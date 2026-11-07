@@ -468,6 +468,8 @@ export function createInferenceRuntime(
         provider.previousProviderState === "unproven"
       )
         throw new Error("The main-process provider changed without exact retirement evidence")
+      if (provider.previousProviderState === "host-lost" && previous.length)
+        throw new Error("Host document loss cannot reconcile partial renderer ownership memory")
     } else if (
       (!handoff.providerEpoch || handoff.windowID === undefined) &&
       previous.some((entry) => entry.grant || entry.acquire || entry.release)

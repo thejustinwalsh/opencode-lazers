@@ -299,6 +299,108 @@ test("a replacement main adopts only the exact predecessor persisted after provi
   await expect(replacement.clear(async () => {})).rejects.toThrow("Unload the model")
 })
 
+test("an exact host-observed window loss drains once, permits a reset sequence, and preserves broker ownership", async () => {
+  const draining = Promise.withResolvers<void>()
+  const lease = new ModelLease(() => draining.promise)
+  register(lease, 1, "page-a", 3)
+  const originalRequest = request(lease, "page-a", 3)
+  const original = await lease.acquire(1, originalRequest)
+
+  expect(() => lease.registerGeneration(1, "forged-reset", 1)).toThrow("stale renderer generation")
+  register(lease, 2, "other-window", 1)
+  await lease.lost(2)
+  expect(() => lease.acquire(2, request(lease, "other-window", 1))).toThrow("owned")
+
+  const loss = lease.lost(1)
+  expect(lease.lost(1)).toBe(loss)
+  const nextRegistration = lease.registerGeneration(1, "page-b", 1)
+  expect(nextRegistration).toBeInstanceOf(Promise)
+  await Promise.resolve()
+  expect(lease.occupied()).toBe(true)
+  expect(() => lease.acquire(2, request(lease, "other-window", 1))).toThrow(/owned|cleaned up/)
+  await expect(lease.clear(async () => {})).rejects.toThrow("Unload the model")
+
+  draining.resolve()
+  await Promise.all([loss, nextRegistration])
+  expect(() =>
+    lease.acquire(1, {
+      ...request(lease, "page-b", 1),
+      providerEpoch: "stale-provider-epoch",
+    }),
+  ).toThrow("provider epoch changed")
+  const successor = await lease.acquire(1, request(lease, "page-b", 1))
+  expect(successor.owner).toBe(original.owner)
+  expect(successor.retired).toBeUndefined()
+  expect(() => lease.assert(1, original)).toThrow()
+  expect(() => lease.registerGeneration(1, "late-page-a", 1)).toThrow()
+
+  // Exact late replies remain descriptive; they cannot release or replace the successor.
+  expect(await lease.acquire(1, originalRequest)).toEqual(original)
+  expect(() =>
+    lease.release(1, {
+      lease: original,
+      retirementID: "late-old-release",
+      rendererDisposalID: "late-old-disposal",
+    }),
+  ).toThrow("does not own")
+  expect(lease.occupied()).toBe(true)
+  lease.assert(1, successor)
+  await lease.release(1, {
+    lease: successor,
+    retirementID: "release-page-b",
+    rendererDisposalID: "dispose-page-b",
+  })
+})
+
+test("failed host-loss drain keeps ownership occupied until an exact retry settles", async () => {
+  let failDrain = true
+  const lease = new ModelLease(async () => {
+    if (failDrain) throw new Error("host-loss drain failed")
+  })
+  register(lease, 1, "page-a", 1)
+  const original = await lease.acquire(1, request(lease, "page-a", 1))
+
+  await expect(lease.lost(1)).rejects.toThrow("host-loss drain failed")
+  expect(lease.occupied()).toBe(true)
+  lease.assert(1, original)
+  expect(() => lease.registerGeneration(1, "page-b", 1)).toThrow("did not settle")
+  register(lease, 2, "other-window", 1)
+  expect(() => lease.acquire(2, request(lease, "other-window", 1))).toThrow("owned")
+  await expect(lease.clear(async () => {})).rejects.toThrow("Unload the model")
+
+  failDrain = false
+  await lease.lost(1)
+  await lease.registerGeneration(1, "page-b", 1)
+  const successor = await lease.acquire(1, request(lease, "page-b", 1))
+  expect(successor.owner).toBe(original.owner)
+  lease.assert(1, successor)
+})
+
+test("only a demonstrably retired inherited owner can use host-loss recovery", async () => {
+  let persisted: ModelLeasePersistence | undefined
+  const original = new ModelLease(
+    async () => {},
+    undefined,
+    (state) => (persisted = state),
+  )
+  register(original, 1, "prior-main-page", 4)
+  const prior = await original.acquire(1, request(original, "prior-main-page", 4))
+  original.providerStopped()
+
+  const replacement = new ModelLease(async () => {}, persisted)
+  expect(replacement.previousProviderState).toBe("retired")
+  const loss = replacement.lost(1)
+  const registration = replacement.registerGeneration(1, "fresh-window-page", 1)
+  await Promise.all([loss, registration])
+  expect(replacement.previousProviderState).toBe("host-lost")
+  const successor = await replacement.acquire(1, request(replacement, "fresh-window-page", 1))
+  expect(successor.owner).toBe(prior.owner)
+  expect(successor.providerEpoch).toBe(replacement.providerEpoch)
+  expect(successor.retired).toBeUndefined()
+  register(replacement, 2, "foreign-window", 1)
+  expect(() => replacement.acquire(2, request(replacement, "foreign-window", 1))).toThrow("owned")
+})
+
 test("unknown provider shutdown stays occupied and lost retirement replies reconcile after replacement", async () => {
   let persisted: ModelLeasePersistence | undefined
   const original = new ModelLease(
@@ -310,6 +412,8 @@ test("unknown provider shutdown stays occupied and lost retirement replies recon
   const a = await original.acquire(1, request(original, "generation-a", 1))
   const unproven = new ModelLease(async () => {}, persisted)
   expect(unproven.previousProviderState).toBe("unproven")
+  expect(unproven.occupied()).toBe(true)
+  await unproven.lost(1)
   expect(unproven.occupied()).toBe(true)
   register(unproven, 1, "unproven-successor", 2)
   expect(() => unproven.acquire(1, request(unproven, "unproven-successor", 2))).toThrow("owned")

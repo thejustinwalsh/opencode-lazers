@@ -179,6 +179,7 @@ const makeMainFixture = (write: (entry: LogEntry) => void, withDebugger = false)
   const otherWindow = new FakeBrowserWindow(18, 4343)
   const cleanup: (() => void)[] = []
   const windowListeners = new Map<string, (...args: never[]) => void>()
+  const persistent = new Map<string, unknown>()
   type MainAPI = {
     trace: (event: unknown, caller: { window: number }) => void
     rendererCaptureStatus: (_: undefined, caller: { window: number }) => RendererArmedCaptureStatus
@@ -194,6 +195,18 @@ const makeMainFixture = (write: (entry: LogEntry) => void, withDebugger = false)
   let implementation!: MainAPI
   const ctx = {
     options: { dataDirectory: `/private/tmp/lazers-main-trace-${crypto.randomUUID()}` },
+    signal: new AbortController().signal,
+    storage: {
+      store: (key: string, options: { initial: unknown }) => {
+        if (!persistent.has(key)) persistent.set(key, options.initial)
+        return {
+          get value() {
+            return persistent.get(key)
+          },
+          set: (value: unknown) => persistent.set(key, value),
+        }
+      },
+    },
     log: {
       write: (level: string, message: string, data?: Record<string, unknown>) =>
         write({ level, message, data }),
@@ -393,3 +406,21 @@ test("failed armed startup suppresses automatic CDP fallback across unresponsive
   for (const fn of fixture.cleanup.reverse()) fn()
   if (typeof fixture.stop === "function") await fixture.stop()
 })
+
+test("registered main and renderer recover the exact lease after a window document reload", async () => {
+  const process = Bun.spawn([processPath(), "run", "test/webgpu-main-lease-reload.fixture.ts"], {
+    cwd: new URL("../..", import.meta.url).pathname,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [code, output, error] = await Promise.all([
+    process.exited,
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+  ])
+  expect(error).toBe("")
+  expect(code).toBe(0)
+  expect(output).toContain("registered renderer-window reload recovered without broker reset")
+}, 30_000)
+
+const processPath = () => globalThis.process.execPath
