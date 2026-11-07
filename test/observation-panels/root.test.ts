@@ -968,7 +968,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           selectedTaskID: TASK_A,
           selectedCandidateID: CANDIDATE_C,
           selectedConfigurationID: CONFIG_ONE,
-          split: 64,
+          split: 56,
           topScroll: 0,
           inspectorScroll: 0,
         },
@@ -1741,9 +1741,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const summaryRule = modelCss.match(/\.lazers-models-market-summary\s*\{([^}]+)\}/)?.[1] ?? ""
     expect(summaryRule).toContain("min-width: 0")
     expect(modelCss).toMatch(
-      /\.lazers-models-market-summary strong\s*\{[^}]*overflow-wrap: anywhere/s,
-    )
-    expect(modelCss).toMatch(
       /\.lazers-models-market-summary small\s*\{[^}]*overflow-wrap: anywhere/s,
     )
     const style = browserDocument.createElement("style")
@@ -1878,7 +1875,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA
         .querySelector<HTMLElement>(".lazers-models")
         ?.style.getPropertyValue("--models-top-size"),
-    ).toBe("64%")
+    ).toBe("56%")
     expect(sourceDetails.querySelector("summary")?.textContent).not.toContain("snapshots available")
     expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
       sourceDetails,
@@ -2010,15 +2007,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     initialAlternative.open = true
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
     const marketSummary = containerA.querySelector<HTMLElement>(".lazers-models-market-summary")!
-    expect(marketSummary.textContent).toContain("GPT-6")
-    expect(marketSummary.textContent).toContain("high")
+    const selectedInspector = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
+    expect(marketSummary.closest(".lazers-models-top")).toBeNull()
+    expect(marketSummary.closest(".lazers-models-inspector")).toBe(selectedInspector)
+    expect(marketSummary.parentElement?.querySelector("h2")?.textContent).toBe("GPT-6 refreshed")
+    expect(marketSummary.getAttribute("aria-label")).toContain("exact route openai / gpt-6 · high")
     expect(marketSummary.textContent).toContain("≈$0.0838–$0.204 / accepted task")
     expect(marketSummary.textContent).toContain("OpenRouter")
-    expect(marketSummary.closest(".lazers-models-top")).not.toBeNull()
     expect(marketSummary.textContent).not.toContain("Current market")
     expect(marketSummary.textContent).not.toContain("retrieved")
     expect(marketSummary.textContent).not.toContain("denominator")
-    expect(marketSummary.children).toHaveLength(2)
+    expect(marketSummary.children).toHaveLength(1)
+    expect(selectedInspector.scrollTop).toBe(0)
+    expect(topPaneA.scrollTop).toBe(0)
     const decisionStatus = comparePanel.querySelector<HTMLElement>(
       ".lazers-models-decision-status",
     )!
@@ -2555,7 +2556,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(partialMarketSummary.textContent).not.toContain("priced subtotal")
     expect(partialMarketSummary.textContent).not.toContain("remainder unknown")
     expect(partialMarketSummary.textContent).not.toContain("total and remainder unknown")
-    expect(partialMarketSummary.children).toHaveLength(2)
+    expect(partialMarketSummary.children).toHaveLength(1)
     expect(partialMarketSummary.getAttribute("aria-label")).toContain("5e-8")
     expect(partialMarketSummary.getAttribute("aria-label")).toContain("denominator 1 accepted task")
     expect(partialMarketSummary.getAttribute("aria-label")).toContain("total and remainder unknown")
@@ -2626,7 +2627,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "98,765 tokens",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).toContain(
-      "GPT-6",
+      "/ accepted task",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).not.toContain(
       "Cost unavailable",
@@ -2698,6 +2699,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_SINGLE,
     )
     expect(containerA.querySelector(".lazers-models-inspector h2")?.textContent).toBe("qwen-7")
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-market-summary")
+          ?.textContent?.includes("/ accepted task") === true,
+    )
+    const qwenMarketSummary = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-summary",
+    )!
+    expect(qwenMarketSummary.closest(".lazers-models-inspector")).not.toBeNull()
+    expect(qwenMarketSummary.textContent).toContain("OpenRouter")
+    expect(containerA.querySelector(".lazers-models-top .lazers-models-market-summary")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-inspector")?.scrollTop).toBe(0)
 
     const zeroProviderTrigger = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
