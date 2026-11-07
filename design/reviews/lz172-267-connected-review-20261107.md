@@ -13,3 +13,9 @@ Actual Desktop observations:
 Screenshots: [wide](artifacts/lz172-267-desktop/lz172-267-wide.png), [narrow](artifacts/lz172-267-desktop/lz172-267-narrow.png), [Qwen selection](artifacts/lz172-267-desktop/lz172-267-qwen-narrow.png).
 
 This is a partial improvement, not visual acceptance or plan completion. Continue the same LZ-172 worker; no replacement task or backend/pricing redesign is needed for this observed defect.
+
+## Repair observation
+
+The same worker added a test requiring a selected label within ten pixels of a plot edge. A completely visible label42pixels inward failed that added condition. Root rejected the extra requirement; Architect delivered advice13 preserving real containment/axis clearance and removing edge proximity. Root also checked installed ECharts6.1 types/source and supplied the measured `labelLayout`/`labelRect`/`dx` seam as optional source guidance (advice14). The worker consumed it, removed proximity checks and implemented measured horizontal adjustment. Targeted rendered Luna/resize checks and autoformat/lint/type checks pass at the current dirty-source boundary. No new candidate commit, combined build or connected visual acceptance is established yet.
+
+Canonical `cf7680c` adds one general implementor sentence: “Verify the requested behavior without adding acceptance requirements.” It preserves coherent-result checks, automatic quality fixes and all Architect research/interview/planning behavior. This observation illustrates unnecessary verification cost; it does not justify skipping actual clipping or dependency/integration failures.
