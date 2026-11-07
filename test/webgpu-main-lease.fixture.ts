@@ -414,6 +414,67 @@ const cleanupHost = async (host: MainHost) => {
 }
 
 try {
+  // A new Desktop process has no old GPU allocations, even if its DB retained an
+  // active/failed lease or reused the same BrowserWindow id. Cache files remain.
+  for (const priorState of ["active", "retired", "unproven", "legacy"] as const) {
+    const original = makeMain()
+    const files = filesFor(original, 17, new AbortController().signal)
+    const identity = await files.identity()
+    await files.registerGeneration({ generationID: "old-process", generationSequence: 1 })
+    await files.acquire({
+      generationID: "old-process",
+      generationSequence: 1,
+      operationID: "old-process-acquire",
+      providerEpoch: identity.providerEpoch,
+    })
+    await cleanupHost(original)
+    const saved = original.persistent.get("webgpu-model-lease") as Record<string, unknown>
+    assert.equal(typeof saved.processIdentity, "string")
+    if (priorState === "legacy") delete saved.processIdentity
+    else saved.processIdentity = "exited-desktop-process"
+    saved.state = priorState === "legacy" ? "active" : priorState
+    original.persistent.set("webgpu-model-lease", saved)
+    if (priorState === "legacy") {
+      // An upgrade cannot assume the old renderer has exited. Tag its retained
+      // reservation first, then recover on the next actual process boundary.
+      const migrating = makeMain(original.persistent)
+      try {
+        const migratedFiles = filesFor(migrating, 17, new AbortController().signal)
+        assert.equal((await migratedFiles.status()).occupied, true)
+        await assertOtherWindowBlocked(
+          migrating,
+          (await migratedFiles.identity()).providerEpoch,
+          "legacy-upgrade",
+        )
+      } finally {
+        await cleanupHost(migrating)
+      }
+      const tagged = original.persistent.get("webgpu-model-lease") as Record<string, unknown>
+      assert.equal(typeof tagged.processIdentity, "string")
+      original.persistent.set("webgpu-model-lease", {
+        ...tagged,
+        processIdentity: "exited-migration-process",
+      })
+    }
+    const restarted = makeMain(original.persistent)
+    try {
+      const b = makeRuntime(restarted)
+      await until(() => b.runtime.state() === "ready", `Desktop restart from ${priorState}`)
+      assert.equal(allocations, 1)
+      await assertOtherWindowBlocked(
+        restarted,
+        (await b.files.identity()).providerEpoch,
+        priorState,
+      )
+      b.controller.abort()
+      await b.runtime.dispose()
+      assert.equal(allocations, 0)
+    } finally {
+      await cleanupHost(restarted)
+    }
+  }
+  successfulDisposals = 0
+
   assert.throws(
     () =>
       makeMain(

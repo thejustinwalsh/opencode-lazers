@@ -1,5 +1,37 @@
 # Local inference lease observation
 
+## Current repair — 2026-11-07
+
+`setupMain` now tags durable leases with the owning Desktop process PID and
+Node performance time origin. A replacement plugin provider in that process
+retains the existing exact handoff rules. A new Desktop process ignores the
+exited process's allocation reservation; downloaded cache files remain intact.
+An untagged legacy lease is retained and tagged first, so upgrading a live
+renderer cannot allocate a second model. Its next Desktop restart recovers it.
+
+The registered main/renderer fixture covers restart from active, retired and
+unproven reservations, reused window IDs, conservative legacy migration, and
+exclusion of other windows after recovery. Existing abort-order, failed-disposal,
+lost-response and same-process provider handoff cases remain passing.
+
+Validation: 11 tests passed across `main-lease.test.ts`, `lease.test.ts` and
+`runtime.test.ts`; formatter, lint, typecheck, diff checks and GUI build/bundle
+evaluation passed. Desktop was fully quit (process absence checked) and reopened.
+All six switches remained on and the cached 3.19 GB remained. Actual native
+local inference returned `local GPU ready.` (19 input / 4 output tokens), then
+the d1 typed decision returned `{"ok":true,"kind":"boolean","value":true}`.
+The original Architect and both original repair workers were observed running.
+A second full quit/reopen with d1 resident again reached chat-ready automatically;
+the same local chat probe succeeded (19 input / 4 output tokens). No cache
+deletion or inference toggle was needed for either restart.
+
+The original abort-path observation below remains relevant to same-process
+handoffs; this repair addresses the separate durable reservation surviving a
+Desktop process. It does not erase model files or relax failed-disposal checks
+inside the same process.
+
+## Original observation
+
 Root inspected native Desktop Settings on 2026-11-04. The runtime displayed
 **“The model cache is owned or being cleaned up”**, with all six switches enabled
 and idle timeout Never. No setting, reload, release or inference was requested.

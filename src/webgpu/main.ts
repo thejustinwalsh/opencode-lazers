@@ -5,6 +5,8 @@ import { ModelFiles } from "./ipc.ts"
 import type { ModelLeaseAcquire, ModelLeaseIdentity } from "./ipc.ts"
 import { DECISION_FILES, DECISION_REVISION, decisionURL } from "./manifest.ts"
 import { dirname, join } from "node:path"
+import { pid } from "node:process"
+import { performance } from "node:perf_hooks"
 import { ModelLease, ModelLeasePersistenceSchema } from "./lease.ts"
 import type { InferenceTraceEvent } from "./inference-trace.ts"
 import {
@@ -19,6 +21,13 @@ import {
   RENDERER_ARMED_SAMPLING_INTERVAL_US,
   RENDERER_ARMED_STOP_MS,
 } from "./renderer-armed-capture.ts"
+
+// Stable across plugin reloads, different after Desktop exits (including PID reuse).
+const processIdentity = `${pid}:${performance.timeOrigin}`
+const ProcessLeaseSchema = Schema.Struct({
+  ...ModelLeasePersistenceSchema.fields,
+  processIdentity: Schema.optionalKey(Schema.String),
+})
 
 const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) => {
   try {
@@ -45,10 +54,17 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     initial: null,
   })
   const persistedValue = persistedLease.value
-  const previousLease =
+  const storedLease =
     persistedValue === null
       ? undefined
-      : Schema.decodeUnknownSync(ModelLeasePersistenceSchema)(persistedValue)
+      : Schema.decodeUnknownSync(ProcessLeaseSchema)(persistedValue)
+  // GPU allocations cannot survive the Desktop process. Durable cache files can.
+  // Adopt untagged records conservatively: this may be an upgrade in a live
+  // renderer. Stamping them makes the next Desktop restart recover automatically.
+  const previousLease =
+    storedLease && (!storedLease.processIdentity || storedLease.processIdentity === processIdentity)
+      ? storedLease
+      : undefined
   let providerEpoch = ""
   const lease = new ModelLease(
     async () => {
@@ -58,13 +74,16 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     (state) => {
       const current = persistedLease.value
       if (current !== null) {
-        const currentEpoch = Schema.decodeUnknownSync(ModelLeasePersistenceSchema)(
-          current,
-        ).providerEpoch
-        if (currentEpoch !== providerEpoch && currentEpoch !== previousLease?.providerEpoch)
+        const currentLease = Schema.decodeUnknownSync(ProcessLeaseSchema)(current)
+        const currentEpoch = currentLease.providerEpoch
+        if (
+          currentLease.processIdentity === processIdentity &&
+          currentEpoch !== providerEpoch &&
+          currentEpoch !== previousLease?.providerEpoch
+        )
           throw new Error("A stale main-process provider cannot replace newer ownership state")
       }
-      persistedLease.set(state)
+      persistedLease.set({ ...state, processIdentity })
     },
   )
   providerEpoch = lease.providerEpoch
