@@ -35,3 +35,20 @@ This is evidence for the existing recovery/trajectory learning lane, not a new
 detector, policy, task or retrospective claim that a single tool-count threshold
 establishes worker struggle. Preserve the original task/attempt/session/input,
 candidate, usage and resource history when evaluating the eventual result.
+
+## Observed subsequent edits
+
+Root read native tool receipts after steering. The first successful patch in this
+repair window completed at Unix ms1794090834553, changing comparison-presentation.ts
+and comparison-chart.tsx. Further successful patches changed comparison-panel.tsx
+at1794090869711 and1794090928890; one intervening patch failed to match context
+and was followed by a successful patch. At1794090928890 the working diff had
+3files,150insertions/72deletions. This establishes implementation progress, not
+a passing visual result or causal proof that the reminder produced it.
+
+The worker's task-advice inspection also used the wrong response path:
+msg_1b823bd08001nEgzmVhGJvbefx selected result.task.advice and result.task.reference;
+the actual tool output contained only writeScope. GetOutput stores advice and
+reference at the top level. Root sent this exact consumption issue to Architect
+through Desktop, recommending the readable instructions getter or the correct
+structured projection. Delivery/readback remains distinct from worker use.

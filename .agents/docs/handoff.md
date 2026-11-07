@@ -272,3 +272,19 @@ coherent missingmonitorfeature, not newproducer/limitinflation/polling. Root
 queued actualfailure+successfulproducerreport viaDesktop queue, nointerruption.
 No newRadar taskreference yet at1794090319712. Original172/182stayactive.
 Current roadmap deliveryfront updated53fba33; allscope remainsactive.
+
+## Models repair implementation and steering observation
+
+Native172remainedbusybut~20.5min read-heavy/zeroedits at1794090595240. Root
+reported toolcounts, Main attachedadvice9+nativekey(no restart/newinput).
+Actual first successful patch completed1794090834553; chart/presentation/panel
+nowchanging(3files150insertions72deletions at1794090928890). No candidate/tests
+passyet. One patchcontextfailurefollowedbysuccess; workercontinued.
+Report design/reviews/lz172-proactive-steering-20261107.md updatedwithreceipts.
+Worker getterattemptselectedwrongresult.task.advice path andreturnedONLYscope;
+RootnotifiedMain to use readableinstructions or top-levelresult.advice.
+
+Radar tasknotyetdispatched: fullscopecheckfoundLiveToolCallhasNOfiletargetfield.
+Main removed consumer-onlyblanketexclusion asauthoringdirection; existingLuna
+researcheraskedfortrustworthyfile-targetnativehook→exactcallprojectionseam.
+UnknownplaceholderNOTcompletionofrequestedfileactivity. Preserve172/182active.
