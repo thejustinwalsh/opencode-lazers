@@ -312,3 +312,30 @@ Tasks182qualitypassed and10initialschedulingtests/114assertionspassed; stillcodi
 registeredUIcoverage. Bothactualworkersstayactive, no finalcandidateaccepted.
 ModelsAssignmentsDesktopread: all3projectpersonas showopenai/gpt-6-luna max,
 UIpersonaeditor/nativecatalogopens; no route saved/changed, notfullmutationproof.
+
+## Models combined preview2715 and remaining visual repair
+
+172candidate2a4ad5c is clean. RootcreatedNATIVEreviewcheckout
+/private/tmp/lz172-visual-review-2a4ad5c frommain, mergedcandidate, resolvedONLY
+market-range.ts/test conflicts bypreserving canonicalproducer EXACTLY(average
+rates/stricttier), retainedcandidate3provenanceschematest. Reviewmerge
+2715a4bdb258fb6f73e148a5584a35b8af8ec866 onfeat/lz172-visual-review-2a4ad5c.
+GPUdiffagainstmainEMPTY. Autofixverify+GUIbuild+72tests/1618assertions/8filesPASS.
+Firsttestsetup lackedgenerateddist/radar-layout-worker.cjs; buildpreflightfixed
+thatsetup failure, thenfullfocusedrunpassed. Logs/private/tmp/lz172-2a4-combined-{tests,gui-build}.log.
+
+CurrentMainSOURCEUNMERGED, ignoredGUIpreview IS2715. Backup/currentpreviewrecord
+/private/tmp/lz172-2a4-current-preview.json pointsrollback
+/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/lz172-2a4-gui-preview-m6qyzmel.
+Hostbundlewatchloadedpreview;NOmanualrenderer/service restart. Preservethis
+checkoutfornextrepairmerge;MaininformedRootEXCLUSIVELYownsit/preview/integration.
+Actualnarrow/wideimagescommitted90f4f3e atdesign/reviews/artifacts/lz172-2a4-desktop/.
+
+NativeTerraHigh existingthreadses_e47f3391affevrhW239V5Jfv2r reviewednewactualimages:
+labels/controls/axes/legendimproved; STILLFAILselectedcostnotvisibleatstored56
+splitbothwidths andQwenbadgeoverlapsxaxisticks. Mainpreparingsame172repair,not
+newtask. RootobservedModeldropdownselectLunaupdatesactualOpenRouterrange;upper
+scroll3pages DOESrevealcost,sohiddeninitiallynotmissingdata. Keyboarddivider
+Down56→61/Up→56works;restored56andscrolltop. Nofinalvisualacceptance.
+172source/planintegrationawaitcorrectionandnativeinteraction/Terrafollowthrough.
+182/184stayactive;do notinterruptthem.
