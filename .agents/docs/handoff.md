@@ -235,3 +235,21 @@ Current ignored dist GUI assets remain ce72ed5 PREVIEW, source unmerged; rollbac
 Main Architect and original LZ-182 LunaMax worker verified live at1794089276397.
 LZ-178 same-worker review correction waits for182 overlapping runtime reservation.
 No backend-wide reload or active worker interruption was performed.
+
+## Inference ancestry correction activated and observed
+
+Root reproduced post-reload settings error Previous renderer ownership is unknown
+in actual registered main/runtime fixture. storeGrant prunes ancestors but local
+previousGenerationID stayed stale. Canonical2d545e6 traverses generation().previous;
+regression failed before,21targetedtests/116assertions and bun run verify passed.
+Canonical GUI build passed and host bundle update loaded it WITHOUT additional
+renderer/service restart. This ENDED ce72 ignored-GUI preview: dist is canonical
+again, though original rollback backup remains. Native settings Ready; local
+prompt returned local GPU ready. Then native Unload from GPU→Unloaded→Reload
+model→Ready→Run locally succeeded again(19input/4output). Sixswitches ON and
+idle Never unchanged. Report design/reviews/inference-pruned-ancestor-recovery-20261107.md.
+Main informed to preserve2d545e6 at later Models integration/preview.
+
+Original172 same-workerrepair genuinely resumed at1794089363340;182stillactive.
+Both native LunaMax sessions confirmed running1794089658825. Source acceptance
+for Models still withheld pending repaired screenshot+interaction walkthrough.
