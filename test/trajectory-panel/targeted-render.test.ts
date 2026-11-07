@@ -6,10 +6,13 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
-import { createTaskValuationReader } from "../../src/models/task-valuation.ts"
-import { nativeMillionTokenIndex } from "../../test/models-valuation/fixtures/current-indexes.ts"
 import type { TrajectoryHost } from "../../src/trajectory/native.ts"
 import { makeFixture, taskID } from "../trajectory/fixture.ts"
+import {
+  lz137Route,
+  lz137ValuationProvider,
+  prepareLz137RetainedData,
+} from "./lz137-market-fixture.ts"
 
 const outputDirectory = fileURLToPath(
   new URL("../../node_modules/.cache/targeted-trajectory-dom-test", import.meta.url),
@@ -24,6 +27,7 @@ async function until(predicate: () => boolean) {
 
 test("a task target renders its scoped report timeline without a broad snapshot", async () => {
   const fixture = makeFixture()
+  prepareLz137RetainedData(fixture)
   const dom = new Window({ url: "https://targeted-trajectory.localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
   const globalNames = [
@@ -83,6 +87,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
   let disposePanel: (() => void) | undefined
   let snapshotCalls = 0
   let historyCalls = 0
+  let latestHistoryReport: Record<string, unknown> | undefined
   try {
     const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
     const entry = fileURLToPath(
@@ -134,21 +139,25 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     } = await import(pathToFileURL(`${outputDirectory}/targeted-trajectory-dom-test.js`).href)
     expect(replacedInferenceRuntime).toBe(true)
 
-    const marketRoute = { providerID: "openrouter", modelID: "vendor/model", variant: null }
-    const marketModel = { providerID: marketRoute.providerID, id: marketRoute.modelID }
+    const marketRoute = lz137Route
+    const marketModel = {
+      providerID: marketRoute.providerID,
+      id: marketRoute.modelID,
+      variant: marketRoute.variant,
+    }
     const host: TrajectoryHost = {
       session: async (id) => {
         const session = await fixture.host.session(id)
-        return session
-          ? {
-              ...session,
-              model: marketModel,
-              messages: session.messages?.map((message) => {
-                const record = message as { model?: unknown }
-                return record.model ? { ...message, model: marketModel } : message
-              }) as never,
-            }
-          : null
+        if (!session) return null
+        if (id !== "ses-failed") return session
+        return {
+          ...session,
+          model: marketModel,
+          messages: session.messages?.map((message) => {
+            const record = message as { model?: unknown }
+            return record.model ? { ...message, model: marketModel } : message
+          }) as never,
+        }
       },
       status: async (id) => {
         const session = fixture.sessions.get(id)
@@ -157,15 +166,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           : null
       },
     }
-    const taskValuationProvider = createTaskValuationReader(async (_routes, signal) => {
-      signal.throwIfAborted()
-      const index = structuredClone(nativeMillionTokenIndex)
-      const pin = index.pins[0]!
-      pin.route = marketRoute
-      pin.productID = marketRoute.modelID
-      pin.configurationID = "vendor-model-default"
-      return { index, freshness: "current" }
-    })
+    const taskValuationProvider = lz137ValuationProvider({ withStrictOpenCodePrice: true })
     const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
     tracker.initialize()
     fixture.store.atomic((db) =>
@@ -209,7 +210,9 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           taskID: string
           limit: number
           cursor?: string
-        }) => reads.trajectory(input, tracker),
+        }) => {
+          return reads.trajectory(input, tracker)
+        },
         trajectoryHistory: async (input: {
           scope: Parameters<typeof reads.trajectoryHistory>[0]["scope"]
           taskID: string
@@ -217,7 +220,9 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           cursor?: string
         }) => {
           historyCalls++
-          return reads.trajectoryHistory(input, tracker)
+          const response = await reads.trajectoryHistory(input, tracker)
+          latestHistoryReport = response.report
+          return response
         },
         trajectoryStatus: async (input: Parameters<typeof reads.trajectoryStatus>[0]) =>
           reads.trajectoryStatus(input, tracker),
@@ -296,16 +301,37 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     )
     expect(snapshotCalls).toBe(0)
     expect(historyCalls).toBeGreaterThan(0)
-    expect(container.querySelector(".lazers-trajectory-cost")?.textContent).toContain(
-      "API equivalent · observed",
-    )
-    expect(container.querySelector(".lazers-trajectory-cost")?.textContent).toContain("$0.0001844")
+    const costRow = container.querySelector(".lazers-trajectory-cost")?.textContent ?? ""
+    expect(latestHistoryReport).toMatchObject({
+      effort: {
+        recordedCost: { apiEquivalentTotalUsd: 0.03197324 },
+        marketEquivalentCost: {
+          observedUsageEstimate: { valueUSD: 0.01598662 },
+        },
+      },
+    })
+    expect(costRow).toContain("Current-market observed-usage estimate")
+    expect(costRow).toContain("$0.01598662 estimate")
+    expect(costRow).not.toContain("$0.03197324")
     expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toContain(
-      "OpenCode · generation 1 · current freshness",
+      "OpenRouter · generation 5 · average · current freshness",
     )
     expect(container.querySelector(".lazers-trajectory-valuation summary")?.textContent).toContain(
       "Pricing coverage and provenance",
     )
+    const estimateDetails = [...container.querySelectorAll(".lazers-trajectory-valuation summary")]
+      .map((summary) => summary.textContent)
+      .find((text) => text?.includes("Estimate assumptions and published-rate basis"))
+    expect(estimateDetails).toContain("19 retained calls")
+    expect(estimateDetails).toContain("published-rate basis")
+    expect(container.textContent).toContain(
+      "Estimate basis · deduplicated-retained-token-usage-at-published-current-rates",
+    )
+    expect(container.textContent).toContain("Strict-index API equivalent · $0.03197324 · OpenCode")
+    expect(container.textContent).toContain("0.0000001")
+    expect(container.textContent).toContain("Recovery gaps · 2")
+    expect(container.textContent).not.toContain("$0 subtotal")
+    expect(container.textContent).not.toContain("Cost unavailable")
     expect(container.querySelector(".lazers-trajectory-axis")).not.toBeNull()
     const measuredSegment = [
       ...container.querySelectorAll<HTMLElement>(".lazers-trajectory-segment"),

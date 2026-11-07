@@ -10,7 +10,11 @@ import type {
   EndpointPricingRead,
   EndpointPricingRecord,
 } from "./endpoint-pricing.ts"
-import { calculateKnownUsageMarket } from "./market-range.ts"
+import {
+  calculateConfiguredKnownUsageMarket,
+  calculateKnownUsageMarket,
+  resolveConfiguredMarketIdentity,
+} from "./market-range.ts"
 import type {
   KnownUsageMarketSession,
   KnownUsagePerCall,
@@ -22,15 +26,26 @@ import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import type { ModelEvidenceSnapshot } from "./source-schema.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { resolveModelIdentity } from "./model-identity.ts"
+import {
+  defaultModelPriceSourcePolicy,
+  ModelPriceSourceSettingsSchema,
+} from "./price-source-settings.ts"
 
 const lunaRoute = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
 const kimiRoute = { providerID: "openrouter", modelID: "moonshotai/kimi-k3.1-pro", variant: null }
 const qwenRoute = { providerID: "openrouter", modelID: "qwen/qwen3.8-flash", variant: null }
 const parsedCatalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
 const parsedGoCatalog = ModelEvidenceSnapshotSchema.parse(capturedGo.openrouter.snapshot)
+const parsedPublishedCatalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
+const parsedPublishedNative = ModelEvidenceSnapshotSchema.parse(captured.native.snapshot)
 
 if (parsedCatalog.source !== "openrouter-models" || parsedGoCatalog.source !== "openrouter-models")
   throw new Error("Expected OpenRouter model-identity catalog fixtures")
+if (
+  parsedPublishedCatalog.source !== "openrouter-models" ||
+  parsedPublishedNative.source !== "native-catalog"
+)
+  throw new Error("Expected published model and native catalog fixtures")
 
 function catalogRead(
   snapshot: Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>,
@@ -47,6 +62,63 @@ function catalogRead(
 
 const directCatalogRead = catalogRead(parsedCatalog)
 const goCatalogRead = catalogRead(parsedGoCatalog)
+
+function readyEvidenceRead(snapshot: ModelEvidenceSnapshot): ModelEvidenceComparisonSourceRead {
+  return {
+    source: snapshot.source,
+    storage: "ready",
+    snapshotState: "available",
+    snapshotID: snapshot.snapshotID,
+    refresh: {
+      source: snapshot.source,
+      state: "succeeded",
+      generation: snapshot.generation,
+      startedAt: snapshot.retrievedAt,
+      completedAt: snapshot.retrievedAt,
+      latestSnapshotID: snapshot.snapshotID,
+      latestRetrievedAt: snapshot.retrievedAt,
+      latestRecordCount: snapshot.records.length,
+      errorCode: null,
+      httpStatus: 200,
+    },
+    snapshot,
+  }
+}
+
+const configuredSources = [
+  readyEvidenceRead(parsedPublishedNative),
+  readyEvidenceRead(parsedPublishedCatalog),
+]
+
+function configuredSettings(sources = ["openrouter", "opencode"] as const) {
+  return ModelPriceSourceSettingsSchema.parse({
+    policy: { ...defaultModelPriceSourcePolicy(), sources: [...sources] },
+    access: { openrouter: "configured", opencode: "configured" },
+  })
+}
+
+function catalogWithMissingLunaOverrideCacheRead() {
+  const snapshot = ModelEvidenceSnapshotSchema.parse({
+    ...parsedPublishedCatalog,
+    snapshotID: crypto.randomUUID(),
+    records: parsedPublishedCatalog.records.map((record) =>
+      record.kind === "openrouter-model" && record.id === "openai/gpt-6-luna" && record.prices
+        ? {
+            ...record,
+            prices: {
+              ...record.prices,
+              tiers: record.prices.tiers.map((tier) =>
+                tier.minPromptTokens === 272_000 ? { ...tier, inputCacheRead: null } : tier,
+              ),
+            },
+          }
+        : record,
+    ),
+  })
+  if (snapshot.source !== "openrouter-models")
+    throw new Error("Expected an OpenRouter model catalog fixture")
+  return snapshot
+}
 
 function identityForRoute(
   route: MarketRangeRoute,
@@ -221,6 +293,28 @@ function lunaRecord() {
   )
 }
 
+function lz137Usage(route: MarketRangeRoute) {
+  const calls: KnownUsagePerCall[] = Array.from({ length: 19 }, (_, index) => ({
+    callID: `retained-luna-call-${index}`,
+    route,
+    categories: {
+      uncachedInput: index < 3 ? 2_972 : 2_971,
+      cacheRead: index < 2 ? 43_211 : 43_210,
+      cacheWrite: 0,
+      output: index < 9 ? 109 : 108,
+      reasoning: index < 17 ? 116 : 115,
+    },
+  }))
+  const categories = measures({
+    uncachedInput: 56_452,
+    cacheRead: 820_992,
+    cacheWrite: 0,
+    output: 2_061,
+    reasoning: 2_202,
+  })
+  return { calls, sessions: [usageSession(route, categories)] }
+}
+
 function evaluate(
   route: MarketRangeRoute,
   evidence: EndpointPricingRead,
@@ -319,6 +413,220 @@ test("mixed known Luna tiers sum each attributable call and aggregate usage stay
     543_992 * 0.0000002 + 18 * 0.00000075 + 12 * 0.00000002 + 14 * 0.00000025,
     12,
   )
+})
+
+test("configured published rates price 19 deduplicated calls below the strict prompt-tier boundary", () => {
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const { calls, sessions } = lz137Usage(route)
+  const settings = configuredSettings()
+  const identity = resolveConfiguredMarketIdentity(route, configuredSources)
+  const exact = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources: configuredSources,
+    sessions,
+    perCallUsage: calls,
+    perCallCoverageComplete: true,
+  })
+  expect(exact).toMatchObject({
+    status: "exact",
+    scenarios: [
+      {
+        id: "configured-current-market",
+        status: "exact",
+        valueUSD: 0.01598662,
+        provenance: {
+          source: "openrouter-models",
+          priceBasis: "average",
+          snapshotID: parsedPublishedCatalog.snapshotID,
+          snapshotGeneration: parsedPublishedCatalog.generation,
+        },
+        tierAttribution: {
+          status: "resolved-per-call",
+          callCount: 19,
+          selectedTierIDs: ["base"],
+          promptThresholds: [272_000],
+        },
+      },
+    ],
+  })
+  expect(
+    calls.every((call) => call.categories.uncachedInput + call.categories.cacheRead < 272_000),
+  ).toBe(true)
+
+  const aggregateOnly = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources: configuredSources,
+    sessions,
+  })
+  expect(aggregateOnly.scenarios[0]).toMatchObject({
+    status: "range",
+    valueUSD: null,
+    tierAttribution: { status: "unresolved", basis: "aggregate-tier-envelope" },
+  })
+  expect(aggregateOnly.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(0.01598662, 12)
+  expect(aggregateOnly.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(0.03090749, 12)
+
+  const boundaryCalls: KnownUsagePerCall[] = [272_000, 272_001].map((input, index) => ({
+    callID: `boundary-${index}`,
+    route,
+    categories: { uncachedInput: input, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+  }))
+  const boundarySession = [usageSession(route, measures({ uncachedInput: 544_001 }))]
+  const boundary = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources: configuredSources,
+    sessions: boundarySession,
+    perCallUsage: boundaryCalls,
+    perCallCoverageComplete: true,
+  })
+  expect(boundary.scenarios[0]).toMatchObject({
+    status: "exact",
+    tierAttribution: {
+      status: "resolved-per-call",
+      selectedTierIDs: ["base", "prompt-272000;utc-none-none:1"],
+    },
+  })
+  expect(boundary.scenarios[0]?.valueUSD).toBeCloseTo(0.0816002, 12)
+
+  const duplicate = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources: configuredSources,
+    sessions,
+    perCallUsage: [...calls, calls[0]!],
+    perCallCoverageComplete: true,
+  })
+  expect(duplicate.scenarios[0]).toMatchObject({
+    status: "range",
+    valueUSD: null,
+    tierAttribution: { status: "unresolved" },
+  })
+})
+
+test("configured schedules ignore a missing unused override rate only with complete per-call evidence", () => {
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const sources = [
+    readyEvidenceRead(parsedPublishedNative),
+    readyEvidenceRead(catalogWithMissingLunaOverrideCacheRead()),
+  ]
+  const settings = configuredSettings()
+  const identity = resolveConfiguredMarketIdentity(route, sources)
+  const { calls, sessions } = lz137Usage(route)
+  const baseCalls = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources,
+    sessions,
+    perCallUsage: calls,
+    perCallCoverageComplete: true,
+  })
+  expect(baseCalls).toMatchObject({
+    status: "exact",
+    scenarios: [
+      {
+        status: "exact",
+        valueUSD: 0.01598662,
+        missingRates: [],
+        provenance: { source: "openrouter-models", priceBasis: "average" },
+        tierAttribution: { status: "resolved-per-call", selectedTierIDs: ["base"] },
+        rateSets: [
+          { tierID: "base", cacheRead: expect.any(String) },
+          { tierID: "prompt-272000;utc-none-none:1", cacheRead: null },
+        ],
+      },
+    ],
+  })
+
+  const overrideCall: KnownUsagePerCall = {
+    callID: "luna-override-with-missing-cache-read-rate",
+    route,
+    categories: {
+      uncachedInput: 272_001,
+      cacheRead: 1,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+    },
+  }
+  const overrideSession = [
+    usageSession(route, measures({ uncachedInput: 272_001, cacheRead: 1 }), {
+      id: "ses-luna-override",
+    }),
+  ]
+  const overrideUsed = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources,
+    sessions: overrideSession,
+    perCallUsage: [overrideCall],
+    perCallCoverageComplete: true,
+  })
+  expect(overrideUsed).toMatchObject({ status: "unavailable", scenarios: [] })
+
+  const tierUnknown = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources,
+    sessions: overrideSession,
+    perCallUsage: [overrideCall],
+    perCallCoverageComplete: false,
+  })
+  expect(tierUnknown).toMatchObject({ status: "unavailable", scenarios: [] })
+})
+
+test("configured ordered sources fall through as whole-model schedules without rate splicing", () => {
+  const route = {
+    providerID: "openrouter",
+    modelID: "anthropic/claude-haiku-5.5",
+    variant: "high",
+  }
+  const sessions = [usageSession(route, measures({ uncachedInput: 100, cacheRead: 20, output: 5 }))]
+  const noCatalogPrices = ModelEvidenceSnapshotSchema.parse({
+    ...parsedPublishedCatalog,
+    snapshotID: crypto.randomUUID(),
+    records: parsedPublishedCatalog.records.map((record) =>
+      record.id === "anthropic/claude-haiku-5.5" ? { ...record, prices: null } : record,
+    ),
+  })
+  const fallback = calculateConfiguredKnownUsageMarket({
+    route,
+    settings: configuredSettings(),
+    sources: [readyEvidenceRead(parsedPublishedNative), readyEvidenceRead(noCatalogPrices)],
+    sessions,
+  })
+  expect(fallback.scenarios[0]).toMatchObject({
+    status: "range",
+    provenance: {
+      source: "native-catalog",
+      priceBasis: "quote",
+      snapshotID: parsedPublishedNative.snapshotID,
+    },
+    rateSets: [
+      { prompt: "0.0000001", completion: "0.0000005" },
+      { prompt: "0.0000005", completion: "0.0000025" },
+    ],
+  })
+
+  const absent = calculateConfiguredKnownUsageMarket({
+    route,
+    settings: ModelPriceSourceSettingsSchema.parse({
+      policy: defaultModelPriceSourcePolicy(),
+      access: { openrouter: "not-configured", opencode: "not-configured" },
+    }),
+    sources: configuredSources,
+    sessions,
+  })
+  expect(absent).toMatchObject({ status: "unavailable", scenarios: [] })
 })
 
 test("market identity supports direct OpenAI Luna and source-backed configured Go routes", () => {

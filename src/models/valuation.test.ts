@@ -5,7 +5,7 @@ import { RunnerStore } from "../runner/store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import { makeFixture, firstAttemptID, secondAttemptID } from "../../test/trajectory/fixture.ts"
-import { projectTaskValuation } from "./valuation.ts"
+import { projectTaskValuation, taskValuationPerCallUsage } from "./valuation.ts"
 import type { CurrentPriceIndex } from "./valuation-schema.ts"
 import {
   nativeMillionTokenIndex,
@@ -210,6 +210,92 @@ function projectStoredProgress(
 ) {
   return fixture.store.progressFacts(attemptIDs).map(projectProgressFact)
 }
+
+test("retained call usage is message-deduplicated and fails closed on conflicting or missing evidence", () => {
+  const luna: AccountingRoute = {
+    providerID: "openai",
+    modelID: "gpt-6-luna",
+    variant: "max",
+  }
+  const callUsage = Array.from({ length: 19 }, (_, index) => ({
+    input: index < 3 ? 2_972 : 2_971,
+    cacheRead: index < 2 ? 43_211 : 43_210,
+    cacheWrite: 0,
+    output: index < 9 ? 109 : 108,
+    reasoning: index < 17 ? 116 : 115,
+  }))
+  const usageTotal = {
+    input: 56_452,
+    cacheRead: 820_992,
+    cacheWrite: 0,
+    output: 2_061,
+    reasoning: 2_202,
+  }
+  const factFor = (index: number, usage = callUsage[index]!) => ({
+    id: `luna-step-${index}`,
+    sequence: index + 1,
+    sessionID: "session-luna",
+    attemptID: "attempt-luna",
+    messageID: `message-luna-${index}`,
+    kind: "worker-step",
+    at: 2_000 + index,
+    recordedAt: 2_100 + index,
+    measurementBasis: "additive-step-measurement",
+    usage,
+    routeEvidence: { status: "observed", route: luna },
+    route: luna,
+  })
+  const request = {
+    attempts: [
+      attempt({
+        id: "attempt-luna",
+        sessionID: "session-luna",
+        state: "accepted",
+        currentRoute: luna,
+        sessionUsage: usageTotal,
+        stepRoutes: [],
+      }),
+    ],
+    progressFacts: callUsage.map((_, index) => factFor(index)),
+    progressTruncated: false,
+    truncatedContextSessionIDs: [],
+  }
+  const complete = taskValuationPerCallUsage(request, luna)
+  expect(complete.complete).toBe(true)
+  expect(complete.calls).toHaveLength(19)
+  expect(complete.calls.reduce((sum, call) => sum + call.categories.uncachedInput, 0)).toBe(56_452)
+  expect(complete.calls.reduce((sum, call) => sum + call.categories.cacheRead, 0)).toBe(820_992)
+
+  const duplicate = taskValuationPerCallUsage(
+    { ...request, progressFacts: [...request.progressFacts, factFor(0)] },
+    luna,
+  )
+  expect(duplicate.complete).toBe(true)
+  expect(duplicate.calls).toHaveLength(19)
+
+  const missing = taskValuationPerCallUsage(
+    { ...request, progressFacts: request.progressFacts.slice(1) },
+    luna,
+  )
+  expect(missing.complete).toBe(false)
+  expect(missing.calls).toHaveLength(18)
+
+  const conflicting = taskValuationPerCallUsage(
+    {
+      ...request,
+      progressFacts: [
+        ...request.progressFacts,
+        factFor(0, { ...callUsage[0]!, input: callUsage[0]!.input + 1 }),
+      ],
+    },
+    luna,
+  )
+  expect(conflicting.complete).toBe(false)
+  expect(conflicting.calls).toHaveLength(19)
+
+  const truncated = taskValuationPerCallUsage({ ...request, progressTruncated: true }, luna)
+  expect(truncated.complete).toBe(false)
+})
 
 function indexWithRouteB(): CurrentPriceIndex {
   const index: CurrentPriceIndex = structuredClone(nativeMillionTokenIndex)

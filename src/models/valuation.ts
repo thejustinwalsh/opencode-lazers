@@ -6,6 +6,7 @@ import {
 import { CurrentPriceIndexSchema, TaskValuationSchema } from "./valuation-schema.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
+import type { KnownUsagePerCall, MarketRangeRoute } from "./market-range.ts"
 
 type Decimal = { coefficient: bigint; scale: number }
 type ProgressFact = {
@@ -33,6 +34,14 @@ const RATE_FOR_CATEGORY = {
   uncachedInput: "uncachedInput",
   output: "completion",
   reasoning: "completion",
+  cacheRead: "cacheRead",
+  cacheWrite: "cacheWrite",
+} as const
+
+const USAGE_FIELD_FOR_CATEGORY = {
+  uncachedInput: "input",
+  output: "output",
+  reasoning: "reasoning",
   cacheRead: "cacheRead",
   cacheWrite: "cacheWrite",
 } as const
@@ -196,7 +205,7 @@ function callKey(sessionID: string, messageID: string) {
   return `${sessionID}\u0000${messageID}`
 }
 
-function routeEvidenceForCall(
+function routeEvidenceByCall(
   progressFacts: readonly unknown[],
   sessionID: string,
   attempts: AccountingAttempt[],
@@ -279,6 +288,15 @@ function routeEvidenceForCall(
       target.routes.push(step.route)
     }
 
+  return { calls, unscopedRoutes }
+}
+
+function routeEvidenceForCall(
+  progressFacts: readonly unknown[],
+  sessionID: string,
+  attempts: AccountingAttempt[],
+) {
+  const { calls, unscopedRoutes } = routeEvidenceByCall(progressFacts, sessionID, attempts)
   const routes = [...unscopedRoutes]
   for (const call of calls.values()) {
     const distinctCallRoutes = new Map<string, AccountingRoute | null>()
@@ -998,6 +1016,179 @@ export type ProjectTaskValuationInput = {
 }
 
 export type ProjectTaskValuationRequest = Omit<ProjectTaskValuationInput, "currentIndex">
+
+function sameUsage(left: Record<string, unknown> | null, right: Record<string, unknown> | null) {
+  return USAGE_CATEGORIES.every(
+    (category) =>
+      left?.[USAGE_FIELD_FOR_CATEGORY[category]] === right?.[USAGE_FIELD_FOR_CATEGORY[category]],
+  )
+}
+
+/** Deduplicate retained additive call measurements and require exact route/category evidence. */
+export function taskValuationPerCallUsage(
+  input: ProjectTaskValuationRequest,
+  route: MarketRangeRoute,
+): { calls: KnownUsagePerCall[]; complete: boolean } {
+  const effort = projectTaskEffortBasis(input)
+  const usage = projectUsage(effort)
+  const sessions = new Map(usage.sessions.map((session) => [session.sessionID, session]))
+  const attemptsBySession = new Map<string, AccountingAttempt[]>()
+  for (const attempt of input.attempts) {
+    const values = attemptsBySession.get(attempt.sessionID) ?? []
+    values.push(attempt)
+    attemptsBySession.set(attempt.sessionID, values)
+  }
+  const routesBySession = new Map<string, ReturnType<typeof routeEvidenceByCall>>()
+  const callsByMessage = new Map<
+    string,
+    { sessionID: string; messageID: string; facts: ProgressFact[] }
+  >()
+  let complete = !input.progressTruncated
+  for (const fact of parseProgressFacts(input.progressFacts)) {
+    if (fact.kind !== "step" || fact.measurementBasis !== "additive-step-measurement") continue
+    if (!fact.messageID) {
+      complete = false
+      continue
+    }
+    const key = callKey(fact.sessionID, fact.messageID)
+    const existing = callsByMessage.get(key)
+    if (existing) existing.facts.push(fact)
+    else
+      callsByMessage.set(key, {
+        sessionID: fact.sessionID,
+        messageID: fact.messageID,
+        facts: [fact],
+      })
+  }
+
+  const calls: KnownUsagePerCall[] = []
+  const totalsBySession = new Map<string, Record<UsageCategory, number>>()
+  const seenCallIDs = new Set<string>()
+  const allocationsBySession = new Map<string, ReturnType<typeof sessionRouteAllocation>>()
+  for (const { sessionID, messageID, facts } of callsByMessage.values()) {
+    if (!sessionID || !messageID) {
+      complete = false
+      continue
+    }
+    const session = sessions.get(sessionID)
+    const attempts = attemptsBySession.get(sessionID) ?? []
+    if (!session) {
+      complete = false
+      continue
+    }
+    let allocation = allocationsBySession.get(sessionID)
+    if (!allocation) {
+      allocation = sessionRouteAllocation(sessionID, attempts, input.progressFacts)
+      allocationsBySession.set(sessionID, allocation)
+    }
+    if (
+      allocation.status === "single-observed-route" &&
+      allocation.identity &&
+      (allocation.identity.providerID !== route.providerID ||
+        allocation.identity.modelID !== route.modelID ||
+        allocation.identity.variant !== route.variant)
+    )
+      continue
+    if (allocation.status !== "single-observed-route" || !allocation.identity) {
+      complete = false
+      continue
+    }
+    let routes = routesBySession.get(sessionID)
+    if (!routes) {
+      routes = routeEvidenceByCall(input.progressFacts, sessionID, attempts)
+      routesBySession.set(sessionID, routes)
+    }
+    const routeEvidence = routes.calls.get(callKey(sessionID, messageID))
+    const distinctRoutes = new Map<string, AccountingRoute>()
+    for (const observed of routeEvidence?.routes ?? []) {
+      const identity = sourceRouteIdentity(observed)
+      if (identity) distinctRoutes.set(routeKey(identity), observed)
+    }
+    if (
+      routeEvidence?.unavailable ||
+      !routeEvidence ||
+      distinctRoutes.size !== 1 ||
+      routeEvidence.routes.length === 0
+    ) {
+      complete = false
+      continue
+    }
+    const observedRoute = [...distinctRoutes.values()][0]!
+    const identity = sourceRouteIdentity(observedRoute)
+    if (!identity) {
+      complete = false
+      continue
+    }
+    if (
+      identity.providerID !== route.providerID ||
+      identity.modelID !== route.modelID ||
+      identity.variant !== route.variant
+    ) {
+      // A different exact route is evidence of a mixed-call session, not a selector for this route.
+      complete = false
+      continue
+    }
+
+    const ordered = [...facts].sort(compareFacts)
+    const selected = ordered[0]!
+    if (facts.some((fact) => !sameUsage(fact.usage, selected.usage))) complete = false
+    const categories = Object.fromEntries(
+      USAGE_CATEGORIES.map((category) => [
+        category,
+        finiteNonnegative(selected.usage?.[USAGE_FIELD_FOR_CATEGORY[category]]),
+      ]),
+    ) as Record<UsageCategory, number | null>
+    if (Object.values(categories).some((value) => value === null)) {
+      complete = false
+      continue
+    }
+    const callID = `${sessionID}\u0000${messageID}`
+    if (seenCallIDs.has(callID)) {
+      complete = false
+      continue
+    }
+    seenCallIDs.add(callID)
+    calls.push({
+      callID,
+      route: identity,
+      categories: categories as Record<UsageCategory, number>,
+    })
+    const totals =
+      totalsBySession.get(sessionID) ??
+      (Object.fromEntries(USAGE_CATEGORIES.map((category) => [category, 0])) as Record<
+        UsageCategory,
+        number
+      >)
+    for (const category of USAGE_CATEGORIES) totals[category] += categories[category]!
+    totalsBySession.set(sessionID, totals)
+  }
+
+  for (const session of usage.sessions) {
+    const attempts = attemptsBySession.get(session.sessionID) ?? []
+    const allocation =
+      allocationsBySession.get(session.sessionID) ??
+      sessionRouteAllocation(session.sessionID, attempts, input.progressFacts)
+    if (
+      allocation.status !== "single-observed-route" ||
+      !allocation.identity ||
+      allocation.identity.providerID !== route.providerID ||
+      allocation.identity.modelID !== route.modelID ||
+      allocation.identity.variant !== route.variant
+    )
+      continue
+    const totals = totalsBySession.get(session.sessionID)
+    for (const category of USAGE_CATEGORIES) {
+      const measure = session.categories[category]
+      if (
+        measure.status !== "observed" ||
+        measure.value === null ||
+        (totals?.[category] ?? 0) !== measure.value
+      )
+        complete = false
+    }
+  }
+  return { calls, complete }
+}
 
 /** Build price selectors from the same deduplicated usage and exact route allocation as valuation. */
 export function taskValuationApplicabilities(

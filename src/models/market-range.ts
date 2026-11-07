@@ -5,13 +5,15 @@ import {
   endpointPricingProduct,
 } from "./endpoint-pricing.ts"
 import type {
-  EndpointPricingProductID,
   EndpointPricingRead,
   EndpointPricingRecord,
   EndpointPricingScenario,
 } from "./endpoint-pricing.ts"
 import { ModelIdentityResolutionSchema } from "./model-identity.ts"
 import type { ModelIdentityResolution } from "./model-identity.ts"
+import { modelIdentityReference, resolveModelIdentity } from "./model-identity.ts"
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
+import type { ModelPriceSourceSettings } from "./price-source-settings.ts"
 
 const Nonnegative = z.number().finite().nonnegative()
 const Count = z.number().int().nonnegative().max(100_000)
@@ -45,6 +47,7 @@ const CategoryUsage = z.strictObject({
 
 const RateSetSchema = z.strictObject({
   tierID: z.string().min(1).max(128),
+  contextTierTokens: Nonnegative.nullable(),
   minPromptTokens: Nonnegative.nullable(),
   utcStart: Nonnegative.nullable(),
   utcEnd: Nonnegative.nullable(),
@@ -88,8 +91,9 @@ const KnownUsageCoverageSchema = z.strictObject({
 })
 
 const ProvenanceSchema = z.strictObject({
-  source: z.literal("openrouter-endpoints"),
-  productID: EndpointPricingProductIDSchema,
+  source: z.enum(["openrouter-endpoints", "openrouter-models", "native-catalog"]),
+  productID: z.string().min(1).max(512),
+  priceBasis: z.enum(["quote", "average"]),
   sourceURL: z.string().url().max(2048),
   refreshState: z.enum(["not-read", "never", "refreshing", "succeeded", "failed", "cancelled"]),
   snapshotID: z.uuid().nullable(),
@@ -105,6 +109,8 @@ const ProvenanceSchema = z.strictObject({
 const CacheWriteEvidenceSchema = z.strictObject({
   basis: z.enum([
     "endpoint-rate",
+    "published-model-rate",
+    "published-native-quote",
     "scoped-documentation",
     "missing",
     "zero-usage-rate-not-required",
@@ -131,7 +137,12 @@ const TierAttributionSchema = z.strictObject({
 })
 
 export const KnownUsageMarketScenarioSchema = z.strictObject({
-  id: z.enum(["kimi-moonshot-mxfp4", "qwen-alibaba", "luna-openai-standard"]),
+  id: z.enum([
+    "kimi-moonshot-mxfp4",
+    "qwen-alibaba",
+    "luna-openai-standard",
+    "configured-current-market",
+  ]),
   label: z.string().min(1).max(160),
   status: z.enum(["exact", "range", "partial", "unavailable"]),
   freshness: z.enum(["current", "stale", "unavailable"]),
@@ -179,12 +190,22 @@ export type KnownUsagePerCall = {
   callID: string
   route: MarketRangeRoute
   categories: Record<UsageCategory, number>
+  contextTierTokens?: number | null
+}
+
+export type KnownUsageMarketPublishedSchedule = {
+  source: "openrouter-models" | "native-catalog"
+  productID: string
+  priceBasis: "quote" | "average"
+  freshness: "current" | "stale"
+  rateSets: Array<RateSet>
+  provenance: z.infer<typeof ProvenanceSchema>
 }
 
 type StandardScenario = {
   id: KnownUsageMarketScenario["id"]
   label: string
-  productID: EndpointPricingProductID
+  productID: string
   providerName: string
   tag: string
   serviceTier: null
@@ -234,11 +255,11 @@ function sameRoute(left: MarketRangeRoute | null, right: MarketRangeRoute) {
   )
 }
 
-function endpointForProduct(
-  endpointPricing: EndpointPricingRead | undefined,
-  productID: EndpointPricingProductID,
-) {
-  return endpointPricing?.scenarios.find((scenario) => scenario.productID === productID) ?? null
+function endpointForProduct(endpointPricing: EndpointPricingRead | undefined, productID: string) {
+  const parsed = EndpointPricingProductIDSchema.safeParse(productID)
+  return parsed.success
+    ? (endpointPricing?.scenarios.find((scenario) => scenario.productID === parsed.data) ?? null)
+    : null
 }
 
 function rateNumber(value: string | null | undefined) {
@@ -290,6 +311,7 @@ function rateSets(record: EndpointPricingRecord, scenario: StandardScenario) {
     return {
       tierID:
         index === 0 ? "base" : `override:${override?.minPromptTokens ?? "unresolved"}:${index}`,
+      contextTierTokens: null,
       minPromptTokens: index === 0 ? null : (override?.minPromptTokens ?? null),
       utcStart: index === 0 ? null : (override?.utcStart ?? null),
       utcEnd: index === 0 ? null : (override?.utcEnd ?? null),
@@ -312,6 +334,310 @@ function rateSets(record: EndpointPricingRecord, scenario: StandardScenario) {
   if (Array.isArray(base.overrides))
     base.overrides.forEach((override, index) => schedules.push(toRateSet(override, index + 1)))
   return { schedules, documentation, overridesUnknown: base.overrides === null }
+}
+
+function readBySource(
+  sources: readonly ModelEvidenceComparisonSourceRead[],
+  source: "native-catalog" | "openrouter-models",
+) {
+  return sources.find((candidate) => candidate.source === source) ?? null
+}
+
+function evidenceFreshness(source: ModelEvidenceComparisonSourceRead) {
+  const snapshot = source.snapshot
+  if (!snapshot) return "stale" as const
+  return source.refresh?.state === "succeeded" && source.refresh.generation === snapshot.generation
+    ? ("current" as const)
+    : ("stale" as const)
+}
+
+function evidenceRecordIndex(source: ModelEvidenceComparisonSourceRead, index: number) {
+  const indexes = (
+    source as ModelEvidenceComparisonSourceRead & { recordIndexes?: readonly number[] }
+  ).recordIndexes
+  return indexes?.[index] ?? index
+}
+
+function normalizedNativeRate(value: number | null): string | null {
+  if (value === null) return null
+  const match = /^(\d+)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(String(value))
+  if (!match) return null
+  const fraction = match[2] ?? ""
+  const exponent = Number(match[3] ?? 0)
+  let coefficient = BigInt(`${match[1]}${fraction}`)
+  let scale = fraction.length - exponent + 6
+  if (scale < 0) {
+    coefficient *= 10n ** BigInt(-scale)
+    scale = 0
+  }
+  while (scale > 0 && coefficient !== 0n && coefficient % 10n === 0n) {
+    coefficient /= 10n
+    scale--
+  }
+  if (scale === 0) return rateText(coefficient.toString())
+  const digits = coefficient.toString().padStart(scale + 1, "0")
+  const split = digits.length - scale
+  return rateText(`${digits.slice(0, split)}.${digits.slice(split)}`)
+}
+
+function canSelectPerCallTiers(input: {
+  route: MarketRangeRoute
+  categories: UsageCategories
+  schedules: readonly RateSet[]
+  perCallUsage: readonly KnownUsagePerCall[]
+  perCallCoverageComplete: boolean
+  retryCoverageComplete: boolean
+  overridesUnknown: boolean
+}) {
+  const hasContextTiers = input.schedules.some((schedule) => schedule.contextTierTokens !== null)
+  const hasTimeTiers = input.schedules.some(
+    (schedule) => schedule.utcStart !== null || schedule.utcEnd !== null,
+  )
+  const hasUnknownTier = input.schedules.some(
+    (schedule) =>
+      schedule.minPromptTokens === null &&
+      schedule.contextTierTokens === null &&
+      schedule.utcStart === null &&
+      schedule.utcEnd === null &&
+      schedule.tierID !== "base" &&
+      schedule.tierID !== "default",
+  )
+  const tiered = input.schedules.length > 1 || hasContextTiers || hasTimeTiers
+  return (
+    tiered &&
+    !input.overridesUnknown &&
+    !hasTimeTiers &&
+    !hasUnknownTier &&
+    (!hasContextTiers ||
+      input.perCallUsage.every((call) => call.contextTierTokens !== undefined)) &&
+    input.perCallCoverageComplete &&
+    callCoverageMatches(input.perCallUsage, input.categories, input.route) &&
+    input.retryCoverageComplete
+  )
+}
+
+function scheduleCanPriceKnownUsage(input: {
+  route: MarketRangeRoute
+  categories: UsageCategories
+  sessions: readonly KnownUsageMarketSession[]
+  schedules: readonly RateSet[]
+  perCallUsage: readonly KnownUsagePerCall[]
+  perCallCoverageComplete: boolean
+}) {
+  if (!input.schedules.length) return false
+  const perCallAttributionComplete = canSelectPerCallTiers({
+    ...input,
+    retryCoverageComplete: retryCoverage(input.sessions, input.route).status === "complete",
+    overridesUnknown: false,
+  })
+  if (perCallAttributionComplete)
+    return input.perCallUsage.every((call) => {
+      const selected = selectedSchedule(call, input.schedules)
+      return selected !== null && amountForCall(call, selected) !== null
+    })
+
+  return CATEGORIES.every((category) => {
+    const tokens = input.categories[category].tokens
+    if (tokens === null || tokens === 0) return true
+    return input.schedules.every(
+      (schedule) => rateNumber(schedule[usageRateCategory(category)]) !== null,
+    )
+  })
+}
+
+function sourceProvenance(input: {
+  source: "native-catalog" | "openrouter-models"
+  productID: string
+  snapshot: NonNullable<ModelEvidenceComparisonSourceRead["snapshot"]>
+  refresh: ModelEvidenceComparisonSourceRead["refresh"]
+  recordIndex: number
+  recordID: string
+}): z.infer<typeof ProvenanceSchema> {
+  return {
+    source: input.source,
+    productID: input.productID,
+    priceBasis: input.source === "native-catalog" ? "quote" : "average",
+    sourceURL: input.snapshot.sourceURL,
+    refreshState: input.refresh?.state ?? "never",
+    snapshotID: input.snapshot.snapshotID,
+    snapshotGeneration: input.snapshot.generation,
+    currentGeneration: input.refresh?.generation ?? input.snapshot.generation,
+    retrievedAt: input.snapshot.retrievedAt,
+    recordIndex: input.recordIndex,
+    providerName: null,
+    tag: input.recordID,
+    serviceTier: null,
+  }
+}
+
+const unavailableCatalogSource: ModelEvidenceComparisonSourceRead = {
+  source: "openrouter-models",
+  storage: "missing-both-tables",
+  snapshotState: "none",
+  snapshotID: null,
+  refresh: null,
+  snapshot: null,
+}
+
+function resolveIdentityFromSources(
+  route: MarketRangeRoute,
+  sources: readonly ModelEvidenceComparisonSourceRead[],
+) {
+  const native = readBySource(sources, "native-catalog")
+  const nativeSnapshot = native?.snapshot?.source === "native-catalog" ? native.snapshot : null
+  const nativeEvidence = nativeSnapshot
+    ? nativeSnapshot.records.flatMap((record, index) =>
+        record.providerID === route.providerID && record.id === route.modelID
+          ? [
+              modelIdentityReference(
+                "native-catalog",
+                nativeSnapshot,
+                evidenceRecordIndex(native!, index),
+                record.id,
+              ),
+            ]
+          : [],
+      )
+    : []
+  const catalog = readBySource(sources, "openrouter-models") ?? unavailableCatalogSource
+  return resolveModelIdentity({
+    route: { providerID: route.providerID, modelID: route.modelID },
+    nativeEvidence,
+    catalogSource: catalog,
+  })
+}
+
+export function resolveConfiguredMarketIdentity(
+  route: MarketRangeRoute,
+  sources: readonly ModelEvidenceComparisonSourceRead[],
+): ModelIdentityResolution {
+  return resolveIdentityFromSources(route, sources).resolution
+}
+
+/** Resolve one whole-model cached source in configured order, without combining source rates. */
+export function selectConfiguredMarketSchedule(input: {
+  route: MarketRangeRoute
+  settings: ModelPriceSourceSettings
+  sources: readonly ModelEvidenceComparisonSourceRead[]
+  sessions: readonly KnownUsageMarketSession[]
+  perCallUsage?: readonly KnownUsagePerCall[]
+  perCallCoverageComplete?: boolean
+}): KnownUsageMarketPublishedSchedule | null {
+  const categories = emptyCoverage(input.sessions, input.route).categoryUsage
+  const native = readBySource(input.sources, "native-catalog")
+  const catalog = readBySource(input.sources, "openrouter-models")
+
+  for (const priceSource of input.settings.policy.sources) {
+    if (input.settings.access[priceSource] !== "configured") continue
+    if (priceSource === "opencode") {
+      const snapshot = native?.snapshot
+      if (native?.snapshotState !== "available" || snapshot?.source !== "native-catalog") continue
+      const matches = snapshot.records.flatMap((record, index) =>
+        record.providerID === input.route.providerID && record.id === input.route.modelID
+          ? [{ record, index: evidenceRecordIndex(native, index) }]
+          : [],
+      )
+      if (matches.length !== 1) continue
+      const { record, index } = matches[0]!
+      if (
+        (input.route.variant !== null &&
+          record.variants !== null &&
+          !record.variants.includes(input.route.variant)) ||
+        !record.prices?.tiers.length
+      )
+        continue
+      const schedules = record.prices.tiers.map((tier): RateSet => ({
+        tierID: tier.contextTierTokens === null ? "default" : `context-${tier.contextTierTokens}`,
+        contextTierTokens: tier.contextTierTokens,
+        minPromptTokens: null,
+        utcStart: null,
+        utcEnd: null,
+        prompt: normalizedNativeRate(tier.input),
+        completion: normalizedNativeRate(tier.output),
+        cacheRead: normalizedNativeRate(tier.cacheRead),
+        cacheWrite: normalizedNativeRate(tier.cacheWrite),
+      }))
+      if (
+        !scheduleCanPriceKnownUsage({
+          route: input.route,
+          categories,
+          sessions: input.sessions,
+          schedules,
+          perCallUsage: input.perCallUsage ?? [],
+          perCallCoverageComplete: input.perCallCoverageComplete ?? false,
+        })
+      )
+        continue
+      return {
+        source: "native-catalog",
+        productID: `${record.providerID}/${record.id}`,
+        priceBasis: "quote",
+        freshness: evidenceFreshness(native),
+        rateSets: schedules,
+        provenance: sourceProvenance({
+          source: "native-catalog",
+          productID: `${record.providerID}/${record.id}`,
+          snapshot,
+          refresh: native.refresh,
+          recordIndex: index,
+          recordID: record.id,
+        }),
+      }
+    }
+
+    const snapshot = catalog?.snapshot
+    if (catalog?.snapshotState !== "available" || snapshot?.source !== "openrouter-models") continue
+    const identity = resolveIdentityFromSources(input.route, input.sources)
+    if (identity.resolution.status !== "exact" || identity.catalogMatches.length !== 1) continue
+    const match = identity.catalogMatches[0]!
+    const record = match.record
+    if (!record.prices?.tiers.length) continue
+    const schedules = record.prices.tiers.map((tier, tierIndex): RateSet => ({
+      tierID:
+        tier.minPromptTokens === null &&
+        (tier.utcStart ?? null) === null &&
+        (tier.utcEnd ?? null) === null
+          ? "base"
+          : `prompt-${tier.minPromptTokens ?? "none"};utc-${tier.utcStart ?? "none"}-${tier.utcEnd ?? "none"}:${tierIndex}`,
+      contextTierTokens: null,
+      minPromptTokens: tier.minPromptTokens,
+      utcStart: tier.utcStart ?? null,
+      utcEnd: tier.utcEnd ?? null,
+      prompt: tier.prompt,
+      completion: tier.completion,
+      cacheRead: tier.inputCacheRead,
+      cacheWrite: tier.inputCacheWrite,
+    }))
+    if (schedules.some((schedule) => schedule.utcStart !== null || schedule.utcEnd !== null))
+      continue
+    if (
+      !scheduleCanPriceKnownUsage({
+        route: input.route,
+        categories,
+        sessions: input.sessions,
+        schedules,
+        perCallUsage: input.perCallUsage ?? [],
+        perCallCoverageComplete: input.perCallCoverageComplete ?? false,
+      })
+    )
+      continue
+    return {
+      source: "openrouter-models",
+      productID: identity.resolution.productID!,
+      priceBasis: "average",
+      freshness: evidenceFreshness(catalog),
+      rateSets: schedules,
+      provenance: sourceProvenance({
+        source: "openrouter-models",
+        productID: identity.resolution.productID!,
+        snapshot,
+        refresh: catalog.refresh,
+        recordIndex: match.recordIndex,
+        recordID: record.id,
+      }),
+    }
+  }
+  return null
 }
 
 function aggregateCategories(sessions: readonly KnownUsageMarketSession[]): UsageCategories {
@@ -402,6 +728,10 @@ function knownSubtotalForSet(categories: UsageCategories, set: RateSet): number 
   return Number.isFinite(total) ? total : null
 }
 
+function hasKnownPositiveUsage(categories: UsageCategories) {
+  return CATEGORIES.some((category) => (categories[category].tokens ?? 0) > 0)
+}
+
 function amountForCall(call: KnownUsagePerCall, set: RateSet): number | null {
   const categories = Object.fromEntries(
     CATEGORIES.map((category) => [
@@ -413,6 +743,14 @@ function amountForCall(call: KnownUsagePerCall, set: RateSet): number | null {
 }
 
 function selectedSchedule(call: KnownUsagePerCall, schedules: readonly RateSet[]): RateSet | null {
+  const hasContextTiers = schedules.some((schedule) => schedule.contextTierTokens !== null)
+  if (hasContextTiers) {
+    if (call.contextTierTokens === undefined) return null
+    const matching = schedules.filter(
+      (schedule) => schedule.contextTierTokens === call.contextTierTokens,
+    )
+    return matching.length === 1 ? matching[0]! : null
+  }
   const overrides = schedules.slice(1)
   const promptTokens =
     call.categories.uncachedInput + call.categories.cacheRead + call.categories.cacheWrite
@@ -568,7 +906,10 @@ function provenance(
   return {
     source: "openrouter-endpoints" as const,
     productID: scenario.productID,
-    sourceURL: evidence?.sourceURL ?? endpointPricingProduct(scenario.productID).sourceURL,
+    priceBasis: "average" as const,
+    sourceURL:
+      evidence?.sourceURL ??
+      endpointPricingProduct(EndpointPricingProductIDSchema.parse(scenario.productID)).sourceURL,
     refreshState: source?.state ?? (endpointPricing ? "never" : "not-read"),
     snapshotID: evidence?.snapshotID ?? null,
     snapshotGeneration: evidence?.generation ?? null,
@@ -633,6 +974,7 @@ function unavailableScenario(input: {
   reason: string
   recordIndex?: number | null
   record?: EndpointPricingRecord
+  publishedSchedule?: KnownUsageMarketPublishedSchedule
 }) {
   const coverage = emptyCoverage(input.sessions, input.route)
   const docs = input.record ? applicableCacheWriteDocumentation(input.record, input.standard) : null
@@ -640,7 +982,7 @@ function unavailableScenario(input: {
     id: input.standard.id,
     label: input.standard.label,
     status: "unavailable",
-    freshness: freshness(input.endpoint),
+    freshness: input.publishedSchedule?.freshness ?? freshness(input.endpoint),
     valueUSD: null,
     rangeUSD: null,
     knownSubtotalUSD: null,
@@ -653,12 +995,9 @@ function unavailableScenario(input: {
       retrievedAt: docs?.retrievedAt ?? null,
     },
     tierAttribution: emptyTierAttribution(),
-    provenance: provenance(
-      input.endpointPricing,
-      input.standard,
-      input.endpoint,
-      input.recordIndex ?? null,
-    ),
+    provenance:
+      input.publishedSchedule?.provenance ??
+      provenance(input.endpointPricing, input.standard, input.endpoint, input.recordIndex ?? null),
     coverage: coverage.coverage,
     reason: input.reason,
   })
@@ -671,10 +1010,11 @@ function calculateScenario(input: {
   sessions: readonly KnownUsageMarketSession[]
   perCallUsage: readonly KnownUsagePerCall[]
   perCallCoverageComplete: boolean
+  publishedSchedule?: KnownUsageMarketPublishedSchedule
 }): KnownUsageMarketScenario {
   const endpoint = endpointForProduct(input.endpointPricing, input.standard.productID)
   const match = standardRecord(endpoint, input.standard)
-  if (!endpoint?.snapshot)
+  if (!input.publishedSchedule && !endpoint?.snapshot)
     return unavailableScenario({
       ...input,
       endpoint,
@@ -682,14 +1022,15 @@ function calculateScenario(input: {
         ? `Retained endpoint evidence is unavailable (${endpoint.errorCode}).`
         : "No retained endpoint snapshot is available for this product.",
     })
-  if (!match)
+  if (!input.publishedSchedule && !match)
     return unavailableScenario({
       ...input,
       endpoint,
       reason: "The exact standard endpoint scenario is absent or ambiguous in retained evidence.",
     })
 
-  const { record, index: recordIndex } = match
+  const record = match?.record
+  const recordIndex = match?.index ?? null
   const coverage = emptyCoverage(input.sessions, input.route)
   const { included, categoryUsage, coverage: usageCoverage } = coverage
   if (!included.length)
@@ -698,25 +1039,44 @@ function calculateScenario(input: {
       endpoint,
       record,
       recordIndex,
+      publishedSchedule: input.publishedSchedule,
       reason: "No non-shared retained usage has a matching exact observed route.",
     })
 
-  const scheduleResult = rateSets(record, input.standard)
+  const scheduleResult = input.publishedSchedule
+    ? {
+        schedules: input.publishedSchedule.rateSets,
+        documentation: null,
+        overridesUnknown: false,
+      }
+    : rateSets(record!, input.standard)
   const schedules = scheduleResult.schedules
   const promptThresholds = schedules
     .slice(1)
     .flatMap((schedule) => (schedule.minPromptTokens === null ? [] : [schedule.minPromptTokens]))
-  const tiered = schedules.length > 1 || scheduleResult.overridesUnknown
-  const hasUnsupportedSelector =
-    schedules.some((schedule) => schedule.utcStart !== null || schedule.utcEnd !== null) ||
-    schedules.slice(1).some((schedule) => schedule.minPromptTokens === null)
-  const usePerCall =
-    tiered &&
-    !scheduleResult.overridesUnknown &&
-    !hasUnsupportedSelector &&
-    input.perCallCoverageComplete &&
-    callCoverageMatches(input.perCallUsage, categoryUsage, input.route) &&
-    usageCoverage.retries.status === "complete"
+  const hasUnknownTier = schedules.some(
+    (schedule) =>
+      schedule.minPromptTokens === null &&
+      schedule.contextTierTokens === null &&
+      schedule.utcStart === null &&
+      schedule.utcEnd === null &&
+      schedule.tierID !== "base" &&
+      schedule.tierID !== "default",
+  )
+  const tiered =
+    schedules.length > 1 ||
+    scheduleResult.overridesUnknown ||
+    schedules.some((schedule) => schedule.contextTierTokens !== null) ||
+    schedules.some((schedule) => schedule.utcStart !== null || schedule.utcEnd !== null)
+  const usePerCall = canSelectPerCallTiers({
+    route: input.route,
+    categories: categoryUsage,
+    schedules,
+    perCallUsage: input.perCallUsage,
+    perCallCoverageComplete: input.perCallCoverageComplete,
+    retryCoverageComplete: usageCoverage.retries.status === "complete",
+    overridesUnknown: scheduleResult.overridesUnknown,
+  })
   const missingRates = new Set<UsageCategory>()
   let valueUSD: number | null = null
   let rangeUSD: { minimum: number; maximum: number } | null = null
@@ -725,7 +1085,7 @@ function calculateScenario(input: {
   const categoriesComplete = isCompleteUsage(categoryUsage)
   const retryComplete = usageCoverage.retries.status === "complete"
 
-  if (scheduleResult.overridesUnknown || hasUnsupportedSelector) {
+  if (scheduleResult.overridesUnknown || (hasUnknownTier && !input.publishedSchedule)) {
     tierAttribution = {
       status: "unsupported",
       basis: "unavailable",
@@ -762,17 +1122,31 @@ function calculateScenario(input: {
       amounts.push(amount)
       selectedTierIDs.push(selected.tierID)
     }
-    if (valid) valueUSD = amounts.reduce((total, amount) => total + amount, 0)
-    tierAttribution = {
-      status: valid ? "resolved-per-call" : "unsupported",
-      basis: "complete-per-call-prompt-usage",
-      callCount: input.perCallUsage.length,
-      selectedTierIDs: [...new Set(selectedTierIDs)],
-      promptThresholds,
-      thresholdSemantics:
-        promptThresholds.length > 0
-          ? "override applies when per-call prompt tokens are greater than minPromptTokens"
-          : null,
+    if (valid) {
+      valueUSD = amounts.reduce((total, amount) => total + amount, 0)
+      tierAttribution = {
+        status: "resolved-per-call",
+        basis: "complete-per-call-prompt-usage",
+        callCount: input.perCallUsage.length,
+        selectedTierIDs: [...new Set(selectedTierIDs)],
+        promptThresholds,
+        thresholdSemantics:
+          promptThresholds.length > 0
+            ? "override applies when per-call prompt tokens are greater than minPromptTokens"
+            : null,
+      }
+    } else {
+      tierAttribution = {
+        status: "unresolved",
+        basis: "aggregate-tier-envelope",
+        callCount: 0,
+        selectedTierIDs: schedules.map(({ tierID }) => tierID),
+        promptThresholds,
+        thresholdSemantics:
+          promptThresholds.length > 0
+            ? "override applies when per-call prompt tokens are greater than minPromptTokens"
+            : null,
+      }
     }
   } else if (tiered) {
     tierAttribution = {
@@ -814,7 +1188,7 @@ function calculateScenario(input: {
     }
   }
 
-  if (valueUSD === null && rangeUSD === null) {
+  if (valueUSD === null && rangeUSD === null && hasKnownPositiveUsage(categoryUsage)) {
     const pricedSubtotals = schedules.map((schedule) =>
       knownSubtotalForSet(categoryUsage, schedule),
     )
@@ -825,9 +1199,10 @@ function calculateScenario(input: {
       }
   }
 
-  for (const schedule of schedules)
-    for (const category of applicableMissingRates(categoryUsage, schedule))
-      missingRates.add(category)
+  if (tierAttribution.status !== "resolved-per-call")
+    for (const schedule of schedules)
+      for (const category of applicableMissingRates(categoryUsage, schedule))
+        missingRates.add(category)
 
   const marketStatus: KnownUsageMarketScenario["status"] =
     valueUSD !== null ? "exact" : rangeUSD !== null ? "range" : "partial"
@@ -843,18 +1218,23 @@ function calculateScenario(input: {
   const cacheWriteEvidence = {
     basis: docs
       ? ("scoped-documentation" as const)
-      : cacheWriteRateExists
-        ? ("endpoint-rate" as const)
-        : cacheWriteRateRequired
-          ? ("missing" as const)
-          : ("zero-usage-rate-not-required" as const),
+      : input.publishedSchedule?.source === "native-catalog"
+        ? ("published-native-quote" as const)
+        : input.publishedSchedule
+          ? ("published-model-rate" as const)
+          : cacheWriteRateExists
+            ? ("endpoint-rate" as const)
+            : cacheWriteRateRequired
+              ? ("missing" as const)
+              : ("zero-usage-rate-not-required" as const),
     policyID: docs?.policyID ?? null,
     sourceURL: docs?.sourceURL ?? null,
     retrievedAt: docs?.retrievedAt ?? null,
   }
-  const rateCoverage = schedules.flatMap((schedule) =>
-    applicableMissingRates(categoryUsage, schedule),
-  )
+  const rateCoverage =
+    tierAttribution.status === "resolved-per-call"
+      ? [...missingRates]
+      : schedules.flatMap((schedule) => applicableMissingRates(categoryUsage, schedule))
   const uniqueMissingRates = [...new Set(rateCoverage)].sort(
     (left, right) => CATEGORIES.indexOf(left) - CATEGORIES.indexOf(right),
   )
@@ -869,7 +1249,7 @@ function calculateScenario(input: {
     id: input.standard.id,
     label: input.standard.label,
     status,
-    freshness: freshness(endpoint),
+    freshness: input.publishedSchedule?.freshness ?? freshness(endpoint),
     valueUSD: status === "exact" ? valueUSD : null,
     rangeUSD: status === "range" ? rangeUSD : null,
     knownSubtotalUSD: status === "partial" ? knownSubtotalUSD : null,
@@ -877,7 +1257,9 @@ function calculateScenario(input: {
     missingRates: uniqueMissingRates,
     cacheWriteEvidence,
     tierAttribution,
-    provenance: provenance(input.endpointPricing, input.standard, endpoint, recordIndex),
+    provenance:
+      input.publishedSchedule?.provenance ??
+      provenance(input.endpointPricing, input.standard, endpoint, recordIndex),
     coverage: usageCoverage,
     reason:
       status === "exact" || status === "range"
@@ -905,9 +1287,37 @@ export function calculateKnownUsageMarket(input: {
   sessions: readonly KnownUsageMarketSession[]
   perCallUsage?: readonly KnownUsagePerCall[]
   perCallCoverageComplete?: boolean
+  publishedSchedule?: KnownUsageMarketPublishedSchedule
 }): KnownUsageMarket {
   const parsedRoute = MarketRangeRouteSchema.parse(input.route)
   const identity = ModelIdentityResolutionSchema.parse(input.identity)
+  if (input.publishedSchedule) {
+    const standard: StandardScenario = {
+      id: "configured-current-market",
+      label: "Configured current-market observed-usage estimate",
+      productID: input.publishedSchedule.productID,
+      providerName: "",
+      tag: "",
+      serviceTier: null,
+    }
+    const scenario = calculateScenario({
+      route: parsedRoute,
+      endpointPricing: undefined,
+      standard,
+      sessions: input.sessions,
+      perCallUsage: input.perCallUsage ?? [],
+      perCallCoverageComplete: input.perCallCoverageComplete ?? false,
+      publishedSchedule: input.publishedSchedule,
+    })
+    return KnownUsageMarketSchema.parse({
+      schemaVersion: 1,
+      scope: "known-retained-token-usage-only",
+      route: parsedRoute,
+      identity,
+      status: scenario.status,
+      scenarios: [scenario],
+    })
+  }
   const resolvedProductID =
     identity.status === "exact"
       ? EndpointPricingProductIDSchema.safeParse(identity.productID)
@@ -951,5 +1361,41 @@ export function calculateKnownUsageMarket(input: {
     identity,
     status,
     scenarios: [scenario],
+  })
+}
+
+/** Resolve configured whole-model pricing first, then use the shared call-aware calculator. */
+export function calculateConfiguredKnownUsageMarket(input: {
+  route: MarketRangeRoute
+  identity?: ModelIdentityResolution
+  settings: ModelPriceSourceSettings
+  sources: readonly ModelEvidenceComparisonSourceRead[]
+  sessions: readonly KnownUsageMarketSession[]
+  perCallUsage?: readonly KnownUsagePerCall[]
+  perCallCoverageComplete?: boolean
+}): KnownUsageMarket {
+  const publishedSchedule = selectConfiguredMarketSchedule(input)
+  const identity = input.identity ?? resolveConfiguredMarketIdentity(input.route, input.sources)
+  if (!publishedSchedule)
+    return KnownUsageMarketSchema.parse({
+      schemaVersion: 1,
+      scope: "known-retained-token-usage-only",
+      route: input.route,
+      identity,
+      status:
+        identity.status === "source-unavailable"
+          ? "unavailable"
+          : identity.status === "exact"
+            ? "unavailable"
+            : "not-applicable",
+      scenarios: [],
+    })
+  return calculateKnownUsageMarket({
+    route: input.route,
+    identity,
+    sessions: input.sessions,
+    perCallUsage: input.perCallUsage,
+    perCallCoverageComplete: input.perCallCoverageComplete,
+    ...(publishedSchedule ? { publishedSchedule } : {}),
   })
 }

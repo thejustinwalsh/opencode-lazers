@@ -6,6 +6,10 @@ import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import { unavailableTaskValuation } from "../models/task-valuation.ts"
 import { makeFixture, taskID } from "../../test/trajectory/fixture.ts"
 import { registerTrajectoryTools } from "./tools.ts"
+import {
+  lz137ValuationProvider,
+  prepareLz137RetainedData,
+} from "../../test/trajectory-panel/lz137-market-fixture.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -82,6 +86,70 @@ test("registered trajectory tool returns Models valuation and authorizes before 
     ).rejects.toThrow("permission denied")
     expect(providerCalls).toBe(1)
     expect(permissionCalls).toEqual(["lz-inspect-trajectory", "lz-inspect-trajectory"])
+  } finally {
+    fixture.close()
+  }
+})
+
+test("registered trajectory tool returns the configured LZ-137 observed estimate, not its zero subtotal", async () => {
+  const fixture = makeFixture()
+  prepareLz137RetainedData(fixture)
+  const tools = new Map<string, RegisteredTool>()
+  const editor: ToolEditor = {
+    add: (tool) => tools.set(tool.name, tool),
+    list: () => [],
+    get: () => undefined,
+    namespace: () => {},
+    update: () => {},
+    remove: () => {},
+  }
+  const context = {
+    permission: { assert: () => Effect.void },
+    tool: {
+      transform: (callback: (editor: ToolEditor) => void) =>
+        Effect.sync(() => {
+          callback(editor)
+          return { dispose: Effect.void }
+        }),
+    },
+  }
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        registerTrajectoryTools(
+          context as never,
+          fixture.store,
+          fixture.host,
+          "project",
+          lz137ValuationProvider(),
+        ),
+      ),
+    )
+    const result = await Effect.runPromise(
+      tools.get("lz-inspect-trajectory")!.execute({ taskID, limit: 20 }, callContext()),
+    )
+    expect(result.output).toMatchObject({
+      effort: {
+        recordedCost: {
+          apiEquivalentTotalUsd: null,
+          apiEquivalentSubtotalUsd: 0,
+        },
+        marketEquivalentCost: {
+          valueUSD: null,
+          subtotalUSD: 0,
+          observedUsageEstimate: {
+            label: "Current-market observed-usage estimate",
+            status: "estimate",
+            valueUSD: 0.01598662,
+            retainedCallCount: 19,
+            recoveryGapCount: 2,
+            sources: [{ source: "openrouter-models", priceBasis: "average" }],
+          },
+        },
+      },
+    })
+    expect(JSON.stringify(result.output)).not.toContain("$0 subtotal")
+    expect(JSON.stringify(result.output)).not.toContain("Cost unavailable")
   } finally {
     fixture.close()
   }

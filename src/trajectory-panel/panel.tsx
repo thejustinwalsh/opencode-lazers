@@ -982,19 +982,44 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 const partial = () => usage().total === null
                 const apiCost = () => currentReport().effort.recordedCost.apiEquivalentTotalUsd
                 const marketCost = () => currentReport().effort.marketEquivalentCost
+                const marketEstimate = () => marketCost()?.observedUsageEstimate
+                const selectedEstimate = () => {
+                  const estimate = marketEstimate()
+                  return estimate &&
+                    (estimate.valueUSD !== null ||
+                      estimate.rangeUSD !== null ||
+                      estimate.pricedPortionUSD !== null)
+                    ? estimate
+                    : null
+                }
                 const marketStatus = () => marketCost()?.status ?? "unknown"
                 const formatMarketUSD = (value: number) =>
                   `$${new Intl.NumberFormat("en-US", {
-                    maximumSignificantDigits: 6,
+                    maximumSignificantDigits: 8,
                     useGrouping: false,
                   }).format(value)}`
                 const displayedMarketCost = () => {
+                  const estimate = selectedEstimate()
+                  if (estimate?.valueUSD !== null && estimate?.valueUSD !== undefined)
+                    return `${formatMarketUSD(estimate.valueUSD)} estimate`
+                  if (estimate?.rangeUSD)
+                    return `${formatMarketUSD(estimate.rangeUSD.minimum)}–${formatMarketUSD(estimate.rangeUSD.maximum)} estimate range`
+                  if (estimate?.pricedPortionUSD) {
+                    const { minimum, maximum } = estimate.pricedPortionUSD
+                    const amount =
+                      minimum === maximum
+                        ? formatMarketUSD(minimum)
+                        : `${formatMarketUSD(minimum)}–${formatMarketUSD(maximum)}`
+                    return `${amount} priced portion`
+                  }
                   const value = apiCost()
                   if (value !== null) return formatMarketUSD(value)
                   const subtotal = marketCost()?.subtotalUSD ?? null
-                  return subtotal === null ? "—" : `${formatMarketUSD(subtotal)} subtotal`
+                  return subtotal === null || subtotal <= 0
+                    ? "—"
+                    : `${formatMarketUSD(subtotal)} subtotal`
                 }
-                const priceSourceSummary = () => {
+                const indexPriceSourceSummary = () => {
                   const index = marketCost()?.currentIndex
                   if (!index) return "Price source unavailable"
                   const sources = index.sources.map(
@@ -1002,6 +1027,18 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation}`,
                   )
                   return `${sources.join("; ") || "No selected cached price source"} · ${index.freshness} freshness`
+                }
+                const priceSourceSummary = () => {
+                  const estimate = selectedEstimate()
+                  const estimateSources = estimate?.sources ?? []
+                  if (estimateSources.length) {
+                    const descriptions = estimateSources.map(
+                      (source) =>
+                        `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation} · ${source.priceBasis}`,
+                    )
+                    return `${descriptions.join("; ")} · ${estimate?.freshness} freshness`
+                  }
+                  return indexPriceSourceSummary()
                 }
                 const categories = [
                   ["Uncached input", "uncachedInput"],
@@ -1038,7 +1075,11 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         class="lazers-trajectory-cost"
                         title="Market-equivalent worker usage is not actual provider charges or full task cost."
                       >
-                        <span>API equivalent · {marketStatus()}</span>
+                        <span>
+                          {selectedEstimate()
+                            ? `${selectedEstimate()!.label}${selectedEstimate()!.status === "partial" ? " · partial" : ""}`
+                            : `API equivalent · ${marketStatus()}`}
+                        </span>
                         <span>{displayedMarketCost()}</span>
                       </div>
                       <Show when={marketCost()}>
@@ -1048,6 +1089,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         <details class="lazers-trajectory-payload lazers-trajectory-valuation">
                           <summary>Pricing coverage and provenance</summary>
                           <p>{marketCost()!.meaning}</p>
+                          <Show when={selectedEstimate() && apiCost() !== null}>
+                            <div class="lazers-trajectory-coverage">
+                              Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
+                              {indexPriceSourceSummary()}
+                            </div>
+                          </Show>
                           <Show when={marketCost()!.currentIndex}>
                             {(index) => (
                               <div class="lazers-trajectory-coverage">
@@ -1094,6 +1141,71 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                             )}
                           </For>
                         </details>
+                      </Show>
+                      <Show when={marketEstimate()}>
+                        {(estimate) => (
+                          <details class="lazers-trajectory-payload lazers-trajectory-valuation">
+                            <summary>
+                              Estimate assumptions and published-rate basis ·{" "}
+                              {estimate().retainedCallCount} retained calls
+                            </summary>
+                            <div>Estimate basis · {estimate().basis}</div>
+                            <p>{estimate().meaning}</p>
+                            <div class="lazers-trajectory-coverage">
+                              <strong>Published sources and freshness</strong>
+                              <For each={estimate().sources}>
+                                {(source) => (
+                                  <div>
+                                    {source.source} · snapshot {source.snapshotID} · generation{" "}
+                                    {source.generation}
+                                    {source.currentGeneration !== source.generation
+                                      ? ` · current generation ${source.currentGeneration}`
+                                      : ""}{" "}
+                                    · {source.priceBasis} · {source.freshness} · read{" "}
+                                    {new Date(source.retrievedAt).toLocaleString()} ·{" "}
+                                    <a href={source.sourceURL} target="_blank" rel="noreferrer">
+                                      {source.sourceURL}
+                                    </a>
+                                  </div>
+                                )}
+                              </For>
+                            </div>
+                            <div class="lazers-trajectory-coverage">
+                              <strong>Selected rates · USD per token</strong>
+                              <For each={estimate().rateSets}>
+                                {(rateSet) => (
+                                  <div>
+                                    {rateSet.tierID}
+                                    {rateSet.minPromptTokens === null
+                                      ? ""
+                                      : ` · prompt override above ${rateSet.minPromptTokens.toLocaleString()} tokens`}
+                                    {rateSet.contextTierTokens === null
+                                      ? ""
+                                      : ` · context tier ${rateSet.contextTierTokens.toLocaleString()} tokens`}
+                                    {` · prompt ${rateSet.prompt ?? "—"} · completion ${rateSet.completion ?? "—"} · cache read ${rateSet.cacheRead ?? "—"} · cache write ${rateSet.cacheWrite ?? "—"}`}
+                                  </div>
+                                )}
+                              </For>
+                              <div>
+                                Tier attribution · {estimate().tierAttribution.status} ·{" "}
+                                {estimate().tierAttribution.basis}
+                                {estimate().tierAttribution.thresholdSemantics
+                                  ? ` · ${estimate().tierAttribution.thresholdSemantics}`
+                                  : ""}
+                              </div>
+                            </div>
+                            <div class="lazers-trajectory-coverage">
+                              <strong>Secondary assumptions and limitations</strong>
+                              <For each={estimate().assumptions}>
+                                {(assumption) => <div>{assumption}</div>}
+                              </For>
+                              <div>
+                                Recovery gaps · {estimate().recoveryGapCount} · exact historical
+                                bill is not guaranteed.
+                              </div>
+                            </div>
+                          </details>
+                        )}
                       </Show>
                       <div class="lazers-trajectory-coverage">
                         <span>
