@@ -26,19 +26,18 @@ improvements. Runtime/API readback is authoritative; revalidate live handles.
 ## Native coordination and next action
 
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol High.
-Service PID20449; project `b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df`.
-Latest active-session map is empty. Main and recovery worker174 stopped on
-`provider.auth: getaddrinfo ENOTFOUND auth.openai.com`; a fresh DNS lookup now
-succeeds, but no successful new model turn is observed. CUA initially read the
-Desktop but input failed with noWindowsAvailable/timeouts, then explicitly
-reported macOS locked. Unlock request is pending. Do not substitute API model
-prompts or production SQL changes for native Desktop recovery.
+Service PID3219 at latest readback. Desktop input recovered after full quit/reopen.
+Main is actively coordinating again through native Desktop; the original Luna Max
+LZ-174 worker is repairing the independent review findings. LZ-173 returned
+corrected candidate0b28972 with no material source findings; its retained candidate
+binding remains blocked, and LZ-175 is queued behind174 to repair that native path.
+Current measurements/status: `design/reviews/live-progress-performance-20261107.md`.
+Root sent the full-roadmap continuation through Desktop, including checking actual
+eligibility for independent work and preserving Models → Tasks/Trajectory → Radar.
 
-After unlock, resume through Desktop: report the canonical LZ-129 landing below;
-continue supported interrupted174 recovery, same-worker173 correction and held172
-correction after174 activation; preserve full roadmap. Revalidate native queues,
-inputs, ownership, artifacts and session handles before acting. No replacement
-workers, speculative effect replay or extra discretionary approval gate.
+Revalidate native queues, inputs, ownership, artifacts and live handles before
+acting. No production SQL mutations, replacement workers, speculative effect
+replay or extra discretionary approval gate.
 
 ## Integrated performance source
 
@@ -66,9 +65,10 @@ and all worker worktrees remain preserved.
 LZ-129 task `91c6c95d-9965-421f-9b35-49da50f84979`, plan
 `243f8093-7c3c-44e3-bda5-e06870e4f680` is natively accepted/version117; native
 integration/cleanup is NOT yet recorded. Original attempt58d8d699 and worker
-`ses_aeff3e9ac5d24c6c944d35e31b050963` remain. Source landing is not activation or
-live acceptance. Root must activate through supported Desktop at a safe boundary,
-then observe actual publication counts, navigation/refresh/scopes and CPU/load.
+`ses_aeff3e9ac5d24c6c944d35e31b050963` remain. Source has now been activated through full Desktop restart. A current 3-second
+subscription observed27events/27distinctidentities, each once at one location.
+Navigation/refresh/scopes and full CPU acceptance remain open; the active-work
+12-second CPU window still measured service42%, renderer15%, GPUhelper38%.
 No all-performance/freeze-resolution claim. Historical association materialization
 remains a known scaling limit. See the 6ee and9f61a6 source reviews for fixes.
 
@@ -89,19 +89,23 @@ this does not close129 or the UI/pricing plans.
   source labels noted in173review. Actual visual acceptance remains open.
 - LZ-173 task `50630f61-d966-43b5-b349-9f39e85ea014`, plan
   `ba5744d0-2657-4f93-b006-44ca0b176108`, attempt4d783df7, worker
-  `ses_145885557d454551815079ab36bd9c24`: accepted artifactddefc44, plan blocked
-  on actual connected137human gate. Source not merged. Review
-  `lz173-ddefc44-source-review-20261106.md` found amount/source provenance mismatch
-  and unused-tier missing-rate veto. Use same-worker substantive repair; keep
-  exact known amounts and useful sourced observed-usage estimates/ranges. Recovery
-  gaps qualify secondary assumptions, not a price veto. Omit truly absent amounts;
-  no false zero, Cost unavailable, internal review prose or subscription charges.
+  `ses_145885557d454551815079ab36bd9c24`: corrected candidate0b28972 returned;
+  independent Luna review found no material findings. Prior accepted candidate
+  ddefc44 remains in runtime history; the new candidate is not integrated or
+  runtime-accepted. Current repair idle lineage is unknown. LZ-175 owns the narrow
+  immutable candidate-binding correction after174, without inventing native idle
+  or replacing this worker. Reviews: `lz173-0b28972-source-review-20261107.md` and
+  `lz173-repair-idle-lineage-and-candidate-binding-20261107.md`. Actual connected
+  LZ-137 acceptance remains open; sourced estimates/ranges are valid, recovery
+  gaps qualify assumptions rather than vetoing prices. No false zero, unavailable
+  copy, internal review prose or subscription charges.
 - LZ-174 task `49dbfe29-b1af-4710-abfa-9268d61db228`, plan
   `f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23`, attempt0375ef98, worker
-  `ses_5210fab90d3745959a4d269dbd6ab744`: node running but plan blocked/version9
-  on interrupted execution with unknown background. Native session is failed,
-  not active; worktree clean at3a116f1, no implementation artifact yet. Resume
-  through supported exact-input machinery, not a replacement. Its feature must
+  `ses_5210fab90d3745959a4d269dbd6ab744`: node and plan running at latest readback,
+  in the same original session/attempt. Candidate6622ebf passed
+  isolated checks but independent review found a task-disposition admission race
+  and missing runtime-command fence regressions. Same worker is correcting these;
+  do not integrate6622ebf. See `lz174-6622ebf-source-review-20261107.md`. Its feature must
   preserve retained-repair authority across authorized interrupted continuation
   and recover the exact runtime-created unprompted172fence failure. Full contract:
   `models172-post-restart-retained-fence-20261106.md`.
@@ -144,9 +148,12 @@ service1.9% is not interactive acceptance. Details:
 Earlier renderer freeze sample was unsymbolized V8, no causal JS diagnosis.
 Export `/Users/tjw/Downloads/opencode-debug-20261106T165751.zip`.
 
-LFM3 indicator currently Error. LZ-159 observed normal reload/local inference and
-is integrated/cleaned; LZ-165 covers remaining generation/navigation recovery.
-Keep inference settings unchanged; do not claim GPU health or freeze recovery.
+Root8975516 fixes cache ownership persisting beyond the Desktop process. All six
+switches and cached models remain. Actual native chat and d1 requests passed;
+chat passed again after full quit/reopen with d1 resident. Lifecycle tests11pass,
+strict checks/build pass. See `inference-lease-lifecycle-20261104.md`. LZ-165's
+remaining generation/navigation branches and general freeze acceptance remain open;
+do not infer those from restart recovery. Native Architect was notified.
 
 Real retained156 operation34d2518c… accepted original ff55/b011 with one original
 implementation prompt, 176 Models tests and quality/build exit0, 24 check resources
