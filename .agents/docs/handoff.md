@@ -214,3 +214,24 @@ Observed UI improvements to fold into appropriate existing work: Tasks row IDs
 replaced during live updates; headline price excessive precision/repeated label;
 expanded basis exposes internal enum slug. Original approved Models mockup and
 Radar monitor direction remain the reference; do not invent diagnostic-heavy UI.
+
+## Latest connected Models preview — 2026-11-07
+
+Root loaded ce72ed5 via ignored GUI bundles and native renderer-only Reload.
+Actual connected project data renders; prior sourceLink crash did not recur.
+Model selector changes Luna reference range and clicking Qwen mark selects Qwen.
+Screenshots/report committed f5a78c7:
+`design/reviews/lz172-ce72-connected-preview-20261107.md`.
+
+Native Terra High session ses_e47f3391affevrhW239V5Jfv2r viewed actual narrow/wide
+images and approved reference: BOTH widths still fail visual acceptance (clipped
+axis/legend, selected label disappearance, oversized controls, diagnostic copy).
+Main attached advice revision8 for ONE same-worker presentation repair; source
+integration and acceptance remain withheld. Native review report:
+`design/reviews/lz172-ce72-native-visual-review-20261107.md`.
+
+Current ignored dist GUI assets remain ce72ed5 PREVIEW, source unmerged; rollback
+`/private/tmp/lz172-ce72-gui-preview-jqi01e_4`. Do not forget preview on handoff.
+Main Architect and original LZ-182 LunaMax worker verified live at1794089276397.
+LZ-178 same-worker review correction waits for182 overlapping runtime reservation.
+No backend-wide reload or active worker interruption was performed.
