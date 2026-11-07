@@ -278,6 +278,69 @@ test("native reconnect refreshes current activity once on the connected stream",
   }
 })
 
+test("ordinary list refresh retains observed activity until replacement or a failed read", async () => {
+  const taskID = crypto.randomUUID()
+  const attemptID = crypto.randomUUID()
+  const state = new TaskPanelState(() => {})
+  const pending = deferred<void>()
+  let hold = false
+  let started = false
+  let fail = false
+  let active = true
+  let snapshot = 0
+  const api = transport(async () => page("/project", taskID, ++snapshot))
+  api.currentActivity = async () => {
+    if (hold) {
+      started = true
+      await pending.promise
+    }
+    if (fail) throw new Error("native observation unavailable")
+    return {
+      activities: [
+        {
+          taskID,
+          workerSessionID: "worker-a",
+          attemptID,
+          foreground: active ? "active" : "inactive",
+          unknownReason: null,
+          recordedState: "running",
+          waiting: false,
+          holdReason: null,
+          pendingInput: false,
+          pendingPermissions: 0,
+          pendingForms: 0,
+          outcome: null,
+          observedAt: Date.now(),
+        },
+      ],
+    }
+  }
+  try {
+    state.connect("view", "/project", api, {}, taskID)
+    await until(
+      () => !state.data.loading && state.data.currentActivity[taskID]?.foreground === "active",
+    )
+    await tick()
+    hold = true
+    active = false
+    const refresh = state.refresh()
+    await until(() => started)
+    expect(state.data.currentActivity[taskID]?.foreground).toBe("active")
+    expect(state.data.currentActivity[taskID]?.attemptID).toBe(attemptID)
+    pending.resolve()
+    await refresh
+    expect(state.data.currentActivity[taskID]?.foreground).toBe("inactive")
+    hold = false
+    fail = true
+    await state.refresh()
+    expect(state.data.currentActivity[taskID]).toBeUndefined()
+    expect(state.data.activityError).toBe("Current activity is unavailable.")
+  } finally {
+    pending.resolve()
+    state.close()
+  }
+})
+
 test("disposed task connections ignore late native activity notifications", async () => {
   const oldTaskID = crypto.randomUUID()
   const newTaskID = crypto.randomUUID()

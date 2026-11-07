@@ -192,9 +192,9 @@ export class TaskPanelState {
       selectedAtRequest === this.data.selectedID &&
       !signal.aborted
     const requested = new Set(taskIDs)
-    const currentActivity = { ...this.data.currentActivity }
-    for (const taskID of taskIDs) delete currentActivity[taskID]
-    this.update({ currentActivity, activityError: "" })
+    // A refresh is not a loss of observation. Keep the last result visible
+    // until this read replaces it; active lists can refresh continuously.
+    this.update({ activityError: "" })
     try {
       const response = await transport.currentActivity(taskIDs, signal)
       if (!isCurrent()) return
@@ -218,7 +218,11 @@ export class TaskPanelState {
           activities.length === taskIDs.length ? "" : "Current activity is incomplete.",
       })
     } catch {
-      if (isCurrent()) this.update({ activityError: "Current activity is unavailable." })
+      if (isCurrent()) {
+        const currentActivity = { ...this.data.currentActivity }
+        for (const taskID of taskIDs) delete currentActivity[taskID]
+        this.update({ currentActivity, activityError: "Current activity is unavailable." })
+      }
     } finally {
       if (this.activityController === controller) this.activityController = undefined
       this.flushCurrentActivity()
@@ -270,7 +274,7 @@ export class TaskPanelState {
     this.clearPendingActivityRefresh()
     this.activitySessions.clear()
     this.cancelCurrentActivity()
-    this.update({ currentActivity: {}, activityError: "" })
+    this.update({ activityError: "" })
     const signal = this.controller.signal
     try {
       let page: TaskPage | undefined
