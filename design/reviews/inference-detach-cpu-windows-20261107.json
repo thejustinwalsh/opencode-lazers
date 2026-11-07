@@ -128,5 +128,31 @@
         "rssKiB": 84624
       }
     ]
+  },
+  {
+    "condition": "trajectory-native-inference-recovered-20261107",
+    "startAt": 1794086758216,
+    "endAt": 1794086770252,
+    "elapsedMs": 12036,
+    "processes": [
+      {
+        "pid": 3219,
+        "cpuSeconds": 6.23,
+        "meanCpuPercent": 51.76,
+        "rssKiB": 2146672
+      },
+      {
+        "pid": 7441,
+        "cpuSeconds": 1.79,
+        "meanCpuPercent": 14.87,
+        "rssKiB": 698336
+      },
+      {
+        "pid": 7435,
+        "cpuSeconds": 4.09,
+        "meanCpuPercent": 33.98,
+        "rssKiB": 66176
+      }
+    ]
   }
 ]

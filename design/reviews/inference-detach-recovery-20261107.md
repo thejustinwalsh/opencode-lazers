@@ -29,3 +29,25 @@ latter windows. The difference did not reverse when switching or closing Models.
 This is an active changing workload, not a controlled CPU or battery comparison.
 The chart is not established as the cause, and neither are the ownership errors
 established as the cause of all CPU use. Reobserve after supported activation.
+
+## Native follow-through
+
+The broker source file changed at16:16:43EST. The last recorded detach ownership
+failure was16:16:43.476, followed by one poll error at16:16:47.682; a later native
+Settings check showed Available/Ready. The unchanged diagnostic prompt actually
+returned `local GPU ready.` with19input/4output tokens. No forced server reload
+or worker restart occurred. This is observed recovery and successful real use;
+source activation identity was not independently established from status alone.
+
+Automatic approval review rejected a proposed server-wide location reload while
+a read-only review still had a streaming call. The action did not execute; Root
+deferred it rather than interrupt that review or bypass the rejection.
+
+The sixth process-counter window after recovery still measured service51.76%,
+renderer14.87%, GPU-helper33.98%. Recovery does not establish CPU/battery repair.
+Three-second native samples are retained as
+[gpu-helper](gpu-helper-active-sample-20261107.txt.gz) and
+[renderer](renderer-active-sample-20261107.txt.gz). GPU sample contains Metal render
+encoder frames, but many framework offsets are unsymbolized; neither sample
+identifies a JavaScript caller or proves a specific cause. No inference switch,
+model, cache policy or provider setting changed.
