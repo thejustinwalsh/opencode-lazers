@@ -24,7 +24,7 @@ type ProgressContext = Pick<
 type ObservedExecutionStart = {
   binding: NativeIdleBinding
   sequence: number
-  source: "live" | "native-log-replay" | "live-peer"
+  source: "live" | "native-log-replay" | "live-peer" | "current-idle"
   current?: () => boolean
 }
 type LiveStartObserver = (
@@ -679,6 +679,107 @@ export function registerProgress(
                   eventSequence,
                 })
               }
+            }
+          }
+        }
+        if (
+          executionStartSequence === null ||
+          executionStartSequence === undefined ||
+          observedStart?.sequence !== executionStartSequence ||
+          !sameIdleBinding(observedStart.binding, binding) ||
+          observedStart.current?.() === false
+        ) {
+          // A current idle callback may witness the exact durable lineage after
+          // replacement; it cannot invent sequences or outlive assignment fences.
+          const assignment = recorder.assignmentForSession(sessionID)
+          const assignedBinding = idleBinding(assignment, projectDirectory)
+          const plan = assignment ? recorder.store.plan(assignment.planID) : undefined
+          const currentAssignment = () => {
+            const current = recorder.assignmentForSession(sessionID)
+            return Boolean(
+              assignment &&
+              current &&
+              current.attemptState === "running" &&
+              sameProgressAssignment(current, assignment) &&
+              sameIdleBinding(idleBinding(current, projectDirectory), binding) &&
+              ["running", "blocked"].includes(recorder.store.plan(current.planID)?.state ?? "") &&
+              !recorder.store.repository.taskDisposition(current.taskID),
+            )
+          }
+          const canUseCurrentIdle = Boolean(
+            assignment &&
+            assignment.attemptState === "running" &&
+            ["running", "blocked"].includes(plan?.state ?? "") &&
+            !recorder.store.repository.taskDisposition(assignment.taskID) &&
+            sameIdleBinding(assignedBinding, binding) &&
+            executionStartSequence !== null &&
+            executionStartSequence !== undefined &&
+            Number.isSafeInteger(executionStartSequence) &&
+            executionStartSequence >= 0 &&
+            eventSequence !== null &&
+            eventSequence !== undefined &&
+            Number.isSafeInteger(eventSequence) &&
+            eventSequence >= executionStartSequence &&
+            !startsRequiringNewerObservation.has(sessionID) &&
+            inputID !== undefined &&
+            recorder.matchesAssignedInput(
+              assignment.attemptID,
+              assignment.sessionID,
+              assignment.assignedMessageID,
+              inputID,
+            ),
+          )
+          if (
+            canUseCurrentIdle &&
+            assignment &&
+            executionStartSequence !== null &&
+            executionStartSequence !== undefined &&
+            eventSequence !== null &&
+            eventSequence !== undefined
+          ) {
+            const currentStartSequence = executionStartSequence
+            const currentEventSequence = eventSequence
+            const currentBefore = await readNativeSession(sessionID)
+            const currentInputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
+            const currentAfter = await readNativeSession(sessionID)
+            const currentState = idleStore.read(binding)
+            if (
+              observing &&
+              currentAssignment() &&
+              sameIdleBinding(binding, bindingFor(sessionID)) &&
+              currentState !== undefined &&
+              currentState.revision === expectedRevision &&
+              currentState.executionStartSequence === currentStartSequence &&
+              currentState.lastEventSequence === currentEventSequence &&
+              currentState.pendingTerminal === null &&
+              currentState.terminal === null &&
+              currentInputID === inputID &&
+              recorder.matchesAssignedInput(
+                assignment.attemptID,
+                assignment.sessionID,
+                assignment.assignedMessageID,
+                currentInputID,
+              ) &&
+              matchesBinding(currentBefore, binding) &&
+              matchesBinding(currentAfter, binding)
+            ) {
+              const currentIdleStart: ObservedExecutionStart = {
+                binding,
+                sequence: currentStartSequence,
+                source: "current-idle",
+                current: () =>
+                  observing &&
+                  observedExecutionStarts.get(sessionID) === currentIdleStart &&
+                  !startsRequiringNewerObservation.has(sessionID) &&
+                  currentAssignment(),
+              }
+              observedStart = currentIdleStart
+              observedExecutionStarts.set(sessionID, currentIdleStart)
+              trace(sessionID, "idle-lineage-current-hook", {
+                inputID,
+                executionStartSequence: currentStartSequence,
+                eventSequence: currentEventSequence,
+              })
             }
           }
         }
