@@ -380,12 +380,68 @@ function normalizedNativeRate(value: number | null): string | null {
   return rateText(`${digits.slice(0, split)}.${digits.slice(split)}`)
 }
 
-function scheduleCanPriceKnownUsage(categories: UsageCategories, schedules: readonly RateSet[]) {
-  if (!schedules.length) return false
+function canSelectPerCallTiers(input: {
+  route: MarketRangeRoute
+  categories: UsageCategories
+  schedules: readonly RateSet[]
+  perCallUsage: readonly KnownUsagePerCall[]
+  perCallCoverageComplete: boolean
+  retryCoverageComplete: boolean
+  overridesUnknown: boolean
+}) {
+  const hasContextTiers = input.schedules.some((schedule) => schedule.contextTierTokens !== null)
+  const hasTimeTiers = input.schedules.some(
+    (schedule) => schedule.utcStart !== null || schedule.utcEnd !== null,
+  )
+  const hasUnknownTier = input.schedules.some(
+    (schedule) =>
+      schedule.minPromptTokens === null &&
+      schedule.contextTierTokens === null &&
+      schedule.utcStart === null &&
+      schedule.utcEnd === null &&
+      schedule.tierID !== "base" &&
+      schedule.tierID !== "default",
+  )
+  const tiered = input.schedules.length > 1 || hasContextTiers || hasTimeTiers
+  return (
+    tiered &&
+    !input.overridesUnknown &&
+    !hasTimeTiers &&
+    !hasUnknownTier &&
+    (!hasContextTiers ||
+      input.perCallUsage.every((call) => call.contextTierTokens !== undefined)) &&
+    input.perCallCoverageComplete &&
+    callCoverageMatches(input.perCallUsage, input.categories, input.route) &&
+    input.retryCoverageComplete
+  )
+}
+
+function scheduleCanPriceKnownUsage(input: {
+  route: MarketRangeRoute
+  categories: UsageCategories
+  sessions: readonly KnownUsageMarketSession[]
+  schedules: readonly RateSet[]
+  perCallUsage: readonly KnownUsagePerCall[]
+  perCallCoverageComplete: boolean
+}) {
+  if (!input.schedules.length) return false
+  const perCallAttributionComplete = canSelectPerCallTiers({
+    ...input,
+    retryCoverageComplete: retryCoverage(input.sessions, input.route).status === "complete",
+    overridesUnknown: false,
+  })
+  if (perCallAttributionComplete)
+    return input.perCallUsage.every((call) => {
+      const selected = selectedSchedule(call, input.schedules)
+      return selected !== null && amountForCall(call, selected) !== null
+    })
+
   return CATEGORIES.every((category) => {
-    const tokens = categories[category].tokens
+    const tokens = input.categories[category].tokens
     if (tokens === null || tokens === 0) return true
-    return schedules.every((schedule) => rateNumber(schedule[usageRateCategory(category)]) !== null)
+    return input.schedules.every(
+      (schedule) => rateNumber(schedule[usageRateCategory(category)]) !== null,
+    )
   })
 }
 
@@ -464,6 +520,8 @@ export function selectConfiguredMarketSchedule(input: {
   settings: ModelPriceSourceSettings
   sources: readonly ModelEvidenceComparisonSourceRead[]
   sessions: readonly KnownUsageMarketSession[]
+  perCallUsage?: readonly KnownUsagePerCall[]
+  perCallCoverageComplete?: boolean
 }): KnownUsageMarketPublishedSchedule | null {
   const categories = emptyCoverage(input.sessions, input.route).categoryUsage
   const native = readBySource(input.sources, "native-catalog")
@@ -499,7 +557,17 @@ export function selectConfiguredMarketSchedule(input: {
         cacheRead: normalizedNativeRate(tier.cacheRead),
         cacheWrite: normalizedNativeRate(tier.cacheWrite),
       }))
-      if (!scheduleCanPriceKnownUsage(categories, schedules)) continue
+      if (
+        !scheduleCanPriceKnownUsage({
+          route: input.route,
+          categories,
+          sessions: input.sessions,
+          schedules,
+          perCallUsage: input.perCallUsage ?? [],
+          perCallCoverageComplete: input.perCallCoverageComplete ?? false,
+        })
+      )
+        continue
       return {
         source: "native-catalog",
         productID: `${record.providerID}/${record.id}`,
@@ -542,7 +610,17 @@ export function selectConfiguredMarketSchedule(input: {
     }))
     if (schedules.some((schedule) => schedule.utcStart !== null || schedule.utcEnd !== null))
       continue
-    if (!scheduleCanPriceKnownUsage(categories, schedules)) continue
+    if (
+      !scheduleCanPriceKnownUsage({
+        route: input.route,
+        categories,
+        sessions: input.sessions,
+        schedules,
+        perCallUsage: input.perCallUsage ?? [],
+        perCallCoverageComplete: input.perCallCoverageComplete ?? false,
+      })
+    )
+      continue
     return {
       source: "openrouter-models",
       productID: identity.resolution.productID!,
@@ -976,10 +1054,6 @@ function calculateScenario(input: {
   const promptThresholds = schedules
     .slice(1)
     .flatMap((schedule) => (schedule.minPromptTokens === null ? [] : [schedule.minPromptTokens]))
-  const hasContextTiers = schedules.some((schedule) => schedule.contextTierTokens !== null)
-  const hasTimeTiers = schedules.some(
-    (schedule) => schedule.utcStart !== null || schedule.utcEnd !== null,
-  )
   const hasUnknownTier = schedules.some(
     (schedule) =>
       schedule.minPromptTokens === null &&
@@ -990,17 +1064,19 @@ function calculateScenario(input: {
       schedule.tierID !== "default",
   )
   const tiered =
-    schedules.length > 1 || scheduleResult.overridesUnknown || hasContextTiers || hasTimeTiers
-  const usePerCall =
-    tiered &&
-    !scheduleResult.overridesUnknown &&
-    !hasTimeTiers &&
-    !hasUnknownTier &&
-    (!hasContextTiers ||
-      input.perCallUsage.every((call) => call.contextTierTokens !== undefined)) &&
-    input.perCallCoverageComplete &&
-    callCoverageMatches(input.perCallUsage, categoryUsage, input.route) &&
-    usageCoverage.retries.status === "complete"
+    schedules.length > 1 ||
+    scheduleResult.overridesUnknown ||
+    schedules.some((schedule) => schedule.contextTierTokens !== null) ||
+    schedules.some((schedule) => schedule.utcStart !== null || schedule.utcEnd !== null)
+  const usePerCall = canSelectPerCallTiers({
+    route: input.route,
+    categories: categoryUsage,
+    schedules,
+    perCallUsage: input.perCallUsage,
+    perCallCoverageComplete: input.perCallCoverageComplete,
+    retryCoverageComplete: usageCoverage.retries.status === "complete",
+    overridesUnknown: scheduleResult.overridesUnknown,
+  })
   const missingRates = new Set<UsageCategory>()
   let valueUSD: number | null = null
   let rangeUSD: { minimum: number; maximum: number } | null = null
@@ -1123,9 +1199,10 @@ function calculateScenario(input: {
       }
   }
 
-  for (const schedule of schedules)
-    for (const category of applicableMissingRates(categoryUsage, schedule))
-      missingRates.add(category)
+  if (tierAttribution.status !== "resolved-per-call")
+    for (const schedule of schedules)
+      for (const category of applicableMissingRates(categoryUsage, schedule))
+        missingRates.add(category)
 
   const marketStatus: KnownUsageMarketScenario["status"] =
     valueUSD !== null ? "exact" : rangeUSD !== null ? "range" : "partial"
@@ -1154,9 +1231,10 @@ function calculateScenario(input: {
     sourceURL: docs?.sourceURL ?? null,
     retrievedAt: docs?.retrievedAt ?? null,
   }
-  const rateCoverage = schedules.flatMap((schedule) =>
-    applicableMissingRates(categoryUsage, schedule),
-  )
+  const rateCoverage =
+    tierAttribution.status === "resolved-per-call"
+      ? [...missingRates]
+      : schedules.flatMap((schedule) => applicableMissingRates(categoryUsage, schedule))
   const uniqueMissingRates = [...new Set(rateCoverage)].sort(
     (left, right) => CATEGORIES.indexOf(left) - CATEGORIES.indexOf(right),
   )

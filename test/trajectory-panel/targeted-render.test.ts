@@ -87,6 +87,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
   let disposePanel: (() => void) | undefined
   let snapshotCalls = 0
   let historyCalls = 0
+  let latestHistoryReport: Record<string, unknown> | undefined
   try {
     const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
     const entry = fileURLToPath(
@@ -165,7 +166,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           : null
       },
     }
-    const taskValuationProvider = lz137ValuationProvider()
+    const taskValuationProvider = lz137ValuationProvider({ withStrictOpenCodePrice: true })
     const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
     tracker.initialize()
     fixture.store.atomic((db) =>
@@ -209,7 +210,9 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           taskID: string
           limit: number
           cursor?: string
-        }) => reads.trajectory(input, tracker),
+        }) => {
+          return reads.trajectory(input, tracker)
+        },
         trajectoryHistory: async (input: {
           scope: Parameters<typeof reads.trajectoryHistory>[0]["scope"]
           taskID: string
@@ -217,7 +220,9 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           cursor?: string
         }) => {
           historyCalls++
-          return reads.trajectoryHistory(input, tracker)
+          const response = await reads.trajectoryHistory(input, tracker)
+          latestHistoryReport = response.report
+          return response
         },
         trajectoryStatus: async (input: Parameters<typeof reads.trajectoryStatus>[0]) =>
           reads.trajectoryStatus(input, tracker),
@@ -296,12 +301,18 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     )
     expect(snapshotCalls).toBe(0)
     expect(historyCalls).toBeGreaterThan(0)
-    expect(container.querySelector(".lazers-trajectory-cost")?.textContent).toContain(
-      "Current-market observed-usage estimate",
-    )
-    expect(container.querySelector(".lazers-trajectory-cost")?.textContent).toContain(
-      "$0.01598662 estimate",
-    )
+    const costRow = container.querySelector(".lazers-trajectory-cost")?.textContent ?? ""
+    expect(latestHistoryReport).toMatchObject({
+      effort: {
+        recordedCost: { apiEquivalentTotalUsd: 0.03197324 },
+        marketEquivalentCost: {
+          observedUsageEstimate: { valueUSD: 0.01598662 },
+        },
+      },
+    })
+    expect(costRow).toContain("Current-market observed-usage estimate")
+    expect(costRow).toContain("$0.01598662 estimate")
+    expect(costRow).not.toContain("$0.03197324")
     expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toContain(
       "OpenRouter · generation 5 · average · current freshness",
     )
@@ -312,6 +323,11 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       .map((summary) => summary.textContent)
       .find((text) => text?.includes("Estimate assumptions and published-rate basis"))
     expect(estimateDetails).toContain("19 retained calls")
+    expect(estimateDetails).toContain("published-rate basis")
+    expect(container.textContent).toContain(
+      "Estimate basis · deduplicated-retained-token-usage-at-published-current-rates",
+    )
+    expect(container.textContent).toContain("Strict-index API equivalent · $0.03197324 · OpenCode")
     expect(container.textContent).toContain("0.0000001")
     expect(container.textContent).toContain("Recovery gaps · 2")
     expect(container.textContent).not.toContain("$0 subtotal")

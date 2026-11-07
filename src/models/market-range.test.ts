@@ -97,6 +97,29 @@ function configuredSettings(sources = ["openrouter", "opencode"] as const) {
   })
 }
 
+function catalogWithMissingLunaOverrideCacheRead() {
+  const snapshot = ModelEvidenceSnapshotSchema.parse({
+    ...parsedPublishedCatalog,
+    snapshotID: crypto.randomUUID(),
+    records: parsedPublishedCatalog.records.map((record) =>
+      record.kind === "openrouter-model" && record.id === "openai/gpt-6-luna" && record.prices
+        ? {
+            ...record,
+            prices: {
+              ...record.prices,
+              tiers: record.prices.tiers.map((tier) =>
+                tier.minPromptTokens === 272_000 ? { ...tier, inputCacheRead: null } : tier,
+              ),
+            },
+          }
+        : record,
+    ),
+  })
+  if (snapshot.source !== "openrouter-models")
+    throw new Error("Expected an OpenRouter model catalog fixture")
+  return snapshot
+}
+
 function identityForRoute(
   route: MarketRangeRoute,
   catalogSource?: ModelEvidenceComparisonSourceRead,
@@ -270,6 +293,28 @@ function lunaRecord() {
   )
 }
 
+function lz137Usage(route: MarketRangeRoute) {
+  const calls: KnownUsagePerCall[] = Array.from({ length: 19 }, (_, index) => ({
+    callID: `retained-luna-call-${index}`,
+    route,
+    categories: {
+      uncachedInput: index < 3 ? 2_972 : 2_971,
+      cacheRead: index < 2 ? 43_211 : 43_210,
+      cacheWrite: 0,
+      output: index < 9 ? 109 : 108,
+      reasoning: index < 17 ? 116 : 115,
+    },
+  }))
+  const categories = measures({
+    uncachedInput: 56_452,
+    cacheRead: 820_992,
+    cacheWrite: 0,
+    output: 2_061,
+    reasoning: 2_202,
+  })
+  return { calls, sessions: [usageSession(route, categories)] }
+}
+
 function evaluate(
   route: MarketRangeRoute,
   evidence: EndpointPricingRead,
@@ -372,25 +417,7 @@ test("mixed known Luna tiers sum each attributable call and aggregate usage stay
 
 test("configured published rates price 19 deduplicated calls below the strict prompt-tier boundary", () => {
   const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
-  const calls: KnownUsagePerCall[] = Array.from({ length: 19 }, (_, index) => ({
-    callID: `retained-luna-call-${index}`,
-    route,
-    categories: {
-      uncachedInput: index < 3 ? 2_972 : 2_971,
-      cacheRead: index < 2 ? 43_211 : 43_210,
-      cacheWrite: 0,
-      output: index < 9 ? 109 : 108,
-      reasoning: index < 17 ? 116 : 115,
-    },
-  }))
-  const categories = measures({
-    uncachedInput: 56_452,
-    cacheRead: 820_992,
-    cacheWrite: 0,
-    output: 2_061,
-    reasoning: 2_202,
-  })
-  const sessions = [usageSession(route, categories)]
+  const { calls, sessions } = lz137Usage(route)
   const settings = configuredSettings()
   const identity = resolveConfiguredMarketIdentity(route, configuredSources)
   const exact = calculateConfiguredKnownUsageMarket({
@@ -481,6 +508,80 @@ test("configured published rates price 19 deduplicated calls below the strict pr
     valueUSD: null,
     tierAttribution: { status: "unresolved" },
   })
+})
+
+test("configured schedules ignore a missing unused override rate only with complete per-call evidence", () => {
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const sources = [
+    readyEvidenceRead(parsedPublishedNative),
+    readyEvidenceRead(catalogWithMissingLunaOverrideCacheRead()),
+  ]
+  const settings = configuredSettings()
+  const identity = resolveConfiguredMarketIdentity(route, sources)
+  const { calls, sessions } = lz137Usage(route)
+  const baseCalls = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources,
+    sessions,
+    perCallUsage: calls,
+    perCallCoverageComplete: true,
+  })
+  expect(baseCalls).toMatchObject({
+    status: "exact",
+    scenarios: [
+      {
+        status: "exact",
+        valueUSD: 0.01598662,
+        missingRates: [],
+        provenance: { source: "openrouter-models", priceBasis: "average" },
+        tierAttribution: { status: "resolved-per-call", selectedTierIDs: ["base"] },
+        rateSets: [
+          { tierID: "base", cacheRead: expect.any(String) },
+          { tierID: "prompt-272000;utc-none-none:1", cacheRead: null },
+        ],
+      },
+    ],
+  })
+
+  const overrideCall: KnownUsagePerCall = {
+    callID: "luna-override-with-missing-cache-read-rate",
+    route,
+    categories: {
+      uncachedInput: 272_001,
+      cacheRead: 1,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+    },
+  }
+  const overrideSession = [
+    usageSession(route, measures({ uncachedInput: 272_001, cacheRead: 1 }), {
+      id: "ses-luna-override",
+    }),
+  ]
+  const overrideUsed = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources,
+    sessions: overrideSession,
+    perCallUsage: [overrideCall],
+    perCallCoverageComplete: true,
+  })
+  expect(overrideUsed).toMatchObject({ status: "unavailable", scenarios: [] })
+
+  const tierUnknown = calculateConfiguredKnownUsageMarket({
+    route,
+    identity,
+    settings,
+    sources,
+    sessions: overrideSession,
+    perCallUsage: [overrideCall],
+    perCallCoverageComplete: false,
+  })
+  expect(tierUnknown).toMatchObject({ status: "unavailable", scenarios: [] })
 })
 
 test("configured ordered sources fall through as whole-model schedules without rate splicing", () => {

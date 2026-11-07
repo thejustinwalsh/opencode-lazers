@@ -2,6 +2,7 @@ import captured from "../models-identity/fixtures/captured-20261103.json" with {
 import { ModelEvidenceSnapshotSchema } from "../../src/models/source-schema.ts"
 import type { ModelEvidenceSnapshot } from "../../src/models/source-schema.ts"
 import type { ModelEvidenceComparisonSourceRead } from "../../src/models/source-store.ts"
+import type { CurrentPriceIndex } from "../../src/models/valuation-schema.ts"
 import {
   ModelPriceSourceSettingsSchema,
   defaultModelPriceSourcePolicy,
@@ -51,9 +52,34 @@ export const lz137MarketSettings = ModelPriceSourceSettingsSchema.parse({
   access: { openrouter: "configured", opencode: "configured" },
 })
 
-export function lz137ValuationProvider() {
-  const index = structuredClone(nativeMillionTokenIndex)
-  index.pins = []
+export function lz137ValuationProvider(options: { withStrictOpenCodePrice?: boolean } = {}) {
+  const index: CurrentPriceIndex = structuredClone(nativeMillionTokenIndex)
+  if (options.withStrictOpenCodePrice) {
+    const strictOpenCodePin: CurrentPriceIndex["pins"][number] = {
+      ...structuredClone(nativeMillionTokenIndex.pins[0]!),
+      route: { ...lz137Route },
+      productID: "openai/gpt-6-luna",
+      configurationID: "openai-gpt-6-luna-strict-quote",
+      rates: {
+        unit: "USD per token",
+        uncachedInput: "0.0000002",
+        completion: "0.000001",
+        cacheRead: "0.00000002",
+        cacheWrite: "0.0000002",
+      },
+      provenance: {
+        source: "native-catalog",
+        snapshotID: "30000000-0000-4000-8000-000000000004",
+        generation: 7,
+        retrievedAt: "2026-11-06T12:00:00.000Z",
+        asOf: null,
+        sourceURL: "https://opencode.ai/v2/docs/models/",
+        recordIndex: 1,
+        recordID: "gpt-6-luna",
+      },
+    }
+    index.pins = [strictOpenCodePin]
+  } else index.pins = []
   return createTaskValuationReader(async (_routes, signal) => {
     signal.throwIfAborted()
     return {

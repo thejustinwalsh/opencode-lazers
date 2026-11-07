@@ -983,6 +983,15 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 const apiCost = () => currentReport().effort.recordedCost.apiEquivalentTotalUsd
                 const marketCost = () => currentReport().effort.marketEquivalentCost
                 const marketEstimate = () => marketCost()?.observedUsageEstimate
+                const selectedEstimate = () => {
+                  const estimate = marketEstimate()
+                  return estimate &&
+                    (estimate.valueUSD !== null ||
+                      estimate.rangeUSD !== null ||
+                      estimate.pricedPortionUSD !== null)
+                    ? estimate
+                    : null
+                }
                 const marketStatus = () => marketCost()?.status ?? "unknown"
                 const formatMarketUSD = (value: number) =>
                   `$${new Intl.NumberFormat("en-US", {
@@ -990,9 +999,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     useGrouping: false,
                   }).format(value)}`
                 const displayedMarketCost = () => {
-                  const value = apiCost()
-                  if (value !== null) return formatMarketUSD(value)
-                  const estimate = marketEstimate()
+                  const estimate = selectedEstimate()
                   if (estimate?.valueUSD !== null && estimate?.valueUSD !== undefined)
                     return `${formatMarketUSD(estimate.valueUSD)} estimate`
                   if (estimate?.rangeUSD)
@@ -1005,20 +1012,14 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         : `${formatMarketUSD(minimum)}–${formatMarketUSD(maximum)}`
                     return `${amount} priced portion`
                   }
+                  const value = apiCost()
+                  if (value !== null) return formatMarketUSD(value)
                   const subtotal = marketCost()?.subtotalUSD ?? null
                   return subtotal === null || subtotal <= 0
                     ? "—"
                     : `${formatMarketUSD(subtotal)} subtotal`
                 }
-                const priceSourceSummary = () => {
-                  const estimateSources = marketEstimate()?.sources ?? []
-                  if (estimateSources.length) {
-                    const descriptions = estimateSources.map(
-                      (source) =>
-                        `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation} · ${source.priceBasis}`,
-                    )
-                    return `${descriptions.join("; ")} · ${marketEstimate()?.freshness} freshness`
-                  }
+                const indexPriceSourceSummary = () => {
                   const index = marketCost()?.currentIndex
                   if (!index) return "Price source unavailable"
                   const sources = index.sources.map(
@@ -1026,6 +1027,18 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation}`,
                   )
                   return `${sources.join("; ") || "No selected cached price source"} · ${index.freshness} freshness`
+                }
+                const priceSourceSummary = () => {
+                  const estimate = selectedEstimate()
+                  const estimateSources = estimate?.sources ?? []
+                  if (estimateSources.length) {
+                    const descriptions = estimateSources.map(
+                      (source) =>
+                        `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation} · ${source.priceBasis}`,
+                    )
+                    return `${descriptions.join("; ")} · ${estimate?.freshness} freshness`
+                  }
+                  return indexPriceSourceSummary()
                 }
                 const categories = [
                   ["Uncached input", "uncachedInput"],
@@ -1063,8 +1076,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         title="Market-equivalent worker usage is not actual provider charges or full task cost."
                       >
                         <span>
-                          {marketEstimate()
-                            ? `${marketEstimate()!.label}${marketEstimate()!.status === "partial" ? " · partial" : ""}`
+                          {selectedEstimate()
+                            ? `${selectedEstimate()!.label}${selectedEstimate()!.status === "partial" ? " · partial" : ""}`
                             : `API equivalent · ${marketStatus()}`}
                         </span>
                         <span>{displayedMarketCost()}</span>
@@ -1076,6 +1089,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         <details class="lazers-trajectory-payload lazers-trajectory-valuation">
                           <summary>Pricing coverage and provenance</summary>
                           <p>{marketCost()!.meaning}</p>
+                          <Show when={selectedEstimate() && apiCost() !== null}>
+                            <div class="lazers-trajectory-coverage">
+                              Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
+                              {indexPriceSourceSummary()}
+                            </div>
+                          </Show>
                           <Show when={marketCost()!.currentIndex}>
                             {(index) => (
                               <div class="lazers-trajectory-coverage">
@@ -1130,6 +1149,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                               Estimate assumptions and published-rate basis ·{" "}
                               {estimate().retainedCallCount} retained calls
                             </summary>
+                            <div>Estimate basis · {estimate().basis}</div>
                             <p>{estimate().meaning}</p>
                             <div class="lazers-trajectory-coverage">
                               <strong>Published sources and freshness</strong>
