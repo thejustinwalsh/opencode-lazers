@@ -269,7 +269,8 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     }),
     registerGeneration: ({ generationID, generationSequence }, caller) => {
       caller.signal.throwIfAborted()
-      lease.registerGeneration(caller.window, generationID, generationSequence)
+      const registration = lease.registerGeneration(caller.window, generationID, generationSequence)
+      return registration === undefined ? undefined : trackLeaseOperation(registration)
     },
     status: async () => ({ ...(await cache.status()), occupied: lease.occupied() }),
     decisionStatus: async () => ({ ...(await decisions.status()), occupied: lease.occupied() }),
