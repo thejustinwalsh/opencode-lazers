@@ -27,9 +27,13 @@ typecheck, diff checks and GUI build/bundle evaluation pass.
 
 Native Desktop Reload Webview loaded the correction. The project-wide list then
 displayed the original174and173 workers as inactive/succeeded, matching their
-completed native sessions, instead of clearing all activity to Unknown. A
-subsequent active-work observation remains needed to qualify sustained behavior;
-the unit regression covers the in-flight replacement interval deterministically.
+completed native sessions, instead of clearing all activity to Unknown.
+Subsequently the new original LZ-165 worker
+`ses_58c9c1c8cff845d68439017dd53e335b` appeared as Active in the unfiltered
+project list before and after a12.042-second live-work window and subsequent
+ordinary updates. Native session.active confirmed that exact worker running.
+The unit regression covers the in-flight replacement interval deterministically;
+these native observations also qualify actual active-work rendering.
 
 ## Separate reload defect
 

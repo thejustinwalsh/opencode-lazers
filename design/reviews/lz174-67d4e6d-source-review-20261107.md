@@ -42,3 +42,9 @@ then removed this clean/unused checkout with native worktree.remove(force:false)
 Readback confirmed exists:false. Do not reuse that deleted path. Every original
 worker checkout/artifact remains. No production state was rewritten and no worker
 tree was changed by this review.
+
+The stored174acceptance requires dirty worktree content and original identity,
+usage and receipts to survive recovery. It does not request content hashing or
+a full-tree stability proof. The scan was an implementation addition, not a
+requirement to preserve in the task. Architect received the exact finding via
+native Desktop Steer and explicitly declined integration pending correction.

@@ -208,7 +208,9 @@ attempt05373e97-01c3-4aa0-bf13-5f112957a10f, native worker
 `ses_58c9c1c8cff845d68439017dd53e335b`, OpenAI Luna Max, worktree
 `/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/05373e97-01c3-4aa0-bf13-5f112957a10f`.
 Root165reservation is fully released; preserve8975516 and no blanket activation.
-The actual project Tasks list shows this exact worker Active with ff73ff3 loaded.
+The actual project Tasks list shows this exact worker Active with ff73ff3 loaded,
+before/after a12second work window and continued normal updates. Native active
+readback corroborates the same worker. Sustained active rendering is now observed.
 
 Root review `lz174-67d4e6d-source-review-20261107.md` blocks67d4e6d unchanged:
 new retainedRepairWorkspaceObservation reads/base64-encodes every untracked file,
@@ -218,7 +220,22 @@ file-content fingerprint gating and can block the shared service. It is NOT
 attribution of currently measured CPU (candidate is uninstalled). Preserve the
 useful final transactional task fence; remove this scan/gate in the same original
 174worker using existing ownership/source-preservation flows, no arbitrarysizecap
-or replacementfulltreescan. Root queued the exact finding via Desktop; confirm
-receipt before claiming the worker has been steered. Root's unused native review
+or replacementfulltreescan. Root delivered the finding with Desktop native Steer; latest-user receipt
+msg_1b6a8d1c7001dvksFfmmf6JzSc and Main acknowledgement explicitly reject
+unchanged67d4e6d. Original174correction is not yet observed running. Root's unused native review
 worktree174was clean/unchanged and removed natively force:false,exists:false.
 No67source merge or production data mutation occurred.
+
+Root used native queued-prompt Steer to deliver the blocking review immediately
+without interrupting the Architect or worker. Four obsolete Root queue notes were
+withdrawn via native Undo into drafts, consolidated, and replaced with one current
+state notice delivered via Steer. Latest receiptmsg_1b6ae787b0012SG8yxTwQXWZHr
+releases ALL Root file reservations, confirms ff73ff3 live, preserves active165,
+and blocks67fingerprinting. No pending Root scope reservation remains. Native
+Steer is available for time-sensitive driver coordination; verify actual receipt
+and subsequent action rather than treating delivery as task success.
+
+Main's additional Luna Max read-only investigation
+`ses_e4953fa0cffeIIqYd0oMDY1UpO` traces Tasks refresh; existing ff73ff3 is already
+landed/live, so avoid duplicate fixes. Completed eligibility findings and actual
+165dispatch are in `independent-roadmap-eligibility-20261107.md`.
