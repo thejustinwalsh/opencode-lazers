@@ -46,6 +46,7 @@ import type {
 } from "../../src/models/decision-contract.ts"
 import { ModelDecisionEstimateSchema } from "../../src/models/decision-contract.ts"
 import { ModelDecisionReferenceEstimateSchema } from "../../src/models/reference-estimate.ts"
+import { KnownUsageMarketSchema } from "../../src/models/market-range.ts"
 import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-estimate.ts"
 import type { ModelMappingUpdate } from "../../src/models/mapping-schema.ts"
 import { ModelSettingsService } from "../../src/models/service.ts"
@@ -223,6 +224,139 @@ function openRouterReference(
         cacheWrite: { tokens: null, status: "missing", rateCoverage: "missing" },
       },
     },
+  })
+}
+
+type KnownUsageSource = "openrouter-endpoints" | "openrouter-models" | "native-catalog"
+
+function knownUsageMarketForSource(
+  route: ModelDecisionConfiguration["route"],
+  source: KnownUsageSource,
+) {
+  const productID = `${route.providerID}/${route.modelID}`
+  const sourceURL =
+    source === "openrouter-endpoints"
+      ? `https://openrouter.ai/${productID}/pricing`
+      : source === "openrouter-models"
+        ? "https://openrouter.ai/api/v1/models"
+        : "https://opencode.ai/models"
+  const priceBasis = source === "openrouter-models" ? "average" : "quote"
+  const cacheWriteBasis =
+    source === "openrouter-endpoints"
+      ? "endpoint-rate"
+      : source === "openrouter-models"
+        ? "published-model-rate"
+        : "published-native-quote"
+
+  return KnownUsageMarketSchema.parse({
+    schemaVersion: 1,
+    scope: "known-retained-token-usage-only",
+    route,
+    identity: {
+      status: "exact",
+      productID,
+      rules: [],
+      basis: "exact-published-catalog-id",
+      catalogSourceState: "available",
+      evidence: {
+        native: [],
+        catalog: [],
+        nativeRecordCount: 0,
+        catalogRecordCount: 0,
+        nativeTruncated: false,
+        catalogTruncated: false,
+      },
+    },
+    status: "exact",
+    scenarios: [
+      {
+        id: "configured-current-market",
+        label: "Configured current-market rates",
+        status: "exact",
+        freshness: "current",
+        valueUSD: 0.00002,
+        rangeUSD: null,
+        knownSubtotalUSD: null,
+        rateSets: [
+          {
+            tierID: "default",
+            contextTierTokens: null,
+            minPromptTokens: null,
+            utcStart: null,
+            utcEnd: null,
+            prompt: "0.000002",
+            completion: "0.00001",
+            cacheRead: "0.0000002",
+            cacheWrite: "0",
+          },
+        ],
+        missingRates: [],
+        cacheWriteEvidence: {
+          basis: cacheWriteBasis,
+          policyID: null,
+          sourceURL: null,
+          retrievedAt: null,
+        },
+        tierAttribution: {
+          status: "not-required",
+          basis: "single-published-rate-scenario",
+          callCount: 0,
+          selectedTierIDs: ["default"],
+          promptThresholds: [],
+          thresholdSemantics: null,
+        },
+        provenance: {
+          source,
+          productID,
+          priceBasis,
+          sourceURL,
+          refreshState: "succeeded",
+          snapshotID: "44444444-4444-4444-8444-444444444444",
+          snapshotGeneration: 3,
+          currentGeneration: 3,
+          retrievedAt: "2026-11-06T12:00:00.000Z",
+          recordIndex: 0,
+          providerName: null,
+          tag: productID,
+          serviceTier: null,
+        },
+        coverage: {
+          scope: "known-route-matched-retained-usage",
+          wholeTaskBound: false,
+          categories: {
+            uncachedInput: { tokens: 10, status: "observed" },
+            output: { tokens: 2, status: "observed" },
+            reasoning: { tokens: 0, status: "observed" },
+            cacheRead: { tokens: 3, status: "observed" },
+            cacheWrite: { tokens: 0, status: "observed" },
+          },
+          route: {
+            relatedSessionCount: 1,
+            matchedRouteSessionCount: 1,
+            includedSessionCount: 1,
+            otherRouteSessionCount: 0,
+            mixedRouteSessionCount: 0,
+            unknownRouteSessionCount: 0,
+            sharedSessionCount: 0,
+          },
+          retries: {
+            status: "complete",
+            attemptCount: 1,
+            routeMatchedAttemptCount: 1,
+            otherRouteAttemptCount: 0,
+            mixedRouteAttemptCount: 0,
+            unknownRouteAttemptCount: 0,
+            sharedAttemptCount: 0,
+            failedAttemptCount: 0,
+            retryAttemptCount: 0,
+            attemptsWithCompleteUsage: 1,
+            failedAttemptsWithCompleteUsage: 0,
+            retryAttemptsWithCompleteUsage: 0,
+          },
+        },
+        reason: null,
+      },
+    ],
   })
 }
 
@@ -1371,6 +1505,28 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                         totalCount: 2,
                         nextCursor: "contributors-next",
                       },
+                ...(input.configurationID === CONFIG_ONE
+                  ? {
+                      knownUsageMarket: knownUsageMarketForSource(
+                        inspectionConfiguration.route,
+                        "openrouter-models",
+                      ),
+                    }
+                  : input.configurationID === lowConfiguration.configurationID
+                    ? {
+                        knownUsageMarket: knownUsageMarketForSource(
+                          inspectionConfiguration.route,
+                          "native-catalog",
+                        ),
+                      }
+                    : input.configurationID === CONFIG_SINGLE
+                      ? {
+                          knownUsageMarket: knownUsageMarketForSource(
+                            inspectionConfiguration.route,
+                            "openrouter-endpoints",
+                          ),
+                        }
+                      : {}),
               })
               if (suspendedInspection?.configurationID === input.configurationID) {
                 suspendedInspection.output = output
@@ -1669,6 +1825,20 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector(".lazers-models-inspector h2")?.textContent ??
         containerA.querySelector(".lazers-models-inspector [role=alert]")?.textContent,
     ).toBe("GPT-6 refreshed")
+    const openRouterModelMarketCard = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-scenario",
+    )!
+    expect(openRouterModelMarketCard.textContent).toContain("OpenRouter model catalog pricing")
+    const openRouterModelEvidence = openRouterModelMarketCard.querySelector<HTMLDetailsElement>(
+      ".lazers-models-market-evidence-details",
+    )!
+    openRouterModelEvidence.open = true
+    expect(openRouterModelEvidence.textContent).toContain("basis average")
+    expect(openRouterModelEvidence.textContent).toContain("OpenRouter model catalog source")
+    expect(openRouterModelEvidence.querySelector("a")?.getAttribute("href")).toBe(
+      "https://openrouter.ai/api/v1/models",
+    )
+    openRouterModelEvidence.open = false
     await until(
       () =>
         containerA
@@ -2064,6 +2234,20 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           .querySelector(".lazers-models-reference-estimate")
           ?.textContent?.includes("OpenRouter model catalog conditional range") === true,
     )
+    const nativeMarketCard = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-scenario",
+    )!
+    expect(nativeMarketCard.textContent).toContain("Native catalog pricing")
+    const nativeEvidence = nativeMarketCard.querySelector<HTMLDetailsElement>(
+      ".lazers-models-market-evidence-details",
+    )!
+    nativeEvidence.open = true
+    expect(nativeEvidence.textContent).toContain("basis quote")
+    expect(nativeEvidence.textContent).toContain("Native model catalog source")
+    expect(nativeEvidence.querySelector("a")?.getAttribute("href")).toBe(
+      "https://opencode.ai/models",
+    )
+    nativeEvidence.open = false
     const conditionalInspection = containerA.querySelector<HTMLElement>(
       ".lazers-models-reference-estimate",
     )!
@@ -2088,6 +2272,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "qwen-7",
     )
+    const endpointMarketCard = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-scenario",
+    )!
+    expect(endpointMarketCard.textContent).toContain("OpenRouter endpoint pricing")
+    const endpointEvidence = endpointMarketCard.querySelector<HTMLDetailsElement>(
+      ".lazers-models-market-evidence-details",
+    )!
+    endpointEvidence.open = true
+    expect(endpointEvidence.textContent).toContain("OpenRouter endpoint source")
+    expect(endpointEvidence.querySelector("a")?.getAttribute("href")).toContain(
+      "https://openrouter.ai/",
+    )
+    endpointEvidence.open = false
     await until(
       () =>
         containerA

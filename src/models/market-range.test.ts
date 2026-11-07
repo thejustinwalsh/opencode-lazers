@@ -10,7 +10,7 @@ import type {
   EndpointPricingRead,
   EndpointPricingRecord,
 } from "./endpoint-pricing.ts"
-import { calculateKnownUsageMarket } from "./market-range.ts"
+import { KnownUsageMarketScenarioSchema, calculateKnownUsageMarket } from "./market-range.ts"
 import type {
   KnownUsageMarketSession,
   KnownUsagePerCall,
@@ -346,7 +346,11 @@ test("market identity supports direct OpenAI Luna and source-backed configured G
       {
         id: "luna-openai-standard",
         status: "range",
-        provenance: { source: "openrouter-endpoints", productID: "openai/gpt-6-luna" },
+        provenance: {
+          source: "openrouter-endpoints",
+          productID: "openai/gpt-6-luna",
+          priceBasis: "quote",
+        },
         tierAttribution: { status: "unresolved", basis: "aggregate-tier-envelope" },
       },
     ],
@@ -674,4 +678,58 @@ test("mixed routes and absent endpoint evidence remain unavailable rather than a
     status: "unavailable",
     scenarios: [{ status: "unavailable", freshness: "unavailable", valueUSD: null }],
   })
+})
+
+test("known-usage scenarios accept current endpoint, model-catalog, and native-catalog provenance", () => {
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const endpointScenario = calculateKnownUsageMarket({
+    route,
+    identity: identityForRoute(route),
+    endpointPricing: endpointRead("openai/gpt-6-luna", lunaRecord()),
+    sessions: [usageSession(route, measures({ uncachedInput: 100 }))],
+  }).scenarios[0]!
+  const sources = [
+    {
+      source: "openrouter-endpoints",
+      priceBasis: "quote",
+      cacheWriteBasis: "endpoint-rate",
+      sourceURL: "https://openrouter.ai/openai/gpt-6-luna/pricing",
+    },
+    {
+      source: "openrouter-models",
+      priceBasis: "average",
+      cacheWriteBasis: "published-model-rate",
+      sourceURL: "https://openrouter.ai/api/v1/models",
+    },
+    {
+      source: "native-catalog",
+      priceBasis: "quote",
+      cacheWriteBasis: "published-native-quote",
+      sourceURL: "https://opencode.ai/models",
+    },
+  ] as const
+
+  for (const { source, priceBasis, cacheWriteBasis, sourceURL } of sources) {
+    const scenario = KnownUsageMarketScenarioSchema.parse({
+      ...endpointScenario,
+      id: "configured-current-market",
+      cacheWriteEvidence: { ...endpointScenario.cacheWriteEvidence, basis: cacheWriteBasis },
+      rateSets: endpointScenario.rateSets.map((rateSet) => ({
+        ...rateSet,
+        contextTierTokens: null,
+      })),
+      provenance: {
+        ...endpointScenario.provenance,
+        source,
+        productID: "openai/gpt-6-luna",
+        priceBasis,
+        sourceURL,
+      },
+    })
+
+    expect(scenario.provenance).toMatchObject({ source, priceBasis, sourceURL })
+    expect(scenario.id).toBe("configured-current-market")
+    expect(scenario.rateSets[0]?.contextTierTokens).toBeNull()
+    expect(scenario.cacheWriteEvidence.basis).toBe(cacheWriteBasis)
+  }
 })

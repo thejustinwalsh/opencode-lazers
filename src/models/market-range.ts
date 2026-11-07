@@ -45,6 +45,7 @@ const CategoryUsage = z.strictObject({
 
 const RateSetSchema = z.strictObject({
   tierID: z.string().min(1).max(128),
+  contextTierTokens: Nonnegative.nullable().optional(),
   minPromptTokens: Nonnegative.nullable(),
   utcStart: Nonnegative.nullable(),
   utcEnd: Nonnegative.nullable(),
@@ -88,8 +89,9 @@ const KnownUsageCoverageSchema = z.strictObject({
 })
 
 const ProvenanceSchema = z.strictObject({
-  source: z.literal("openrouter-endpoints"),
-  productID: EndpointPricingProductIDSchema,
+  source: z.enum(["openrouter-endpoints", "openrouter-models", "native-catalog"]),
+  productID: z.string().min(1).max(512),
+  priceBasis: z.enum(["quote", "average"]),
   sourceURL: z.string().url().max(2048),
   refreshState: z.enum(["not-read", "never", "refreshing", "succeeded", "failed", "cancelled"]),
   snapshotID: z.uuid().nullable(),
@@ -105,6 +107,8 @@ const ProvenanceSchema = z.strictObject({
 const CacheWriteEvidenceSchema = z.strictObject({
   basis: z.enum([
     "endpoint-rate",
+    "published-model-rate",
+    "published-native-quote",
     "scoped-documentation",
     "missing",
     "zero-usage-rate-not-required",
@@ -131,7 +135,12 @@ const TierAttributionSchema = z.strictObject({
 })
 
 export const KnownUsageMarketScenarioSchema = z.strictObject({
-  id: z.enum(["kimi-moonshot-mxfp4", "qwen-alibaba", "luna-openai-standard"]),
+  id: z.enum([
+    "kimi-moonshot-mxfp4",
+    "qwen-alibaba",
+    "luna-openai-standard",
+    "configured-current-market",
+  ]),
   label: z.string().min(1).max(160),
   status: z.enum(["exact", "range", "partial", "unavailable"]),
   freshness: z.enum(["current", "stale", "unavailable"]),
@@ -568,6 +577,7 @@ function provenance(
   return {
     source: "openrouter-endpoints" as const,
     productID: scenario.productID,
+    priceBasis: "quote" as const,
     sourceURL: evidence?.sourceURL ?? endpointPricingProduct(scenario.productID).sourceURL,
     refreshState: source?.state ?? (endpointPricing ? "never" : "not-read"),
     snapshotID: evidence?.snapshotID ?? null,

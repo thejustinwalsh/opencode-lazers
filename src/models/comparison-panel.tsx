@@ -256,13 +256,43 @@ function countLabel(count: number, singular: string, plural = `${singular}s`) {
   return `${count.toLocaleString()} ${count === 1 ? singular : plural}`
 }
 
-function knownUsageSourcePresentation(source: KnownUsageMarketScenario["provenance"]["source"]) {
+function knownUsageSourcePresentation(source: string) {
   switch (source) {
     case "openrouter-endpoints":
       return {
         compact: "OpenRouter endpoint pricing",
         pricing: "OpenRouter endpoint pricing",
         sourceLink: "OpenRouter endpoint source",
+        range: "Endpoint range",
+        tierSelector: "Endpoint tier selector",
+        scenario: "endpoint scenario",
+      }
+    case "openrouter-models":
+      return {
+        compact: "OpenRouter model catalog pricing",
+        pricing: "OpenRouter model catalog pricing",
+        sourceLink: "OpenRouter model catalog source",
+        range: "OpenRouter model catalog range",
+        tierSelector: "OpenRouter model catalog tier selector",
+        scenario: "OpenRouter model catalog scenario",
+      }
+    case "native-catalog":
+      return {
+        compact: "Native catalog pricing",
+        pricing: "Native catalog pricing",
+        sourceLink: "Native model catalog source",
+        range: "Native catalog range",
+        tierSelector: "Native catalog tier selector",
+        scenario: "native catalog scenario",
+      }
+    default:
+      return {
+        compact: "Pricing source unavailable",
+        pricing: "Pricing source unavailable",
+        sourceLink: "Pricing source",
+        range: "Conditional range",
+        tierSelector: "Pricing tier selector",
+        scenario: "pricing scenario",
       }
   }
 }
@@ -286,7 +316,7 @@ function knownUsageValueLabel(scenario: KnownUsageMarketScenario) {
     case "range":
       return scenario.rangeUSD === null
         ? "Unavailable · range not supplied"
-        : `Endpoint range · ${formatKnownUsageRange(scenario.rangeUSD, true)}`
+        : `${knownUsageSourcePresentation(scenario.provenance.source).range} · ${formatKnownUsageRange(scenario.rangeUSD, true)}`
     case "partial":
       return scenario.knownSubtotalUSD === null
         ? "Unavailable · not a zero price"
@@ -297,11 +327,12 @@ function knownUsageValueLabel(scenario: KnownUsageMarketScenario) {
 }
 
 function knownUsageEssentialDescription(scenario: KnownUsageMarketScenario) {
+  const source = knownUsageSourcePresentation(scenario.provenance.source)
   const conditions = [
     scenario.tierAttribution.status === "unresolved"
       ? "prompt tier unresolved"
       : scenario.tierAttribution.status === "unsupported"
-        ? "endpoint tier selector unsupported"
+        ? `${source.tierSelector.toLowerCase()} unsupported`
         : null,
     scenario.coverage.retries.status === "complete"
       ? null
@@ -320,7 +351,7 @@ function knownUsageEssentialDescription(scenario: KnownUsageMarketScenario) {
     return `Partial known-usage subtotal only${conditions.length ? ` · ${conditions.join(" · ")}` : ""} · not a complete-task or whole-history bound.`
 
   if (scenario.status === "range" || conditions.length)
-    return `Conditional endpoint scenario${conditions.length ? ` · ${conditions.join(" · ")}` : ""} · known retained usage only, not a complete-task or whole-history bound or actual charges.`
+    return `Conditional ${source.scenario}${conditions.length ? ` · ${conditions.join(" · ")}` : ""} · known retained usage only, not a complete-task or whole-history bound or actual charges.`
 
   return "Known retained usage only · not actual charges or a complete-task bound."
 }
@@ -336,7 +367,7 @@ function knownUsageTierDescription(scenario: KnownUsageMarketScenario) {
     case "unresolved":
       return `Prompt tier unresolved · available tiers ${selected}. Any range is conditional for known retained usage only, not a complete-task or whole-history bound.`
     case "unsupported":
-      return `Endpoint tier selector unsupported by retained usage evidence · no unsupported tier is inferred.`
+      return `${knownUsageSourcePresentation(scenario.provenance.source).tierSelector} unsupported by retained usage evidence · no unsupported tier is inferred.`
   }
 }
 
@@ -359,6 +390,10 @@ function knownUsageCacheWriteDescription(scenario: KnownUsageMarketScenario) {
       return `Cache-write pricing uses scoped documentation${evidence.policyID ? ` · ${evidence.policyID}` : ""}; any documented zero applies only to this scenario.`
     case "endpoint-rate":
       return "Cache-write pricing uses the published rate for this exact endpoint scenario only; it does not establish general cache-write capability or availability."
+    case "published-model-rate":
+      return "Cache-write pricing uses the published OpenRouter model rate for this exact scenario only; it does not establish general cache-write capability or availability."
+    case "published-native-quote":
+      return "Cache-write pricing uses the published native catalog quote for this exact scenario only; it does not establish general cache-write capability or availability."
     case "zero-usage-rate-not-required":
       return "No cache-write rate was needed for the measured zero usage; zero observed writes do not mean cache writes are free."
     case "missing":
@@ -431,16 +466,20 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
             <dl class="lazers-models-evidence-summary">
               <dt>Pricing source</dt>
               <dd>
-                {sourcePresentation().pricing} · {provenance().productID} · refresh{" "}
-                {provenance().refreshState} · snapshot generation{" "}
+                {sourcePresentation().pricing} · basis {provenance().priceBasis} ·{" "}
+                {provenance().productID} · refresh {provenance().refreshState} · snapshot generation{" "}
                 {provenance().snapshotGeneration?.toLocaleString() ?? "unavailable"} · current
                 generation {provenance().currentGeneration?.toLocaleString() ?? "unavailable"}
               </dd>
               <dt>{sourcePresentation().sourceLink}</dt>
               <dd>
-                <a href={provenance().sourceURL} target="_blank" rel="noreferrer">
-                  {provenance().sourceURL}
-                </a>
+                <Show when={provenance().sourceURL} fallback={<span>Source unavailable</span>}>
+                  {(sourceURL) => (
+                    <a href={sourceURL()} target="_blank" rel="noreferrer">
+                      {sourceURL()}
+                    </a>
+                  )}
+                </Show>
               </dd>
               <dt>Source record</dt>
               <dd>

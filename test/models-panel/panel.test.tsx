@@ -222,6 +222,7 @@ function knownUsageScenario(
     provenance: {
       source: "openrouter-endpoints",
       productID: "moonshotai/kimi-k3.1-pro",
+      priceBasis: "quote",
       sourceURL: "https://openrouter.ai/moonshotai/kimi-k3.1-pro/pricing",
       refreshState: "succeeded",
       snapshotID: "11111111-1111-4111-8111-111111111111",
@@ -302,6 +303,28 @@ test("known-usage inspector labels endpoint provenance and scoped documented cac
     expect(card.markup).toContain('<th scope="col">Tier</th>')
     expect(card.markup).toContain('<th scope="row">standard</th>')
     expect(card.markup).toContain('target="_blank" rel="noreferrer"')
+  } finally {
+    card.dispose()
+  }
+})
+
+test("unknown or missing market provenance stays visible without fabricating a source link", () => {
+  const base = knownUsageScenario()
+  const card = renderMarketScenario(
+    knownUsageScenario({
+      provenance: {
+        ...base.provenance,
+        source: "future-price-source" as KnownUsageMarketScenario["provenance"]["source"],
+        sourceURL: "",
+      },
+    }),
+  )
+  try {
+    expect(card.compactText).toContain("Pricing source unavailable")
+    expect(card.expand()).toBe(true)
+    expect(card.evidenceText()).toContain("Pricing source")
+    expect(card.evidenceText()).toContain("Source unavailable")
+    expect(card.details.querySelector("a")).toBeNull()
   } finally {
     card.dispose()
   }
