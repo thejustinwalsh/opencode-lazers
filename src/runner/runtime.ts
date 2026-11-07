@@ -706,6 +706,48 @@ export class TaskRuntime {
       throw new Error("Retained repair changed during candidate observation")
   }
 
+  private assertRetainedVerificationScopeAvailable(
+    planID: string,
+    taskID: string,
+    attemptID: string,
+    taskWorkspace: string,
+  ) {
+    const taskScope = this.store.effectiveWriteScope(taskID)
+    // Exclude only a valid sealed source quarantine, and only from this physical
+    // destination reserved for the isolated retained check.
+    const competingAttempt = this.store
+      .plans()
+      .flatMap((candidatePlan) => this.store.attempts(candidatePlan.id))
+      .find(
+        (candidate) =>
+          candidate.id !== attemptID &&
+          ["preparing", "running", "verifying"].includes(candidate.state) &&
+          scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)) &&
+          !sourceReservationExcluded(this.store, candidate, {
+            mode: "isolated",
+            workspace: taskWorkspace,
+          }),
+      )
+    if (competingAttempt)
+      throw new Error("A conflicting active implementation attempt prevents retained verification")
+    const conflictingAdoption = this.store
+      .activeAdoptions()
+      .find((candidate) =>
+        scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)),
+      )
+    if (conflictingAdoption)
+      throw new Error("A conflicting descendant adoption prevents retained verification")
+    const conflictingVerification = this.store.atomic((db) =>
+      activeRetainedVerifications(db, this.directory).find((candidate) =>
+        candidate.planID !== planID || candidate.taskID !== taskID
+          ? scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.taskID))
+          : true,
+      ),
+    )
+    if (conflictingVerification)
+      throw new Error("A conflicting retained verification authority is already active")
+  }
+
   private async prepareRetainedVerification(
     plan: PlanRow,
     command: PlanCommand,
@@ -785,42 +827,9 @@ export class TaskRuntime {
       )
     if (node.state === "cancelled" || node.state === "exhausted" || node.state === "incorporated")
       throw new Error("A cancelled, exhausted or incorporated task cannot be retained-verified")
-    const taskScope = this.store.effectiveWriteScope(task.id)
     const id = crypto.randomUUID()
     const taskWorkspace = this.retainedVerificationWorkspacePath(id, "task")
-    // Exclude only a valid sealed source quarantine, and only from this physical
-    // destination reserved for the isolated retained check.
-    const competingAttempt = this.store
-      .plans()
-      .flatMap((candidatePlan) => this.store.attempts(candidatePlan.id))
-      .find(
-        (candidate) =>
-          candidate.id !== attempt.id &&
-          ["preparing", "running", "verifying"].includes(candidate.state) &&
-          scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)) &&
-          !sourceReservationExcluded(this.store, candidate, {
-            mode: "isolated",
-            workspace: taskWorkspace,
-          }),
-      )
-    if (competingAttempt)
-      throw new Error("A conflicting active implementation attempt prevents retained verification")
-    const conflictingAdoption = this.store
-      .activeAdoptions()
-      .find((candidate) =>
-        scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)),
-      )
-    if (conflictingAdoption)
-      throw new Error("A conflicting descendant adoption prevents retained verification")
-    const conflictingVerification = this.store.atomic((db) =>
-      activeRetainedVerifications(db, this.directory).find((candidate) =>
-        candidate.planID !== plan.id || candidate.taskID !== task.id
-          ? scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.taskID))
-          : true,
-      ),
-    )
-    if (conflictingVerification)
-      throw new Error("A conflicting retained verification authority is already active")
+    this.assertRetainedVerificationScopeAvailable(plan.id, task.id, attempt.id, taskWorkspace)
     if (!existsSync(attempt.workspace)) throw new Error("Original attempt workspace is unavailable")
     const originalWorkspace = realpathSync(attempt.workspace)
     if (
@@ -2546,6 +2555,9 @@ export class TaskRuntime {
           retainedVerificationSeed.repair,
         )
       }
+      ownerSession = await this.host.session(caller)
+      if (!this.validArchitect(ownerSession) || ownerSession.id !== old.owner)
+        throw new Error("Retained verification owner changed during final native admission")
     }
 
     if (retainedRepair) {
@@ -3050,6 +3062,12 @@ export class TaskRuntime {
           throw new Error(
             "Original task, latest attempt or exact committed candidate changed before reservation",
           )
+        this.assertRetainedVerificationScopeAvailable(
+          plan.id,
+          seed.taskID,
+          seed.attemptID,
+          this.retainedVerificationWorkspacePath(seed.id, "task"),
+        )
         const operation = createRetainedVerification(db, this.directory, {
           ...seed,
           state: "pending",
@@ -9452,6 +9470,14 @@ export class TaskRuntime {
         await this.holdRetainedVerification(initial, errorText(error), fence)
         return undefined
       }
+    }
+    try {
+      const owner = await this.host.session(initial.owner)
+      if (!this.validArchitect(owner) || owner.id !== initial.owner)
+        throw new Error("Retained verification owner changed before task acceptance")
+    } catch (error) {
+      await this.holdRetainedVerification(initial, errorText(error), fence)
+      return undefined
     }
     if (!this.retainedWorkspaceUnchanged(workspace, initial.artifact)) {
       await this.holdRetainedVerification(

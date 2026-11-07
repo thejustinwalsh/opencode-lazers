@@ -480,11 +480,12 @@ async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   return { ...f, plan, attempt, artifact: attempt.artifact }
 }
 
-async function heldRepairFixture() {
+async function heldRepairFixture(options: Parameters<typeof fixture>[0] = {}) {
   const f = fixture({
     taskCheckCommand: "bun test src/runner/retained-check.test.ts",
     combinedCheckCommand: "bun test src/runner/retained-check.test.ts",
     candidateContentsCheck: true,
+    ...options,
   })
   const control = await registeredPlanCommand(f.runtime)
   await control.execute({
@@ -705,6 +706,75 @@ test.each(["disposition", "owner", "input"])(
             .get(f.planID)?.n,
       ),
     ).toBe(0)
+    expect(f.prompts).toHaveLength(2)
+  },
+)
+
+test.each(["archive", "role", "project", "competing-attempt"])(
+  "repair admission rechecks %s after its final worker observations",
+  async (kind) => {
+    const f = await heldRepairFixture()
+    const session = f.host.session
+    let owners = 0
+    let changed = false
+    f.host.session = async (id, options) => {
+      const observed = await session(id, options)
+      if (id === "owner") owners++
+      if (id === f.attempt.session_id && owners >= 2 && !changed) {
+        changed = true
+        const owner = f.sessions.get("owner")!
+        if (kind === "archive") owner.archived = true
+        if (kind === "role") owner.agent = "implementor"
+        if (kind === "project") owner.projectID = "another-project"
+        if (kind === "competing-attempt") await addCompetingAttempt(f, "none")
+      }
+      return observed
+    }
+    await expect(f.control.execute(f.request)).rejects.toThrow()
+    expect(changed).toBe(true)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+            )
+            .get(f.planID)?.n,
+      ),
+    ).toBe(0)
+    expect(f.store.attempts(f.planID)[0]?.artifact).toBe(f.previousArtifact)
+    expect(f.prompts).toHaveLength(2)
+  },
+)
+
+test.each(["archive", "role", "project"])(
+  "retained acceptance rechecks native owner %s after asynchronous check setup",
+  async (kind) => {
+    const f = await heldRepairFixture({ requestTick: async () => {} })
+    const requested = await f.control.execute(f.request)
+    const worktree = f.host.worktree
+    let changed = false
+    f.host.worktree = async (input) => {
+      const result = await worktree(input)
+      const owner = f.sessions.get("owner")!
+      if (kind === "archive") owner.archived = true
+      if (kind === "role") owner.agent = "implementor"
+      if (kind === "project") owner.projectID = "another-project"
+      changed = true
+      return result
+    }
+    for (let i = 0; i < 6; i++) await f.runtime.tick()
+    expect(changed).toBe(true)
+    expect(f.store.attempts(f.planID)[0]?.artifact).toBe(f.previousArtifact)
+    expect(f.store.nodes(f.planID)[0]?.state).not.toBe("accepted")
+    const operation = f.store.atomic((db) =>
+      db
+        .query<{ state: string }, [string]>(
+          "SELECT state FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(String(requested.operationID)),
+    )
+    expect(operation?.state).toBe("held")
     expect(f.prompts).toHaveLength(2)
   },
 )
