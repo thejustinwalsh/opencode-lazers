@@ -43,6 +43,26 @@ changes or declare file activity complete while coverage remains unknown. Raw
 file contents/proposed edits are not requested. Current versus completed file
 activity must follow actual native call facts.
 
+Current-source research identifies a narrow extension: observe supported tool
+inputs at `execute.before` beside the existing `execute.after` registration in
+`src/progress/native.ts`; native input-start events have IDs/name but no arguments.
+Project only requested workspace-relative `read.path`, `edit.path` and validated
+`patch.patchText` operation paths. Fence enrichment by assignment and exact
+session/call/message/tool identity, then use the existing `runner_progress` fact,
+`projectProgressFact` allowlist and `LiveRadarReader` live/history paths. Add strict
+bounded target/provenance fields to existing contracts; no new producer/table.
+Requested targets are not resolution, permission, execution or mutation proof.
+Native call state determines current/completed/failed meaning. Explicit result
+metadata may support separately identified result facts, never guessed file effects.
+Keep raw inputs/contents out of storage, live summaries and selected history.
+
+This target-only extension and consumer belong to the **same** feature. Focused
+progress native/recorder/projection and observability live-contract/read paths plus
+Radar-only modules/tests have no identified file conflict with active LZ-172 or
+LZ-182. Do not edit runner, Tasks, Models, index or shared GUI test files. Exercise
+identity collisions, stale assignments, late/failed calls, lexical containment,
+bounded malformed/oversized input and content canaries through hook→facts→RPC→UI.
+
 ## Actual failing baseline supplied by Root
 
 On 2026-11-07, while both original Models and Tasks native workers were running,
