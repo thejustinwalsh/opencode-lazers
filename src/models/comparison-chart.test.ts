@@ -360,6 +360,8 @@ test("reference scalars, conditional envelopes and priced subtotals remain disti
     data: { configurationID: subtotal.configurationID, markKind: "reference" },
   })
   expect(scalarTooltip).toContain("scalar reference")
+  expect(scalarTooltip).toContain("OpenRouter model catalog")
+  expect(scalarTooltip).toContain("exact route openai / gpt-6 · high")
   expect(scalarTooltip).toContain("≈$3.08e-12 / accepted task")
   expect(rangeTooltip).toContain("conditional range")
   expect(rangeTooltip).toContain("≈$1e-8–$3e-8 / accepted task")
@@ -369,7 +371,7 @@ test("reference scalars, conditional envelopes and priced subtotals remain disti
   expect(subtotalTooltip).toContain("OpenRouter")
   expect(comparisonChartReferenceText(scalar)).toContain("exact route openai / gpt-6 · high")
   expect(comparisonChartReferenceText(scalar)).toContain(
-    "basis OpenRouter published model-reference cost per accepted task",
+    "basis OpenRouter model catalog reference cost per accepted task",
   )
   expect(option.aria.description).toContain("denominator 4 accepted tasks")
   expect(option.aria.description).toContain("not plotted because a numeric actual cohort token")
@@ -413,11 +415,12 @@ test("responsive layout budgets axis ticks and margins for width, height, and in
   expect(wideAxisOptions.yAxis.name).toBe("USD / accepted task")
 })
 
-test("selected point and every reference amount kind receive a collision-safe identity label", () => {
+test("selected point and every reference amount kind receive readable identity labels", () => {
   const selectedPoint = {
     ...points[0]!,
     configurationID: "selected:point",
-    label: "Luna",
+    label: "GPT-6 Luna · openai / gpt-6-luna · high",
+    route: { providerID: "openai", modelID: "gpt-6-luna", variant: "high" },
     tokensPerAcceptedTask: 12_000,
     currentMarketUSDPerAcceptedTask: 0.1,
   }
@@ -467,6 +470,18 @@ test("selected point and every reference amount kind receive a collision-safe id
         symbolSize: 14,
         label: { show: false },
       })
+      expect(identities?.data).toContainEqual(
+        expect.objectContaining({
+          configurationID,
+          name: "GPT-6 Luna · high",
+          value: [12_000, 0.1],
+        }),
+      )
+      const tooltip = option.tooltip.formatter({
+        data: { configurationID, markKind: "canonical" },
+      })
+      expect(tooltip).toContain("GPT-6 Luna · high")
+      expect(tooltip).toContain("exact route openai / gpt-6-luna · high")
       expect(observations.data[1]).toMatchObject({
         configurationID: nearbyPoint.configurationID,
         label: { show: true },
@@ -488,5 +503,7 @@ test("selected point and every reference amount kind receive a collision-safe id
   )
   expect(absent.series.find((series) => series.id === "selected-identities")?.data).toEqual([])
   expect(comparisonChartReferenceTooltip(references[1]!)).toContain("4 accepted tasks")
-  expect(comparisonChartReferenceTooltip(references[1]!)).toContain("OpenRouter")
+  expect(comparisonChartReferenceTooltip(references[1]!)).toContain(
+    "OpenRouter model catalog conditional range",
+  )
 })

@@ -9,10 +9,10 @@ import { For, Show, createEffect, createUniqueId, onCleanup, onMount } from "sol
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
-  boundedChartModelLabel,
-  boundedModelLabel,
+  boundedModelEffortLabel,
   formatMarketAmount,
   formatMarketRange,
+  modelEffortLabel,
   routeLabel,
 } from "./comparison-presentation.ts"
 
@@ -154,9 +154,9 @@ export function comparisonChartPointText(point: ComparisonChartPoint) {
     : `producer label ${point.label}; exact route metadata not present`
   const source =
     point.marketSource === "openrouter"
-      ? "OpenRouter"
+      ? "OpenRouter model catalog"
       : point.marketSource === "opencode"
-        ? "OpenCode"
+        ? "OpenCode model catalog"
         : point.marketSource === "mixed"
           ? "configured price sources"
           : point.marketSource === "unavailable"
@@ -169,15 +169,17 @@ export function comparisonChartPointText(point: ComparisonChartPoint) {
 export function comparisonChartPointTooltip(point: ComparisonChartPoint) {
   const source =
     point.marketSource === "openrouter"
-      ? "OpenRouter"
+      ? "OpenRouter model catalog"
       : point.marketSource === "opencode"
-        ? "OpenCode"
+        ? "OpenCode model catalog"
         : point.marketSource === "mixed"
           ? "Configured sources"
           : point.marketSource === "unavailable"
             ? "Price source unavailable"
             : "Price source not supplied"
-  return `${boundedModelLabel(point.label)} · ≈${formatMarketAmount(point.currentMarketUSDPerAcceptedTask)} / accepted task · ${point.acceptedTaskCount} accepted task${point.acceptedTaskCount === 1 ? "" : "s"} · ${source} · ${compactTokenAxisValue(point.tokensPerAcceptedTask)} tokens${point.partial ? " · partial cohort" : ""}`
+  const label = boundedModelEffortLabel(modelEffortLabel(point.label, point.route))
+  const route = point.route ? ` · exact route ${routeLabel(point.route)}` : ""
+  return `${label}${route} · ≈${formatMarketAmount(point.currentMarketUSDPerAcceptedTask)} / accepted task · ${point.acceptedTaskCount} accepted task${point.acceptedTaskCount === 1 ? "" : "s"} · ${source} · ${compactTokenAxisValue(point.tokensPerAcceptedTask)} tokens${point.partial ? " · partial cohort" : ""}`
 }
 
 type ReferenceAmount =
@@ -203,12 +205,12 @@ export function comparisonChartReferenceText(reference: ComparisonChartReference
   const amount = referenceAmount(estimate)
   const amountLabel = amount
     ? amount.kind === "scalar"
-      ? `OpenRouter scalar reference ${money.format(amount.value)} per accepted task`
+      ? `OpenRouter model catalog scalar reference ${money.format(amount.value)} per accepted task`
       : amount.kind === "range"
-        ? `OpenRouter conditional range ${money.format(amount.minimum)}–${money.format(amount.maximum)} per accepted task`
+        ? `OpenRouter model catalog conditional range ${money.format(amount.minimum)}–${money.format(amount.maximum)} per accepted task`
         : amount.kind === "subtotal"
-          ? `OpenRouter priced subtotal only ${money.format(amount.value)} per accepted task; total and remainder unknown`
-          : `OpenRouter priced subtotal range only ${money.format(amount.minimum)}–${money.format(amount.maximum)} per accepted task; total and remainder unknown`
+          ? `OpenRouter model catalog priced subtotal only ${money.format(amount.value)} per accepted task; total and remainder unknown`
+          : `OpenRouter model catalog priced subtotal range only ${money.format(amount.minimum)}–${money.format(amount.maximum)} per accepted task; total and remainder unknown`
     : estimate.status === "zero-accepted"
       ? "no accepted-task denominator"
       : "no numeric per-task amount"
@@ -216,7 +218,7 @@ export function comparisonChartReferenceText(reference: ComparisonChartReference
     reference.tokensPerAcceptedTask === null
       ? "Actual cohort token coordinate unknown"
       : `${tokens.format(reference.tokensPerAcceptedTask)} actual cohort tokens per accepted task`
-  return `${reference.label} · exact route ${routeLabel(estimate.route)}: ${coordinate}; ${amountLabel}; basis OpenRouter published model-reference cost per accepted task; denominator ${estimate.acceptedTaskCount} accepted task${estimate.acceptedTaskCount === 1 ? "" : "s"}; OpenRouter source ${estimate.provenance.freshness}; actual route-specific task mix (not a common workload).`
+  return `${modelEffortLabel(reference.label, estimate.route)} · exact route ${routeLabel(estimate.route)}: ${coordinate}; ${amountLabel}; basis OpenRouter model catalog reference cost per accepted task; denominator ${estimate.acceptedTaskCount} accepted task${estimate.acceptedTaskCount === 1 ? "" : "s"}; OpenRouter model catalog source ${estimate.provenance.freshness}; actual route-specific task mix (not a common workload).`
 }
 
 export function comparisonChartReferenceTooltip(reference: ComparisonChartReference) {
@@ -235,7 +237,7 @@ export function comparisonChartReferenceTooltip(reference: ComparisonChartRefere
           ? "priced portion · total unknown"
           : "priced portion range · total unknown"
   const denominator = reference.estimate.acceptedTaskCount
-  return `OpenRouter · ${boundedModelLabel(reference.label)} · ≈${value}${amount.kind === "subtotal" || amount.kind === "subtotal-range" ? " priced portion" : ""} / accepted task · ${denominator} accepted task${denominator === 1 ? "" : "s"} · ${description}`
+  return `OpenRouter model catalog ${description} · ${boundedModelEffortLabel(modelEffortLabel(reference.label, reference.estimate.route))} · exact route ${routeLabel(reference.estimate.route)} · ≈${value}${amount.kind === "subtotal" || amount.kind === "subtotal-range" ? " priced portion" : ""} / accepted task · ${denominator} accepted task${denominator === 1 ? "" : "s"}`
 }
 
 function tooltipText(value: string) {
@@ -296,7 +298,7 @@ function comparisonChartDescription(
         : []),
       ...(unplottedReferences.length
         ? [
-            `${unplottedReferences.length} OpenRouter reference estimate${unplottedReferences.length === 1 ? "" : "s"} are not plotted because a numeric actual cohort token coordinate or per-task amount is missing.`,
+            `${unplottedReferences.length} OpenRouter model catalog reference estimate${unplottedReferences.length === 1 ? "" : "s"} are not plotted because a numeric actual cohort token coordinate or per-task amount is missing.`,
           ]
         : []),
     ].join(" ") || noPointDescription
@@ -374,16 +376,6 @@ export function comparisonChartOptions(
 ) {
   const points = data.points.filter(plottable)
   const references = data.references ?? []
-  const routeLabels = [
-    ...points.flatMap((point) => (point.route ? [{ label: point.label, route: point.route }] : [])),
-    ...references.map((reference) => ({ label: reference.label, route: reference.estimate.route })),
-  ]
-  const routePeers = (label: string) => {
-    const name = label.split(" · ", 1)[0]
-    return routeLabels
-      .filter((candidate) => candidate.label.split(" · ", 1)[0] === name)
-      .map((candidate) => candidate.route)
-  }
   type ReferenceMark = {
     reference: ComparisonChartReference
     amount: ReferenceAmount
@@ -469,15 +461,10 @@ export function comparisonChartOptions(
     largestTokenValue > 0 && tokensValue >= largestTokenValue * 0.68 ? "left" : "right"
   const fontSize = layout.fontSize
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
-  const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.62)) - 3, 8, 18)
+  const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.48)), 8, 18)
   const boundedSelectedLabels = selectedLabelData.map((item) => ({
     ...item,
-    visibleLabel: boundedChartModelLabel(
-      item.label,
-      item.route,
-      routePeers(item.label),
-      labelLimit,
-    ),
+    visibleLabel: boundedModelEffortLabel(modelEffortLabel(item.label, item.route), labelLimit),
   }))
   const axisTitleFontSize = Math.min(
     fontSize,
@@ -575,7 +562,10 @@ export function comparisonChartOptions(
             },
             label: {
               show: !selected,
-              formatter: boundedModelLabel(point.label, labelLimit),
+              formatter: boundedModelEffortLabel(
+                modelEffortLabel(point.label, point.route),
+                labelLimit,
+              ),
               position: labelPosition(point.tokensPerAcceptedTask),
               color: selected ? theme.text : theme.mutedText,
               fontFamily: theme.fontFamily,
@@ -606,7 +596,7 @@ export function comparisonChartOptions(
       },
       {
         id: "openrouter-reference-scalars",
-        name: "OpenRouter scalar reference",
+        name: "OpenRouter model catalog scalar reference",
         type: "scatter",
         data: scalarReferences.map(({ reference, amount, tokens: tokenCount }) => ({
           name: reference.label,
@@ -700,7 +690,7 @@ export function comparisonChartOptions(
         label: {
           show: true,
           formatter: (parameters: { name?: string }) =>
-            boundedModelLabel(parameters.name ?? "Selected model", labelLimit),
+            boundedModelEffortLabel(parameters.name ?? "Selected model", labelLimit),
           color: theme.text,
           fontFamily: theme.fontFamily,
           fontSize,
@@ -868,7 +858,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
           host = element
         }}
         role="img"
-        aria-label="Actual cohort tokens, canonical current-market observations, and OpenRouter reference costs per accepted task"
+        aria-label="Actual cohort tokens, canonical current-market observations, and OpenRouter model catalog reference costs per accepted task"
         aria-describedby={descriptionID}
         style={{
           width: "100%",
@@ -923,7 +913,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
               class="lazers-models-chart-key lazers-models-chart-key-reference"
               aria-hidden="true"
             />
-            OpenRouter reference
+            OpenRouter model catalog
           </li>
         </Show>
         <Show

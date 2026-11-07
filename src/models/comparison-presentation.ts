@@ -220,15 +220,15 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   if (estimate.status === "exact" && estimate.valueUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketAmount(estimate.valueUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · ${freshness}`,
+      title: `OpenRouter model catalog scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.status === "conditional" && estimate.rangeUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketRange(estimate.rangeUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter range · ${freshness}`,
-      title: `OpenRouter conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · range · ${freshness}`,
+      title: `OpenRouter model catalog conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.status !== "partial") return undefined
@@ -236,15 +236,15 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   if (estimate.knownSubtotalUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketAmount(estimate.knownSubtotalUSDPerAcceptedTask)} priced portion / accepted task`,
-      context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · ${freshness}`,
+      title: `OpenRouter model catalog known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.knownSubtotalRangeUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketRange(estimate.knownSubtotalRangeUSDPerAcceptedTask)} priced portion / accepted task`,
-      context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · ${freshness}`,
+      title: `OpenRouter model catalog known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   return undefined
@@ -265,9 +265,9 @@ export function currentMarketEstimateSummary(input: {
     const freshness = marketFreshness(input.priceFreshness)
     const source =
       input.priceSource === "openrouter"
-        ? "OpenRouter"
+        ? "OpenRouter model catalog"
         : input.priceSource === "opencode"
-          ? "OpenCode"
+          ? "OpenCode model catalog"
           : input.priceSource === "mixed"
             ? "Configured price sources"
             : "Configured price source"
@@ -371,80 +371,43 @@ export function boundedModelLabel(value: string, maximumLength = 36) {
   return `${characters.slice(0, Math.max(1, maximumLength - 1)).join("")}…`
 }
 
-/** Keep a friendly chart label and a compact, data-derived route discriminator visible. */
-export function boundedChartModelLabel(
-  value: string,
-  route: ModelDisplayRoute | undefined,
-  routes: readonly ModelDisplayRoute[],
-  maximumLength = 36,
-) {
-  const characters = Array.from(value)
-  if (characters.length <= maximumLength || !route) return boundedModelLabel(value, maximumLength)
-
-  const routeKey = (candidate: ModelDisplayRoute) =>
-    `${candidate.providerID}\u0000${candidate.modelID}\u0000${candidate.variant ?? ""}`
-  const uniqueRoutes = [
-    ...new Map(routes.map((candidate) => [routeKey(candidate), candidate])).values(),
-  ]
-  const selectedRouteKey = routeKey(route)
-  if (!uniqueRoutes.some((candidate) => routeKey(candidate) === selectedRouteKey))
-    uniqueRoutes.push(route)
-  if (uniqueRoutes.length < 2) return boundedModelLabel(value, maximumLength)
-
-  const componentValues = (candidate: ModelDisplayRoute): [string, string, string] => [
-    candidate.providerID,
-    candidate.modelID,
-    candidate.variant ?? "∅",
-  ]
-  const allComponents = uniqueRoutes.map(componentValues)
-  const variableComponents = [0, 1, 2].filter(
-    (index) => new Set(allComponents.map((components) => components[index])).size > 1,
+/** Remove route disambiguation from a display label, then retain the selected effort. */
+export function modelEffortLabel(value: string, route?: ModelDisplayRoute) {
+  if (!route) return value
+  const exactRouteSuffix = ` · ${routeLabel(route)}`
+  const modelName = value.endsWith(exactRouteSuffix)
+    ? value.slice(0, -exactRouteSuffix.length)
+    : value
+  if (
+    route.variant &&
+    modelName.toLocaleLowerCase().endsWith(` · ${route.variant}`.toLocaleLowerCase())
   )
-  const tags = ["p", "m", "e"] as const
-  const fragments = variableComponents.map((index) => {
-    const values = [...new Set(allComponents.map((components) => components[index]!))]
-    const byValue = new Map<string, string>()
-    for (const componentValue of values) {
-      const others = values.filter((candidate) => candidate !== componentValue)
-      let fragment = componentValue
-      for (let length = 1; length <= componentValue.length; length++) {
-        const prefix = componentValue.slice(0, length)
-        if (others.every((candidate) => !candidate.startsWith(prefix))) {
-          fragment = prefix
-          break
-        }
-        const suffix = componentValue.slice(-length)
-        if (others.every((candidate) => !candidate.endsWith(suffix))) {
-          fragment = suffix
-          break
-        }
-      }
-      byValue.set(componentValue, fragment)
-    }
-    return { index, tag: tags[index]!, byValue }
-  })
+    return modelName
+  return route.variant ? `${modelName} · ${route.variant}` : modelName
+}
 
-  let routeCode: string | undefined
-  for (let mask = 1; mask < 1 << fragments.length; mask++) {
-    const selected = fragments.filter((_, index) => mask & (1 << index))
-    const keys = allComponents.map((components) =>
-      selected.map(({ index, byValue }) => byValue.get(components[index]!)).join("/"),
-    )
-    if (new Set(keys).size !== uniqueRoutes.length) continue
-    const selectedComponents = componentValues(route)
-    const candidate = selected
-      .map(({ index, tag, byValue }) => `${tag}:${byValue.get(selectedComponents[index]!)}`)
-      .join("/")
-    if (!routeCode || candidate.length < routeCode.length) routeCode = candidate
-  }
-  if (!routeCode) return boundedModelLabel(value, maximumLength)
+/** Bound chart labels without dropping the selected effort at narrow widths. */
+export function boundedModelEffortLabel(value: string, maximumLength = 36) {
+  const characters = Array.from(value)
+  if (characters.length <= maximumLength) return value
 
-  const name = value.split(" · ", 1)[0] || value
-  const nameBudget = Math.max(1, maximumLength - Array.from(routeCode).length - 1)
-  const nameCharacters = Array.from(name)
-  const visibleName =
-    nameCharacters.length <= nameBudget ? name : `${nameCharacters.slice(0, nameBudget).join("")}…`
-  return `${visibleName}${visibleName === name ? "…" : ""}${routeCode}`
+  const separator = value.lastIndexOf(" · ")
+  if (separator < 0) return boundedModelLabel(value, maximumLength)
+
+  const modelName = value.slice(0, separator)
+  const effort = value.slice(separator + 3)
+  const effortBudget = Math.max(1, maximumLength - 5)
+  const visibleEffort =
+    Array.from(effort).length <= effortBudget
+      ? effort
+      : effortBudget === 1
+        ? "…"
+        : `…${Array.from(effort)
+            .slice(-(effortBudget - 1))
+            .join("")}`
+  const suffix = ` · ${visibleEffort}`
+  const nameBudget = Math.max(1, maximumLength - Array.from(suffix).length - 1)
+  return `${Array.from(modelName).slice(0, nameBudget).join("")}…${suffix}`
 }
 
 export function sourceTitle(source: ModelSource["source"]) {

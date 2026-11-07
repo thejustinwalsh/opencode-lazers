@@ -619,7 +619,7 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   dom.document.body.append(container)
   const scalar = reference("reference:scalar", "exact", 12_000)
   const conditional = reference("reference:conditional", "conditional", 18_000)
-  conditional.label = "GPT-6 Luna · OpenAI"
+  conditional.label = "GPT-6 Luna · openai / reference-model · high"
   const subtotal = reference("reference:subtotal", "partial", 24_000)
   const subtotalRange = reference("reference:subtotal-range", "partial", 30_000)
   subtotalRange.estimate = ModelDecisionReferenceEstimateSchema.parse({
@@ -691,11 +691,11 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
       ),
   ).toBe(false)
   expect(container.querySelectorAll("svg path").length).toBeGreaterThan(0)
-  expect(host.getAttribute("aria-label")).toContain("OpenRouter scalar reference")
+  expect(host.getAttribute("aria-label")).toContain("OpenRouter model catalog scalar reference")
   expect(host.getAttribute("aria-label")).toContain("conditional range")
   expect(host.getAttribute("aria-label")).toContain("remainder unknown")
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "OpenRouter reference",
+    "OpenRouter model catalog",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
     "Conditional range",
@@ -722,9 +722,15 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(conditionalButton.tagName).toBe("BUTTON")
   expect(conditionalButton.tabIndex).toBe(0)
   expect(conditionalButton.getAttribute("aria-pressed")).toBe("false")
-  expect(conditionalButton.getAttribute("aria-label")).toContain("OpenRouter conditional range")
+  expect(conditionalButton.getAttribute("aria-label")).toContain(
+    "OpenRouter model catalog conditional range",
+  )
+  expect(conditionalButton.getAttribute("aria-label")).toContain(
+    "exact route openai / reference-model · high",
+  )
   expect(conditionalButton.getAttribute("title")).toContain("GPT-6 Luna")
-  expect(conditionalButton.getAttribute("title")).toContain("3 accepted tasks · conditional range")
+  expect(conditionalButton.getAttribute("title")).toContain("conditional range")
+  expect(conditionalButton.getAttribute("title")).toContain("3 accepted tasks")
   conditionalButton.focus()
   expect((dom.document.activeElement as unknown) === (conditionalButton as unknown)).toBe(true)
   conditionalButton.click()
@@ -732,9 +738,14 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   await until(() => buttonFor(conditional.configurationID).getAttribute("aria-pressed") === "true")
   const selectedRangeLabels = () =>
     Array.from(host.querySelectorAll("svg text")).some((label) =>
-      label.textContent?.includes("GPT-6 Luna"),
+      label.textContent?.includes("GPT-6 Luna · high"),
     )
   await until(() => selectedRangeLabels())
+  expect(
+    Array.from(host.querySelectorAll("svg text")).some(
+      (label) => label.textContent?.trim() === "GPT-6 Luna · high",
+    ),
+  ).toBe(true)
   expect(
     (chart.getOption() as unknown as RenderedOption).series
       ?.find((entry) => entry.id === "selected-identities")
@@ -777,6 +788,9 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(visibleTooltip("conditional range")?.textContent).toContain(
     "≈$4e-8–$1.2e-7 / accepted task",
   )
+  expect(visibleTooltip("conditional range")?.textContent).toContain(
+    "GPT-6 Luna · high · exact route openai / reference-model · high",
+  )
   const subtotalSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-reference-subtotals",
   )
@@ -795,49 +809,51 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(visibleTooltip("priced portion range")?.textContent).toContain("total unknown")
 })
 
-test("narrow selected Luna range labels retain visible provider and model route distinctions", async () => {
+test("selected Luna ranges use readable model-effort labels and retain exact route and mark identity", async () => {
   const host = dom.document.createElement("div")
   host.style.fontSize = "20px"
   dom.document.body.append(host)
   size(host, 330, 190)
-  const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, () => {})
-  const cases = [
-    [
-      {
-        providerID: "provider-long-prefix-openai",
-        modelID: "shared-long-prefix-gpt-6-luna-model",
-        variant: "max",
-      },
-      {
-        providerID: "provider-long-prefix-openrouter",
-        modelID: "shared-long-prefix-gpt-6-luna-model",
-        variant: "max",
-      },
-    ],
-    [
-      {
-        providerID: "provider-long-prefix-openai",
-        modelID: "gpt-6-luna-long-shared-alpha",
-        variant: "max",
-      },
-      {
-        providerID: "provider-long-prefix-openai",
-        modelID: "gpt-6-luna-long-shared-beta",
-        variant: "max",
-      },
-    ],
+  const selections: string[] = []
+  const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, (id) =>
+    selections.push(id),
+  )
+  const observer = TestResizeObserver.instances.at(-1)!
+  const routes = [
+    { providerID: "openai", modelID: "gpt-6-luna", variant: "max" },
+    { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: "max" },
   ] as const
-  const renderedLabels: string[][] = []
+  const references = routes.map((route, index) =>
+    routedRangeReference(`global:route-${index}`, route),
+  )
+  const viewports = [
+    { width: 330, height: 190 },
+    { width: 450, height: 230 },
+    { width: 960, height: 320 },
+  ]
   const svgLabelTexts = () =>
     Array.from(host.querySelectorAll("svg text")).map((label) => label.textContent?.trim() ?? "")
+  const option = () => adapter.chart.getOption() as unknown as RenderedOption
+  const visibleTooltip = (routeLabel: string) =>
+    Array.from(host.children).find((child) => {
+      if (child.tagName !== "DIV") return false
+      const style = dom.getComputedStyle(child)
+      return (
+        style.position === "absolute" &&
+        style.display === "block" &&
+        style.visibility !== "hidden" &&
+        style.opacity !== "0" &&
+        child.textContent?.includes(routeLabel) === true
+      )
+    })
 
   try {
-    for (const [caseIndex, routes] of cases.entries()) {
-      const references = routes.map((route, index) =>
-        routedRangeReference(`duplicate-route-${caseIndex}-${index}`, route),
-      )
-      const labels: string[] = []
-      for (const reference of references) {
+    for (const viewport of viewports) {
+      size(host, viewport.width, viewport.height)
+      observer.trigger()
+      await until(() => host.querySelector("svg")?.getAttribute("width") === String(viewport.width))
+
+      for (const [index, reference] of references.entries()) {
         adapter.update(
           {
             points: [],
@@ -847,7 +863,6 @@ test("narrow selected Luna range labels retain visible provider and model route 
           },
           theme,
         )
-        const option = () => adapter.chart.getOption() as unknown as RenderedOption
         const selectedName = () =>
           option()
             .series?.find((series) => series.id === "selected-identities")
@@ -860,22 +875,54 @@ test("narrow selected Luna range labels retain visible provider and model route 
           return (
             !Array.isArray(datum) &&
             typeof datum?.name === "string" &&
-            svgLabelTexts().includes(datum.name)
+            svgLabelTexts().includes(datum.name) &&
+            datum.configurationID === reference.configurationID
           )
         })
         const datum = selectedName()
         if (!datum || Array.isArray(datum)) throw new Error("Expected a selected model label")
         const visibleLabel = datum.name!
-        expect(visibleLabel).toContain("GPT-6")
-        expect(visibleLabel.length).toBeLessThanOrEqual(10)
+        expect(visibleLabel).toBe("GPT-6 Luna · max")
+        expect(visibleLabel).not.toMatch(/[pme]:/)
         expect(svgLabelTexts()).toContain(visibleLabel)
-        labels.push(visibleLabel)
+        expect(datum).toMatchObject({
+          configurationID: reference.configurationID,
+          markKind: "selected-identity",
+          value: [20_000, 0.00000008],
+        })
+
+        const rangeData = option()
+          .series?.find((series) => series.id === "openrouter-conditional-ranges")
+          ?.data?.find(
+            (entry) => !Array.isArray(entry) && entry.configurationID === reference.configurationID,
+          )
+        expect(rangeData).toMatchObject({
+          configurationID: reference.configurationID,
+          value: [20_000, 0.00000004, 0.00000012],
+          markKind: "reference",
+        })
+
+        const route = routes[index]!
+        const exactRoute = `${route.providerID} / ${route.modelID} · ${route.variant}`
+        const rangeSeriesIndex = option().series?.findIndex(
+          (series) => series.id === "openrouter-conditional-ranges",
+        )
+        adapter.chart.dispatchAction({
+          type: "showTip",
+          seriesIndex: rangeSeriesIndex,
+          dataIndex: index,
+        })
+        await until(() => visibleTooltip(exactRoute) !== undefined)
+        expect(visibleTooltip(exactRoute)?.textContent).toContain("GPT-6 Luna · max")
+        expect(visibleTooltip(exactRoute)?.textContent).toContain(`exact route ${exactRoute}`)
+
+        const chartEvents = adapter.chart as unknown as {
+          trigger: (event: string, payload: unknown) => void
+        }
+        chartEvents.trigger("click", { data: { configurationID: reference.configurationID } })
+        expect(selections.at(-1)).toBe(reference.configurationID)
       }
-      expect(new Set(labels).size).toBe(references.length)
-      renderedLabels.push(labels)
     }
-    expect(renderedLabels[0]).toEqual(["GPT-6 …p:i", "GPT-6 …p:r"])
-    expect(renderedLabels[1]).toEqual(["GPT-6…m:ha", "GPT-6…m:ta"])
   } finally {
     adapter.dispose()
   }
@@ -928,14 +975,16 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     {
       ...points[0]!,
       configurationID: "crowded:selected-luna",
-      label: "GPT-6 Luna · OpenAI",
+      label: "GPT-6 Luna",
+      route: { providerID: "openai", modelID: "gpt-6-luna", variant: "max" },
       tokensPerAcceptedTask: 20_000,
       currentMarketUSDPerAcceptedTask: 0.1,
     },
     {
       ...points[1]!,
       configurationID: "crowded:nearby-luna",
-      label: "GPT-6 Luna · OpenRouter",
+      label: "GPT-6 Luna",
+      route: { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: "max" },
       tokensPerAcceptedTask: 20_001,
       currentMarketUSDPerAcceptedTask: 0.100001,
     },
@@ -968,7 +1017,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     expect(svg()?.getAttribute("height")).toBe("190")
     expect(svg()?.textContent).toContain("Tokens / accepted task")
     expect(svg()?.textContent).toContain("USD / task")
-    expect(svg()?.textContent).toContain("GPT-6 Lun")
+    expect(svg()?.textContent).toContain("GPT-6 Luna · max")
     const narrow = option()
     expect(narrow.xAxis?.[0]?.splitNumber).toBe(2)
     expect(narrow.yAxis?.[0]?.splitNumber).toBe(2)
@@ -1073,7 +1122,11 @@ test("actual tooltip renders markup-like model labels as literal text without in
   const shortLabel = `${Array.from(label).slice(0, 35).join("")}…`
   const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, () => {})
   try {
-    adapter.update({ points: [{ ...points[0]!, label }], frontierConfigurationIDs: [] }, theme)
+    const { route: _route, ...pointWithoutRoute } = points[0]!
+    adapter.update(
+      { points: [{ ...pointWithoutRoute, label }], frontierConfigurationIDs: [] },
+      theme,
+    )
     adapter.chart.dispatchAction({ type: "showTip", seriesIndex: 0, dataIndex: 0 })
     const visibleTooltip = () =>
       Array.from(host.children).find((child) => {

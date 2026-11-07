@@ -210,22 +210,22 @@ function referenceCostLabel(estimate: ModelDecisionReferenceEstimate) {
   switch (estimate.status) {
     case "exact":
       return estimate.valueUSDPerAcceptedTask === null
-        ? "No numeric OpenRouter reference amount"
-        : `OpenRouter scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
+        ? "No numeric OpenRouter model catalog reference amount"
+        : `OpenRouter model catalog scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
     case "conditional":
       return estimate.rangeUSDPerAcceptedTask
-        ? `OpenRouter conditional range · ${moneyRangeLabel(estimate.rangeUSDPerAcceptedTask)} / accepted task`
-        : "No numeric OpenRouter range amount"
+        ? `OpenRouter model catalog conditional range · ${moneyRangeLabel(estimate.rangeUSDPerAcceptedTask)} / accepted task`
+        : "No numeric OpenRouter model catalog range amount"
     case "partial":
       if (estimate.knownSubtotalUSDPerAcceptedTask !== null)
-        return `OpenRouter priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
+        return `OpenRouter model catalog priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
       if (estimate.knownSubtotalRangeUSDPerAcceptedTask)
-        return `OpenRouter priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
+        return `OpenRouter model catalog priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
       return "No priced portion is shown; total unknown"
     case "zero-accepted":
       return "No accepted tasks · no reference per-task amount"
     case "unavailable":
-      return "No numeric OpenRouter reference amount"
+      return "No numeric OpenRouter model catalog reference amount"
   }
 }
 
@@ -254,6 +254,17 @@ function formatKnownUsageMoney(value: number | null) {
 
 function countLabel(count: number, singular: string, plural = `${singular}s`) {
   return `${count.toLocaleString()} ${count === 1 ? singular : plural}`
+}
+
+function knownUsageSourcePresentation(source: KnownUsageMarketScenario["provenance"]["source"]) {
+  switch (source) {
+    case "openrouter-endpoints":
+      return {
+        compact: "OpenRouter endpoint pricing",
+        pricing: "OpenRouter endpoint pricing",
+        sourceLink: "OpenRouter endpoint source",
+      }
+  }
 }
 
 function formatKnownUsageRange(
@@ -371,6 +382,7 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
   const valueLabel = () => knownUsageValueLabel(scenario())
   const essentialDescription = () => knownUsageEssentialDescription(scenario())
   const provenance = () => scenario().provenance
+  const sourcePresentation = () => knownUsageSourcePresentation(provenance().source)
   const freshness = () =>
     scenario().freshness === "current"
       ? "Current"
@@ -391,7 +403,7 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
         <strong>{valueLabel()}</strong>
       </p>
       <p class="lazers-models-market-meta">
-        OpenRouter endpoint · provider {provenance().providerName ?? "unavailable"} · tag{" "}
+        {sourcePresentation().compact} · provider {provenance().providerName ?? "unavailable"} · tag{" "}
         {provenance().tag ?? "unavailable"} · service tier{" "}
         {provenance().serviceTier ?? "not specified"} · {freshness()} ·{" "}
         {formatDate(provenance().retrievedAt)}
@@ -419,12 +431,12 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
             <dl class="lazers-models-evidence-summary">
               <dt>Pricing source</dt>
               <dd>
-                OpenRouter endpoint pricing · {provenance().productID} · refresh{" "}
+                {sourcePresentation().pricing} · {provenance().productID} · refresh{" "}
                 {provenance().refreshState} · snapshot generation{" "}
                 {provenance().snapshotGeneration?.toLocaleString() ?? "unavailable"} · current
                 generation {provenance().currentGeneration?.toLocaleString() ?? "unavailable"}
               </dd>
-              <dt>Endpoint source</dt>
+              <dt>{sourcePresentation().sourceLink}</dt>
               <dd>
                 <a href={provenance().sourceURL} target="_blank" rel="noreferrer">
                   {provenance().sourceURL}
@@ -1981,7 +1993,7 @@ function ModelPanel(
                       if (comparisonChartHasPlottablePoints(points))
                         return "Historical task outcomes"
                       if (comparisonChartHasPlottablePoints([], references))
-                        return "OpenRouter reference estimates · actual task mix"
+                        return "OpenRouter model catalog reference estimates · actual task mix"
                       return "No plottable comparison points"
                     })()}
                   </h3>
@@ -2276,21 +2288,23 @@ function ModelPanel(
                               {(reference) => (
                                 <section
                                   class="lazers-models-reference-estimate"
-                                  aria-label="OpenRouter actual-cohort reference estimate"
+                                  aria-label="OpenRouter actual-cohort model catalog reference estimate"
                                 >
-                                  <h3>OpenRouter market reference</h3>
+                                  <h3>OpenRouter model catalog reference</h3>
                                   <p>{referenceCostLabel(reference())}</p>
                                   <details class="lazers-models-reference-details">
-                                    <summary>OpenRouter reference coverage and source</summary>
+                                    <summary>
+                                      OpenRouter model catalog reference coverage and source
+                                    </summary>
                                     <div class="lazers-models-reference-content">
                                       <p>
                                         This reference uses observed attributed usage and published
-                                        OpenRouter rates. Failed and retry effort is included as
-                                        producer-reported; it is divided by accepted logical tasks.
-                                        Actual task mix can differ by configuration; this is not a
-                                        common workload or universal ranking. Denominator ·{" "}
-                                        {formatNumber(reference().acceptedTaskCount)} accepted
-                                        tasks.
+                                        OpenRouter model catalog rates. Failed and retry effort is
+                                        included as producer-reported; it is divided by accepted
+                                        logical tasks. Actual task mix can differ by configuration;
+                                        this is not a common workload or universal ranking.
+                                        Denominator · {formatNumber(reference().acceptedTaskCount)}{" "}
+                                        accepted tasks.
                                       </p>
                                       <p>
                                         Identity · {reference().identityStatus} · source
@@ -2328,7 +2342,7 @@ function ModelPanel(
                                         {(sourceURL) => (
                                           <p>
                                             <a href={sourceURL()} target="_blank" rel="noreferrer">
-                                              OpenRouter published source
+                                              OpenRouter model catalog source
                                             </a>
                                           </p>
                                         )}

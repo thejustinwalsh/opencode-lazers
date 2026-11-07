@@ -272,13 +272,14 @@ function knownUsageScenario(
   }
 }
 
-test("known-usage inspector shows endpoint provenance and scoped documented cache-write zero", () => {
+test("known-usage inspector labels endpoint provenance and scoped documented cache-write zero", () => {
   const card = renderMarketScenario(knownUsageScenario())
   try {
     expect(card.initiallyOpen).toBe(false)
     expect(card.compactText).toContain("Current-market equivalent of known retained usage")
     expect(card.compactText).toContain("Scenario amount · $0.00002")
-    expect(card.compactText).toContain("OpenRouter endpoint · provider Moonshot AI")
+    expect(card.compactText).toContain("OpenRouter endpoint pricing · provider Moonshot AI")
+    expect(card.compactText).not.toContain("OpenRouter model catalog")
     expect(card.compactText).toContain("moonshotai/mxfp4")
     expect(card.compactText).toContain("service tier not specified · Current")
     expect(card.compactText).toContain("not actual charges")
@@ -295,6 +296,8 @@ test("known-usage inspector shows endpoint provenance and scoped documented cach
     expect(card.evidenceText()).toContain("Cache write · 5 tokens · Observed")
     expect(card.evidenceText()).toContain("standard0.0000020.000010.00000020")
     expect(card.evidenceText()).toContain("not a complete-task bound")
+    expect(card.evidenceText()).toContain("OpenRouter endpoint pricing")
+    expect(card.evidenceText()).toContain("OpenRouter endpoint source")
     expect(card.markup).toContain('aria-label="Current-market equivalent of known retained usage"')
     expect(card.markup).toContain('<th scope="col">Tier</th>')
     expect(card.markup).toContain('<th scope="row">standard</th>')

@@ -1724,7 +1724,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ".lazers-models-comparison-chart [role=img]",
     )!
     expect(chartImage.getAttribute("aria-label")).toBe(
-      "Actual cohort tokens, canonical current-market observations, and OpenRouter reference costs per accepted task",
+      "Actual cohort tokens, canonical current-market observations, and OpenRouter model catalog reference costs per accepted task",
     )
     const chartAccessibleDescription = containerA.querySelector<HTMLElement>(
       `#${chartImage.getAttribute("aria-describedby")}`,
@@ -1878,7 +1878,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const exactReferencePanel = containerA.querySelector<HTMLElement>(
       ".lazers-models-reference-estimate",
     )!
-    expect(exactReferencePanel.textContent).toContain("OpenRouter scalar reference")
+    expect(exactReferencePanel.textContent).toContain("OpenRouter model catalog scalar reference")
     expect(exactReferencePanel.textContent).toContain("$0.0000000000123 / accepted task")
     expect(exactReferencePanel.textContent).toContain("not a common workload")
     expect(exactReferencePanel.textContent).toContain("Denominator · 9 accepted tasks")
@@ -1889,7 +1889,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     expect(exactReferenceDetails.open).toBe(false)
     exactReferenceDetails.open = true
-    expect(exactReferenceDetails.textContent).toContain("OpenRouter published source")
+    expect(exactReferenceDetails.textContent).toContain("OpenRouter model catalog source")
     expect(exactReferenceDetails.textContent).toContain("2 failed · 3 retries")
     expect(exactReferenceDetails.textContent).toContain("Cache read")
     exactReferenceDetails.open = false
@@ -2028,7 +2028,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "Observed",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "OpenRouter reference",
+      "OpenRouter model catalog",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
       "Conditional range",
@@ -2048,7 +2048,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(conditionalReferenceButton.tagName).toBe("BUTTON")
     expect(conditionalReferenceButton.tabIndex).toBe(0)
     expect(conditionalReferenceButton.getAttribute("aria-label")).toContain(
-      "OpenRouter conditional range",
+      "OpenRouter model catalog conditional range",
     )
     conditionalReferenceButton.focus()
     expect(browserDocument.activeElement).toBe(conditionalReferenceButton)
@@ -2062,7 +2062,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () =>
         containerA
           .querySelector(".lazers-models-reference-estimate")
-          ?.textContent?.includes("OpenRouter conditional range") === true,
+          ?.textContent?.includes("OpenRouter model catalog conditional range") === true,
     )
     const conditionalInspection = containerA.querySelector<HTMLElement>(
       ".lazers-models-reference-estimate",
@@ -2331,7 +2331,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           ?.textContent?.includes("88,888 tokens") === true,
     )
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
-      "OpenRouter priced subtotal only",
+      "OpenRouter model catalog priced subtotal only",
     )
     const partialMarketSummary = containerA.querySelector<HTMLElement>(
       ".lazers-models-market-summary",
@@ -2613,7 +2613,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA.querySelector(".lazers-models-chart h3")?.textContent ===
-          "OpenRouter reference estimates · actual task mix" &&
+          "OpenRouter model catalog reference estimates · actual task mix" &&
         containerA.querySelector(
           `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
         ) !== null,
@@ -2935,11 +2935,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const catalogGraphDescription = chartDescription()
     expect(catalogGraphDescription).toContain("An unusually long catalog-backed model display name")
     expect(catalogGraphDescription).toContain("Qwen 7")
-    expect(catalogGraphDescription).toContain("GPT-6 · openai / gpt-6 · high")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-b / model-b · 50")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-a")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-a · high")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-c")
+    expect(catalogGraphDescription).toContain("GPT-6 · high · exact route openai / gpt-6 · high")
+    expect(catalogGraphDescription).toContain("GPT-6 · 50 · exact route provider-b / model-b · 50")
+    expect(catalogGraphDescription).toContain("GPT-6 · exact route provider-a / model-a")
+    expect(catalogGraphDescription).toContain(
+      "GPT-6 · high · exact route provider-a / model-a · high",
+    )
+    expect(catalogGraphDescription).toContain("GPT-6 · exact route provider-a / model-c")
     const catalogChartHost = containerA.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
@@ -2977,7 +2979,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       renderedCatalogSeries?.data?.find((datum) => datum.configurationID === CONFIG_CROSS_ROUTE)
         ?.label?.formatter,
-    ).toBe("GPT-6 · provider-…")
+    ).toBe("GPT-6 · 50")
     const renderedReferenceSeries = (
       catalogChart.getOption() as unknown as {
         series: Array<{ id?: string; data?: Array<{ configurationID?: string; name?: string }> }>
@@ -3068,12 +3070,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           style.position === "absolute" &&
           style.display === "block" &&
           style.visibility !== "hidden" &&
-          child.textContent?.includes("An unusually long catalog-backed mo…") === true
+          child.textContent?.includes("An unusually long catalog-ba… · deep") === true
         )
       })
     await until(() => catalogReferenceTooltip() !== undefined)
     expect(catalogReferenceTooltip()?.textContent).toContain("≈$1.23e-11 / accepted task")
     expect(catalogReferenceTooltip()?.textContent).toContain("scalar reference")
+    expect(catalogReferenceTooltip()?.textContent).toContain(
+      "exact route provider-c / model-with-long-name · deep",
+    )
     const visibleCatalogTooltip = (label: string) =>
       [...catalogChartHost.children].find((child) => {
         if (child.tagName !== "DIV") return false
@@ -3088,8 +3093,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         )
       })
     for (const [configurationID, label] of [
-      [sharedNameNullConfigurationID, "GPT-6 · provider-a / model-a"],
-      [sharedNameVariantConfigurationID, "GPT-6 · provider-a / model-a · high"],
+      [sharedNameNullConfigurationID, "GPT-6 · exact route provider-a / model-a"],
+      [sharedNameVariantConfigurationID, "GPT-6 · high · exact route provider-a / model-a · high"],
     ] as const) {
       const referenceDataIndex = catalogChartSeries[catalogReferenceSeriesIndex]!.data!.findIndex(
         (datum) => datum.configurationID === configurationID,
