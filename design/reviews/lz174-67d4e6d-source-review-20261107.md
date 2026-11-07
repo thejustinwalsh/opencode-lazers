@@ -71,3 +71,24 @@ does not claim canonical integration, native174 acceptance, original172 recovery
 or live qualification. Original attempt/history and recorded6622ebf artifact were
 not rewritten. Current canonical Architect tasking guidance must survive merging
 the older174 branch.
+
+## Direct correction from a combined review hold
+
+Observed native Models plan09cb85ba reconcile73 immediately return to blocked74
+for its existing `root-live-corrected-models:human` wait; the following retained
+repair rejected the stale version. The accepted task still needed source changes.
+Root extended the existing retained-repair preflight, atomic validation and plan
+update to allow blocked unintegrated plans. All existing exact accepted-task,
+attempt, owner, route, native input, workspace, integration and dependency checks
+remain. This avoids an intermediate reconcile race; it does not accept a candidate
+or waive the outstanding product review.
+
+The regression uses an actual accepted isolated task whose combined product
+review is missing. Direct repair executes on the same session/attempt/workspace;
+after revised task checks pass, combined review remains blocked. The new test
+first exposed the additional atomic SQL restriction, then passed after all three
+admission sites were aligned. Final suite:17 passed,0 failed,232 assertions;
+`bun run verify` passed with automatic formatting/lint and strict checking.
+The Architect also succeeded in resuming172 through a tightly sequenced existing
+control call before this fix's direct blocked-plan path was observed natively.
+Do not claim that workaround as live verification of the new direct path.

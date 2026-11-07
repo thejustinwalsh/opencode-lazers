@@ -17,6 +17,7 @@ afterEach(() => {
 type FixtureOptions = {
   dependent?: boolean
   humanEvidence?: boolean
+  combinedHumanEvidence?: boolean
   failRepair?: boolean
   ambiguousRepair?: boolean
   repairRace?: boolean
@@ -100,7 +101,12 @@ function fixture(options: FixtureOptions = {}) {
         {
           id: "combined",
           assertion: "All isolated task artifacts are present together",
-          evidence: [{ kind: "verification" as const, verificationID: "combined" }],
+          evidence: [
+            { kind: "verification" as const, verificationID: "combined" },
+            ...(options.combinedHumanEvidence
+              ? [{ kind: "human" as const, decision: "product review" }]
+              : []),
+          ],
         },
       ],
     },
@@ -383,6 +389,35 @@ function addActivePlanAttempt(
   )
   return plan.planID
 }
+
+test("retained repair directly corrects an accepted task blocked on combined product review", async () => {
+  const f = fixture({ combinedHumanEvidence: true })
+  await accept(f)
+  const prior = f.store.attempts(f.planID)[0]!
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(prior.state).toBe("accepted")
+  const requested = await f.runtime.command(retainedRepairCommand(f), "owner")
+  expect(requested).toMatchObject({
+    status: "retained-repair-requested",
+    attemptID: prior.id,
+  })
+  await f.runtime.tick()
+  expect(f.prompts).toHaveLength(2)
+  expect(f.created).toEqual([prior.session_id])
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: prior.id,
+    session_id: prior.session_id,
+    workspace: prior.workspace,
+    policy: prior.policy,
+  })
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.store.plan(f.planID)?.reason).toContain("combined:human")
+})
 
 test("explicit retained repair preserves accepted history and usage and re-verifies equal-hash task and combined artifacts", async () => {
   const f = fixture()

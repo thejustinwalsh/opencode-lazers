@@ -1703,8 +1703,8 @@ export class TaskRuntime {
     )
       throw new Error("Retained repair requires the current same-project Architect owner")
     const ownerEpoch = this.store.planControlEpoch(plan.id)
-    if (!["running", "accepted"].includes(plan.state))
-      throw new Error("Retained repair requires a running or accepted, unintegrated plan")
+    if (!["running", "accepted", "blocked"].includes(plan.state))
+      throw new Error("Retained repair requires a running, accepted or blocked, unintegrated plan")
     if (this.store.activeAdoptions(plan.id).length)
       throw new Error("A descendant adoption prevents retained repair")
     if (
@@ -3249,8 +3249,10 @@ export class TaskRuntime {
           this.store.planControlEpoch(plan.id) !== retainedRepair.ownerEpoch
         )
           throw new Error("Retained repair owner/control authorization changed before admission")
-        if (!new Set(["running", "accepted"]).has(plan.state))
-          throw new Error("Retained repair requires a running or accepted, unintegrated plan")
+        if (!new Set(["running", "accepted", "blocked"]).has(plan.state))
+          throw new Error(
+            "Retained repair requires a running, accepted or blocked, unintegrated plan",
+          )
         const input = PlanInput.parse(JSON.parse(plan.body))
         const task = this.store.repository.get(retainedRepair.taskID)
         const node = this.store
@@ -3338,7 +3340,7 @@ export class TaskRuntime {
           .run(retainedRepair.messageID, attempt.id, retainedRepair.previousMessageID).changes
         const updatedPlan = db
           .query(
-            "UPDATE runner_plans SET state='running',reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted')",
+            "UPDATE runner_plans SET state='running',reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
           )
           .run(plan.id, command.expectedVersion + 1).changes
         if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
