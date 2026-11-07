@@ -73,8 +73,8 @@ was removed; native/control/task checks remain. Existing generation2
 `a5aadd33-556a-4785-acad-0b62129b2709` passed task and combined continuation,
 runner and auto-fix quality checks. At Unix1794084309704 the whole plan was
 acceptedv26 after Architect recorded actual original172 substantive recovery.
-Native integration bookkeeping/cleanup still needs follow-through; do not infer
-cleanup from acceptance. Report: `design/reviews/lz174-67d4e6d-source-review-20261107.md`.
+Native integration is recorded; cleanup-blockedv28 preserves unknown-idle
+original resources. Do not retry unchanged cleanup or invalidate the landed source. Report: `design/reviews/lz174-67d4e6d-source-review-20261107.md`.
 
 LZ172 original attempt14b02650 resumed in its existing session83bd7a96/workspace,
 OpenAI LunaMax route and parent, performed actual patches and committed clean
@@ -85,8 +85,13 @@ helper; latest readable-name/effort guidance was not reflected. Last60 messages
 show only two instruction fetches, both advice1 from Nov6, none on this resumed
 turn. Main Architect is inspecting native keyed instructions and reviewing the
 same candidate, then must use supported same-attempt execution for corrections.
-Do not equate keyed instruction delivery with idle worker execution. Advice5 and
-render review: `design/reviews/lz172-retained-render-20261107.md`. Real narrow/wide
+Advice6 is now stored, native keyed context is read back, and the SAME worker is
+actually running again (busy1794084601387, planv78). Original tightly sequenced
+reconcile/repair succeeded; no replacement or retry. Do not equate keyed
+instruction delivery with execution. Root also fixed direct admission from a
+blocked combined-review plan in deb9a09 (17tests/232assertions + auto-fix strict
+checks pass); direct blocked-path native observation remains unproven. That fix
+avoids the observed intermediate reconcile73→blocked74 version race. Render review: `design/reviews/lz172-retained-render-20261107.md`. Real narrow/wide
 Desktop and native Terra visual review remain; fixture pictures are insufficient.
 
 ## Verified and landed this pass
