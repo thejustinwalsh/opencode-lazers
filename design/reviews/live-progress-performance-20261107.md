@@ -118,3 +118,5 @@ Cause in current `src/tasks/scheduling-read.ts`: `planProof`/`taskProof` avoid t
 
 Reproduction `/private/tmp/lz182-transient-proof-observation.test.ts` failed one assertion; no-failure control `/private/tmp/lz182-transient-proof-control.test.ts` passed. Both use disposable SQLite/Git fixtures and clean them up. This is a candidate review finding, not a claim that runtime dispatch itself is blocked by this read-only UI cache.
 
+The worker's broader native test command completed in 198.98 seconds with **709 passing / 19 failing** across 49 files (8,877 assertions). Root read the exact completed tool result, not an observation timeout. Failures include dependency execution, retained successor chains, serial shared children, integration and cleanup fixtures. Their causes still require worker diagnosis against the changed integration-before-successor contract; they are not automatically unrelated or waived by the seven focused scheduling passes. Full retained output is `/private/tmp/lz182-broad-test-output.txt`. The current original worker is still active repairing the cache finding; no restart or duplicate suite was launched by Root.
+
