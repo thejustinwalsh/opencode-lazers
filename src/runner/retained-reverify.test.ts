@@ -19,6 +19,7 @@ import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
+import { fingerprint } from "../identity.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
@@ -64,6 +65,7 @@ function fixture(
     failRetainedCheck?: boolean
     combinedHumanEvidence?: boolean
     candidateContentsCheck?: boolean
+    projectBuild?: boolean
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-reverify-project-"))
@@ -85,6 +87,22 @@ function fixture(
     join(root, "package.json"),
     '{"name":"retained-reverify-fixture","version":"1.0.0"}\n',
   )
+  if (options.projectBuild) {
+    writeFileSync(join(root, ".gitignore"), "node_modules/\ndist/\n")
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "retained-reverify-fixture",
+        version: "1.0.0",
+        scripts: { "build:fixture": "bun scripts/build-fixture.ts" },
+      }) + "\n",
+    )
+    mkdirSync(join(root, "scripts"))
+    writeFileSync(
+      join(root, "scripts/build-fixture.ts"),
+      'import {mkdirSync,writeFileSync} from "node:fs"; mkdirSync("dist",{recursive:true});writeFileSync("dist/built.txt","built before tests");console.log("project build completed");\n',
+    )
+  }
   if (options.retainedDependencyInstaller) {
     const manifest = {
       name: "retained-reverify-fixture",
@@ -153,7 +171,11 @@ function fixture(
     writeFileSync(
       join(root, "src/runner/retained-check.test.ts"),
       'import {test,expect} from "bun:test"; import {readFileSync} from "node:fs";\n' +
-        'test("committed candidate contents",()=>{const text=readFileSync("result.txt","utf8");expect(text).toContain("retained candidate");console.log(text)});\n',
+        'test("committed candidate contents",()=>{const text=readFileSync("result.txt","utf8");expect(text).toContain("retained candidate");' +
+        (options.projectBuild
+          ? 'expect(readFileSync("dist/built.txt","utf8")).toBe("built before tests");'
+          : "") +
+        "console.log(text)});\n",
     )
   git(root, ["add", "-A"])
   git(root, ["commit", "-m", "baseline"])
@@ -590,6 +612,48 @@ test("registered verification qualifies an actual same-worker repair descendant 
       (check) => check.artifact === f.artifact && check.receipt.includes("repair descendant"),
     ),
   ).toBe(true)
+})
+
+test("registered retained repair verification executes the exact authored build/test chain", async () => {
+  const command = "bun run build:fixture && bun test src/runner/retained-check.test.ts"
+  const f = await heldRepairFixture({
+    projectBuild: true,
+    taskCheckCommand: command,
+    combinedCheckCommand: command,
+  })
+  const requested = await f.control.execute(f.request)
+  for (let i = 0; i < 6; i++) await f.runtime.tick()
+  expect(f.store.attempts(f.planID)[0]?.artifact).toBe(f.artifact)
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  await f.control.execute({
+    requestID: "continue-combined-build-chain",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "reconcile",
+    reason: "Continue combined checks after exact task candidate acceptance",
+  })
+  for (let i = 0; i < 6; i++) await f.runtime.tick()
+  const rows = f.store.atomic((db) =>
+    db
+      .query<{ check_json: string; artifact: string; receipt: string }, [string]>(
+        "SELECT check_json,artifact,receipt FROM runner_retained_verification_checks WHERE operation_id=?",
+      )
+      .all(String(requested.operationID)),
+  )
+  expect(rows).toHaveLength(2)
+  for (const row of rows) {
+    expect(JSON.parse(row.check_json).command).toBe(command)
+    expect(row.artifact).toBe(f.artifact)
+    const receipt = JSON.parse(row.receipt)
+    expect(receipt.exitCode).toBe(0)
+    expect(receipt.command).toBe(command)
+    expect(receipt.isolation.procedureBinding.commandFingerprint).toBe(fingerprint(command))
+    expect(row.receipt).toContain("project build completed")
+    expect(row.receipt).toContain("repair descendant")
+  }
+  expect(f.prompts).toHaveLength(2)
+  expect(f.created).toHaveLength(1)
+  expect(f.sessions.get(f.attempt.session_id)?.background?.state).toBe("unknown")
 })
 
 test.each([
