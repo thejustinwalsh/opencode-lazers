@@ -31,5 +31,6 @@ formatting or fixable lint failures back to another model.
 Report changed files, checks and unresolved issues in prose, without task JSON.
 Evidence is passing checks and observed behavior, not file hashes.
 Runtime verification determines acceptance.
-Verify the coherent result rather than every edit. Use focused checks to diagnose
+Verify the requested behavior without adding acceptance requirements. Check the
+coherent result rather than every edit. Use focused checks to diagnose
 failures; repeat broader checks when changes or unresolved risk justify them.
