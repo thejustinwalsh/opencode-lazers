@@ -3,29 +3,33 @@
 LAZERS builds itself through OpenCode Desktop. The goal is accepted software
 changes with clear intent, efficient execution and little manual intervention.
 
-## Current delivery front — 2026-11-06
+## Current delivery front — 2026-11-07
 
-Native runtime state is authoritative. Source landing, task acceptance, plan
-acceptance, live observation and cleanup are separate facts. Current work is
-Models → Tasks/Trajectory → Radar, with genuinely independent work in parallel.
+Native runtime state is authoritative. Source integration, live product behavior,
+acceptance and cleanup are separate facts. Priority remains Models →
+Tasks/Trajectory → Radar, with independent work in parallel.
 
-| Lane                              | Delivered / current work                                                                                                                                                    | Remaining boundary                                                                                                                                                                                                       |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Models                            | LZ-153 history-read repair is integrated and observed over 16,315 facts/155 tasks. Decision RPC and saved assignments are accessible. LZ-151/152 scenario source is landed. | LZ-156 native catalog access is reviewed/staged; recover its retained attempt. LZ-157/158 deliver actual cohort/reference estimates, coherent Refresh and the approved comparison UI. Connected acceptance remains open. |
-| Tasks                             | LZ-147 inspector correction is landed; objective/Done when and actual dependency navigation are observed. Its task is accepted.                                             | LZ-147 old worktree cleanup is held separately. LZ-148/149 own runtime ordering/eligibility and compact grouping; do not duplicate them.                                                                                 |
-| Trajectory                        | Existing duration UI and recorded history remain useful.                                                                                                                    | Unix endpoints, current-market valuation and live/history interaction observations remain part of the existing work; use LZ-155 for the valuation continuation.                                                          |
-| Retained recovery                 | LZ-138 is active on the original Luna Max worker. Fresh private verification preserves original attempt/model/usage and unknown original resources.                         | Fix target acceptance incorrectly waiting for queued successors, then observe actual retained LZ-156 qualification and subsequent ordinary dispatch. No proof-only implementation rerun.                                 |
-| Native reliability                | LZ-128 returned8f14285; task accepted, independent lease/runtime checks pass.                                                                                               | Its plan waits for actual same-provider GUI-replacement/inference observation. Staged source/build is not that observation. Retain earlier117/110 observation gaps.                                                      |
-| Architect continuity              | LZ-132/137 advice and LZ-133 journal are qualified/integrated. Advice text has no character ceiling.                                                                        | Preserve runtime ownership, meaningful notifications and existing continuation work; old-session recovery must not require Root SQL repair.                                                                              |
-| Performance                       | Reuse integrated Astra repairs and prior measured observations.                                                                                                             | LZ-135 performance/idle observation remains open; no overall battery or CPU success claim.                                                                                                                               |
-| Radar                             | Reuse accepted producers and the approved agent-monitor direction.                                                                                                          | Finish reviewed live-data defects and the compact agent monitor with actual tools/files/messages/health, narrow/wide interaction and Tera review. Architecture maps stay diagnostic.                                     |
-| Recovery / verification / release | Reuse delivered foundations and the original qualification chain.                                                                                                           | Finish R2–R6, H3–H5, V3–V6/N1, actual same-worker correction/reprobe and usable one-package release/install/upgrade verification.                                                                                        |
+| Lane | Current work | Remaining boundary |
+| --- | --- | --- |
+| Models | LZ-172 original Luna Max worker is repairing the actual connected narrow/wide view after Terra High screenshot review. Its ce72 candidate renders, and selector/chart selection work. | Fit axes/legend, readable point labels, compact controls and consumer copy; repeat actual Desktop/Terra review, integrate and complete acceptance. Preserve canonical pricing producer and GPU fixes. |
+| Tasks | LZ-182 Luna Max worker is implementing authoritative Now / Attention / Next, priority/dependency decisions and readable grouping. Reuses delivered LZ-147. | Review behavior and source, observe actual ordering/grouping and dispatch, integrate and clean up. |
+| Trajectory | Current-market valuation has been observed live on LZ-137 using OpenRouter published rates. LZ-131 retains lifecycle timestamp and duplicate-receipt work. | LZ-131 is queued; its runtime/store write scope conflicts with active LZ-182. Finish Unix lifecycle endpoints, duplicate projection correction and historical/live navigation observation. |
+| Retained recovery | LZ-178 candidate passed recorded checks; Sol High review found a pending combined-probe regression. | Same-worker correction waits for LZ-182's overlapping runtime reservation. Integrate, then reconcile original LZ-173 retained generation/checks through supported tools and finish acceptance. |
+| Verification and metrics | Consolidated LZ-181 verification responsiveness/autofix and LZ-183 managed overhead metrics remain queued behind their real dependencies. | Actual asynchronous checks, price-valued managed usage, full-instance implementer verification and failure/correction/reprobe walkthroughs. |
+| Native inference | Canonical 2d545e6 fixes stale ancestor traversal after legitimate pruning; 21 targeted tests passed. Native unload → reload → inference succeeded with all switches on and idle unload Never. | Preserve this code during worker integration. This does not establish whole-product freeze, CPU or battery acceptance. |
+| Architect continuity | Advice tools and durable continuation foundations are integrated. | Remaining ownership, stale-observation and renewal repairs; old historical holds must be reconciled through product tools without Root SQL mutations. |
+| Performance | Integrated Astra optimizations and measured bounded improvements remain available. | Residual service/renderer/GPU CPU and battery behavior remain open; no overall performance success claim. |
+| Radar | Existing producers and approved agent-monitor direction remain the base. | Deliver realtime sessions/models/tools/files/messages/health, compact narrow/wide UI and actual Terra/interaction review. Architecture diagrams are diagnostic, not the primary monitor. |
+| Recovery / handoff / release | Existing foundations and original qualification chain remain in scope. | Complete proactive recovery, reviewed handoff disposition, two real implementer verification walkthroughs, audio follow-through and package/install/upgrade/cross-machine verification. |
 
-Current observations, commits, test boundaries and active worker identities are in
-[retained recovery follow-through](reviews/retained-recovery-followthrough-20261106.md)
-and the [handoff](../.agents/docs/handoff.md). Root's isolated staged tree is
-`/private/tmp/lz-native-log-contract-review`; activation waits for a real quiet
-worker boundary. Keep all six inference flags enabled and idle unload Never.
+Current identities, controls and observations are in the
+[handoff](../.agents/docs/handoff.md). Models preview report:
+[connected walkthrough](reviews/lz172-ce72-connected-preview-20261107.md) and
+[native Terra review](reviews/lz172-ce72-native-visual-review-20261107.md).
+The ce72 ignored-GUI preview ended when canonical GUI was rebuilt for the
+[inference recovery fix](reviews/inference-pruned-ancestor-recovery-20261107.md).
+Root coordinates activation; no healthy worker is stopped to manufacture it.
+All six inference flags remain enabled and idle unload remains Never.
 
 Historical Astra/Root global holds are obsolete. Preserve native permissions,
 actual resource isolation, current owners and truthful acceptance boundaries.
