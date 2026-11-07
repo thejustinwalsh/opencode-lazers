@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
 import { nativeTools } from "../test/retry-process.ts"
 import { TaskRepository } from "./storage.ts"
+import { submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
 import { GetInstructionsOutput } from "./tasks/contract.ts"
 import { registerTaskTools } from "./tools.ts"
@@ -554,6 +555,207 @@ test("Architect can durably retire a legacy task and replay the same disposition
     ).tasks[0].disposition.disposition,
   ).toBe("superseded")
   expect(assertions).toContain("lz-dispose-task")
+})
+
+test("the registered disposition tool records reviewed fulfillment without changing cancelled execution readback", async () => {
+  const { tools, repository } = await setup()
+  const submit = await Effect.runPromise(
+    tools.get("lz-submit-task")!.execute(keyedProposal("external-fulfillment-tool"), context),
+  )
+  const { taskID } = JSON.parse(String(submit.content)) as { taskID: string }
+  const task = repository.get(taskID)!
+  if (task.provenance.startingRevision.kind !== "git")
+    throw new Error("Expected a committed starting revision")
+  const runner = new RunnerStore(repository)
+  const plan = runner.submit(
+    {
+      requestID: "external-fulfillment-tool-plan",
+      objective: task.proposal.objective,
+      baseCommit: task.provenance.startingRevision.commit,
+      nodes: [{ taskID, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [taskID],
+      verification: task.proposal.verification,
+      acceptance: task.proposal.acceptance,
+    },
+    "architect",
+  )
+  runner.move(plan.planID, taskID, "CANCEL")
+  repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(plan.planID),
+  )
+  const dispositionInput = {
+    taskID,
+    requestID: "external-fulfillment-tool-review",
+    disposition: "fulfilled",
+    reason: "The reviewed external patch satisfies the unchanged specification.",
+    evidence: [{ kind: "artifact", reference: "reviews/externally-applied.patch" }],
+    relatedTaskIDs: [],
+  }
+  const disposition = JSON.parse(
+    String(
+      await Effect.runPromise(
+        tools.get("lz-dispose-task")!.execute(dispositionInput, context),
+      ).then((result) => result.content),
+    ),
+  )
+  expect(disposition).toMatchObject({
+    status: "recorded",
+    disposition: { disposition: "fulfilled", evidence: dispositionInput.evidence },
+  })
+
+  const publicReadback = JSON.parse(
+    String(
+      await Effect.runPromise(tools.get("lz-get-task")!.execute({ taskID }, context)).then(
+        (result) => result.content,
+      ),
+    ),
+  )
+  expect(publicReadback).toMatchObject({
+    status: "found",
+    disposition: { disposition: "fulfilled", evidence: dispositionInput.evidence },
+    recordedState: "cancelled",
+    execution: { state: "cancelled", planID: plan.planID },
+    attempts: [],
+  })
+  expect(runner.nodes(plan.planID)[0]?.state).toBe("cancelled")
+  expect(runner.attempts(plan.planID)).toEqual([])
+  expect(runner.effects(plan.planID)).toEqual([])
+
+  const quietDraftSubmit = await Effect.runPromise(
+    tools
+      .get("lz-submit-task")!
+      .execute(keyedProposal("external-fulfillment-quiet-draft"), context),
+  )
+  const { taskID: quietTaskID } = JSON.parse(String(quietDraftSubmit.content)) as {
+    taskID: string
+  }
+  const quietTask = repository.get(quietTaskID)!
+  const quietPlan = runner.submit(
+    {
+      requestID: "external-fulfillment-quiet-draft-plan",
+      objective: quietTask.proposal.objective,
+      baseCommit: task.provenance.startingRevision.commit,
+      nodes: [{ taskID: quietTaskID, revision: quietTask.revision }],
+      dependencies: [],
+      integrationOrder: [quietTaskID],
+      verification: quietTask.proposal.verification,
+      acceptance: quietTask.proposal.acceptance,
+    },
+    "architect",
+  )
+  const quietDisposition = {
+    taskID: quietTaskID,
+    requestID: "external-fulfillment-quiet-draft-review",
+    disposition: "fulfilled",
+    reason: "The reviewed external change fulfills this quiet draft task.",
+    evidence: [{ kind: "verification", reference: "reviews/external-verification.txt" }],
+    relatedTaskIDs: [],
+  }
+  expect(
+    JSON.parse(
+      String(
+        await Effect.runPromise(
+          tools.get("lz-dispose-task")!.execute(quietDisposition, context),
+        ).then((result) => result.content),
+      ),
+    ),
+  ).toMatchObject({ status: "recorded", disposition: { disposition: "fulfilled" } })
+  const quietReadback = JSON.parse(
+    String(
+      await Effect.runPromise(
+        tools.get("lz-get-task")!.execute({ taskID: quietTaskID }, context),
+      ).then((result) => result.content),
+    ),
+  )
+  expect(quietReadback).toMatchObject({
+    status: "found",
+    disposition: { disposition: "fulfilled", evidence: quietDisposition.evidence },
+    recordedState: "queued",
+    execution: { state: "queued", planID: quietPlan.planID },
+    attempts: [],
+  })
+  expect(runner.nodes(quietPlan.planID)[0]?.state).toBe("queued")
+  expect(runner.attempts(quietPlan.planID)).toEqual([])
+})
+
+test("invalid, foreign, and non-Architect disposition requests do not write", async () => {
+  const { tools, repository } = await setup()
+  const dispose = tools.get("lz-dispose-task")!
+  const implementor = { ...context, agent: Agent.ID.make("lazers-implementor") }
+  const query = spyOn(Database.prototype, "query")
+  try {
+    await expect(
+      Effect.runPromise(
+        dispose.execute(
+          {
+            taskID: "invalid-task-id",
+            requestID: "non-architect-invalid",
+            disposition: "fulfilled",
+            reason: "Not authorized.",
+            evidence: [{ kind: "human", reference: "review" }],
+            relatedTaskIDs: [],
+          },
+          implementor,
+        ),
+      ),
+    ).rejects.toThrow("restricted to Architect")
+    expect(query).not.toHaveBeenCalled()
+
+    await expect(
+      Effect.runPromise(
+        dispose.execute(
+          {
+            taskID: "invalid-task-id",
+            requestID: "architect-invalid",
+            disposition: "fulfilled",
+            reason: "Invalid ID must fail before storage.",
+            evidence: [{ kind: "human", reference: "review" }],
+            relatedTaskIDs: [],
+          },
+          context,
+        ),
+      ),
+    ).rejects.toThrow()
+    expect(query).not.toHaveBeenCalled()
+  } finally {
+    query.mockRestore()
+  }
+
+  const foreignRepository = new TaskRepository(repository.path, "/foreign/project")
+  cleanup.push(() => foreignRepository.close())
+  const foreignTask = submitTask(foreignRepository, keyedProposal("foreign-disposition"), () => ({
+    projectID: "foreign-project",
+    projectDirectory: "/foreign/project",
+    workspaceDirectory: "/foreign/project",
+    sessionID: "foreign-session",
+    startingRevision: { kind: "unborn" },
+  }))
+  if (foreignTask.status !== "submitted") throw new Error("Expected foreign task")
+  await expect(
+    Effect.runPromise(
+      dispose.execute(
+        {
+          taskID: foreignTask.taskID,
+          requestID: "architect-foreign",
+          disposition: "fulfilled",
+          reason: "Foreign task must not be recorded.",
+          evidence: [{ kind: "human", reference: "review" }],
+          relatedTaskIDs: [],
+        },
+        context,
+      ),
+    ),
+  ).rejects.toThrow("Task not found in this project")
+  expect(repository.taskDisposition(foreignTask.taskID)).toBeUndefined()
+  expect(foreignRepository.taskDisposition(foreignTask.taskID)).toBeUndefined()
+  expect(
+    repository.atomic(
+      (db) =>
+        db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM task_dispositions").get()!
+          .count,
+    ),
+  ).toBe(0)
 })
 
 test("task disposition is Architect-only even when native permission allows the tool", async () => {

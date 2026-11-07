@@ -818,21 +818,80 @@ export class TaskRepository {
         }
 
       const activeStates = ["queued", "ready", "running", "verifying", "blocked", "exhausted"]
-      const states = hasTable(db, "runner_nodes")
+      const nodes =
+        hasTable(db, "runner_nodes") && hasTable(db, "runner_plans")
+          ? db
+              .query<{ state: string; plan_state: string }, [string, string]>(
+                `SELECT n.state,p.state AS plan_state FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+               WHERE p.project_directory=? AND n.task_id=?`,
+              )
+              .all(this.projectDirectory, parsed.taskID)
+          : []
+      const attempts = hasTable(db, "runner_attempts")
         ? db
             .query<{ state: string }, [string, string]>(
-              `SELECT n.state FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
-               WHERE p.project_directory=? AND n.task_id=?`,
+              `SELECT a.state FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+               WHERE p.project_directory=? AND a.task_id=?`,
             )
             .all(this.projectDirectory, parsed.taskID)
-            .map((row) => row.state)
         : []
-      if (states.some((state) => activeStates.includes(state)))
+      const hasActiveReviewHold =
+        (hasTable(db, "runner_adoptions") &&
+          Boolean(
+            db
+              .query<{ present: number }, [string, string]>(
+                `SELECT 1 AS present FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+                 WHERE p.project_directory=? AND a.task_id=?
+                   AND a.state IN ('pending','task-checks','combined-checks','waiting-human') LIMIT 1`,
+              )
+              .get(this.projectDirectory, parsed.taskID),
+          )) ||
+        (hasTable(db, "runner_retained_verifications") &&
+          Boolean(
+            db
+              .query<{ present: number }, [string, string]>(
+                `SELECT 1 AS present FROM runner_retained_verifications
+                 WHERE project_directory=? AND task_id=?
+                   AND state IN ('pending','task-checks','combined-checks','waiting-human','waiting-human-combined')
+                 LIMIT 1`,
+              )
+              .get(this.projectDirectory, parsed.taskID),
+          ))
+      const activeAttemptStates = [
+        "preparing",
+        "running",
+        "verifying",
+        "held",
+        "approval-held",
+        "waiting-human",
+        "waiting-human-combined",
+      ]
+      const activeNode = nodes.some(({ state, plan_state }) => {
+        if (!activeStates.includes(state)) return false
+        return !(parsed.disposition === "fulfilled" && state === "queued" && plan_state === "draft")
+      })
+      if (
+        activeNode ||
+        attempts.some(({ state }) => activeAttemptStates.includes(state)) ||
+        hasActiveReviewHold
+      )
         throw new Error("Cannot dispose a task with active execution")
+      const acceptedExecution =
+        nodes.length > 0 && nodes.every(({ state }) => ["accepted", "incorporated"].includes(state))
+      const neverPlanned = nodes.length === 0 && attempts.length === 0
+      const reviewedNeverExecuted =
+        attempts.length === 0 &&
+        nodes.length > 0 &&
+        nodes.every(
+          ({ state, plan_state }) =>
+            (state === "cancelled" && plan_state === "cancelled") ||
+            (state === "queued" && plan_state === "draft"),
+        )
       if (
         parsed.disposition === "fulfilled" &&
-        states.length > 0 &&
-        states.some((state) => !["accepted", "incorporated"].includes(state))
+        !acceptedExecution &&
+        !neverPlanned &&
+        !reviewedNeverExecuted
       )
         throw new Error("Fulfilled disposition requires accepted execution or reviewed evidence")
 

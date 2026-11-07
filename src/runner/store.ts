@@ -3176,6 +3176,17 @@ export class RunnerStore {
       if (node.machine_version !== machineVersion)
         throw new Error("Unsupported task machine version")
       const next = transition(node.state, event)
+      if (["queued", "ready", "running"].includes(next.state)) {
+        const fulfilled = db
+          .query<{ id: number }, [string, string]>(
+            `SELECT id FROM task_dispositions
+             WHERE project_directory=? AND task_id=? AND disposition='fulfilled'
+             ORDER BY id DESC LIMIT 1`,
+          )
+          .get(this.repository.projectDirectory, taskID)
+        if (fulfilled)
+          throw new Error("Task has a fulfilled disposition; worker execution is fenced")
+      }
       db.query(
         "UPDATE runner_nodes SET state=?,version=version+1,reason=?,snapshot=? WHERE plan_id=? AND task_id=? AND version=?",
       ).run(next.state, reason, JSON.stringify(next.snapshot), planID, taskID, node.version)
