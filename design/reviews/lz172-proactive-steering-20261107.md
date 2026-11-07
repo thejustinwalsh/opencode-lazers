@@ -36,6 +36,20 @@ detector, policy, task or retrospective claim that a single tool-count threshold
 establishes worker struggle. Preserve the original task/attempt/session/input,
 candidate, usage and resource history when evaluating the eventual result.
 
+## Subsequent consumption finding
+
+Root inspected native execute `msg_1b823bd08001nEgzmVhGJvbefx`: the worker fetched
+`lz-get-task` but projected `result.task.advice?.current` and
+`result.task.reference`. `GetOutput` places `advice` and `reference` at the top
+level. The actual result contained only `writeScope`; those attempted fields were
+undefined. This fetch therefore did **not** prove advice consumption.
+
+The Architect prepended a concise getter correction to the same native context
+key, preserving advice 9: read `lz-get-task-instructions`, or use
+`result.advice?.current` and `result.reference`. Readback confirmed the corrected
+entry without a new input. Actual readable steering consumption and substantive
+edit outcome remain to be observed; no getter invocation alone establishes either.
+
 ## Observed subsequent edits
 
 Root read native tool receipts after steering. The first successful patch in this
