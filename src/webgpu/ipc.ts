@@ -77,7 +77,9 @@ const ProviderIdentity = Schema.Struct({
   providerEpoch: leaseID,
   windowID: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   previousProviderEpoch: Schema.optionalKey(leaseID),
-  previousProviderState: Schema.optionalKey(Schema.Literals(["idle", "retired", "unproven"])),
+  previousProviderState: Schema.optionalKey(
+    Schema.Literals(["idle", "retired", "host-lost", "unproven"]),
+  ),
 })
 export type ModelLeaseIdentity = typeof LeaseIdentity.Type
 export type ModelLeaseGrant = typeof LeaseGrant.Type

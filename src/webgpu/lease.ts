@@ -13,8 +13,25 @@ type ReleaseRequest = {
   rendererDisposalID: string
 }
 
-type RegisteredGeneration = { generationID: string; generationSequence: number }
+type RegisteredGeneration = {
+  generationID: string
+  generationSequence: number
+  hostLossID?: string
+}
 type LeaseOwner = { window: number; lease: ModelLeaseGrant }
+/** Main-authored document-loss evidence; this is deliberately not renderer-disposal proof. */
+type HostLoss = {
+  id: string
+  window: number
+  observerProviderEpoch: string
+  source: "current-owner" | "inherited-owner" | "reserved-owner" | "registered-window"
+  lease?: ModelLeaseGrant
+  priorGeneration?: RegisteredGeneration
+  registeredGeneration?: RegisteredGeneration
+  state: "pending" | "settled" | "failed"
+  pending?: Promise<void>
+  reserved: boolean
+}
 type AcquireOperation = {
   operationID: string
   window: number
@@ -73,7 +90,14 @@ export const ModelLeasePersistenceSchema = Schema.Struct({
 export type ModelLeasePersistence = typeof ModelLeasePersistenceSchema.Type
 
 type InheritedOwner = { window: number; grant: ModelLeaseGrant }
-type ProviderOwnershipState = "idle" | "retired" | "unproven"
+type ProviderOwnershipState = "idle" | "retired" | "host-lost" | "unproven"
+
+const sameGeneration = (
+  left: RegisteredGeneration | undefined,
+  right: RegisteredGeneration | undefined,
+) =>
+  left?.generationID === right?.generationID &&
+  left?.generationSequence === right?.generationSequence
 
 const sameLease = (left: ModelLeaseIdentity, right: ModelLeaseIdentity) =>
   left.owner === right.owner &&
@@ -102,11 +126,12 @@ export class ModelLease {
   private clearing = false
   private sealed = false
   private readonly generations = new Map<number, RegisteredGeneration>()
+  private readonly hostLosses = new Map<number, HostLoss>()
   private readonly legacySequences = new Map<number, number>()
   private readonly acquisitions = new Map<string, AcquireOperation>()
   private readonly retirements = new Map<string, RetirementOperation>()
   readonly previousProviderEpoch?: string
-  readonly previousProviderState?: ProviderOwnershipState
+  previousProviderState?: ProviderOwnershipState
 
   constructor(
     private readonly drain: () => Promise<void>,
@@ -159,11 +184,16 @@ export class ModelLease {
   }
 
   private snapshot(): ModelLeasePersistence {
+    const reservedHostLoss = Array.from(this.hostLosses.values()).find(
+      (loss) => loss.reserved && loss.lease,
+    )
     const retained = this.owner
       ? { windowID: this.owner.window, lease: this.owner.lease }
       : this.inherited
         ? { windowID: this.inherited.window, lease: this.inherited.grant }
-        : undefined
+        : reservedHostLoss?.lease
+          ? { windowID: reservedHostLoss.window, lease: reservedHostLoss.lease }
+          : undefined
     return {
       schemaVersion: 1,
       providerEpoch: this.providerEpoch,
@@ -172,7 +202,7 @@ export class ModelLease {
           ? "unproven"
           : this.owner
             ? "active"
-            : this.inherited
+            : this.inherited || reservedHostLoss
               ? "retired"
               : "idle",
       ...(retained ?? {}),
@@ -195,7 +225,18 @@ export class ModelLease {
   }
 
   occupied() {
-    return Boolean(this.owner || this.inherited || this.blocked || this.retiring || this.clearing)
+    return Boolean(
+      this.owner ||
+      this.inherited ||
+      this.hasHostLossReservation() ||
+      this.blocked ||
+      this.retiring ||
+      this.clearing,
+    )
+  }
+
+  private hasHostLossReservation() {
+    return Array.from(this.hostLosses.values()).some((loss) => loss.reserved)
   }
 
   seal() {
@@ -219,11 +260,56 @@ export class ModelLease {
     this.persist()
   }
 
-  registerGeneration(window: number, generationID: string, generationSequence: number) {
+  registerGeneration(
+    window: number,
+    generationID: string,
+    generationSequence: number,
+  ): void | Promise<void> {
     if (this.sealed) throw new Error("The main-process provider is shutting down")
     if (!Number.isSafeInteger(generationSequence) || generationSequence < 1)
       throw new Error("Invalid renderer generation")
+    const hostLoss = this.hostLosses.get(window)
+    if (hostLoss?.pending)
+      return hostLoss.pending.then(() =>
+        this.registerGeneration(window, generationID, generationSequence),
+      )
     const current = this.generations.get(window)
+    if (hostLoss?.state === "failed")
+      throw new Error("Host-observed renderer lifetime loss did not settle")
+    if (hostLoss?.state === "settled" && !hostLoss.registeredGeneration) {
+      if (hostLoss.observerProviderEpoch !== this.providerEpoch)
+        throw new Error("The host-loss proof belongs to a different main-process provider")
+      if (current && !sameGeneration(current, hostLoss.priorGeneration))
+        throw new Error("The host-loss proof no longer matches the registered renderer lifetime")
+      const priorGenerationID =
+        hostLoss.lease?.generationID ?? hostLoss.priorGeneration?.generationID
+      if (
+        generationID === priorGenerationID ||
+        generationID === hostLoss.priorGeneration?.generationID
+      )
+        throw new Error("The host-observed renderer document lifetime has ended")
+      if (generationSequence !== 1)
+        throw new Error("A host-observed renderer reload must restart its generation sequence")
+      if (!current && hostLoss.priorGeneration)
+        throw new Error("The host-loss proof is not bound to the registered renderer lifetime")
+      const next = { generationID, generationSequence, hostLossID: hostLoss.id }
+      this.generations.set(window, next)
+      hostLoss.registeredGeneration = next
+      return
+    }
+    if (hostLoss?.reserved && hostLoss.registeredGeneration) {
+      if (
+        sameGeneration(current, hostLoss.registeredGeneration) &&
+        sameGeneration(current, { generationID, generationSequence })
+      )
+        return
+      throw new Error("The host-loss generation may be consumed only once")
+    }
+    if (hostLoss?.registeredGeneration && sameGeneration(current, hostLoss.registeredGeneration)) {
+      if (sameGeneration(current, { generationID, generationSequence })) return
+      if (generationID === (hostLoss.lease?.generationID ?? hostLoss.priorGeneration?.generationID))
+        throw new Error("The host-observed renderer document lifetime has ended")
+    }
     if (current && generationSequence < current.generationSequence)
       throw new Error("A stale renderer generation cannot claim the model cache")
     if (current && generationSequence === current.generationSequence) {
@@ -287,7 +373,46 @@ export class ModelLease {
 
     if (!request.predecessor) {
       if (this.retiring) throw new Error("The model cache is being cleaned up")
-      if (this.owner || this.inherited || this.blocked)
+      const hostLoss = this.hostLosses.get(window)
+      const currentGeneration = this.generations.get(window)
+      if (hostLoss?.reserved) {
+        if (
+          hostLoss.state !== "settled" ||
+          hostLoss.observerProviderEpoch !== this.providerEpoch ||
+          !hostLoss.lease ||
+          !hostLoss.registeredGeneration ||
+          currentGeneration?.hostLossID !== hostLoss.id ||
+          !sameGeneration(currentGeneration, hostLoss.registeredGeneration) ||
+          this.owner ||
+          this.inherited ||
+          this.blocked
+        )
+          throw new Error(
+            "The host-observed renderer lifetime is not authorized to inherit ownership",
+          )
+        // The broker remains attached to this opaque token; a host loss is not models.release().
+        const grant: ModelLeaseGrant = {
+          owner: hostLoss.lease.owner,
+          generationID: request.generationID,
+          generationSequence: request.generationSequence,
+          operationID: request.operationID,
+          providerEpoch: request.providerEpoch,
+        }
+        remember(this.acquisitions, request.operationID, {
+          operationID: request.operationID,
+          window,
+          fingerprint,
+          generationID: request.generationID,
+          generationSequence: request.generationSequence,
+          providerEpoch: request.providerEpoch,
+          grant,
+        })
+        this.owner = { window, lease: grant }
+        hostLoss.reserved = false
+        this.persist()
+        return Promise.resolve(grant)
+      }
+      if (this.owner || this.inherited || this.blocked || this.hasHostLossReservation())
         throw new Error("The model cache is owned or being cleaned up")
       const identity = {
         owner: crypto.randomUUID(),
@@ -544,23 +669,154 @@ export class ModelLease {
     return operation.result
   }
 
-  lost(window: number) {
+  lost(window: number): Promise<void> {
     if (this.sealed) return Promise.resolve()
-    const observed = this.owner
-    if (!observed || observed.window !== window) return Promise.resolve()
-    return (this.retiring?.catch(() => {}) ?? Promise.resolve()).then(() => {
+    // Bind the main-only lifecycle observation before waiting for any asynchronous drain.
+    const generation = this.generations.get(window)
+    const priorLoss = this.hostLosses.get(window)
+    if (priorLoss?.pending) return priorLoss.pending
+
+    let source: HostLoss["source"]
+    let lease: ModelLeaseGrant | undefined
+    if (this.owner?.window === window) {
       if (
-        !this.owner ||
-        this.owner.window !== observed.window ||
-        !sameLease(this.owner.lease, observed.lease)
+        !generation ||
+        generation.generationID !== this.owner.lease.generationID ||
+        generation.generationSequence !== this.owner.lease.generationSequence
       )
-        return
-      return this.release(window, {
-        lease: observed.lease,
-        retirementID: crypto.randomUUID(),
-        rendererDisposalID: `host-lifecycle-${crypto.randomUUID()}`,
+        return Promise.resolve()
+      source = "current-owner"
+      lease = this.owner.lease
+    } else if (this.inherited?.window === window) {
+      if (
+        this.blocked ||
+        this.previousProviderState !== "retired" ||
+        (generation &&
+          (generation.generationID !== this.inherited.grant.generationID ||
+            generation.generationSequence !== this.inherited.grant.generationSequence))
+      )
+        return Promise.resolve()
+      source = "inherited-owner"
+      lease = this.inherited.grant
+    } else if (
+      priorLoss?.reserved &&
+      priorLoss.lease &&
+      priorLoss.registeredGeneration &&
+      sameGeneration(generation, priorLoss.registeredGeneration)
+    ) {
+      const nextLoss: HostLoss = {
+        id: crypto.randomUUID(),
+        window,
+        observerProviderEpoch: this.providerEpoch,
+        source: "reserved-owner",
+        lease: priorLoss.lease,
+        priorGeneration: generation && { ...generation },
+        state: "settled",
+        reserved: true,
+      }
+      this.hostLosses.set(window, nextLoss)
+      this.persist()
+      return Promise.resolve()
+    } else {
+      if (!generation) return Promise.resolve()
+      if (priorLoss?.state === "settled" && sameGeneration(generation, priorLoss.priorGeneration))
+        return Promise.resolve()
+      source = "registered-window"
+    }
+
+    const samePrior =
+      priorLoss &&
+      priorLoss.source === source &&
+      priorLoss.lease?.owner === lease?.owner &&
+      priorLoss.lease?.generationID === lease?.generationID &&
+      priorLoss.lease?.generationSequence === lease?.generationSequence &&
+      priorLoss.lease?.operationID === lease?.operationID &&
+      priorLoss.lease?.providerEpoch === lease?.providerEpoch &&
+      sameGeneration(priorLoss.priorGeneration, generation)
+    const hostLoss: HostLoss = samePrior
+      ? priorLoss
+      : {
+          id: crypto.randomUUID(),
+          window,
+          observerProviderEpoch: this.providerEpoch,
+          source,
+          ...(lease ? { lease } : {}),
+          ...(generation ? { priorGeneration: { ...generation } } : {}),
+          state: "pending",
+          reserved: false,
+        }
+    this.hostLosses.set(window, hostLoss)
+
+    const previousRetirement = this.retiring
+    const pending = Promise.resolve(previousRetirement?.catch(() => {}))
+      .then(async () => {
+        if (this.sealed) throw new Error("The main-process provider is shutting down")
+        if (this.clearing) throw new Error("The model cache is being cleared")
+        if (hostLoss.lease) {
+          const currentOwner = this.owner
+          const currentInherited = this.inherited
+          const ownsCurrent =
+            hostLoss.source === "current-owner" &&
+            currentOwner?.window === window &&
+            sameLease(currentOwner.lease, hostLoss.lease)
+          const ownsInherited =
+            hostLoss.source === "inherited-owner" &&
+            this.previousProviderState === "retired" &&
+            currentInherited?.window === window &&
+            sameLease(currentInherited.grant, hostLoss.lease)
+          const ownsReservation =
+            hostLoss.source === "reserved-owner" &&
+            this.hostLosses.get(window)?.id === hostLoss.id &&
+            hostLoss.reserved
+          if (!ownsCurrent && !ownsInherited && !ownsReservation) {
+            hostLoss.state = "settled"
+            hostLoss.reserved = false
+            return
+          }
+          if (!ownsReservation) await this.drain()
+          const stillCurrent =
+            ownsCurrent &&
+            this.owner?.window === window &&
+            sameLease(this.owner.lease, hostLoss.lease) &&
+            sameGeneration(this.generations.get(window), hostLoss.priorGeneration)
+          const stillInherited =
+            ownsInherited &&
+            this.previousProviderState === "retired" &&
+            this.inherited?.window === window &&
+            sameLease(this.inherited.grant, hostLoss.lease) &&
+            (!hostLoss.priorGeneration ||
+              sameGeneration(this.generations.get(window), hostLoss.priorGeneration))
+          if (stillCurrent) this.owner = undefined
+          else if (stillInherited) {
+            this.inherited = undefined
+            this.previousProviderState = "host-lost"
+          } else if (!ownsReservation) {
+            // An already-settled explicit renderer retirement supersedes this host observation.
+            hostLoss.state = "settled"
+            hostLoss.reserved = false
+            this.persist()
+            return
+          }
+          hostLoss.reserved = true
+        } else if (previousRetirement) {
+          await previousRetirement
+        }
+        hostLoss.state = "settled"
+        this.persist()
       })
-    })
+      .catch((error: unknown) => {
+        hostLoss.state = "failed"
+        hostLoss.reserved = false
+        throw error
+      })
+      .finally(() => {
+        if (this.retiring === pending) this.retiring = undefined
+        if (hostLoss.pending === pending) hostLoss.pending = undefined
+      })
+    hostLoss.state = "pending"
+    hostLoss.pending = pending
+    this.retiring = pending
+    return pending
   }
 
   private assertCurrentGeneration(
