@@ -10,6 +10,7 @@ import { Observability, type ObservationChange } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { databaseChanges } from "../database-events.ts"
+import { LiveHistoryUnavailableError } from "./live-store.ts"
 
 type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
 
@@ -170,6 +171,45 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
+      liveRadar: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.liveRadar(input, tracker, signal, tracker.streamEpoch)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
+      liveHistory: (input, context) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.liveHistory(input, signal)
+          },
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof LiveHistoryUnavailableError
+              ? Effect.fail(
+                  context.error("live_history_unavailable", error.message, {
+                    reason: error.reason,
+                    recovery: "restart",
+                  }),
+                )
+              : Effect.die(new Error(safeError(error, privacyStats()))),
+          ),
+        ),
       trajectory: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -259,6 +299,7 @@ export function registerObservability(
       Effect.sync(() => {
         disposed = true
         if (retry) clearTimeout(retry)
+        tracker.close()
       }),
     )
 

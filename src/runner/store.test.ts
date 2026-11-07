@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { Buffer } from "node:buffer"
+import { Database, type SQLQueryBindings } from "bun:sqlite"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -12,6 +13,164 @@ import { outcomeText } from "./outcome.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
+
+function captureDatabaseExec<T>(run: () => T) {
+  const statements: string[] = []
+  const original = Database.prototype.exec
+  const wrapped = function (this: Database, sql: string, ...bindings: SQLQueryBindings[]) {
+    statements.push(sql)
+    return Reflect.apply(original, this, [sql, ...bindings])
+  }
+  Database.prototype.exec = wrapped as typeof original
+  try {
+    return { value: run(), statements }
+  } finally {
+    Database.prototype.exec = original
+  }
+}
+
+const isAttemptProjectDirectoryBackfill = (sql: string) =>
+  /UPDATE\s+runner_attempts\s+SET\s+project_directory\s*=\s*\(SELECT\s+project_directory\s+FROM\s+runner_plans\s+WHERE\s+id=runner_attempts\.plan_id\)\s+WHERE\s+project_directory\s+IS\s+NOT/i.test(
+    sql,
+  )
+
+test("active-attempt project-key migration backfills legacy rows once, not on reopen", () => {
+  const f = fixture("active-attempt-project-key-migration")
+  const receipt = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  const retainedAttempts = 2_000
+
+  f.repository.atomic((db) => {
+    const insert = db.query(
+      `INSERT INTO runner_attempts(
+        id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,'failed',?)`,
+    )
+    for (let index = 0; index < retainedAttempts; index++)
+      insert.run(
+        `legacy-attempt-${index}`,
+        receipt.planID,
+        taskID,
+        index + 100,
+        `legacy-session-${index}`,
+        `legacy-message-${index}`,
+        f.projectDirectory,
+        "base",
+        "{}",
+        index,
+      )
+  })
+
+  f.repository.atomic((db) =>
+    db.exec(`
+      DROP TRIGGER runner_attempts_project_directory_insert;
+      DROP TRIGGER runner_attempts_project_directory_plan_update;
+      DROP TRIGGER runner_plans_project_directory_update;
+      DROP TRIGGER observation_revision_runner_attempts_INSERT;
+      DROP TRIGGER observation_revision_runner_attempts_UPDATE;
+      DROP TRIGGER observation_revision_runner_attempts_DELETE;
+      DROP INDEX runner_attempts_active_project;
+      ALTER TABLE runner_attempts DROP COLUMN project_directory;
+    `),
+  )
+
+  const migration = captureDatabaseExec(() => new RunnerStore(f.repository))
+  expect(migration.statements.filter(isAttemptProjectDirectoryBackfill)).toHaveLength(1)
+  expect(
+    f.repository.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            `SELECT COUNT(*) AS count FROM runner_attempts
+            WHERE session_id LIKE 'legacy-session-%' AND project_directory=?`,
+          )
+          .get(f.projectDirectory)!.count,
+    ),
+  ).toBe(retainedAttempts)
+
+  f.repository.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_attempts(
+        id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,'failed',?)`,
+    ).run(
+      "trigger-populated-attempt",
+      receipt.planID,
+      taskID,
+      retainedAttempts + 100,
+      "trigger-populated-session",
+      "trigger-populated-message",
+      f.projectDirectory,
+      "base",
+      "{}",
+      retainedAttempts,
+    )
+    expect(
+      db
+        .query<{ project_directory: string }, [string]>(
+          "SELECT project_directory FROM runner_attempts WHERE id=?",
+        )
+        .get("trigger-populated-attempt")?.project_directory,
+    ).toBe(f.projectDirectory)
+    expect(
+      db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='runner_attempts_active_project'",
+        )
+        .get()?.name,
+    ).toBe("runner_attempts_active_project")
+    expect(
+      db
+        .query<{ name: string }, []>(
+          `SELECT name FROM sqlite_master WHERE type='trigger'
+            AND name IN (
+              'runner_attempts_project_directory_insert',
+              'runner_attempts_project_directory_plan_update',
+              'runner_plans_project_directory_update'
+            ) ORDER BY name`,
+        )
+        .all()
+        .map(({ name }) => name),
+    ).toEqual([
+      "runner_attempts_project_directory_insert",
+      "runner_attempts_project_directory_plan_update",
+      "runner_plans_project_directory_update",
+    ])
+    const movedProjectDirectory = `${f.projectDirectory}-moved`
+    db.query("UPDATE runner_plans SET project_directory=? WHERE id=?").run(
+      movedProjectDirectory,
+      receipt.planID,
+    )
+    expect(
+      db
+        .query<{ project_directory: string }, [string]>(
+          "SELECT project_directory FROM runner_attempts WHERE id=?",
+        )
+        .get("legacy-attempt-0")?.project_directory,
+    ).toBe(movedProjectDirectory)
+    db.query("UPDATE runner_plans SET project_directory=? WHERE id=?").run(
+      f.projectDirectory,
+      receipt.planID,
+    )
+  })
+
+  f.repository.close()
+  const reopened = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(reopened)
+  const reopen = captureDatabaseExec(() => new RunnerStore(reopened))
+  expect(reopen.statements.filter(isAttemptProjectDirectoryBackfill)).toHaveLength(0)
+  expect(
+    reopened.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            `SELECT COUNT(*) AS count FROM runner_attempts
+            WHERE session_id LIKE 'legacy-session-%' AND project_directory=?`,
+          )
+          .get(f.projectDirectory)!.count,
+    ),
+  ).toBe(retainedAttempts)
+})
 
 test("legacy Architect renewal rows migrate to store an explicit continuity snapshot", () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-architect-continuity-migration-"))

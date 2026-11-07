@@ -660,7 +660,7 @@ export class RunnerStore {
         project_directory TEXT PRIMARY KEY, owner TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS runner_attempts (
-        id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL,
+        id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, project_directory TEXT, task_id TEXT NOT NULL, number INTEGER NOT NULL,
         session_id TEXT NOT NULL UNIQUE, message_id TEXT NOT NULL UNIQUE, workspace TEXT NOT NULL, base_commit TEXT NOT NULL,
         artifact TEXT, policy TEXT NOT NULL, state TEXT NOT NULL, started_at INTEGER NOT NULL,
         token_count INTEGER, tool_count INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0, cost REAL,
@@ -819,6 +819,52 @@ export class RunnerStore {
       // event time or the time this additive migration happens to run.
       if (!progressColumns.has("recorded_at"))
         db.exec("ALTER TABLE runner_progress ADD COLUMN recorded_at INTEGER")
+      const attemptColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_attempts)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!attemptColumns.has("project_directory")) {
+        db.exec("ALTER TABLE runner_attempts ADD COLUMN project_directory TEXT")
+        // Only the legacy schema needs a full retained-attempt backfill. Keep
+        // this scan inside the one-time additive migration, not normal reopen.
+        db.exec(`
+          UPDATE runner_attempts
+             SET project_directory=(SELECT project_directory FROM runner_plans WHERE id=runner_attempts.plan_id)
+           WHERE project_directory IS NOT
+                 (SELECT project_directory FROM runner_plans WHERE id=runner_attempts.plan_id)
+        `)
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS runner_attempts_active_project
+          ON runner_attempts(project_directory,started_at DESC,id DESC)
+          WHERE state IN ('preparing','running','verifying');
+        CREATE TRIGGER IF NOT EXISTS runner_attempts_project_directory_insert
+          AFTER INSERT ON runner_attempts
+          WHEN NEW.project_directory IS NOT
+               (SELECT project_directory FROM runner_plans WHERE id=NEW.plan_id)
+          BEGIN
+            UPDATE runner_attempts
+               SET project_directory=(SELECT project_directory FROM runner_plans WHERE id=NEW.plan_id)
+             WHERE id=NEW.id;
+          END;
+        CREATE TRIGGER IF NOT EXISTS runner_attempts_project_directory_plan_update
+          AFTER UPDATE OF plan_id ON runner_attempts
+          WHEN NEW.project_directory IS NOT
+               (SELECT project_directory FROM runner_plans WHERE id=NEW.plan_id)
+          BEGIN
+            UPDATE runner_attempts
+               SET project_directory=(SELECT project_directory FROM runner_plans WHERE id=NEW.plan_id)
+             WHERE id=NEW.id;
+          END;
+        CREATE TRIGGER IF NOT EXISTS runner_plans_project_directory_update
+          AFTER UPDATE OF project_directory ON runner_plans
+          WHEN OLD.project_directory IS NOT NEW.project_directory
+          BEGIN
+            UPDATE runner_attempts SET project_directory=NEW.project_directory WHERE plan_id=NEW.id;
+          END;
+      `)
       const reminderColumns = new Set(
         db
           .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
