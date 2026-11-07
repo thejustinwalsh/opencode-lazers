@@ -32,16 +32,17 @@ import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
   boundedModelLabel,
+  boundedModelEffortLabel,
   candidateLabel,
   formatDate,
   currentMarketEstimateSummary,
   modelDisplayLabel,
-  modelDisplayName,
   numericValue,
   recordReferenceLabel,
   routeLabel,
   sourceState,
   sourceTitle,
+  modelEffortLabel,
 } from "./comparison-presentation.ts"
 import css from "./comparison-panel.css?inline"
 
@@ -74,7 +75,7 @@ const initial: typeof Preference.Type = {
   selectedTaskID: null,
   selectedCandidateID: null,
   selectedConfigurationID: null,
-  split: 56,
+  split: 64,
   topScroll: 0,
   inspectorScroll: 0,
 }
@@ -130,7 +131,27 @@ function candidateAvailabilityLabel(candidate: ModelCandidate) {
 }
 
 function personaFilterLabel(persona: typeof initial.persona) {
-  return persona ? modelPersonaLabels[persona] : "All personas"
+  if (!persona) return "All"
+  return persona === "small-refactoring" ? "Refactor" : modelPersonaLabels[persona]
+}
+
+function marketSummarySource(context: string) {
+  const [source, ...details] = context.split(" · ")
+  const conciseSource = (() => {
+    switch (source) {
+      case "OpenRouter model catalog":
+        return "OpenRouter"
+      case "OpenCode model catalog":
+        return "OpenCode"
+      case "Configured price sources":
+        return "Configured sources"
+      case "Configured price source":
+        return "Configured source"
+      default:
+        return source
+    }
+  })()
+  return [conciseSource, ...details].join(" · ")
 }
 
 function decisionStatusLabel(status: ModelComparisonPanelData["decisionStatus"]) {
@@ -161,7 +182,7 @@ function decisionStatusSummary(status: ModelComparisonPanelData["decisionStatus"
     case "ready":
       return "Current"
     case "partial":
-      return "Coverage gaps"
+      return "Partial"
     case "stale":
       return "Stale evidence"
     case "unknown":
@@ -211,22 +232,22 @@ function referenceCostLabel(estimate: ModelDecisionReferenceEstimate) {
   switch (estimate.status) {
     case "exact":
       return estimate.valueUSDPerAcceptedTask === null
-        ? "No numeric OpenRouter reference amount"
-        : `OpenRouter scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
+        ? "No numeric OpenRouter model catalog reference amount"
+        : `OpenRouter model catalog scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
     case "conditional":
       return estimate.rangeUSDPerAcceptedTask
-        ? `OpenRouter conditional range · ${moneyRangeLabel(estimate.rangeUSDPerAcceptedTask)} / accepted task`
-        : "No numeric OpenRouter range amount"
+        ? `OpenRouter model catalog conditional range · ${moneyRangeLabel(estimate.rangeUSDPerAcceptedTask)} / accepted task`
+        : "No numeric OpenRouter model catalog range amount"
     case "partial":
       if (estimate.knownSubtotalUSDPerAcceptedTask !== null)
-        return `OpenRouter priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
+        return `OpenRouter model catalog priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
       if (estimate.knownSubtotalRangeUSDPerAcceptedTask)
-        return `OpenRouter priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
+        return `OpenRouter model catalog priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
       return "No priced portion is shown; total unknown"
     case "zero-accepted":
       return "No accepted tasks · no reference per-task amount"
     case "unavailable":
-      return "No numeric OpenRouter reference amount"
+      return "No numeric OpenRouter model catalog reference amount"
   }
 }
 
@@ -257,6 +278,47 @@ function countLabel(count: number, singular: string, plural = `${singular}s`) {
   return `${count.toLocaleString()} ${count === 1 ? singular : plural}`
 }
 
+function knownUsageSourcePresentation(source: string) {
+  switch (source) {
+    case "openrouter-endpoints":
+      return {
+        compact: "OpenRouter endpoint pricing",
+        pricing: "OpenRouter endpoint pricing",
+        sourceLink: "OpenRouter endpoint source",
+        range: "Endpoint range",
+        tierSelector: "Endpoint tier selector",
+        scenario: "endpoint scenario",
+      }
+    case "openrouter-models":
+      return {
+        compact: "OpenRouter model catalog pricing",
+        pricing: "OpenRouter model catalog pricing",
+        sourceLink: "OpenRouter model catalog source",
+        range: "OpenRouter model catalog range",
+        tierSelector: "OpenRouter model catalog tier selector",
+        scenario: "OpenRouter model catalog scenario",
+      }
+    case "native-catalog":
+      return {
+        compact: "Native catalog pricing",
+        pricing: "Native catalog pricing",
+        sourceLink: "Native model catalog source",
+        range: "Native catalog range",
+        tierSelector: "Native catalog tier selector",
+        scenario: "native catalog scenario",
+      }
+    default:
+      return {
+        compact: "Pricing source unavailable",
+        pricing: "Pricing source unavailable",
+        sourceLink: "Pricing source",
+        range: "Conditional range",
+        tierSelector: "Pricing tier selector",
+        scenario: "pricing scenario",
+      }
+  }
+}
+
 function formatKnownUsageRange(
   range: { minimum: number; maximum: number } | null,
   alwaysShowEndpoints = false,
@@ -276,7 +338,7 @@ function knownUsageValueLabel(scenario: KnownUsageMarketScenario) {
     case "range":
       return scenario.rangeUSD === null
         ? "Unavailable · range not supplied"
-        : `Endpoint range · ${formatKnownUsageRange(scenario.rangeUSD, true)}`
+        : `${knownUsageSourcePresentation(scenario.provenance.source).range} · ${formatKnownUsageRange(scenario.rangeUSD, true)}`
     case "partial":
       return scenario.knownSubtotalUSD === null
         ? "Unavailable · not a zero price"
@@ -287,11 +349,12 @@ function knownUsageValueLabel(scenario: KnownUsageMarketScenario) {
 }
 
 function knownUsageEssentialDescription(scenario: KnownUsageMarketScenario) {
+  const source = knownUsageSourcePresentation(scenario.provenance.source)
   const conditions = [
     scenario.tierAttribution.status === "unresolved"
       ? "prompt tier unresolved"
       : scenario.tierAttribution.status === "unsupported"
-        ? "endpoint tier selector unsupported"
+        ? `${source.tierSelector.toLowerCase()} unsupported`
         : null,
     scenario.coverage.retries.status === "complete"
       ? null
@@ -310,7 +373,7 @@ function knownUsageEssentialDescription(scenario: KnownUsageMarketScenario) {
     return `Partial known-usage subtotal only${conditions.length ? ` · ${conditions.join(" · ")}` : ""} · not a complete-task or whole-history bound.`
 
   if (scenario.status === "range" || conditions.length)
-    return `Conditional endpoint scenario${conditions.length ? ` · ${conditions.join(" · ")}` : ""} · known retained usage only, not a complete-task or whole-history bound or actual charges.`
+    return `Conditional ${source.scenario}${conditions.length ? ` · ${conditions.join(" · ")}` : ""} · known retained usage only, not a complete-task or whole-history bound or actual charges.`
 
   return "Known retained usage only · not actual charges or a complete-task bound."
 }
@@ -326,7 +389,7 @@ function knownUsageTierDescription(scenario: KnownUsageMarketScenario) {
     case "unresolved":
       return `Prompt tier unresolved · available tiers ${selected}. Any range is conditional for known retained usage only, not a complete-task or whole-history bound.`
     case "unsupported":
-      return `Endpoint tier selector unsupported by retained usage evidence · no unsupported tier is inferred.`
+      return `${knownUsageSourcePresentation(scenario.provenance.source).tierSelector} unsupported by retained usage evidence · no unsupported tier is inferred.`
   }
 }
 
@@ -349,6 +412,10 @@ function knownUsageCacheWriteDescription(scenario: KnownUsageMarketScenario) {
       return `Cache-write pricing uses scoped documentation${evidence.policyID ? ` · ${evidence.policyID}` : ""}; any documented zero applies only to this scenario.`
     case "endpoint-rate":
       return "Cache-write pricing uses the published rate for this exact endpoint scenario only; it does not establish general cache-write capability or availability."
+    case "published-model-rate":
+      return "Cache-write pricing uses the published OpenRouter model rate for this exact scenario only; it does not establish general cache-write capability or availability."
+    case "published-native-quote":
+      return "Cache-write pricing uses the published native catalog quote for this exact scenario only; it does not establish general cache-write capability or availability."
     case "zero-usage-rate-not-required":
       return "No cache-write rate was needed for the measured zero usage; zero observed writes do not mean cache writes are free."
     case "missing":
@@ -372,6 +439,7 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
   const valueLabel = () => knownUsageValueLabel(scenario())
   const essentialDescription = () => knownUsageEssentialDescription(scenario())
   const provenance = () => scenario().provenance
+  const sourcePresentation = () => knownUsageSourcePresentation(provenance().source)
   const freshness = () =>
     scenario().freshness === "current"
       ? "Current"
@@ -392,7 +460,7 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
         <strong>{valueLabel()}</strong>
       </p>
       <p class="lazers-models-market-meta">
-        OpenRouter endpoint · provider {provenance().providerName ?? "unavailable"} · tag{" "}
+        {sourcePresentation().compact} · provider {provenance().providerName ?? "unavailable"} · tag{" "}
         {provenance().tag ?? "unavailable"} · service tier{" "}
         {provenance().serviceTier ?? "not specified"} · {freshness()} ·{" "}
         {formatDate(provenance().retrievedAt)}
@@ -420,16 +488,20 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
             <dl class="lazers-models-evidence-summary">
               <dt>Pricing source</dt>
               <dd>
-                OpenRouter endpoint pricing · {provenance().productID} · refresh{" "}
-                {provenance().refreshState} · snapshot generation{" "}
+                {sourcePresentation().pricing} · basis {provenance().priceBasis} ·{" "}
+                {provenance().productID} · refresh {provenance().refreshState} · snapshot generation{" "}
                 {provenance().snapshotGeneration?.toLocaleString() ?? "unavailable"} · current
                 generation {provenance().currentGeneration?.toLocaleString() ?? "unavailable"}
               </dd>
-              <dt>Endpoint source</dt>
+              <dt>{sourcePresentation().sourceLink}</dt>
               <dd>
-                <a href={provenance().sourceURL} target="_blank" rel="noreferrer">
-                  {provenance().sourceURL}
-                </a>
+                <Show when={provenance().sourceURL} fallback={<span>Source unavailable</span>}>
+                  {(sourceURL) => (
+                    <a href={sourceURL()} target="_blank" rel="noreferrer">
+                      {sourceURL()}
+                    </a>
+                  )}
+                </Show>
               </dd>
               <dt>Source record</dt>
               <dd>
@@ -996,14 +1068,30 @@ function ModelPanel(
         candidate.identity.variant === configuration.route.variant,
     )
   }
+  const decisionDisplayRoutes = () => [
+    ...availableConfigurations().map((configuration) => ({
+      ...configuration.route,
+      variant: null,
+    })),
+    ...(visible()?.decisionOverview?.graph.referenceEstimates ?? []).map((reference) => ({
+      ...reference.estimate.route,
+      variant: null,
+    })),
+  ]
   const decisionModelFullName = (configuration: ModelDecisionConfiguration) =>
-    modelDisplayName(
+    modelDisplayLabel(
       configuration.route,
+      decisionDisplayRoutes(),
       visible()?.candidates ?? [],
       visible()?.catalog?.options ?? [],
     )
   const decisionModelLabel = (configuration: ModelDecisionConfiguration) =>
     boundedModelLabel(decisionModelFullName(configuration))
+  const decisionModelChoiceLabel = (configuration: ModelDecisionConfiguration) => {
+    const friendly = decisionModelFullName(configuration)
+    const exactRoute = routeLabel(configuration.route)
+    return friendly.includes(exactRoute) ? friendly : `${friendly} · ${exactRoute}`
+  }
   const selectedTask = () => visible()?.task
   const selectedDecisionConfiguration = () => {
     const current = visible()
@@ -1036,6 +1124,11 @@ function ModelPanel(
       priceSource: context.priceIndex.source,
       priceFreshness: freshness,
     })
+  }
+  const selectedMarketSummary = () => {
+    const summary = selectedMarketEstimate()
+    const configuration = selectedDecisionConfiguration()
+    return summary && configuration ? { summary, configuration } : undefined
   }
   type DecisionChartGraph = NonNullable<ModelComparisonPanelData["decisionOverview"]>["graph"]
   let chartReferencePoints: DecisionChartGraph["points"] | undefined
@@ -1147,7 +1240,6 @@ function ModelPanel(
   }
   const configurationsForGroup = (groupID: string) =>
     availableConfigurations().filter((configuration) => configuration.groupID === groupID)
-  const selectedGroupID = () => selectedDecisionConfiguration()?.groupID ?? null
   const providerChoices = () => {
     const groupByID = new Map<string, ModelDecisionConfiguration>()
     for (const configuration of availableConfigurations())
@@ -1181,11 +1273,7 @@ function ModelPanel(
   }
   const taskLabel = () => {
     const task = selectedTask()
-    return task
-      ? `Task · ${task.reference}`
-      : visible()?.selectedTaskID
-        ? "Task unavailable"
-        : "Choose task"
+    return task ? task.reference : visible()?.selectedTaskID ? "Task unavailable" : "Choose task"
   }
   const taskDescription = () => {
     const task = selectedTask()
@@ -1637,11 +1725,6 @@ function ModelPanel(
       return { message: "One or more source snapshots are unavailable.", role: "status" as const }
     return undefined
   }
-  const sourceSnapshotSummary = () => {
-    const sources = visible()?.comparison?.sources
-    if (!sources) return "Loading source coverage"
-    return `${sources.filter((source) => source.snapshot).length} of ${sources.length} snapshots available`
-  }
   const effortDetailsSummary = () => {
     const basis = visible()?.effortBasis
     if (!basis) return "Recorded task effort"
@@ -1796,57 +1879,87 @@ function ModelPanel(
               Assignments
             </button>
           </div>
-          <div class="lazers-models-filters">
-            <Ui.Menu
-              label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All personas",
-                  onSelect: () => changeDecisionFilters({ persona: null }),
-                },
-                ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
-                  label: modelPersonaLabels[persona],
-                  onSelect: () => changeDecisionFilters({ persona }),
-                })),
-              ]}
-            />
-            <Ui.Menu
-              label={`Task kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All task kinds",
-                  onSelect: () => changeDecisionFilters({ taskKind: null }),
-                },
-                ...modelTaskKinds.map((taskKind) => ({
-                  label: modelTaskKindLabels[taskKind],
-                  onSelect: () => changeDecisionFilters({ taskKind }),
-                })),
-              ]}
-            />
-            <span class="lazers-models-filter-status">
-              {visible()?.decisionContext?.classification.status ?? "Classification loading"}
-            </span>
-            <span
-              class="lazers-models-task-select"
-              role="group"
-              aria-label={taskDescription()}
-              title={taskDescription()}
-            >
+          <div class="lazers-models-controls">
+            <div class="lazers-models-filters" role="group" aria-label="Comparison filters">
               <Ui.Menu
-                label={taskLabel()}
+                label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
                 trigger="button"
                 icon="chevron-down"
-                disabled={!visible()?.tasks.length}
-                items={(visible()?.tasks ?? []).map((task) => ({
-                  label: `${task.reference} · ${task.title || task.objective} · ${task.status}`,
-                  onSelect: () => selectTask(task.taskID),
-                }))}
+                items={[
+                  {
+                    label: "All personas",
+                    onSelect: () => changeDecisionFilters({ persona: null }),
+                  },
+                  ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
+                    label: modelPersonaLabels[persona],
+                    onSelect: () => changeDecisionFilters({ persona }),
+                  })),
+                ]}
               />
-            </span>
+              <Ui.Menu
+                label={`Kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
+                trigger="button"
+                icon="chevron-down"
+                items={[
+                  {
+                    label: "All task kinds",
+                    onSelect: () => changeDecisionFilters({ taskKind: null }),
+                  },
+                  ...modelTaskKinds.map((taskKind) => ({
+                    label: modelTaskKindLabels[taskKind],
+                    onSelect: () => changeDecisionFilters({ taskKind }),
+                  })),
+                ]}
+              />
+              <span
+                class="lazers-models-task-select"
+                role="group"
+                aria-label={taskDescription()}
+                title={taskDescription()}
+              >
+                <Ui.Menu
+                  label={taskLabel()}
+                  trigger="button"
+                  icon="chevron-down"
+                  disabled={!visible()?.tasks.length}
+                  items={(visible()?.tasks ?? []).map((task) => ({
+                    label: `${task.reference} · ${task.title || task.objective} · ${task.status}`,
+                    onSelect: () => selectTask(task.taskID),
+                  }))}
+                />
+              </span>
+            </div>
+            <Show when={selectedDecisionConfiguration()}>
+              {(configuration) => (
+                <div
+                  class="lazers-models-selection-tools"
+                  role="group"
+                  aria-label="Model and effort selection"
+                  title={`Exact route ${routeLabel(configuration().route)}`}
+                >
+                  <Ui.Menu
+                    label={`Model · ${decisionModelLabel(configuration())}`}
+                    trigger="button"
+                    icon="chevron-down"
+                    disabled={!providerChoices().length}
+                    items={providerChoices().map((choice) => ({
+                      label: decisionModelChoiceLabel(choice),
+                      onSelect: () => selectDecisionGroup(choice.groupID),
+                    }))}
+                  />
+                  <Ui.Menu
+                    label={`Effort · ${configuration().route.variant ?? "Not specified"}`}
+                    trigger="button"
+                    icon="chevron-down"
+                    disabled={!configurationsForGroup(configuration().groupID).length}
+                    items={configurationsForGroup(configuration().groupID).map((choice) => ({
+                      label: choice.route.variant ?? "Not specified",
+                      onSelect: () => state.selectConfiguration(choice.configurationID),
+                    }))}
+                  />
+                </div>
+              )}
+            </Show>
           </div>
           <Show when={visible()?.sourceRefresh === "refreshing"}>
             <p class="lazers-models-refresh-note" role="status">
@@ -1907,7 +2020,7 @@ function ModelPanel(
         <div class="lazers-models-comparison-content">
           <section class="lazers-models-compare" aria-label="Model comparison">
             <details class="lazers-models-sources-details">
-              <summary>Source snapshots · {sourceSnapshotSummary()}</summary>
+              <summary>Sources</summary>
               <div class="lazers-models-sources" aria-label="Source snapshot coverage">
                 <For each={visible()?.comparison?.sources ?? []}>
                   {(source) => (
@@ -1974,12 +2087,15 @@ function ModelPanel(
                       if (comparisonChartHasPlottablePoints(points))
                         return "Historical task outcomes"
                       if (comparisonChartHasPlottablePoints([], references))
-                        return "OpenRouter reference estimates · actual task mix"
+                        return "Catalog reference estimates"
                       return "No plottable comparison points"
                     })()}
                   </h3>
                   <span
                     class="lazers-models-decision-status"
+                    classList={{
+                      "lazers-models-visually-hidden": visible()?.decisionStatus === "partial",
+                    }}
                     role="status"
                     data-decision-status={visible()?.decisionStatus ?? "loading"}
                     aria-label={decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
@@ -2017,6 +2133,30 @@ function ModelPanel(
                       appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
                       monoFontFamily={ctx.appearance.font("mono")}
                     />
+                  )}
+                </Show>
+                <Show when={selectedMarketSummary()}>
+                  {(selected) => (
+                    <p
+                      class="lazers-models-market-summary"
+                      role="status"
+                      aria-label={`Selected ${decisionModelFullName(selected().configuration)} · exact route ${routeLabel(selected().configuration.route)}. ${selected().summary.title}`}
+                      title={selected().summary.title}
+                    >
+                      <strong>
+                        {boundedModelEffortLabel(
+                          modelEffortLabel(
+                            decisionModelFullName(selected().configuration),
+                            selected().configuration.route,
+                          ),
+                          28,
+                        )}
+                      </strong>
+                      <small>
+                        {selected().summary.amount} ·{" "}
+                        {marketSummarySource(selected().summary.context)}
+                      </small>
+                    </p>
                   )}
                 </Show>
               </section>
@@ -2140,39 +2280,6 @@ function ModelPanel(
                       >
                         {decisionModelLabel(configuration())}
                       </h2>
-                      <p
-                        class="lazers-models-inspector-route"
-                        title={routeLabel(configuration().route)}
-                      >
-                        {routeLabel(configuration().route)}
-                      </p>
-                      <div
-                        class="lazers-models-decision-tools lazers-models-inspector-tools"
-                        aria-label="Exact route selection"
-                      >
-                        <Ui.Menu
-                          label={`Provider · ${selectedDecisionConfiguration() ? `${selectedDecisionConfiguration()!.route.providerID} / ${selectedDecisionConfiguration()!.route.modelID}` : "Select route"}`}
-                          trigger="button"
-                          icon="chevron-down"
-                          disabled={!providerChoices().length}
-                          items={providerChoices().map((choice) => ({
-                            label: `${choice.route.providerID} / ${choice.route.modelID}`,
-                            onSelect: () => selectDecisionGroup(choice.groupID),
-                          }))}
-                        />
-                        <Ui.Menu
-                          label={`Effort · ${selectedDecisionConfiguration()?.route.variant ?? "Not specified"}`}
-                          trigger="button"
-                          icon="chevron-down"
-                          disabled={
-                            !selectedGroupID() || !configurationsForGroup(selectedGroupID()!).length
-                          }
-                          items={configurationsForGroup(selectedGroupID() ?? "").map((choice) => ({
-                            label: choice.route.variant ?? "Not specified",
-                            onSelect: () => state.selectConfiguration(choice.configurationID),
-                          }))}
-                        />
-                      </div>
                     </div>
                   </div>
                   <Show
@@ -2231,19 +2338,6 @@ function ModelPanel(
                       </span>
                     </p>
                   </Show>
-                  <Show when={selectedMarketEstimate()}>
-                    {(summary) => (
-                      <p
-                        class="lazers-models-market-summary"
-                        role="status"
-                        aria-label={`Current market estimate ${summary().amount}; ${summary().context}. ${summary().title}`}
-                        title={summary().title}
-                      >
-                        <strong>{summary().amount}</strong>
-                        <small>Current market · {summary().context}</small>
-                      </p>
-                    )}
-                  </Show>
                   <Show when={visible()?.decisionInspection}>
                     {(inspection) => (
                       <>
@@ -2274,21 +2368,23 @@ function ModelPanel(
                               {(reference) => (
                                 <section
                                   class="lazers-models-reference-estimate"
-                                  aria-label="OpenRouter actual-cohort reference estimate"
+                                  aria-label="OpenRouter actual-cohort model catalog reference estimate"
                                 >
-                                  <h3>OpenRouter market reference</h3>
+                                  <h3>OpenRouter model catalog reference</h3>
                                   <p>{referenceCostLabel(reference())}</p>
                                   <details class="lazers-models-reference-details">
-                                    <summary>OpenRouter reference coverage and source</summary>
+                                    <summary>
+                                      OpenRouter model catalog reference coverage and source
+                                    </summary>
                                     <div class="lazers-models-reference-content">
                                       <p>
                                         This reference uses observed attributed usage and published
-                                        OpenRouter rates. Failed and retry effort is included as
-                                        producer-reported; it is divided by accepted logical tasks.
-                                        Actual task mix can differ by configuration; this is not a
-                                        common workload or universal ranking. Denominator ·{" "}
-                                        {formatNumber(reference().acceptedTaskCount)} accepted
-                                        tasks.
+                                        OpenRouter model catalog rates. Failed and retry effort is
+                                        included as producer-reported; it is divided by accepted
+                                        logical tasks. Actual task mix can differ by configuration;
+                                        this is not a common workload or universal ranking.
+                                        Denominator · {formatNumber(reference().acceptedTaskCount)}{" "}
+                                        accepted tasks.
                                       </p>
                                       <p>
                                         Identity · {reference().identityStatus} · source
@@ -2326,7 +2422,7 @@ function ModelPanel(
                                         {(sourceURL) => (
                                           <p>
                                             <a href={sourceURL()} target="_blank" rel="noreferrer">
-                                              OpenRouter published source
+                                              OpenRouter model catalog source
                                             </a>
                                           </p>
                                         )}

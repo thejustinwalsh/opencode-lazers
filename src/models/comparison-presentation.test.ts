@@ -7,6 +7,9 @@ import {
   candidateFocusIndex,
   boundedModelLabel,
   currentMarketEstimateSummary,
+  boundedModelEffortLabel,
+  chartModelEffortLabel,
+  modelEffortLabel,
   modelDisplayName,
   modelDisplayLabel,
   readTaskEffortBasis,
@@ -133,6 +136,26 @@ test("ambiguous metadata falls back to the route and colliding catalog names rem
   expect(modelDisplayName(routeA, [], [])).toBe("model-a")
 })
 
+test("chart labels keep the friendly model and effort while route identity stays exact", () => {
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "high" }
+  const fullDisplayLabel = "GPT-6 Luna · openai / gpt-6-luna · high"
+
+  expect(modelEffortLabel(fullDisplayLabel, route)).toBe("GPT-6 Luna · high")
+  expect(chartModelEffortLabel(fullDisplayLabel, route, 18)).toBe("GPT-6 Luna\nhigh")
+  expect(
+    chartModelEffortLabel("Qwen 7 · qwen / qwen-7 · preview-effort", {
+      providerID: "qwen",
+      modelID: "qwen-7",
+      variant: "preview-effort",
+    }),
+  ).toBe("Qwen 7\npreview-effort")
+  expect(boundedModelEffortLabel(modelEffortLabel(fullDisplayLabel, route), 16)).toBe(
+    "GPT-6 Lu… · high",
+  )
+  expect(routeLabel(route)).toBe("openai / gpt-6-luna · high")
+  expect(modelEffortLabel(fullDisplayLabel, route)).not.toMatch(/[pme]:/)
+})
+
 test("candidate keyboard focus is bounded and does not intercept unrelated keys", () => {
   expect(candidateFocusIndex(0, 3, "ArrowUp")).toBe(0)
   expect(candidateFocusIndex(0, 3, "ArrowDown")).toBe(1)
@@ -255,7 +278,7 @@ test("selected current-market summary rounds producer scalars and preserves tiny
     priceFreshness: "current",
   })
   expect(configured?.amount).toBe("≈$0.123 / accepted task")
-  expect(configured?.context).toBe("OpenCode · current")
+  expect(configured?.context).toBe("OpenCode model catalog · current")
   expect(configured?.title).toContain("0.123456")
 
   const tiny = currentMarketEstimateSummary({
@@ -279,7 +302,7 @@ test("selected current-market summary rounds producer scalars and preserves tiny
     priceFreshness: "stale",
   })
   expect(staleProducer?.amount).toBe("≈$4e-8–$1.2e-7 priced portion / accepted task")
-  expect(staleProducer?.context).toBe("OpenRouter · range · stale")
+  expect(staleProducer?.context).toBe("OpenRouter model catalog · range · stale")
   expect(staleProducer?.title).toContain("exact USD per accepted task 4e-8–1.2e-7")
   expect(staleProducer?.title).toContain("partial observed cohort")
   expect(staleProducer?.title).toContain("denominator 3 accepted tasks")
@@ -305,7 +328,7 @@ test("selected current-market summary identifies conditional ranges and stale pr
     priceFreshness: "current",
   })
   expect(conditional?.amount).toBe("≈$4e-8–$1.2e-7 / accepted task")
-  expect(conditional?.context).toBe("OpenRouter range · stale")
+  expect(conditional?.context).toBe("OpenRouter model catalog · range · stale")
   expect(conditional?.title).toContain("retrieved 2026-11-05T12:00:00.000Z")
   expect(conditional?.title).toContain("denominator 2 accepted tasks")
 })
@@ -329,7 +352,7 @@ test("selected current-market summary keeps partial subtotals qualified and omit
     priceFreshness: "current",
   })
   expect(partial?.amount).toBe("≈$5e-8 priced portion / accepted task")
-  expect(partial?.context).toBe("OpenRouter · current")
+  expect(partial?.context).toBe("OpenRouter model catalog · current")
   expect(partial?.amount).not.toContain("priced subtotal")
   expect(partial?.context).not.toContain("remainder unknown")
   expect(partial?.title).toContain("total and remainder unknown")
