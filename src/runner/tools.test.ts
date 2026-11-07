@@ -93,6 +93,8 @@ test("authorized callers read native catalog advice; only orchestration requires
   await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
   for (const tool of tools.values()) expect(tool.options?.codemode).toBe(true)
   expect(tools.get("lz-plan-command")?.description).toContain("retained-repair")
+  expect(tools.get("lz-plan-command")?.description).toContain("unprompted repair-fence failure")
+  expect(tools.get("lz-plan-command")?.description).toContain("User cancellation")
 
   const catalog = tools.get("lz-worker-catalog")!
   expect(catalog.options).toMatchObject({ codemode: true, permission: "lz-worker-catalog" })

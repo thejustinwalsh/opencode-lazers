@@ -58,6 +58,26 @@ test("startup settlement command requires exact task, attempt and decision", () 
   }
 })
 
+test("resume exposes only the exact task and attempt bindings for retained-repair recovery", () => {
+  const command = {
+    requestID: "resume-retained-repair-after-fence-failure",
+    planID: crypto.randomUUID(),
+    expectedVersion: 7,
+    action: "resume" as const,
+    taskID: crypto.randomUUID(),
+    attemptID: crypto.randomUUID(),
+    reason: "Recover the original interrupted retained repair after its runtime fence failure.",
+  }
+  expect(CommandInput.parse(command)).toEqual(command)
+  expect(CommandInput.safeParse({ ...command, nativeInputID: "msg_caller_chosen" }).success).toBe(
+    false,
+  )
+  expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(true)
+  expect(CommandInput.shape.action.description).toContain(
+    "unprompted retained-repair fence failure",
+  )
+})
+
 test("Architect continuity preserves exact authored decisions and bounds the handoff", () => {
   const continuity = {
     decisions: [" Keep the accepted direction. "],
