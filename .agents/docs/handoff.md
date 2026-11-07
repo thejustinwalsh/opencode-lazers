@@ -27,7 +27,8 @@ Older details remain in Git history and linked reports.
 
 ## Current source and native coordinator
 
-Canonical main is `207fa24` at last check; GPU source fix `cbd66d8` is active in Desktop.
+Canonical main is `105e7af` at last check; source177 is integrated via `e2d75bb`.
+GPU source fix `cbd66d8` is active in Desktop. Revalidate HEAD before integration.
 Architect `ses_e568438ebffeaoFbF9nBb942XM`; existing service PID3219. Revalidate both.
 Desktop CUA is usable after full quit/reopen; current view is real LZ-137 Trajectory.
 Native queued prompt **Steer** can deliver time-sensitive coordination. Verify
@@ -100,19 +101,38 @@ human evidence follow-through remains pending; no whole-plan completion claimed.
 
 ## Active native work and next steps
 
-LZ-177 reviewed independent fulfillment: task87a1b82f-cae5-4453-a193-c01a63a1cd9e,
-plan a8394e90-b1dd-4510-8bb9-1a7f7f6ef0ec. Normal native Luna Max implementor
-`ses_5cd7fb530a554a3f8e3513f2624a5a1b` was confirmed ACTIVE, OpenAI gpt-6-luna/max,
-attempt291bb88d-cca6-497f-82d1-d1472ba012a4 in native runner worktree of that name.
-Preserve it; no runtime activation that interrupts healthy implementation.
-It repairs `lz-dispose-task` rejecting reviewed external work for never-executed
-stopped tasks175/176; do not fabricate accepted attempts or mutate SQL. Its scope
-was chosen to avoid original174runtime work. Revalidate actual native scope/status.
+LZ-177 source7f8bd70 is integrated viae2d75bb. Native task/combined checks
+passed (four receipts, exit0, cleanup complete); real registered tools recorded
+175/176 fulfilled dispositions16/17, preserving cancelled/zero-attempt executors.
+Whole-plan source integration is recorded. Original177 checkout cleanup remains
+blocked on its discarded idle observation; do not retry unchanged cleanup or
+let that invalidate delivered work. Independent integration checkout was removed
+natively force:false. Report: `design/reviews/lz177-native-completion-hold-20261107.md`.
 
-Benign integration-rebind research reused native Luna reviewer
-`ses_e4934a918ffejMSRddGxHwR6ol`; inspect current result/tasking. Do not assume a
-new task number until querying actual records. Keep this and177 from delaying
-original174 correction and retained172UI.
+Actual active implementor is LZ-180, task834d8513-b419-45b5-b89e-d81041902b8d,
+plan002c3469-5346-4d74-a21f-6991eb52eeec, attempt805fadf8-efa5-4df6-ac48-bd4e1443f02c,
+worker `ses_dc161541d1334b14a156704f789ab9f5`, OpenAI gpt-6-luna/max.
+Its native runner tree uses the attempt ID. Revalidate active status; Main has
+handled a real once-only permission and reconciled permission holds. Preserve it.
+It corrects genuine current idle-hook authority across listener replacement.
+Original179 was never executed and cancelled;180 preserves behavior with disjoint
+progress source/new test paths. Do not redispatch179 or duplicate180.
+
+LZ-178 benign integration rebind: task095a9e75-3731-4834-9d67-f4293c260636,
+planc68342dc-d51e-42cb-98ba-287067e51a5f, queued with no attempts. It overlaps
+original174 runtime scope; scope contention, not a running implementation.
+Read-only diagnostics and timings: `design/reviews/delivery-bottleneck-20261107.md`.
+
+User's latest requirements: auto-fix formatting/lint in every current quality
+workflow, capture fixes in the actual verified candidate without formatting-only
+model retries; integrate completed prerequisites before dependent dispatch,
+independently of cleanup bookkeeping.105e7af updates package verify, agents,
+task-fetch/schema guidance and retained procedure recognition;25tests/164assertions
+and actual verify pass. Runtime-owned mechanical candidate capture is not yet
+implemented by that commit. Main is reusing existing170→171 for quality work and
+researching existing148/dependency integration behavior. Native Luna read-only
+researchers were explicitly told not to submit tasks. Keep full acceptance and
+avoid another broad recovery framework; confirm actual dispatch, not plan labels.
 
 Original174: task49dbfe29-b1af-4710-abfa-9268d61db228, plan
 f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23, attempt0375ef98-ff9b-456f-849d-2ed9da547920,

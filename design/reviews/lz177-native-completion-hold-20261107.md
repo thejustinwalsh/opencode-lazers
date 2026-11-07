@@ -144,3 +144,24 @@ The separate Architect-created integration checkout was independently confirmed
 clean and merged into `main`, then removed by native `worktree.remove` with
 `force:false`, returning `removed:true`. That is not the original worker checkout
 or a retained-verification resource, and establishes no historical containment.
+
+## Original checkout cleanup remains independently guarded
+
+Native cleanup subsequently held at version 14: the original worker activity is
+not conclusively idle. A fresh read-only Git check confirmed original HEAD is
+exact `7f8bd70`, the checkout is clean, and its HEAD is an ancestor of canonical
+`main`. Thus dirty/unmerged work is not the reported blocker; missing matching
+native idle authority remains unresolved.
+
+Architect retried the existing `integrated` control against current version 14,
+requesting only fresh native revalidation and non-forced cleanup. It returned
+`cleanup-requested`, version 15. That is not successful cleanup or a repaired
+historical idle report. No original files/resources were manually removed, and
+no worker prompt, interruption, restart, certificate reconstruction or force was
+used. Await the native outcome; do not repeat unchanged retries if the same idle
+hold returns. This hold must not interrupt healthy LZ-180 implementation.
+
+That retry returned the same cleanup hold at version 16, confirmed by fresh native
+inspection. No newly conclusive original-worker idle evidence is available, so
+there is no basis for another identical retry. Preserve the original checkout;
+accepted source integration and recorded external fulfillment remain valid.
