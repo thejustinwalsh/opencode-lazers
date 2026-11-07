@@ -8,6 +8,7 @@ import { keyedProposal, validProposal } from "../test/proposal.ts"
 import { TaskRepository, taskDatabasePath } from "./storage.ts"
 import { startingRevision, submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
+import { ensureRetainedVerificationTables } from "./runner/retained-verification/store.ts"
 import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
 
 const directories: string[] = []
@@ -875,6 +876,315 @@ test("a disposition cannot hide active execution or claim failed work was fulfil
       { sessionID: "architect", agent: "architect" },
     ),
   ).toThrow("active execution")
+})
+
+test("reviewed fulfillment accepts quiet unstarted plans without rewriting executor state", () => {
+  const path = join(directory(), "tasks.sqlite")
+  let repository = open(path)
+  let runner = new RunnerStore(repository)
+  const createPlan = (key: string) => {
+    const submitted = submitTask(repository, keyedProposal(key), provenance)
+    if (submitted.status !== "submitted") throw new Error("Expected submitted task")
+    const task = repository.get(submitted.taskID)!
+    const plan = runner.submit(
+      {
+        requestID: `plan-${key}`,
+        objective: task.proposal.objective,
+        baseCommit: "a".repeat(40),
+        nodes: [{ taskID: task.id, revision: task.revision }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: task.proposal.verification,
+        acceptance: task.proposal.acceptance,
+      },
+      "architect",
+    )
+    return { task, plan }
+  }
+  const inputFor = (taskID: string, requestID: string) => ({
+    taskID,
+    requestID,
+    disposition: "fulfilled" as const,
+    reason: "Reviewed external completion evidence.",
+    evidence: [{ kind: "artifact" as const, reference: "reviews/external-completion.patch" }],
+    relatedTaskIDs: [],
+  })
+
+  const cancelled = createPlan("cancelled-external")
+  runner.move(cancelled.plan.planID, cancelled.task.id, "CANCEL")
+  repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(cancelled.plan.planID),
+  )
+  const cancelledInput = inputFor(cancelled.task.id, "cancelled-external-review")
+  const recorded = repository.recordDisposition(cancelledInput, {
+    sessionID: "architect-session",
+    agent: "architect",
+  })
+  expect(recorded).toMatchObject({
+    status: "recorded",
+    disposition: {
+      disposition: "fulfilled",
+      evidence: cancelledInput.evidence,
+      sessionID: "architect-session",
+      agent: "architect",
+    },
+  })
+  expect(runner.nodes(cancelled.plan.planID)[0]?.state).toBe("cancelled")
+  expect(runner.execution(cancelled.task.id)?.state).toBe("cancelled")
+  expect(runner.attempts(cancelled.plan.planID)).toEqual([])
+
+  const draft = createPlan("quiet-draft-external")
+  const draftInput = inputFor(draft.task.id, "quiet-draft-external-review")
+  expect(
+    repository.recordDisposition(draftInput, { sessionID: "architect-session", agent: "architect" })
+      .status,
+  ).toBe("recorded")
+  expect(runner.plan(draft.plan.planID)?.state).toBe("draft")
+  expect(runner.nodes(draft.plan.planID)[0]?.state).toBe("queued")
+  expect(runner.attempts(draft.plan.planID)).toEqual([])
+
+  const running = createPlan("running-queued-external")
+  repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(running.plan.planID),
+  )
+  expect(() =>
+    repository.recordDisposition(inputFor(running.task.id, "running-queued-external-review"), {
+      sessionID: "architect-session",
+      agent: "architect",
+    }),
+  ).toThrow("active execution")
+  expect(repository.taskDisposition(running.task.id)).toBeUndefined()
+
+  repository.close()
+  repository = open(path)
+  runner = new RunnerStore(repository)
+  expect(
+    repository.recordDisposition(cancelledInput, { sessionID: "reopened", agent: "architect" }),
+  ).toMatchObject({ status: "replayed", disposition: { evidence: cancelledInput.evidence } })
+  expect(
+    repository.recordDisposition(
+      { ...cancelledInput, reason: "Changed reviewed outcome." },
+      { sessionID: "architect-session", agent: "architect" },
+    ),
+  ).toMatchObject({ status: "conflict" })
+  expect(repository.taskDispositionHistory(cancelled.task.id)).toHaveLength(1)
+  expect(runner.nodes(cancelled.plan.planID)[0]?.state).toBe("cancelled")
+  expect(runner.attempts(cancelled.plan.planID)).toEqual([])
+})
+
+test("reviewed fulfillment refuses all historical attempt rows, including terminal and unknown states", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const runner = new RunnerStore(repository)
+  const submitted = submitTask(repository, keyedProposal(), provenance)
+  if (submitted.status !== "submitted") throw new Error("Expected submitted task")
+  const task = repository.get(submitted.taskID)!
+  const plan = runner.submit(
+    {
+      requestID: "history-review-plan",
+      objective: task.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: task.id, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [task.id],
+      verification: task.proposal.verification,
+      acceptance: task.proposal.acceptance,
+    },
+    "architect",
+  )
+  runner.move(plan.planID, task.id, "CANCEL")
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(plan.planID)
+    const insert = db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (const [index, state] of ["failed", "cancelled", "unknown"].entries())
+      insert.run(
+        `historical-${index}`,
+        plan.planID,
+        task.id,
+        index + 1,
+        `ses_historical_${index}`,
+        `msg_historical_${index}`,
+        "/repo",
+        "a".repeat(40),
+        "{}",
+        state,
+        index,
+      )
+  })
+
+  expect(() =>
+    repository.recordDisposition(
+      {
+        taskID: task.id,
+        requestID: "historical-attempt-external-review",
+        disposition: "fulfilled",
+        reason: "Review does not erase the attempt history.",
+        evidence: [{ kind: "human", reference: "reviewed externally" }],
+      },
+      { sessionID: "architect-session", agent: "architect" },
+    ),
+  ).toThrow("Fulfilled disposition requires accepted execution or reviewed evidence")
+  expect(repository.taskDisposition(task.id)).toBeUndefined()
+  expect(runner.attempts(plan.planID).map((attempt) => attempt.state)).toEqual([
+    "failed",
+    "cancelled",
+    "unknown",
+  ])
+  expect(runner.nodes(plan.planID)[0]?.state).toBe("cancelled")
+})
+
+test("incorporated fulfillment remains compatible with existing executor history", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const runner = new RunnerStore(repository)
+  const submitted = submitTask(repository, keyedProposal(), provenance)
+  if (submitted.status !== "submitted") throw new Error("Expected submitted task")
+  const task = repository.get(submitted.taskID)!
+  const plan = runner.submit(
+    {
+      requestID: "incorporated-fulfillment-plan",
+      objective: task.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: task.id, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [task.id],
+      verification: task.proposal.verification,
+      acceptance: task.proposal.acceptance,
+    },
+    "architect",
+  )
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='incorporated' WHERE id=?").run(plan.planID)
+    db.query("UPDATE runner_nodes SET state='incorporated' WHERE plan_id=?").run(plan.planID)
+    db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+       VALUES(?,?,?,?,?,?,?,?,?,'unknown',?)`,
+    ).run(
+      "incorporated-historical-attempt",
+      plan.planID,
+      task.id,
+      1,
+      "ses_incorporated_history",
+      "msg_incorporated_history",
+      "/repo",
+      "a".repeat(40),
+      "{}",
+      1,
+    )
+  })
+
+  expect(
+    repository.recordDisposition(
+      {
+        taskID: task.id,
+        requestID: "incorporated-fulfillment-review",
+        disposition: "fulfilled",
+        reason: "The incorporated execution remains a valid fulfillment basis.",
+        evidence: [{ kind: "verification", reference: "bun test" }],
+      },
+      { sessionID: "architect-session", agent: "architect" },
+    ),
+  ).toMatchObject({ status: "recorded", disposition: { disposition: "fulfilled" } })
+  expect(runner.nodes(plan.planID)[0]?.state).toBe("incorporated")
+  expect(runner.attempts(plan.planID).map((attempt) => attempt.state)).toEqual(["unknown"])
+})
+
+test("preparing, running, verifying, and approval-held execution cannot be externally fulfilled", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const runner = new RunnerStore(repository)
+  const createCancelledPlan = (key: string) => {
+    const submitted = submitTask(repository, keyedProposal(key), provenance)
+    if (submitted.status !== "submitted") throw new Error("Expected submitted task")
+    const task = repository.get(submitted.taskID)!
+    const plan = runner.submit(
+      {
+        requestID: `active-${key}-plan`,
+        objective: task.proposal.objective,
+        baseCommit: "a".repeat(40),
+        nodes: [{ taskID: task.id, revision: task.revision }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: task.proposal.verification,
+        acceptance: task.proposal.acceptance,
+      },
+      "architect",
+    )
+    runner.move(plan.planID, task.id, "CANCEL")
+    repository.atomic((db) =>
+      db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(plan.planID),
+    )
+    return { task, plan }
+  }
+
+  const active = createCancelledPlan("active-attempts")
+  repository.atomic((db) => {
+    const insert = db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (const [index, state] of ["preparing", "running", "verifying"].entries())
+      insert.run(
+        `active-attempt-${index}`,
+        active.plan.planID,
+        active.task.id,
+        index + 1,
+        `ses_active_${index}`,
+        `msg_active_${index}`,
+        "/repo",
+        "a".repeat(40),
+        "{}",
+        state,
+        index,
+      )
+  })
+  expect(() =>
+    repository.recordDisposition(
+      {
+        taskID: active.task.id,
+        requestID: "active-attempts-review",
+        disposition: "fulfilled",
+        reason: "An active reservation is not external completion.",
+        evidence: [{ kind: "human", reference: "review" }],
+      },
+      { sessionID: "architect-session", agent: "architect" },
+    ),
+  ).toThrow("active execution")
+  expect(repository.taskDisposition(active.task.id)).toBeUndefined()
+
+  const held = createCancelledPlan("approval-held")
+  repository.atomic((db) => {
+    ensureRetainedVerificationTables(db)
+    db.query("INSERT INTO runner_retained_verifications VALUES(?,?,?,?,?,?,?)").run(
+      crypto.randomUUID(),
+      "/repo",
+      held.plan.planID,
+      held.task.id,
+      1,
+      "waiting-human",
+      "{}",
+    )
+  })
+  expect(() =>
+    repository.recordDisposition(
+      {
+        taskID: held.task.id,
+        requestID: "approval-held-review",
+        disposition: "fulfilled",
+        reason: "Retained verification is awaiting its required approval.",
+        evidence: [{ kind: "human", reference: "review" }],
+      },
+      { sessionID: "architect-session", agent: "architect" },
+    ),
+  ).toThrow("active execution")
+  expect(repository.taskDisposition(held.task.id)).toBeUndefined()
+  expect(runner.attempts(held.plan.planID)).toEqual([])
 })
 
 test("storage path honors an explicit directory and rejects a relative override", () => {
