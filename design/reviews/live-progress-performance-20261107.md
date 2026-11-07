@@ -88,3 +88,17 @@ Tasks148/149 eligibility and independent roadmap work through Architect rather
 than treating Models holds as a global freeze. Capture attributable residual CPU
 in the existing performance lane; keep source publication/navigation/scope
 verification and CPU acceptance separate.
+
+## LZ-182 scheduling read before integration
+
+Root invoked the actual candidate TaskSchedulingRead against the real project DB
+read-only at1794092767945/1794092768103: first-page reads took235.88ms/157.28ms,
+covering149plans/175nodes/13reservations; each returned94025bytes for100plans.
+Repository revision changed1024644→1024649 under active native work. This is two
+observations, not a benchmark or invented target. The fresh-page path rebuilds
+inside a read-only transaction and calls synchronous Git ancestry operations;
+its cache only serves cursor pages. Native Architect attached advice2 to the
+SAME182worker to keep hot reads responsive and reuse unchanged scheduling/source
+work without weakening dispatch freshness. No new task, hashes or polling were
+introduced. Improvement has not yet been measured. Reproduction script:
+/private/tmp/lz182-read-performance-observation.ts.

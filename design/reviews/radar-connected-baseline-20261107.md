@@ -26,3 +26,13 @@ The new agent-monitor consumer should use this existing live producer and progre
 Root queued the actual failure and server cause to the native Architect without interrupting its current tasking. The native Architect separately verified the accepted producer's source is already on main and is reconciling the missing runtime integration receipt. Source landing alone does not establish consumer behavior or live performance acceptance.
 
 A second live project read at1794090364431 explicitly included BOTH actual workers as managed, available, current and busy, with their original task/attempt/session IDs and observed routes. This establishes active-worker presence in the new producer; aggregate counts alone did not. Main's native integration record for LZ-129 is now integrated version119, preserving original accepted artifact9f61a6633dd3d64a3bc51672c4e5d63e1234adcb.
+
+## Additional full-monitor coverage observation
+
+At1794092915983 the managed Project live read included all three current worker
+sessions, but not the active primary Architect ses_e568438ebffeaoFbF9nBb942XM.
+The response has no scheduler/current-coordinator state field. Runner freshness
+`current` is not scheduler running/paused status. Root sent these remaining user
+requirements to native Architect for reconciliation in the existing monitor work
+or explicitly linked remaining work if a real boundary requires it. Worker
+presence alone does not establish a complete scheduler/Architect monitor.
