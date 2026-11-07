@@ -21,8 +21,9 @@ description is unknown rather than inferred. Workers may load a useful native
 skill progressively, subject to OpenCode's normal permission check; an absent or
 denied suggestion does not block a task. An empty applicable list is sufficient.
 Quality checks run formatter and linter automatic fixes before remaining checks.
-For LAZERS use `bun run verify` plus relevant behavior tests. Do not create
-model repair turns for mechanically fixable formatting or lint.
+For LAZERS use `bun run verify` plus relevant behavior tests. Choose test targets
+from repository findings and inspect which cases ran. Do not create model repair
+turns for mechanically fixable formatting or lint.
 Do not fill fields with boilerplate.
 
 Every new task must carry one explicit primary classification:

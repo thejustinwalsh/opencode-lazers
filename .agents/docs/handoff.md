@@ -180,8 +180,15 @@ removed natively. Report: `design/reviews/lz177-native-completion-hold-20261107.
 
 178 benign integration rebind is genuinely running: task095a9e75-3731-4834-9d67-f4293c260636,
 planc68342dc-d51e-42cb-98ba-287067e51a5f, attempt14fca257-f6e7-44ad-baa8-109167e49c50,
-worker ses_f3b9ac74651745adb91015eb6f5a416a (OpenAI LunaMax). Actual runtime/schema
-patches observed; preserve it.179 was never executed and cancelled in favor of180;
+worker ses_f3b9ac74651745adb91015eb6f5a416a (OpenAI LunaMax). Candidate
+`c41648b524011574a927af3ab2a0825de8552e5d` is now clean, task/attempt accepted,
+plan runningv12 for combined verification. Worker reports369 behavior tests,
+quality/GUI build passed; named retained-integration.test.ts does not exist in
+either checkout, so only four of five listed test files actually ran. No empty
+file/new task is needed to conceal that authoring error; review real coverage.
+Native SolHigh review ses_e48056a19ffe5lVI1Hv3e8wjgz is active, focused on
+proportionality, duplicated proof paths and CAS versus semantic bindings. Source
+review, integration, actual original173g2 reconciliation and cleanup remain.179 was never executed and cancelled in favor of180;
 do not redispatch it. Source reservation diagnostics and timings are in
 `design/reviews/delivery-bottleneck-20261107.md`.
 
