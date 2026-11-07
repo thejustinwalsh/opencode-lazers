@@ -33,18 +33,33 @@ in68bbd86. Native Architect recorded integration, verified non-forced worktree
 removal and no pending effects. Six inference flags ON, unload Never, cached
 models preserved. Report: design/reviews/lz165-b108d38-source-review-20261107.md.
 
-Root implemented and merged the existing full LZ-175 bootstrap contract through
-cbf20ee (312dabd/c135109/7727cc4). Independent Luna Max final rereview found no
-material findings; all four review findings resolved. Exact final declared75tests
-813assertions and merged canonical retained+GPU118tests1062assertions12files pass;
-strict/GUI checks pass. Parentc135 broader593tests7800assertions29files passed.
-Root's clean, merged native review checkout /private/tmp/lz175-binding-repair-20261107
-was removed through native force:false (exists:false). Do not reuse it. Native175
-is undispatched with zero attempts; reviewed fulfillment still requires actual
-native path observation, not a fictional worker execution. Main received Desktop
-activation/live qualification instructions after the combined checks. Check current
-runtime and Main handles before acting; GUI-only reload is not proof server runtime
-changed. Report: design/reviews/lz175-bootstrap-implementation-20261107.md.
+Root merged reviewed LZ-175 via cbf20ee; final75tests813assertions and canonical
+retained+GPU118tests1062assertions12files pass, strict/GUI pass. Parent broad593/
+7800/29 passed. Review checkout removed natively force:false. Supported external
+client.location.reload completed1794071693061→1794071701471, PID3219 unchanged,
+global model idle and target forms/permissions0. Receipt is durable at
+ design/reviews/lz175-native-runtime-reload-20261107.json. No service restart.
+
+Actual native173 corrected0b28972 admission succeeded as op8618a6eb-5812-4063-8a8a-
+9a11d73117cf generation1, bound to original repair255ec4c3-eb1f-4c99-83d9-cf4b26347b6c
+and previousartifactddefc44. Existing156heldauthority34d2518c was retired with
+native cancel-retained-verification first; its history/unresolved comparison gate
+remain. New173operation then held BEFORE checks: parser rejects authored build:gui
+&&Bun-test chain, though each step is supported. No173acceptance yet.
+
+Root parser repair e1a6f8d is committed, NOT merged/loaded, in native checkout
+/private/tmp/lz-procedure-composition-20261107, branch
+feat/retained-procedure-composition-20261107 (parentbc855a2). Changes procedure.ts
+(20implementationlines), procedure.test.ts, isolation.test.ts, retained-reverify.test.ts.
+Five before-fail composition/registered regressions; scoped85tests864assertions5files
+and final strict/GUI/eval pass. Native LZ-176 task5d0061c7-37c8-4a42-a560-8dca2e0089cc, plan
+d51c29bc-f239-426e-b453-ea46d65eb086 is linked as correction138 and undispatched
+for Root bootstrap. Native OpenAI Luna Max reviewer ses_e48ed2096ffenX0f3U8Q442NaI
+is active on exacte1a6f8d. Check its result and Main's state before proceeding. Report:
+design/reviews/retained-procedure-composition-20261107.md. After review/integration,
+activate at quiet boundary, retire only held8618operation via native tools, request
+new generation with NEW command identity (old successful admission replays oldop),
+run unchanged173checks and inspect acceptance. No SQL mutation or fake idle.
 
 Original174worker ses_5210fab90d3745959a4d269dbd6ab744 remains retained at67d4e6d,
 rejected unchanged for its exhaustive content fingerprint gate. Preserve its useful
