@@ -3736,6 +3736,100 @@ async function reproduceLegacyRetainedRepairFenceFailure() {
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
   return { ...state, reopened, failedReservation }
 }
+type LegacyFenceState = Awaited<ReturnType<typeof reproduceLegacyRetainedRepairFenceFailure>>
+
+function recoveryCommand(state: LegacyFenceState, requestID: string) {
+  return {
+    requestID,
+    planID: state.planID,
+    expectedVersion: state.reopened.store.plan(state.planID)!.version,
+    action: "resume" as const,
+    taskID: state.task.id,
+    attemptID: state.attempt.id,
+    reason: "Recover only the original retained repair after its proven fence failure.",
+  }
+}
+
+function recoveryAdmissionSnapshot(state: LegacyFenceState) {
+  const plan = state.reopened.store.plan(state.planID)!
+  return {
+    version: plan.version,
+    state: plan.state,
+    owner: plan.owner,
+    attempt: structuredClone(
+      state.reopened.store
+        .attempts(state.planID)
+        .find((candidate) => candidate.id === state.attempt.id)!,
+    ),
+    resumes: state.reopened.store
+      .activity(state.planID, state.task.id)
+      .filter((entry) => entry.event === "ATTEMPT_RESUMED").length,
+    promptEffects: state.reopened.store
+      .effects(state.planID)
+      .filter((effect) => effect.attempt_id === state.attempt.id && effect.kind === "prompt")
+      .length,
+    prompts: state.f.events.filter((event) => event.startsWith("prompt:")).length,
+    creates: state.f.events.filter((event) => event.startsWith("create:")).length,
+  }
+}
+
+function expectNoRecoveryAdmission(
+  state: LegacyFenceState,
+  before: ReturnType<typeof recoveryAdmissionSnapshot>,
+) {
+  const plan = state.reopened.store.plan(state.planID)!
+  expect({ version: plan.version, state: plan.state, owner: plan.owner }).toEqual({
+    version: before.version,
+    state: before.state,
+    owner: before.owner,
+  })
+  expect(
+    state.reopened.store
+      .attempts(state.planID)
+      .find((candidate) => candidate.id === state.attempt.id),
+  ).toEqual(before.attempt)
+  expect(
+    state.reopened.store
+      .activity(state.planID, state.task.id)
+      .filter((entry) => entry.event === "ATTEMPT_RESUMED"),
+  ).toHaveLength(before.resumes)
+  expect(
+    state.reopened.store
+      .effects(state.planID)
+      .filter((effect) => effect.attempt_id === state.attempt.id && effect.kind === "prompt"),
+  ).toHaveLength(before.promptEffects)
+  expect(state.f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(before.prompts)
+  expect(state.f.events.filter((event) => event.startsWith("create:"))).toHaveLength(before.creates)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((complete) => (resolve = complete))
+  return { promise, resolve }
+}
+
+async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: string) {
+  const entered = deferred<void>()
+  const release = deferred<void>()
+  const originalWorktrees = state.f.host.worktrees
+  state.f.host.worktrees = async () => {
+    entered.resolve()
+    await release.promise
+    return originalWorktrees()
+  }
+  const command = recoveryCommand(state, requestID)
+  const pending = state.reopened.runtime.command(command, "owner")
+  await entered.promise
+  return {
+    command,
+    pending,
+    release: () => {
+      release.resolve()
+      state.f.host.worktrees = originalWorktrees
+    },
+  }
+}
+
 function reopenRuntime(f: ReturnType<typeof fixture>) {
   const repository = new TaskRepository(f.repository.path, f.root)
   const store = new RunnerStore(repository)
@@ -9269,6 +9363,204 @@ test("an owner cancellation after the fence failure is not eligible for retained
   expect(reopened.store.attempts(planID)).toHaveLength(1)
   expect(reopened.store.attempts(planID)[0]).toMatchObject({ id: attempt.id, state: "cancelled" })
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(promptsBeforeCancel)
+})
+
+test.each([
+  {
+    name: "native route",
+    caller: "owner",
+    mutate: (state: LegacyFenceState) => {
+      state.worker.model = { providerID: "openai", id: "wrong-recovery-route" }
+    },
+  },
+  {
+    name: "repair artifact",
+    caller: "owner",
+    mutate: (state: LegacyFenceState) => {
+      const transition = state.reopened.store
+        .activity(state.planID, state.task.id)
+        .filter((entry) => entry.event === "RETAINED_REPAIR_REQUESTED")
+        .at(-1)!
+      const payload = JSON.parse(transition.payload) as Record<string, unknown>
+      payload.artifact = "f".repeat(40)
+      state.reopened.store.atomic((db) =>
+        db
+          .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+          .run(JSON.stringify(payload), transition.id),
+      )
+    },
+  },
+  {
+    name: "owner",
+    caller: "not-the-plan-owner",
+    mutate: () => {},
+  },
+  {
+    name: "uncertain effect",
+    caller: "owner",
+    mutate: (state: LegacyFenceState) => {
+      const check = state.reopened.store
+        .effects(state.planID)
+        .find((effect) => effect.kind === "verify:content")!
+      state.reopened.store.atomic((db) =>
+        db.query("UPDATE runner_effects SET state='uncertain' WHERE id=?").run(check.id),
+      )
+    },
+  },
+  {
+    name: "pending executable controls",
+    caller: "owner",
+    mutate: (state: LegacyFenceState) => {
+      Object.assign(state.worker, {
+        pendingInput: true,
+        pendingPermissions: 1,
+        pendingForms: 1,
+      })
+    },
+  },
+])(
+  "registered retained-repair recovery rejects a mismatched $name",
+  async ({ name, caller, mutate }) => {
+    const state = await reproduceLegacyRetainedRepairFenceFailure()
+    mutate(state)
+    const before = recoveryAdmissionSnapshot(state)
+    await expect(
+      state.reopened.runtime.command(
+        recoveryCommand(state, `reject-retained-repair-${name}-${crypto.randomUUID()}`),
+        caller,
+      ),
+    ).rejects.toThrow()
+    expectNoRecoveryAdmission(state, before)
+  },
+)
+
+test.each(["revision", "project"] as const)(
+  "registered retained-repair recovery rechecks changed task %s after deferred native revalidation",
+  async (binding) => {
+    const state = await reproduceLegacyRetainedRepairFenceFailure()
+    const before = recoveryAdmissionSnapshot(state)
+    const paused = await pauseRecoveryAtWorktrees(state, `deferred-task-${binding}`)
+    try {
+      const task = state.f.repository.get(state.task.id)!
+      const changed = structuredClone(task)
+      if (binding === "revision") changed.revision += 1
+      else changed.provenance.projectID = "foreign-project"
+      state.f.repository.atomic((db) =>
+        db
+          .query("UPDATE tasks SET body=? WHERE project_directory=? AND id=?")
+          .run(JSON.stringify(changed), state.f.repository.projectDirectory, state.task.id),
+      )
+    } finally {
+      paused.release()
+    }
+    await expect(paused.pending).rejects.toThrow()
+    expectNoRecoveryAdmission(state, before)
+  },
+)
+
+test("registered retained-repair recovery rechecks task disposition after deferred native revalidation", async () => {
+  const state = await reproduceLegacyRetainedRepairFenceFailure()
+  const before = recoveryAdmissionSnapshot(state)
+  const paused = await pauseRecoveryAtWorktrees(state, "deferred-task-disposition")
+  try {
+    expect(
+      state.f.repository.recordDisposition(
+        {
+          taskID: state.task.id,
+          requestID: "dispose-during-retained-recovery",
+          disposition: "rejected",
+          reason: "The task is obsolete while native recovery validation is pending.",
+          evidence: [{ kind: "human", reference: "Deferred recovery race regression" }],
+        },
+        { sessionID: "owner", agent: "architect" },
+      ).status,
+    ).toBe("recorded")
+    expect(state.reopened.store.plan(state.planID)?.version).toBe(before.version)
+  } finally {
+    paused.release()
+  }
+  await expect(paused.pending).rejects.toThrow()
+  expectNoRecoveryAdmission(state, before)
+})
+
+test("registered retained-repair recovery loses to an owner reassignment during deferred native revalidation", async () => {
+  const state = await reproduceLegacyRetainedRepairFenceFailure()
+  const { f, reopened, planID, attempt } = state
+  const owner = f.sessions.get("owner")!
+  f.sessions.set("owner-b", { ...structuredClone(owner), id: "owner-b" })
+  const paused = await pauseRecoveryAtWorktrees(state, "recovery-raced-by-reassign")
+  const originalResumes = reopened.store
+    .activity(planID, state.task.id)
+    .filter((entry) => entry.event === "ATTEMPT_RESUMED").length
+  const originalPrompts = f.events.filter((event) => event.startsWith("prompt:")).length
+  try {
+    await reopened.runtime.command(
+      {
+        requestID: "reassign-during-retained-recovery",
+        planID,
+        expectedVersion: reopened.store.plan(planID)!.version,
+        action: "reassign",
+        targetSessionID: "owner-b",
+        reason: "Reassign while original-worker recovery is awaiting native evidence.",
+      },
+      "owner",
+    )
+  } finally {
+    paused.release()
+  }
+  await expect(paused.pending).rejects.toThrow()
+  expect(reopened.store.plan(planID)).toMatchObject({ owner: "owner-b", state: "blocked" })
+  expect(reopened.store.attempts(planID)).toHaveLength(1)
+  expect(reopened.store.attempts(planID)[0]).toMatchObject({
+    id: attempt.id,
+    state: "cancelled",
+    message_id: state.failedReservation.message_id,
+    session_id: attempt.session_id,
+    workspace: attempt.workspace,
+    base_commit: attempt.base_commit,
+    policy: attempt.policy,
+  })
+  expect(
+    reopened.store
+      .activity(planID, state.task.id)
+      .filter((entry) => entry.event === "ATTEMPT_RESUMED"),
+  ).toHaveLength(originalResumes)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(originalPrompts)
+})
+
+test("registered retained-repair recovery rejects a native input that changes between revalidation reads", async () => {
+  const state = await reproduceLegacyRetainedRepairFenceFailure()
+  const before = recoveryAdmissionSnapshot(state)
+  const ownerRead = deferred<void>()
+  const releaseOwnerRead = deferred<void>()
+  const originalSession = state.f.host.session
+  let ownerReads = 0
+  state.f.host.session = async (sessionID, options) => {
+    if (sessionID === "owner" && ++ownerReads === 2) {
+      ownerRead.resolve()
+      await releaseOwnerRead.promise
+    }
+    return originalSession(sessionID, options)
+  }
+  const pending = state.reopened.runtime.command(
+    recoveryCommand(state, "recovery-raced-by-native-input"),
+    "owner",
+  )
+  try {
+    await ownerRead.promise
+    state.worker.messages.push({
+      id: "msg-new-native-input",
+      type: "user",
+      text: "A newer native input arrived during recovery revalidation.",
+    })
+    state.worker.outcome = "interrupted"
+    state.worker.turn = { inputID: "msg-new-native-input", state: "interrupted" }
+  } finally {
+    releaseOwnerRead.resolve()
+    state.f.host.session = originalSession
+  }
+  await expect(pending).rejects.toThrow()
+  expectNoRecoveryAdmission(state, before)
 })
 
 test("an explicit resume continues one process-replaced interrupted attempt without inventing idle proof", async () => {

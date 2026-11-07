@@ -33,3 +33,28 @@ not a mutation or recovery of the production LZ172 worker.
 No OpenCode service, production database, live worker, source activation, or
 original LZ172 session was changed or prompted. Native activation and actual
 original-attempt recovery remain for Root's reviewed quiet boundary.
+
+## Final-admission fence correction
+
+On 2026-11-07, review of `6622ebf` identified that recovery's early task checks
+were not repeated after asynchronous native revalidation. The registered resume
+transaction now re-reads the exact task from the same SQLite transaction used
+for reservation, binds its ID and current revision to the command, original
+attempt and admitted plan node, checks project identity/directory, and rejects
+any current task disposition. It performs this check before changing the attempt
+message, state, task node, or plan.
+
+New runtime-path regressions defer native worktree/owner observations while
+disposition, task revision/project, owner reassignment, or native input changes.
+They assert rejection with no added resume receipt, prompt effect, native prompt,
+or replacement attempt. Additional registered recovery cases reject a wrong
+route, repair artifact, caller, uncertain effect, pending executable controls,
+and a real cancellation. The already committed 6622ebf implementation and its
+prior evidence/check history above remain intact; tests use only disposable
+fixture repositories and do not touch the original LZ172 resource.
+
+Correction verification:
+
+- `bun test src/runner/interrupted-continuation.test.ts src/runner/runtime.test.ts src/runner/native.test.ts src/runner/schema.test.ts src/runner/tools.test.ts` — 395 passed, 0 failed, 5,575 assertions.
+- `bun test src/runner test/runner` — 582 passed, 0 failed, 7,852 assertions.
+- `bun fmt --check && bun lint && bun check && git diff --check && bun run build:gui` — passed; formatter covered 836 files, lint covered 401 files, typecheck covered 389 files, and GUI bundle evaluation succeeded. Vite reported its existing `inlineDynamicImports` deprecation, dependency `import.meta` CommonJS warnings, and a plugin timing notice.

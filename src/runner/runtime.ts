@@ -285,6 +285,7 @@ type RetainedRepairRecoverySeed = {
   interruptedInputID: string
   owner: string
   ownerEpoch: number
+  taskRevision: number
   planVersion: number
   planRevision: number
   resumedTransitionID: number
@@ -1472,6 +1473,7 @@ export class TaskRuntime {
       interruptedInputID: repairMessageID,
       owner: caller,
       ownerEpoch: repairOwnerEpoch as number,
+      taskRevision: task.revision,
       planVersion: plan.version,
       planRevision: plan.revision,
       resumedTransitionID: matchingResume.transition.id,
@@ -3895,10 +3897,22 @@ export class TaskRuntime {
         if (command.attemptID && command.attemptID !== attempt?.id)
           throw new Error("Command attemptID does not match the exact latest task attempt")
         if (retainedRepairRecovery) {
+          const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
+          const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
+            (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
+          )
           if (
             retry ||
             !attempt ||
             !node ||
+            retainedRepairRecovery.taskID !== command.taskID ||
+            retainedRepairRecovery.taskID !== attempt.task_id ||
+            retainedRepairRecovery.taskRevision !== admittedRecoveryTask?.revision ||
+            recoveryTask?.id !== retainedRepairRecovery.taskID ||
+            recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
+            recoveryTask.provenance.projectID !== this.projectID ||
+            recoveryTask.provenance.projectDirectory !== this.directory ||
+            this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !== undefined ||
             command.taskID !== retainedRepairRecovery.taskID ||
             command.attemptID !== retainedRepairRecovery.attemptID ||
             ownerSession?.id !== plan.owner ||
