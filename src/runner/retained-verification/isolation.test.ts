@@ -591,106 +591,151 @@ test("an unavailable candidate-committed dependency source blocks before resourc
   expect(existsSync(join(root, "node_modules", "fixture-peer"))).toBe(true)
 })
 
-test("candidate-declared build scripts execute with private build outputs and mutable resources", async () => {
-  const root = mkdtempSync(join(tmpdir(), "lazers-retained-authored-build-"))
-  const state = mkdtempSync(join(tmpdir(), "lazers-retained-authored-build-state-"))
-  const candidate = join(state, "candidate")
-  const oldProfile = join(state, "old-profile")
-  const taskDatabase = join(state, "tasks.sqlite")
-  const receiptPath = join(state, "receipt.json")
-  cleanups.push(() => {
-    try {
-      git(root, ["worktree", "remove", candidate])
-    } catch {
-      // A failing assertion still cleans only this test fixture.
+test.each(["standalone", "chain", "failed-chain"] as const)(
+  "candidate-declared %s build checks retain isolated ordered execution",
+  async (kind) => {
+    const root = mkdtempSync(join(tmpdir(), "lazers-retained-authored-build-"))
+    const state = mkdtempSync(join(tmpdir(), "lazers-retained-authored-build-state-"))
+    const candidate = join(state, "candidate")
+    const oldProfile = join(state, "old-profile")
+    const taskDatabase = join(state, "tasks.sqlite")
+    const receiptPath = join(state, "receipt.json")
+    cleanups.push(() => {
+      try {
+        git(root, ["worktree", "remove", candidate])
+      } catch {
+        // A failing assertion still cleans only this test fixture.
+      }
+      rmSync(root, { recursive: true, force: true })
+      rmSync(state, { recursive: true, force: true })
+    })
+
+    writeFileSync(join(root, "tracked.txt"), "authored build fixture\n")
+    writeFixtureProject(root)
+    if (kind !== "standalone") {
+      const script = join(root, "scripts", "build-fixture.ts")
+      writeFileSync(
+        script,
+        'if (process.env.FIXTURE_FAIL_BUILD === "1") process.exit(1)\n' +
+          readFileSync(script, "utf8"),
+      )
+      writeFileSync(
+        join(root, "src/runner/build-order.test.ts"),
+        'import {test,expect} from "bun:test"; import {appendFileSync,readFileSync} from "node:fs"; import {join} from "node:path";\n' +
+          'test("build precedes tests",()=>{appendFileSync(join(process.env.HOME!,"post-build-ran"),"ran");expect(readFileSync("dist/fixture-build.txt","utf8")).toBe("built candidate\\n")});\n',
+      )
     }
-    rmSync(root, { recursive: true, force: true })
-    rmSync(state, { recursive: true, force: true })
-  })
+    const artifact = commitFixture(root)
+    git(root, ["worktree", "add", "--detach", candidate, artifact])
+    writeFileSync(taskDatabase, "")
+    new Database(taskDatabase).close()
+    mkdirSync(oldProfile)
+    writeFileSync(join(oldProfile, "build.txt"), "old profile\n")
 
-  writeFileSync(join(root, "tracked.txt"), "authored build fixture\n")
-  writeFixtureProject(root)
-  const artifact = commitFixture(root)
-  git(root, ["worktree", "add", "--detach", candidate, artifact])
-  writeFileSync(taskDatabase, "")
-  new Database(taskDatabase).close()
-  mkdirSync(oldProfile)
-  writeFileSync(join(oldProfile, "build.txt"), "old profile\n")
-
-  const command = "bun run build:fixture"
-  const procedure = retainedProcedurePlan(command)
-  if (procedure.status !== "supported") throw new Error(procedure.reason)
-  expect(procedure.plan).toMatchObject({ kind: "bun-quality", projectScripts: ["build:fixture"] })
-  const unownedScript = retainedProcedurePlan("bun run not-declared")
-  if (unownedScript.status !== "supported") throw new Error(unownedScript.reason)
-  const rejectedOperation = crypto.randomUUID()
-  await expect(
-    createRetainedCheckContext({
+    const command =
+      kind === "standalone"
+        ? "bun run build:fixture"
+        : "bun run build:fixture && bun test src/runner"
+    const procedure = retainedProcedurePlan(command)
+    if (procedure.status !== "supported") throw new Error(procedure.reason)
+    expect(procedure.plan).toMatchObject({ kind: "bun-quality", projectScripts: ["build:fixture"] })
+    const unownedScript = retainedProcedurePlan("bun run not-declared")
+    if (unownedScript.status !== "supported") throw new Error(unownedScript.reason)
+    const rejectedOperation = crypto.randomUUID()
+    await expect(
+      createRetainedCheckContext({
+        rootDirectory: state,
+        operationID: rejectedOperation,
+        generation: 1,
+        phase: "task",
+        checkID: "missing-project-script",
+        originalWorkspace: root,
+        candidateWorkspace: candidate,
+        taskDatabase,
+        projectDirectory: root,
+        candidateArtifact: artifact,
+        priorResourcePaths: [oldProfile],
+        procedurePlan: unownedScript.plan,
+      }),
+    ).rejects.toThrow(
+      "Candidate package.json does not declare project procedure script not-declared",
+    )
+    expect(existsSync(join(state, `retained-${rejectedOperation}-1`))).toBe(false)
+    const context = await createRetainedCheckContext({
       rootDirectory: state,
-      operationID: rejectedOperation,
+      operationID: crypto.randomUUID(),
       generation: 1,
       phase: "task",
-      checkID: "missing-project-script",
+      checkID: "authored-build",
       originalWorkspace: root,
       candidateWorkspace: candidate,
       taskDatabase,
       projectDirectory: root,
       candidateArtifact: artifact,
       priorResourcePaths: [oldProfile],
-      procedurePlan: unownedScript.plan,
-    }),
-  ).rejects.toThrow("Candidate package.json does not declare project procedure script not-declared")
-  expect(existsSync(join(state, `retained-${rejectedOperation}-1`))).toBe(false)
-  const context = await createRetainedCheckContext({
-    rootDirectory: state,
-    operationID: crypto.randomUUID(),
-    generation: 1,
-    phase: "task",
-    checkID: "authored-build",
-    originalWorkspace: root,
-    candidateWorkspace: candidate,
-    taskDatabase,
-    projectDirectory: root,
-    candidateArtifact: artifact,
-    priorResourcePaths: [oldProfile],
-    procedurePlan: procedure.plan,
-  })
-  const witness = retainedCheckIsolationWitness(context)
-  const receipt = await runCheck(
-    candidate,
-    artifact,
-    { id: "authored-build", command, timeoutMs: 10_000 },
-    receiptPath,
-    {
-      environment: context.environment,
-      environmentIdentity: context.environmentIdentity,
-      ownedUntrackedPaths: ["node_modules"],
-      isolation: witness,
-    },
-  )
-  expect(receipt.exitCode, receipt.stderr).toBe(0)
-  expect(receipt.unchanged).toBe(true)
-  expect(observeRetainedCheckContext(context)).toBe(true)
-  expect(readFileSync(join(oldProfile, "build.txt"), "utf8")).toBe("old profile\n")
-  expect(readFileSync(join(candidate, "dist", "fixture-build.txt"), "utf8")).toBe(
-    "built candidate\n",
-  )
-  expect(readFileSync(join(candidate, ".cache", "fixture-cache.txt"), "utf8")).toBe(
-    "private cache\n",
-  )
-  expect(
-    readFileSync(join(context.environment.HOME!, "fixture-profile", "build.txt"), "utf8"),
-  ).toBe("private profile\n")
-  const privateDB = new Database(context.environment.LAZERS_VERIFICATION_SQLITE!)
-  try {
+      procedurePlan: procedure.plan,
+    })
+    const witness = retainedCheckIsolationWitness(context)
+    const receipt = await runCheck(
+      candidate,
+      artifact,
+      { id: "authored-build", command, timeoutMs: 10_000 },
+      receiptPath,
+      {
+        environment: {
+          ...context.environment,
+          ...(kind === "failed-chain" ? { FIXTURE_FAIL_BUILD: "1" } : {}),
+        },
+        environmentIdentity: context.environmentIdentity,
+        ownedUntrackedPaths: ["node_modules"],
+        isolation: witness,
+      },
+    )
+    if (kind === "failed-chain") {
+      expect(receipt.exitCode).toBe(1)
+      expect(existsSync(join(context.environment.HOME!, "post-build-ran"))).toBe(false)
+      expect(existsSync(join(candidate, "dist/fixture-build.txt"))).toBe(false)
+      expect(readFileSync(join(oldProfile, "build.txt"), "utf8")).toBe("old profile\n")
+      expect(observeRetainedCheckContext(context)).toBe(true)
+    } else {
+      expect(receipt.exitCode, receipt.stderr).toBe(0)
+      expect(receipt.unchanged).toBe(true)
+      expect(observeRetainedCheckContext(context)).toBe(true)
+      expect(readFileSync(join(oldProfile, "build.txt"), "utf8")).toBe("old profile\n")
+      expect(readFileSync(join(candidate, "dist", "fixture-build.txt"), "utf8")).toBe(
+        "built candidate\n",
+      )
+      expect(readFileSync(join(candidate, ".cache", "fixture-cache.txt"), "utf8")).toBe(
+        "private cache\n",
+      )
+      expect(
+        readFileSync(join(context.environment.HOME!, "fixture-profile", "build.txt"), "utf8"),
+      ).toBe("private profile\n")
+      const privateDB = new Database(context.environment.LAZERS_VERIFICATION_SQLITE!)
+      try {
+        expect(
+          privateDB.query<{ value: string }, []>("SELECT value FROM build_writes").get()?.value,
+        ).toBe("private build")
+      } finally {
+        privateDB.close()
+      }
+    }
     expect(
-      privateDB.query<{ value: string }, []>("SELECT value FROM build_writes").get()?.value,
-    ).toBe("private build")
-  } finally {
-    privateDB.close()
-  }
-  expect(
-    observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
+      observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
+        operationID: context.operationID,
+        generation: context.generation,
+        phase: context.phase,
+        checkID: context.checkID,
+        originalWorkspace: root,
+        candidateWorkspace: candidate,
+        taskDatabase,
+        projectDirectory: root,
+        candidateArtifact: artifact,
+        projectIdentity: context.projectIdentity,
+        procedurePlan: procedure.plan,
+      }),
+    ).toBe(true)
+    removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
       operationID: context.operationID,
       generation: context.generation,
       phase: context.phase,
@@ -702,23 +747,10 @@ test("candidate-declared build scripts execute with private build outputs and mu
       candidateArtifact: artifact,
       projectIdentity: context.projectIdentity,
       procedurePlan: procedure.plan,
-    }),
-  ).toBe(true)
-  removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
-    operationID: context.operationID,
-    generation: context.generation,
-    phase: context.phase,
-    checkID: context.checkID,
-    originalWorkspace: root,
-    candidateWorkspace: candidate,
-    taskDatabase,
-    projectDirectory: root,
-    candidateArtifact: artifact,
-    projectIdentity: context.projectIdentity,
-    procedurePlan: procedure.plan,
-  })
-  expect(existsSync(join(candidate, "node_modules"))).toBe(false)
-})
+    })
+    expect(existsSync(join(candidate, "node_modules"))).toBe(false)
+  },
+)
 
 test("a verification resource aliasing a retained workspace is rejected", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-alias-"))
@@ -795,8 +827,8 @@ test("project procedure bindings cover authored and newly scoped Bun targets", (
     plan: { kind: "bun-test", targets: ["apps/other-project/specs"] },
   })
   expect(retainedProcedurePlan("bun test src/runner && bun lint")).toMatchObject({
-    status: "unsupported",
-    reason: expect.stringContaining("safe project-relative procedure contract"),
+    status: "supported",
+    plan: { kind: "bun-quality", targets: ["src/runner"], projectScripts: [] },
   })
   expect(retainedProcedurePlan("bun run build:fixture && echo unbound")).toMatchObject({
     status: "unsupported",

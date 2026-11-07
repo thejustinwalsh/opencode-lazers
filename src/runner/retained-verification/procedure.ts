@@ -89,6 +89,26 @@ function lstatIfPresent(path: string) {
  * arbitrary shell commands.
  */
 export function retainedProcedurePlan(command: string): RetainedProcedurePlanResult {
+  const chain = command.split(" && ")
+  if (chain.length > 1) {
+    const plans: RetainedProcedurePlan[] = []
+    for (const step of chain) {
+      const result = retainedProcedurePlan(step)
+      if (result.status === "unsupported") return result
+      plans.push(result.plan)
+    }
+    return {
+      status: "supported",
+      plan: {
+        schemaVersion: 1,
+        kind: plans.every((plan) => plan.kind === "bun-test") ? "bun-test" : "bun-quality",
+        commandFingerprint: fingerprint(command),
+        targets: [...new Set(plans.flatMap((plan) => plan.targets))],
+        projectScripts: [...new Set(plans.flatMap((plan) => plan.projectScripts))],
+        resources: [...retainedProjectResourceNames],
+      },
+    }
+  }
   if (command === "bun test" || command.startsWith("bun test ")) {
     const targetText = command === "bun test" ? "" : command.slice("bun test ".length)
     if (command !== "bun test" && !targetText)
