@@ -110,3 +110,11 @@ Work counters demonstrate actual reuse: two fact captures but one projection bui
 
 Observation script: `/private/tmp/lz182-async-read-performance-observation.ts`. No production DB writes, model calls or listening server were used.
 
+## Tasks transient-failure cache regression
+
+Root reviewed the updated asynchronous cache and reproduced a failure using the worker's existing scheduling fixture in a temporary standalone test, without modifying its checkout. An integrated parent and eligible dependent child normally return a known next task. Injecting one generic I/O failure into the first `merge-base` command makes the first read return none. The second fresh-page read, with Git healthy and unchanged DB/HEAD, still returns none. Counters: two captures, one projection build, one projection cache hit, one proof evaluation. The expected recovery assertion fails. An identical control with no injected failure passes and returns the child on both reads.
+
+Cause in current `src/tasks/scheduling-read.ts`: `planProof`/`taskProof` avoid their individual caches on unexpected Git failures, but `projectionFor` caches the resulting unsuccessful whole projection regardless. That projection is reused while semantic facts/HEAD stay unchanged. Explicit Refresh cannot retry the failed proof. Correct the existing cache's transient-failure propagation and add a focused refresh/recovery regression within LZ-182; preserve normal unchanged-state reuse and fresh runtime dispatch authority. No new task or cache timeout policy is necessary to establish this behavior.
+
+Reproduction `/private/tmp/lz182-transient-proof-observation.test.ts` failed one assertion; no-failure control `/private/tmp/lz182-transient-proof-control.test.ts` passed. Both use disposable SQLite/Git fixtures and clean them up. This is a candidate review finding, not a claim that runtime dispatch itself is blocked by this read-only UI cache.
+
