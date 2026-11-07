@@ -253,3 +253,22 @@ Main informed to preserve2d545e6 at later Models integration/preview.
 Original172 same-workerrepair genuinely resumed at1794089363340;182stillactive.
 Both native LunaMax sessions confirmed running1794089658825. Source acceptance
 for Models still withheld pending repaired screenshot+interaction walkthrough.
+
+## Radar monitor tasking and actual producer baseline
+
+Root drove legacy Radar in actual Desktop with172/182active. Session/Project both
+fail even Refresh; UI[object Object]/no operational data. Server exacterror:
+Observation scope is too large; narrow it. Existing liveRadar succeeds same
+scopes;1794090364431projectread explicitlyincludes BOTH originalworkers current/
+busy with correct assignment and observedroute.12managedsessions returned,
+coveragebounded—notallprojecthistory. Report/screenshot f3e86de at
+design/reviews/radar-connected-baseline-20261107.md.
+
+Main actually verified129sourcealreadyonmain then recorded nativeintegration: plan
+243f8093-7c3c-44e3-bda5-e06870e4f680 integratedv119 (artifact9f61a6). Native Terra
+review of approved Radar image ses_e47e6bfe5ffeiVeC75EF2gFaN4 completed; native
+Luna source researcher ses_e47e6ee61ffeHkK8uOdxSagKUO running. Main composing
+coherent missingmonitorfeature, not newproducer/limitinflation/polling. Root
+queued actualfailure+successfulproducerreport viaDesktop queue, nointerruption.
+No newRadar taskreference yet at1794090319712. Original172/182stayactive.
+Current roadmap deliveryfront updated53fba33; allscope remainsactive.
