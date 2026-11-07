@@ -982,6 +982,29 @@ try {
     }
   }
 
+  // A successor may prune a fully released predecessor, then load again in the same generation.
+  {
+    const host = makeMain()
+    try {
+      const a = makeRuntime(host)
+      await until(() => a.runtime.state() === "ready", "pruned-predecessor A")
+      await a.runtime.unload()
+      a.controller.abort()
+      await a.runtime.dispose()
+      const b = makeRuntime(host)
+      await until(() => b.runtime.state() === "ready", "pruned-predecessor B")
+      await b.runtime.unload()
+      await b.runtime.load()
+      assert.equal(b.runtime.state(), "ready", b.runtime.detail())
+      assert.equal(allocations, 1)
+      b.controller.abort()
+      await b.runtime.dispose()
+      assert.equal(allocations, 0)
+    } finally {
+      await cleanupHost(host)
+    }
+  }
+
   // A failed renderer disposal and a changed provider epoch never turn unknown ownership into a free cache.
   {
     const host = makeMain()

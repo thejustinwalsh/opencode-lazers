@@ -267,7 +267,7 @@ export function createInferenceRuntime(
   const ancestors = () => {
     const result: HandoffGeneration[] = []
     const seen = new Set<string>()
-    let id = previousGenerationID
+    let id = generation().previous
     while (id) {
       if (seen.has(id)) throw new Error("Renderer ownership history is invalid")
       seen.add(id)
