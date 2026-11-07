@@ -968,7 +968,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           selectedTaskID: TASK_A,
           selectedCandidateID: CANDIDATE_C,
           selectedConfigurationID: CONFIG_ONE,
-          split: 56,
+          split: 64,
           topScroll: 0,
           inspectorScroll: 0,
         },
@@ -979,7 +979,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           selectedTaskID: null,
           selectedCandidateID: null,
           selectedConfigurationID: null,
-          split: 56,
+          split: 64,
           topScroll: 0,
           inspectorScroll: 0,
         },
@@ -1873,9 +1873,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ".lazers-models-sources-details",
     )!
     expect(sourceDetails.open).toBe(false)
-    expect(sourceDetails.querySelector("summary")?.textContent).toBe(
-      "Data sources and refresh history",
-    )
+    expect(sourceDetails.querySelector("summary")?.textContent).toBe("Sources")
+    expect(
+      containerA
+        .querySelector<HTMLElement>(".lazers-models")
+        ?.style.getPropertyValue("--models-top-size"),
+    ).toBe("64%")
     expect(sourceDetails.querySelector("summary")?.textContent).not.toContain("snapshots available")
     expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
       sourceDetails,
@@ -1903,7 +1906,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const chartHost = comparePanel.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
-    let chartWidth = 330
+    expect(chartHost.parentElement?.classList.contains("lazers-models-comparison-chart")).toBe(true)
+    expect(chartHost.parentElement?.style.width).toBe("100%")
+    let chartWidth = 340
     let chartHeight = 190
     Object.defineProperty(chartHost, "clientWidth", { configurable: true, get: () => chartWidth })
     Object.defineProperty(chartHost, "clientHeight", { configurable: true, get: () => chartHeight })
@@ -1930,7 +1935,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       return chartSVGMarkup()
     }
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(330)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(340)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
     const chartOptions = () =>
       chart.getOption() as unknown as {
@@ -1949,6 +1954,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(narrowOptions.grid?.[0]?.left).toBeGreaterThan(72)
     expect(narrowOptions.yAxis?.[0]?.name).toBe("USD / task")
     const initialSVGGeometry = await settleChart()
+    expect(initialSVGGeometry).toContain("Tokens / accepted task")
+    expect(initialSVGGeometry).toContain("USD / task")
+    expect(initialSVGGeometry).toContain("preview-effort")
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
       draft.font = "Test Mono"
     })
@@ -1960,7 +1968,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       draft.mode = "light"
     })
     await until(() => chartSVGMarkup() !== themedSVGGeometry)
-    await settleChart()
     chartWidth = 450
     chartHeight = 230
     dom.window.dispatchEvent(new dom.Event("resize"))
@@ -1983,7 +1990,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       narrowOptions.yAxis?.[0]?.splitNumber ?? 0,
     )
     expect(chartOptions().yAxis?.[0]?.name).toBe("USD / accepted task")
-    await settleChart()
+    const wideSVGGeometry = await settleChart()
+    expect(wideSVGGeometry).toContain("Tokens / accepted task")
+    expect(wideSVGGeometry).toContain("USD / accepted task")
     const initialAlternative = comparePanel.querySelector<HTMLDetailsElement>(
       ".lazers-models-comparison-chart-data",
     )!
@@ -2001,8 +2010,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     initialAlternative.open = true
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
     const marketSummary = containerA.querySelector<HTMLElement>(".lazers-models-market-summary")!
-    expect(marketSummary.textContent).toContain("Current market")
+    expect(marketSummary.textContent).toContain("GPT-6")
+    expect(marketSummary.textContent).toContain("high")
     expect(marketSummary.textContent).toContain("≈$0.0838–$0.204 / accepted task")
+    expect(marketSummary.textContent).toContain("OpenRouter")
+    expect(marketSummary.closest(".lazers-models-top")).not.toBeNull()
+    expect(marketSummary.textContent).not.toContain("Current market")
     expect(marketSummary.textContent).not.toContain("retrieved")
     expect(marketSummary.textContent).not.toContain("denominator")
     expect(marketSummary.children).toHaveLength(2)
@@ -2013,13 +2026,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(decisionStatus.getAttribute("aria-label")).toBe("Current producer snapshot")
     expect(decisionStatus.textContent).not.toContain("Partial evidence")
     expect(comparePanel.querySelector(".lazers-models-decision-tools")).toBeNull()
-    const inspectorTools = containerA.querySelector<HTMLElement>(".lazers-models-inspector-tools")!
-    expect(inspectorTools.closest(".lazers-models-inspector")).not.toBeNull()
-    expect(inspectorTools.querySelectorAll("button")).toHaveLength(2)
-    expect(inspectorTools.textContent).toContain("Model ·")
-    expect(inspectorTools.textContent).toContain("Effort ·")
-    expect(inspectorTools.getAttribute("role")).toBe("group")
-    expect(inspectorTools.textContent).not.toContain("openai / gpt-6")
+    const selectionTools = containerA.querySelector<HTMLElement>(".lazers-models-selection-tools")!
+    expect(selectionTools.closest(".lazers-models-top")).not.toBeNull()
+    expect(selectionTools.querySelectorAll("button")).toHaveLength(2)
+    expect(selectionTools.textContent).toContain("Model ·")
+    expect(selectionTools.textContent).toContain("Effort ·")
+    expect(selectionTools.getAttribute("role")).toBe("group")
+    expect(selectionTools.textContent).not.toContain("openai / gpt-6")
     expect(containerA.querySelector(".lazers-models-inspector-route")).toBeNull()
     expect(
       containerA.querySelector(".lazers-models-inspector-heading h2")?.getAttribute("aria-label"),
@@ -2029,7 +2042,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       `Project · ${DIRECTORY_A}`,
     )
     const taskMenu = topPaneA.querySelector<HTMLButtonElement>(".lazers-models-task-select button")!
-    expect(taskMenu.textContent).toBe("Task · LZ-17")
+    expect(taskMenu.textContent).toBe("LZ-17")
     expect(taskMenu.textContent).not.toContain(TASK_A)
     expect(taskMenu.closest(".lazers-models-task-select")?.getAttribute("aria-label")).toContain(
       TASK_A,
@@ -2198,10 +2211,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "Observed",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "OpenRouter model catalog",
+      "Catalog",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Conditional range",
+      "Range",
+    )
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
+      "Priced portion",
     )
     expect(
       initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
@@ -2295,6 +2311,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await until(() => chartSVGMarkup() !== beforePointSelectionSVG)
     const selectedQwenGraphSVG = await settleChart()
+    expect(selectedQwenGraphSVG).toContain("qwen-7")
+    expect(selectedQwenGraphSVG).toContain("preview-effort")
     const currentFilters = (
       calls.filter((call) => call.method === "overview").at(-1)?.input as {
         filters: ModelDecisionFilters
@@ -2608,7 +2626,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "98,765 tokens",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).toContain(
-      "Current market",
+      "GPT-6",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).not.toContain(
       "Cost unavailable",
@@ -2629,7 +2647,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     suspendedInspection = undefined
     const effortTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
     ].find((button) => button.textContent?.includes("Effort"))
     effortTrigger?.click()
     const lowOption = menuItemWithText(containerA, "low")
@@ -2672,7 +2690,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     })
 
     const providerTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
     ].find((button) => button.textContent?.includes("Model"))!
     providerTrigger.click()
     menuItemWithText(containerA, "qwen / qwen-7")?.click()
@@ -2682,7 +2700,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-inspector h2")?.textContent).toBe("qwen-7")
 
     const zeroProviderTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
     ].find((button) => button.textContent?.includes("Model"))!
     zeroProviderTrigger.click()
     menuItemWithText(containerA, "anthropic / sonnet")?.click()
@@ -2702,7 +2720,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(chartDescription()).toBe(loadedReferenceGraphDescription)
 
     const crossRouteProviderTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
     ].find((button) => button.textContent?.includes("Model"))!
     crossRouteProviderTrigger.click()
     const crossRouteOption = menuItemWithText(containerA, "provider-b / model-b")
@@ -2783,7 +2801,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(systemsOverview.filters?.persona).toBe("systems")
     const taskKindFilter = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),
-    ].find((button) => button.textContent?.includes("Task kind"))!
+    ].find((button) => button.textContent?.includes("Kind"))!
     taskKindFilter.click()
     menuItemWithText(containerA, "Testing")?.click()
     await until(
@@ -2810,7 +2828,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA.querySelector(".lazers-models-chart h3")?.textContent ===
-          "OpenRouter model catalog reference estimates · actual task mix" &&
+          "Catalog reference estimates" &&
         containerA.querySelector(
           `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
         ) !== null,
@@ -2818,7 +2836,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
     expect(
       containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent,
-    ).toContain("Priced portion only")
+    ).toContain("Priced portion")
     const unknownPriceName = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
@@ -3081,7 +3099,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     expect(
       [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Task kind ·"),
+        button.textContent?.includes("Kind ·"),
       ),
     ).toBe(true)
     expect(containerA.querySelector(".lazers-models-filter-status")).toBeNull()
@@ -3128,7 +3146,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       '[role="tab"][aria-controls="lazers-models-compare-panel"]',
     )!
     compareTab.click()
-    await until(() => containerA.querySelector(".lazers-models-decision-tools") !== null)
+    await until(() => containerA.querySelector(".lazers-models-selection-tools") !== null)
     const catalogGraphDescription = chartDescription()
     expect(catalogGraphDescription).toContain("An unusually long catalog-backed model display name")
     expect(catalogGraphDescription).toContain("Qwen 7")
@@ -3176,7 +3194,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       renderedCatalogSeries?.data?.find((datum) => datum.configurationID === CONFIG_CROSS_ROUTE)
         ?.label?.formatter,
-    ).toBe("GPT-6 · 50")
+    ).toBe("GPT-6\n50")
     const renderedReferenceSeries = (
       catalogChart.getOption() as unknown as {
         series: Array<{ id?: string; data?: Array<{ configurationID?: string; name?: string }> }>
@@ -3324,7 +3342,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     )
     const cachedNameProvider = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
     ].find((button) => button.textContent?.includes("Model"))!
     cachedNameProvider.click()
     const qwenOption = menuItemWithText(containerA, "qwen / qwen-7")
@@ -3338,7 +3356,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toContain("Exact route qwen / qwen-7 · preview-effort")
     expect(
       [
-        ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+        ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
       ].find((button) => button.textContent?.includes("Effort"))?.textContent,
     ).toContain("preview-effort")
     const restoreHighSelection = containerA.querySelector<HTMLButtonElement>(
@@ -3825,7 +3843,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     expect(
       [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Task kind ·"),
+        button.textContent?.includes("Kind ·"),
       ),
     ).toBe(true)
     expect(containerA.querySelector(".lazers-models-decision-status")).not.toBeNull()

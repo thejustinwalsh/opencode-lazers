@@ -32,6 +32,7 @@ import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
   boundedModelLabel,
+  boundedModelEffortLabel,
   candidateLabel,
   formatDate,
   currentMarketEstimateSummary,
@@ -41,6 +42,7 @@ import {
   routeLabel,
   sourceState,
   sourceTitle,
+  modelEffortLabel,
 } from "./comparison-presentation.ts"
 import css from "./comparison-panel.css?inline"
 
@@ -73,7 +75,7 @@ const initial: typeof Preference.Type = {
   selectedTaskID: null,
   selectedCandidateID: null,
   selectedConfigurationID: null,
-  split: 56,
+  split: 64,
   topScroll: 0,
   inspectorScroll: 0,
 }
@@ -129,7 +131,27 @@ function candidateAvailabilityLabel(candidate: ModelCandidate) {
 }
 
 function personaFilterLabel(persona: typeof initial.persona) {
-  return persona ? modelPersonaLabels[persona] : "All personas"
+  if (!persona) return "All"
+  return persona === "small-refactoring" ? "Refactor" : modelPersonaLabels[persona]
+}
+
+function marketSummarySource(context: string) {
+  const [source, ...details] = context.split(" · ")
+  const conciseSource = (() => {
+    switch (source) {
+      case "OpenRouter model catalog":
+        return "OpenRouter"
+      case "OpenCode model catalog":
+        return "OpenCode"
+      case "Configured price sources":
+        return "Configured sources"
+      case "Configured price source":
+        return "Configured source"
+      default:
+        return source
+    }
+  })()
+  return [conciseSource, ...details].join(" · ")
 }
 
 function decisionStatusLabel(status: ModelComparisonPanelData["decisionStatus"]) {
@@ -1103,6 +1125,11 @@ function ModelPanel(
       priceFreshness: freshness,
     })
   }
+  const selectedMarketSummary = () => {
+    const summary = selectedMarketEstimate()
+    const configuration = selectedDecisionConfiguration()
+    return summary && configuration ? { summary, configuration } : undefined
+  }
   type DecisionChartGraph = NonNullable<ModelComparisonPanelData["decisionOverview"]>["graph"]
   let chartReferencePoints: DecisionChartGraph["points"] | undefined
   let chartReferenceEstimates: DecisionChartGraph["referenceEstimates"] | undefined
@@ -1213,7 +1240,6 @@ function ModelPanel(
   }
   const configurationsForGroup = (groupID: string) =>
     availableConfigurations().filter((configuration) => configuration.groupID === groupID)
-  const selectedGroupID = () => selectedDecisionConfiguration()?.groupID ?? null
   const providerChoices = () => {
     const groupByID = new Map<string, ModelDecisionConfiguration>()
     for (const configuration of availableConfigurations())
@@ -1247,11 +1273,7 @@ function ModelPanel(
   }
   const taskLabel = () => {
     const task = selectedTask()
-    return task
-      ? `Task · ${task.reference}`
-      : visible()?.selectedTaskID
-        ? "Task unavailable"
-        : "Choose task"
+    return task ? task.reference : visible()?.selectedTaskID ? "Task unavailable" : "Choose task"
   }
   const taskDescription = () => {
     const task = selectedTask()
@@ -1857,54 +1879,87 @@ function ModelPanel(
               Assignments
             </button>
           </div>
-          <div class="lazers-models-filters">
-            <Ui.Menu
-              label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All personas",
-                  onSelect: () => changeDecisionFilters({ persona: null }),
-                },
-                ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
-                  label: modelPersonaLabels[persona],
-                  onSelect: () => changeDecisionFilters({ persona }),
-                })),
-              ]}
-            />
-            <Ui.Menu
-              label={`Task kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All task kinds",
-                  onSelect: () => changeDecisionFilters({ taskKind: null }),
-                },
-                ...modelTaskKinds.map((taskKind) => ({
-                  label: modelTaskKindLabels[taskKind],
-                  onSelect: () => changeDecisionFilters({ taskKind }),
-                })),
-              ]}
-            />
-            <span
-              class="lazers-models-task-select"
-              role="group"
-              aria-label={taskDescription()}
-              title={taskDescription()}
-            >
+          <div class="lazers-models-controls">
+            <div class="lazers-models-filters" role="group" aria-label="Comparison filters">
               <Ui.Menu
-                label={taskLabel()}
+                label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
                 trigger="button"
                 icon="chevron-down"
-                disabled={!visible()?.tasks.length}
-                items={(visible()?.tasks ?? []).map((task) => ({
-                  label: `${task.reference} · ${task.title || task.objective} · ${task.status}`,
-                  onSelect: () => selectTask(task.taskID),
-                }))}
+                items={[
+                  {
+                    label: "All personas",
+                    onSelect: () => changeDecisionFilters({ persona: null }),
+                  },
+                  ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
+                    label: modelPersonaLabels[persona],
+                    onSelect: () => changeDecisionFilters({ persona }),
+                  })),
+                ]}
               />
-            </span>
+              <Ui.Menu
+                label={`Kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
+                trigger="button"
+                icon="chevron-down"
+                items={[
+                  {
+                    label: "All task kinds",
+                    onSelect: () => changeDecisionFilters({ taskKind: null }),
+                  },
+                  ...modelTaskKinds.map((taskKind) => ({
+                    label: modelTaskKindLabels[taskKind],
+                    onSelect: () => changeDecisionFilters({ taskKind }),
+                  })),
+                ]}
+              />
+              <span
+                class="lazers-models-task-select"
+                role="group"
+                aria-label={taskDescription()}
+                title={taskDescription()}
+              >
+                <Ui.Menu
+                  label={taskLabel()}
+                  trigger="button"
+                  icon="chevron-down"
+                  disabled={!visible()?.tasks.length}
+                  items={(visible()?.tasks ?? []).map((task) => ({
+                    label: `${task.reference} · ${task.title || task.objective} · ${task.status}`,
+                    onSelect: () => selectTask(task.taskID),
+                  }))}
+                />
+              </span>
+            </div>
+            <Show when={selectedDecisionConfiguration()}>
+              {(configuration) => (
+                <div
+                  class="lazers-models-selection-tools"
+                  role="group"
+                  aria-label="Model and effort selection"
+                  title={`Exact route ${routeLabel(configuration().route)}`}
+                >
+                  <Ui.Menu
+                    label={`Model · ${decisionModelLabel(configuration())}`}
+                    trigger="button"
+                    icon="chevron-down"
+                    disabled={!providerChoices().length}
+                    items={providerChoices().map((choice) => ({
+                      label: decisionModelChoiceLabel(choice),
+                      onSelect: () => selectDecisionGroup(choice.groupID),
+                    }))}
+                  />
+                  <Ui.Menu
+                    label={`Effort · ${configuration().route.variant ?? "Not specified"}`}
+                    trigger="button"
+                    icon="chevron-down"
+                    disabled={!configurationsForGroup(configuration().groupID).length}
+                    items={configurationsForGroup(configuration().groupID).map((choice) => ({
+                      label: choice.route.variant ?? "Not specified",
+                      onSelect: () => state.selectConfiguration(choice.configurationID),
+                    }))}
+                  />
+                </div>
+              )}
+            </Show>
           </div>
           <Show when={visible()?.sourceRefresh === "refreshing"}>
             <p class="lazers-models-refresh-note" role="status">
@@ -1965,7 +2020,7 @@ function ModelPanel(
         <div class="lazers-models-comparison-content">
           <section class="lazers-models-compare" aria-label="Model comparison">
             <details class="lazers-models-sources-details">
-              <summary>Data sources and refresh history</summary>
+              <summary>Sources</summary>
               <div class="lazers-models-sources" aria-label="Source snapshot coverage">
                 <For each={visible()?.comparison?.sources ?? []}>
                   {(source) => (
@@ -2032,12 +2087,15 @@ function ModelPanel(
                       if (comparisonChartHasPlottablePoints(points))
                         return "Historical task outcomes"
                       if (comparisonChartHasPlottablePoints([], references))
-                        return "OpenRouter model catalog reference estimates · actual task mix"
+                        return "Catalog reference estimates"
                       return "No plottable comparison points"
                     })()}
                   </h3>
                   <span
                     class="lazers-models-decision-status"
+                    classList={{
+                      "lazers-models-visually-hidden": visible()?.decisionStatus === "partial",
+                    }}
                     role="status"
                     data-decision-status={visible()?.decisionStatus ?? "loading"}
                     aria-label={decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
@@ -2075,6 +2133,30 @@ function ModelPanel(
                       appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
                       monoFontFamily={ctx.appearance.font("mono")}
                     />
+                  )}
+                </Show>
+                <Show when={selectedMarketSummary()}>
+                  {(selected) => (
+                    <p
+                      class="lazers-models-market-summary"
+                      role="status"
+                      aria-label={`Selected ${decisionModelFullName(selected().configuration)} · exact route ${routeLabel(selected().configuration.route)}. ${selected().summary.title}`}
+                      title={selected().summary.title}
+                    >
+                      <strong>
+                        {boundedModelEffortLabel(
+                          modelEffortLabel(
+                            decisionModelFullName(selected().configuration),
+                            selected().configuration.route,
+                          ),
+                          28,
+                        )}
+                      </strong>
+                      <small>
+                        {selected().summary.amount} ·{" "}
+                        {marketSummarySource(selected().summary.context)}
+                      </small>
+                    </p>
                   )}
                 </Show>
               </section>
@@ -2198,34 +2280,6 @@ function ModelPanel(
                       >
                         {decisionModelLabel(configuration())}
                       </h2>
-                      <div
-                        class="lazers-models-decision-tools lazers-models-inspector-tools"
-                        role="group"
-                        aria-label="Exact route selection"
-                      >
-                        <Ui.Menu
-                          label={`Model · ${selectedDecisionConfiguration() ? decisionModelLabel(selectedDecisionConfiguration()!) : "Select route"}`}
-                          trigger="button"
-                          icon="chevron-down"
-                          disabled={!providerChoices().length}
-                          items={providerChoices().map((choice) => ({
-                            label: decisionModelChoiceLabel(choice),
-                            onSelect: () => selectDecisionGroup(choice.groupID),
-                          }))}
-                        />
-                        <Ui.Menu
-                          label={`Effort · ${selectedDecisionConfiguration()?.route.variant ?? "Not specified"}`}
-                          trigger="button"
-                          icon="chevron-down"
-                          disabled={
-                            !selectedGroupID() || !configurationsForGroup(selectedGroupID()!).length
-                          }
-                          items={configurationsForGroup(selectedGroupID() ?? "").map((choice) => ({
-                            label: choice.route.variant ?? "Not specified",
-                            onSelect: () => state.selectConfiguration(choice.configurationID),
-                          }))}
-                        />
-                      </div>
                     </div>
                   </div>
                   <Show
@@ -2283,19 +2337,6 @@ function ModelPanel(
                           "No estimate is available."}
                       </span>
                     </p>
-                  </Show>
-                  <Show when={selectedMarketEstimate()}>
-                    {(summary) => (
-                      <p
-                        class="lazers-models-market-summary"
-                        role="status"
-                        aria-label={`Current market estimate ${summary().amount}; ${summary().context}. ${summary().title}`}
-                        title={summary().title}
-                      >
-                        <strong>{summary().amount}</strong>
-                        <small>Current market · {summary().context}</small>
-                      </p>
-                    )}
                   </Show>
                   <Show when={visible()?.decisionInspection}>
                     {(inspection) => (

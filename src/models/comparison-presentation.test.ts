@@ -8,6 +8,7 @@ import {
   boundedModelLabel,
   currentMarketEstimateSummary,
   boundedModelEffortLabel,
+  chartModelEffortLabel,
   modelEffortLabel,
   modelDisplayName,
   modelDisplayLabel,
@@ -140,6 +141,14 @@ test("chart labels keep the friendly model and effort while route identity stays
   const fullDisplayLabel = "GPT-6 Luna · openai / gpt-6-luna · high"
 
   expect(modelEffortLabel(fullDisplayLabel, route)).toBe("GPT-6 Luna · high")
+  expect(chartModelEffortLabel(fullDisplayLabel, route, 18)).toBe("GPT-6 Luna\nhigh")
+  expect(
+    chartModelEffortLabel("Qwen 7 · qwen / qwen-7 · preview-effort", {
+      providerID: "qwen",
+      modelID: "qwen-7",
+      variant: "preview-effort",
+    }),
+  ).toBe("Qwen 7\npreview-effort")
   expect(boundedModelEffortLabel(modelEffortLabel(fullDisplayLabel, route), 16)).toBe(
     "GPT-6 Lu… · high",
   )

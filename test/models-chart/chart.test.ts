@@ -695,14 +695,24 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(host.getAttribute("aria-label")).toContain("conditional range")
   expect(host.getAttribute("aria-label")).toContain("remainder unknown")
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "OpenRouter model catalog",
+    "Catalog",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Conditional range",
+    "Range",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Priced portion only",
+    "Priced portion",
   )
+  expect(
+    container
+      .querySelector("[aria-label='Chart mark legend']")
+      ?.querySelector("[aria-label='OpenRouter model catalog reference estimate']"),
+  ).not.toBeNull()
+  expect(
+    container
+      .querySelector("[aria-label='Chart mark legend']")
+      ?.querySelector("[aria-label='Priced portion; total and remainder unknown']"),
+  ).not.toBeNull()
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).not.toContain(
     "Canonical actual-cohort",
   )
@@ -710,9 +720,7 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   const disclosure = container.querySelector(
     ".lazers-models-comparison-chart-data",
   ) as unknown as HTMLDetailsElement
-  expect(disclosure.querySelector("summary")?.textContent).toContain(
-    "Accessible chart data and point selection",
-  )
+  expect(disclosure.querySelector("summary")?.textContent).toContain("Chart data")
   disclosure.open = true
   const buttonFor = (configurationID: string) =>
     container.querySelector(
@@ -738,14 +746,13 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   await until(() => buttonFor(conditional.configurationID).getAttribute("aria-pressed") === "true")
   const selectedRangeLabels = () =>
     Array.from(host.querySelectorAll("svg text")).some((label) =>
-      label.textContent?.includes("GPT-6 Luna · high"),
+      label.textContent?.includes("GPT-6 Luna"),
+    ) &&
+    Array.from(host.querySelectorAll("svg text")).some((label) =>
+      label.textContent?.includes("high"),
     )
   await until(() => selectedRangeLabels())
-  expect(
-    Array.from(host.querySelectorAll("svg text")).some(
-      (label) => label.textContent?.trim() === "GPT-6 Luna · high",
-    ),
-  ).toBe(true)
+  expect(selectedRangeLabels()).toBe(true)
   expect(
     (chart.getOption() as unknown as RenderedOption).series
       ?.find((entry) => entry.id === "selected-identities")
@@ -833,6 +840,8 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
   ]
   const svgLabelTexts = () =>
     Array.from(host.querySelectorAll("svg text")).map((label) => label.textContent?.trim() ?? "")
+  const normalizedSvgLabelTexts = () =>
+    svgLabelTexts().map((label) => label.replace(/\s+/g, " ").trim())
   const option = () => adapter.chart.getOption() as unknown as RenderedOption
   const visibleTooltip = (routeLabel: string) =>
     Array.from(host.children).find((child) => {
@@ -875,7 +884,8 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
           return (
             !Array.isArray(datum) &&
             typeof datum?.name === "string" &&
-            svgLabelTexts().includes(datum.name) &&
+            normalizedSvgLabelTexts().some((label) => label.includes("GPT-6 Luna")) &&
+            normalizedSvgLabelTexts().includes("max") &&
             datum.configurationID === reference.configurationID
           )
         })
@@ -884,7 +894,8 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
         const visibleLabel = datum.name!
         expect(visibleLabel).toBe("GPT-6 Luna · max")
         expect(visibleLabel).not.toMatch(/[pme]:/)
-        expect(svgLabelTexts()).toContain(visibleLabel)
+        expect(normalizedSvgLabelTexts().some((label) => label.includes("GPT-6 Luna"))).toBe(true)
+        expect(normalizedSvgLabelTexts()).toContain("max")
         expect(datum).toMatchObject({
           configurationID: reference.configurationID,
           markKind: "selected-identity",
@@ -955,7 +966,10 @@ test("rendered priced-portion legend uses only the supplied scalar and range key
     cleanups.push(dispose)
     await until(() => container.querySelector("[aria-label='Chart mark legend']") !== null)
     const legend = container.querySelector("[aria-label='Chart mark legend']")!
-    expect(legend.textContent).toContain("Priced portion only")
+    expect(legend.textContent).toContain("Priced portion")
+    expect(
+      legend.querySelector("[aria-label='Priced portion; total and remainder unknown']"),
+    ).not.toBeNull()
     expect(legend.querySelectorAll(".lazers-models-chart-key-subtotal")).toHaveLength(
       entry.scalarKey,
     )
@@ -974,17 +988,17 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
   const crowdedPoints = [
     {
       ...points[0]!,
-      configurationID: "crowded:selected-luna",
-      label: "GPT-6 Luna",
-      route: { providerID: "openai", modelID: "gpt-6-luna", variant: "max" },
+      configurationID: "crowded:selected-kimi",
+      label: "Kimi K2.5",
+      route: { providerID: "moonshotai", modelID: "kimi-k2.5", variant: "thinking" },
       tokensPerAcceptedTask: 20_000,
       currentMarketUSDPerAcceptedTask: 0.1,
     },
     {
       ...points[1]!,
-      configurationID: "crowded:nearby-luna",
-      label: "GPT-6 Luna",
-      route: { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: "max" },
+      configurationID: "crowded:nearby-qwen",
+      label: "Qwen 7",
+      route: { providerID: "qwen", modelID: "qwen-7", variant: "preview-effort" },
       tokensPerAcceptedTask: 20_001,
       currentMarketUSDPerAcceptedTask: 0.100001,
     },
@@ -1017,7 +1031,15 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     expect(svg()?.getAttribute("height")).toBe("190")
     expect(svg()?.textContent).toContain("Tokens / accepted task")
     expect(svg()?.textContent).toContain("USD / task")
-    expect(svg()?.textContent).toContain("GPT-6 Luna · max")
+    const renderedLabels = () =>
+      Array.from(host.querySelectorAll("svg text")).map(
+        (label) => label.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      )
+    const renderedLabelText = renderedLabels().join(" ")
+    expect(renderedLabelText).toContain("Kimi K2.5")
+    expect(renderedLabelText).toContain("thinking")
+    expect(renderedLabelText).toContain("Qwen 7")
+    expect(renderedLabelText).toContain("preview-effort")
     const narrow = option()
     expect(narrow.xAxis?.[0]?.splitNumber).toBe(2)
     expect(narrow.yAxis?.[0]?.splitNumber).toBe(2)

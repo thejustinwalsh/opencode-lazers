@@ -410,6 +410,20 @@ export function boundedModelEffortLabel(value: string, maximumLength = 36) {
   return `${Array.from(modelName).slice(0, nameBudget).join("")}…${suffix}`
 }
 
+/** Keep the model and selected effort independently readable in compact chart labels. */
+export function chartModelEffortLabel(
+  value: string,
+  route?: ModelDisplayRoute,
+  maximumModelLength = 18,
+) {
+  const label = modelEffortLabel(value, route)
+  if (!route?.variant) return boundedModelLabel(label, maximumModelLength)
+
+  const suffix = ` · ${route.variant}`
+  const modelName = label.endsWith(suffix) ? label.slice(0, -suffix.length) : label
+  return `${boundedModelLabel(modelName, maximumModelLength)}\n${route.variant}`
+}
+
 export function sourceTitle(source: ModelSource["source"]) {
   switch (source) {
     case "native-catalog":

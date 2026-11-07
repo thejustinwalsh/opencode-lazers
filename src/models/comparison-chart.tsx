@@ -10,6 +10,7 @@ import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
   boundedModelEffortLabel,
+  chartModelEffortLabel,
   formatMarketAmount,
   formatMarketRange,
   modelEffortLabel,
@@ -464,7 +465,7 @@ export function comparisonChartOptions(
   const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.48)), 8, 18)
   const boundedSelectedLabels = selectedLabelData.map((item) => ({
     ...item,
-    visibleLabel: boundedModelEffortLabel(modelEffortLabel(item.label, item.route), labelLimit),
+    visibleLabel: chartModelEffortLabel(item.label, item.route, labelLimit),
   }))
   const axisTitleFontSize = Math.min(
     fontSize,
@@ -562,10 +563,7 @@ export function comparisonChartOptions(
             },
             label: {
               show: !selected,
-              formatter: boundedModelEffortLabel(
-                modelEffortLabel(point.label, point.route),
-                labelLimit,
-              ),
+              formatter: chartModelEffortLabel(point.label, point.route, labelLimit),
               position: labelPosition(point.tokensPerAcceptedTask),
               color: selected ? theme.text : theme.mutedText,
               fontFamily: theme.fontFamily,
@@ -675,14 +673,18 @@ export function comparisonChartOptions(
         name: "Selected model identity",
         type: "scatter",
         data: boundedSelectedLabels.map((item) => ({
-          name: item.visibleLabel,
+          name: modelEffortLabel(item.label, item.route),
           value: [item.tokens, item.amount],
           configurationID: item.configurationID,
           markKind: "selected-identity",
           symbol: "circle",
           symbolSize: 1,
-          itemStyle: { color: theme.text, opacity: 0, borderWidth: 0 },
-          label: { position: labelPosition(item.tokens) },
+          itemStyle: { color: theme.surface, borderWidth: 0 },
+          label: {
+            show: true,
+            formatter: item.visibleLabel,
+            position: labelPosition(item.tokens),
+          },
         })),
         silent: true,
         tooltip: { show: false },
@@ -908,12 +910,15 @@ export function ComparisonChart(props: ComparisonChartProps) {
             (reference) => reference.estimate.status === "exact" && referenceIsPlottable(reference),
           )}
         >
-          <li>
+          <li
+            aria-label="OpenRouter model catalog reference estimate"
+            title="OpenRouter model catalog reference estimate"
+          >
             <span
               class="lazers-models-chart-key lazers-models-chart-key-reference"
               aria-hidden="true"
             />
-            OpenRouter model catalog
+            Catalog
           </li>
         </Show>
         <Show
@@ -922,16 +927,19 @@ export function ComparisonChart(props: ComparisonChartProps) {
               reference.estimate.status === "conditional" && referenceIsPlottable(reference),
           )}
         >
-          <li>
+          <li aria-label="Conditional range" title="Conditional range">
             <span
               class="lazers-models-chart-key lazers-models-chart-key-range"
               aria-hidden="true"
             />
-            Conditional range
+            Range
           </li>
         </Show>
         <Show when={hasSubtotal() || hasSubtotalRange()}>
-          <li>
+          <li
+            aria-label="Priced portion; total and remainder unknown"
+            title="Priced portion; total and remainder unknown"
+          >
             <Show when={hasSubtotal()}>
               <span
                 class="lazers-models-chart-key lazers-models-chart-key-subtotal"
@@ -944,12 +952,12 @@ export function ComparisonChart(props: ComparisonChartProps) {
                 aria-hidden="true"
               />
             </Show>
-            Priced portion only
+            Priced portion
           </li>
         </Show>
       </ul>
       <details class="lazers-models-comparison-chart-data">
-        <summary>Accessible chart data and point selection</summary>
+        <summary>Chart data</summary>
         <ul>
           <For each={chartChoices()}>
             {([configurationID, choice]) => {
