@@ -32,6 +32,17 @@ producer/consumer microtasks. Final exact scope follows current-source research.
   identify trustworthy fields and any necessary narrow seam; never infer a worker
   from a global file-change event or expose raw arguments/content as a fallback.
 
+File activity is a required outcome, not satisfied by an “unknown” placeholder:
+Root confirmed current `LiveToolCall` lacks a file-target field and `live-read.ts`
+has no attributed target projection. The existing researcher must identify the
+smallest trustworthy native-fact → safe target-only observation → exact call
+identity → existing live-contract path. Include that focused extension with the
+monitor by default. A separate linked remaining feature requires a genuine
+responsibility or reservation boundary; do not silently exclude all producer
+changes or declare file activity complete while coverage remains unknown. Raw
+file contents/proposed edits are not requested. Current versus completed file
+activity must follow actual native call facts.
+
 ## Actual failing baseline supplied by Root
 
 On 2026-11-07, while both original Models and Tasks native workers were running,
