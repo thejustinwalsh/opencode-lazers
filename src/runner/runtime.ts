@@ -2,7 +2,7 @@ import {
   evaluatePrerequisiteIntegration,
   type PrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
@@ -51,8 +51,16 @@ import { appendOutboxReceipt, appendRunnerEffectReceipt, RunnerStore } from "./s
 import { outcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
 import type { OutcomeOwnership } from "./inbox.ts"
-import { terminalWorkerContinuationProblem } from "./interrupted-continuation.ts"
-import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
+import {
+  resolveRetainedRepairInputLineage,
+  RETAINED_REPAIR_FENCE_FAILURE_REASON,
+  terminalWorkerContinuationProblem as checkTerminalWorkerContinuation,
+} from "./interrupted-continuation.ts"
+import type {
+  RetainedRepairContinuationTransition,
+  TerminalWorkerHold,
+  TerminalWorkerContinuationFacts,
+} from "./interrupted-continuation.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import {
@@ -256,13 +264,43 @@ type RetainedRepairRecord = {
   operationID: string
   attemptID: string
   previousMessageID: string
+  repairMessageID: string
   messageID: string
+  nativeInputID: string
+  continued: boolean
+  terminalOutcome?: "interrupted" | "succeeded" | "failed"
   owner: string
   ownerEpoch: number
   sessionID: string
   workspace: string
   route: unknown
   defect: string
+}
+
+type RetainedRepairRecoverySeed = {
+  operationID: string
+  attemptID: string
+  taskID: string
+  failedMessageID: string
+  interruptedInputID: string
+  owner: string
+  ownerEpoch: number
+  planVersion: number
+  planRevision: number
+  resumedTransitionID: number
+  blockedTransitionID: number
+  cancelledTransitionID: number
+  usage: { tokenCount: number | null; toolCount: number; cost: number | null }
+  worker: HostSession
+  workerObservation: string
+  workspaceObservation: string
+}
+
+type RunnerTransitionRecord = {
+  id: number
+  task_id: string | null
+  event: string
+  payload: string
 }
 
 type RetainedVerificationSeed = RetainedVerification
@@ -983,6 +1021,7 @@ export class TaskRuntime {
       turn: worker.turn ?? null,
       background: worker.background ?? null,
       idleAt: worker.idleAt ?? null,
+      messages: worker.messages.map((message) => ({ id: message.id, type: message.type ?? null })),
     })
   }
 
@@ -990,8 +1029,9 @@ export class TaskRuntime {
     plan: PlanRow,
     attempt: AttemptRow,
     worker: HostSession | null | undefined,
-    previousMessageID: string,
+    expectedInputID: string,
     model: ModelPolicy,
+    expectedOutcome: "succeeded" | "interrupted" | "failed" = "succeeded",
   ) {
     if (
       !worker ||
@@ -1020,13 +1060,485 @@ export class TaskRuntime {
       worker.pendingForms !== 0
     )
       return "Retained repair worker has active foreground or pending executable controls"
+    const expectedTurnState = expectedOutcome === "interrupted" ? "interrupted" : "completed"
     if (
-      worker.outcome !== "succeeded" ||
-      worker.turn?.state !== "completed" ||
-      worker.turn.inputID !== previousMessageID
+      worker.outcome !== expectedOutcome ||
+      worker.turn?.state !== expectedTurnState ||
+      worker.turn.inputID !== expectedInputID
     )
-      return "Retained repair worker's accepted input is no longer its completed current turn"
+      return expectedOutcome === "interrupted"
+        ? "Retained repair worker's exact interrupted input is no longer its current turn"
+        : "Retained repair worker's accepted input is no longer its completed current turn"
     return undefined
+  }
+
+  private transitionHistory(planID: string): RunnerTransitionRecord[] {
+    return this.store.atomic((db) =>
+      db
+        .query<RunnerTransitionRecord, [string]>(
+          "SELECT id,task_id,event,payload FROM runner_transitions WHERE plan_id=? ORDER BY id",
+        )
+        .all(planID),
+    )
+  }
+
+  private retainedRepairWorkspaceObservation(attempt: AttemptRow) {
+    const workspace = realpathSync(attempt.workspace)
+    const head = git(workspace, ["rev-parse", "HEAD"])
+    const status = git(workspace, ["status", "--porcelain", "--untracked-files=all"])
+    const trackedDiff = git(workspace, ["diff", "--binary", "HEAD"])
+    const untracked = git(workspace, ["ls-files", "--others", "--exclude-standard", "-z"])
+      .split("\0")
+      .filter(Boolean)
+      .map((path) => {
+        const absolute = resolve(workspace, path)
+        const relativePath = relative(workspace, absolute)
+        if (
+          relativePath.startsWith(`..${sep}`) ||
+          relativePath === ".." ||
+          resolve(workspace, path) !== absolute
+        )
+          throw new Error("Retained repair worktree contains an invalid untracked path")
+        const stat = lstatSync(absolute)
+        return [
+          path,
+          stat.isSymbolicLink()
+            ? { symlink: readlinkSync(absolute) }
+            : stat.isFile()
+              ? { content: readFileSync(absolute).toString("base64") }
+              : { mode: stat.mode },
+        ]
+      })
+    return fingerprint({ workspace, head, status, trackedDiff, untracked })
+  }
+
+  private parseTransitionPayload<T>(transition: RunnerTransitionRecord | undefined): T | undefined {
+    if (!transition) return undefined
+    try {
+      return JSON.parse(transition.payload) as T
+    } catch {
+      return undefined
+    }
+  }
+
+  private async prepareRetainedRepairRecovery(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+    attempt: AttemptRow,
+  ): Promise<RetainedRepairRecoverySeed> {
+    if (!command.taskID || !command.attemptID || !command.reason)
+      throw new Error("Retained repair recovery requires the exact task, attempt and reason")
+    if (
+      caller !== plan.owner ||
+      !this.validArchitect(ownerSession) ||
+      ownerSession.id !== plan.owner ||
+      ownerSession.projectID !== this.projectID
+    )
+      throw new Error("Retained repair recovery requires the current same-project Architect owner")
+    if (plan.state !== "blocked" || plan.artifact !== null)
+      throw new Error("Retained repair recovery requires the original blocked, unintegrated plan")
+
+    const task = this.store.repository.get(command.taskID)
+    const node = this.store.nodes(plan.id).find((candidate) => candidate.task_id === command.taskID)
+    const latest = this.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === command.taskID)
+      .at(-1)
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const admitted = input.nodes.find((candidate) => candidate.taskID === command.taskID)
+    if (
+      !task ||
+      !node ||
+      !latest ||
+      latest.id !== attempt.id ||
+      latest.id !== command.attemptID ||
+      latest.state !== "cancelled" ||
+      node.state !== "cancelled" ||
+      task.revision !== admitted?.revision ||
+      task.provenance.projectID !== this.projectID ||
+      task.provenance.projectDirectory !== this.directory ||
+      this.store.repository.taskDisposition(task.id)
+    )
+      throw new Error("Retained repair recovery must name the exact current cancelled attempt")
+
+    const history = this.transitionHistory(plan.id)
+    const repairTransition = history
+      .filter(
+        (transition) =>
+          transition.task_id === task.id && transition.event === "RETAINED_REPAIR_REQUESTED",
+      )
+      .at(-1)
+    const repair = this.parseTransitionPayload<Record<string, unknown>>(repairTransition)
+    const operationID = repair?.operationID
+    const repairMessageID = repair?.messageID
+    const previousMessageID = repair?.previousMessageID
+    const repairOwner = repair?.owner
+    const repairOwnerEpoch = repair?.ownerEpoch
+    const repairRoute = ModelPolicy.safeParse(repair?.route)
+    const policy = (() => {
+      try {
+        return JSON.parse(attempt.policy) as { workspaceMode?: unknown; model?: unknown }
+      } catch {
+        return undefined
+      }
+    })()
+    const attemptRoute = ModelPolicy.safeParse(policy?.model)
+    const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+    const artifact = repair?.artifact
+    if (
+      !repairTransition ||
+      typeof operationID !== "string" ||
+      typeof repairMessageID !== "string" ||
+      typeof previousMessageID !== "string" ||
+      repair?.attemptID !== attempt.id ||
+      repairTransition.task_id !== task.id ||
+      repairOwner !== plan.owner ||
+      repairOwnerEpoch !== this.store.planControlEpoch(plan.id) ||
+      !Number.isSafeInteger(repairOwnerEpoch) ||
+      typeof repair?.sessionID !== "string" ||
+      repair.sessionID !== attempt.session_id ||
+      repair.workspace !== attempt.workspace ||
+      artifact !== attempt.artifact ||
+      node.artifact !== null ||
+      !isCommitID(artifact) ||
+      !attemptRoute.success ||
+      !planRoute?.success ||
+      !repairRoute.success ||
+      policy?.workspaceMode !== "isolated" ||
+      !this.sameModel(attemptRoute.data, planRoute.data) ||
+      !this.sameModel(attemptRoute.data, repairRoute.data) ||
+      this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
+      sourceQuarantine(this.store, attempt.id)
+    )
+      throw new Error("Retained repair recovery authority, artifact, route or task lineage changed")
+
+    const repairEffects = this.store
+      .effects(plan.id)
+      .filter((effect) => effect.attempt_id === attempt.id)
+    const unresolved = this.store
+      .effects(plan.id)
+      .some((effect) => ["intended", "uncertain"].includes(effect.state))
+    const sessionReceipt = repairEffects.some((effect) => {
+      if (effect.kind !== "session" || effect.state !== "completed") return false
+      try {
+        const payload = JSON.parse(effect.payload) as Record<string, unknown>
+        const receipt = JSON.parse(effect.receipt ?? "null") as Record<string, unknown> | null
+        return payload.sessionID === attempt.session_id && receipt?.sessionID === attempt.session_id
+      } catch {
+        return false
+      }
+    })
+    const repairPromptReceipt = repairEffects.some((effect) => {
+      if (effect.kind !== "prompt" || effect.state !== "completed") return false
+      try {
+        const payload = JSON.parse(effect.payload) as Record<string, unknown>
+        const receipt = JSON.parse(effect.receipt ?? "null") as Record<string, unknown> | null
+        return (
+          payload.sessionID === attempt.session_id &&
+          payload.messageID === repairMessageID &&
+          payload.workspace === attempt.workspace &&
+          payload.repairID === operationID &&
+          receipt?.messageID === repairMessageID &&
+          receipt?.taskID === task.id &&
+          receipt?.repairID === operationID
+        )
+      } catch {
+        return false
+      }
+    })
+    if (!sessionReceipt || !repairPromptReceipt || unresolved)
+      throw new Error(
+        "Retained repair recovery requires completed original receipts and no uncertain effects",
+      )
+    if (
+      repairEffects.some((effect) => {
+        if (effect.kind !== "prompt") return false
+        try {
+          return JSON.parse(effect.payload).messageID === attempt.message_id
+        } catch {
+          return false
+        }
+      })
+    )
+      throw new Error("Retained repair recovery refuses an already-admitted reservation input")
+
+    const matchingResume = history
+      .filter(
+        (transition) => transition.task_id === task.id && transition.event === "ATTEMPT_RESUMED",
+      )
+      .map((transition) => ({
+        transition,
+        payload: this.parseTransitionPayload<Record<string, unknown>>(transition),
+      }))
+      .filter(({ payload }) => payload?.attemptID === attempt.id)
+      .at(-1)
+    const resumed = matchingResume?.payload
+    const priorHoldTransition = matchingResume
+      ? history
+          .filter(
+            (transition) =>
+              transition.task_id === null &&
+              transition.event === "BLOCKED" &&
+              transition.id < matchingResume.transition.id,
+          )
+          .at(-1)
+      : undefined
+    const priorHold = this.parseTransitionPayload<{ workerObservation?: TerminalWorkerHold }>(
+      priorHoldTransition,
+    )?.workerObservation
+    const fenceBlockTransition = matchingResume
+      ? history
+          .filter(
+            (transition) =>
+              transition.task_id === null &&
+              transition.event === "BLOCKED" &&
+              transition.id > matchingResume.transition.id,
+          )
+          .at(-1)
+      : undefined
+    const fenceBlock = this.parseTransitionPayload<{
+      reason?: unknown
+      workerObservation?: unknown
+    }>(fenceBlockTransition)
+    const cancelTransition = history
+      .filter((transition) => transition.task_id === task.id && transition.event === "CANCEL")
+      .at(-1)
+    const cancel = this.parseTransitionPayload<{ from?: unknown; to?: unknown; reason?: unknown }>(
+      cancelTransition,
+    )
+    if (
+      !matchingResume ||
+      !resumed ||
+      resumed.previousMessageID !== repairMessageID ||
+      resumed.messageID !== attempt.message_id ||
+      resumed.terminalOutcome !== "interrupted" ||
+      resumed.terminalInputID !== repairMessageID ||
+      resumed.interruptedInputID !== repairMessageID ||
+      resumed.retainedRepairContinuation !== undefined ||
+      resumed.retainedRepairRecovery !== undefined ||
+      !priorHoldTransition ||
+      priorHoldTransition.id <= repairTransition.id ||
+      priorHold?.kind !== "terminal-worker-observation" ||
+      priorHold.attemptID !== attempt.id ||
+      priorHold.sessionID !== attempt.session_id ||
+      priorHold.workspace !== attempt.workspace ||
+      priorHold.inputID !== repairMessageID ||
+      priorHold.outcome !== "interrupted" ||
+      priorHold.turnState !== "interrupted" ||
+      !fenceBlockTransition ||
+      fenceBlock?.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
+      fenceBlock.workerObservation !== undefined ||
+      plan.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
+      !cancelTransition ||
+      cancelTransition.id <= fenceBlockTransition.id ||
+      cancel?.from !== "running" ||
+      cancel.to !== "cancelled" ||
+      cancel.reason !== null ||
+      history.some(
+        (transition) =>
+          transition.task_id === null &&
+          transition.event === "CANCEL_REQUESTED" &&
+          transition.id > repairTransition.id,
+      )
+    )
+      throw new Error(
+        "Retained repair cancellation is not the exact runtime-created interrupted fence failure",
+      )
+
+    const stopped = history
+      .filter(
+        (transition) =>
+          transition.task_id === task.id &&
+          transition.event === "WORKER_STOPPED" &&
+          transition.id < matchingResume.transition.id,
+      )
+      .map((transition) => ({
+        transition,
+        payload: this.parseTransitionPayload<Record<string, unknown>>(transition),
+      }))
+      .filter(
+        ({ payload }) =>
+          payload?.attemptID === attempt.id &&
+          payload.sessionID === attempt.session_id &&
+          payload.workspace === attempt.workspace &&
+          payload.outcome === "interrupted" &&
+          payload.inputID === repairMessageID,
+      )
+      .at(-1)?.payload
+    if (!stopped)
+      throw new Error(
+        "Retained repair recovery has no matching durable interrupted-worker stop receipt",
+      )
+
+    this.assertNoDispatchedDependents(plan, task.id, input)
+    if (
+      !existsSync(attempt.workspace) ||
+      attempt.workspace === this.directory ||
+      realpathSync(git(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
+        realpathSync(attempt.workspace) ||
+      git(attempt.workspace, ["rev-parse", `${artifact}^{commit}`]) !== artifact ||
+      !commitIsAncestor(
+        attempt.workspace,
+        artifact,
+        git(attempt.workspace, ["rev-parse", "HEAD"]),
+      ) ||
+      !isCommitID(attempt.base_commit) ||
+      !commitIsAncestor(attempt.workspace, attempt.base_commit, artifact) ||
+      !this.preparationAllowed(attempt)
+    )
+      throw new Error("Retained repair recovery no longer matches the original retained checkout")
+    const nativeWorktrees = await this.host.worktrees()
+    if (!nativeWorktrees.some((workspace) => samePhysicalWorkspace(workspace, attempt.workspace)))
+      throw new Error(
+        "Retained repair recovery checkout is not owned by the native worktree adapter",
+      )
+    const workspaceObservation = this.retainedRepairWorkspaceObservation(attempt)
+
+    const freshOwner = async () => {
+      const current = await this.host.session(plan.owner)
+      if (
+        !this.validArchitect(current) ||
+        current.id !== caller ||
+        current.projectID !== this.projectID
+      )
+        throw new Error("Retained repair recovery owner changed during native revalidation")
+      return current
+    }
+    const firstWorker = await this.host.session(attempt.session_id, { messages: true })
+    const currentOwner = await freshOwner()
+    const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
+    const route = attemptRoute.data
+    const problem = this.retainedRepairWorkerProblem(
+      plan,
+      attempt,
+      confirmedWorker,
+      repairMessageID,
+      route,
+      "interrupted",
+    )
+    if (
+      problem ||
+      !firstWorker ||
+      !confirmedWorker ||
+      this.retainedRepairObservation(firstWorker) !==
+        this.retainedRepairObservation(confirmedWorker) ||
+      confirmedWorker.messages.some((message) => message.id === attempt.message_id) ||
+      this.retainedRepairWorkspaceObservation(attempt) !== workspaceObservation
+    )
+      throw new Error(
+        problem ?? "Retained repair recovery worker or dirty checkout changed during revalidation",
+      )
+
+    const historicalAttempt = { ...attempt, state: "running" as const, message_id: repairMessageID }
+    const continuationProblem = checkTerminalWorkerContinuation({
+      plan: { state: "blocked", owner: plan.owner, model: plan.model, artifact: null },
+      node: { task_id: node.task_id, state: "running" },
+      attempt: historicalAttempt,
+      latestAttemptID: attempt.id,
+      commandTaskID: command.taskID,
+      commandAttemptID: command.attemptID,
+      caller,
+      owner: currentOwner,
+      worker: confirmedWorker,
+      projectID: this.projectID,
+      taskCurrent: true,
+      assignedInputMatches: confirmedWorker.turn?.inputID === repairMessageID,
+      backgroundInputMatches:
+        confirmedWorker.background?.state === "observed" &&
+        confirmedWorker.background.inputID === repairMessageID,
+      stopObservation: stopped,
+      planHoldObservation: priorHold,
+      retainedSession: sessionReceipt,
+      retainedPrompt: repairPromptReceipt,
+      hasUnresolvedEffects: unresolved,
+      reservationAvailable: this.preparationAllowed(attempt),
+    } satisfies TerminalWorkerContinuationFacts)
+    if (continuationProblem) throw new Error(continuationProblem)
+    if (
+      this.store.plan(plan.id)?.version !== plan.version ||
+      this.store.planControlEpoch(plan.id) !== repairOwnerEpoch
+    )
+      throw new Error(
+        "Retained repair recovery plan or owner authorization changed during revalidation",
+      )
+
+    return {
+      operationID,
+      attemptID: attempt.id,
+      taskID: task.id,
+      failedMessageID: attempt.message_id,
+      interruptedInputID: repairMessageID,
+      owner: caller,
+      ownerEpoch: repairOwnerEpoch as number,
+      planVersion: plan.version,
+      planRevision: plan.revision,
+      resumedTransitionID: matchingResume.transition.id,
+      blockedTransitionID: fenceBlockTransition.id,
+      cancelledTransitionID: cancelTransition.id,
+      usage: {
+        tokenCount: attempt.token_count,
+        toolCount: attempt.tool_count,
+        cost: attempt.cost,
+      },
+      worker: confirmedWorker,
+      workerObservation: this.retainedRepairObservation(confirmedWorker),
+      workspaceObservation,
+    }
+  }
+
+  private retainedRepairRecoveryCurrent(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    recovery: RetainedRepairRecoverySeed,
+  ) {
+    const currentPlan = this.store.plan(plan.id)
+    const currentAttempt = this.store
+      .attempts(plan.id)
+      .find((candidate) => candidate.id === attempt.id)
+    const currentNode = this.store
+      .nodes(plan.id)
+      .find((candidate) => candidate.task_id === attempt.task_id)
+    const history = this.transitionHistory(plan.id)
+    const matching = (id: number, event: string, taskID: string | null) =>
+      history.find(
+        (transition) =>
+          transition.id === id && transition.event === event && transition.task_id === taskID,
+      )
+    return Boolean(
+      currentPlan?.state === "blocked" &&
+      currentPlan.version === recovery.planVersion &&
+      currentPlan.revision === recovery.planRevision &&
+      currentPlan.owner === recovery.owner &&
+      currentPlan.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
+      this.store.planControlEpoch(plan.id) === recovery.ownerEpoch &&
+      currentAttempt?.state === "cancelled" &&
+      currentAttempt.message_id === recovery.failedMessageID &&
+      currentAttempt.session_id === attempt.session_id &&
+      currentAttempt.workspace === attempt.workspace &&
+      currentAttempt.base_commit === attempt.base_commit &&
+      currentAttempt.policy === attempt.policy &&
+      currentAttempt.token_count === recovery.usage.tokenCount &&
+      currentAttempt.tool_count === recovery.usage.toolCount &&
+      currentAttempt.cost === recovery.usage.cost &&
+      currentNode?.state === "cancelled" &&
+      matching(recovery.resumedTransitionID, "ATTEMPT_RESUMED", attempt.task_id) &&
+      matching(recovery.blockedTransitionID, "BLOCKED", null) &&
+      matching(recovery.cancelledTransitionID, "CANCEL", attempt.task_id) &&
+      !history.some(
+        (transition) =>
+          transition.task_id === null &&
+          transition.event === "CANCEL_REQUESTED" &&
+          transition.id > recovery.blockedTransitionID,
+      ) &&
+      !this.store
+        .effects(plan.id)
+        .some((effect) => ["intended", "uncertain"].includes(effect.state)) &&
+      !sourceQuarantine(this.store, attempt.id) &&
+      this.preparationAllowed(attempt) &&
+      this.retainedRepairWorkspaceObservation(attempt) === recovery.workspaceObservation,
+    )
   }
 
   private assertNoDispatchedDependents(plan: PlanRow, taskID: string, input: PlanInput) {
@@ -1423,7 +1935,7 @@ export class TaskRuntime {
         taskCurrent = false
       }
     }
-    return terminalWorkerContinuationProblem({
+    return checkTerminalWorkerContinuation({
       plan: continuationPlan,
       node,
       attempt,
@@ -2253,6 +2765,9 @@ export class TaskRuntime {
           worker: HostSession
         }
       | undefined
+    let terminalRepairContinuation:
+      { operationID: string; owner: string; ownerEpoch: number } | undefined
+    let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
     if (command.action === "resume" && command.taskID) {
       const attempt = this.store
         .attempts(old.id)
@@ -2284,7 +2799,45 @@ export class TaskRuntime {
           inputID: worker!.turn!.inputID!,
           worker: worker!,
         }
+        const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
+          old.id,
+          attempt.task_id,
+        )
+        if (latestRepair?.attemptID === attempt.id) {
+          const repair = this.retainedRepairForAttempt(attempt)
+          if (
+            !repair ||
+            repair.messageID !== attempt.message_id ||
+            repair.owner !== caller ||
+            repair.ownerEpoch !== this.store.planControlEpoch(old.id)
+          )
+            throw new Error(
+              "Retained repair continuation is missing its current owner/control authorization",
+            )
+          terminalRepairContinuation = {
+            operationID: repair.operationID,
+            owner: repair.owner,
+            ownerEpoch: repair.ownerEpoch,
+          }
+        }
       }
+      if (
+        !terminalContinuation &&
+        attempt?.state === "cancelled" &&
+        this.store.nodes(old.id).find((candidate) => candidate.task_id === attempt.task_id)
+          ?.state === "cancelled" &&
+        old.state === "blocked" &&
+        old.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
+        this.store.latestRetainedRepair<{ attemptID?: unknown }>(old.id, attempt.task_id)
+          ?.attemptID === attempt.id
+      )
+        retainedRepairRecovery = await this.prepareRetainedRepairRecovery(
+          old,
+          command,
+          caller,
+          ownerSession,
+          attempt,
+        )
     }
     if (command.action === "run" && !this.validArchitect(ownerSession)) {
       ownerSession = await this.ensureArchitectOwner(old, ownerSession, false)
@@ -2469,6 +3022,28 @@ export class TaskRuntime {
         throw new Error(
           confirmedProblem ?? "Retained repair authorization changed during final admission",
         )
+    }
+    if (retainedRepairRecovery) {
+      const currentOwner = await this.host.session(caller)
+      const recoveryAttempt = this.store
+        .attempts(old.id)
+        .find((candidate) => candidate.id === retainedRepairRecovery!.attemptID)
+      const currentWorker = await this.host.session(retainedRepairRecovery.worker.id, {
+        messages: true,
+      })
+      if (
+        !recoveryAttempt ||
+        !this.validArchitect(currentOwner) ||
+        currentOwner.id !== retainedRepairRecovery.owner ||
+        !currentWorker ||
+        this.retainedRepairObservation(currentWorker) !==
+          retainedRepairRecovery.workerObservation ||
+        currentWorker.messages.some(
+          (message) => message.id === retainedRepairRecovery.failedMessageID,
+        ) ||
+        !this.retainedRepairRecoveryCurrent(old, recoveryAttempt, retainedRepairRecovery)
+      )
+        throw new Error("Retained repair recovery changed during final native revalidation")
     }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
@@ -3319,6 +3894,66 @@ export class TaskRuntime {
           .at(-1)
         if (command.attemptID && command.attemptID !== attempt?.id)
           throw new Error("Command attemptID does not match the exact latest task attempt")
+        if (retainedRepairRecovery) {
+          if (
+            retry ||
+            !attempt ||
+            !node ||
+            command.taskID !== retainedRepairRecovery.taskID ||
+            command.attemptID !== retainedRepairRecovery.attemptID ||
+            ownerSession?.id !== plan.owner ||
+            !this.validArchitect(ownerSession) ||
+            !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
+          )
+            throw new Error("Retained repair recovery authorization changed before reservation")
+          const resumedMessageID = messageID()
+          this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
+          const updatedAttempt = db
+            .query(
+              "UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
+            )
+            .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
+          const updatedPlan = db
+            .query(
+              "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
+            )
+            .run(
+              plan.id,
+              RETAINED_REPAIR_FENCE_FAILURE_REASON,
+              retainedRepairRecovery.planVersion + 1,
+            ).changes
+          if (updatedAttempt !== 1 || updatedPlan !== 1)
+            throw new Error("Retained repair recovery reservation changed during atomic admission")
+          this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
+            attemptID: attempt.id,
+            reason: command.reason,
+            usageRetained: true,
+            budget: null,
+            previousMessageID: retainedRepairRecovery.failedMessageID,
+            messageID: resumedMessageID,
+            terminalInputID: retainedRepairRecovery.interruptedInputID,
+            terminalOutcome: "interrupted",
+            interruptedInputID: retainedRepairRecovery.interruptedInputID,
+            retainedRepairRecovery: {
+              schema: "lazers-retained-repair-recovery/v1",
+              operationID: retainedRepairRecovery.operationID,
+              failedMessageID: retainedRepairRecovery.failedMessageID,
+              interruptedInputID: retainedRepairRecovery.interruptedInputID,
+              owner: retainedRepairRecovery.owner,
+              ownerEpoch: retainedRepairRecovery.ownerEpoch,
+              failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
+              blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
+              cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
+            },
+          })
+          return {
+            status: "retained-repair-recovered",
+            version: this.store.plan(plan.id)!.version,
+            taskID: attempt.task_id,
+            attemptID: attempt.id,
+            messageID: resumedMessageID,
+          }
+        }
         const continuingTerminalWorker = Boolean(
           !retry &&
           terminalContinuation &&
@@ -3342,6 +3977,21 @@ export class TaskRuntime {
           if (problem) throw new Error(problem)
           if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
             throw new Error("Native terminal observation changed before continuation admission")
+          const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
+            plan.id,
+            attempt!.task_id,
+          )
+          const currentRepair = this.retainedRepairForAttempt(attempt!)
+          if (
+            (latestRepair?.attemptID === attempt!.id &&
+              (!terminalRepairContinuation ||
+                !currentRepair ||
+                currentRepair.operationID !== terminalRepairContinuation.operationID ||
+                currentRepair.owner !== terminalRepairContinuation.owner ||
+                currentRepair.ownerEpoch !== terminalRepairContinuation.ownerEpoch)) ||
+            (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
+          )
+            throw new Error("Retained repair continuation authority changed before reservation")
         }
         if (retry && node?.state === "cancelled" && !attempt) {
           if (
@@ -3557,6 +4207,16 @@ export class TaskRuntime {
                 ...(terminalContinuation!.worker.outcome === "interrupted"
                   ? { interruptedInputID: terminalContinuation!.inputID }
                   : {}),
+              }
+            : {}),
+          ...(continuingTerminalWorker && terminalRepairContinuation
+            ? {
+                retainedRepairContinuation: {
+                  schema: "lazers-retained-repair-continuation/v1",
+                  operationID: terminalRepairContinuation.operationID,
+                  owner: terminalRepairContinuation.owner,
+                  ownerEpoch: terminalRepairContinuation.ownerEpoch,
+                },
               }
             : {}),
           ...(retry ? { selectedBaseline } : {}),
@@ -6899,9 +7559,12 @@ export class TaskRuntime {
     if (
       !repair ||
       typeof repair.operationID !== "string" ||
+      !repair.operationID ||
       typeof repair.attemptID !== "string" ||
       typeof repair.previousMessageID !== "string" ||
+      !repair.previousMessageID ||
       typeof repair.messageID !== "string" ||
+      !repair.messageID ||
       typeof repair.owner !== "string" ||
       !repair.owner.trim() ||
       !Number.isSafeInteger(repair.ownerEpoch) ||
@@ -6910,14 +7573,136 @@ export class TaskRuntime {
       typeof repair.workspace !== "string" ||
       typeof repair.defect !== "string" ||
       repair.attemptID !== attempt.id ||
-      repair.messageID !== attempt.message_id
+      repair.sessionID !== attempt.session_id ||
+      repair.workspace !== attempt.workspace ||
+      !ModelPolicy.safeParse(repair.route).success
     )
       return undefined
+    const plan = this.store.plan(attempt.plan_id)
+    if (
+      !plan ||
+      plan.owner !== repair.owner ||
+      this.store.planControlEpoch(attempt.plan_id) !== repair.ownerEpoch
+    )
+      return undefined
+    const repairRoute = ModelPolicy.safeParse(repair.route)
+    let attemptRoute: ReturnType<typeof ModelPolicy.safeParse> | undefined
+    let planRoute: ReturnType<typeof ModelPolicy.safeParse> | undefined
+    try {
+      attemptRoute = ModelPolicy.safeParse(
+        (JSON.parse(attempt.policy) as { model?: unknown }).model,
+      )
+      planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+    } catch {
+      return undefined
+    }
+    if (
+      !repairRoute.success ||
+      !attemptRoute?.success ||
+      !planRoute?.success ||
+      !this.sameModel(repairRoute.data, attemptRoute.data) ||
+      !this.sameModel(repairRoute.data, planRoute.data)
+    )
+      return undefined
+    const history = this.transitionHistory(attempt.plan_id)
+    const repairTransition = history
+      .filter(
+        (entry) => entry.task_id === attempt.task_id && entry.event === "RETAINED_REPAIR_REQUESTED",
+      )
+      .at(-1)
+    const transitions: RetainedRepairContinuationTransition[] = history
+      .filter((entry) => entry.task_id === attempt.task_id && entry.event === "ATTEMPT_RESUMED")
+      .flatMap((entry) => {
+        const receipt = this.parseTransitionPayload<RetainedRepairContinuationTransition>(entry)
+        if (!receipt) return []
+        const recovery = isRecord(receipt.retainedRepairRecovery)
+          ? receipt.retainedRepairRecovery
+          : undefined
+        if (recovery) {
+          const failedResumeID = recovery.failedResumeTransitionID
+          const blockedID = recovery.blockedTransitionID
+          const cancelledID = recovery.cancelledTransitionID
+          const failedResumeTransition = history.find(
+            (candidate) => candidate.id === failedResumeID,
+          )
+          const blockedTransition = history.find((candidate) => candidate.id === blockedID)
+          const cancelledTransition = history.find((candidate) => candidate.id === cancelledID)
+          const failedResume =
+            this.parseTransitionPayload<Record<string, unknown>>(failedResumeTransition)
+          const blocked = this.parseTransitionPayload<{
+            reason?: unknown
+            workerObservation?: unknown
+          }>(blockedTransition)
+          const cancelled = this.parseTransitionPayload<{
+            from?: unknown
+            to?: unknown
+            reason?: unknown
+          }>(cancelledTransition)
+          if (
+            recovery.schema !== "lazers-retained-repair-recovery/v1" ||
+            recovery.operationID !== repair.operationID ||
+            recovery.owner !== repair.owner ||
+            recovery.ownerEpoch !== repair.ownerEpoch ||
+            recovery.interruptedInputID !== repair.messageID ||
+            !repairTransition ||
+            !Number.isSafeInteger(failedResumeID) ||
+            !Number.isSafeInteger(blockedID) ||
+            !Number.isSafeInteger(cancelledID) ||
+            failedResumeTransition?.event !== "ATTEMPT_RESUMED" ||
+            failedResumeTransition.task_id !== attempt.task_id ||
+            blockedTransition?.event !== "BLOCKED" ||
+            blockedTransition.task_id !== null ||
+            cancelledTransition?.event !== "CANCEL" ||
+            cancelledTransition.task_id !== attempt.task_id ||
+            failedResumeTransition.id <= repairTransition.id ||
+            blockedTransition.id <= failedResumeTransition.id ||
+            cancelledTransition.id <= blockedTransition.id ||
+            failedResume?.attemptID !== attempt.id ||
+            failedResume.previousMessageID !== repair.messageID ||
+            failedResume.messageID !== recovery.failedMessageID ||
+            failedResume.terminalInputID !== repair.messageID ||
+            failedResume.interruptedInputID !== repair.messageID ||
+            failedResume.terminalOutcome !== "interrupted" ||
+            failedResume.retainedRepairContinuation !== undefined ||
+            failedResume.retainedRepairRecovery !== undefined ||
+            blocked?.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
+            blocked.workerObservation !== undefined ||
+            cancelled?.from !== "running" ||
+            cancelled.to !== "cancelled" ||
+            cancelled.reason !== null ||
+            history.some(
+              (candidate) =>
+                candidate.task_id === null &&
+                candidate.event === "CANCEL_REQUESTED" &&
+                repairTransition &&
+                candidate.id > repairTransition.id &&
+                candidate.id < cancelledTransition.id,
+            )
+          )
+            return []
+        }
+        return [receipt]
+      })
+    const lineage = resolveRetainedRepairInputLineage({
+      operationID: repair.operationID,
+      attemptID: attempt.id,
+      originalMessageID: repair.messageID,
+      assignedMessageID: attempt.message_id,
+      owner: repair.owner,
+      ownerEpoch: repair.ownerEpoch as number,
+      allowLegacyReceipt: true,
+      transitions,
+    })
+    if (lineage.status === "invalid") return undefined
     return {
       operationID: repair.operationID,
       attemptID: repair.attemptID,
       previousMessageID: repair.previousMessageID,
-      messageID: repair.messageID,
+      repairMessageID: repair.messageID,
+      messageID: attempt.message_id,
+      nativeInputID: lineage.nativeInputID,
+      continued: lineage.status === "continued",
+      ...(lineage.status === "continued" ? { terminalOutcome: lineage.terminalOutcome } : {}),
       owner: repair.owner,
       ownerEpoch: repair.ownerEpoch as number,
       sessionID: repair.sessionID,
@@ -6975,8 +7760,11 @@ export class TaskRuntime {
         latestAttempt.message_id === attempt.message_id &&
         latestAttempt.session_id === attempt.session_id &&
         latestAttempt.workspace === attempt.workspace &&
-        latestNode?.state === "ready" &&
-        latestRepair?.operationID === repair.operationID,
+        latestNode?.state === (repair.continued ? "running" : "ready") &&
+        latestRepair?.operationID === repair.operationID &&
+        latestRepair?.messageID === repair.messageID &&
+        latestRepair?.nativeInputID === repair.nativeInputID &&
+        latestRepair?.continued === repair.continued,
       )
     }
     if (!this.host.waitForSession || !current()) return false
@@ -6984,14 +7772,27 @@ export class TaskRuntime {
     if (!model.success) return false
     await this.host.waitForSession(attempt.session_id)
     const observed = await this.host.session(attempt.session_id, { messages: true })
+    const expectedInputID = repair.continued ? repair.nativeInputID : repair.previousMessageID
+    const expectedOutcome = repair.continued ? repair.terminalOutcome! : "succeeded"
+    const backgroundProblem =
+      observed?.background?.state === "observed"
+        ? observed.background.count > 0
+          ? "Known background work must finish before the retained repair can continue"
+          : observed.background.count !== 0 || observed.background.inputID !== expectedInputID
+            ? "Retained repair background observation does not match its terminal input"
+            : undefined
+        : undefined
     if (
+      backgroundProblem ||
       this.retainedRepairWorkerProblem(
         plan,
         attempt,
         observed,
-        repair.previousMessageID,
+        expectedInputID,
         model.data,
+        expectedOutcome,
       ) ||
+      observed?.messages.some((message) => message.id === attempt.message_id) ||
       !current()
     )
       return false
@@ -7003,9 +7804,16 @@ export class TaskRuntime {
         plan,
         attempt,
         confirmed,
-        repair.previousMessageID,
+        expectedInputID,
         model.data,
+        expectedOutcome,
       ) &&
+      !(confirmed?.background?.state === "observed" && confirmed.background.count > 0) &&
+      !(
+        confirmed?.background?.state === "observed" &&
+        confirmed.background.inputID !== expectedInputID
+      ) &&
+      !confirmed?.messages.some((message) => message.id === attempt.message_id) &&
       observed &&
       confirmed &&
       this.retainedRepairObservation(observed) === this.retainedRepairObservation(confirmed) &&
@@ -7085,7 +7893,9 @@ export class TaskRuntime {
               try {
                 return (
                   (JSON.parse(effect.payload) as { repairID?: unknown }).repairID ===
-                  retainedRepair.operationID
+                    retainedRepair.operationID &&
+                  (JSON.parse(effect.payload) as { messageID?: unknown }).messageID ===
+                    attempt.message_id
                 )
               } catch {
                 return false
@@ -7155,6 +7965,13 @@ export class TaskRuntime {
             ? {
                 repairID: retainedRepair.operationID,
                 previousMessageID: retainedRepair.previousMessageID,
+                repairMessageID: retainedRepair.repairMessageID,
+                ...(retainedRepair.continued
+                  ? {
+                      continuedFromInputID: retainedRepair.nativeInputID,
+                      continuedFromOutcome: retainedRepair.terminalOutcome,
+                    }
+                  : {}),
                 defect: retainedRepair.defect,
               }
             : {}),
@@ -7174,7 +7991,7 @@ export class TaskRuntime {
           model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           ...(retainedRepair ? { moveIfNeeded: false } : {}),
           text: retainedRepair
-            ? `Repair task ${attempt.task_id} in the same retained workspace ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow the implementor role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
+            ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow the implementor role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
             : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
         })
         this.receipt(
@@ -7183,7 +8000,15 @@ export class TaskRuntime {
             messageID: attempt.message_id,
             taskID: attempt.task_id,
             instructions: "readable; lz-get-task-instructions",
-            ...(retainedRepair ? { repairID: retainedRepair.operationID } : {}),
+            ...(retainedRepair
+              ? {
+                  repairID: retainedRepair.operationID,
+                  repairMessageID: retainedRepair.repairMessageID,
+                  ...(retainedRepair.continued
+                    ? { continuedFromInputID: retainedRepair.nativeInputID }
+                    : {}),
+                }
+              : {}),
           },
           fence,
         )
@@ -7202,13 +8027,14 @@ export class TaskRuntime {
         currentAttempt?.state !== "preparing" ||
         currentAttempt.message_id !== attempt.message_id ||
         (retainedRepair
-          ? currentNode?.state !== "ready" ||
+          ? currentNode?.state !== (retainedRepair.continued ? "running" : "ready") ||
             this.retainedRepairForAttempt(currentAttempt)?.operationID !==
               retainedRepair.operationID
           : false)
       )
         return false
-      if (retainedRepair) this.store.move(plan.id, attempt.task_id, "DISPATCH")
+      if (retainedRepair && !retainedRepair.continued)
+        this.store.move(plan.id, attempt.task_id, "DISPATCH")
       return (
         db
           .query(

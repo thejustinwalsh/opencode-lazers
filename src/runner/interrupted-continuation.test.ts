@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import type { HostSession } from "./host.ts"
 import {
+  resolveRetainedRepairInputLineage,
   terminalWorkerContinuationProblem,
+  type RetainedRepairContinuationTransition,
   type TerminalWorkerContinuationFacts,
 } from "./interrupted-continuation.ts"
 
@@ -11,6 +13,156 @@ const taskID = "task-current"
 const sessionID = "worker-current"
 const inputID = "msg-interrupted"
 const workspace = "/workspace/task"
+
+const repairLineage = {
+  operationID: "repair-current",
+  attemptID,
+  originalMessageID: "msg-repair-input",
+  assignedMessageID: "msg-repair-continuation",
+  owner: "architect-current",
+  ownerEpoch: 7,
+}
+
+test("retained repair continuation resolves only one owner-authorized interrupted input lineage", () => {
+  const receipt: RetainedRepairContinuationTransition = {
+    attemptID,
+    previousMessageID: repairLineage.originalMessageID,
+    messageID: repairLineage.assignedMessageID,
+    terminalInputID: repairLineage.originalMessageID,
+    interruptedInputID: repairLineage.originalMessageID,
+    terminalOutcome: "interrupted",
+    retainedRepairContinuation: {
+      schema: "lazers-retained-repair-continuation/v1",
+      operationID: repairLineage.operationID,
+      owner: repairLineage.owner,
+      ownerEpoch: repairLineage.ownerEpoch,
+    },
+  }
+  expect(
+    resolveRetainedRepairInputLineage({
+      ...repairLineage,
+      allowLegacyReceipt: false,
+      transitions: [receipt],
+    }),
+  ).toEqual({
+    status: "continued",
+    nativeInputID: repairLineage.originalMessageID,
+    terminalOutcome: "interrupted",
+  })
+  expect(
+    resolveRetainedRepairInputLineage({
+      ...repairLineage,
+      assignedMessageID: repairLineage.originalMessageID,
+      allowLegacyReceipt: false,
+      transitions: [],
+    }),
+  ).toEqual({ status: "direct", nativeInputID: repairLineage.originalMessageID })
+
+  expect(
+    resolveRetainedRepairInputLineage({
+      ...repairLineage,
+      allowLegacyReceipt: true,
+      transitions: [
+        {
+          attemptID,
+          previousMessageID: repairLineage.originalMessageID,
+          messageID: repairLineage.assignedMessageID,
+          terminalInputID: repairLineage.originalMessageID,
+          interruptedInputID: repairLineage.originalMessageID,
+          terminalOutcome: "interrupted",
+        },
+      ],
+    }),
+  ).toEqual({
+    status: "continued",
+    nativeInputID: repairLineage.originalMessageID,
+    terminalOutcome: "interrupted",
+  })
+})
+
+test("a retained-repair recovery receipt links its unprompted reservation to the observed old input", () => {
+  const firstContinuation: RetainedRepairContinuationTransition = {
+    attemptID,
+    previousMessageID: repairLineage.originalMessageID,
+    messageID: "msg-unprompted-reservation",
+    terminalInputID: repairLineage.originalMessageID,
+    interruptedInputID: repairLineage.originalMessageID,
+    terminalOutcome: "interrupted",
+  }
+  const recovery: RetainedRepairContinuationTransition = {
+    attemptID,
+    previousMessageID: "msg-unprompted-reservation",
+    messageID: repairLineage.assignedMessageID,
+    terminalInputID: repairLineage.originalMessageID,
+    interruptedInputID: repairLineage.originalMessageID,
+    terminalOutcome: "interrupted",
+    retainedRepairRecovery: {
+      schema: "lazers-retained-repair-recovery/v1",
+      operationID: repairLineage.operationID,
+      failedMessageID: "msg-unprompted-reservation",
+      interruptedInputID: repairLineage.originalMessageID,
+      owner: repairLineage.owner,
+      ownerEpoch: repairLineage.ownerEpoch,
+      failedResumeTransitionID: 18,
+      blockedTransitionID: 20,
+      cancelledTransitionID: 21,
+    },
+  }
+  expect(
+    resolveRetainedRepairInputLineage({
+      ...repairLineage,
+      allowLegacyReceipt: true,
+      transitions: [firstContinuation, recovery],
+    }),
+  ).toEqual({
+    status: "continued",
+    nativeInputID: repairLineage.originalMessageID,
+    terminalOutcome: "interrupted",
+  })
+
+  for (const mutate of [
+    (value: RetainedRepairContinuationTransition) => {
+      value.terminalInputID = "msg-foreign-input"
+    },
+    (value: RetainedRepairContinuationTransition) => {
+      value.retainedRepairRecovery = {
+        ...(value.retainedRepairRecovery as Record<string, unknown>),
+        ownerEpoch: repairLineage.ownerEpoch + 1,
+      }
+    },
+    (value: RetainedRepairContinuationTransition) => {
+      value.retainedRepairRecovery = {
+        ...(value.retainedRepairRecovery as Record<string, unknown>),
+        cancelledTransitionID: 19,
+      }
+    },
+  ]) {
+    const invalidRecovery = structuredClone(recovery)
+    mutate(invalidRecovery)
+    expect(
+      resolveRetainedRepairInputLineage({
+        ...repairLineage,
+        allowLegacyReceipt: true,
+        transitions: [firstContinuation, invalidRecovery],
+      }).status,
+    ).toBe("invalid")
+  }
+
+  expect(
+    resolveRetainedRepairInputLineage({
+      ...repairLineage,
+      allowLegacyReceipt: false,
+      transitions: [firstContinuation],
+    }).status,
+  ).toBe("invalid")
+  expect(
+    resolveRetainedRepairInputLineage({
+      ...repairLineage,
+      allowLegacyReceipt: true,
+      transitions: [firstContinuation, firstContinuation],
+    }).status,
+  ).toBe("invalid")
+})
 
 function facts(): TerminalWorkerContinuationFacts {
   const owner: HostSession = {

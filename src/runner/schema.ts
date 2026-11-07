@@ -185,7 +185,7 @@ export const CommandInput = z
         "cancel-retained-verification",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel, audit/reconcile, evidence, and reviewed integration. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel, audit/reconcile, evidence, and reviewed integration. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted retained-repair fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -220,7 +220,7 @@ export const CommandInput = z
       .uuid()
       .optional()
       .describe(
-        "Latest original implementation attempt; verification does not create a replacement attempt.",
+        "Exact latest attempt to resume or recover; retained-repair recovery does not create a replacement attempt.",
       ),
     reviewInputID: z
       .string()

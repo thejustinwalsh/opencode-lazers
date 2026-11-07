@@ -10,6 +10,152 @@ type WorkerStopObservation = {
   inputID?: unknown
 }
 
+export const RETAINED_REPAIR_FENCE_FAILURE_REASON =
+  "Retained repair is missing a valid owner/control authorization fence"
+
+export type RetainedRepairContinuationTransition = {
+  attemptID?: unknown
+  previousMessageID?: unknown
+  messageID?: unknown
+  terminalInputID?: unknown
+  interruptedInputID?: unknown
+  terminalOutcome?: unknown
+  retainedRepairContinuation?: unknown
+  retainedRepairRecovery?: unknown
+}
+
+export type RetainedRepairInputLineage =
+  | { status: "direct"; nativeInputID: string }
+  | {
+      status: "continued"
+      nativeInputID: string
+      terminalOutcome: "interrupted" | "succeeded" | "failed"
+    }
+  | { status: "invalid"; problem: string }
+
+/**
+ * Resolve a retained-repair input through owner-authorized interrupted resume
+ * receipts. This accepts old receipts without the new explicit marker only
+ * when the caller has independently established an unchanged owner epoch.
+ */
+export function resolveRetainedRepairInputLineage(input: {
+  operationID: string
+  attemptID: string
+  originalMessageID: string
+  assignedMessageID: string
+  owner: string
+  ownerEpoch: number
+  allowLegacyReceipt: boolean
+  transitions: readonly RetainedRepairContinuationTransition[]
+}): RetainedRepairInputLineage {
+  if (
+    !input.operationID ||
+    !input.attemptID ||
+    !input.originalMessageID ||
+    !input.assignedMessageID
+  )
+    return { status: "invalid", problem: "Retained repair input lineage is incomplete" }
+  if (input.assignedMessageID === input.originalMessageID)
+    return { status: "direct", nativeInputID: input.originalMessageID }
+
+  const continuation = (value: unknown) =>
+    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined
+  let currentMessageID = input.originalMessageID
+  let nativeInputID = input.originalMessageID
+  let terminalOutcome: "interrupted" | "succeeded" | "failed" = "interrupted"
+  const visited = new Set<string>([currentMessageID])
+
+  while (currentMessageID !== input.assignedMessageID) {
+    const next = input.transitions.filter(
+      (candidate) =>
+        candidate.attemptID === input.attemptID && candidate.previousMessageID === currentMessageID,
+    )
+    if (next.length !== 1)
+      return {
+        status: "invalid",
+        problem: "Retained repair continuation does not have one exact durable input successor",
+      }
+    const receipt = next[0]!
+    if (
+      typeof receipt.messageID !== "string" ||
+      !receipt.messageID ||
+      visited.has(receipt.messageID) ||
+      !["interrupted", "succeeded", "failed"].includes(receipt.terminalOutcome as string) ||
+      typeof receipt.terminalInputID !== "string" ||
+      !receipt.terminalInputID ||
+      (receipt.terminalOutcome === "interrupted"
+        ? typeof receipt.interruptedInputID !== "string" || !receipt.interruptedInputID
+        : receipt.interruptedInputID !== undefined)
+    )
+      return {
+        status: "invalid",
+        problem: "Retained repair continuation has an incomplete or non-interrupted receipt",
+      }
+
+    const marker = continuation(receipt.retainedRepairContinuation)
+    const recovery = continuation(receipt.retainedRepairRecovery)
+    if (marker && recovery)
+      return {
+        status: "invalid",
+        problem: "Retained repair continuation has conflicting durable authority markers",
+      }
+    if (recovery) {
+      if (
+        recovery.schema !== "lazers-retained-repair-recovery/v1" ||
+        receipt.terminalOutcome !== "interrupted" ||
+        recovery.operationID !== input.operationID ||
+        recovery.failedMessageID !== currentMessageID ||
+        recovery.interruptedInputID !== receipt.terminalInputID ||
+        recovery.interruptedInputID !== receipt.interruptedInputID ||
+        recovery.owner !== input.owner ||
+        recovery.ownerEpoch !== input.ownerEpoch ||
+        !Number.isSafeInteger(recovery.blockedTransitionID) ||
+        !Number.isSafeInteger(recovery.cancelledTransitionID) ||
+        !Number.isSafeInteger(recovery.failedResumeTransitionID) ||
+        (recovery.blockedTransitionID as number) <= 0 ||
+        (recovery.failedResumeTransitionID as number) <= 0 ||
+        (recovery.failedResumeTransitionID as number) >= (recovery.blockedTransitionID as number) ||
+        (recovery.cancelledTransitionID as number) <= (recovery.blockedTransitionID as number)
+      )
+        return {
+          status: "invalid",
+          problem:
+            "Retained repair recovery receipt does not bind the exact interrupted reservation",
+        }
+    } else {
+      if (
+        receipt.terminalInputID !== currentMessageID ||
+        (receipt.terminalOutcome === "interrupted"
+          ? receipt.interruptedInputID !== currentMessageID
+          : receipt.interruptedInputID !== undefined)
+      )
+        return {
+          status: "invalid",
+          problem: "Retained repair continuation does not bind its prior assigned input",
+        }
+      if (
+        marker
+          ? marker.schema !== "lazers-retained-repair-continuation/v1" ||
+            marker.operationID !== input.operationID ||
+            marker.owner !== input.owner ||
+            marker.ownerEpoch !== input.ownerEpoch
+          : !input.allowLegacyReceipt
+      )
+        return {
+          status: "invalid",
+          problem: "Retained repair continuation owner/control receipt is unavailable",
+        }
+    }
+
+    currentMessageID = receipt.messageID
+    nativeInputID = receipt.terminalInputID
+    terminalOutcome = receipt.terminalOutcome as "interrupted" | "succeeded" | "failed"
+    visited.add(currentMessageID)
+  }
+
+  return { status: "continued", nativeInputID, terminalOutcome }
+}
+
 export type TerminalWorkerHold = {
   kind: "terminal-worker-observation"
   attemptID?: unknown

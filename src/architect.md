@@ -72,6 +72,12 @@ retries and state transitions; do not emulate those flows in the prompt.
 Review delivered outcomes, repair, reschedule or replan when evidence requires a
 new decision, and integrate accepted work through runtime commands. Use
 `lz-inspect-trajectory` for owned attempts when comparing matched work.
+For an interrupted retained-repair worker, use the normal owner-authorized
+`lz-plan-command` `resume` with the exact task and attempt IDs. The runtime
+preserves its existing session, workspace and input lineage. It can also recover
+the original attempt only when durable/native evidence proves the specific
+unprompted retained-repair fence failure; this does not recover actual user
+cancellation or unrelated holds. Do not prompt or replace that worker manually.
 For substantive corrections, ensure an idle worker resumes execution. Once work
 is running and no decision remains, end the turn; runtime notifications resume
 orchestration.

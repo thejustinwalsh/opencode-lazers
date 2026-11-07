@@ -20,7 +20,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lz-plan-command",
         description:
-          "Control an owned plan using expectedVersion and stable requestID. Supports scheduling, execution/recovery, artifact-bound evidence and reviewed integration. `verify-retained` checks an exact original candidate in isolated checkout/resources without an implementation turn; `retained-repair` corrects the same accepted unintegrated attempt. See action/input details and `design/retained-candidate-proportional-follow-through-20261105.md` for bindings and limits. Includes startup settlement and source-notice reconciliation. No forced acceptance or cleanup.",
+          "Use expectedVersion and stable requestID for owned-plan run/cancel/resume, evidence and integration. `resume` continues terminal workers and narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure; exact taskID/attemptID required. User cancellation and unrelated holds are excluded. `verify-retained` runs checks in an isolated checkout without an implementation turn; `retained-repair` corrects the same accepted unintegrated attempt. Also handles startup settlement and source notices.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },
