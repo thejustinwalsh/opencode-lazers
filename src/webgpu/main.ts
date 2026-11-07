@@ -22,8 +22,6 @@ import {
   RENDERER_ARMED_STOP_MS,
 } from "./renderer-armed-capture.ts"
 
-// Stable across plugin reloads, different after Desktop exits (including PID reuse).
-const processIdentity = `${pid}:${performance.timeOrigin}`
 const ProcessLeaseSchema = Schema.Struct({
   ...ModelLeasePersistenceSchema.fields,
   processIdentity: Schema.optionalKey(Schema.String),
@@ -39,6 +37,8 @@ const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) 
 }
 
 export const setupMain: Plugin.MainSetup = (ctx) => {
+  // Main-only: renderer module evaluation must not read Node process exports.
+  const processIdentity = `${pid}:${performance.timeOrigin}`
   const configured = ctx.options.dataDirectory
   if (configured !== undefined && typeof configured !== "string")
     throw new Error("dataDirectory must be a string")

@@ -190,16 +190,22 @@ function transition(
 function permitSharedAttemptSession(path: string, sharedAttemptID: string, sessionID: string) {
   const db = new Database(path)
   try {
+    const schema = db
+      .query<{ sql: string }, [string]>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+      )
+      .get("runner_attempts")?.sql
+    if (!schema) throw new Error("Attempt fixture schema is unavailable")
+    const sharedSessionSchema = schema.replace(
+      /\bsession_id\s+TEXT\s+NOT\s+NULL\s+UNIQUE\b/i,
+      "session_id TEXT NOT NULL",
+    )
+    if (sharedSessionSchema === schema)
+      throw new Error("Attempt fixture session uniqueness was not found")
     db.exec("PRAGMA foreign_keys=OFF")
     db.exec(`
       ALTER TABLE runner_attempts RENAME TO runner_attempts_unique_session;
-      CREATE TABLE runner_attempts (
-        id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL,
-        session_id TEXT NOT NULL, message_id TEXT NOT NULL, workspace TEXT NOT NULL,
-        base_commit TEXT NOT NULL, artifact TEXT, policy TEXT NOT NULL, state TEXT NOT NULL,
-        started_at INTEGER NOT NULL, token_count INTEGER, tool_count INTEGER NOT NULL DEFAULT 0,
-        retry_count INTEGER NOT NULL DEFAULT 0, cost REAL, UNIQUE(task_id,number)
-      );
+      ${sharedSessionSchema};
       INSERT INTO runner_attempts SELECT * FROM runner_attempts_unique_session;
       DROP TABLE runner_attempts_unique_session;
     `)
