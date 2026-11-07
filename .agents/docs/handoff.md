@@ -339,3 +339,11 @@ scroll3pages DOESrevealcost,sohiddeninitiallynotmissingdata. Keyboarddivider
 Down56→61/Up→56works;restored56andscrolltop. Nofinalvisualacceptance.
 172source/planintegrationawaitcorrectionandnativeinteraction/Terrafollowthrough.
 182/184stayactive;do notinterruptthem.
+
+## Models267 connected review and parallel coverage follow-through
+
+Original172worker committed267e160ae5b8cc10ae0c4df53b8223191e5e86ac,60tests/1592assertions and autofix/check passing. Root merged delta into EXISTING native review tree /private/tmp/lz172-visual-review-2a4ad5c as a5bc38b; canonical pricing/GPU preserved, verify/build and40relatedtests/1279assertions pass. Staged ignored GUI at1794093873863 via normal bundle watch. CURRENT preview record /private/tmp/lz172-267-current-preview.json; backup /var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/lz172-267-gui-preview-piw94mnx. Main source still UNMERGED.
+
+Actual Desktop at both widths: selected cost immediately visible below divider, Qwen point selects/updates cost and label clears x ticks; Refresh preserves selection; keyboard divider56→61→56 works/restored. NEW actual regression: top-position Luna badge clips beyond right chart edge at both widths. Report/screenshots committed6a92e2d, design/reviews/lz172-267-connected-review-20261107.md. Root QUEUED actual report to Main for same172worker/advice, no newtask/producer changes. Must verify edge containment before visual acceptance.172nativelyidle/succeeded1794093849320;182/184bothstillrunning1794093995632.
+
+Main completed focused native Luna Radar authority research; SAME184scope natively amended with ONLY src/runner/scheduler-coordinator.ts/test, disjoint from182runtime/store/proof. Advice1 attached and native key delivered: exact project-key registration/scheduled/draining facts, no process aggregate as project; current-view Architect via exact authorized session lookup/role, not invented unique plan-owner selection. No deliberate pause feature exists; do not invent pause control. Main continues native orchestration.182actively replacing synchronous scheduling read/proofs with async reusable implementation and updating callers/tests; no final candidate/perf improvement claim yet.
