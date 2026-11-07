@@ -50,6 +50,28 @@ key, preserving advice 9: read `lz-get-task-instructions`, or use
 entry without a new input. Actual readable steering consumption and substantive
 edit outcome remain to be observed; no getter invocation alone establishes either.
 
+## Delivered source outcome
+
+The same original attempt subsequently delivered clean
+`2a4ad5c88d5c10a6bcf9cd23b5ba507e664735c5` (`Polish Models comparison first view`),
+parent `ce72ed5`. Its seven-file presentation/rendered-test delta has 351 additions
+and 211 deletions. This establishes substantive work after the read-heavy window,
+not a controlled causal claim that steering alone produced it.
+
+Advice 10 corrected the old checkout's quality procedure. A narrowly filtered
+native tool readback confirms shell message `msg_1b8362a7f001qvEf6YNKjNJ6f7`
+executed `bun fmt && bun lint --fix && bun fmt && bun check`, completed with exit 0,
+formatted `comparison-panel.tsx`, and reported no lint or type errors. It preceded
+the final focused Models tests and GUI build. The worker reported 60 tests; runtime
+task and combined Models/quality receipts bind the exact new artifact and all pass
+unchanged without timeout. The worktree is clean.
+
+Independent source review is in progress. Root alone prepares the current-main
+review/integration checkout and connected GUI preview, preserving canonical GPU,
+producer and package fixes. Actual native visual/interaction acceptance and both
+source/plan integration remain pending; source delivery and green checks do not
+close those gates.
+
 ## Observed subsequent edits
 
 Root read native tool receipts after steering. The first successful patch in this
