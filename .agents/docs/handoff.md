@@ -27,14 +27,64 @@ Older details remain in Git history and linked reports.
 
 ## Current source and native coordinator
 
-Canonical main is `105e7af` at last check; source177 is integrated via `e2d75bb`.
-GPU source fix `cbd66d8` is active in Desktop. Revalidate HEAD before integration.
-Architect `ses_e568438ebffeaoFbF9nBb942XM`; existing service PID3219. Revalidate both.
-Desktop CUA is usable after full quit/reopen; current view is real LZ-137 Trajectory.
-Native queued prompt **Steer** can deliver time-sensitive coordination. Verify
-receipt/response; the user-only diagnostic can briefly lag persistence. Updated
-helper `/private/tmp/lz-latest-driver-input-20261107.ts` includes synthetic inputs.
-Avoid dumping full AX trees/tool results: filter controls and truncate long lines.
+Canonical source180 landed through `d2f4a79`; Root formatter-tool fix `28066f4`
+and tasking tune `0cf0ee1` are ancestors. Revalidate HEAD before integration.
+Architect `ses_e568438ebffeaoFbF9nBb942XM`, service PID3219; revalidate both.
+Desktop CUA is usable after native webview reload. AX indices move while streaming;
+read fresh controls. Native `typeText` worked when paste silently missed. Verify
+actual composer value and submission receipt. Avoid unnecessary app restarts.
+Read-only helpers in /private/tmp include lz-native-all-presence.ts,
+lz-current-public-tools.ts, lz-latest-text-only.ts and
+lz-live-plan-summary-20261107.ts. Do not dump full transcripts or hidden reasoning.
+
+## Tasking correction and next delivery
+
+User correction is task sizing, not a state-machine replacement. Preserve research,
+interview/clear intent, then planning. Features are default tasks; split for useful
+independence, parallelism or capability limits. Group context/interfaces and related
+fixes/tests with one implementor. Reconcile requirement meaning, not concatenated
+historical constraints. Source0cf0ee1 is verified loaded through public agent.get;
+research/interview/self-review and unrestricted normal tools remain. Research:
+`design/reviews/llm-work-decomposition-research-20261107.md`; audit:
+`design/reviews/architect-tasking-tune-20261107.md`.
+
+Native Architect consolidated only zero-attempt pairs170/171→181,148/149→182,
+160/161→183, preserving external dependencies/priority and original histories.
+The three successors have zero implementor attempts at last check; don't equate
+plan running with dispatch. Do not cancel/resubmit them just for prose polish.
+
+LZ180 original candidate `2ad21e7c4bce696c6f0e5d2966a409d1b1221a0f` is merged.
+Plan002c3469-5346-4d74-a21f-6991eb52eeec is ACCEPTEDv19 at Unix1794082461331;
+original node/attempt accepted, worker genuinely idle after success. Generation2
+operationd723d59e-0285-4926-9a51-f958b80fe309 accepted after task+combined lifecycle
+and quality receipts all exit0, unchanged and cleaned. Next: supported integration
+record and non-forced cleanup; preserve original historical unknown-idle resources.
+Do not reimplement/remerge/rerun checks absent changes or concern. Generation1
+2c86b98f... was cancelled after scoped formatter binding blocked before checks.
+Root28066f4 fixed that exact parser gap (16tests/strict pass). Existing reconcile,
+not worker resume/run, promoted accepted nodes from blockedv17 to runningv18 for
+same-generation deferred combined checks. Report:
+`design/reviews/lz180-retained-integration-20261107.md`.
+
+LZ174 Root corrected ORIGINAL clean tree0375ef98-ff9b-456f-849d-2ed9da547920 to
+`5e1d9ed6756bcc3ff73911c7325b7770498e564d`, descendant67d4e6d. Full-tree content
+fingerprint gate removed; native/control/task checks retained. New dirty-progress
+regression fails old code and passes fixed.13targeted tests/296assertions +strict
+pass; broader396 had395passes/one5089ms timeout; unchanged isolated rerun3252ms pass.
+Original worker5210fab was not active during Root edits. Planf33eddb3... remains
+blockedv23, attempt recorded artifact6622ebf unchanged. Native Architect now has
+candidate for review and existing retained verification; don't restore hashing,
+replace worker, mutate SQL or merge stale Architect prose. Report:
+`design/reviews/lz174-67d4e6d-source-review-20261107.md`.
+
+LZ172 original WIP remains in14b02650...; isolated review found8 strict errors in
+an overbuilt route-label helper. Actual330/450/960 fixture renders and native Terra
+High review confirm narrow overlap and model/effort truncation. Root recommends
+readable names/effort and full-route tooltip, not p:/m:/e: codes. This is Root review
+advice, not a verbatim user correction. Source wording/legend fixes belong to same
+172 outcome. Advice revision5 links `design/reviews/lz172-retained-render-20261107.md`.
+Needs same-worker correction after174 support, native narrow/wide product review
+and real acceptance. Fixture pictures are not connected Desktop acceptance.
 
 ## Verified and landed this pass
 
@@ -99,58 +149,19 @@ is tasking legitimate benign-integration reconciliation with existing heldg2
 recovery; genuine owner/spec/input/candidate changes must still fence. Task/plan
 human evidence follow-through remains pending; no whole-plan completion claimed.
 
-## Active native work and next steps
+## Other retained runtime work
 
-LZ-177 source7f8bd70 is integrated viae2d75bb. Native task/combined checks
-passed (four receipts, exit0, cleanup complete); real registered tools recorded
-175/176 fulfilled dispositions16/17, preserving cancelled/zero-attempt executors.
-Whole-plan source integration is recorded. Original177 checkout cleanup remains
-blocked on its discarded idle observation; do not retry unchanged cleanup or
-let that invalidate delivered work. Independent integration checkout was removed
-natively force:false. Report: `design/reviews/lz177-native-completion-hold-20261107.md`.
+177source is integrated;175/176 were actually fulfilled through native controls
+while cancelled executor history/zero attempts remained. Original177 checkout
+cleanup remains blocked on historical missing idle. Do not retry unchanged
+cleanup or invalidate delivered code. Its separate integration checkout was
+removed natively. Report: `design/reviews/lz177-native-completion-hold-20261107.md`.
 
-Actual active implementor is LZ-180, task834d8513-b419-45b5-b89e-d81041902b8d,
-plan002c3469-5346-4d74-a21f-6991eb52eeec, attempt805fadf8-efa5-4df6-ac48-bd4e1443f02c,
-worker `ses_dc161541d1334b14a156704f789ab9f5`, OpenAI gpt-6-luna/max.
-Its native runner tree uses the attempt ID. Revalidate active status; Main has
-handled a real once-only permission and reconciled permission holds. Preserve it.
-It corrects genuine current idle-hook authority across listener replacement.
-Original179 was never executed and cancelled;180 preserves behavior with disjoint
-progress source/new test paths. Do not redispatch179 or duplicate180.
-
-LZ-178 benign integration rebind: task095a9e75-3731-4834-9d67-f4293c260636,
-planc68342dc-d51e-42cb-98ba-287067e51a5f, queued with no attempts. It overlaps
-original174 runtime scope; scope contention, not a running implementation.
-Read-only diagnostics and timings: `design/reviews/delivery-bottleneck-20261107.md`.
-
-User's latest requirements: auto-fix formatting/lint in every current quality
-workflow, capture fixes in the actual verified candidate without formatting-only
-model retries; integrate completed prerequisites before dependent dispatch,
-independently of cleanup bookkeeping.105e7af updates package verify, agents,
-task-fetch/schema guidance and retained procedure recognition;25tests/164assertions
-and actual verify pass. Runtime-owned mechanical candidate capture is not yet
-implemented by that commit. Main is reusing existing170→171 for quality work and
-researching existing148/dependency integration behavior. Native Luna read-only
-researchers were explicitly told not to submit tasks. Keep full acceptance and
-avoid another broad recovery framework; confirm actual dispatch, not plan labels.
-
-Original174: task49dbfe29-b1af-4710-abfa-9268d61db228, plan
-f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23, attempt0375ef98-ff9b-456f-849d-2ed9da547920,
-worker `ses_5210fab90d3745959a4d269dbd6ab744`, clean candidate67d4e6d retained.
-Root rejects unchanged source: full untracked-file/base64/binary-diff fingerprint
-gate. Preserve useful final task transaction fence; remove scan/gate and its
-expectations in same worker via legitimate tooling. Review:
-`design/reviews/lz174-67d4e6d-source-review-20261107.md`. Never merge unchanged67.
-
-Original172 UI: task32810daa-f8dc-4c50-a2fc-f7000c480ad8,
-worker `ses_83bd7a96b951462e9aa31f80043e8940`, retained0da6681. Recovery depends on174.
-Needs actual narrow/wide Tera screenshot review and user acceptance; preserve work.
-No massive stale handoff prompts, replacement workers or source quarantine as a
-shortcut that makes the original worker permanently unable to repair.
-
-After native task outcomes, review/integrate at safe boundaries, complete live
-observations, record truthful native acceptance and clean merged worktrees.
-Use independent research/review in background while ready integrations advance.
+178 benign integration rebind remains queued with no attempts: task
+095a9e75-3731-4834-9d67-f4293c260636, planc68342dc-d51e-42cb-98ba-287067e51a5f.
+It overlaps174 runtime scope.179 was never executed and cancelled in favor of180;
+do not redispatch it. Source reservation diagnostics and timings are in
+`design/reviews/delivery-bottleneck-20261107.md`.
 
 ## Full remaining scope and observation backlog
 

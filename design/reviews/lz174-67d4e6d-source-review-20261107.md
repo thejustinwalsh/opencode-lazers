@@ -48,3 +48,26 @@ usage and receipts to survive recovery. It does not request content hashing or
 a full-tree stability proof. The scan was an implementation addition, not a
 requirement to preserve in the task. Architect received the exact finding via
 native Desktop Steer and explicitly declined integration pending correction.
+
+## Corrected retained candidate
+
+Root corrected the original inactive checkout and committed
+`5e1d9ed6756bcc3ff73911c7325b7770498e564d`, descending from67d4e6d.
+The full-tree content-reading helper, observation field and all its recovery
+admission comparisons are removed. Native ownership/input/control, workspace
+identity, artifact ancestry and final task transaction checks remain.
+
+A regression changes useful dirty progress between native revalidation reads.
+The old candidate fails with its content-stability rejection; the correction
+recovers the same attempt while preserving new content, identity and usage.
+13 focused recovery tests/296 assertions passed, as did automatic formatting,
+lint and strict typecheck. The broader five-file run had395 passes and one
+existing afterPlans timeout at5089.97ms; its unchanged isolated rerun passed
+at3251.57ms/40 assertions. No test deadline or assertion was weakened.
+
+The original retained checkout is clean at5e1d9ed. Architect received the exact
+candidate, test qualification and source-review request through Desktop. This
+does not claim canonical integration, native174 acceptance, original172 recovery
+or live qualification. Original attempt/history and recorded6622ebf artifact were
+not rewritten. Current canonical Architect tasking guidance must survive merging
+the older174 branch.
