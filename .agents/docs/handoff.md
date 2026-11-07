@@ -28,7 +28,9 @@ improvements. Runtime/API readback is authoritative; revalidate live handles.
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol High.
 Service PID3219 at latest readback. Desktop input recovered after full quit/reopen.
 Main is actively coordinating again through native Desktop; the original Luna Max
-LZ-174 worker is repairing the independent review findings. LZ-173 returned
+LZ-174 worker returned corrected67d4e6d, now inactive/succeeded; review and
+retained verification/integration remain. Its exact native checks passed395
+targeted tests and582runner tests, strict checks and GUI build. LZ-173 returned
 corrected candidate0b28972 with no material source findings; its retained candidate
 binding remains blocked, and LZ-175 is queued behind174 to repair that native path.
 Current measurements/status: `design/reviews/live-progress-performance-20261107.md`.
@@ -104,8 +106,10 @@ this does not close129 or the UI/pricing plans.
   `ses_5210fab90d3745959a4d269dbd6ab744`: node and plan running at latest readback,
   in the same original session/attempt. Candidate6622ebf passed
   isolated checks but independent review found a task-disposition admission race
-  and missing runtime-command fence regressions. Same worker is correcting these;
-  do not integrate6622ebf. See `lz174-6622ebf-source-review-20261107.md`. Its feature must
+  and missing runtime-command fence regressions. The same worker returned67d4e6d
+  correcting both;395targeted and582runner tests plus quality/build pass. It is
+  inactive/succeeded, with native background lineage still separately unknown.
+  Review67d4e6d before integration; do not integrate obsolete6622ebf alone. See `lz174-6622ebf-source-review-20261107.md`. Its feature must
   preserve retained-repair authority across authorized interrupted continuation
   and recover the exact runtime-created unprompted172fence failure. Full contract:
   `models172-post-restart-retained-fence-20261106.md`.
@@ -172,3 +176,25 @@ plan acceptance/cleanup still need truthful final disposition. Legitimate147
 accepted work is cleanup-blocked separately. Duplicate check rows need exact
 receipt reconciliation, not name/duration deduplication. Advice character cap is
 removed. Use README, roadmap-execution.md and design/roadmap.md for full contracts.
+
+## Latest native UI follow-through
+
+Rootff73ff3 fixes Tasks clearing known activity during each replacement read.
+The failing-before/passing-after regression and all22panel-state tests pass;
+strict checks/GUI build pass. Loaded Desktop project list now shows actual
+inactive/succeeded original workers, rather than reset-to-Unknown. Sustained
+active-work observation remains. Record: `tasks-activity-refresh-20261107.md`.
+
+A native Reload Webview at chat-ready reproduced existing165:
+“A stale renderer generation cannot claim the model cache”. Root queued the
+exact case and released its WebGPU scope; only panel state/tests were reserved
+for the completedff73ff3fix. Full quit/reopen restored chat-ready and actual
+local chat passed again. This does not close165same-window navigation recovery.
+
+Architect's two native Luna Max research sessions are eligibility
+`ses_e49678d33ffeaqfWYXeSHkrgaT` (last confirmed running) and residual CPU
+`ses_e496824efffeeN5zdOWSnUi55c` (completed). Report
+`residual-cpu-attribution-20261107.md` measured active service63.9%,renderer21.6%,
+GPUhelper37.8% in a separate window. SQLite preparation/schema frames are a
+subsystem lead; no JS/DB attribution or overall performance acceptance. Main's
+queued Root notices include ff73ff3's scope and165's exact live reproduction.

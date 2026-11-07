@@ -39,3 +39,8 @@ LZ-165's fresh-page/window-generation case, distinct from8975516's verified full
 Desktop process restart recovery. Root queued the exact reproduction to Architect
 and released its WebGPU source reservation; the focused Tasks change touches only
 panel state/tests. Do not mark LZ-165 complete from the process-restart repair.
+
+Full Desktop quit/reopen restored chat-ready with settings/cache unchanged.
+The native local chat probe then returned `local GPU ready.` again
+(19input/4outputtokens). The reload-generation defect remains queued for165;
+restart is a recovery observation, not its implementation.
