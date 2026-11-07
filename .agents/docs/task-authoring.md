@@ -62,7 +62,9 @@ and dependency graph. The scheduler executes
 eligible work; Architect returns for decisions, review and integration.
 
 After researching and clarifying user intent, form the plan and choose task
-boundaries from its outcomes and dependencies. A feature is the default task;
+boundaries from its outcomes and dependencies. Check requested outcomes against
+existing capabilities; include missing producer/consumer work or linked tasks
+instead of excluding an outcome. A feature is the default task;
 bugs and refactors follow coherent behavior or responsibility boundaries. Split
 for independently useful outcomes, productive parallelism or material risk/context
 limits. Group shared context and changing interfaces; each split must earn its
