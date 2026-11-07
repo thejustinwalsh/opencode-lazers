@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06. Goal remains active: drive OpenCode Desktop until the full
+Updated 2026-11-07. Goal remains active: drive OpenCode Desktop until the full
 roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. Runtime/API readback is authoritative; revalidate live handles.
 
@@ -23,109 +23,103 @@ improvements. Runtime/API readback is authoritative; revalidate live handles.
 - Priority: Models, then Tasks/Trajectory, then Radar; preserve the full roadmap.
   Architect decomposes requests into small coherent tasks and owns orchestration.
 
-## Native coordination
+## Native coordination and next action
 
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol High.
-Service PID71027. Canonical project `b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df`.
-User unlocked macOS and Root resumed Desktop. Broad continuation receipt
-`msg_1b2775fe80011WkNsIBR16Mvqc` authorizes Models/pricing repairs without another
-Root approval. Native input showed severe delayed application/noWindowsAvailable;
-resetting the CUA runtime eventually exposed the review draft. Verify actual
-message receipts, never repeat blind or replace Desktop prompts with API prompts.
+Service PID20449; project `b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df`.
+Latest active-session map is empty. Main and recovery worker174 stopped on
+`provider.auth: getaddrinfo ENOTFOUND auth.openai.com`; a fresh DNS lookup now
+succeeds, but no successful new model turn is observed. CUA initially read the
+Desktop but input failed with noWindowsAvailable/timeouts, then explicitly
+reported macOS locked. Unlock request is pending. Do not substitute API model
+prompts or production SQL changes for native Desktop recovery.
 
-Original LZ-129 performance repair is active on OpenAI Luna Max:
+After unlock, resume through Desktop: report the canonical LZ-129 landing below;
+continue supported interrupted174 recovery, same-worker173 correction and held172
+correction after174 activation; preserve full roadmap. Revalidate native queues,
+inputs, ownership, artifacts and session handles before acting. No replacement
+workers, speculative effect replay or extra discretionary approval gate.
 
-- Task `91c6c95d-9965-421f-9b35-49da50f84979`; plan `243f8093-7c3c-44e3-bda5-e06870e4f680`.
-- Original attempt `58d8d699-6a12-44c3-a5af-954b2b5564bc`, worker
-  `ses_aeff3e9ac5d24c6c944d35e31b050963`, same native worktree and original parent.
-- Supported retained repair admitted operation `a320bff0-3654-4261-9382-22ba5dfe4e80`.
-  Admission evidence: `design/reviews/ownership163-original129-admission-20261106.md`.
-- Native scope review `ses_e4dbc30daffe4HkwWzpwGLGsry` completed. Architect recorded
-  seven additive source/test paths using amend-scope, then answered exact native
-  form `frm_1b2432e71002UkKAohL9ZC1a4X`; receipt
-  `msg_1b24afbcb001iXYKeHsXtFqHJc` reports answered:true and remaining:[], followed
-  by reconcile. Worker resumed in the same attempt; no new prompt/restart/SQL fix.
-- Repair covers bounded queries, first inventory, UTF-16 and canonical observability
-  publication with independent scoped reader queues. Preserve newer canonical
-  association-cache/activeProjectAttempts/privacy/consumer fixes absent from the
-  old worker baseline. Durable journal replay is not newly promised.
+## Integrated performance source
 
-## Integrated source and actual acceptance
+Canonical main now includes merge `0e64881` and report commit `ecbdb01`, preserving
+accepted original-worker LZ-129 artifact `9f61a6633dd3d64a3bc51672c4e5d63e1234adcb`.
+Report: `design/reviews/lz129-canonical-integration-20261107.md`.
+Four conflicts were resolved individually, retaining canonical association-cache,
+active-attempt tests, valuation provider and trajectory live cache alongside the
+new Radar reader. The process-shared source identity follows reviewed9f61a6;
+reader-specific history cursor signing remains separate.
 
-Canonical runtime/GUI source is `fab6bfe`; later commits currently record docs and
-observations. It includes original LZ-163 efa5f11, LZ-168 2bbf8a3, LZ-155 1ca1e1b,
-LZ-169 e743a6e by ancestry-preserving merges, plus Root partial-price qualifier.
-Root built canonical GUI and activated using native Plugins → lazers Reload at an
-observed all-model-idle boundary. Actual Models and new trajectory market fields
-loaded. This is not whole-feature visual/pricing acceptance.
+The combined source passed526tests/7046assertions/27files in108.74seconds with
+`--max-concurrency=1` and default timeouts, including runtime, store, observability,
+Radar and Trajectory consumers. Formatter843files, lint404, typecheck392, diff
+checks and isolated GUI build pass. Canonical GUI build also passes. Logs:
+`/private/tmp/lz129-canonical-{combined-tests,gui-build,activation-build}-20261107.log`.
 
-Combined checks: pre169 733 tests/10,360 assertions; final affected consumers
-357 tests/4,779 assertions; Root qualifier 11 tests/770 assertions. Formatting,
-lint, typecheck, diff checks and GUI build passed. Logs:
-`/private/tmp/lz-models-runtime-{combined-tests,final-consumers,review-correction-build,canonical-build}.log`.
-Root's clean merged native review worktree `/private/tmp/lz-models-runtime-review`
-was removed using native remove(force:false); physical absence confirmed. Branch
-`feat/models-runtime-integration-20261106` retains source. Do not reuse deleted
-Root review directories or remove retained worker trees.
+Root's native-created `/private/tmp/lz129-canonical-integration-20261107` was clean
+and merged, then removed with native worktree.remove(force:false); existence:false.
+Branch `feat/lz129-canonical-integration-20261107` retains the candidate. Do not
+reuse the deleted checkout. The OLD conflicted6ee trial at
+`/Users/tjw/.local/share/opencode/worktree/b5da4c/lz129-combined-review-20261106`
+and all worker worktrees remain preserved.
 
-LZ-163 plan `61e9cffc-7883-43d9-81e0-803e0fd591b1` is integrated/version34.
-Native receipt `msg_1b2412843001Nq9kjauiNV0sOH` confirms both completed163 worktrees
-removed natively, cache retirement evicted, and WORKTREES_RECONCILED against efa.
-Original129 worktree remains. This closes163, not129's source/CPU acceptance.
+LZ-129 task `91c6c95d-9965-421f-9b35-49da50f84979`, plan
+`243f8093-7c3c-44e3-bda5-e06870e4f680` is natively accepted/version117; native
+integration/cleanup is NOT yet recorded. Original attempt58d8d699 and worker
+`ses_aeff3e9ac5d24c6c944d35e31b050963` remain. Source landing is not activation or
+live acceptance. Root must activate through supported Desktop at a safe boundary,
+then observe actual publication counts, navigation/refresh/scopes and CPU/load.
+No all-performance/freeze-resolution claim. Historical association materialization
+remains a known scaling limit. See the 6ee and9f61a6 source reviews for fixes.
 
-## Models and Trajectory follow-up
+Prior integrated source includes163efa5f11,1682bbf8a3,1551ca1e1b,169e743a6e and
+Root partial qualifierfab6bfe. Their prior733/357/11test runs do not substitute for
+current acceptance. LZ-163 is integrated/version34 with native non-forced cleanup;
+this does not close129 or the UI/pricing plans.
 
-LZ-172 `32810daa-f8dc-4c50-a2fc-f7000c480ad8`, plan
-`09cb85ba-dc17-40ed-adff-c0e7e50ad135`, is the native four-defect Models visual
-correction. Original worker `ses_83bd7a96b951462e9aa31f80043e8940`, attempt
-`14b02650-aea7-43fa-a7dd-3e60228f00b5`, was confirmed active on OpenAI Luna Max
-in its distinct native worktree. Plan may show transient approval holds while
-node/session remain running; inspect exact native queues before acting.
-Main is scoping a compatible shared market-pricing repair; no submitted reference
-was present at the last check. Do not claim it dispatched yet.
+## Current held UI, pricing and recovery work
 
-Original LZ-129 now has a substantive uncommitted patch. Root source review
-`design/reviews/task129-retained-repair-review-20261106.md` identifies unconditional
-historical-attempt backfill in every RunnerStore constructor. Desktop feedback
-receipt `msg_1b2848f410010H1rdwuufM9XsZ` requests same-worker correction and
-upgrade/reopen verification. Current observability112/consumer50 tests and quality
-pass; runtime rerun still needs its actual outcome. Source not accepted or loaded.
-Cleared-permission loop diagnosis stays in existing LZ-88; see
-`design/reviews/lz129-cleared-permission-holds-investigation-20261106.md`.
+- LZ-172 task `32810daa-f8dc-4c50-a2fc-f7000c480ad8`, plan
+  `09cb85ba-dc17-40ed-adff-c0e7e50ad135`, original attempt14b02650 and worker
+  `ses_83bd7a96b951462e9aa31f80043e8940`: node cancelled/plan blocked/version67
+  after interrupted retained continuation lost its control fence. Preserve
+  artifact0da6681, worktree, patch, usage and input history. Source review
+  `models172-0da6681-source-review-20261106.md` requires collision-safe visible
+  route labels and a truthful interval legend. Also correct the configured-price
+  source labels noted in173review. Actual visual acceptance remains open.
+- LZ-173 task `50630f61-d966-43b5-b349-9f39e85ea014`, plan
+  `ba5744d0-2657-4f93-b006-44ca0b176108`, attempt4d783df7, worker
+  `ses_145885557d454551815079ab36bd9c24`: accepted artifactddefc44, plan blocked
+  on actual connected137human gate. Source not merged. Review
+  `lz173-ddefc44-source-review-20261106.md` found amount/source provenance mismatch
+  and unused-tier missing-rate veto. Use same-worker substantive repair; keep
+  exact known amounts and useful sourced observed-usage estimates/ranges. Recovery
+  gaps qualify secondary assumptions, not a price veto. Omit truly absent amounts;
+  no false zero, Cost unavailable, internal review prose or subscription charges.
+- LZ-174 task `49dbfe29-b1af-4710-abfa-9268d61db228`, plan
+  `f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23`, attempt0375ef98, worker
+  `ses_5210fab90d3745959a4d269dbd6ab744`: node running but plan blocked/version9
+  on interrupted execution with unknown background. Native session is failed,
+  not active; worktree clean at3a116f1, no implementation artifact yet. Resume
+  through supported exact-input machinery, not a replacement. Its feature must
+  preserve retained-repair authority across authorized interrupted continuation
+  and recover the exact runtime-created unprompted172fence failure. Full contract:
+  `models172-post-restart-retained-fence-20261106.md`.
 
-Models plan `145cde90-22ae-4521-b58a-cd0147f1eb55` contains delivered168→169.
-Task169 `3b5ed421-d8b4-42bb-b238-7ea15c70286e`, original worker
-`ses_eab54443be664e52902ecdfe7b0aea47`, delivered e743a6e after same-worker naming
-correction. Root correction fab6bfe is additive; do not credit it to e743 alone.
-LZ-167 was superseded before execution, zero attempts.
+User-approved Models layout: full-width global chart at every width; no persistent
+model table or right inspector. Point tooltips, selected one/two-line cost summary,
+details below horizontal split, secondary assumptions collapsed, native theme/fonts.
+Tera actual narrow/wide review and images remain under
+`design/reviews/*models*fab6bfe*20261106*`; latest DESIGN overrides old table mockup.
+Assignments, resizing, keyboard, refresh and theme/font walkthroughs remain.
 
-Actual captures: `design/reviews/models-live-fab6bfe-{narrow,wide}-20261106.png`.
-Tera review: `design/reviews/tera-models-fab6bfe-visual-review-20261106.md`.
-**Not visually accepted:** narrow ticks overlap, selected Luna mark is unclear,
-accounting labels and bulky controls dominate. Latest user/DESIGN direction:
-full-width chart at every width, no persistent table/right panel; compact tooltip
-and one/two-line selected cost; details below horizontal split; secondary detail
-collapsed. No internal review labels; omit truly unavailable cost. Assignments,
-interaction, resizing, theme/fonts and refresh still need actual walkthroughs.
-
-LZ-155 task `c23ffca3-fe8d-4102-afe6-3ee6ebf12f0c`, plan
-`b2d491ae-b125-485e-8637-796ae194447e`, delivered 1ca1e1b. Connected-cost gate OPEN.
-Actual LZ-137 (`0f6bb558-101b-4d57-a9d9-80428df78fce`) has nonzero usage but shows
-partial `$0 subtotal`, with no selected cached quote. Capture:
-`design/reviews/trajectory-live-lz137-unpriced-zero-20261106.png`.
-Read-only Luna investigator `ses_e4dc4687cffeFseohr89By1Hbk` remains active,
-checking retained per-step usage. Findings in
-`design/reviews/lz155-connected137-market-investigation-20261106.md` establish
-matching OpenRouter tiered rates exist, but strict applicability selects none;
-zero unused cache-write contribution becomes misleading displayed subtotal.
-Root product review `design/reviews/lz155-market-estimate-product-review-20261106.md`
-requires useful published current-market estimates/ranges, not UI-only hiding or
-exact-billing prerequisites. Existing market-range.ts is a source starting point.
-Root relayed the product review through Desktop in the continuation receipt above;
-Main attached the estimate clarification to LZ-155 and is tasking the repair.
-Do not invent rates, infer per-call tier from cumulative usage, or use subscription
-charges. Use configured OpenRouter→OpenCode source order and shared valuation
-owner; source-backed estimate assumptions belong in secondary detail.
+Actual LZ-137 `0f6bb558-101b-4d57-a9d9-80428df78fce` still shows the old misleading
+partial$0subtotal before corrected pricing activation. 19 retained unique calls
+support approximately$0.016 at cached OpenRouter base rates. Investigation and
+Root product review are durable under `design/reviews/lz155-*20261106.md`.
+Both reached Main via Desktop receipt `msg_1b2775fe80011WkNsIBR16Mvqc`; Main
+attached estimate advice and created173. No further Root approval is required.
+The latest source review findings, not passing earlier tests, govern correction.
 
 ## Architecture, performance and preserved roadmap
 
