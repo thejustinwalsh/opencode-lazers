@@ -32,7 +32,6 @@ import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
   boundedModelLabel,
-  boundedModelEffortLabel,
   candidateLabel,
   formatDate,
   currentMarketEstimateSummary,
@@ -42,7 +41,6 @@ import {
   routeLabel,
   sourceState,
   sourceTitle,
-  modelEffortLabel,
 } from "./comparison-presentation.ts"
 import css from "./comparison-panel.css?inline"
 
@@ -2135,30 +2133,6 @@ function ModelPanel(
                     />
                   )}
                 </Show>
-                <Show when={selectedMarketSummary()}>
-                  {(selected) => (
-                    <p
-                      class="lazers-models-market-summary"
-                      role="status"
-                      aria-label={`Selected ${decisionModelFullName(selected().configuration)} · exact route ${routeLabel(selected().configuration.route)}. ${selected().summary.title}`}
-                      title={selected().summary.title}
-                    >
-                      <strong>
-                        {boundedModelEffortLabel(
-                          modelEffortLabel(
-                            decisionModelFullName(selected().configuration),
-                            selected().configuration.route,
-                          ),
-                          28,
-                        )}
-                      </strong>
-                      <small>
-                        {selected().summary.amount} ·{" "}
-                        {marketSummarySource(selected().summary.context)}
-                      </small>
-                    </p>
-                  )}
-                </Show>
               </section>
             </div>
           </section>
@@ -2280,6 +2254,21 @@ function ModelPanel(
                       >
                         {decisionModelLabel(configuration())}
                       </h2>
+                      <Show when={selectedMarketSummary()}>
+                        {(selected) => (
+                          <p
+                            class="lazers-models-market-summary"
+                            role="status"
+                            aria-label={`Selected ${decisionModelFullName(selected().configuration)} · exact route ${routeLabel(selected().configuration.route)}. ${selected().summary.title}`}
+                            title={selected().summary.title}
+                          >
+                            <small>
+                              {selected().summary.amount} ·{" "}
+                              {marketSummarySource(selected().summary.context)}
+                            </small>
+                          </p>
+                        )}
+                      </Show>
                     </div>
                   </div>
                   <Show

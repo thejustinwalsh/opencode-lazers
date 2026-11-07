@@ -41,7 +41,7 @@ type RenderedOption = {
           configurationID?: string
           symbolSize?: number
           markKind?: string
-          label?: { show?: boolean }
+          label?: { show?: boolean; formatter?: string; position?: string; distance?: number }
         }
       | number[]
     >
@@ -985,6 +985,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
   host.style.fontSize = "20px"
   dom.document.body.append(host)
   size(host, 330, 190)
+  const longEffort = `preview-effort-${"x".repeat(512 - "preview-effort-".length)}`
   const crowdedPoints = [
     {
       ...points[0]!,
@@ -998,9 +999,13 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
       ...points[1]!,
       configurationID: "crowded:nearby-qwen",
       label: "Qwen 7",
-      route: { providerID: "qwen", modelID: "qwen-7", variant: "preview-effort" },
+      route: {
+        providerID: "qwen",
+        modelID: "qwen-7",
+        variant: longEffort,
+      },
       tokensPerAcceptedTask: 20_001,
-      currentMarketUSDPerAcceptedTask: 0.100001,
+      currentMarketUSDPerAcceptedTask: 0.000001,
     },
   ]
   const selections: string[] = []
@@ -1015,7 +1020,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
         points: crowdedPoints,
         references: [reference(referenceID, "conditional", 20_000)],
         frontierConfigurationIDs: [crowdedPoints[0]!.configurationID],
-        selectedConfigurationID: crowdedPoints[0]!.configurationID,
+        selectedConfigurationID: crowdedPoints[1]!.configurationID,
       },
       theme,
     )
@@ -1051,12 +1056,60 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     expect(narrow.yAxis?.[0]?.name).toBe("USD / task")
     expect(tickLabels().filter((label) => label.startsWith("$")).length).toBeGreaterThanOrEqual(2)
 
+    const qwenID = crowdedPoints[1]!.configurationID
+    const selectedQwen = () =>
+      option()
+        .series?.find((series) => series.id === "selected-identities")
+        ?.data?.find((datum) => !Array.isArray(datum) && datum.configurationID === qwenID)
+    const selectedQwenLabel = selectedQwen()
+    if (!selectedQwenLabel || Array.isArray(selectedQwenLabel))
+      throw new Error("Expected the selected Qwen identity mark")
+    expect(selectedQwenLabel.name).toContain(longEffort)
+    expect(selectedQwenLabel.label?.position).toBe("top")
+    expect(selectedQwenLabel.label?.distance).toBe(6)
+    const badgeText = selectedQwenLabel.label?.formatter ?? ""
+    const [badgeModel, badgeEffort] = badgeText.split("\n")
+    expect(badgeText.length).toBeLessThanOrEqual(37)
+    expect(badgeModel).toContain("Qwen 7")
+    expect(badgeEffort).toMatch(/^preview-effort/)
+    expect(badgeEffort?.length).toBeLessThanOrEqual(18)
+    const svgText = Array.from(host.querySelectorAll("svg text"))
+    expect(svgText.some((text) => text.textContent?.includes(badgeModel ?? ""))).toBe(true)
+    expect(svgText.some((text) => text.textContent?.includes(badgeEffort ?? ""))).toBe(true)
+    const textBaseline = (text: (typeof svgText)[number]) => {
+      const translatedY = text
+        .getAttribute("transform")
+        ?.match(/translate\(\s*[-+\d.]+[ ,]+([-+\d.]+)/)?.[1]
+      return Number(translatedY ?? 0) + Number(text.getAttribute("y") ?? 0)
+    }
+    const assertSelectedBadgeClearsXAxis = () => {
+      const currentText = Array.from(host.querySelectorAll("svg text"))
+      const selected = selectedQwen()
+      const formatter =
+        selected && !Array.isArray(selected) ? (selected.label?.formatter ?? "") : ""
+      const [currentModel, currentEffort] = formatter.split("\n")
+      expect(currentModel).toContain("Qwen 7")
+      expect(currentEffort).toMatch(/^preview-effort/)
+      expect(currentEffort?.length).toBeLessThanOrEqual(18)
+      const badgeBaselines = currentText
+        .filter((text) => [currentModel, currentEffort].includes(text.textContent?.trim()))
+        .map(textBaseline)
+      const xAxisTickBaselines = currentText
+        .filter((text) => /^(?:0|\d+(?:\.\d+)?K)$/.test(text.textContent?.trim() ?? ""))
+        .map(textBaseline)
+      expect(badgeBaselines.length).toBeGreaterThanOrEqual(2)
+      expect(xAxisTickBaselines.length).toBeGreaterThanOrEqual(2)
+      expect(Math.min(...xAxisTickBaselines) - Math.max(...badgeBaselines)).toBeGreaterThan(20)
+    }
+    assertSelectedBadgeClearsXAxis()
+
     size(host, 450, 230)
     observer.trigger()
     await until(() => svg()?.getAttribute("width") === "450")
     const medium = option()
     expect(medium.xAxis?.[0]?.splitNumber).toBeGreaterThan(narrow.xAxis?.[0]?.splitNumber ?? 0)
     expect(svg()?.textContent).toContain("Tokens / accepted task")
+    assertSelectedBadgeClearsXAxis()
 
     size(host, 960, 320)
     observer.trigger()
@@ -1068,12 +1121,29 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     expect(wide.yAxis?.[0]?.name).toBe("USD / accepted task")
     expect(svg()?.getAttribute("height")).toBe("320")
     expect(tickLabels().filter((label) => label.startsWith("$")).length).toBeGreaterThanOrEqual(2)
+    assertSelectedBadgeClearsXAxis()
 
     const chartEvents = adapter.chart as unknown as {
       trigger: (event: string, payload: unknown) => void
     }
     chartEvents.trigger("click", { data: { configurationID: referenceID } })
-    expect(selections).toEqual([referenceID])
+    const observationsIndex = option().series?.findIndex((series) => series.id === "observations")
+    const qwenDataIndex = option()
+      .series?.find((series) => series.id === "observations")
+      ?.data?.findIndex((datum) => !Array.isArray(datum) && datum.configurationID === qwenID)
+    adapter.chart.dispatchAction({
+      type: "showTip",
+      seriesIndex: observationsIndex,
+      dataIndex: qwenDataIndex,
+    })
+    const fullRouteTooltip = () =>
+      Array.from(host.children).find(
+        (child) => child.tagName === "DIV" && child.textContent?.includes(longEffort),
+      )
+    await until(() => fullRouteTooltip() !== undefined)
+    expect(fullRouteTooltip()?.textContent).toContain(`exact route qwen / qwen-7 · ${longEffort}`)
+    chartEvents.trigger("click", { data: { configurationID: qwenID } })
+    expect(selections).toEqual([referenceID, qwenID])
   } finally {
     adapter.dispose()
   }

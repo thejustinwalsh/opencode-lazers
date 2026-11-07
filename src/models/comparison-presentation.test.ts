@@ -149,6 +149,14 @@ test("chart labels keep the friendly model and effort while route identity stays
       variant: "preview-effort",
     }),
   ).toBe("Qwen 7\npreview-effort")
+  const longVariant = `preview-effort-${"x".repeat(512 - "preview-effort-".length)}`
+  const longIdentity = chartModelEffortLabel(`Qwen 7 · qwen / qwen-7 · ${longVariant}`, {
+    providerID: "qwen",
+    modelID: "qwen-7",
+    variant: longVariant,
+  })
+  expect(longIdentity).toBe("Qwen 7\npreview-effort-xx…")
+  expect(longIdentity.length).toBeLessThanOrEqual(37)
   expect(boundedModelEffortLabel(modelEffortLabel(fullDisplayLabel, route), 16)).toBe(
     "GPT-6 Lu… · high",
   )

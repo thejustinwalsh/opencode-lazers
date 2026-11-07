@@ -683,7 +683,8 @@ export function comparisonChartOptions(
           label: {
             show: true,
             formatter: item.visibleLabel,
-            position: labelPosition(item.tokens),
+            position: "top",
+            distance: 6,
           },
         })),
         silent: true,

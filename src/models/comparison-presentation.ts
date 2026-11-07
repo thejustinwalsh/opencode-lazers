@@ -410,18 +410,18 @@ export function boundedModelEffortLabel(value: string, maximumLength = 36) {
   return `${Array.from(modelName).slice(0, nameBudget).join("")}…${suffix}`
 }
 
-/** Keep the model and selected effort independently readable in compact chart labels. */
+/** Bound both lines of the visible identity badge; the full exact route stays in accessible detail. */
 export function chartModelEffortLabel(
   value: string,
   route?: ModelDisplayRoute,
-  maximumModelLength = 18,
+  maximumLineLength = 18,
 ) {
   const label = modelEffortLabel(value, route)
-  if (!route?.variant) return boundedModelLabel(label, maximumModelLength)
+  if (!route?.variant) return boundedModelLabel(label, maximumLineLength)
 
   const suffix = ` · ${route.variant}`
   const modelName = label.endsWith(suffix) ? label.slice(0, -suffix.length) : label
-  return `${boundedModelLabel(modelName, maximumModelLength)}\n${route.variant}`
+  return `${boundedModelLabel(modelName, maximumLineLength)}\n${boundedModelLabel(route.variant, maximumLineLength)}`
 }
 
 export function sourceTitle(source: ModelSource["source"]) {
