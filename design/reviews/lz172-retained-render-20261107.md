@@ -25,10 +25,12 @@
    `comparison-presentation.ts:410–436` allows undefined component values in
    length/slice/prefix/suffix/map operations. This candidate is not quality-clean.
 
-These are related fixes for the original Models outcome, not new tasks. The user
-subsequently rejected the dirty 77-line `p:/m:/e:` coding scheme: replace it with
-readable model/effort labels and full-route tooltips within LZ-172. Do not repair
-or extend that coding scheme merely to make its strict errors pass.
+These are related fixes for the original Models outcome, not new tasks. Root's
+source review rejects the dirty 77-line `p:/m:/e:` coding scheme and recommends
+readable model/effort labels with full-route tooltips within LZ-172. This is a
+review finding serving the user's readable Linear-style UI requirement, not a
+verbatim new user design instruction. Do not extend the coding scheme merely to
+make its strict errors pass.
 
 ## Isolated verification
 
@@ -66,13 +68,13 @@ settled plot uses its full available width. These are chart-fixture pixels, not
 connected panel or live OpenCode Desktop screenshots; controls, details, native
 font metrics and connected interactions remain unverified.
 
-The initial literal “tera” search found no model. After the user's spelling
-correction, native catalog search resolved `openai/gpt-6.1-terra#high`. Its review
+The initial literal “tera” search found no model. Following Root's spelling hint,
+native catalog search resolved `openai/gpt-6.1-terra#high`. Its review
 of these exact PNGs confirms a selected-label/$0.10 tick collision at 330px;
 450px removes that collision but still truncates identity; 960px has ample plot
 space and legible ticks but also truncates the selected label.
 
-Terra's completion criteria match the user correction: readable model/effort
+Terra's completion criteria support Root's review of the readable UI requirement: readable model/effort
 labels without an encoded scheme, full-route tooltips, no label/tick collisions,
 and useful full-width plot space with details below. This is a finding, not visual
 approval. Native-font, tooltip, control, interaction and connected full-panel
