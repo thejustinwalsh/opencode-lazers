@@ -54,11 +54,12 @@ The three successors have zero implementor attempts at last check; don't equate
 plan running with dispatch. Do not cancel/resubmit them just for prose polish.
 
 LZ180 original candidate `2ad21e7c4bce696c6f0e5d2966a409d1b1221a0f` is merged.
-Plan002c3469-5346-4d74-a21f-6991eb52eeec is ACCEPTEDv19 at Unix1794082461331;
+Plan002c3469-5346-4d74-a21f-6991eb52eeec source integration is recorded;
+cleanup-blockedv21 at Unix1794082548065 preserves the original unknown-idle tree;
 original node/attempt accepted, worker genuinely idle after success. Generation2
 operationd723d59e-0285-4926-9a51-f958b80fe309 accepted after task+combined lifecycle
-and quality receipts all exit0, unchanged and cleaned. Next: supported integration
-record and non-forced cleanup; preserve original historical unknown-idle resources.
+and quality receipts all exit0, unchanged and cleaned. Do not retry unchanged
+cleanup or invalidate delivered source; preserve historical unknown-idle resources.
 Do not reimplement/remerge/rerun checks absent changes or concern. Generation1
 2c86b98f... was cancelled after scoped formatter binding blocked before checks.
 Root28066f4 fixed that exact parser gap (16tests/strict pass). Existing reconcile,
@@ -73,7 +74,8 @@ regression fails old code and passes fixed.13targeted tests/296assertions +stric
 pass; broader396 had395passes/one5089ms timeout; unchanged isolated rerun3252ms pass.
 Original worker5210fab was not active during Root edits. Planf33eddb3... remains
 blockedv23, attempt recorded artifact6622ebf unchanged. Native Architect now has
-candidate for review and existing retained verification; don't restore hashing,
+candidate for review (native Luna Max `ses_e485a234effe8DqqiZwpKqWZ5A`)
+and existing retained verification; don't restore hashing,
 replace worker, mutate SQL or merge stale Architect prose. Report:
 `design/reviews/lz174-67d4e6d-source-review-20261107.md`.
 
