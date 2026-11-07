@@ -28,8 +28,9 @@ improvements. Runtime/API readback is authoritative; revalidate live handles.
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol High.
 Service PID3219 at latest readback. Desktop input recovered after full quit/reopen.
 Main is actively coordinating again through native Desktop; the original Luna Max
-LZ-174 worker returned corrected67d4e6d, now inactive/succeeded; review and
-retained verification/integration remain. Its exact native checks passed395
+LZ-174 worker returned corrected67d4e6d, now inactive/succeeded. Root review
+found a new full-worktree content fingerprint gate; do not integrate unchanged.
+Same-worker correction and retained verification/integration remain. Its exact native checks passed395
 targeted tests and582runner tests, strict checks and GUI build. LZ-173 returned
 corrected candidate0b28972 with no material source findings; its retained candidate
 binding remains blocked, and LZ-175 is queued behind174 to repair that native path.
@@ -198,3 +199,26 @@ Architect's two native Luna Max research sessions are eligibility
 GPUhelper37.8% in a separate window. SQLite preparation/schema frames are a
 subsystem lead; no JS/DB attribution or overall performance acceptance. Main's
 queued Root notices include ff73ff3's scope and165's exact live reproduction.
+
+## Latest dispatch and blocking review
+
+LZ-165 is now natively running, after Architect run-admitted the existing plan
+and treated the old draft-only implementation hold as obsolete. Original new
+attempt05373e97-01c3-4aa0-bf13-5f112957a10f, native worker
+`ses_58c9c1c8cff845d68439017dd53e335b`, OpenAI Luna Max, worktree
+`/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/05373e97-01c3-4aa0-bf13-5f112957a10f`.
+Root165reservation is fully released; preserve8975516 and no blanket activation.
+The actual project Tasks list shows this exact worker Active with ff73ff3 loaded.
+
+Root review `lz174-67d4e6d-source-review-20261107.md` blocks67d4e6d unchanged:
+new retainedRepairWorkspaceObservation reads/base64-encodes every untracked file,
+obtains full binary diff, fingerprints all content and repeats this synchronously
+three times during recovery admission/revalidation. This reinstates rejected
+file-content fingerprint gating and can block the shared service. It is NOT
+attribution of currently measured CPU (candidate is uninstalled). Preserve the
+useful final transactional task fence; remove this scan/gate in the same original
+174worker using existing ownership/source-preservation flows, no arbitrarysizecap
+or replacementfulltreescan. Root queued the exact finding via Desktop; confirm
+receipt before claiming the worker has been steered. Root's unused native review
+worktree174was clean/unchanged and removed natively force:false,exists:false.
+No67source merge or production data mutation occurred.
