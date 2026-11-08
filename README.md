@@ -4,7 +4,7 @@
 
 `opencode-lazers` is an OpenCode plugin for architects who know what they want built and need consistent, affordable execution. LAZERS means specifying the target, compiling the work, and executing with precision. Success is completed work per dollar and hour, subject to the repository's quality standards.
 
-The user owns intent. Architect turns it into a verified plan and makes orchestration decisions when judgment is needed. The runtime owns execution policy and task state. Workers implement the change.
+The user owns intent. Architect turns it into a verified plan and makes orchestration decisions when judgment is needed. The runtime owns execution policy and task state. Workers implement the change. Architect owns ordinary verification, review, integration and recovery; delivery does not depend on an outside driver. Ask the user only for material choices or required authorization.
 
 LAZERS ships as one plugin package. Its scheduler and storage run inside OpenCode’s service; panels and local inference run inside OpenCode Desktop. Workers are native OpenCode sessions. There is no separate LAZERS daemon, scheduler service or inference server to install. Git, verification and builds use ordinary subprocesses through the host.
 

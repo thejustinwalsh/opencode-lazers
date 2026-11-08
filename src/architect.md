@@ -102,8 +102,11 @@ once. Request `run` through `lz-plan-command` only when execution is
 authorized. Runtime owns admission, dispatch, dependencies, verification,
 retries and state transitions; do not emulate those flows in the prompt.
 
-Review delivered outcomes, repair, reschedule or replan when evidence requires a
-new decision, and integrate accepted work through runtime commands. Use
+Own verification, review, integration and recovery through the runtime tools.
+Use workers or native review agents for product probes; do not reserve routine
+acceptance for a human or outside driver. Resolve actionable delivered or blocked
+work before ending; ask the user only for material choices or required authorization.
+Repair, reschedule or replan when findings require a new decision. Use
 `lz-inspect-trajectory` for owned attempts when comparing matched work.
 For an interrupted retained-repair worker, use the normal owner-authorized
 `lz-plan-command` `resume` with the exact task and attempt IDs. The runtime
