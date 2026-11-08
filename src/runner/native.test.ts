@@ -2191,3 +2191,45 @@ test("wrong-location and unavailable location shell reads block and persisted po
     fixture.close()
   }
 })
+
+test("Auditor prompt accepts native default readback and still rejects changed explicit effort", async () => {
+  const model = { providerID: "opencode-go", id: "muse-spark-1.3-contributor" }
+  let prompts = 0
+  const host = nativeHost(
+    {
+      location: { project: { id: "project" } },
+      session: {
+        get: () =>
+          Effect.succeed({
+            id: "ses_auditor",
+            agent: "auditor",
+            projectID: "project",
+            model: { ...model, variant: "default" },
+            metadata: { lazersAttemptID: "attempt" },
+            time: {},
+            location: { directory: "/worker" },
+          }),
+        instructions: { entry: { remove: () => Effect.void } },
+        prompt: () =>
+          Effect.sync(() => {
+            prompts++
+          }),
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  const input = {
+    sessionID: "ses_auditor",
+    id: "msg_work",
+    directory: "/worker",
+    attemptID: "attempt",
+    model,
+    text: "Audit the system",
+  }
+  await host.prompt(input)
+  expect(prompts).toBe(1)
+  await expect(host.prompt({ ...input, model: { ...model, variant: "high" } })).rejects.toThrow(
+    "exact assigned session and route",
+  )
+  expect(prompts).toBe(1)
+})

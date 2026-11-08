@@ -1,3 +1,4 @@
+import { sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import type { HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
@@ -204,13 +205,7 @@ export type TerminalWorkerContinuationFacts = {
 function sameRoute(left: unknown, right: unknown): boolean {
   const first = ModelPolicy.safeParse(left)
   const second = ModelPolicy.safeParse(right)
-  return (
-    first.success &&
-    second.success &&
-    first.data.providerID === second.data.providerID &&
-    first.data.id === second.data.id &&
-    first.data.variant === second.data.variant
-  )
+  return first.success && second.success && sameNativeModel(first.data, second.data)
 }
 
 function storedRoute(value: string | null): unknown {

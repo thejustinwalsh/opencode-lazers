@@ -1,3 +1,4 @@
+import { sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { OpenCode } from "@opencode/client"
@@ -1008,13 +1009,7 @@ export function nativeHost(
                 })
               : undefined
           const model = ModelPolicy.parse(JSON.parse(authorized.policy).model)
-          if (
-            metadata?.requestID !== review.requestID ||
-            !foreground.model ||
-            foreground.model.providerID !== model.providerID ||
-            foreground.model.id !== model.id ||
-            foreground.model.variant !== model.variant
-          )
+          if (metadata?.requestID !== review.requestID || !sameNativeModel(foreground.model, model))
             throw new Error("Native retained archive review metadata or route changed")
         }
         return target
@@ -1070,10 +1065,7 @@ export function nativeHost(
           isWorkerAgent(session.agent) &&
           session.metadata?.lazersAttemptID === input.attemptID &&
           session.time.archived === undefined &&
-          (!input.model ||
-            (session.model?.providerID === input.model.providerID &&
-              session.model.id === input.model.id &&
-              session.model.variant === input.model.variant)))
+          (!input.model || sameNativeModel(session.model, input.model)))
       if (!matchesAttempt(before))
         throw new Error("Worker prompt target is not the exact assigned session and route")
       if (before.location.directory !== input.directory) {

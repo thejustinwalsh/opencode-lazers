@@ -1,3 +1,4 @@
+import { sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import {
   evaluatePrerequisiteIntegration,
@@ -1085,26 +1086,14 @@ export class TaskRuntime {
           ? reviewMetadata(inputs[0]!, { taskID: attempt.task_id, attemptID: attempt.id })
           : undefined
       const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
-      if (
-        metadata?.requestID !== review.requestID ||
-        !session.model ||
-        session.model.providerID !== model.providerID ||
-        session.model.id !== model.id ||
-        session.model.variant !== model.variant
-      )
+      if (metadata?.requestID !== review.requestID || !sameNativeModel(session.model, model))
         return "Retained review input metadata or admitted route changed"
     }
     return undefined
   }
 
   private sameModel(left: ModelPolicy | undefined, right: ModelPolicy | undefined) {
-    return Boolean(
-      left &&
-      right &&
-      left.providerID === right.providerID &&
-      left.id === right.id &&
-      left.variant === right.variant,
-    )
+    return sameNativeModel(left, right)
   }
 
   private retainedRepairObservation(worker: HostSession) {
@@ -5630,9 +5619,7 @@ export class TaskRuntime {
       session.projectID === this.projectID &&
       session.directory === renewal.directory &&
       session.parentID === renewal.previous_session_id &&
-      session.model?.id === model.id &&
-      session.model.providerID === model.providerID &&
-      session.model.variant === model.variant &&
+      sameNativeModel(session.model, model) &&
       session.metadata?.lazersContinuation === true &&
       session.metadata.lazersSourceSessionID === renewal.previous_session_id &&
       anchorIdentity,
@@ -12182,18 +12169,20 @@ export class TaskRuntime {
           )
           return
         }
-        // This guard throws before ctx.session.prompt. A queued native move may
-        // finish after the call returns; no model work was admitted by this effect.
+        // These adapter guards throw before ctx.session.prompt. Record the
+        // conclusive non-dispatch so reconciliation can retry the same worker.
         if (
           !session?.messages.some((m) => m.id === payload.messageID) &&
-          JSON.parse(effect.receipt ?? "{}").error ===
-            "Worker session is not in its assigned worktree"
+          [
+            "Worker session is not in its assigned worktree",
+            "Worker prompt target is not the exact assigned session and route",
+          ].includes(JSON.parse(effect.receipt ?? "{}").error)
         ) {
           this.store.fenced(this.owner, fence, (db) => {
             db.query("UPDATE runner_effects SET state='failed',receipt=? WHERE id=?").run(
               JSON.stringify({
                 notSent: true,
-                reason: "Native move queued; prompt guard prevented dispatch",
+                reason: "Native prompt guard prevented dispatch",
               }),
               effect.id,
             )
@@ -12203,7 +12192,7 @@ export class TaskRuntime {
             )
             this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
               effectID: effect.id,
-              continuation: "new durable message after native move wait",
+              continuation: "new durable message after native prompt guard",
             })
           })
           return

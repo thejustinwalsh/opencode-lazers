@@ -5548,6 +5548,46 @@ test("plan evidence binds to the accepted combination and remains separate from 
   expect(recorded()).toHaveLength(1)
 })
 
+test("reconcile retries a conclusively unsent route-guard prompt on the same attempt", async () => {
+  const f = fixture({ independent: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const original = f.host.prompt
+  f.host.prompt = async () => {
+    throw new Error("Worker prompt target is not the exact assigned session and route")
+  }
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
+  expect(
+    f.store.effects(f.receipt.planID).find((effect) => effect.kind === "prompt"),
+  ).toMatchObject({
+    state: "failed",
+    receipt: expect.stringContaining('"notSent":true'),
+  })
+  f.host.prompt = original
+  await f.runtime.command(
+    {
+      requestID: "reconcile-route-guard",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 8)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+    workspace: attempt.workspace,
+  })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+})
+
 test("lost host response reconciles a real accepted prompt without creating another worker", async () => {
   const f = fixture()
   const original = f.host.prompt

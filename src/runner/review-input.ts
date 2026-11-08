@@ -1,3 +1,4 @@
+import { sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import { z } from "zod"
 import type { HostBackgroundObservation, HostMessage, HostSession } from "./host.ts"
@@ -101,12 +102,7 @@ export function reviewMetadata(
 }
 
 function sameModel(actual: HostSession["model"], expected: z.infer<typeof ModelPolicy>) {
-  return Boolean(
-    actual &&
-    actual.providerID === expected.providerID &&
-    actual.id === expected.id &&
-    actual.variant === expected.variant,
-  )
+  return sameNativeModel(actual, expected)
 }
 
 function matchesIdleBinding(
