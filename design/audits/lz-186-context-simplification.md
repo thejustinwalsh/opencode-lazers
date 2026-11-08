@@ -60,3 +60,29 @@ No prompt, permission, schema, or persisted-data change. `packet`,
 - `bun run verify` (fmt, lint --fix, fmt, check): pass, no type errors.
 - `bun test src/context test/context src/architect.test.ts
 src/audit/report.test.ts`: 26 pass, 0 fail.
+
+## Architect review and combined verification
+
+Architect inspected the complete candidate diff, relevant callers/tests and both
+persisted runs. Independent native source review found no material regression in
+permission ordering, cancellation, isolation, error wrapping or response shapes.
+The generic helper retains the existing native caller values; its branded-ID
+casts were reviewed and are not evidence of a runtime behavior change.
+
+Candidate `7afd88be88a0a43223519817c174d372dd69b21e` was merged into current main
+as `0d0fa9b01ceb015fdbe7d43b14d20f4e091e5c40`, preserving Root's newer
+`c9ffb96` durable history and `7ea6a54` adapter repair. Native `session.active`
+showed no other active executions immediately before the merge. No explicit
+service reload or duplicate review checkout was used.
+
+Combined verification on that merge:
+
+```sh
+bun run verify
+bun test src/context test/context src/architect.test.ts src/audit
+```
+
+Quality/type checks passed; **33 tests passed, zero failed, 256 assertions across
+7 files**. The formatter added one blank line in the current handoff document;
+that mechanical change is retained, not treated as an acceptance failure.
+Broader Tasks/Radar connected acceptance and other roadmap gates remain open.

@@ -8,6 +8,7 @@ Older details remain in Git history and linked reports.
 ## Current priority: Auditor dogfood and durable history
 
 Implemented and committed:
+
 - `7ea6a54`: omitted/native-default effort equivalence and same-worker recovery
   for conclusively unsent native prompt guards. Explicit efforts stay exact;
   unknown response loss checks native message history before retrying.
