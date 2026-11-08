@@ -5,6 +5,22 @@ roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. This file is a locator; native runtime/API state is authoritative.
 Older details remain in Git history and linked reports.
 
+## Default-effort adapter repair — 2026-11-08
+
+Commit `7ea6a54` treats native omitted/default effort as equivalent while keeping
+explicit effort, provider and model comparisons exact. Conclusively unsent
+native prompt guards can reconcile on the same attempt/session/workspace;
+unknown response loss still checks native message history before any retry.
+`bun run verify` and387relevant runner/native/continuation tests pass.
+Quiet supported plugin reload activated it. Architect received Desktop recovery
+instructions for LZ-186 plan `dbab5faf-7560-4321-88e1-4436030f6240`, original
+attempt `e3f446f8-0969-4af6-b887-714f5095543a`, worker
+`ses_0a7c388bd25741348a4fcaa75b9f825b`. Native inspection found the attempt
+cancelled with no prompt messages; Architect is handling supported recovery.
+Durable audit history remains Root's uncommitted work in src/audit and task
+read/instructions; preserve it during overlapping LZ-186 work. Its eight audit
+tests and full quality checks pass; documentation and native observation remain.
+
 ## Current priority: Auditor dogfood
 
 Auditor is implemented and natively loaded. `workerAgent: "auditor"` selects the
