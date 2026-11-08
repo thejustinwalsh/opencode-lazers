@@ -5,55 +5,44 @@ roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. This file is a locator; native runtime/API state is authoritative.
 Older details remain in Git history and linked reports.
 
-## Default-effort adapter repair — 2026-11-08
+## Current priority: Auditor dogfood and durable history
 
-Commit `7ea6a54` treats native omitted/default effort as equivalent while keeping
-explicit effort, provider and model comparisons exact. Conclusively unsent
-native prompt guards can reconcile on the same attempt/session/workspace;
-unknown response loss still checks native message history before any retry.
-`bun run verify` and387relevant runner/native/continuation tests pass.
-Quiet supported plugin reload activated it. Architect received Desktop recovery
-instructions for LZ-186 plan `dbab5faf-7560-4321-88e1-4436030f6240`, original
-attempt `e3f446f8-0969-4af6-b887-714f5095543a`, worker
-`ses_0a7c388bd25741348a4fcaa75b9f825b`. Native inspection found the attempt
-cancelled with no prompt messages; Architect is handling supported recovery.
-Durable audit history remains Root's uncommitted work in src/audit and task
-read/instructions; preserve it during overlapping LZ-186 work. Its eight audit
-tests and full quality checks pass; documentation and native observation remain.
+Implemented and committed:
+- `7ea6a54`: omitted/native-default effort equivalence and same-worker recovery
+  for conclusively unsent native prompt guards. Explicit efforts stay exact;
+  unknown response loss checks native message history before retrying.
+  `bun run verify` and 387runner/native/continuation tests pass.
+- `c9ffb96`: durable Fallow run/section/finding-decision history in the existing
+  task SQLite DB, automatically associated with worker task/plan/attempt/session.
+  Unix millisecond timestamps, baseline/follow-up links, append-only decisions,
+  legacy import and regenerable JSON exports outside worktrees. Five Code Mode
+  tools; compact task history locator. See `design/auditor.md`. Quality checks
+  and 23focused audit/task-read/instructions tests pass.
 
-## Current priority: Auditor dogfood
+Auditor is the native runtime-managed `auditor` role. Default route OpenCode Go
+`muse-spark-1.3-contributor`; ordinary plans select `workerAgent: "auditor"`.
+Existing implementor personas remain three; hooks, workspaces, recovery,
+trajectories and integration are shared. No separate scheduler/service.
+Architect has submitted six sequential system audit tasks LZ-186 through191;
+inspect native plans for current IDs/dependencies rather than resubmitting.
 
-Auditor is implemented and natively loaded. `workerAgent: "auditor"` selects the
-new runtime-managed agent on an ordinary plan; its configured default route is
-OpenCode Go `muse-spark-1.3-contributor`, confirmed enabled in the live catalog.
-Existing implementor personas remain three. Shared worker hooks, native session
-ownership, context access, trajectories, recovery and integration recognize both
-roles. No second scheduler is introduced.
+Quiet supported plugin reload activated the adapter and history tools. Architect
+`ses_e568438ebffeaoFbF9nBb942XM` resumed LZ-186 through `lz-plan-command`:
+plan `dbab5faf-7560-4321-88e1-4436030f6240`, original attempt
+`e3f446f8-0969-4af6-b887-714f5095543a`, original Muse worker
+`ses_0a7c388bd25741348a4fcaa75b9f825b`. Native prompt now reaches Go.
+Go returns provider.invalid-request400: this Muse endpoint trains on request
+content and the account's training permission is off. No worker tool calls yet.
+User has a pending choice here: use Luna Max through OpenAI or allow Muse
+training. Do not change privacy settings or model route while it is pending.
+No Auditor simplification or native history scan is yet observed complete.
 
-`lz-fallow-report` is registered in Code Mode. Bundled native Fallow3.41.0 runs
-five sequential async analyses on the server and saves complete timestamped JSON
-under `design/audits/`. Auditor saves before/after reports and simplifies real
-systems; Architect reviews every diff and changed behavior before integration,
-steering the same worker when necessary. Findings are candidates, not gates.
-Details/source links: `design/auditor.md`.
-
-Checks: `bun run verify` passes; runner suite314pass/0fail; integration suite
-196pass/0fail; both worker roles pass trajectory hook/event coalescing tests;
-real bundled NAPI fixture analysis produces five reports without editing source.
-Quiet native `location.reload()` confirmed the effective Auditor definition,
-model and Architect guidance. System-wide audit request was submitted through Desktop after commit7126ebf.
-Architect accepted it and launched read-only system-boundary and roadmap/overlap
-research. No Auditor implementation task or completed refactor is yet confirmed.
-
-The prior verification-gate repair is committed as b5d103f and included in that
-reload. Architect received Root coordination and answered the prior hold question;
-its public reply confirms preservation of work and no additional execution.
-Desktop's stale view was recovered using native OpenCode menu Restart. Architect
-`ses_e568438ebffeaoFbF9nBb942XM` is idle on Sol High. Root's temporary coordination hold was released in that Desktop prompt.
-Continue observing Architect's coherent system decomposition and dependencies
-while preserving the roadmap.
-Do not hand it one finding at a time. Observe tasking, exact Muse worker route,
-saved reports, review and actual integration; do not infer success from dispatch.
+Root submitted Desktop coordination reporting c9ffb96 and the provider block;
+confirm queued message consumption. Architect previously attached advice to
+preserve Root's audit/task-history code and focus on independent context work.
+History code is now committed; reconcile source overlap before later audit edits.
+Continue non-overlapping roadmap work and connected Tasks/Radar review while
+that model decision is pending. Preserve original workers and failure history.
 
 ## Current review boundary — 2026-11-08
 
