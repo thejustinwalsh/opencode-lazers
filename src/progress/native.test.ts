@@ -127,6 +127,7 @@ function makeContext(
     remove: () => {},
   }
   let afterHook: ((call: never) => Effect.Effect<void>) | undefined
+  let beforeHook: ((call: never) => Effect.Effect<void>) | undefined
   let idleHook: ((idle: never) => Effect.Effect<void>) | undefined
   let syntheticCalls = 0
   let subscriptionCount = 0
@@ -177,6 +178,7 @@ function makeContext(
         }),
       hook: (name: string, callback: (call: never) => Effect.Effect<void>) => {
         if (name === "execute.after") afterHook = callback
+        if (name === "execute.before") beforeHook = callback
         return Effect.succeed({ dispose: Effect.void })
       },
     },
@@ -231,6 +233,7 @@ function makeContext(
   return {
     context,
     tools,
+    before: () => beforeHook,
     after: () => afterHook,
     idle: () => idleHook,
     syntheticCalls: () => syntheticCalls,
@@ -267,6 +270,50 @@ function makeContext(
     failEvents: () => Effect.runPromise(Queue.offer(eventQueue, streamFailure)),
   }
 }
+
+test("registered execute.before records only an assigned bounded requested target", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(secondAttemptID),
+    )
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const ctx = makeContext(fixture)
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          const before = ctx.before()
+          expect(before).toBeDefined()
+          yield* before!({
+            tool: "read",
+            sessionID: Session.ID.make("ses-accepted"),
+            agent: Agent.ID.make("lazers-implementor"),
+            messageID: SessionMessage.ID.make("msg_worker_call"),
+            id: Tool.CallID.make("call-read-1"),
+            input: {
+              path: "src/private.ts",
+              content: "private file body decoy",
+              headers: { Authorization: "Bearer credential-decoy" },
+            },
+          } as never)
+        }),
+      ),
+    )
+    const fact = fixture.store
+      .progressFacts([secondAttemptID])
+      .find((item) => item.call_id === "call-read-1")
+    expect(fact).toBeDefined()
+    expect(JSON.parse(fact!.payload)).toMatchObject({
+      tool: "read",
+      fileTargets: { coverage: "observed", operation: "read", paths: ["src/private.ts"] },
+    })
+    expect(fact!.payload).not.toContain("private file body")
+    expect(fact!.payload).not.toContain("credential-decoy")
+  } finally {
+    fixture.close()
+  }
+})
 
 function nativeLivenessFixture(
   fixture: ReturnType<typeof makeFixture>,

@@ -228,6 +228,48 @@ function projectedObservations(value: unknown, stats: ReturnType<typeof privacyS
   })
 }
 
+function projectedFileTargets(value: unknown) {
+  const targets = object(value)
+  if (!targets) return undefined
+  const operation =
+    targets.operation === "read" || targets.operation === "edit" || targets.operation === "patch"
+      ? targets.operation
+      : null
+  const coverage =
+    targets.coverage === "observed" ||
+    targets.coverage === "partial" ||
+    targets.coverage === "omitted"
+      ? targets.coverage
+      : "omitted"
+  const rawPaths = Array.isArray(targets.paths) ? targets.paths : []
+  const paths: string[] = []
+  let invalid = !operation || !Array.isArray(targets.paths) || rawPaths.length > 8
+  const hasControlCharacters = (value: string) =>
+    [...value].some((character) => {
+      const code = character.codePointAt(0)!
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+    })
+  for (const raw of rawPaths.slice(0, 8)) {
+    if (
+      typeof raw !== "string" ||
+      !raw ||
+      raw.length > 512 ||
+      raw.startsWith("/") ||
+      raw.includes("\\") ||
+      /^[a-z][a-z\d+.-]*:/iu.test(raw) ||
+      hasControlCharacters(raw) ||
+      raw.split("/").some((part) => !part || part === "." || part === "..")
+    ) {
+      invalid = true
+      continue
+    }
+    if (!paths.includes(raw)) paths.push(raw)
+  }
+  const projectedCoverage =
+    paths.length === 0 ? "omitted" : invalid || coverage === "partial" ? "partial" : coverage
+  return { coverage: projectedCoverage, operation, paths }
+}
+
 /** Fail-closed trajectory view; stored native or model payloads are never copied wholesale. */
 export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
   const stats = privacyStats()
@@ -274,6 +316,12 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       // Legacy arbitrary structured output is not exported either.
       if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       view.observations = projectedObservations(value.observations, stats)
+      if (Object.hasOwn(value, "fileTargets"))
+        view.fileTargets = projectedFileTargets(value.fileTargets) ?? {
+          coverage: "omitted",
+          operation: null,
+          paths: [],
+        }
       break
     case "visible-text":
       view.text = typeof value.text === "string" ? safeText(value.text, stats) : ""

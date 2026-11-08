@@ -12,7 +12,7 @@ import {
   type LiveRadarRequestInput,
   type LiveRadarResponse,
 } from "./contract.ts"
-import type { ObservationChangeTracker } from "./changes.ts"
+import type { NativeSignal, ObservationChangeTracker } from "./changes.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
 import {
   LIVE_LIMITS,
@@ -22,6 +22,7 @@ import {
   type LiveSourceSnapshot,
 } from "./live-store.ts"
 import type { RunnerStore } from "../runner/store.ts"
+import { schedulerProjectKey, sharedScheduler } from "../runner/scheduler-coordinator.ts"
 
 type JsonObject = Record<string, unknown>
 type SessionCandidate = { id: string; directory: string | null; native?: RadarNativeSession }
@@ -300,6 +301,55 @@ function toolStatus(
   return "unknown"
 }
 
+function fileTargets(value: unknown):
+  | {
+      coverage: "observed" | "partial" | "omitted"
+      operation: "read" | "edit" | "patch" | null
+      paths: string[]
+    }
+  | undefined {
+  const targets = object(value)
+  if (
+    !targets ||
+    (targets.coverage !== "observed" &&
+      targets.coverage !== "partial" &&
+      targets.coverage !== "omitted")
+  )
+    return undefined
+  const operation =
+    targets.operation === "read" || targets.operation === "edit" || targets.operation === "patch"
+      ? targets.operation
+      : null
+  const hasControlCharacters = (value: string) =>
+    [...value].some((character) => {
+      const code = character.codePointAt(0)!
+      return code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+    })
+  const paths = Array.isArray(targets.paths)
+    ? targets.paths
+        .slice(0, 8)
+        .filter(
+          (path): path is string =>
+            typeof path === "string" &&
+            path.length <= 512 &&
+            path.length > 0 &&
+            !path.startsWith("/") &&
+            !path.includes("\\") &&
+            !/^[a-z][a-z\d+.-]*:/iu.test(path) &&
+            !hasControlCharacters(path) &&
+            !path.split("/").some((part) => !part || part === "." || part === ".."),
+        )
+    : []
+  const invalidPaths = !Array.isArray(targets.paths) || targets.paths.length > paths.length
+  const coverage =
+    paths.length === 0
+      ? "omitted"
+      : invalidPaths || targets.coverage === "partial"
+        ? "partial"
+        : targets.coverage
+  return { coverage, operation, paths }
+}
+
 function latestNativeObservation(observations: JsonObject[]) {
   return observations
     .filter((observation) => observation.source === "native-event")
@@ -433,11 +483,14 @@ function toNativeObservations(
       flow.push({
         id: `flow:${stableToken(`${row.seq}:${eventID ?? ""}:${kind}`)}`,
         kind,
+        source: "progress",
         from,
         to,
         sessionID: session.id,
         messageID,
         callID: null,
+        tool: null,
+        agent: null,
         routeID: routeIDForMessage,
         toolID: null,
         status: contractText(String(observation.status ?? "unknown"), stats, 32),
@@ -446,6 +499,7 @@ function toNativeObservations(
           (kind === "model-request" ? getEndpoint(fact, "startedAt") : null),
         observedAt,
         sourceProgressSequence: row.seq,
+        sourceNativeRevision: null,
         sourceEventID: eventID,
         sourceEventType: contractText(String(eventType), stats, 120),
       })
@@ -497,22 +551,27 @@ function toNativeObservations(
       flow.push({
         id: `flow:${stableToken(`${row.seq}:tool-phase`)}`,
         kind: "tool-phase",
+        source: "progress",
         from: phaseEventType ? (terminalEvent ? toolID : sessionIDNode) : null,
         to: phaseEventType ? (terminalEvent ? sessionIDNode : toolID) : null,
         sessionID: session.id,
         messageID,
         callID,
+        tool: toolName,
+        agent: null,
         routeID: null,
         toolID,
         status: contractText(String(latest.status ?? status), stats, 32),
         startedAt: getEndpoint(fact, "inputAt") ?? getEndpoint(fact, "calledAt"),
         observedAt: phaseObservedAt,
         sourceProgressSequence: row.seq,
+        sourceNativeRevision: null,
         sourceEventID: phaseEventID,
         sourceEventType: phaseEventType,
       })
 
     const error = object(fact.error)
+    const requestedFiles = fileTargets(fact.fileTargets)
     calls.push({
       id,
       sessionID: session.id,
@@ -532,6 +591,7 @@ function toNativeObservations(
       result: text(fact.result, 240, stats),
       error: text(error?.message, 240, stats),
       payloadAvailable: true,
+      ...(requestedFiles ? { fileTargets: requestedFiles } : {}),
     })
   }
 
@@ -555,6 +615,104 @@ function toNativeObservations(
   }
 }
 
+function toUnassignedNativeSignals(
+  sessionID: string,
+  signals: readonly NativeSignal[],
+  routes: LiveRadarResponse["routes"],
+  routeByID: Map<string, LiveRadarResponse["routes"][number]>,
+  flow: LiveRadarResponse["flow"],
+  stats: ReturnType<typeof privacyStats>,
+  flags: { routeTruncated: boolean; flowTruncated: boolean; callsTruncated: boolean },
+) {
+  let latestObservedRoute: { id: string | null; at: number } | undefined
+
+  for (const signal of signals) {
+    if (signal.sessionID !== sessionID) continue
+    let routeIDForSignal: string | null = null
+    if (signal.eventType === "session.step.started") {
+      const route = safeRoute(
+        {
+          providerID: signal.providerID,
+          modelID: signal.modelID,
+          variant: signal.variant,
+        },
+        stats,
+      )
+      if (route && signal.messageID) {
+        routeIDForSignal = addLiveRoute(
+          "step-event",
+          sessionID,
+          null,
+          signal.messageID,
+          signal.eventID,
+          signal.observedAt,
+          route,
+          routes,
+          routeByID,
+          stats,
+          () => (flags.routeTruncated = true),
+        )
+        latestObservedRoute = { id: routeIDForSignal, at: signal.observedAt }
+      } else {
+        latestObservedRoute = { id: null, at: signal.observedAt }
+      }
+    }
+
+    const kind = signal.eventType.startsWith("session.tool.")
+      ? "tool-phase"
+      : signal.eventType.startsWith("session.execution.")
+        ? "execution"
+        : signal.eventType === "session.step.started"
+          ? "model-request"
+          : signal.eventType === "session.step.streamed"
+            ? "model-stream"
+            : "model-response"
+    if (flow.length >= 256) {
+      flags.flowTruncated = true
+      continue
+    }
+    const toolID = signal.tool ? `tool:${stableToken(signal.tool)}` : null
+    flow.push({
+      id: `flow:native:${stableToken(`${sessionID}:${signal.eventID}`)}`,
+      kind,
+      source: "native-event",
+      from: null,
+      to: null,
+      sessionID,
+      messageID: signal.messageID,
+      callID: signal.callID,
+      tool: signal.tool,
+      agent: signal.agent,
+      routeID: routeIDForSignal,
+      toolID,
+      status: contractText(signal.status, stats, 32),
+      startedAt:
+        signal.eventType === "session.step.started" ||
+        signal.eventType === "session.execution.started" ||
+        signal.eventType === "session.tool.called" ||
+        signal.eventType === "session.tool.input.started"
+          ? signal.observedAt
+          : null,
+      observedAt: signal.observedAt,
+      sourceProgressSequence: null,
+      sourceNativeRevision: signal.sourceNativeRevision,
+      sourceEventID: signal.eventID,
+      sourceEventType: contractText(signal.eventType, stats, 120),
+    })
+  }
+
+  return {
+    observedRouteID: latestObservedRoute?.id ?? null,
+    observedRouteCoverage: latestObservedRoute?.id
+      ? ("available" as const)
+      : latestObservedRoute
+        ? flags.routeTruncated
+          ? ("truncated" as const)
+          : ("identity-unavailable" as const)
+        : ("not-observed" as const),
+  }
+}
+
 function historyItem(row: LiveProgressRow, stats: ReturnType<typeof privacyStats>) {
   const fact = row.payload === null ? {} : factFor(row)
   const observations = observationList(fact.observations)
@@ -570,6 +728,7 @@ function historyItem(row: LiveProgressRow, stats: ReturnType<typeof privacyStats
   const routeValue =
     routeEvidence?.status === "observed" ? safeRoute(routeEvidence.route, stats) : null
   const error = object(fact.error)
+  const requestedFiles = fileTargets(fact.fileTargets)
   return {
     sequence: row.seq,
     at: row.at,
@@ -586,11 +745,13 @@ function historyItem(row: LiveProgressRow, stats: ReturnType<typeof privacyStats
     route: routeValue,
     observations,
     payloadAvailable: row.payload !== null,
+    ...(requestedFiles ? { fileTargets: requestedFiles } : {}),
   }
 }
 
 export class LiveRadarReader {
   private readonly source: LiveReadStore
+  private readonly schedulerKey: string
   private readonly trackedSessionIDs = new Set<string>()
   private trackedSessionIDsTruncated = false
 
@@ -600,6 +761,11 @@ export class LiveRadarReader {
     private readonly projectID: string,
     private readonly secret: Uint8Array,
   ) {
+    this.schedulerKey = schedulerProjectKey(
+      store.repository.path,
+      store.repository.projectDirectory,
+      projectID,
+    )
     this.source = new LiveReadStore(
       store.repository.path,
       store.repository.projectDirectory,
@@ -608,8 +774,15 @@ export class LiveRadarReader {
     )
   }
 
-  private trackSessions(tracker: ObservationChangeTracker, sessionIDs: Iterable<string>) {
-    for (const sessionID of sessionIDs) {
+  private trackSessions(
+    tracker: ObservationChangeTracker,
+    sessionIDs: Iterable<string>,
+    preferredSessionID?: string,
+  ) {
+    const incoming = [...new Set(sessionIDs)]
+    const preferred = preferredSessionID ? incoming.indexOf(preferredSessionID) : -1
+    if (preferred >= 0) incoming.splice(preferred, 1)
+    for (const sessionID of incoming) {
       this.trackedSessionIDs.delete(sessionID)
       this.trackedSessionIDs.add(sessionID)
       if (this.trackedSessionIDs.size > LIVE_LIMITS.retainedStateEntries) {
@@ -617,7 +790,16 @@ export class LiveRadarReader {
         this.trackedSessionIDsTruncated = true
       }
     }
-    tracker.trackScopedSessions(this.trackedSessionIDs)
+    if (preferredSessionID) {
+      this.trackedSessionIDs.delete(preferredSessionID)
+      this.trackedSessionIDs.add(preferredSessionID)
+      if (this.trackedSessionIDs.size > LIVE_LIMITS.retainedStateEntries) {
+        const evictable = [...this.trackedSessionIDs].find((id) => id !== preferredSessionID)
+        if (evictable) this.trackedSessionIDs.delete(evictable)
+        this.trackedSessionIDsTruncated = true
+      }
+    }
+    tracker.trackScopedSessions(this.trackedSessionIDs, preferredSessionID)
     return this.trackedSessionIDs.size
   }
 
@@ -650,6 +832,7 @@ export class LiveRadarReader {
     let inventoryTruncated = false
     let nativeMetadataTruncated = false
     let foreignSessionsExcluded = 0
+    let viewSessionArchived = false
     let nativeInventoryReads = 0
     let nativeSessionReads = 0
     let nativeMetadataBytesInspected = 0
@@ -662,7 +845,7 @@ export class LiveRadarReader {
       throw new LiveSourceChangedError()
 
     const managedIDs = [...source.assignments.keys()]
-    this.trackSessions(tracker, managedIDs)
+    this.trackSessions(tracker, [...managedIDs, request.scope.sessionID], request.scope.sessionID)
     const nativeByID = new Map<string, RadarNativeSession>()
     const seenNativeIDs = new Set<string>()
     const inspectNative = (session: RadarNativeSession) => {
@@ -700,6 +883,7 @@ export class LiveRadarReader {
         foreignSessionsExcluded++
         return null
       }
+      if (session.archived) return null
       if (!session.id || session.id.length > 200 || seenNativeIDs.has(session.id)) {
         inventoryTruncated = true
         return null
@@ -722,12 +906,16 @@ export class LiveRadarReader {
           const session = await this.host.get(request.scope.sessionID, signal)
           signal.throwIfAborted()
           if (session) {
-            const boundedSession = inspectNative(session)
-            if (boundedSession?.id === request.scope.sessionID)
-              nativeByID.set(request.scope.sessionID, boundedSession)
-            else if (boundedSession) {
-              inventoryTruncated = true
-              nativeInventory = "bounded"
+            if (session.id === request.scope.sessionID && session.archived) {
+              viewSessionArchived = true
+            } else {
+              const boundedSession = inspectNative(session)
+              if (boundedSession?.id === request.scope.sessionID)
+                nativeByID.set(request.scope.sessionID, boundedSession)
+              else if (boundedSession) {
+                inventoryTruncated = true
+                nativeInventory = "bounded"
+              }
             }
           }
         } catch (error) {
@@ -768,9 +956,47 @@ export class LiveRadarReader {
         inventoryByID.set(session.id, session)
       }
 
+      // The view's exact authorized session may be a human Architect outside the
+      // bounded worker inventory. Fetch only this ID; never widen inventory here.
+      if (nativeSessionReads < LIVE_LIMITS.nativeSessionReads) {
+        nativeSessionReads++
+        try {
+          const current = await this.host.get(request.scope.sessionID, signal)
+          signal.throwIfAborted()
+          if (current) {
+            if (current.id !== request.scope.sessionID) {
+              inventoryTruncated = true
+              nativeInventory = "bounded"
+            } else if (current.archived) {
+              // Archived scope is never promoted into current activity.
+              viewSessionArchived = true
+            } else {
+              const boundedSession = inspectNative(current)
+              if (boundedSession?.id === request.scope.sessionID)
+                nativeByID.set(request.scope.sessionID, boundedSession)
+              else if (boundedSession) {
+                inventoryTruncated = true
+                nativeInventory = "bounded"
+              }
+            }
+          }
+        } catch (error) {
+          if (signal.aborted) throw error
+          nativeInventory = "unavailable"
+        }
+      } else {
+        inventoryTruncated = true
+        nativeInventory = "bounded"
+      }
+
       for (const sessionID of managedIDs) {
-        let native = inventoryByID.get(sessionID)
+        let native = nativeByID.get(sessionID) ?? inventoryByID.get(sessionID)
         if (!native) {
+          if (nativeSessionReads >= LIVE_LIMITS.nativeSessionReads) {
+            inventoryTruncated = true
+            nativeInventory = "bounded"
+            continue
+          }
           nativeSessionReads++
           try {
             native = (await this.host.get(sessionID, signal)) ?? undefined
@@ -823,7 +1049,23 @@ export class LiveRadarReader {
     }
 
     const candidates: SessionCandidate[] = []
+    if (request.scope.kind === "project") {
+      const current = nativeByID.get(request.scope.sessionID)
+      if (current)
+        candidates.push({
+          id: request.scope.sessionID,
+          directory: current.directory,
+          native: current,
+        })
+      else if (
+        !viewSessionArchived &&
+        !source.assignments.has(request.scope.sessionID) &&
+        foreignSessionsExcluded === 0
+      )
+        candidates.push({ id: request.scope.sessionID, directory: null })
+    }
     for (const sessionID of managedIDs) {
+      if (candidates.some((candidate) => candidate.id === sessionID)) continue
       const native = nativeByID.get(sessionID)
       candidates.push({
         id: sessionID,
@@ -832,7 +1074,7 @@ export class LiveRadarReader {
       })
     }
     if (request.scope.kind === "session") {
-      if (!candidates.length && foreignSessionsExcluded === 0)
+      if (!candidates.length && foreignSessionsExcluded === 0 && !viewSessionArchived)
         candidates.push({
           id: request.scope.sessionID,
           directory: nativeByID.get(request.scope.sessionID)?.directory ?? null,
@@ -843,6 +1085,7 @@ export class LiveRadarReader {
     } else if (request.includeUnmanagedSessions) {
       for (const [sessionID, native] of nativeByID) {
         if (source.assignments.has(sessionID)) continue
+        if (candidates.some((candidate) => candidate.id === sessionID)) continue
         if (candidates.length >= LIVE_LIMITS.sessions) break
         candidates.push({ id: sessionID, directory: native.directory, native })
       }
@@ -855,24 +1098,37 @@ export class LiveRadarReader {
     let retainedStateEntries = this.trackSessions(
       tracker,
       boundedCandidates.map((candidate) => candidate.id),
+      request.scope.sessionID,
     )
     signal.throwIfAborted()
     if (nativeRevision !== tracker.nativeRevision || eventSequence !== tracker.sequence)
       throw new LiveSourceChangedError()
+    const liveSignalSnapshot = tracker.peekLiveSignals(
+      new Set(boundedCandidates.map((candidate) => candidate.id)),
+    )
 
     const sessionRows: LiveRadarResponse["sessions"] = []
     const routes: LiveRadarResponse["routes"] = []
     const calls: LiveRadarResponse["calls"] = []
     const flow: LiveRadarResponse["flow"] = []
     const routeByID = new Map<string, LiveRadarResponse["routes"][number]>()
-    const flags = { routeTruncated: false, flowTruncated: false, callsTruncated: false }
+    const flags = {
+      routeTruncated: false,
+      flowTruncated: liveSignalSnapshot.truncated,
+      callsTruncated: false,
+    }
     const observedAt = Date.now()
 
     for (const candidate of boundedCandidates) {
       signal.throwIfAborted()
       const native = candidate.native
       const assignment = source.assignments.get(candidate.id)
-      if (request.scope.kind === "project" && !request.includeUnmanagedSessions && !assignment)
+      if (
+        request.scope.kind === "project" &&
+        !request.includeUnmanagedSessions &&
+        !assignment &&
+        candidate.id !== request.scope.sessionID
+      )
         continue
       if (native && native.projectID !== this.projectID) {
         foreignSessionsExcluded++
@@ -910,7 +1166,19 @@ export class LiveRadarReader {
             () => (flags.routeTruncated = true),
           )
         : null
-      const routeState = toNativeObservations(
+      const sessionSignals = assignment
+        ? []
+        : liveSignalSnapshot.signals.filter((item) => item.sessionID === candidate.id)
+      const nativeSignalState = toUnassignedNativeSignals(
+        candidate.id,
+        sessionSignals,
+        routes,
+        routeByID,
+        flow,
+        stats,
+        flags,
+      )
+      const nativeRouteState = toNativeObservations(
         native ?? {
           id: candidate.id,
           projectID: this.projectID,
@@ -931,11 +1199,29 @@ export class LiveRadarReader {
         stats,
         flags,
       )
+      const routeState = {
+        ...nativeRouteState,
+        observedRouteID: nativeSignalState.observedRouteID ?? nativeRouteState.observedRouteID,
+        routeCoverage: {
+          ...nativeRouteState.routeCoverage,
+          observed:
+            nativeSignalState.observedRouteCoverage === "not-observed"
+              ? nativeRouteState.routeCoverage.observed
+              : nativeSignalState.observedRouteCoverage,
+        },
+      }
       sessionRows.push({
         id: sessionNodeID(candidate.id),
         sessionID: candidate.id,
         projectID: this.projectID,
         classification: assignment ? "managed" : "unmanaged",
+        isViewSession: candidate.id === request.scope.sessionID,
+        isCurrentArchitect:
+          candidate.id !== request.scope.sessionID || !native
+            ? null
+            : native.agent === null
+              ? null
+              : native.agent.trim().toLocaleLowerCase() === "architect",
         availability,
         freshness: fresh
           ? "current"
@@ -973,6 +1259,11 @@ export class LiveRadarReader {
     }
 
     sessionRows.sort((left, right) => {
+      const currentArchitect =
+        Number(right.isCurrentArchitect === true) - Number(left.isCurrentArchitect === true)
+      if (currentArchitect) return currentArchitect
+      const currentView = Number(right.isViewSession) - Number(left.isViewSession)
+      if (currentView) return currentView
       const managed =
         Number(right.classification === "managed") - Number(left.classification === "managed")
       if (managed) return managed
@@ -1002,6 +1293,20 @@ export class LiveRadarReader {
           ? ("connected" as const)
           : ("gap-or-unavailable" as const),
       },
+      scheduler: (() => {
+        try {
+          const status = sharedScheduler.projectStatus(this.schedulerKey)
+          return {
+            status: status.status,
+            participants:
+              Number.isSafeInteger(status.participants) && status.participants >= 0
+                ? status.participants
+                : null,
+          }
+        } catch {
+          return { status: "unknown" as const, participants: null }
+        }
+      })(),
       coverage: {
         sessionCount: sessionRows.length,
         managedSessionCount: sessionRows.filter((session) => session.classification === "managed")
@@ -1048,6 +1353,7 @@ export class LiveRadarReader {
     retainedStateEntries = this.trackSessions(
       tracker,
       response.sessions.map((session) => session.sessionID),
+      request.scope.sessionID,
     )
     response.coverage.retainedStateEntries = retainedStateEntries
     let responseBytes = measuredResponseBytes(response)
@@ -1072,6 +1378,7 @@ export class LiveRadarReader {
       retainedStateEntries = this.trackSessions(
         tracker,
         response.sessions.map((session) => session.sessionID),
+        request.scope.sessionID,
       )
       response.coverage.retainedStateEntries = retainedStateEntries
       responseBytes = measuredResponseBytes(response)
@@ -1080,6 +1387,7 @@ export class LiveRadarReader {
     retainedStateEntries = this.trackSessions(
       tracker,
       response.sessions.map((session) => session.sessionID),
+      request.scope.sessionID,
     )
     response.coverage.retainedStateEntries = retainedStateEntries
     responseBytes = measuredResponseBytes(response)

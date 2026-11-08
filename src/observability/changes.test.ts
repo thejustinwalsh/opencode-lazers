@@ -104,6 +104,188 @@ test("filtered native sequences deduplicate without inventing gaps; disconnect r
   }
 })
 
+test("bounded native signals retain only allowlisted metadata for selected sessions", () => {
+  const fixture = makeFixture()
+  try {
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(61),
+      "project",
+    )
+    tracker.initialize()
+    tracker.trackScopedSessions(["ses-architect", "ses-other"], "ses-architect")
+    const selected = new Set(["ses-architect"])
+    tracker.native({
+      id: "evt-architect-step",
+      type: "session.step.started",
+      created: 42_001,
+      durable: { aggregateID: "ses-architect", seq: 1, version: 2 },
+      data: {
+        sessionID: "ses-architect",
+        assistantMessageID: "msg_architect_turn",
+        agent: "architect",
+        model: { providerID: "openai", id: "gpt-6-luna", variant: "high" },
+        started: 42_000,
+        text: "PRIVATE MESSAGE DECOY",
+        content: "MODEL CONTENT DECOY",
+        input: { token: "PRIVATE INPUT TOKEN DECOY" },
+        credentials: "PRIVATE CREDENTIAL DECOY",
+      },
+    })
+    tracker.native({
+      id: "evt-architect-tool",
+      type: "session.tool.input.started",
+      created: 42_002,
+      durable: { aggregateID: "ses-architect", seq: 2, version: 2 },
+      data: {
+        sessionID: "ses-architect",
+        assistantMessageID: "msg_architect_turn",
+        id: "call_architect_list",
+        name: "List",
+        input: { directory: "PRIVATE ARGUMENT DECOY" },
+        content: "PRIVATE TOOL CONTENT DECOY",
+      },
+    })
+
+    const snapshot = tracker.peekLiveSignals(selected)
+    expect(snapshot.truncated).toBe(false)
+    expect(snapshot.signals).toEqual([
+      {
+        sessionID: "ses-architect",
+        eventID: "evt-architect-step",
+        eventType: "session.step.started",
+        sourceNativeRevision: 1,
+        messageID: "msg_architect_turn",
+        callID: null,
+        tool: null,
+        agent: "architect",
+        providerID: "openai",
+        modelID: "gpt-6-luna",
+        variant: "high",
+        status: "request-started",
+        observedAt: 42_001,
+      },
+      {
+        sessionID: "ses-architect",
+        eventID: "evt-architect-tool",
+        eventType: "session.tool.input.started",
+        sourceNativeRevision: 2,
+        messageID: "msg_architect_turn",
+        callID: "call_architect_list",
+        tool: "List",
+        agent: null,
+        providerID: null,
+        modelID: null,
+        variant: null,
+        status: "input-started",
+        observedAt: 42_002,
+      },
+    ])
+    expect(tracker.peekLiveSignals(new Set(["ses-other"])).signals).toEqual([])
+    const retained = JSON.stringify(snapshot)
+    for (const decoy of [
+      "PRIVATE MESSAGE DECOY",
+      "MODEL CONTENT DECOY",
+      "PRIVATE INPUT TOKEN DECOY",
+      "PRIVATE CREDENTIAL DECOY",
+      "PRIVATE ARGUMENT DECOY",
+      "PRIVATE TOOL CONTENT DECOY",
+    ])
+      expect(retained).not.toContain(decoy)
+
+    const sequence = tracker.sequence
+    tracker.native({
+      id: "evt-architect-late",
+      type: "session.tool.success",
+      created: 42_003,
+      durable: { aggregateID: "ses-architect", seq: 1, version: 2 },
+      data: {
+        sessionID: "ses-architect",
+        assistantMessageID: "msg_architect_turn",
+        id: "call_architect_list",
+        content: [{ type: "text", text: "PRIVATE TERMINAL BODY DECOY" }],
+      },
+    })
+    expect(tracker.sequence).toBe(sequence)
+    expect(tracker.peekLiveSignals(selected).signals).toHaveLength(2)
+    expect(tracker.peekLiveSignals(selected).signals).toHaveLength(2)
+    tracker.streamGap()
+    expect(tracker.peekLiveSignals(selected)).toEqual({ signals: [], truncated: false })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("pending native signals drain only after exact scope selection and overflow stays bounded", () => {
+  const fixture = makeFixture()
+  try {
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(62),
+      "project",
+    )
+    tracker.initialize()
+    const finishSelection = tracker.beginScopeSelection()
+    tracker.native({
+      id: "evt-buffered-architect",
+      type: "session.text.ended",
+      created: 43_001,
+      data: {
+        sessionID: "ses-architect-buffered",
+        assistantMessageID: "msg_buffered_turn",
+        text: "NEVER RETAIN PRIVATE MESSAGE TEXT",
+      },
+    })
+    expect(tracker.peekLiveSignals(new Set(["ses-architect-buffered"])).signals).toEqual([])
+    tracker.trackScopedSessions(["ses-architect-buffered"], "ses-architect-buffered")
+    finishSelection()
+    expect(tracker.peekLiveSignals(new Set(["ses-architect-buffered"])).signals).toMatchObject([
+      {
+        eventID: "evt-buffered-architect",
+        eventType: "session.text.ended",
+        messageID: "msg_buffered_turn",
+        status: "text-ended",
+      },
+    ])
+
+    for (let index = 0; index < 270; index++)
+      tracker.native({
+        id: `evt-bounded-${index}`,
+        type: "session.execution.started",
+        created: 44_000 + index,
+        data: { sessionID: "ses-architect-buffered" },
+      })
+    const bounded = tracker.peekLiveSignals(new Set(["ses-architect-buffered"]))
+    expect(bounded.signals).toHaveLength(256)
+    expect(bounded.truncated).toBe(true)
+    expect(bounded.signals.at(-1)?.eventID).toBe("evt-bounded-269")
+
+    tracker.streamGap()
+    for (let index = 0; index < 256; index++)
+      tracker.native({
+        id: `evt-byte-cap-${index}-${"x".repeat(180)}`,
+        type: "session.step.started",
+        created: 45_000 + index,
+        durable: { aggregateID: "ses-architect-buffered", seq: index + 1, version: 2 },
+        data: {
+          sessionID: "ses-architect-buffered",
+          assistantMessageID: `msg-${"m".repeat(180)}`,
+          agent: "a".repeat(180),
+          model: {
+            providerID: "p".repeat(180),
+            id: "m".repeat(280),
+            variant: "v".repeat(180),
+          },
+        },
+      })
+    const byteBounded = tracker.peekLiveSignals(new Set(["ses-architect-buffered"]))
+    expect(byteBounded.signals.length).toBeLessThan(256)
+    expect(byteBounded.truncated).toBe(true)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("loaded project registrations with distinct secrets share stamps and private reader queues", async () => {
   const fixture = makeFixture()
   const trackers: InstanceType<typeof ObservationChangeTracker>[] = []

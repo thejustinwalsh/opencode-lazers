@@ -451,6 +451,8 @@ const LiveSession = z.strictObject({
   sessionID: z.string().min(1).max(200),
   projectID: z.string().min(1).max(200),
   classification: z.enum(["managed", "unmanaged"]),
+  isViewSession: z.boolean(),
+  isCurrentArchitect: z.boolean().nullable(),
   availability: z.enum(["available", "missing", "archived", "moved", "unavailable"]),
   freshness: z.enum(["current", "stale", "unknown"]),
   agent: z.string().max(200).nullable(),
@@ -487,22 +489,33 @@ const LiveToolCall = z.strictObject({
   result: z.string().max(240).nullable(),
   error: z.string().max(240).nullable(),
   payloadAvailable: z.boolean(),
+  fileTargets: z
+    .strictObject({
+      coverage: z.enum(["observed", "partial", "omitted"]),
+      operation: z.enum(["read", "edit", "patch"]).nullable(),
+      paths: z.array(z.string().max(512)).max(8),
+    })
+    .optional(),
 })
 
 const LiveFlow = z.strictObject({
   id: z.string().min(1).max(200),
-  kind: z.enum(["model-request", "model-stream", "model-response", "tool-phase"]),
+  kind: z.enum(["execution", "model-request", "model-stream", "model-response", "tool-phase"]),
+  source: z.enum(["progress", "native-event"]),
   from: z.string().max(512).nullable(),
   to: z.string().max(512).nullable(),
   sessionID: z.string().min(1).max(200),
   messageID: z.string().max(200).nullable(),
   callID: z.string().max(200).nullable(),
+  tool: z.string().max(160).nullable(),
+  agent: z.string().max(200).nullable(),
   routeID: z.string().max(512).nullable(),
   toolID: z.string().max(512).nullable(),
   status: z.string().min(1).max(32),
   startedAt: z.number().finite().nullable(),
   observedAt: z.number().finite(),
-  sourceProgressSequence: z.int().positive(),
+  sourceProgressSequence: z.int().positive().nullable(),
+  sourceNativeRevision: z.int().positive().nullable(),
   sourceEventID: z.string().max(200).nullable(),
   sourceEventType: z.string().max(120).nullable(),
 })
@@ -526,6 +539,10 @@ export const LiveRadarOutput = z.strictObject({
     runner: z.enum(["current", "unavailable"]),
     nativeInventory: z.enum(["complete", "bounded", "unavailable"]),
     nativeEvents: z.enum(["connected", "gap-or-unavailable"]),
+  }),
+  scheduler: z.strictObject({
+    status: z.enum(["scheduled", "draining", "registered", "absent", "stale", "unknown"]),
+    participants: z.int().nonnegative().nullable(),
   }),
   coverage: z.strictObject({
     sessionCount: z.int().nonnegative(),
@@ -613,6 +630,13 @@ const LiveHistoryItem = z.strictObject({
     .nullable(),
   observations: z.array(LiveHistoryObservation).max(8),
   payloadAvailable: z.boolean(),
+  fileTargets: z
+    .strictObject({
+      coverage: z.enum(["observed", "partial", "omitted"]),
+      operation: z.enum(["read", "edit", "patch"]).nullable(),
+      paths: z.array(z.string().max(512)).max(8),
+    })
+    .optional(),
 })
 export const LiveHistoryOutput = z.strictObject({
   schemaVersion: z.literal(1),
