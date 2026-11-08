@@ -1,5 +1,6 @@
 import type { TopologyResponse } from "../observability/contract.ts"
 import type { TaskSummary } from "./contract.ts"
+import type { SchedulingNode, SchedulingPlan, SchedulingSnapshot } from "./scheduling-contract.ts"
 
 type Plan = TopologyResponse["plans"][number]
 type Node = Plan["nodes"][number]
@@ -16,6 +17,12 @@ export type ExecutionListRow = {
   contextOnly: boolean
   prerequisites: string[]
   successors: string[]
+  scheduling?: {
+    decision: SchedulingNode["decision"]
+    reason: string | null
+    waitingOn: string[]
+    reservationTaskIDs: string[]
+  }
   fork?: ExecutionFork
 }
 
@@ -35,18 +42,135 @@ export type ExecutionFork = {
 export type ExecutionPlanGroup = {
   planID: string
   planVersion: number
-  planRevision: number
+  planRevision?: number
   title: string
   hasRecordedTitle: boolean
   nonterminalCount: number
   totalCount: number
   rows: ExecutionListRow[]
+  priority?: number
+  planOrder?: number
+  schedulingDecision?: SchedulingPlan["decision"]
+  schedulingReason?: string | null
+  afterPlans?: string[]
 }
 
 export type ExecutionList = {
   plans: ExecutionPlanGroup[]
   unplanned: ExecutionListRow[]
   topologyAvailable: boolean
+}
+
+function buildScheduledGroups(input: {
+  tasks: TaskSummary[]
+  search?: string
+  revealTaskIDs?: ReadonlySet<string>
+  scheduling?: SchedulingSnapshot
+}): ExecutionList {
+  const summaries = new Map(input.tasks.map((task) => [task.taskID, task]))
+  const plans = input.scheduling?.plans ?? []
+  const planByTask = new Map<string, SchedulingPlan>()
+  const nodeByTask = new Map<string, SchedulingNode>()
+  const successors = new Map<string, string[]>()
+  for (const plan of plans) {
+    for (const node of plan.nodes) {
+      planByTask.set(node.taskID, plan)
+      nodeByTask.set(node.taskID, node)
+      for (const prerequisite of node.prerequisites)
+        successors.set(prerequisite, [...(successors.get(prerequisite) ?? []), node.taskID])
+    }
+  }
+
+  const visible = new Set([...summaries.keys(), ...(input.revealTaskIDs ?? [])])
+  const contextual = new Set(
+    [...(input.revealTaskIDs ?? [])].filter((taskID) => !summaries.has(taskID)),
+  )
+  if (input.search?.trim()) {
+    for (const taskID of summaries.keys()) {
+      const plan = planByTask.get(taskID)
+      if (!plan) continue
+      const pending = [...(nodeByTask.get(taskID)?.prerequisites ?? [])]
+      while (pending.length) {
+        const prerequisite = pending.pop()!
+        if (!nodeByTask.has(prerequisite) || visible.has(prerequisite)) continue
+        visible.add(prerequisite)
+        contextual.add(prerequisite)
+        pending.push(...(nodeByTask.get(prerequisite)?.prerequisites ?? []))
+      }
+    }
+  }
+
+  const groups = plans.flatMap((plan) => {
+    const nodes = plan.nodes.toSorted((left, right) => left.ordinal - right.ordinal)
+    const rows = nodes.flatMap((node) => {
+      if (!visible.has(node.taskID)) return []
+      const summary = summaries.get(node.taskID)
+      const reason = node.reason ?? summary?.reason ?? null
+      const waiting =
+        !terminal.has(node.lifecycle) &&
+        (node.decision === "waiting" || node.lifecycle === "blocked")
+      return [
+        {
+          taskID: node.taskID,
+          title: summary?.objective ?? node.title,
+          status: summary?.recordedState ?? summary?.status ?? node.lifecycle,
+          reason,
+          waiting,
+          holdReason: waiting ? reason : null,
+          ordinal: node.ordinal,
+          ...((summary?.reference ?? node.reference)
+            ? { reference: summary?.reference ?? node.reference }
+            : {}),
+          contextOnly: contextual.has(node.taskID),
+          prerequisites: node.prerequisites,
+          successors: successors.get(node.taskID) ?? [],
+          scheduling: {
+            decision: node.decision,
+            reason: node.reason,
+            waitingOn: node.waitingOn,
+            reservationTaskIDs: node.reservationTaskIDs,
+          },
+        },
+      ]
+    })
+    if (!rows.length) return []
+    return [
+      {
+        planID: plan.planID,
+        planVersion: plan.planVersion,
+        title: plan.title,
+        hasRecordedTitle: true,
+        nonterminalCount: nodes.filter((node) => !terminal.has(node.lifecycle)).length,
+        totalCount: nodes.length,
+        rows,
+        priority: plan.priority,
+        planOrder: plan.planOrder,
+        schedulingDecision: plan.decision,
+        schedulingReason: plan.reason,
+        afterPlans: plan.afterPlans,
+      },
+    ]
+  })
+
+  const unplanned = input.tasks.flatMap((task, ordinal) => {
+    if (nodeByTask.has(task.taskID)) return []
+    return [
+      {
+        taskID: task.taskID,
+        title: task.objective,
+        status: task.recordedState ?? task.status,
+        reason: task.reason,
+        waiting: false,
+        holdReason: null,
+        ordinal,
+        ...(task.reference ? { reference: task.reference } : {}),
+        contextOnly: false,
+        prerequisites: [],
+        successors: [],
+      },
+    ]
+  })
+  return { topologyAvailable: false, plans: groups, unplanned }
 }
 
 type ForkBlock = {
@@ -209,6 +333,7 @@ function row(
   summary: TaskSummary | undefined,
   contextOnly: boolean,
   relations: ReturnType<typeof relationMap>,
+  scheduling?: SchedulingNode,
 ): ExecutionListRow {
   const waiting =
     plan.state !== "cancelled" &&
@@ -228,6 +353,16 @@ function row(
     contextOnly,
     prerequisites: relations.prerequisites.get(node.taskID) ?? [],
     successors: relations.successors.get(node.taskID) ?? [],
+    ...(scheduling
+      ? {
+          scheduling: {
+            decision: scheduling.decision,
+            reason: scheduling.reason,
+            waitingOn: scheduling.waitingOn,
+            reservationTaskIDs: scheduling.reservationTaskIDs,
+          },
+        }
+      : {}),
   }
 }
 
@@ -240,26 +375,17 @@ export function buildExecutionList(input: {
   tasks: TaskSummary[]
   search?: string
   revealTaskIDs?: ReadonlySet<string>
+  scheduling?: SchedulingSnapshot
 }): ExecutionList {
   const summaryByID = new Map(input.tasks.map((task) => [task.taskID, task]))
+  const scheduleByPlan = new Map(input.scheduling?.plans.map((plan) => [plan.planID, plan]) ?? [])
+  const scheduleByTask = new Map(
+    input.scheduling?.plans.flatMap((plan) =>
+      plan.nodes.map((node) => [node.taskID, node] as const),
+    ) ?? [],
+  )
   if (!input.topology) {
-    return {
-      topologyAvailable: false,
-      plans: [],
-      unplanned: input.tasks.map((task, ordinal) => ({
-        taskID: task.taskID,
-        title: task.objective,
-        status: task.recordedState ?? task.status,
-        reason: task.reason,
-        waiting: false,
-        holdReason: null,
-        ordinal,
-        ...(task.reference ? { reference: task.reference } : {}),
-        contextOnly: false,
-        prerequisites: [],
-        successors: [],
-      })),
-    }
+    return buildScheduledGroups(input)
   }
 
   const topology = input.topology
@@ -307,7 +433,14 @@ export function buildExecutionList(input: {
       rendered.add(node.taskID)
       planRows.set(
         node.taskID,
-        row(plan, node, summaryByID.get(node.taskID), contextual.has(node.taskID), relations),
+        row(
+          plan,
+          node,
+          summaryByID.get(node.taskID),
+          contextual.has(node.taskID),
+          relations,
+          scheduleByTask.get(node.taskID),
+        ),
       )
     }
 
@@ -343,11 +476,20 @@ export function buildExecutionList(input: {
       planID: plan.id,
       planVersion: plan.version,
       planRevision: plan.revision,
-      title: plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
-      hasRecordedTitle: plan.title !== null,
+      title: scheduleByPlan.get(plan.id)?.title ?? plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
+      hasRecordedTitle: plan.title !== null || Boolean(scheduleByPlan.get(plan.id)?.title),
       nonterminalCount,
       totalCount: nodes.length,
       rows: rootRows,
+      ...(scheduleByPlan.get(plan.id)
+        ? {
+            priority: scheduleByPlan.get(plan.id)!.priority,
+            planOrder: scheduleByPlan.get(plan.id)!.planOrder,
+            schedulingDecision: scheduleByPlan.get(plan.id)!.decision,
+            schedulingReason: scheduleByPlan.get(plan.id)!.reason,
+            afterPlans: scheduleByPlan.get(plan.id)!.afterPlans,
+          }
+        : {}),
     })
   }
 
@@ -375,6 +517,16 @@ export function buildExecutionList(input: {
         contextOnly: !summary,
         prerequisites: relations.prerequisites.get(taskID) ?? [],
         successors: relations.successors.get(taskID) ?? [],
+        ...(scheduleByTask.get(taskID)
+          ? {
+              scheduling: {
+                decision: scheduleByTask.get(taskID)!.decision,
+                reason: scheduleByTask.get(taskID)!.reason,
+                waitingOn: scheduleByTask.get(taskID)!.waitingOn,
+                reservationTaskIDs: scheduleByTask.get(taskID)!.reservationTaskIDs,
+              },
+            }
+          : {}),
       },
     ]
   })

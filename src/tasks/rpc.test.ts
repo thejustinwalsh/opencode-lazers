@@ -12,12 +12,14 @@ import { AssociationTaskReads } from "../observability/task-reads.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 import type { HostSession } from "../runner/host.ts"
 import { TaskRepository } from "../storage.ts"
+import { Tasks } from "./contract.ts"
 import type { StartTaskInput, StartTaskResult } from "./contract.ts"
 import { TaskReads } from "./read.ts"
 import { registerTaskReads } from "./rpc.ts"
 import { recordTaskAdvice } from "./advice.ts"
 import { taskInstructions } from "./instructions.ts"
 import { registerTaskTools } from "../tools.ts"
+import { TasksScheduling } from "./scheduling-contract.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -195,14 +197,16 @@ test("Tasks RPC restores persisted references on association-aware query summari
   const ctx = {
     rpc: {
       register: (
-        _contract: unknown,
+        contract: unknown,
         methods: {
           query: (input: unknown) => Effect.Effect<unknown, never>
           get: (input: unknown) => Effect.Effect<unknown, never>
         },
       ) => {
-        query = methods.query
-        get = methods.get
+        if ((contract as { id?: string }).id === Tasks.id) {
+          query = methods.query
+          get = methods.get
+        }
         return Effect.succeed({
           dispose: Effect.void,
           events: { emit: () => Effect.void },
@@ -374,10 +378,10 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
   const ctx = {
     rpc: {
       register: (
-        _contract: unknown,
+        contract: unknown,
         methods: { currentActivity: (input: unknown) => ActivityEffect },
       ) => {
-        currentActivity = methods.currentActivity
+        if ((contract as { id?: string }).id === Tasks.id) currentActivity = methods.currentActivity
         return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
       },
     },
@@ -636,6 +640,128 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
   }
 })
 
+test("scheduling RPC authorizes exact live project scope before facts and observes cancellation", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-scheduling-rpc-"))
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/project")
+  const sessionID = "ses_scheduling_owner"
+  const page = {
+    schemaVersion: 1 as const,
+    snapshotID: crypto.randomUUID(),
+    repositoryVersion: 0,
+    scope: { kind: "project" as const, sessionID },
+    observedAt: 0,
+    coverage: {
+      status: "complete" as const,
+      planCount: 0,
+      coveredPlanCount: 0,
+      nodeCount: 0,
+      coveredNodeCount: 0,
+      activeReservationCount: 0,
+      reservationsComplete: true,
+      reason: null,
+    },
+    next: { status: "none" as const },
+    selectedTaskIDs: [],
+    selectionComplete: true,
+    plans: [],
+    nextCursor: null,
+  }
+  const methods = new Map<
+    string,
+    Record<string, (input: unknown) => Effect.Effect<unknown, never>>
+  >()
+  const permissionRequests: unknown[] = []
+  let projectID = "project"
+  let archived = false
+  let denied = false
+  let readCount = 0
+  let abortDuringRead: AbortController | undefined
+  const runtime = {
+    projectID: "project",
+    host: { session: async () => null },
+    readScheduling: () => {
+      readCount++
+      abortDuringRead?.abort()
+      return page
+    },
+  } as unknown as TaskRuntime
+  const context = {
+    rpc: {
+      register: (
+        contract: unknown,
+        registered: Record<string, (input: unknown) => Effect.Effect<unknown, never>>,
+      ) => {
+        const id = (contract as { id?: string }).id
+        if (id) methods.set(id, registered)
+        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+      },
+    },
+    permission: {
+      assert: (request: unknown) => {
+        permissionRequests.push(request)
+        return denied ? Effect.fail(new Error("Denied")) : Effect.void
+      },
+    },
+    session: {
+      get: ({ sessionID: requested }: { sessionID: string }) =>
+        Effect.succeed({
+          id: requested,
+          projectID,
+          agent: "architect",
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: 1, updated: 1, ...(archived ? { archived: 2 } : {}) },
+          location: { directory: "/project" },
+        }),
+    },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session">
+  const input = { scope: { kind: "project" as const, sessionID }, limit: 20 }
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerTaskReads(context, new TaskReads(repository), runtime)
+        }),
+      ),
+    )
+    const read = methods.get(TasksScheduling.id)?.read
+    expect(read).toBeDefined()
+    expect(await Effect.runPromise(read!(input))).toEqual(page)
+    expect(readCount).toBe(1)
+    expect(permissionRequests).toHaveLength(1)
+    expect(permissionRequests[0]).toMatchObject({
+      action: "read",
+      resources: ["/project"],
+    })
+
+    projectID = "foreign-project"
+    await expect(Effect.runPromise(read!(input))).rejects.toThrow()
+    expect(readCount).toBe(1)
+    projectID = "project"
+    archived = true
+    await expect(Effect.runPromise(read!(input))).rejects.toThrow()
+    expect(readCount).toBe(1)
+    archived = false
+    denied = true
+    await expect(Effect.runPromise(read!(input))).rejects.toThrow()
+    expect(readCount).toBe(1)
+    denied = false
+
+    const before = new AbortController()
+    before.abort()
+    await expect(Effect.runPromise(read!(input), { signal: before.signal })).rejects.toThrow()
+    expect(readCount).toBe(1)
+
+    const during = new AbortController()
+    abortDuringRead = during
+    await expect(Effect.runPromise(read!(input), { signal: during.signal })).rejects.toThrow()
+    expect(readCount).toBe(2)
+  } finally {
+    repository.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("native advice attachment is Architect-only, replay-safe, and returned through task reads", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-advice-rpc-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/project")
@@ -661,10 +787,10 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
   const ctx = {
     rpc: {
       register: (
-        _contract: unknown,
+        contract: unknown,
         methods: { get: (input: unknown) => Effect.Effect<unknown, never> },
       ) => {
-        rpcGet = methods.get
+        if ((contract as { id?: string }).id === Tasks.id) rpcGet = methods.get
         return Effect.succeed({
           dispose: Effect.void,
           events: { emit: () => Effect.void },
@@ -862,12 +988,12 @@ test("Start RPC checks actor ownership and native permission before entering run
   const ctx = {
     rpc: {
       register: (
-        _contract: unknown,
+        contract: unknown,
         methods: {
           start: (input: StartTaskInput) => Effect.Effect<StartTaskResult, Error>
         },
       ) => {
-        invokeStart = methods.start
+        if ((contract as { id?: string }).id === Tasks.id) invokeStart = methods.start
         return Effect.succeed({
           dispose: Effect.void,
           events: { emit: () => Effect.void },

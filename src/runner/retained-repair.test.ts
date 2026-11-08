@@ -293,6 +293,32 @@ async function accept(f: ReturnType<typeof fixture>) {
   await f.runtime.tick()
 }
 
+async function integrateTaskSource(f: ReturnType<typeof fixture>, taskID: string) {
+  const node = f.store.nodes(f.planID).find((candidate) => candidate.task_id === taskID)
+  if (node?.state !== "accepted" || !node.artifact)
+    throw new Error(`Expected accepted task source to integrate: ${taskID}`)
+  const current = git(f.root, ["rev-parse", "HEAD"])
+  try {
+    git(f.root, ["merge-base", "--is-ancestor", node.artifact, current])
+  } catch {
+    git(f.root, ["merge", "--ff-only", node.artifact])
+  }
+  const plan = f.store.plan(f.planID)!
+  return f.runtime.command(
+    {
+      requestID: `land-retained-repair-task-${taskID}`,
+      planID: f.planID,
+      expectedVersion: plan.version,
+      action: "integrated",
+      taskID,
+      artifact: node.artifact,
+      targetBranch: git(f.root, ["branch", "--show-current"]),
+      reason: "Review and land accepted task source before its dependent is dispatched",
+    },
+    "owner",
+  )
+}
+
 function retainedRepairCommand(
   f: ReturnType<typeof fixture>,
   reason = "Escaped delimiters are parsed incorrectly.",
@@ -982,7 +1008,7 @@ test("native ownership and input races reject without reopening or prompting", a
   expect(f.store.latestRetainedRepair(f.planID, f.tasks[0]!.id)).toBeUndefined()
 })
 
-test("source-landed artifacts and tasks with dispatched transitive dependents cannot reopen", async () => {
+test("source-landed artifacts and an actually dispatched dependent cannot reopen", async () => {
   const landed = fixture()
   await accept(landed)
   const landedAttempt = landed.store.attempts(landed.planID)[0]!
@@ -996,10 +1022,25 @@ test("source-landed artifacts and tasks with dispatched transitive dependents ca
   await start(dependent)
   await dependent.runtime.tick()
   expect(dependent.store.nodes(dependent.planID)[0]?.state).toBe("accepted")
+  expect(dependent.store.attempts(dependent.planID)).toHaveLength(1)
+  await integrateTaskSource(dependent, dependent.tasks[0]!.id)
+  for (let index = 0; index < 5 && dependent.store.attempts(dependent.planID).length < 2; index++)
+    await dependent.runtime.tick()
   expect(dependent.store.attempts(dependent.planID)).toHaveLength(2)
+  const [prerequisiteAttempt, successorAttempt] = dependent.store.attempts(dependent.planID)
+  expect(prerequisiteAttempt?.artifact).toBeString()
+  expect(successorAttempt?.base_commit).toBe(git(dependent.root, ["rev-parse", "HEAD"]))
+  expect(
+    git(dependent.root, [
+      "merge-base",
+      "--is-ancestor",
+      prerequisiteAttempt!.artifact!,
+      successorAttempt!.base_commit!,
+    ]),
+  ).toBe("")
   const command = retainedRepairCommand(dependent)
   await expect(dependent.runtime.command(command, "owner")).rejects.toThrow(
-    "dispatched transitive dependent",
+    "Source-landed task work",
   )
   expect(dependent.store.nodes(dependent.planID)[0]?.state).toBe("accepted")
   expect(dependent.store.attempts(dependent.planID)).toHaveLength(2)

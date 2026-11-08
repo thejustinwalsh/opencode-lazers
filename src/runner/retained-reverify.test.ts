@@ -502,6 +502,81 @@ async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   return { ...f, plan, attempt, artifact: attempt.artifact }
 }
 
+function includeReviewedArtifact(root: string, artifact: string) {
+  const head = git(root, ["rev-parse", "HEAD"])
+  try {
+    git(root, ["merge-base", "--is-ancestor", artifact, head])
+    return
+  } catch {
+    // The accepted task commit is not on the reviewed branch yet.
+  }
+  try {
+    git(root, ["merge-base", "--is-ancestor", head, artifact])
+    git(root, ["merge", "--ff-only", artifact])
+    return
+  } catch {
+    // Independent task commits require an explicit reviewed merge commit.
+  }
+  git(root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "merge",
+    "--no-edit",
+    "--no-ff",
+    artifact,
+  ])
+}
+
+async function integrateAcceptedTaskSource(
+  root: string,
+  store: RunnerStore,
+  runtime: TaskRuntime,
+  planID: string,
+  taskID: string,
+) {
+  const node = store.nodes(planID).find((candidate) => candidate.task_id === taskID)
+  if (node?.state !== "accepted" || !node.artifact)
+    throw new Error(`Expected an accepted task source to integrate: ${taskID}`)
+  includeReviewedArtifact(root, node.artifact)
+  const plan = store.plan(planID)!
+  return runtime.command(
+    {
+      requestID: `land-retained-task-${planID}-${taskID}`,
+      planID,
+      expectedVersion: plan.version,
+      action: "integrated",
+      taskID,
+      artifact: node.artifact,
+      targetBranch: git(root, ["branch", "--show-current"]),
+      reason: "Review and land accepted task source before dispatching its dependent",
+    },
+    "owner",
+  )
+}
+
+async function driveWithReviewedTaskLandings(
+  root: string,
+  store: RunnerStore,
+  runtime: TaskRuntime,
+  planID: string,
+  count = 40,
+) {
+  for (let iteration = 0; iteration < count; iteration++) {
+    await runtime.tick()
+    const nodes = store.nodes(planID)
+    for (const [index, node] of nodes.entries()) {
+      if (
+        index < nodes.length - 1 &&
+        node.state === "accepted" &&
+        !store.latestTransition(planID, node.task_id, "TASK_INTEGRATION_RECORDED")
+      )
+        await integrateAcceptedTaskSource(root, store, runtime, planID, node.task_id)
+    }
+  }
+}
+
 async function heldRepairFixture(options: Parameters<typeof fixture>[0] = {}) {
   const f = fixture({
     taskCheckCommand: "bun test src/runner/retained-check.test.ts",
@@ -1192,6 +1267,7 @@ test("unrecorded running candidate qualifies under an idle hold and continues th
   expect(f.store.effects(old.planID)).toEqual(oldEffectHistory)
   expect(sourceQuarantine(f.store, old.attemptID)).toEqual(old.quarantine)
   expect(f.sessions.get(old.sessionID)).toEqual(old.worker)
+  await integrateAcceptedTaskSource(f.root, f.store, f.runtime, f.planID, f.task.id)
   await f.runtime.command(
     {
       requestID: "reconcile-qualified-held-plan",
@@ -1201,8 +1277,7 @@ test("unrecorded running candidate qualifies under an idle hold and continues th
     },
     "owner",
   )
-  for (let i = 0; i < 20 && f.store.nodes(f.planID).some((node) => node.state !== "accepted"); i++)
-    await f.runtime.tick()
+  await driveWithReviewedTaskLandings(f.root, f.store, f.runtime, f.planID)
   expect(f.store.nodes(f.planID).map((node) => node.state)).toEqual([
     "accepted",
     "accepted",
@@ -1553,6 +1628,7 @@ test(
     expect(reopenedStore.nodes(f.planID)[0]?.state).toBe("accepted")
     expect(reopenedStore.nodes(f.planID)[2]?.state).toBe("queued")
     expect(reopenedStore.plan(f.planID)?.state).toBe("running")
+    await integrateAcceptedTaskSource(f.root, reopenedStore, reopenedRuntime, f.planID, f.task.id)
     expect(
       reopenedStore.atomic(
         (db) =>
@@ -1564,22 +1640,7 @@ test(
       ),
     ).toBe(0)
 
-    for (
-      let i = 0;
-      i < 40 &&
-      reopenedStore.plan(f.planID)?.state !== "accepted" &&
-      reopenedStore
-        .atomic((db) =>
-          db
-            .query<{ payload: string }, [string]>(
-              "SELECT payload FROM runner_retained_verifications WHERE id=?",
-            )
-            .get(requested.operationID),
-        )
-        ?.payload.includes('"state":"waiting-human-combined"') !== true;
-      i++
-    )
-      await reopenedRuntime.tick()
+    await driveWithReviewedTaskLandings(f.root, reopenedStore, reopenedRuntime, f.planID)
     expect(reopenedStore.nodes(f.planID).map((node) => node.state)).toEqual([
       "accepted",
       "accepted",
