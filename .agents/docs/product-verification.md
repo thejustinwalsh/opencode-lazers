@@ -150,6 +150,13 @@ bun src/verification/opencode/cli.ts native-status --root "$ROOT"
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind snapshot
 ```
 
+A blank composer is a draft, not a persisted session. For session panels, create
+an empty session at the candidate workspace through native `session.create`;
+this does not invoke a model. Prepare scoped disposable fixtures through the
+normal APIs/resource lifecycle, exercise them, retain results and confirm cleanup.
+Missing fixture data is setup work; fixtures must be labeled and must not be
+reported as production activity or completed implementation.
+
 After switching to an authentication browser, use `native --root "$ROOT" --kind focus --window WINDOW_ID` to activate the exact owned app/window, then use its fresh snapshot. A failed focus does not mean application activation had no effect; inspect current state before proceeding.
 
 `native-status` reports only the owned adapter state and bounded window
