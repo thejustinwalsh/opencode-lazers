@@ -35,3 +35,32 @@ attempt. Relay these failures to the existing Radar worker through Architect.
 
 Computer Use explicitly reported macOS locked when Root attempted the follow-up;
 user unlock is pending. This report preserves the actionable result meanwhile.
+
+## Current Radar correction and baseline comparison
+
+The current runtime-owned worker completed `c983c0a` (session-scoped truncation
+coverage) with 181 focused tests and its quality/build checks reported passing.
+Root merged it into the durable review composition, now HEAD
+`8360cbd43f58aff42810045cf434ca081e9f73ce`.
+
+Root's actual `bun run verify` passes there. Running
+`bun test src/observability/changes.test.ts src/observability/read.test.ts src/observability/rpc.test.ts`
+yields **38 pass / 6 fail**, 355 assertions, 5.36 seconds. The same six failures
+remain. Logs: `.cache/review/c983-{quality,behavior}.log` in that checkout.
+
+Control on canonical Main (`594f831`):
+`bun test src/observability/read.test.ts src/observability/rpc.test.ts` passes
+**36 tests / 420 assertions**, 5.09 seconds. Thus these contract differences are
+introduced by the candidate, not a pre-existing failing Main baseline. Decide
+behavior and update implementation/tests together rather than waive failures.
+
+Native Luna Max source reviewer `ses_e4427a3dbffeOyojjAt0iCyOmw` finished its
+review of8919a20 without finding a material defect in the inspected scheduler,
+Architect-flow and file-target paths. It identified missing over-limit cases for
+output-path and total-output byte caps. It explicitly distinguished mocked
+registered-panel coverage from actual Desktop subscription wiring. It did not
+rerun checks and did not inspect the laterc983c0a correction. Its review therefore
+does not override the observed six broader test failures or live acceptance work.
+
+Current worker reports the connected Desktop/Terra walkthrough remains unperformed.
+Computer Use remains explicitly locked; Root's follow-up is awaiting unlock.
