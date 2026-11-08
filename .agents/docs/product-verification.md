@@ -183,9 +183,10 @@ removes the owned logs with the test root, so record only those safe fields and
 necessary timestamps.
 
 The optional screenshot command captures the owned Desktop window, not a
-browser-tool screenshot. Use it only after a human has confirmed that the entire
-visible page is safe to retain; automatic credential filtering is best-effort,
-not a privacy guarantee:
+browser-tool screenshot. Check the fresh native snapshot and confirm that the
+visible fixture page is safe to retain before capture. The agent operating the
+fixture can make that check; routine screenshots do not require a human review.
+Automatic credential filtering is best-effort, not a privacy guarantee:
 
 ```sh
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind capture \
