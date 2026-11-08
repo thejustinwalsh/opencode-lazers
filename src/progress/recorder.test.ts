@@ -477,7 +477,7 @@ test("runtime checks and artifacts are durable facts but never acceptance author
       inputIdentity: "c".repeat(40),
       exitCode: 0,
       timedOut: false,
-      unchanged: true,
+      unchanged: false,
       startedAt: 100,
       endedAt: 200,
       command: "bun test",

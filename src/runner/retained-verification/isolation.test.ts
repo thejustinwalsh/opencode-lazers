@@ -20,6 +20,7 @@ import {
   observeRetainedCheckContext,
   observeRetainedCheckIsolationWitness,
   removeRetainedCheckContextFromWitness,
+  removeRetainedCheckContext,
   retainedCheckIsolationWitness,
 } from "./isolation.ts"
 import { retainedProcedurePlan } from "./procedure.ts"
@@ -327,7 +328,7 @@ test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
       isolation: witness,
     })
     expect(receipt.exitCode, receipt.stderr).toBe(0)
-    expect(receipt.unchanged).toBe(true)
+    expect(receipt).not.toHaveProperty("unchanged")
     expect(receipt.cwd).toBe(canonicalCandidate)
     expect(readFileSync(join(oldProfile, "sentinel"), "utf8")).toBe(oldProfileContents)
     expect(readFileSync(join(context.environment.HOME!, "profile", "sentinel"), "utf8")).toBe(
@@ -491,7 +492,7 @@ test("another project executes a new scoped target against its committed depende
     },
   )
   expect(receipt.exitCode, receipt.stderr).toBe(0)
-  expect(receipt.unchanged).toBe(true)
+  expect(receipt).not.toHaveProperty("unchanged")
   expect(observeRetainedCheckContext(context)).toBe(true)
   expect(readFileSync(join(oldProfile, "candidate"), "utf8")).toBe("old\n")
   expect(readFileSync(join(root, "bun.lock")).equals(baselineLock)).toBe(true)
@@ -642,24 +643,34 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
     const unownedScript = retainedProcedurePlan("bun run not-declared")
     if (unownedScript.status !== "supported") throw new Error(unownedScript.reason)
     const rejectedOperation = crypto.randomUUID()
-    await expect(
-      createRetainedCheckContext({
-        rootDirectory: state,
-        operationID: rejectedOperation,
-        generation: 1,
-        phase: "task",
-        checkID: "missing-project-script",
-        originalWorkspace: root,
-        candidateWorkspace: candidate,
-        taskDatabase,
-        projectDirectory: root,
-        candidateArtifact: artifact,
-        priorResourcePaths: [oldProfile],
-        procedurePlan: unownedScript.plan,
-      }),
-    ).rejects.toThrow(
-      "Candidate package.json does not declare project procedure script not-declared",
+    const permitted = await createRetainedCheckContext({
+      rootDirectory: state,
+      operationID: rejectedOperation,
+      generation: 1,
+      phase: "task",
+      checkID: "missing-project-script",
+      originalWorkspace: root,
+      candidateWorkspace: candidate,
+      taskDatabase,
+      projectDirectory: root,
+      candidateArtifact: artifact,
+      priorResourcePaths: [oldProfile],
+      procedurePlan: unownedScript.plan,
+    })
+    const missingScript = await runCheck(
+      candidate,
+      artifact,
+      {
+        id: "missing-project-script",
+        command: "bun run not-declared",
+        timeoutMs: 5000,
+      },
+      join(state, "missing-script.json"),
+      { environment: permitted.environment },
     )
+    expect(missingScript.exitCode).not.toBe(0)
+    expect(missingScript.stderr).toContain("not-declared")
+    removeRetainedCheckContext(permitted)
     expect(existsSync(join(state, `retained-${rejectedOperation}-1`))).toBe(false)
     const context = await createRetainedCheckContext({
       rootDirectory: state,
@@ -699,7 +710,7 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
       expect(observeRetainedCheckContext(context)).toBe(true)
     } else {
       expect(receipt.exitCode, receipt.stderr).toBe(0)
-      expect(receipt.unchanged).toBe(true)
+      expect(receipt).not.toHaveProperty("unchanged")
       expect(observeRetainedCheckContext(context)).toBe(true)
       expect(readFileSync(join(oldProfile, "build.txt"), "utf8")).toBe("old profile\n")
       expect(readFileSync(join(candidate, "dist", "fixture-build.txt"), "utf8")).toBe(
@@ -811,12 +822,10 @@ test("project procedure bindings cover authored and newly scoped Bun targets", (
       },
     })
   expect(retainedProcedurePlan("bun ./scripts/check-profile.ts")).toMatchObject({
-    status: "unsupported",
-    reason: expect.stringContaining("no project-authored procedure/resource binding"),
+    status: "supported",
   })
   expect(retainedProcedurePlan("bun test ../../shared-tests")).toMatchObject({
-    status: "unsupported",
-    reason: expect.stringContaining("safe project-relative procedure contract"),
+    status: "supported",
   })
   expect(retainedProcedurePlan("bun test packages/new-feature/test")).toMatchObject({
     status: "supported",
@@ -831,7 +840,6 @@ test("project procedure bindings cover authored and newly scoped Bun targets", (
     plan: { kind: "bun-quality", targets: ["src/runner"], projectScripts: [] },
   })
   expect(retainedProcedurePlan("bun run build:fixture && echo unbound")).toMatchObject({
-    status: "unsupported",
-    reason: expect.stringContaining("no project-authored procedure/resource binding"),
+    status: "supported",
   })
 })

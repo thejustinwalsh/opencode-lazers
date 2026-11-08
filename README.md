@@ -68,6 +68,12 @@ A `TaskGraph` contains versioned specifications and dependency edges. Every task
 
 Use one worker and task for a coherent outcome, including related implementation, fixes and verification. Split for independently useful deliverables, meaningful parallelism or a material risk/context boundary; each split must earn its research, dispatch, review and integration overhead. Files, layers, individual test cases and line counts do not define tasks. Keep routine discoveries and repairs with the same worker through existing scope controls. Verify at completion boundaries. Accept the graph only after its combined result meets overall acceptance.
 
+Acceptance uses command outcomes, observed product behavior and Architect review.
+Source-file hashes, clean-tree assertions and environment fingerprints do not prove
+completion or expire passing results. Record changed context for review. Commit
+successful automatic fixes with the work. Setup failures retain the same attempt;
+cleanup tracks resources independently of the feature result.
+
 ### 3 Execution policy
 
 **Status:** Implemented in the runtime and native adapters; exact route failures remain visible and are never replaced by fallback selection.
@@ -102,9 +108,9 @@ draft → ready → running → verifying → accepted
 
 `ready` requires a valid specification and admitted plan. Verification failure permits one repair by default. Cancellation, execution failure, or a missing prerequisite stop work with evidence and a concrete next action. Explicit resume/retry commands retain prior attempts and usage.
 
-`accepted` means all acceptance evidence exists, required checks pass, the diff respects scope, and required human decisions are resolved. Tests passing and a worker saying “done” are insufficient. Acceptance identifies the exact resulting revision or artifact; merging or publishing remains a separate action.
+`accepted` records the task’s required checks, behavior observations and resolved decisions for its resulting artifact. Architect reviews delivered work and decides integration. A worker’s completion message is a report, not a state transition; merging or publishing remains a separate action.
 
-Reuse a verification result only for the same relevant code, inputs, command, and environment. Edits or integration that invalidate those inputs invalidate the result. Repair receives the specific failure; repeat checks whose evidence became invalid.
+Retain check results with the code, command, timestamps and observed environment. Architect decides whether subsequent changes require another check; metadata drift does not automatically revoke a pass. Repair receives the specific failure.
 
 Completion/failure delivery and Architect decisions are separate from lifecycle transitions. Persist the outcome and evidence before notification, and prevent duplicate or stale notifications/commands from dispatching work twice. Apply configured repair or retry rules without a model call when the response is already defined. Re-enter Architect when the failure requires a new approach, changed dependencies or scope, or a user decision. A reschedule or revised plan must pass admission and retain prior attempts and usage; it does not silently restart a loop.
 

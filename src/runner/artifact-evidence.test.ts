@@ -16,7 +16,9 @@ afterEach(() => {
 
 type EvidenceDirectory = "populated" | "empty" | "empty-tree" | "missing"
 
-function fixture(options: { evidenceDirectory?: EvidenceDirectory; failedCheck?: boolean } = {}) {
+function fixture(
+  options: { evidenceDirectory?: EvidenceDirectory; failedCheck?: boolean; autoFix?: boolean } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "lazers-directory-artifact-"))
   const state = mkdtempSync(join(tmpdir(), "lazers-directory-artifact-state-"))
   git(root, ["init", "--initial-branch=main"])
@@ -41,7 +43,11 @@ function fixture(options: { evidenceDirectory?: EvidenceDirectory; failedCheck?:
   proposal.verification = [
     {
       id: "check",
-      command: options.failedCheck ? "exit 7" : 'test "$(cat result.txt)" = "ok"',
+      command: options.failedCheck
+        ? "exit 7"
+        : options.autoFix
+          ? "printf 'formatted\\n' > result.txt"
+          : 'test "$(cat result.txt)" = "ok"',
       timeoutMs: 1000,
     },
   ]
@@ -247,7 +253,7 @@ test("directory artifact evidence accepts only with matching checks and human ev
   expect(originalChecks).toHaveLength(1)
   const originalReceipt = originalChecks[0]!.receipt
   const checked = JSON.parse(originalReceipt!).check
-  expect(checked).toMatchObject({ exitCode: 0, timedOut: false, unchanged: true })
+  expect(checked).toMatchObject({ exitCode: 0, timedOut: false })
   expect(checked.inputIdentity).toBe(checked.artifact)
   expect(f.store.repository.get(f.task.id)?.proposal.acceptance[0]?.evidence[0]).toEqual({
     kind: "artifact",
@@ -292,22 +298,37 @@ test("directory artifact evidence accepts only with matching checks and human ev
   expect(git(f.root, ["status", "--porcelain"])).toBe("")
 })
 
-test("empty or missing directories and failed checks still prevent acceptance", async () => {
-  for (const evidenceDirectory of ["missing", "empty", "empty-tree"] as const) {
+test.each(["missing", "empty", "empty-tree"] as const)(
+  "%s requested output remains missing",
+  async (evidenceDirectory) => {
     const f = fixture({ evidenceDirectory })
     await run(f.runtime, f.planID)
     expect(f.store.plan(f.planID)?.state).toBe("blocked")
     expect(f.store.plan(f.planID)?.reason).toContain(`correct:${f.directoryReference}`)
     const check = f.store.effects(f.planID).find((effect) => effect.kind === "verify:check")
-    expect(JSON.parse(check!.receipt!).check).toMatchObject({ exitCode: 0, unchanged: true })
-  }
+    expect(JSON.parse(check!.receipt!).check).toMatchObject({ exitCode: 0 })
+  },
+)
 
+test("a failed command still prevents acceptance", async () => {
   const failed = fixture({ failedCheck: true })
   await run(failed.runtime, failed.planID)
   expect(failed.store.plan(failed.planID)?.state).toBe("blocked")
-  expect(failed.store.plan(failed.planID)?.reason).toContain("Verification check failed")
+  expect(failed.store.plan(failed.planID)?.reason).toContain("Verification check exited")
   const failedCheck = failed.store
     .effects(failed.planID)
     .find((effect) => effect.kind === "verify:check")
-  expect(JSON.parse(failedCheck!.receipt!).check).toMatchObject({ exitCode: 7, unchanged: true })
+  expect(JSON.parse(failedCheck!.receipt!).check).toMatchObject({ exitCode: 7 })
+})
+
+test("successful automatic fixes are committed and reach Architect review in the same attempt", async () => {
+  const f = fixture({ autoFix: true })
+  await run(f.runtime, f.planID)
+  const attempt = f.store.attempts(f.planID)[0]!
+  expect(f.store.plan(f.planID)?.reason).toContain("correct:human")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+  expect(git(f.root, ["show", `${attempt.artifact}:result.txt`])).toBe("formatted")
+  expect(git(f.root, ["rev-parse", "HEAD"])).toBe(attempt.artifact!)
+  expect(git(f.root, ["status", "--porcelain"])).toBe("")
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
 })

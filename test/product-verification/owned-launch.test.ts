@@ -811,70 +811,21 @@ describe("owned Desktop boundaries", () => {
     ).toThrow("behaviorally present")
   })
 
-  test("allows only scoped qualification evidence outputs without relaxing source identity", () => {
-    expect(
-      sameCandidateIdentity(
-        {
-          ...candidate,
-          dirtyPaths: [
-            ...candidate.dirtyPaths,
-            ".agents/docs/evidence/full-instance-qualification/trial.png",
-            ".agents/docs/evidence/full-instance-qualification/worker-trial.md",
-            ".agents/docs/evidence/full-instance-qualification/native-observation.json",
-          ],
-        },
-        candidate,
-      ),
-    ).toBe(true)
-    expect(
-      sameCandidateIdentity(
-        {
-          ...candidate,
-          dirtyPaths: [
-            ...candidate.dirtyPaths,
-            ".agents/docs/evidence/full-instance-qualification/unscoped.txt",
-          ],
-        },
-        candidate,
-      ),
-    ).toBe(false)
-    expect(
-      sameCandidateIdentity(
-        {
-          ...candidate,
-          dirtyPaths: [...candidate.dirtyPaths, ".agents/docs/product-verification.md"],
-        },
-        candidate,
-      ),
-    ).toBe(false)
-    expect(
-      sameCandidateIdentity(
-        { ...candidate, dirtyPaths: [...candidate.dirtyPaths, "src/changed.ts"] },
-        candidate,
-      ),
-    ).toBe(false)
-    expect(
-      sameCandidateIdentity(
-        { ...candidate, guiEntryBytes: candidate.guiEntryBytes + 1 },
-        candidate,
-      ),
-    ).toBe(false)
-    expect(
-      candidateIdentityDifferences(
-        { ...candidate, dirtyPaths: [...candidate.dirtyPaths, "src/changed.ts"] },
-        candidate,
-      ),
-    ).toEqual(["dirtyPaths"])
-  })
-
-  test("same-revision GUI rebuild timestamps do not invalidate an owned candidate", () => {
-    const rebuilt = { ...candidate, guiEntryModifiedAt: "2026-11-02T02:00:00.000Z" }
-    expect(candidateIdentityDifferences(rebuilt, candidate)).toEqual([])
-    expect(sameCandidateIdentity(rebuilt, candidate)).toBe(true)
-    expect(sameCandidateIdentity({ ...rebuilt, revision: "b".repeat(40) }, candidate)).toBe(false)
-    expect(
-      sameCandidateIdentity({ ...rebuilt, guiEntryBytes: rebuilt.guiEntryBytes + 1 }, candidate),
-    ).toBe(false)
+  test("source edits and rebuilds preserve access to the owned verification instance", () => {
+    const changed = {
+      ...candidate,
+      revision: "b".repeat(40),
+      dirtyPaths: ["src/changed.ts", "notes.txt"],
+      guiEntryBytes: candidate.guiEntryBytes + 1,
+      guiEntryModifiedAt: "2026-11-02T02:00:00.000Z",
+      architectDescription: "updated guidance",
+    }
+    expect(candidateIdentityDifferences(changed, candidate)).toEqual([])
+    expect(sameCandidateIdentity(changed, candidate)).toBe(true)
+    expect(sameCandidateIdentity({ ...changed, workspace: "/elsewhere" }, candidate)).toBe(false)
+    expect(sameCandidateIdentity({ ...changed, guiEntry: "/elsewhere/gui.js" }, candidate)).toBe(
+      false,
+    )
   })
 
   test("blocks all cleanup side effects while native interaction delivery is pending or ambiguous", async () => {

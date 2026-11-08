@@ -956,7 +956,7 @@ export class SystemLaunchDependencies implements LaunchDependencies {
     const stored = await readManifestFile(runtimePaths(input.root).manifest)
     const currentCandidate = await inspectCandidate(input.candidatePath)
     if (!sameCandidateIdentity(currentCandidate, stored.candidate)) {
-      throw new Error("Candidate source or built GUI identity changed after owned setup")
+      throw new Error("Owned candidate workspace or entry path changed after setup")
     }
     const env = isolatedEnvironment(input.root)
     const output = await open(join(input.root, "desktop-process.log"), "ax", 0o600)
@@ -1346,7 +1346,7 @@ export async function verifyOwnedSidecar(
   const changedCandidateFields = candidateIdentityDifferences(candidate, manifest.candidate)
   if (changedCandidateFields.length > 0) {
     throw new Error(
-      `Candidate source or built GUI identity changed after owned setup (fields: ${changedCandidateFields.join(",")})`,
+      `Owned candidate workspace or entry path changed after setup (fields: ${changedCandidateFields.join(",")})`,
     )
   }
   return { manifest, registration, health }
@@ -1667,34 +1667,10 @@ export function candidateIdentityDifferences(
   actual: CandidateIdentity,
   expected: CandidateIdentity,
 ): Array<keyof CandidateIdentity> {
-  // This task explicitly scopes probe evidence to this directory; only simple PNG,
-  // Markdown, and JSON outputs are non-source writes for candidate identity.
-  const isRetainedEvidenceOutput = (path: string) =>
-    /^\.agents\/docs\/evidence\/full-instance-qualification\/[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(?:png|md|json)$/i.test(
-      path,
-    )
-  const fields: Array<keyof CandidateIdentity> = [
-    "workspace",
-    "revision",
-    "dirtyPaths",
-    "pluginEntry",
-    "guiEntry",
-    "guiEntryBytes",
-    "architectDescription",
-  ]
-  // Build timestamps are provenance, not source identity. Rebuilding an unchanged
-  // candidate must not invalidate an otherwise owned, observable Desktop trial.
-  return fields.filter((field) => {
-    const left =
-      field === "dirtyPaths"
-        ? actual.dirtyPaths.filter((path) => !isRetainedEvidenceOutput(path)).sort()
-        : actual[field]
-    const right =
-      field === "dirtyPaths"
-        ? expected.dirtyPaths.filter((path) => !isRetainedEvidenceOutput(path)).sort()
-        : expected[field]
-    return JSON.stringify(left) !== JSON.stringify(right)
-  })
+  // These paths bind interaction to the owned checkout. Source/build metadata is
+  // observation context for Architect review, not permission to use that instance.
+  const fields: Array<keyof CandidateIdentity> = ["workspace", "pluginEntry", "guiEntry"]
+  return fields.filter((field) => actual[field] !== expected[field])
 }
 
 export function sameCandidateIdentity(

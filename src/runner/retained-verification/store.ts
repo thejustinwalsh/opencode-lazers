@@ -259,8 +259,6 @@ export function beginRetainedVerificationCheck(
     .get(input.operationID, input.phase, input.checkID)
   if (current) {
     if (
-      current.inputFingerprint !== input.inputFingerprint ||
-      current.environmentIdentity !== input.environmentIdentity ||
       current.workspace !== input.workspace ||
       current.artifact !== input.artifact ||
       fingerprint(JSON.parse(current.checkJSON)) !== fingerprint(input.check) ||

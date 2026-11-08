@@ -168,7 +168,7 @@ export const CheckReceiptSchema = z.strictObject({
   timedOut: z.boolean(),
   stdout: z.string().max(32_832),
   stderr: z.string().max(32_832),
-  unchanged: z.boolean(),
+  unchanged: z.boolean().optional(),
 })
 export type CheckReceipt = z.infer<typeof CheckReceiptSchema>
 

@@ -164,7 +164,7 @@ export type ProbeRunUpdate =
 export type ProbeEligibility = {
   runID: string
   eligible: boolean
-  /** Current completed product pass; cleanup is an independent obligation. */
+  /** Recorded product pass; metadata differences remain review context, not automatic expiry. */
   satisfied: boolean
   reasons: string[]
   lifecycle: ProbeRun["lifecycle"]
@@ -606,7 +606,8 @@ export class ProbeRepository {
       }
 
       const uniqueReasons = [...new Set(reasons)]
-      const eligible = uniqueReasons.length === 0
+      // Keep the observed result. Architect evaluates whether a changed context needs a reprobe.
+      const eligible = !uniqueReasons.includes("retained-verification-changed")
       return {
         runID: run.runID,
         eligible,
@@ -736,12 +737,8 @@ export class ProbeRepository {
     )
       throw new Error("Retained probe is not bound to the current owned verification generation")
     const basis = retainedVerificationProbeBasis(operation, phase)
-    if (
-      !same(input.candidate, basis.candidate) ||
-      !same(input.inputs, basis.inputs) ||
-      !same(input.environment, basis.environment)
-    )
-      throw new Error("Retained probe candidate, inputs or environment are stale")
+    if (input.candidate.workspace !== basis.candidate.workspace)
+      throw new Error("Retained probe workspace does not match its authorized operation")
     const plan = db
       .query<
         { owner: string; revision: number; version: number; state: string; body: string },

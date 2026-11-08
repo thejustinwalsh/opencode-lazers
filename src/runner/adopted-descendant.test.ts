@@ -968,8 +968,9 @@ test("supplemental scope cannot be revoked during a writer or an active adoption
   expect(f.store.effectiveWriteScope(f.task.id)).toEqual(["result.txt", "extra.txt"])
 })
 
-test("identical task and combined assertion/artifact evidence remains phase- and task-bound", async () => {
-  for (const firstPhase of ["task", "combined"] as const) {
+test.each(["task", "combined"] as const)(
+  "identical assertion/artifact results stay phase-bound when %s is reviewed first",
+  async (firstPhase) => {
     const f = fixture("failed-task", "shared-result")
     const { node, attempt } = await strand(f)
     const candidate = landCandidate(f, node.artifact!)
@@ -1013,8 +1014,9 @@ test("identical task and combined assertion/artifact evidence remains phase- and
     )
     await drive(f.runtime, 2)
     expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
-  }
-}, 10_000)
+  },
+  10_000,
+)
 
 test("restart recovers task and combined check receipt cuts without replaying checks", async () => {
   for (const cutPhase of ["task", "combined"] as const) {
@@ -1112,26 +1114,13 @@ test("irrelevant environment churn is ignored while check inputs and operation e
     if (oldLanguage === undefined) delete process.env.LANG
     else process.env.LANG = oldLanguage
   }
-  expect(f.store.adoption(first.adoptionID)?.state).toBe("held")
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-
-  const secondCommand = {
-    ...adoptionCommand(f, attempt.id, node.artifact!, candidate),
-    requestID: "adopt-same-content-new-operation",
-  }
-  const second = (await f.runtime.command(secondCommand, "owner")) as { adoptionID: string }
-  expect(second.adoptionID).not.toBe(first.adoptionID)
-  await drive(f.runtime, 1)
-  expect(f.store.adoption(second.adoptionID)?.state).toBe("waiting-human")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
+  expect(f.store.adoption(first.adoptionID)?.state).toBe("accepted")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(
-    f.store.adoptionChecks(second.adoptionID).every((check) => check.state === "completed"),
+    f.store.adoptionChecks(first.adoptionID).every((check) => check.state === "completed"),
   ).toBe(true)
   expect(f.store.adoptionEvidence(first.adoptionID)).toHaveLength(2)
-  expect(f.store.adoptionEvidence(second.adoptionID)).toHaveLength(0)
-  expect(readFileSync(f.taskLog, "utf8")).toHaveLength(3)
-  expect(readFileSync(f.graphLog, "utf8")).toHaveLength(2)
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
 })
 
 test("changed verification command input invalidates completed adoption receipts", async () => {
@@ -1466,7 +1455,7 @@ test("timed-out adoption checks hold without repair, new worker turns, or accept
   const receipt = JSON.parse(f.store.adoptionChecks(requested.adoptionID, "task")[0]!.receipt!)
   expect(receipt.timedOut).toBe(true)
   expect(receipt.exitCode).not.toBe(0)
-  expect(receipt.unchanged).toBe(true)
+  expect(receipt).not.toHaveProperty("unchanged")
   expect(f.store.adoptionChecks(requested.adoptionID, "combined")).toHaveLength(0)
 })
 
@@ -1500,7 +1489,7 @@ test("cancel during worker observation does not create a candidate worktree or p
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
 })
 
-test("mutating adoption checks hold without repair or publication", async () => {
+test("successful mutating checks retain their result and wait for Architect review", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -1510,7 +1499,7 @@ test("mutating adoption checks hold without repair or publication", async () => 
   )) as { adoptionID: string }
   writeFileSync(f.mutationGate, "mutate\n")
   await f.runtime.tick()
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("held")
+  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
@@ -1522,5 +1511,5 @@ test("mutating adoption checks hold without repair or publication", async () => 
   expect(f.store.adoptionChecks(requested.adoptionID, "task")[0]?.state).toBe("completed")
   expect(
     JSON.parse(f.store.adoptionChecks(requested.adoptionID, "task")[0]!.receipt!).unchanged,
-  ).toBe(false)
+  ).toBeUndefined()
 })

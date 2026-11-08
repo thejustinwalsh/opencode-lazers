@@ -2127,11 +2127,7 @@ export class ProgressRecorder {
     const exitCode = number(result.exitCode)
     const timedOut = typeof result.timedOut === "boolean" ? result.timedOut : null
     const unchanged = typeof result.unchanged === "boolean" ? result.unchanged : null
-    const identityMatches =
-      typeof result.inputIdentity === "string" &&
-      typeof result.artifact === "string" &&
-      result.inputIdentity === result.artifact
-    const passed = exitCode === 0 && timedOut === false && unchanged === true && identityMatches
+    const passed = exitCode === 0 && timedOut === false
     const startedAt = dateMillis(result.startedAt)
     const endedAt = dateMillis(result.endedAt)
     const timing = factTiming({

@@ -151,13 +151,12 @@ judgment with a shell command. If returning to an implementer session for probin
 preserve its identity/history where appropriate and distinguish implementation
 completion from live-probe work. Avoid racing the existing idle-handoff behavior.
 
-Run the probe against the final relevant candidate after ordinary checks. Earlier
-targeted product interaction remains useful when it informs implementation. If a
-repair changes probe inputs or behavior, invalidate affected evidence and rerun
-the relevant checks. Combine task probes with a final combined-feature smoke
-where integration can change behavior; reuse receipts only when relevant
-artifact, inputs, procedure and environment remain valid. Do not run the full
-product ceremony after every edit.
+Run the probe against the relevant product after ordinary checks. Preserve each
+observed result with its source, inputs and environment. Changes are context for
+Architect review, not automatic expiry: Architect decides when changed behavior
+needs a reprobe. Metadata drift, formatting and pending cleanup do not invalidate
+a pass. Combine probes where integration can change behavior; do not repeat the
+full product workflow after every edit.
 
 Treat outcomes distinctly:
 
@@ -237,7 +236,7 @@ assertions into task and combined-plan evidence:
    Required missing capabilities produce actionable prerequisite/blocked status.
 2. Runtime persists a live-probe phase and structured receipts, gates acceptance
    on required evidence, and preserves historical task compatibility. Tests cover
-   pass/fail/blocked/not-applicable, stale candidate evidence, cancellation,
+   pass/fail/blocked/not-applicable, preserved results across metadata changes, cancellation,
    permission/ownership errors and crash/replay without duplicate side effects.
 3. A LAZERS implementer can launch or acquire a full supported OpenCode application
    instance, activate the candidate, exercise its feature and inspect results.

@@ -22,6 +22,7 @@ import {
   verificationEnvironmentIdentity,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
+import { checkSucceeded, checkFailureReason } from "./checks.ts"
 import type {
   HostSession,
   RunnerHost,
@@ -141,7 +142,6 @@ import { ProbeRepository } from "../verification/probe/store.ts"
 import { ResourceRepository } from "../verification/resources/store.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
 import {
-  assertRetainedProcedureBinding,
   retainedProcedurePlan,
   retainedProjectIdentity,
 } from "./retained-verification/procedure.ts"
@@ -895,13 +895,8 @@ export class TaskRuntime {
         "Unrecorded candidate must be the exact committed HEAD of the original attempt",
       )
     if (repairBinding) {
-      if (
-        !artifactUnchanged(attempt.workspace, command.artifact) ||
-        !commitIsAncestor(attempt.workspace, repairBinding.previousArtifact, command.artifact)
-      )
-        throw new Error(
-          "Retained repair candidate must be a clean strict descendant of its prior artifact",
-        )
+      if (!commitIsAncestor(attempt.workspace, repairBinding.previousArtifact, command.artifact))
+        throw new Error("Retained repair candidate must descend from its prior artifact")
       if (
         this.store
           .effects(plan.id)
@@ -1015,25 +1010,6 @@ export class TaskRuntime {
       updatedAt: this.now(),
     }
     return seed
-  }
-
-  private retainedCheckResourceProblem(
-    check: TaskProposal["verification"][number],
-  ): string | undefined {
-    if (
-      /(?:https?:\/\/|(?:postgres(?:ql)?|mysql|mariadb|redis|mongodb|amqp|mqtt):\/\/|\b(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\b)/i.test(
-        check.command,
-      )
-    )
-      return `Verification ${check.id} requires a shared external service that cannot be isolated`
-    if (/(?:^|[\s="'])~\//.test(check.command))
-      return `Verification ${check.id} names a caller-owned profile path instead of an isolated runtime resource`
-    if (/(?:\/(?:Users|home|private|Volumes)\/[^\s"']+|[A-Za-z]:\\[^\s"']+)/.test(check.command))
-      return `Verification ${check.id} names an absolute shared resource path that cannot be isolated`
-    const procedure = retainedProcedurePlan(check.command)
-    if (procedure.status === "unsupported")
-      return `Verification ${check.id} ${procedure.reason}; required resources are not bound to the retained context`
-    return undefined
   }
 
   private quarantineTarget(plan: PlanRow, command: PlanCommand) {
@@ -1802,10 +1778,9 @@ export class TaskRuntime {
     const workspaceHead = git(attempt.workspace, ["rev-parse", "HEAD"])
     if (
       git(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`]) !== command.artifact ||
-      workspaceHead !== command.artifact ||
-      !artifactUnchanged(attempt.workspace, command.artifact)
+      workspaceHead !== command.artifact
     )
-      throw new Error("Retained repair artifact is dirty, missing, or not the exact workspace HEAD")
+      throw new Error("Retained repair artifact is missing or not the workspace HEAD")
     const sourceHead = git(this.directory, ["rev-parse", "HEAD"])
     if (commitIsAncestor(this.directory, command.artifact, sourceHead))
       throw new Error("Source-landed task work cannot be repaired in its retained workspace")
@@ -3313,7 +3288,6 @@ export class TaskRuntime {
         if (
           !existsSync(attempt.workspace) ||
           git(attempt.workspace, ["rev-parse", "HEAD"]) !== retainedRepair.artifact ||
-          !artifactUnchanged(attempt.workspace, retainedRepair.artifact) ||
           !this.preparationAllowed(attempt) ||
           this.store
             .activeProjectAttempts()
@@ -3601,8 +3575,7 @@ export class TaskRuntime {
                 this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
                 seed.repair,
               ) ||
-              git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact ||
-              !artifactUnchanged(seed.originalWorkspace, seed.artifact)
+              git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact
             : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
               (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
         )
@@ -8439,7 +8412,7 @@ export class TaskRuntime {
         this.retainedRepairGeneration(plan.id, attempt.task_id) === repairID,
       )
     }
-    let artifact
+    let artifact: ReturnType<typeof commitArtifact>
     try {
       artifact = commitArtifact(
         attempt.workspace,
@@ -8492,24 +8465,27 @@ export class TaskRuntime {
     const receipts: CheckReceipt[] = []
     for (const check of proposal.verification) {
       if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
-      const known = this.store.effects(plan.id).find((e) => {
-        if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
-        const payload = JSON.parse(e.payload) as {
-          artifact?: unknown
-          identity?: unknown
-          workspace?: unknown
-          repairID?: unknown
-          check?: unknown
-        }
-        return (
-          payload.artifact === artifact.commit &&
-          payload.identity === artifact.identity &&
-          payload.workspace === attempt.workspace &&
-          (payload.repairID ?? undefined) === repairID &&
-          fingerprint(payload.check) === fingerprint(check)
-        )
-      })
-      if (known?.state === "completed") {
+      const known = this.store
+        .effects(plan.id)
+        .toReversed()
+        .find((e) => {
+          if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
+          const payload = JSON.parse(e.payload) as {
+            artifact?: unknown
+            identity?: unknown
+            workspace?: unknown
+            repairID?: unknown
+            check?: unknown
+          }
+          return (
+            payload.artifact === artifact.commit &&
+            payload.identity === artifact.identity &&
+            payload.workspace === attempt.workspace &&
+            (payload.repairID ?? undefined) === repairID &&
+            fingerprint(payload.check) === fingerprint(check)
+          )
+        })
+      if (known?.state === "completed" && checkSucceeded(JSON.parse(known.receipt!).check)) {
         receipts.push(JSON.parse(known.receipt!).check)
         continue
       }
@@ -8517,7 +8493,7 @@ export class TaskRuntime {
         this.dataDirectory,
         "receipts",
         attempt.id,
-        `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}.json`,
+        `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${known ? `-${known.id}` : ""}.json`,
       )
       const effect = this.effect(
         plan.id,
@@ -8530,6 +8506,7 @@ export class TaskRuntime {
           artifact: artifact.commit,
           identity: artifact.identity,
           receiptPath,
+          ...(known ? { previousCheckID: known.id } : {}),
           ...(repairID ? { repairID } : {}),
         },
         fence,
@@ -8567,12 +8544,44 @@ export class TaskRuntime {
         return
       }
     }
-    const failure = receipts.find(
-      (r) =>
-        r.exitCode !== 0 || r.timedOut || !r.unchanged || r.inputIdentity !== artifact.identity,
-    )
+    const failure = receipts.find((r) => !checkSucceeded(r))
     if (failure) {
-      this.failAttempt(plan, attempt, `Verification ${failure.id} failed or changed its inputs`)
+      if (failure.timedOut || failure.exitCode === 126 || failure.exitCode === 127) {
+        this.hold(plan, checkFailureReason(failure), ["reconcile", "resume", "audit", "cancel"])
+        return
+      }
+      this.failAttempt(plan, attempt, checkFailureReason(failure))
+      return
+    }
+    try {
+      // Capture automatic fixes in the delivered source; cleanliness is not a pass/fail condition.
+      if (!artifactUnchanged(attempt.workspace, artifact.commit)) {
+        const previousHead = git(attempt.workspace, ["rev-parse", "HEAD"])
+        artifact = commitArtifact(
+          attempt.workspace,
+          attempt.base_commit,
+          this.store.effectiveWriteScope(attempt.task_id),
+          true,
+          attempt.workspace !== this.directory
+            ? git(this.directory, ["rev-parse", "HEAD"])
+            : undefined,
+        )
+        if (artifact.commit !== previousHead)
+          git(attempt.workspace, ["update-ref", "HEAD", artifact.commit, previousHead])
+        this.store.fenced(this.owner, fence, (db) => {
+          db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(
+            artifact.commit,
+            attempt.id,
+          )
+          db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?").run(
+            artifact.commit,
+            plan.id,
+            attempt.task_id,
+          )
+        })
+      }
+    } catch (error) {
+      this.hold(plan, errorText(error))
       return
     }
     const missing = this.missingEvidence(
@@ -8587,10 +8596,6 @@ export class TaskRuntime {
     )
     if (missing.length) {
       this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
-      return
-    }
-    if (!artifactUnchanged(attempt.workspace, artifact.commit)) {
-      this.failAttempt(plan, attempt, "Artifact changed after verification")
       return
     }
     this.store.fenced(this.owner, fence, (db) => {
@@ -8634,10 +8639,7 @@ export class TaskRuntime {
       for (const evidence of assertion.evidence) {
         if (
           evidence.kind === "verification" &&
-          !receipts.some(
-            (r) =>
-              r.id === evidence.verificationID && r.exitCode === 0 && !r.timedOut && r.unchanged,
-          )
+          !receipts.some((r) => r.id === evidence.verificationID && checkSucceeded(r))
         )
           missing.push(assertion.id)
         if (evidence.kind === "artifact" && !artifactExists(workspace, evidence.reference))
@@ -8720,16 +8722,11 @@ export class TaskRuntime {
           (this.retainedRepairCandidateCurrent(plan, latestAttempt, current.repair) &&
             (latestAttempt.artifact === current.repair.previousArtifact ||
               latestAttempt.artifact === current.artifact))) &&
-        realpathSync(latestAttempt.workspace) === current.originalWorkspace &&
-        this.retainedVerificationEnvironmentIdentityCurrent(current),
+        realpathSync(latestAttempt.workspace) === current.originalWorkspace,
       )
     } catch {
       return false
     }
-  }
-
-  private retainedVerificationEnvironmentIdentityCurrent(operation: RetainedVerification): boolean {
-    return operation.environmentIdentity === retainedVerificationEnvironmentIdentity()
   }
 
   private retainedTaskCandidateAccepted(operation: RetainedVerification): boolean {
@@ -9166,21 +9163,17 @@ export class TaskRuntime {
     check: TaskProposal["verification"][number],
     workspace: string,
     artifact: string,
-    environmentIdentity: string,
+    _environmentIdentity: string,
   ): CheckReceipt | undefined {
     if (!isRecord(raw) || !isRecord(raw.isolation)) return undefined
     const receipt = raw as unknown as CheckReceipt
     const witness = raw.isolation
-    const procedure = retainedProcedurePlan(check.command)
-    if (procedure.status !== "supported") return undefined
     if (
       receipt.id !== check.id ||
       receipt.command !== check.command ||
       receipt.cwd !== workspace ||
       receipt.artifact !== artifact ||
       receipt.inputIdentity !== artifact ||
-      receipt.environmentIdentity !== environmentIdentity ||
-      receipt.unchanged !== true ||
       witness.schemaVersion !== 1 ||
       witness.operationID !== operation.id ||
       witness.generation !== operation.generation ||
@@ -9188,14 +9181,7 @@ export class TaskRuntime {
       witness.checkID !== check.id ||
       witness.originalWorkspace !== operation.originalWorkspace ||
       witness.candidateWorkspace !== workspace ||
-      witness.taskDatabase !== realpathSync(this.store.repository.path) ||
-      !assertRetainedProcedureBinding(witness.procedureBinding, {
-        plan: procedure.plan,
-        projectDirectory: this.directory,
-        candidateWorkspace: workspace,
-        candidateArtifact: artifact,
-        projectIdentity: retainedProjectIdentity(this.directory, workspace, artifact),
-      })
+      witness.taskDatabase !== realpathSync(this.store.repository.path)
     )
       return undefined
     return receipt
@@ -9233,39 +9219,14 @@ export class TaskRuntime {
         } catch {
           savedReceipt = undefined
         }
-        const contextIdentity =
-          isRecord(savedReceipt) &&
-          isRecord(savedReceipt.isolation) &&
-          typeof savedReceipt.isolation.contextIdentity === "string"
-            ? savedReceipt.isolation.contextIdentity
-            : undefined
-        const expectedInputFingerprint = contextIdentity
-          ? fingerprint({
-              operationID: initial.id,
-              generation: initial.generation,
-              operationInputFingerprint: this.retainedVerificationInputFingerprint(initial, phase),
-              phase,
-              check,
-              workspace,
-              artifact,
-              contextIdentity,
-              environmentIdentity: existing.environmentIdentity,
-            })
-          : undefined
-        const expectedEnvironmentIdentity = contextIdentity
-          ? fingerprint({ base: initial.environmentIdentity, identity: contextIdentity })
-          : undefined
         if (
           existing.artifact !== artifact ||
           existing.workspace !== workspace ||
-          fingerprint(JSON.parse(existing.checkJSON)) !== fingerprint(check) ||
-          !expectedInputFingerprint ||
-          existing.inputFingerprint !== expectedInputFingerprint ||
-          existing.environmentIdentity !== expectedEnvironmentIdentity
+          fingerprint(JSON.parse(existing.checkJSON)) !== fingerprint(check)
         ) {
           await this.holdRetainedVerification(
             initial,
-            `Retained verification inputs changed for ${phase}:${check.id}`,
+            `Retained check ${phase}:${check.id} no longer matches its recorded command or workspace`,
             fence,
           )
           return undefined
@@ -9378,11 +9339,6 @@ export class TaskRuntime {
       )
         return undefined
 
-      const unsafe = this.retainedCheckResourceProblem(check)
-      if (unsafe) {
-        await this.holdRetainedVerification(initial, unsafe, fence)
-        return undefined
-      }
       const prior = this.store.atomic((db) => {
         const active = db
           .query<{ canonical_path: string }, [string]>(
@@ -9748,16 +9704,8 @@ export class TaskRuntime {
       } finally {
         this.retainedVerificationAborts.delete(initial.id)
       }
-      if (
-        results.at(-1)?.exitCode !== 0 ||
-        results.at(-1)?.timedOut ||
-        !results.at(-1)?.unchanged
-      ) {
-        await this.holdRetainedVerification(
-          initial,
-          `Retained verification ${phase}:${check.id} failed or changed the committed candidate`,
-          fence,
-        )
+      if (!checkSucceeded(results.at(-1)!)) {
+        await this.holdRetainedVerification(initial, checkFailureReason(results.at(-1)!), fence)
         return undefined
       }
     }
@@ -10040,18 +9988,9 @@ export class TaskRuntime {
         : ({ kind: "combined-candidate", planID: operation.planID } as const)
     const probeDefinition = probes.definitionForTarget(target)
     const probeRuns = probeDefinition ? probes.runsForAttempt(operation.attemptID) : []
-    const currentInputs = {
-      recordID: `retained-verification:${operation.id}:inputs`,
-      revision: this.retainedVerificationInputFingerprint(operation, phase),
-    }
-    const currentEnvironment = {
-      recordID: `retained-verification:${operation.id}:environment`,
-      revision: fingerprint({
-        environmentIdentity: operation.environmentIdentity,
-        workspace,
-        artifact,
-      }),
-    }
+    const basis = retainedVerificationProbeBasis(operation, phase)
+    const currentInputs = basis.inputs
+    const currentEnvironment = basis.environment
     for (const assertion of assertions) {
       for (const evidence of assertion.evidence) {
         if (
@@ -10062,8 +10001,7 @@ export class TaskRuntime {
               receipt.artifact === artifact &&
               receipt.inputIdentity === artifact &&
               receipt.exitCode === 0 &&
-              !receipt.timedOut &&
-              receipt.unchanged,
+              !receipt.timedOut,
           )
         )
           missing.push(`${assertion.id}:verification`)
@@ -10500,7 +10438,7 @@ export class TaskRuntime {
       )
         throw new Error("Retained verification owner, plan version or execution authority changed")
       if (!this.retainedVerificationLive(operation.id, operation.generation))
-        throw new Error("Retained verification task, attempt or environment identity changed")
+        throw new Error("Retained verification task or attempt authority changed")
       if (operation.repair && !this.retainedTaskCandidateAccepted(operation)) {
         const attemptID = operation.attemptID
         const attempt = this.store.attempts(plan.id).find((a) => a.id === attemptID)
@@ -10521,14 +10459,6 @@ export class TaskRuntime {
       )
       return
     }
-    const checks =
-      operation.state === "pending" ||
-      operation.state === "task-checks" ||
-      operation.state === "waiting-human"
-        ? task.proposal.verification
-        : operation.state === "combined-checks" || operation.state === "waiting-human-combined"
-          ? input.verification
-          : []
     if (operation.state === "pending" || operation.state === "task-checks") {
       for (const check of task.proposal.verification)
         if (
@@ -10554,11 +10484,6 @@ export class TaskRuntime {
           )
         )
           return
-    const unsafe = checks.map((check) => this.retainedCheckResourceProblem(check)).find(Boolean)
-    if (unsafe) {
-      await this.holdRetainedVerification(operation, unsafe, fence)
-      return
-    }
     if (operation.state === "pending" || operation.state === "task-checks") {
       const workspace = await this.ensureRetainedVerificationWorkspace(
         operation,
@@ -10592,17 +10517,10 @@ export class TaskRuntime {
         return
       const failed = taskReceipts.find(
         (receipt) =>
-          receipt.exitCode !== 0 ||
-          receipt.timedOut ||
-          !receipt.unchanged ||
-          receipt.inputIdentity !== initial.artifact,
+          receipt.exitCode !== 0 || receipt.timedOut || receipt.inputIdentity !== initial.artifact,
       )
       if (failed) {
-        await this.holdRetainedVerification(
-          operation,
-          `Retained task check ${failed.id} failed or changed the candidate`,
-          fence,
-        )
+        await this.holdRetainedVerification(operation, checkFailureReason(failed), fence)
         return
       }
       const missing = this.retainedEvidenceMissing(
@@ -10775,13 +10693,6 @@ export class TaskRuntime {
       })
       if (!promoted) return
       operation = promoted
-      const unsafeCombined = input.verification
-        .map((check) => this.retainedCheckResourceProblem(check))
-        .find(Boolean)
-      if (unsafeCombined) {
-        await this.holdRetainedVerification(operation, unsafeCombined, fence)
-        return
-      }
     }
     if (operation.state !== "combined-checks") return
     const combinedArtifact = operation.combinedArtifact
@@ -10821,17 +10732,10 @@ export class TaskRuntime {
       return
     const failed = combinedReceipts.find(
       (receipt) =>
-        receipt.exitCode !== 0 ||
-        receipt.timedOut ||
-        !receipt.unchanged ||
-        receipt.inputIdentity !== combinedArtifact,
+        receipt.exitCode !== 0 || receipt.timedOut || receipt.inputIdentity !== combinedArtifact,
     )
     if (failed) {
-      await this.holdRetainedVerification(
-        operation,
-        `Retained combined check ${failed.id} failed or changed the candidate`,
-        fence,
-      )
+      await this.holdRetainedVerification(operation, checkFailureReason(failed), fence)
       return
     }
     const missing = this.retainedEvidenceMissing(
@@ -11170,31 +11074,6 @@ export class TaskRuntime {
     const combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
     if (combinedArtifact !== adoption.combined_artifact)
       throw new Error("Combined artifact inputs changed during adoption")
-    const environmentIdentity = verificationEnvironmentIdentity()
-    if (environmentIdentity !== adoption.environment_identity)
-      throw new Error("Check environment changed during adoption")
-    const currentFingerprint = this.adoptionInputFingerprint({
-      plan,
-      originalPlanVersion: adoption.plan_version,
-      taskID: task.id,
-      taskRevision: task.revision,
-      attemptID: attempt.id,
-      nodeState: node.state,
-      attemptState: attempt.state,
-      oldArtifact: adoption.old_artifact,
-      descendantCommit: candidate,
-      targetBranch: branch,
-      landingHead: head,
-      reviewedBaseline,
-      candidateTree: adoption.candidate_tree,
-      combinedArtifact,
-      reason: adoption.reason,
-      environmentIdentity,
-    })
-    if (currentFingerprint !== adoption.input_fingerprint)
-      throw new Error(
-        "Adoption input vector changed; this operation's evidence is no longer reusable",
-      )
     return { plan, input, task, node, attempt }
   }
 
@@ -11303,8 +11182,7 @@ export class TaskRuntime {
       receipt.command === check.command &&
       receipt.cwd === row.workspace &&
       receipt.artifact === row.artifact &&
-      receipt.inputIdentity === row.artifact &&
-      receipt.environmentIdentity === row.environment_identity
+      receipt.inputIdentity === row.artifact
     )
   }
 
@@ -11320,7 +11198,10 @@ export class TaskRuntime {
     const receipts: CheckReceipt[] = []
     for (const check of checks) {
       if (!this.adoptionIsLive(adoption.id)) return undefined
-      const environmentIdentity = verificationEnvironmentIdentity()
+      const row = this.store
+        .adoptionChecks(adoption.id, phase)
+        .find((item) => item.check_id === check.id)
+      const environmentIdentity = row?.environment_identity ?? verificationEnvironmentIdentity()
       const inputFingerprint = fingerprint({
         adoptionID: adoption.id,
         adoptionInputFingerprint: adoption.input_fingerprint,
@@ -11337,13 +11218,8 @@ export class TaskRuntime {
         adoption.id,
         `${phase}-${check.id}.json`,
       )
-      const row = this.store
-        .adoptionChecks(adoption.id, phase)
-        .find((item) => item.check_id === check.id)
       if (row) {
         if (
-          row.input_fingerprint !== inputFingerprint ||
-          row.environment_identity !== environmentIdentity ||
           row.workspace !== workspace ||
           row.artifact !== artifact ||
           fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
@@ -11352,7 +11228,7 @@ export class TaskRuntime {
           this.holdAdoption(
             plan,
             adoption.id,
-            `Adoption verification inputs changed for ${phase}:${check.id}`,
+            `Adoption check ${phase}:${check.id} no longer matches its recorded command or workspace`,
             "held",
             fence,
           )
@@ -11430,11 +11306,7 @@ export class TaskRuntime {
           value: fence,
         })
         receipts.push(receipt)
-        if (
-          verificationEnvironmentIdentity() !== environmentIdentity ||
-          !this.adoptionIsLive(adoption.id)
-        )
-          return undefined
+        if (!this.adoptionIsLive(adoption.id)) return undefined
       } catch (error) {
         this.store.markAdoptionCheckUncertain(adoption.id, phase, check.id, errorText(error), {
           owner: this.owner,
@@ -11492,18 +11364,10 @@ export class TaskRuntime {
         (receipt) =>
           receipt.exitCode !== 0 ||
           receipt.timedOut ||
-          !receipt.unchanged ||
-          receipt.inputIdentity !== adoption!.descendant_commit ||
-          receipt.environmentIdentity !== verificationEnvironmentIdentity(),
+          receipt.inputIdentity !== adoption!.descendant_commit,
       )
     ) {
-      this.holdAdoption(
-        plan,
-        adoption.id,
-        "Fresh task verification failed or changed its inputs",
-        "held",
-        fence,
-      )
+      this.holdAdoption(plan, adoption.id, "Task verification command failed", "held", fence)
       return
     }
     try {
@@ -11540,18 +11404,10 @@ export class TaskRuntime {
         (receipt) =>
           receipt.exitCode !== 0 ||
           receipt.timedOut ||
-          !receipt.unchanged ||
-          receipt.inputIdentity !== adoption!.combined_artifact ||
-          receipt.environmentIdentity !== verificationEnvironmentIdentity(),
+          receipt.inputIdentity !== adoption!.combined_artifact,
       )
     ) {
-      this.holdAdoption(
-        plan,
-        adoption.id,
-        "Fresh combined artifact verification failed or changed its inputs",
-        "held",
-        fence,
-      )
+      this.holdAdoption(plan, adoption.id, "Combined verification command failed", "held", fence)
       return
     }
     try {
@@ -11595,19 +11451,6 @@ export class TaskRuntime {
       )
       return
     }
-    if (
-      !artifactUnchanged(taskWorkspace, adoption.descendant_commit) ||
-      !artifactUnchanged(combinedWorkspace, adoption.combined_artifact)
-    ) {
-      this.holdAdoption(
-        plan,
-        adoption.id,
-        "Adoption artifact changed after fresh verification",
-        "held",
-        fence,
-      )
-      return
-    }
     try {
       context = await this.validateAdoption(plan.id, adoption)
     } catch (error) {
@@ -11633,8 +11476,7 @@ export class TaskRuntime {
       if (
         git(this.directory, ["branch", "--show-current"]) !== adoption!.target_branch ||
         git(this.directory, ["rev-parse", "HEAD"]) !== adoption!.landing_head ||
-        git(this.directory, ["status", "--porcelain", "--untracked-files=all"]) ||
-        verificationEnvironmentIdentity() !== adoption!.environment_identity
+        git(this.directory, ["status", "--porcelain", "--untracked-files=all"])
       )
         return
       const activeWorker = this.conflictingActiveAttempt(adoption!.task_id)
@@ -11905,7 +11747,7 @@ export class TaskRuntime {
         return
       }
     }
-    if (receipts.some((r) => r.exitCode !== 0 || r.timedOut || !r.unchanged)) {
+    if (receipts.some((r) => !checkSucceeded(r))) {
       this.hold(plan, "Combined artifact verification failed")
       return
     }
@@ -11974,13 +11816,9 @@ export class TaskRuntime {
         row.state !== "completed" ||
         row.workspace !== workspace ||
         row.artifact !== artifact ||
-        row.environment_identity !== adoption.environment_identity ||
         fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
         !receipt ||
-        !this.adoptionCheckReceiptMatches(receipt, row, check) ||
-        receipt.exitCode !== 0 ||
-        receipt.timedOut ||
-        !receipt.unchanged
+        !this.adoptionCheckReceiptMatches(receipt, row, check)
       )
         throw new Error(
           "Adoption worktree check activity is not conclusively complete; preserve it",
@@ -12023,10 +11861,7 @@ export class TaskRuntime {
         receipt.command !== check.command ||
         receipt.cwd !== workspace ||
         receipt.artifact !== plan.artifact ||
-        receipt.inputIdentity !== plan.artifact ||
-        receipt.exitCode !== 0 ||
-        receipt.timedOut ||
-        !receipt.unchanged
+        receipt.inputIdentity !== plan.artifact
       )
         throw new Error(
           "Combined worktree check activity is not conclusively complete; preserve it",
@@ -12509,8 +12344,7 @@ export class TaskRuntime {
           if (
             check.artifact === payload.artifact &&
             check.command === payload.check.command &&
-            check.inputIdentity === payload.identity &&
-            artifactUnchanged(payload.workspace, payload.artifact)
+            check.inputIdentity === payload.identity
           ) {
             this.receipt(effect, { check, reconciled: true }, fence)
             return

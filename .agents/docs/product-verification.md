@@ -194,12 +194,11 @@ bun src/verification/opencode/cli.ts native --root "$ROOT" --kind capture \
 
 The command writes a new, mode-restricted PNG under
 `.agents/docs/evidence/full-instance-qualification/` in the candidate checkout.
-Only single-component `.png`, `.md`, or `.json` outputs in that task-scoped
-evidence directory are treated as probe evidence rather than material source
-changes. The manifest retains the initial candidate revision and dirty-path
-provenance; edits elsewhere, or other file types in that directory, invalidate
-the launch proof and require fresh setup/observation. This narrow evidence
-scope is not a clean-tree requirement or a general exemption for docs/data.
+The manifest retains the launch revision and source/build metadata for review.
+Source edits, documentation, screenshots and GUI rebuilds do not revoke access
+to the owned instance or invalidate recorded observations. Architect decides
+whether a changed feature needs a fresh observation. Workspace and entry paths
+still bind interactions to the owned checkout.
 Keep screenshots only when they contain no credentials, unrelated chats,
 personal data, or other sensitive material. If native delivery becomes
 pending or ambiguous, inspect only that request:

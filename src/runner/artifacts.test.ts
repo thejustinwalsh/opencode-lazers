@@ -46,6 +46,10 @@ test("identical check modules retain the same environment identity across reload
         '"../task.ts"',
         JSON.stringify(fileURLToPath(new URL("../task.ts", import.meta.url))),
       )
+      .replace(
+        '"./checks.ts"',
+        JSON.stringify(fileURLToPath(new URL("./checks.ts", import.meta.url))),
+      )
     const paths = [join(directory, "first.ts"), join(directory, "second.ts")]
     for (const path of paths) writeFileSync(path, source)
     const first = (await import(pathToFileURL(paths[0]!).href)) as typeof import("./artifacts.ts")

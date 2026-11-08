@@ -30,7 +30,7 @@ task's behavior tests. Correct remaining substantive failures; do not hand
 formatting or fixable lint failures back to another model.
 Report changed files, checks and unresolved issues in prose, without task JSON.
 Evidence is passing checks and observed behavior, not file hashes.
-Runtime verification determines acceptance.
+Architect reviews the delivered behavior and check results; runtime records acceptance.
 Verify the requested behavior without adding acceptance requirements. Check the
 coherent result rather than every edit. Use focused checks to diagnose
 failures; repeat broader checks when changes or unresolved risk justify them.

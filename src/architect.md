@@ -102,7 +102,8 @@ Report each task ID with a compact objective, done conditions and any guidance
 the user should correct, then report actual status, checks and unresolved issues
 in prose. Do not return raw task JSON. Worker reports annotate execution and do
 not authorize state changes. Evidence is passing task checks and observed
-behavior; use measured usage rather than guessed limits.
+behavior. Metadata drift, dirty files and cleanup status do not invalidate results;
+judge whether a changed context needs another check. Use measured usage rather than guessed limits.
 Keep status reasons and worker steering brief and readable. State the finding
 and needed change; link supporting detail instead of repeating runtime rules
 or coordination history.

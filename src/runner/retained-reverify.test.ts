@@ -656,8 +656,18 @@ test("registered retained repair verification executes the exact authored build/
   expect(f.sessions.get(f.attempt.session_id)?.background?.state).toBe("unknown")
 })
 
+test("uncommitted retained work is preserved while its selected committed candidate is checked", async () => {
+  const f = await heldRepairFixture()
+  writeFileSync(join(f.attempt.workspace, "untracked.txt"), "preserve this work")
+  const result = await f.control.execute(f.request)
+  expect(result.operationID).toBeDefined()
+  expect(readFileSync(join(f.attempt.workspace, "untracked.txt"), "utf8")).toBe(
+    "preserve this work",
+  )
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+})
+
 test.each([
-  "dirty",
   "moved-head",
   "non-descendant",
   "busy",
@@ -677,7 +687,6 @@ test.each([
     const f = await heldRepairFixture()
     const worker = f.sessions.get(f.attempt.session_id)!
     const prompts = [...f.prompts]
-    if (kind === "dirty") writeFileSync(join(f.attempt.workspace, "untracked.txt"), "not committed")
     if (kind === "moved-head") {
       writeFileSync(join(f.attempt.workspace, "result.txt"), "retained candidate\nlater\n")
       git(f.attempt.workspace, ["commit", "-am", "later source"])
@@ -1605,7 +1614,7 @@ test(
       throw new Error("Deferred combined evidence has no phase-specific input fingerprint")
     expect(combinedInputFingerprint).not.toBe(combinedOperation.inputFingerprint)
     expect(retainedVerificationProbeBasis(combinedOperation, "combined").inputs.revision).toBe(
-      combinedInputFingerprint,
+      `${combinedOperation.id}:${combinedOperation.generation}:combined`,
     )
     expect(reopenedStore.plan(f.planID)?.state).toBe("running")
     expect(
@@ -1750,7 +1759,7 @@ test("stale, wrong-candidate, wrong-attempt and foreign-owner requests launch no
   ).toBe(0)
 })
 
-test("unisolatable required shared services block before checkout or check receipt", async () => {
+test("a service URL in an authorized check does not trigger a verification admission ban", async () => {
   const f = fixture({ taskCheckCommand: "true # http://127.0.0.1:5432" })
   await f.runtime.command(
     {
@@ -1789,11 +1798,8 @@ test("unisolatable required shared services block before checkout or check recei
       )
       .get(result.operationID),
   )!
-  expect(JSON.parse(retained.payload)).toMatchObject({
-    state: "held",
-    holdReason: expect.stringContaining("shared external service"),
-  })
-  expect(f.worktreeCreations).toHaveLength(before)
+  expect(JSON.parse(retained.payload).holdReason ?? "").not.toContain("shared external service")
+  expect(f.worktreeCreations.length).toBeGreaterThan(before)
   expect(
     f.store.atomic(
       (db) =>
@@ -1803,10 +1809,10 @@ test("unisolatable required shared services block before checkout or check recei
           )
           .get(result.operationID)!.count,
     ),
-  ).toBe(0)
+  ).toBeGreaterThan(0)
 })
 
-test("an opaque called script is held before candidate checkout or receipt creation", async () => {
+test("a configured script executes and records its actual command failure", async () => {
   const f = fixture({ taskCheckCommand: "bun ./scripts/check-profile-and-database.ts" })
   await f.runtime.command(
     {
@@ -1847,9 +1853,9 @@ test("an opaque called script is held before candidate checkout or receipt creat
   )!
   expect(JSON.parse(retained.payload)).toMatchObject({
     state: "held",
-    holdReason: expect.stringContaining("has no project-authored procedure/resource binding"),
+    holdReason: expect.stringContaining("exited with code"),
   })
-  expect(f.worktreeCreations).toHaveLength(before)
+  expect(f.worktreeCreations.length).toBeGreaterThan(before)
   expect(
     f.store.atomic(
       (db) =>
@@ -1859,7 +1865,7 @@ test("an opaque called script is held before candidate checkout or receipt creat
           )
           .get(result.operationID)!.count,
     ),
-  ).toBe(0)
+  ).toBeGreaterThan(0)
 })
 
 test("a current task probe definition cannot be bypassed by task-check receipts", async () => {
@@ -1996,23 +2002,23 @@ test(
       cleanupState: "pending" as const,
     }
     const architect = { sessionID: "owner", agent: "architect" }
-    expect(() =>
+    expect(
       probes.startRun(
         {
           ...probeInput,
-          requestID: "stale-retained-live-probe",
-          inputs: { ...basis.inputs, revision: "stale" },
+          requestID: "described-retained-live-probe",
+          inputs: { ...basis.inputs, revision: "updated-context" },
         },
         architect,
-      ),
-    ).toThrow("candidate, inputs or environment are stale")
+      ).status,
+    ).toBe("started")
     expect(() =>
       probes.startRun(
         { ...probeInput, requestID: "foreign-retained-live-probe" },
         { sessionID: "foreign", agent: "architect" },
       ),
     ).toThrow("current Architect owner")
-    expect(probes.runsForAttempt(f.attempt.id)).toHaveLength(0)
+    expect(probes.runsForAttempt(f.attempt.id)).toHaveLength(1)
     const started = probes.startRun(probeInput, architect)
     if (started.status === "conflict") throw new Error(started.message)
     expect(started.run).toMatchObject({

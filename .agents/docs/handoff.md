@@ -1,9 +1,29 @@
 # Current dogfood handoff
 
-Updated 2026-11-07. Goal stays active: drive OpenCode Desktop until the entire
+Updated 2026-11-08. Goal stays active: drive OpenCode Desktop until the entire
 roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. This file is a locator; native runtime/API state is authoritative.
 Older details remain in Git history and linked reports.
+
+## Priority: verification gate repair
+
+Root removed source-file hashing, dirty-tree and environment/metadata expiry
+from verification acceptance. Check results depend on actual exit/timeout and
+product observations; Architect judges whether changed context needs a reprobe.
+Same-attempt formatting capture, specific command failures and Bun discovery
+repair the concrete Radar exit127 blocker. Trajectory and maintenance views
+follow the same rule. Owned Desktop source edits/rebuilds no longer lock testing.
+Schema validation, Architect task self-review, operation ownership, task/attempt
+association and safe cleanup remain. See
+`design/reviews/verification-gate-audit-20261108.md` for validation and activation.
+No replacement workers or microtasks are needed for this repair.
+
+Native Architect received Root's coordination and asked whether Root handles
+admission while it issues no more execution commands. Root selected that option
+in Desktop; submission was not yet confirmed. CUA AX clicks/keys and screenshots
+are inconsistent; do not claim successful delivery from an attempted click.
+Architect `ses_e568438ebffeaoFbF9nBb942XM` remains Sol High. Native Luna review
+`ses_e435f01d6ffebq0784b403Un3R` completed. Preserve existing workers/attempts.
 
 ## Current review boundary — 2026-11-08
 
@@ -35,12 +55,10 @@ task**. Native Luna workspace research is complete; see
 change four fresh path producers, retain native API/cleanup. Research and source
 review sessions are finished; no further polling needed.
 
-Computer Use repeatedly explicitly reports macOS locked. User unlock request is
-pending. After unlock: answer Architect, relay both corrected compositions and
-completed reviews, stage/observe actual Tasks and Radar at narrow/wide sizes,
-request native Terra High screenshot review, then coordinate integration/acceptance
-and original roadmap continuation. Do not infer live acceptance from tests. No
-model prompts through SDK. Durable ignored `.cache/driver/client.ts` discovers the
+Connected Desktop acceptance of Tasks/Radar remains pending. Both corrected
+compositions are preserved; continue narrow/wide observation and native Tera
+High screenshot review after the verification repair is activated. No model
+prompts through SDK. Durable ignored `.cache/driver/client.ts` discovers the
 existing service; `state.ts` and bounded public-output helpers are available.
 
 ## Working rules
@@ -67,7 +85,7 @@ existing service; `state.ts` and bounded public-output helpers are available.
 
 Canonical source180 landed through `d2f4a79`, corrected174 through `3e47b2e`.
 Formatter-tool fix `28066f4` and the tasking tune are ancestors. Revalidate HEAD.
-Architect `ses_e568438ebffeaoFbF9nBb942XM`, service PID3219; revalidate both.
+Architect `ses_e568438ebffeaoFbF9nBb942XM`; revalidate the service before use.
 Desktop CUA is usable after native webview reload. AX indices move while streaming;
 read fresh controls. Native `typeText` worked when paste silently missed. Verify
 actual composer value and submission receipt. Avoid unnecessary app restarts.

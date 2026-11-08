@@ -4672,7 +4672,6 @@ test("completed shared plan verifies its exact artifact without touching an adva
   expect(JSON.parse(check.receipt!).check).toMatchObject({
     cwd: workspace,
     artifact: plan.artifact,
-    unchanged: true,
     exitCode: 0,
   })
 })
@@ -4809,7 +4808,6 @@ test("reconciliation retains legacy advanced-checkout receipts and verifies the 
   const fresh = JSON.parse(effects.find((effect) => effect.id !== legacyID)!.receipt!).check
   expect(fresh).toMatchObject({
     artifact: f.store.plan(f.receipt.planID)!.artifact!,
-    unchanged: true,
     exitCode: 0,
   })
   expect(fresh.cwd).not.toBe(f.root)
@@ -4849,7 +4847,7 @@ test("explicit reconcile retries conclusive combined checks after environment re
   expect(checks().find((effect) => effect.id === failed.id)?.receipt).toBe(failed.receipt)
   const fresh = checks().find((effect) => effect.id !== failed.id)!
   expect(JSON.parse(fresh.payload).verificationEpoch).toBeGreaterThan(0)
-  expect(JSON.parse(fresh.receipt!).check).toMatchObject({ exitCode: 0, unchanged: true })
+  expect(JSON.parse(fresh.receipt!).check).toMatchObject({ exitCode: 0 })
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
 

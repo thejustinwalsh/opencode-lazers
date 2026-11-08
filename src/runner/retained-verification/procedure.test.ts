@@ -71,6 +71,6 @@ test.each([
   "bun fmt src/progress/native.ts; echo unbound",
   "bun fmt --check src/progress/$(echo injected)",
   "bun fmt --config foreign.json src/progress/native.ts",
-])("composed verification preserves rejection of %s", (command) => {
-  expect(retainedProcedurePlan(command).status).toBe("unsupported")
+])("authorized verification commands are not restricted by a syntax allowlist: %s", (command) => {
+  expect(retainedProcedurePlan(command).status).toBe("supported")
 })

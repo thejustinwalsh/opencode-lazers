@@ -40,7 +40,7 @@ const actorSchema = z.strictObject({
   agent: identifier,
 })
 
-/** Durable source record identity; revision changes invalidate older receipts. */
+/** Durable source context; revision changes remain available for Architect review. */
 export const ProbeBasisSchema = z.strictObject({
   recordID: safeTextSchema(500),
   revision: safeTextSchema(200),
@@ -48,7 +48,7 @@ export const ProbeBasisSchema = z.strictObject({
 export type ProbeBasis = z.infer<typeof ProbeBasisSchema>
 
 export const ProbeCandidateSchema = z.strictObject({
-  // Candidate freshness is a Git object identity, not a content hash invented by this feature.
+  // Git revision identifies the observed source; it does not expire the result.
   revision: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
   workspace: reference,
 })
