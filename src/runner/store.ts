@@ -1,5 +1,6 @@
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
+import { sessionAssociations } from "../observability/associations.ts"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
@@ -456,6 +457,7 @@ export type SchedulingReservationFact = AttemptRow & {
 export type SchedulingFactSnapshot = {
   projectDirectory: string
   repositoryVersion: number
+  sessionAssociations?: SchedulingSessionAssociations
   plans: SchedulingPlanFact[]
   totalPlanCount: number
   plansComplete: boolean
@@ -473,6 +475,94 @@ export type SchedulingFactSnapshot = {
   taskIntegrations: TaskPrerequisiteIntegrationRow[]
   planIntegrations: PrerequisiteIntegrationRow[]
   planIntegrationsComplete: boolean
+}
+
+export type SchedulingSessionAssociations = {
+  taskIDs: string[]
+  planIDs: string[]
+  planCount: number
+  nodeCount: number
+  activeReservationCount: number
+}
+
+function schedulingSessionAssociations(
+  db: Database,
+  projectDirectory: string,
+  sessionID: string,
+): SchedulingSessionAssociations {
+  const associations = sessionAssociations(db, projectDirectory, sessionID)
+  const planBodies = new Map<string, string>()
+  const pending = [...associations.planIDs]
+  if (associations.planIDs.size > 1_000)
+    throw new Error("Observation scope is too large; narrow it")
+
+  const planBody = db.query<{ body: string }, [string, string]>(
+    "SELECT body FROM runner_plans WHERE project_directory=? AND id=?",
+  )
+  while (pending.length) {
+    const planID = pending.pop()!
+    const body = planBodies.get(planID) ?? planBody.get(projectDirectory, planID)?.body
+    if (body === undefined) continue
+    planBodies.set(planID, body)
+    let afterPlans: string[] = []
+    try {
+      const parsed = PlanInput.safeParse(JSON.parse(body))
+      if (parsed.success) afterPlans = parsed.data.afterPlans ?? []
+    } catch {
+      // Malformed plan input has no readable afterPlans relationships.
+    }
+    for (const dependency of afterPlans) {
+      if (associations.planIDs.has(dependency)) continue
+      const related = planBody.get(projectDirectory, dependency)
+      if (!related) continue
+      associations.planIDs.add(dependency)
+      planBodies.set(dependency, related.body)
+      pending.push(dependency)
+      if (associations.planIDs.size > 1_000)
+        throw new Error("Observation scope is too large; narrow it")
+    }
+  }
+
+  const planIDs = [...associations.planIDs].toSorted()
+  for (let offset = 0; offset < planIDs.length; offset += 100) {
+    const batch = planIDs.slice(offset, offset + 100)
+    for (const row of db
+      .query<{ task_id: string }, string[]>(
+        `SELECT task_id FROM runner_nodes WHERE plan_id IN (${batch.map(() => "?").join(",")})`,
+      )
+      .all(...batch))
+      associations.taskIDs.add(row.task_id)
+  }
+
+  const countForPlans = (
+    table: "runner_nodes" | "runner_attempts" | "runner_adoptions",
+    filter = "",
+  ) => {
+    let count = 0
+    for (let offset = 0; offset < planIDs.length; offset += 100) {
+      const batch = planIDs.slice(offset, offset + 100)
+      count += db
+        .query<{ count: number }, string[]>(
+          `SELECT COUNT(*) AS count FROM ${table} WHERE plan_id IN (${batch.map(() => "?").join(",")}) ${filter}`,
+        )
+        .get(...batch)!.count
+    }
+    return count
+  }
+
+  const activeReservationCount =
+    countForPlans("runner_attempts", "AND state IN ('preparing','running','verifying')") +
+    countForPlans(
+      "runner_adoptions",
+      "AND state IN ('pending','task-checks','combined-checks','waiting-human')",
+    )
+  return {
+    taskIDs: [...associations.taskIDs].toSorted(),
+    planIDs,
+    planCount: planIDs.length,
+    nodeCount: countForPlans("runner_nodes"),
+    activeReservationCount,
+  }
 }
 
 export function appendOutboxReceipt(previous: string | null, next: unknown) {
@@ -3402,7 +3492,14 @@ export class RunnerStore {
     return rows
   }
   /** One bounded, read-only database view for the registered scheduling projection. */
-  schedulingFacts(input: { maxPlans?: number; maxNodes?: number; maxReservations?: number } = {}) {
+  schedulingFacts(
+    input: {
+      maxPlans?: number
+      maxNodes?: number
+      maxReservations?: number
+      scopeSessionID?: string
+    } = {},
+  ) {
     const maxPlans = Math.max(1, Math.min(input.maxPlans ?? 1_000, 1_000))
     const maxNodes = Math.max(1, Math.min(input.maxNodes ?? 10_000, 10_000))
     const maxReservations = Math.max(1, Math.min(input.maxReservations ?? 10_000, 10_000))
@@ -3413,6 +3510,9 @@ export class RunnerStore {
           "SELECT COALESCE(MAX(id),0) AS version FROM task_changes WHERE project_directory=?",
         )
         .get(directory)!.version
+      const scopedAssociations = input.scopeSessionID
+        ? schedulingSessionAssociations(db, directory, input.scopeSessionID)
+        : undefined
       const totalPlanCount = db
         .query<{ count: number }, [string]>(
           "SELECT COUNT(*) AS count FROM runner_plans WHERE project_directory=?",
@@ -3583,6 +3683,7 @@ export class RunnerStore {
       return {
         projectDirectory: directory,
         repositoryVersion,
+        ...(scopedAssociations ? { sessionAssociations: scopedAssociations } : {}),
         plans,
         totalPlanCount,
         plansComplete: plans.length === totalPlanCount,

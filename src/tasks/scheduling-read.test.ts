@@ -34,6 +34,7 @@ function fixture() {
     priority: number,
     dependency = false,
     afterPlans: string[] = [],
+    sessionID = "owner",
   ) => {
     const task = repository.insert({
       schemaVersion: 1,
@@ -45,7 +46,7 @@ function fixture() {
         projectID: "project",
         projectDirectory: directory,
         workspaceDirectory: directory,
-        sessionID: "owner",
+        sessionID,
         startingRevision: { kind: "git", commit: baseCommit },
       },
       proposal: { ...validProposal(), objective: name, writeScope: [`${name}.ts`] },
@@ -67,7 +68,7 @@ function fixture() {
           { id: "done", assertion: "Done", evidence: [{ kind: "human", decision: "review" }] },
         ],
       },
-      "owner",
+      sessionID,
     )
     repository.atomic((db) => {
       db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID)
@@ -119,6 +120,92 @@ test("scheduling pages pin one bounded ordered snapshot while a new write remain
   expect(refreshed.repositoryVersion).toBeGreaterThan(version)
   expect(refreshed.next).toMatchObject({ status: "known", candidate: { taskID: newer.task.id } })
   expect(thirdPlan.plan.planID).not.toBe(first.plans[0]!.planID)
+})
+
+test("Session visibility preserves the project-wide winner and exposes it only when associated", async () => {
+  const f = fixture()
+  const local = f.create("session-a-winner", 20, false, [], "session-a")
+  const unrelated = f.create("session-b-lower", 10, false, [], "session-b")
+  const read = new TaskSchedulingRead(f.store, () => 11)
+  const session = await read.read({
+    scope: { kind: "session", sessionID: "session-a" },
+    limit: 10,
+  })
+  expect(session.plans.map((plan) => plan.planID)).toEqual([local.plan.planID])
+  expect(session.selectedTaskIDs).toEqual([local.task.id])
+  expect(session.next).toMatchObject({ status: "known", candidate: { taskID: local.task.id } })
+  expect(session.coverage).toMatchObject({
+    planCount: 1,
+    coveredPlanCount: 1,
+    nodeCount: 1,
+    coveredNodeCount: 1,
+  })
+
+  const project = await read.read({
+    scope: { kind: "project", sessionID: "session-a" },
+    limit: 10,
+  })
+  expect(project.plans.map((plan) => plan.planID)).toEqual([
+    local.plan.planID,
+    unrelated.plan.planID,
+  ])
+  expect(project.next).toMatchObject({ status: "known", candidate: { taskID: local.task.id } })
+})
+
+test("Session associations include same-project afterPlans prerequisites but not unrelated plans", async () => {
+  const f = fixture()
+  const prerequisite = f.create("session-b-linked-prerequisite", 0, false, [], "session-b")
+  const local = f.create("session-a-plan", 20, false, [prerequisite.plan.planID], "session-a")
+  const unrelated = f.create("session-b-unrelated", -10, false, [], "session-b")
+  const read = new TaskSchedulingRead(f.store, () => 13)
+  const result = await read.read({
+    scope: { kind: "session", sessionID: "session-a" },
+    limit: 10,
+  })
+  expect(result.plans.map((plan) => plan.planID)).toEqual([
+    local.plan.planID,
+    prerequisite.plan.planID,
+  ])
+  expect(result.plans[0]?.afterPlans).toEqual([prerequisite.plan.planID])
+  expect(result.plans.map((plan) => plan.planID)).not.toContain(unrelated.plan.planID)
+  expect(result.next).toMatchObject({
+    status: "known",
+    candidate: { taskID: prerequisite.task.id, planID: prerequisite.plan.planID },
+  })
+  expect(result.coverage).toMatchObject({
+    planCount: 2,
+    coveredPlanCount: 2,
+    nodeCount: 2,
+    coveredNodeCount: 2,
+  })
+})
+
+test("an outside-Session global winner never promotes a lower local task and pages stay scoped", async () => {
+  const f = fixture()
+  const unrelated = f.create("outside-session-winner", 50, false, [], "session-b")
+  const firstLocal = f.create("session-a-first", 10, false, [], "session-a")
+  const secondLocal = f.create("session-a-second", 1, false, [], "session-a")
+  const read = new TaskSchedulingRead(f.store, () => 12)
+  const scope = { kind: "session" as const, sessionID: "session-a" }
+  const first = await read.read({ scope, limit: 1 })
+  expect(first.plans.map((plan) => plan.planID)).toEqual([firstLocal.plan.planID])
+  expect(first.plans[0]?.planOrder).toBe(1)
+  expect(first.selectedTaskIDs).toEqual([firstLocal.task.id, secondLocal.task.id])
+  expect(first.next).toMatchObject({ status: "unknown" })
+  expect(first.next).not.toMatchObject({ candidate: { taskID: firstLocal.task.id } })
+  expect(first.plans.map((plan) => plan.planID)).not.toContain(unrelated.plan.planID)
+  expect(first.coverage).toMatchObject({
+    planCount: 2,
+    coveredPlanCount: 2,
+    nodeCount: 2,
+    coveredNodeCount: 2,
+  })
+
+  const second = await read.read({ scope, cursor: first.nextCursor!, limit: 1 })
+  expect(second.snapshotID).toBe(first.snapshotID)
+  expect(second.plans.map((plan) => plan.planID)).toEqual([secondLocal.plan.planID])
+  expect(second.next).toEqual(first.next)
+  expect(second.coverage).toEqual(first.coverage)
 })
 
 test("unknown higher-priority coverage is not reported as no candidate", async () => {

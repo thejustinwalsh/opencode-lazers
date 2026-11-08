@@ -596,7 +596,85 @@ async function buildSnapshot(input: {
     selectionComplete,
     plans: allPlans,
   }
-  return { snapshot: SchedulingSnapshotSchema.parse(snapshot), cacheable }
+  const validated = SchedulingSnapshotSchema.parse(snapshot)
+  return {
+    snapshot: scope.kind === "session" ? scopeSessionSnapshot(validated, facts) : validated,
+    cacheable,
+  }
+}
+
+function scopeSessionSnapshot(
+  snapshot: SchedulingSnapshot,
+  facts: SchedulingFactSnapshot,
+): SchedulingSnapshot {
+  const associations = facts.sessionAssociations
+  if (!associations) throw new Error("Session scheduling associations are unavailable")
+
+  const planIDs = new Set(associations.planIDs)
+  const taskIDs = new Set(associations.taskIDs)
+  const plans = snapshot.plans
+    .filter((plan) => planIDs.has(plan.planID))
+    .map((plan) => ({
+      ...plan,
+      afterPlans: plan.afterPlans.filter((planID) => planIDs.has(planID)),
+      nodes: plan.nodes.map((node) => ({
+        ...node,
+        prerequisites: node.prerequisites.filter((taskID) => taskIDs.has(taskID)),
+        waitingOn: node.waitingOn.filter((id) => planIDs.has(id) || taskIDs.has(id)),
+        reservationTaskIDs: node.reservationTaskIDs.filter((taskID) => taskIDs.has(taskID)),
+      })),
+    }))
+  const coveredNodeCount = facts.nodes.filter((node) => planIDs.has(node.plan_id)).length
+  const capturedReservationCount =
+    facts.reservations.filter((reservation) => planIDs.has(reservation.plan_id)).length +
+    facts.adoptions.filter((adoption) => planIDs.has(adoption.plan_id)).length
+  const plansComplete = plans.length === associations.planCount
+  const nodesComplete = coveredNodeCount === associations.nodeCount
+  const reservationsComplete =
+    capturedReservationCount === associations.activeReservationCount &&
+    facts.reservationsComplete &&
+    facts.adoptionsComplete
+  const reasons = [
+    snapshot.coverage.reason,
+    !plansComplete ? "Session plan coverage is incomplete." : null,
+    !nodesComplete ? "Session task coverage is incomplete." : null,
+    !reservationsComplete ? "Session reservation coverage is incomplete." : null,
+  ].filter((reason): reason is string => reason !== null)
+
+  let next = snapshot.next
+  if (
+    next.status === "known" &&
+    (!planIDs.has(next.candidate.planID) || !taskIDs.has(next.candidate.taskID))
+  )
+    next = {
+      status: "unknown",
+      reason:
+        "The project-wide next task is outside this session scope; a session Next is unavailable.",
+    }
+  else if (next.status === "unknown")
+    next = {
+      status: "unknown",
+      reason: "Project-wide scheduling coverage is insufficient to establish this session's Next.",
+    }
+
+  return SchedulingSnapshotSchema.parse({
+    ...snapshot,
+    coverage: {
+      status: reasons.length ? "partial" : "complete",
+      planCount: associations.planCount,
+      coveredPlanCount: plans.length,
+      nodeCount: associations.nodeCount,
+      coveredNodeCount,
+      activeReservationCount: associations.activeReservationCount,
+      reservationsComplete,
+      reason: reasons.join(" ") || null,
+    },
+    next,
+    selectedTaskIDs: snapshot.selectedTaskIDs.filter((taskID) => taskIDs.has(taskID)),
+    selectionComplete:
+      snapshot.selectionComplete && plansComplete && nodesComplete && reservationsComplete,
+    plans,
+  })
 }
 
 export class TaskSchedulingRead {
@@ -855,6 +933,7 @@ export class TaskSchedulingRead {
             1,
             Math.min(this.limits.maxReservations ?? MAX_RESERVATIONS, MAX_RESERVATIONS),
           ),
+          ...(input.scope.kind === "session" ? { scopeSessionID: input.scope.sessionID } : {}),
         })
         this.work.factCaptures++
       } finally {

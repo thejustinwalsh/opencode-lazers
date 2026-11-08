@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import type { TopologyResponse } from "../observability/contract.ts"
 import type { TaskSummary } from "./contract.ts"
 import { buildExecutionList } from "./execution-list.ts"
+import type { SchedulingSnapshot } from "./scheduling-contract.ts"
 
 const id = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, "0")}`
 const planID = id(900)
@@ -76,6 +77,61 @@ function summaries(ids: string[]): TaskSummary[] {
     sessionID: "session",
     matches: [],
   }))
+}
+
+function scheduling(
+  nodes: FixtureNode[],
+  dependencies: Array<[string, string]>,
+): SchedulingSnapshot {
+  return {
+    schemaVersion: 1,
+    snapshotID: id(901),
+    repositoryVersion: 1,
+    scope: { kind: "project", sessionID: "session" },
+    observedAt: 1,
+    coverage: {
+      status: "complete",
+      planCount: 1,
+      coveredPlanCount: 1,
+      nodeCount: nodes.length,
+      coveredNodeCount: nodes.length,
+      activeReservationCount: 0,
+      reservationsComplete: true,
+      reason: null,
+    },
+    next: { status: "none" },
+    selectedTaskIDs: [],
+    selectionComplete: true,
+    plans: [
+      {
+        planID,
+        planVersion: 1,
+        planOrder: 0,
+        priority: 0,
+        title: "Fixture plan",
+        lifecycle: "running",
+        decision: "eligible",
+        reason: null,
+        afterPlans: [],
+        nodes: nodes.map((node) => ({
+          taskID: node.taskID,
+          title: `Task ${node.ordinal}`,
+          objective: `Task ${node.ordinal}`,
+          ordinal: node.ordinal,
+          order: node.ordinal,
+          lifecycle: (node.state ?? "ready") as "ready",
+          decision: "eligible",
+          reason: null,
+          prerequisites: dependencies
+            .filter(([, successor]) => successor === node.taskID)
+            .map(([prerequisite]) => prerequisite),
+          waitingOn: [],
+          reservationTaskIDs: [],
+        })),
+        nodesComplete: true,
+      },
+    ],
+  }
 }
 
 function renderedIDs(list: ReturnType<typeof buildExecutionList>) {
@@ -180,6 +236,51 @@ test("a diamond is one real expandable fork and its shared join stays on the roo
     { taskIDs: [left] },
     { taskIDs: [], hiddenCount: 1 },
   ])
+})
+
+test("scheduling-only fallback preserves flat chains and expandable diamond forks", () => {
+  const [root, left, right, join] = [id(1), id(2), id(3), id(4)]
+  const nodes = [root, left, right, join].map((taskID, ordinal) => ({ taskID, ordinal }))
+  const diamondEdges: Array<[string, string]> = [
+    [root, left],
+    [root, right],
+    [left, join],
+    [right, join],
+  ]
+  const complete = buildExecutionList({
+    tasks: summaries([root, left, right, join]),
+    scheduling: scheduling(nodes, diamondEdges),
+  })
+  expect(complete.plans[0]?.rows.map((row) => row.taskID)).toEqual([root, join])
+  expect(complete.plans[0]?.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([
+    [left],
+    [right],
+  ])
+  expect(new Set(renderedIDs(complete)).size).toBe(4)
+
+  const filtered = buildExecutionList({
+    tasks: summaries([left]),
+    search: "Task",
+    scheduling: scheduling(nodes, diamondEdges),
+  })
+  expect(filtered.plans[0]?.rows[0]).toMatchObject({ taskID: root, contextOnly: true })
+  expect(filtered.plans[0]?.rows[0]?.fork?.branches).toMatchObject([
+    { taskIDs: [left] },
+    { taskIDs: [], hiddenCount: 1 },
+  ])
+
+  const chain = buildExecutionList({
+    tasks: summaries([join, left, root]),
+    scheduling: scheduling(
+      [root, left, join].map((taskID, ordinal) => ({ taskID, ordinal })),
+      [
+        [root, left],
+        [left, join],
+      ],
+    ),
+  })
+  expect(chain.plans[0]?.rows.map((row) => row.taskID)).toEqual([root, left, join])
+  expect(chain.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
 })
 
 test("disjoint forks remain separate and an overlapping cross-edge is never forced into a tree", () => {
