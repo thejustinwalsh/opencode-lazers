@@ -154,6 +154,7 @@ const MAX_TRACKED_EVENTS = 4096
 export const LIVE_SIGNAL_LIMITS = {
   flowEntries: 256,
   retainedBytes: 256_000,
+  truncatedSessions: 500,
 } as const
 const NATIVE_SIGNAL_STATUS: Record<string, string> = {
   "session.execution.started": "execution-started",
@@ -406,7 +407,8 @@ export class ObservationChangeTracker {
   private readonly liveEventIDs = new Map<string, string>()
   private readonly liveSignals = new Map<string, { signal: NativeSignal; bytes: number }>()
   private liveSignalBytes = 0
-  private liveSignalTruncated = false
+  private readonly liveSignalTruncatedSessionIDs = new Set<string>()
+  private liveSignalTruncationUnknown = false
   private preferredLiveSessionID: string | null = null
   private scopeSelectionReads = 0
 
@@ -550,7 +552,34 @@ export class ObservationChangeTracker {
           Number(left.sessionID === this.preferredLiveSessionID)
         return preferred || left.sourceNativeRevision - right.sourceNativeRevision
       })
-    return { signals, truncated: this.liveSignalTruncated }
+    return {
+      signals,
+      truncated: this.liveSignalTruncationUnknown || this.hasTruncatedSession(sessionIDs),
+    }
+  }
+
+  private hasTruncatedSession(sessionIDs: ReadonlySet<string>) {
+    for (const sessionID of sessionIDs)
+      if (this.liveSignalTruncatedSessionIDs.has(sessionID)) return true
+    return false
+  }
+
+  private markLiveSignalsTruncated(sessionID: string) {
+    this.liveSignalTruncatedSessionIDs.delete(sessionID)
+    this.liveSignalTruncatedSessionIDs.add(sessionID)
+    while (this.liveSignalTruncatedSessionIDs.size > LIVE_SIGNAL_LIMITS.truncatedSessions) {
+      let oldest: string | undefined
+      for (const id of this.liveSignalTruncatedSessionIDs) {
+        if (id !== this.preferredLiveSessionID) {
+          oldest = id
+          break
+        }
+      }
+      const eviction = oldest ?? this.liveSignalTruncatedSessionIDs.values().next().value
+      if (eviction === undefined) break
+      this.liveSignalTruncatedSessionIDs.delete(eviction)
+      this.liveSignalTruncationUnknown = true
+    }
   }
 
   recordLiveEvent(eventID: string, sessionID: string) {
@@ -565,7 +594,7 @@ export class ObservationChangeTracker {
     if (this.liveSignals.has(key)) return
     const bytes = liveSignalBytes(signal)
     if (bytes > LIVE_SIGNAL_LIMITS.retainedBytes) {
-      this.liveSignalTruncated = true
+      this.markLiveSignalsTruncated(signal.sessionID)
       return
     }
     while (
@@ -577,12 +606,12 @@ export class ObservationChangeTracker {
       )
       const eviction = oldest ?? this.liveSignals.entries().next().value
       if (!eviction) {
-        this.liveSignalTruncated = true
+        this.markLiveSignalsTruncated(signal.sessionID)
         return
       }
       this.liveSignals.delete(eviction[0])
       this.liveSignalBytes -= eviction[1].bytes
-      this.liveSignalTruncated = true
+      this.markLiveSignalsTruncated(eviction[1].signal.sessionID)
     }
     this.liveSignals.set(key, { signal, bytes })
     this.liveSignalBytes += bytes
@@ -592,7 +621,8 @@ export class ObservationChangeTracker {
     this.liveEventIDs.clear()
     this.liveSignals.clear()
     this.liveSignalBytes = 0
-    this.liveSignalTruncated = false
+    this.liveSignalTruncatedSessionIDs.clear()
+    this.liveSignalTruncationUnknown = false
   }
 
   observeStamp(stamp: SourceStamp) {
@@ -645,6 +675,8 @@ export class ObservationChangeTracker {
     this.liveEventIDs.clear()
     this.liveSignals.clear()
     this.liveSignalBytes = 0
+    this.liveSignalTruncatedSessionIDs.clear()
+    this.liveSignalTruncationUnknown = false
     if (!state.members.size) {
       if (state.registryKey) projectStates.delete(state.registryKey)
       state.pendingNative = []
