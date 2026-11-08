@@ -103,6 +103,41 @@ test("patch input, output path count and malformed headers have bounded omission
   )
 })
 
+test("output paths enforce the UTF-8 byte boundary after normalization", () => {
+  const boundary = "é".repeat(FILE_TARGET_LIMITS.outputPathBytes / 2)
+  expect(observeFileTargets("read", { path: `./${boundary}` }, workspace)).toEqual({
+    coverage: "observed",
+    operation: "read",
+    paths: [boundary],
+  })
+  expect(observeFileTargets("read", { path: `${boundary}x` }, workspace)).toEqual({
+    coverage: "omitted",
+    operation: "read",
+    paths: [],
+  })
+})
+
+test("serialized output bytes truncate individually valid patch targets", () => {
+  const paths = Array.from({ length: FILE_TARGET_LIMITS.targets }, (_, index) =>
+    `${index}`.padEnd(FILE_TARGET_LIMITS.outputPathBytes, "x"),
+  )
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength
+  expect(bytes(paths)).toBeGreaterThan(FILE_TARGET_LIMITS.outputBytes)
+  const result = observeFileTargets(
+    "patch",
+    {
+      patchText: [
+        "*** Begin Patch",
+        ...paths.map((path) => `*** Update File: ${path}`),
+        "*** End Patch",
+      ].join("\n"),
+    },
+    workspace,
+  )
+  expect(result).toEqual({ coverage: "partial", operation: "patch", paths: paths.slice(0, -1) })
+  expect(bytes(result!.paths)).toBeLessThanOrEqual(FILE_TARGET_LIMITS.outputBytes)
+})
+
 test("unsupported tools and accessors do not expose or evaluate argument values", () => {
   let getterRead = false
   const input = Object.defineProperty({}, "path", {
