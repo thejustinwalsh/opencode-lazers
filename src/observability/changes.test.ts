@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test"
-import { ObservationChangeTracker, readSourceStamp, sourceStampFromDatabase } from "./changes.ts"
+import {
+  LIVE_SIGNAL_LIMITS,
+  ObservationChangeTracker,
+  readSourceStamp,
+  sourceStampFromDatabase,
+} from "./changes.ts"
 import type { ObservationChange } from "./contract.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -281,6 +286,59 @@ test("pending native signals drain only after exact scope selection and overflow
     const byteBounded = tracker.peekLiveSignals(new Set(["ses-architect-buffered"]))
     expect(byteBounded.signals.length).toBeLessThan(256)
     expect(byteBounded.truncated).toBe(true)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("native signal truncation is session-scoped until bounded omission markers overflow", () => {
+  const fixture = makeFixture()
+  try {
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(66),
+      "project",
+    )
+    tracker.initialize()
+    tracker.trackScopedSessions(["ses-anchor", "ses-busy"], "ses-anchor")
+
+    for (let index = 0; index < 270; index++)
+      tracker.native({
+        id: `evt-busy-${index}`,
+        type: "session.execution.started",
+        created: 46_000 + index,
+        data: { sessionID: "ses-busy" },
+      })
+
+    expect(tracker.peekLiveSignals(new Set(["ses-anchor"]))).toEqual({
+      signals: [],
+      truncated: false,
+    })
+    const busy = tracker.peekLiveSignals(new Set(["ses-busy"]))
+    expect(busy.truncated).toBe(true)
+    expect(busy.signals).toHaveLength(LIVE_SIGNAL_LIMITS.flowEntries)
+    expect(busy.signals[0]).toMatchObject({
+      sessionID: "ses-busy",
+      eventID: "evt-busy-14",
+    })
+
+    tracker.streamGap()
+    for (let index = 0; index < LIVE_SIGNAL_LIMITS.truncatedSessions + 257; index++) {
+      const sessionID = `ses-cap-${index}`
+      tracker.trackScopedSessions([sessionID], sessionID)
+      tracker.native({
+        id: `evt-cap-${index}`,
+        type: "session.execution.started",
+        created: 47_000 + index,
+        data: { sessionID },
+      })
+    }
+    expect(tracker.peekLiveSignals(new Set(["ses-cap-0"])).truncated).toBe(true)
+    tracker.streamGap()
+    expect(tracker.peekLiveSignals(new Set(["ses-cap-0"]))).toEqual({
+      signals: [],
+      truncated: false,
+    })
   } finally {
     fixture.close()
   }
