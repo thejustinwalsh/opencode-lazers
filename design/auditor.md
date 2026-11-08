@@ -83,3 +83,17 @@ same native-hook/retained-event coalescing test. Broader integration and runtime
 suite results are retained in `.cache/driver/auditor-*.log` and summarized in the
 handoff. Effective registration was observed natively; the first system-wide
 Auditor refactor remains a dogfood observation, not a result inferred from tests.
+
+## Native observation — 2026-11-08
+
+LZ-186 resumed the original Muse worker after the default-effort adapter repair
+and verified Go training permission. The actual worker called `lz-fallow-report`
+and then `lz-get-audit` to retrieve dead-code findings. SQLite records baseline
+`5a34540f-8f44-41ad-9597-b2cf1de5a86b`, task
+`8ff17c9d-8e47-4fab-92f2-276378f55de3`, attempt
+`e3f446f8-0969-4af6-b887-714f5095543a`, session
+`ses_0a7c388bd25741348a4fcaa75b9f825b`. Start1794170969948,
+finish1794170974814 Unix milliseconds:4.866 seconds, completed baseline.
+This proves native scanning, automatic association and finding retrieval.
+Follow-up comparison, simplification, Architect review and integration remain
+unproven until that worker finishes and its result is reviewed.

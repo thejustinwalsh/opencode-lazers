@@ -31,18 +31,24 @@ Quiet supported plugin reload activated the adapter and history tools. Architect
 plan `dbab5faf-7560-4321-88e1-4436030f6240`, original attempt
 `e3f446f8-0969-4af6-b887-714f5095543a`, original Muse worker
 `ses_0a7c388bd25741348a4fcaa75b9f825b`. Native prompt now reaches Go.
-Go returns provider.invalid-request400: this Muse endpoint trains on request
-content and the account's training permission is off. No worker tool calls yet.
-User has a pending choice here: use Luna Max through OpenAI or allow Muse
-training. Do not change privacy settings or model route while it is pending.
-No Auditor simplification or native history scan is yet observed complete.
+Go initially rejected Muse because its endpoint trains on requests. User then
+explicitly approved that sharing. Root opened the exact workspace privacy URL
+and confirmed paid-endpoint training enabled, persisting after reload. Architect
+issued another supported same-attempt resume; no replacement/model change.
+Native `session.active` confirms Muse running. Original worker completed
+`lz-fallow-report` then fetched findings with `lz-get-audit`. Production SQLite
+confirms run `5a34540f-8f44-41ad-9597-b2cf1de5a86b`, same task/attempt/session,
+start1794170969948,finish1794170974814 Unix ms, completed baseline (4.866s).
+The task's old provider failure remains history; current native activity and
+latest attempt/plan state must be inspected before acting. At last observation
+worker was reading actual source after fetching findings. No simplification,
+follow-up scan, review or integration is yet confirmed complete.
 
-Root submitted Desktop coordination reporting c9ffb96 and the provider block;
-confirm queued message consumption. Architect previously attached advice to
-preserve Root's audit/task-history code and focus on independent context work.
-History code is now committed; reconcile source overlap before later audit edits.
-Continue non-overlapping roadmap work and connected Tasks/Radar review while
-that model decision is pending. Preserve original workers and failure history.
+Root submitted Desktop coordination reporting c9ffb96. Architect attached updated
+advice preserving the history implementation and focusing initial simplification
+on independent context work. Audit-history code is now committed; compose current
+interfaces rather than overwrite them from the worker's older baseline.
+Continue the existing roadmap and connected Tasks/Radar review while Muse works.
 
 ## Current review boundary — 2026-11-08
 
