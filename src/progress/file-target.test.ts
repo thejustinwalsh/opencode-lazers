@@ -40,6 +40,18 @@ test("external, URI, traversal, malformed and over-limit paths are omitted", () 
     })
 })
 
+test("requested targets above the output-path cap are omitted", () => {
+  const path = `src/${"x".repeat(FILE_TARGET_LIMITS.outputPathBytes + 1)}`
+  const pathBytes = new TextEncoder().encode(path).byteLength
+  expect(pathBytes).toBeGreaterThan(FILE_TARGET_LIMITS.outputPathBytes)
+  expect(pathBytes).toBeLessThan(FILE_TARGET_LIMITS.pathBytes)
+  expect(observeFileTargets("read", { path }, workspace)).toEqual({
+    coverage: "omitted",
+    operation: "read",
+    paths: [],
+  })
+})
+
 test("patch parsing retains operation paths without retaining patch bodies", () => {
   const patchText = [
     "*** Begin Patch",
@@ -98,6 +110,30 @@ test("patch input, output path count and malformed headers have bounded omission
   const result = observeFileTargets("patch", { patchText }, workspace)
   expect(result?.coverage).toBe("partial")
   expect(result?.paths).toHaveLength(FILE_TARGET_LIMITS.targets)
+  expect(new TextEncoder().encode(JSON.stringify(result?.paths)).byteLength).toBeLessThanOrEqual(
+    FILE_TARGET_LIMITS.outputBytes,
+  )
+})
+
+test("multi-target patch summaries stay below the total output byte cap", () => {
+  const paths = Array.from(
+    { length: FILE_TARGET_LIMITS.targets },
+    (_, index) => `src/${index}${"x".repeat(FILE_TARGET_LIMITS.outputPathBytes - 5)}`,
+  )
+  const patchText = [
+    "*** Begin Patch",
+    ...paths.map((path) => `*** Update File: ${path}`),
+    "*** End Patch",
+  ].join("\n")
+  expect(new TextEncoder().encode(patchText).byteLength).toBeLessThan(FILE_TARGET_LIMITS.inputBytes)
+  expect(new TextEncoder().encode(JSON.stringify(paths)).byteLength).toBeGreaterThan(
+    FILE_TARGET_LIMITS.outputBytes,
+  )
+
+  const result = observeFileTargets("patch", { patchText }, workspace)
+  expect(result?.coverage).toBe("partial")
+  expect(result?.paths).toHaveLength(FILE_TARGET_LIMITS.targets - 1)
+  expect(result?.paths.at(-1)).toBe(paths.at(-2))
   expect(new TextEncoder().encode(JSON.stringify(result?.paths)).byteLength).toBeLessThanOrEqual(
     FILE_TARGET_LIMITS.outputBytes,
   )
