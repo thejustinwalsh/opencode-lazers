@@ -222,6 +222,7 @@ function knownUsageScenario(
     provenance: {
       source: "openrouter-endpoints",
       productID: "moonshotai/kimi-k3.1-pro",
+      priceBasis: "quote",
       sourceURL: "https://openrouter.ai/moonshotai/kimi-k3.1-pro/pricing",
       refreshState: "succeeded",
       snapshotID: "11111111-1111-4111-8111-111111111111",
@@ -272,13 +273,14 @@ function knownUsageScenario(
   }
 }
 
-test("known-usage inspector shows endpoint provenance and scoped documented cache-write zero", () => {
+test("known-usage inspector labels endpoint provenance and scoped documented cache-write zero", () => {
   const card = renderMarketScenario(knownUsageScenario())
   try {
     expect(card.initiallyOpen).toBe(false)
     expect(card.compactText).toContain("Current-market equivalent of known retained usage")
     expect(card.compactText).toContain("Scenario amount · $0.00002")
-    expect(card.compactText).toContain("OpenRouter endpoint · provider Moonshot AI")
+    expect(card.compactText).toContain("OpenRouter endpoint pricing · provider Moonshot AI")
+    expect(card.compactText).not.toContain("OpenRouter model catalog")
     expect(card.compactText).toContain("moonshotai/mxfp4")
     expect(card.compactText).toContain("service tier not specified · Current")
     expect(card.compactText).toContain("not actual charges")
@@ -295,10 +297,34 @@ test("known-usage inspector shows endpoint provenance and scoped documented cach
     expect(card.evidenceText()).toContain("Cache write · 5 tokens · Observed")
     expect(card.evidenceText()).toContain("standard0.0000020.000010.00000020")
     expect(card.evidenceText()).toContain("not a complete-task bound")
+    expect(card.evidenceText()).toContain("OpenRouter endpoint pricing")
+    expect(card.evidenceText()).toContain("OpenRouter endpoint source")
     expect(card.markup).toContain('aria-label="Current-market equivalent of known retained usage"')
     expect(card.markup).toContain('<th scope="col">Tier</th>')
     expect(card.markup).toContain('<th scope="row">standard</th>')
     expect(card.markup).toContain('target="_blank" rel="noreferrer"')
+  } finally {
+    card.dispose()
+  }
+})
+
+test("unknown or missing market provenance stays visible without fabricating a source link", () => {
+  const base = knownUsageScenario()
+  const card = renderMarketScenario(
+    knownUsageScenario({
+      provenance: {
+        ...base.provenance,
+        source: "future-price-source" as KnownUsageMarketScenario["provenance"]["source"],
+        sourceURL: "",
+      },
+    }),
+  )
+  try {
+    expect(card.compactText).toContain("Pricing source unavailable")
+    expect(card.expand()).toBe(true)
+    expect(card.evidenceText()).toContain("Pricing source")
+    expect(card.evidenceText()).toContain("Source unavailable")
+    expect(card.details.querySelector("a")).toBeNull()
   } finally {
     card.dispose()
   }

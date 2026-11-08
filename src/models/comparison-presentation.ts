@@ -220,15 +220,15 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   if (estimate.status === "exact" && estimate.valueUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketAmount(estimate.valueUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · ${freshness}`,
+      title: `OpenRouter model catalog scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.status === "conditional" && estimate.rangeUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketRange(estimate.rangeUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter range · ${freshness}`,
-      title: `OpenRouter conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · range · ${freshness}`,
+      title: `OpenRouter model catalog conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.status !== "partial") return undefined
@@ -236,15 +236,15 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   if (estimate.knownSubtotalUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketAmount(estimate.knownSubtotalUSDPerAcceptedTask)} priced portion / accepted task`,
-      context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · ${freshness}`,
+      title: `OpenRouter model catalog known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.knownSubtotalRangeUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketRange(estimate.knownSubtotalRangeUSDPerAcceptedTask)} priced portion / accepted task`,
-      context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · ${freshness}`,
+      title: `OpenRouter model catalog known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   return undefined
@@ -265,9 +265,9 @@ export function currentMarketEstimateSummary(input: {
     const freshness = marketFreshness(input.priceFreshness)
     const source =
       input.priceSource === "openrouter"
-        ? "OpenRouter"
+        ? "OpenRouter model catalog"
         : input.priceSource === "opencode"
-          ? "OpenCode"
+          ? "OpenCode model catalog"
           : input.priceSource === "mixed"
             ? "Configured price sources"
             : "Configured price source"
@@ -369,6 +369,59 @@ export function boundedModelLabel(value: string, maximumLength = 36) {
   const characters = Array.from(value)
   if (characters.length <= maximumLength) return value
   return `${characters.slice(0, Math.max(1, maximumLength - 1)).join("")}…`
+}
+
+/** Remove route disambiguation from a display label, then retain the selected effort. */
+export function modelEffortLabel(value: string, route?: ModelDisplayRoute) {
+  if (!route) return value
+  const exactRouteSuffix = ` · ${routeLabel(route)}`
+  const modelName = value.endsWith(exactRouteSuffix)
+    ? value.slice(0, -exactRouteSuffix.length)
+    : value
+  if (
+    route.variant &&
+    modelName.toLocaleLowerCase().endsWith(` · ${route.variant}`.toLocaleLowerCase())
+  )
+    return modelName
+  return route.variant ? `${modelName} · ${route.variant}` : modelName
+}
+
+/** Bound chart labels without dropping the selected effort at narrow widths. */
+export function boundedModelEffortLabel(value: string, maximumLength = 36) {
+  const characters = Array.from(value)
+  if (characters.length <= maximumLength) return value
+
+  const separator = value.lastIndexOf(" · ")
+  if (separator < 0) return boundedModelLabel(value, maximumLength)
+
+  const modelName = value.slice(0, separator)
+  const effort = value.slice(separator + 3)
+  const effortBudget = Math.max(1, maximumLength - 5)
+  const visibleEffort =
+    Array.from(effort).length <= effortBudget
+      ? effort
+      : effortBudget === 1
+        ? "…"
+        : `…${Array.from(effort)
+            .slice(-(effortBudget - 1))
+            .join("")}`
+  const suffix = ` · ${visibleEffort}`
+  const nameBudget = Math.max(1, maximumLength - Array.from(suffix).length - 1)
+  return `${Array.from(modelName).slice(0, nameBudget).join("")}…${suffix}`
+}
+
+/** Bound both lines of the visible identity badge; the full exact route stays in accessible detail. */
+export function chartModelEffortLabel(
+  value: string,
+  route?: ModelDisplayRoute,
+  maximumLineLength = 18,
+) {
+  const label = modelEffortLabel(value, route)
+  if (!route?.variant) return boundedModelLabel(label, maximumLineLength)
+
+  const suffix = ` · ${route.variant}`
+  const modelName = label.endsWith(suffix) ? label.slice(0, -suffix.length) : label
+  return `${boundedModelLabel(modelName, maximumLineLength)}\n${boundedModelLabel(route.variant, maximumLineLength)}`
 }
 
 export function sourceTitle(source: ModelSource["source"]) {

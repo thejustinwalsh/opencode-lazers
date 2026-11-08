@@ -46,6 +46,7 @@ import type {
 } from "../../src/models/decision-contract.ts"
 import { ModelDecisionEstimateSchema } from "../../src/models/decision-contract.ts"
 import { ModelDecisionReferenceEstimateSchema } from "../../src/models/reference-estimate.ts"
+import { KnownUsageMarketSchema } from "../../src/models/market-range.ts"
 import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-estimate.ts"
 import type { ModelMappingUpdate } from "../../src/models/mapping-schema.ts"
 import { ModelSettingsService } from "../../src/models/service.ts"
@@ -223,6 +224,139 @@ function openRouterReference(
         cacheWrite: { tokens: null, status: "missing", rateCoverage: "missing" },
       },
     },
+  })
+}
+
+type KnownUsageSource = "openrouter-endpoints" | "openrouter-models" | "native-catalog"
+
+function knownUsageMarketForSource(
+  route: ModelDecisionConfiguration["route"],
+  source: KnownUsageSource,
+) {
+  const productID = `${route.providerID}/${route.modelID}`
+  const sourceURL =
+    source === "openrouter-endpoints"
+      ? `https://openrouter.ai/${productID}/pricing`
+      : source === "openrouter-models"
+        ? "https://openrouter.ai/api/v1/models"
+        : "https://opencode.ai/models"
+  const priceBasis = source === "openrouter-models" ? "average" : "quote"
+  const cacheWriteBasis =
+    source === "openrouter-endpoints"
+      ? "endpoint-rate"
+      : source === "openrouter-models"
+        ? "published-model-rate"
+        : "published-native-quote"
+
+  return KnownUsageMarketSchema.parse({
+    schemaVersion: 1,
+    scope: "known-retained-token-usage-only",
+    route,
+    identity: {
+      status: "exact",
+      productID,
+      rules: [],
+      basis: "exact-published-catalog-id",
+      catalogSourceState: "available",
+      evidence: {
+        native: [],
+        catalog: [],
+        nativeRecordCount: 0,
+        catalogRecordCount: 0,
+        nativeTruncated: false,
+        catalogTruncated: false,
+      },
+    },
+    status: "exact",
+    scenarios: [
+      {
+        id: "configured-current-market",
+        label: "Configured current-market rates",
+        status: "exact",
+        freshness: "current",
+        valueUSD: 0.00002,
+        rangeUSD: null,
+        knownSubtotalUSD: null,
+        rateSets: [
+          {
+            tierID: "default",
+            contextTierTokens: null,
+            minPromptTokens: null,
+            utcStart: null,
+            utcEnd: null,
+            prompt: "0.000002",
+            completion: "0.00001",
+            cacheRead: "0.0000002",
+            cacheWrite: "0",
+          },
+        ],
+        missingRates: [],
+        cacheWriteEvidence: {
+          basis: cacheWriteBasis,
+          policyID: null,
+          sourceURL: null,
+          retrievedAt: null,
+        },
+        tierAttribution: {
+          status: "not-required",
+          basis: "single-published-rate-scenario",
+          callCount: 0,
+          selectedTierIDs: ["default"],
+          promptThresholds: [],
+          thresholdSemantics: null,
+        },
+        provenance: {
+          source,
+          productID,
+          priceBasis,
+          sourceURL,
+          refreshState: "succeeded",
+          snapshotID: "44444444-4444-4444-8444-444444444444",
+          snapshotGeneration: 3,
+          currentGeneration: 3,
+          retrievedAt: "2026-11-06T12:00:00.000Z",
+          recordIndex: 0,
+          providerName: null,
+          tag: productID,
+          serviceTier: null,
+        },
+        coverage: {
+          scope: "known-route-matched-retained-usage",
+          wholeTaskBound: false,
+          categories: {
+            uncachedInput: { tokens: 10, status: "observed" },
+            output: { tokens: 2, status: "observed" },
+            reasoning: { tokens: 0, status: "observed" },
+            cacheRead: { tokens: 3, status: "observed" },
+            cacheWrite: { tokens: 0, status: "observed" },
+          },
+          route: {
+            relatedSessionCount: 1,
+            matchedRouteSessionCount: 1,
+            includedSessionCount: 1,
+            otherRouteSessionCount: 0,
+            mixedRouteSessionCount: 0,
+            unknownRouteSessionCount: 0,
+            sharedSessionCount: 0,
+          },
+          retries: {
+            status: "complete",
+            attemptCount: 1,
+            routeMatchedAttemptCount: 1,
+            otherRouteAttemptCount: 0,
+            mixedRouteAttemptCount: 0,
+            unknownRouteAttemptCount: 0,
+            sharedAttemptCount: 0,
+            failedAttemptCount: 0,
+            retryAttemptCount: 0,
+            attemptsWithCompleteUsage: 1,
+            failedAttemptsWithCompleteUsage: 0,
+            retryAttemptsWithCompleteUsage: 0,
+          },
+        },
+        reason: null,
+      },
+    ],
   })
 }
 
@@ -845,7 +979,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           selectedTaskID: null,
           selectedCandidateID: null,
           selectedConfigurationID: null,
-          split: 56,
+          split: 64,
           topScroll: 0,
           inspectorScroll: 0,
         },
@@ -1371,6 +1505,28 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                         totalCount: 2,
                         nextCursor: "contributors-next",
                       },
+                ...(input.configurationID === CONFIG_ONE
+                  ? {
+                      knownUsageMarket: knownUsageMarketForSource(
+                        inspectionConfiguration.route,
+                        "openrouter-models",
+                      ),
+                    }
+                  : input.configurationID === lowConfiguration.configurationID
+                    ? {
+                        knownUsageMarket: knownUsageMarketForSource(
+                          inspectionConfiguration.route,
+                          "native-catalog",
+                        ),
+                      }
+                    : input.configurationID === CONFIG_SINGLE
+                      ? {
+                          knownUsageMarket: knownUsageMarketForSource(
+                            inspectionConfiguration.route,
+                            "openrouter-endpoints",
+                          ),
+                        }
+                      : {}),
               })
               if (suspendedInspection?.configurationID === input.configurationID) {
                 suspendedInspection.output = output
@@ -1585,9 +1741,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const summaryRule = modelCss.match(/\.lazers-models-market-summary\s*\{([^}]+)\}/)?.[1] ?? ""
     expect(summaryRule).toContain("min-width: 0")
     expect(modelCss).toMatch(
-      /\.lazers-models-market-summary strong\s*\{[^}]*overflow-wrap: anywhere/s,
-    )
-    expect(modelCss).toMatch(
       /\.lazers-models-market-summary small\s*\{[^}]*overflow-wrap: anywhere/s,
     )
     const style = browserDocument.createElement("style")
@@ -1669,6 +1822,20 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector(".lazers-models-inspector h2")?.textContent ??
         containerA.querySelector(".lazers-models-inspector [role=alert]")?.textContent,
     ).toBe("GPT-6 refreshed")
+    const openRouterModelMarketCard = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-scenario",
+    )!
+    expect(openRouterModelMarketCard.textContent).toContain("OpenRouter model catalog pricing")
+    const openRouterModelEvidence = openRouterModelMarketCard.querySelector<HTMLDetailsElement>(
+      ".lazers-models-market-evidence-details",
+    )!
+    openRouterModelEvidence.open = true
+    expect(openRouterModelEvidence.textContent).toContain("basis average")
+    expect(openRouterModelEvidence.textContent).toContain("OpenRouter model catalog source")
+    expect(openRouterModelEvidence.querySelector("a")?.getAttribute("href")).toBe(
+      "https://openrouter.ai/api/v1/models",
+    )
+    openRouterModelEvidence.open = false
     await until(
       () =>
         containerA
@@ -1703,6 +1870,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ".lazers-models-sources-details",
     )!
     expect(sourceDetails.open).toBe(false)
+    expect(sourceDetails.querySelector("summary")?.textContent).toBe("Sources")
+    expect(
+      containerA
+        .querySelector<HTMLElement>(".lazers-models")
+        ?.style.getPropertyValue("--models-top-size"),
+    ).toBe("56%")
+    expect(sourceDetails.querySelector("summary")?.textContent).not.toContain("snapshots available")
     expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
       sourceDetails,
     )
@@ -1716,16 +1890,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(sourceDetails.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-    expect(
-      comparePanel
-        .querySelector(".lazers-models-comparison-chart [role=img]")
-        ?.getAttribute("aria-label"),
-    ).toContain("exact route openai / gpt-6 · high")
+    const chartImage = comparePanel.querySelector<HTMLElement>(
+      ".lazers-models-comparison-chart [role=img]",
+    )!
+    expect(chartImage.getAttribute("aria-label")).toBe(
+      "Actual cohort tokens, canonical current-market observations, and OpenRouter model catalog reference costs per accepted task",
+    )
+    const chartAccessibleDescription = containerA.querySelector<HTMLElement>(
+      `#${chartImage.getAttribute("aria-describedby")}`,
+    )!
+    expect(chartAccessibleDescription.textContent).toContain("exact route openai / gpt-6 · high")
     const chartHost = comparePanel.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
-    let chartWidth = 360
-    const chartHeight = 280
+    expect(chartHost.parentElement?.classList.contains("lazers-models-comparison-chart")).toBe(true)
+    expect(chartHost.parentElement?.style.width).toBe("100%")
+    let chartWidth = 340
+    let chartHeight = 190
     Object.defineProperty(chartHost, "clientWidth", { configurable: true, get: () => chartWidth })
     Object.defineProperty(chartHost, "clientHeight", { configurable: true, get: () => chartHeight })
     Object.defineProperty(chartHost, "getBoundingClientRect", {
@@ -1740,6 +1921,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           height: chartHeight,
         }) as DOMRect,
     })
+    chartHost.style.fontSize = "20px"
     dom.window.dispatchEvent(new dom.Event("resize"))
     const chartSVG = () => chartHost.querySelector<SVGSVGElement>("svg")
     const chartSVGMarkup = () => chartSVG()?.outerHTML ?? ""
@@ -1750,9 +1932,28 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       return chartSVGMarkup()
     }
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(360)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(340)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    const chartOptions = () =>
+      chart.getOption() as unknown as {
+        grid?: Array<{ left?: number }>
+        xAxis?: Array<{ splitNumber?: number; axisLabel?: { fontSize?: number } }>
+        yAxis?: Array<{
+          name?: string
+          splitNumber?: number
+          axisLabel?: { fontSize?: number }
+        }>
+      }
+    const narrowOptions = chartOptions()
+    expect(narrowOptions.xAxis?.[0]?.splitNumber).toBe(2)
+    expect(narrowOptions.yAxis?.[0]?.splitNumber).toBe(2)
+    expect(narrowOptions.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
+    expect(narrowOptions.grid?.[0]?.left).toBeGreaterThan(72)
+    expect(narrowOptions.yAxis?.[0]?.name).toBe("USD / task")
     const initialSVGGeometry = await settleChart()
+    expect(initialSVGGeometry).toContain("Tokens / accepted task")
+    expect(initialSVGGeometry).toContain("USD / task")
+    expect(initialSVGGeometry).toContain("preview-effo")
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
       draft.font = "Test Mono"
     })
@@ -1764,13 +1965,31 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       draft.mode = "light"
     })
     await until(() => chartSVGMarkup() !== themedSVGGeometry)
-    await settleChart()
+    chartWidth = 450
+    chartHeight = 230
+    dom.window.dispatchEvent(new dom.Event("resize"))
+    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(450)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    expect(chartOptions().xAxis?.[0]?.splitNumber).toBeGreaterThan(
+      narrowOptions.xAxis?.[0]?.splitNumber ?? 0,
+    )
     chartWidth = 960
+    chartHeight = 320
     dom.window.dispatchEvent(new dom.Event("resize"))
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
     expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(960)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
-    await settleChart()
+    expect(chartOptions().xAxis?.[0]?.splitNumber).toBeGreaterThan(
+      narrowOptions.xAxis?.[0]?.splitNumber ?? 0,
+    )
+    expect(chartOptions().yAxis?.[0]?.splitNumber).toBeGreaterThan(
+      narrowOptions.yAxis?.[0]?.splitNumber ?? 0,
+    )
+    expect(chartOptions().yAxis?.[0]?.name).toBe("USD / accepted task")
+    const wideSVGGeometry = await settleChart()
+    expect(wideSVGGeometry).toContain("Tokens / accepted task")
+    expect(wideSVGGeometry).toContain("USD / accepted task")
     const initialAlternative = comparePanel.querySelector<HTMLDetailsElement>(
       ".lazers-models-comparison-chart-data",
     )!
@@ -1788,11 +2007,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     initialAlternative.open = true
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
     const marketSummary = containerA.querySelector<HTMLElement>(".lazers-models-market-summary")!
-    expect(marketSummary.textContent).toContain("Current market")
+    const selectedInspector = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
+    expect(marketSummary.closest(".lazers-models-top")).toBeNull()
+    expect(marketSummary.closest(".lazers-models-inspector")).toBe(selectedInspector)
+    expect(marketSummary.parentElement?.querySelector("h2")?.textContent).toBe("GPT-6 refreshed")
+    expect(marketSummary.getAttribute("aria-label")).toContain("exact route openai / gpt-6 · high")
     expect(marketSummary.textContent).toContain("≈$0.0838–$0.204 / accepted task")
+    expect(marketSummary.textContent).toContain("OpenRouter")
+    expect(marketSummary.textContent).not.toContain("Current market")
     expect(marketSummary.textContent).not.toContain("retrieved")
     expect(marketSummary.textContent).not.toContain("denominator")
-    expect(marketSummary.children).toHaveLength(2)
+    expect(marketSummary.children).toHaveLength(1)
+    expect(selectedInspector.scrollTop).toBe(0)
+    expect(topPaneA.scrollTop).toBe(0)
     const decisionStatus = comparePanel.querySelector<HTMLElement>(
       ".lazers-models-decision-status",
     )!
@@ -1800,14 +2027,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(decisionStatus.getAttribute("aria-label")).toBe("Current producer snapshot")
     expect(decisionStatus.textContent).not.toContain("Partial evidence")
     expect(comparePanel.querySelector(".lazers-models-decision-tools")).toBeNull()
-    const inspectorTools = containerA.querySelector<HTMLElement>(".lazers-models-inspector-tools")!
-    expect(inspectorTools.closest(".lazers-models-inspector")).not.toBeNull()
-    expect(inspectorTools.querySelectorAll("button")).toHaveLength(2)
-    expect(inspectorTools.textContent).toContain("Provider ·")
-    expect(inspectorTools.textContent).toContain("Effort ·")
-    const exactRoute = containerA.querySelector<HTMLElement>(".lazers-models-inspector-route")!
-    expect(exactRoute.textContent).toContain("openai / gpt-6")
-    expect(exactRoute.title).toBe(exactRoute.textContent)
+    const selectionTools = containerA.querySelector<HTMLElement>(".lazers-models-selection-tools")!
+    expect(selectionTools.closest(".lazers-models-top")).not.toBeNull()
+    expect(selectionTools.querySelectorAll("button")).toHaveLength(2)
+    expect(selectionTools.textContent).toContain("Model ·")
+    expect(selectionTools.textContent).toContain("Effort ·")
+    expect(selectionTools.getAttribute("role")).toBe("group")
+    expect(selectionTools.textContent).not.toContain("openai / gpt-6")
+    expect(containerA.querySelector(".lazers-models-inspector-route")).toBeNull()
     expect(
       containerA.querySelector(".lazers-models-inspector-heading h2")?.getAttribute("aria-label"),
     ).toContain("Exact route")
@@ -1816,7 +2043,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       `Project · ${DIRECTORY_A}`,
     )
     const taskMenu = topPaneA.querySelector<HTMLButtonElement>(".lazers-models-task-select button")!
-    expect(taskMenu.textContent).toBe("Task · LZ-17")
+    expect(taskMenu.textContent).toBe("LZ-17")
     expect(taskMenu.textContent).not.toContain(TASK_A)
     expect(taskMenu.closest(".lazers-models-task-select")?.getAttribute("aria-label")).toContain(
       TASK_A,
@@ -1835,7 +2062,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const exactReferencePanel = containerA.querySelector<HTMLElement>(
       ".lazers-models-reference-estimate",
     )!
-    expect(exactReferencePanel.textContent).toContain("OpenRouter scalar reference")
+    expect(exactReferencePanel.textContent).toContain("OpenRouter model catalog scalar reference")
     expect(exactReferencePanel.textContent).toContain("$0.0000000000123 / accepted task")
     expect(exactReferencePanel.textContent).toContain("not a common workload")
     expect(exactReferencePanel.textContent).toContain("Denominator · 9 accepted tasks")
@@ -1846,7 +2073,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     expect(exactReferenceDetails.open).toBe(false)
     exactReferenceDetails.open = true
-    expect(exactReferenceDetails.textContent).toContain("OpenRouter published source")
+    expect(exactReferenceDetails.textContent).toContain("OpenRouter model catalog source")
     expect(exactReferenceDetails.textContent).toContain("2 failed · 3 retries")
     expect(exactReferenceDetails.textContent).toContain("Cache read")
     exactReferenceDetails.open = false
@@ -1982,13 +2209,16 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ?.getAttribute("aria-label"),
     ).toContain("Not plotted")
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Observed cohort",
+      "Observed",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Scalar reference",
+      "Catalog",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Conditional range",
+      "Range",
+    )
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
+      "Priced portion",
     )
     expect(
       initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
@@ -2005,7 +2235,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(conditionalReferenceButton.tagName).toBe("BUTTON")
     expect(conditionalReferenceButton.tabIndex).toBe(0)
     expect(conditionalReferenceButton.getAttribute("aria-label")).toContain(
-      "OpenRouter conditional range",
+      "OpenRouter model catalog conditional range",
     )
     conditionalReferenceButton.focus()
     expect(browserDocument.activeElement).toBe(conditionalReferenceButton)
@@ -2019,8 +2249,22 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () =>
         containerA
           .querySelector(".lazers-models-reference-estimate")
-          ?.textContent?.includes("OpenRouter conditional range") === true,
+          ?.textContent?.includes("OpenRouter model catalog conditional range") === true,
     )
+    const nativeMarketCard = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-scenario",
+    )!
+    expect(nativeMarketCard.textContent).toContain("Native catalog pricing")
+    const nativeEvidence = nativeMarketCard.querySelector<HTMLDetailsElement>(
+      ".lazers-models-market-evidence-details",
+    )!
+    nativeEvidence.open = true
+    expect(nativeEvidence.textContent).toContain("basis quote")
+    expect(nativeEvidence.textContent).toContain("Native model catalog source")
+    expect(nativeEvidence.querySelector("a")?.getAttribute("href")).toBe(
+      "https://opencode.ai/models",
+    )
+    nativeEvidence.open = false
     const conditionalInspection = containerA.querySelector<HTMLElement>(
       ".lazers-models-reference-estimate",
     )!
@@ -2045,6 +2289,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "qwen-7",
     )
+    const endpointMarketCard = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-scenario",
+    )!
+    expect(endpointMarketCard.textContent).toContain("OpenRouter endpoint pricing")
+    const endpointEvidence = endpointMarketCard.querySelector<HTMLDetailsElement>(
+      ".lazers-models-market-evidence-details",
+    )!
+    endpointEvidence.open = true
+    expect(endpointEvidence.textContent).toContain("OpenRouter endpoint source")
+    expect(endpointEvidence.querySelector("a")?.getAttribute("href")).toContain(
+      "https://openrouter.ai/",
+    )
+    endpointEvidence.open = false
     await until(
       () =>
         containerA
@@ -2055,6 +2312,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await until(() => chartSVGMarkup() !== beforePointSelectionSVG)
     const selectedQwenGraphSVG = await settleChart()
+    expect(selectedQwenGraphSVG).toContain("qwen-7")
+    expect(selectedQwenGraphSVG).toContain("preview-effort")
     const currentFilters = (
       calls.filter((call) => call.method === "overview").at(-1)?.input as {
         filters: ModelDecisionFilters
@@ -2288,7 +2547,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           ?.textContent?.includes("88,888 tokens") === true,
     )
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
-      "OpenRouter priced subtotal only",
+      "OpenRouter model catalog priced subtotal only",
     )
     const partialMarketSummary = containerA.querySelector<HTMLElement>(
       ".lazers-models-market-summary",
@@ -2297,7 +2556,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(partialMarketSummary.textContent).not.toContain("priced subtotal")
     expect(partialMarketSummary.textContent).not.toContain("remainder unknown")
     expect(partialMarketSummary.textContent).not.toContain("total and remainder unknown")
-    expect(partialMarketSummary.children).toHaveLength(2)
+    expect(partialMarketSummary.children).toHaveLength(1)
     expect(partialMarketSummary.getAttribute("aria-label")).toContain("5e-8")
     expect(partialMarketSummary.getAttribute("aria-label")).toContain("denominator 1 accepted task")
     expect(partialMarketSummary.getAttribute("aria-label")).toContain("total and remainder unknown")
@@ -2368,7 +2627,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "98,765 tokens",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).toContain(
-      "Current market",
+      "/ accepted task",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).not.toContain(
       "Cost unavailable",
@@ -2389,7 +2648,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     suspendedInspection = undefined
     const effortTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
     ].find((button) => button.textContent?.includes("Effort"))
     effortTrigger?.click()
     const lowOption = menuItemWithText(containerA, "low")
@@ -2432,18 +2691,31 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     })
 
     const providerTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
+    ].find((button) => button.textContent?.includes("Model"))!
     providerTrigger.click()
     menuItemWithText(containerA, "qwen / qwen-7")?.click()
     await until(
       () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_SINGLE,
     )
     expect(containerA.querySelector(".lazers-models-inspector h2")?.textContent).toBe("qwen-7")
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-market-summary")
+          ?.textContent?.includes("/ accepted task") === true,
+    )
+    const qwenMarketSummary = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-summary",
+    )!
+    expect(qwenMarketSummary.closest(".lazers-models-inspector")).not.toBeNull()
+    expect(qwenMarketSummary.textContent).toContain("OpenRouter")
+    expect(containerA.querySelector(".lazers-models-top .lazers-models-market-summary")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-inspector")?.scrollTop).toBe(0)
 
     const zeroProviderTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
+    ].find((button) => button.textContent?.includes("Model"))!
     zeroProviderTrigger.click()
     menuItemWithText(containerA, "anthropic / sonnet")?.click()
     await until(
@@ -2462,8 +2734,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(chartDescription()).toBe(loadedReferenceGraphDescription)
 
     const crossRouteProviderTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
+    ].find((button) => button.textContent?.includes("Model"))!
     crossRouteProviderTrigger.click()
     const crossRouteOption = menuItemWithText(containerA, "provider-b / model-b")
     if (!crossRouteOption) throw new Error("Missing the B50 exact route option")
@@ -2543,7 +2815,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(systemsOverview.filters?.persona).toBe("systems")
     const taskKindFilter = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),
-    ].find((button) => button.textContent?.includes("Task kind"))!
+    ].find((button) => button.textContent?.includes("Kind"))!
     taskKindFilter.click()
     menuItemWithText(containerA, "Testing")?.click()
     await until(
@@ -2570,7 +2842,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA.querySelector(".lazers-models-chart h3")?.textContent ===
-          "OpenRouter reference estimates · actual task mix" &&
+          "Catalog reference estimates" &&
         containerA.querySelector(
           `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
         ) !== null,
@@ -2578,7 +2850,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
     expect(
       containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent,
-    ).toContain("Priced subtotal · total unknown")
+    ).toContain("Priced portion")
     const unknownPriceName = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
@@ -2841,15 +3113,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     expect(
       [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Task kind ·"),
+        button.textContent?.includes("Kind ·"),
       ),
     ).toBe(true)
-    expect(containerA.querySelector(".lazers-models-filter-status")).not.toBeNull()
+    expect(containerA.querySelector(".lazers-models-filter-status")).toBeNull()
     expect(containerA.querySelector("[data-decision-status]")).not.toBeNull()
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
-    expect(containerA.textContent).not.toContain(
-      "Select a producer-backed configuration or chart point to inspect its evidence.",
-    )
+    expect(containerA.textContent).not.toContain("Select a model to compare.")
     const taskSelectButton = containerA.querySelector<HTMLButtonElement>(
       ".lazers-models-task-select button",
     )
@@ -2888,19 +3158,39 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       '[role="tab"][aria-controls="lazers-models-compare-panel"]',
     )!
     compareTab.click()
-    await until(() => containerA.querySelector(".lazers-models-decision-tools") !== null)
+    await until(() => containerA.querySelector(".lazers-models-selection-tools") !== null)
     const catalogGraphDescription = chartDescription()
     expect(catalogGraphDescription).toContain("An unusually long catalog-backed model display name")
     expect(catalogGraphDescription).toContain("Qwen 7")
-    expect(catalogGraphDescription).toContain("GPT-6 · openai / gpt-6 · high")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-b / model-b · 50")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-a")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-a · high")
-    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-c")
+    expect(catalogGraphDescription).toContain("GPT-6 · high · exact route openai / gpt-6 · high")
+    expect(catalogGraphDescription).toContain("GPT-6 · 50 · exact route provider-b / model-b · 50")
+    expect(catalogGraphDescription).toContain("GPT-6 · exact route provider-a / model-a")
+    expect(catalogGraphDescription).toContain(
+      "GPT-6 · high · exact route provider-a / model-a · high",
+    )
+    expect(catalogGraphDescription).toContain("GPT-6 · exact route provider-a / model-c")
     const catalogChartHost = containerA.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
+    await until(() => host.getComparisonChartInstance(catalogChartHost) !== undefined)
     const catalogChart = host.getComparisonChartInstance(catalogChartHost)!
+    Object.defineProperty(catalogChartHost, "clientWidth", {
+      configurable: true,
+      get: () => chartWidth,
+    })
+    Object.defineProperty(catalogChartHost, "clientHeight", {
+      configurable: true,
+      get: () => chartHeight,
+    })
+    dom.window.dispatchEvent(new dom.Event("resize"))
+    await until(
+      () =>
+        (
+          catalogChart.getOption() as unknown as {
+            series?: unknown[]
+          }
+        )?.series !== undefined,
+    )
     const renderedCatalogSeries = (
       catalogChart.getOption() as unknown as {
         series: Array<{
@@ -2916,7 +3206,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       renderedCatalogSeries?.data?.find((datum) => datum.configurationID === CONFIG_CROSS_ROUTE)
         ?.label?.formatter,
-    ).toBe("GPT-6 · provider-…")
+    ).toBe("GPT-6\n50")
     const renderedReferenceSeries = (
       catalogChart.getOption() as unknown as {
         series: Array<{ id?: string; data?: Array<{ configurationID?: string; name?: string }> }>
@@ -3007,12 +3297,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           style.position === "absolute" &&
           style.display === "block" &&
           style.visibility !== "hidden" &&
-          child.textContent?.includes("An unusually long catalog-backed mo…") === true
+          child.textContent?.includes("An unusually long catalog-ba… · deep") === true
         )
       })
     await until(() => catalogReferenceTooltip() !== undefined)
     expect(catalogReferenceTooltip()?.textContent).toContain("≈$1.23e-11 / accepted task")
     expect(catalogReferenceTooltip()?.textContent).toContain("scalar reference")
+    expect(catalogReferenceTooltip()?.textContent).toContain(
+      "exact route provider-c / model-with-long-name · deep",
+    )
     const visibleCatalogTooltip = (label: string) =>
       [...catalogChartHost.children].find((child) => {
         if (child.tagName !== "DIV") return false
@@ -3027,8 +3320,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         )
       })
     for (const [configurationID, label] of [
-      [sharedNameNullConfigurationID, "GPT-6 · provider-a / model-a"],
-      [sharedNameVariantConfigurationID, "GPT-6 · provider-a / model-a · high"],
+      [sharedNameNullConfigurationID, "GPT-6 · exact route provider-a / model-a"],
+      [sharedNameVariantConfigurationID, "GPT-6 · high · exact route provider-a / model-a · high"],
     ] as const) {
       const referenceDataIndex = catalogChartSeries[catalogReferenceSeriesIndex]!.data!.findIndex(
         (datum) => datum.configurationID === configurationID,
@@ -3061,8 +3354,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     )
     const cachedNameProvider = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
+    ].find((button) => button.textContent?.includes("Model"))!
     cachedNameProvider.click()
     const qwenOption = menuItemWithText(containerA, "qwen / qwen-7")
     if (!qwenOption) throw new Error("Missing exact qwen route in the provider selector")
@@ -3075,7 +3368,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toContain("Exact route qwen / qwen-7 · preview-effort")
     expect(
       [
-        ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+        ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
       ].find((button) => button.textContent?.includes("Effort"))?.textContent,
     ).toContain("preview-effort")
     const restoreHighSelection = containerA.querySelector<HTMLButtonElement>(
@@ -3083,8 +3376,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     restoreHighSelection.click()
     await until(
-      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6",
+      () =>
+        containerA.querySelector(".lazers-models-inspector h2")?.textContent?.startsWith("GPT-6") ??
+        false,
     )
+    expect(
+      containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
+    ).toContain("Exact route openai / gpt-6 · high")
     assignmentTab.click()
     await until(() => containerA.querySelector(".lazers-models-assignment-editor") !== null)
     const assignmentLayers = () =>
@@ -3557,7 +3855,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     expect(
       [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Task kind ·"),
+        button.textContent?.includes("Kind ·"),
       ),
     ).toBe(true)
     expect(containerA.querySelector(".lazers-models-decision-status")).not.toBeNull()
