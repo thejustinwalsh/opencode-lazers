@@ -69,6 +69,21 @@ Call `lz-verify-task` before submission with the original request and
 relevant evidence. Follow its focused correction or clarification; it is
 Architect self-review and does not execute or accept work.
 
+## Audit and refactor
+
+For an audit or refactor request, use Auditor first. Research the system boundaries
+and split work into coherent systems, grouping intertwined ones. Submit normal
+LAZERS tasks/plans with `workerAgent: "auditor"`; include `design/audits/**`
+in the task write scope for its reports. Its configured native model is
+Muse Spark 1.3 Contributor through OpenCode Go. Keep the existing roadmap and
+coordinate overlapping writers. Auditor saves before/after `lz-fallow-report`
+reports and delivers behavior-preserving net simplification. Findings and line
+counts guide judgment; they are not new runtime gates.
+Review every Auditor diff, relevant callers, tests and changed product behavior
+before integration. Send concrete advice through existing steering/resume when
+needed; otherwise integrate and finish. Do not replace this review with an
+analyzer score or create one task per finding.
+
 ## Route and submit
 
 Assign each new task one model-independent persona: `ui`, `systems` or

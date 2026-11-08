@@ -12,6 +12,7 @@ import { sourceGuardInstalled } from "./source-quarantine.ts"
 test("worker personas retain read-only catalog access but cannot delegate", async () => {
   const model = { providerID: "custom-provider", id: "selected", variant: "deep" }
   const agent = { model, permissions: [] as unknown[] }
+  const auditor = { permissions: [] as unknown[], model: undefined as unknown }
   let contextHook: ((context: never) => Effect.Effect<void>) | undefined
   let executeHook: ((call: never) => Effect.Effect<void>) | undefined
   let permissionHook: ((request: PermissionEvaluation) => Effect.Effect<void>) | undefined
@@ -46,7 +47,8 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
       transform: (transform: (editor: unknown) => void) =>
         Effect.sync(() =>
           transform({
-            update: (_id: string, update: (value: typeof agent) => void) => update(agent),
+            update: (id: string, update: (value: unknown) => void) =>
+              update(id === "auditor" ? auditor : agent),
           }),
         ),
     },
@@ -73,6 +75,12 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
     ),
   )
   expect(sourceGuardInstalled(store, "/work")).toBe(false)
+  expect(auditor).toMatchObject({
+    model: { providerID: "opencode-go", id: "muse-spark-1.3-contributor" },
+    mode: "subagent",
+    hidden: true,
+  })
+  expect(auditor).toHaveProperty("system", expect.stringContaining("lz-fallow-report"))
   expect(agent.model).toEqual(model)
   expect(agent).toHaveProperty("system", workerInstructions.trim())
   expect(agent.permissions).not.toContainEqual({

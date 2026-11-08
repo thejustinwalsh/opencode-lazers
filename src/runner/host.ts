@@ -1,3 +1,4 @@
+import type { WorkerAgent } from "./worker-agent.ts"
 import type { ModelPolicy } from "./schema.ts"
 import type { OutcomeOwnership, OutcomeInboxEntry } from "./inbox.ts"
 import type { PrivacyStats } from "../trajectory/privacy.ts"
@@ -131,7 +132,7 @@ export type WorktreeLocationRetirement =
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
   /** Current native implementor-agent selection; never inferred from Architect identity. */
-  workerModel?(): Promise<ModelPolicy | undefined>
+  workerModel?(agent?: WorkerAgent): Promise<ModelPolicy | undefined>
   /** Native adapters preserve only pinned typed creation failures; all other throws remain uncertain. */
   worktree(input: { directory: string; base: string }): Promise<string>
   worktrees(): Promise<string[]>

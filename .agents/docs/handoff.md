@@ -5,25 +5,37 @@ roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. This file is a locator; native runtime/API state is authoritative.
 Older details remain in Git history and linked reports.
 
-## Priority: verification gate repair
+## Current priority: Auditor dogfood
 
-Root removed source-file hashing, dirty-tree and environment/metadata expiry
-from verification acceptance. Check results depend on actual exit/timeout and
-product observations; Architect judges whether changed context needs a reprobe.
-Same-attempt formatting capture, specific command failures and Bun discovery
-repair the concrete Radar exit127 blocker. Trajectory and maintenance views
-follow the same rule. Owned Desktop source edits/rebuilds no longer lock testing.
-Schema validation, Architect task self-review, operation ownership, task/attempt
-association and safe cleanup remain. See
-`design/reviews/verification-gate-audit-20261108.md` for validation and activation.
-No replacement workers or microtasks are needed for this repair.
+Auditor is implemented and natively loaded. `workerAgent: "auditor"` selects the
+new runtime-managed agent on an ordinary plan; its configured default route is
+OpenCode Go `muse-spark-1.3-contributor`, confirmed enabled in the live catalog.
+Existing implementor personas remain three. Shared worker hooks, native session
+ownership, context access, trajectories, recovery and integration recognize both
+roles. No second scheduler is introduced.
 
-Native Architect received Root's coordination and asked whether Root handles
-admission while it issues no more execution commands. Root selected that option
-in Desktop; submission was not yet confirmed. CUA AX clicks/keys and screenshots
-are inconsistent; do not claim successful delivery from an attempted click.
-Architect `ses_e568438ebffeaoFbF9nBb942XM` remains Sol High. Native Luna review
-`ses_e435f01d6ffebq0784b403Un3R` completed. Preserve existing workers/attempts.
+`lz-fallow-report` is registered in Code Mode. Bundled native Fallow3.41.0 runs
+five sequential async analyses on the server and saves complete timestamped JSON
+under `design/audits/`. Auditor saves before/after reports and simplifies real
+systems; Architect reviews every diff and changed behavior before integration,
+steering the same worker when necessary. Findings are candidates, not gates.
+Details/source links: `design/auditor.md`.
+
+Checks: `bun run verify` passes; runner suite314pass/0fail; integration suite
+196pass/0fail; both worker roles pass trajectory hook/event coalescing tests;
+real bundled NAPI fixture analysis produces five reports without editing source.
+Quiet native `location.reload()` confirmed the effective Auditor definition,
+model and Architect guidance. System-wide audit has not yet been observed.
+
+The prior verification-gate repair is committed as b5d103f and included in that
+reload. Architect received Root coordination and answered the prior hold question;
+its public reply confirms preservation of work and no additional execution.
+Desktop's stale view was recovered using native OpenCode menu Restart. Architect
+`ses_e568438ebffeaoFbF9nBb942XM` is idle on Sol High. Next, release Root's temporary
+coordination hold and ask it to run the system-wide Auditor audit, choosing its
+own coherent system boundaries and dependencies while preserving the roadmap.
+Do not hand it one finding at a time. Observe tasking, exact Muse worker route,
+saved reports, review and actual integration; do not infer success from dispatch.
 
 ## Current review boundary — 2026-11-08
 

@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "./worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
@@ -367,10 +368,8 @@ export function nativeHost(
   } = {
     retainedInputID,
     readSessionLog,
-    async workerModel() {
-      const agent = await Effect.runPromise(
-        ctx.agent.get({ agentID: Agent.ID.make("lazers-implementor") }),
-      )
+    async workerModel(agentID = "lazers-implementor") {
+      const agent = await Effect.runPromise(ctx.agent.get({ agentID: Agent.ID.make(agentID) }))
       return agent.data.model
     },
     async worktree(input) {
@@ -511,7 +510,7 @@ export function nativeHost(
       let retainedCurrentInput: HostMessage | undefined
       if (
         options?.messages &&
-        session.agent === "lazers-implementor" &&
+        isWorkerAgent(session.agent) &&
         currentInputID &&
         !messages.some((message) => message.id === currentInputID)
       ) {
@@ -635,7 +634,7 @@ export function nativeHost(
         binding.workspace === latest.location.directory &&
         binding.attemptID === latest.metadata?.lazersAttemptID &&
         latest.projectID === binding.projectID &&
-        latest.agent === "lazers-implementor"
+        isWorkerAgent(latest.agent)
       if (detailed && binding && idleStore && backgroundAfter.state === "observed") {
         const report = idleAfter?.report
         const terminal = idleAfter?.terminal
@@ -929,7 +928,7 @@ export function nativeHost(
           input.projectID !== ctx.location.project.id ||
           target.id !== input.sessionID ||
           target.projectID !== input.projectID ||
-          target.agent !== "lazers-implementor" ||
+          !isWorkerAgent(target.agent) ||
           target.metadata?.lazersAttemptID !== input.attemptID ||
           target.location.directory !== input.directory
         )
@@ -988,7 +987,7 @@ export function nativeHost(
             foreground.id !== input.sessionID ||
             foreground.projectID !== input.projectID ||
             foreground.directory !== input.directory ||
-            foreground.agent !== "lazers-implementor" ||
+            !isWorkerAgent(foreground.agent) ||
             foreground.metadata?.lazersAttemptID !== input.attemptID ||
             foreground.busy ||
             foreground.observationUnstable ||
@@ -1068,7 +1067,7 @@ export function nativeHost(
         input.attemptID === undefined ||
         (session.id === input.sessionID &&
           session.projectID === ctx.location.project.id &&
-          session.agent === "lazers-implementor" &&
+          isWorkerAgent(session.agent) &&
           session.metadata?.lazersAttemptID === input.attemptID &&
           session.time.archived === undefined &&
           (!input.model ||
@@ -1128,7 +1127,7 @@ export function nativeHost(
       const session = await Effect.runPromise(ctx.session.get({ sessionID }))
       if (
         session.id !== input.sessionID ||
-        session.agent !== "lazers-implementor" ||
+        !isWorkerAgent(session.agent) ||
         input.projectID !== ctx.location.project.id ||
         session.projectID !== input.projectID ||
         session.location.directory !== input.directory ||

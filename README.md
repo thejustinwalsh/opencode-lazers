@@ -10,6 +10,27 @@ LAZERS ships as one plugin package. Its scheduler and storage run inside OpenCod
 
 For panel work, use [DESIGN.md](DESIGN.md) and its linked visual references.
 
+## Auditor
+
+Audit and refactor requests go through Architect to the runtime-managed `auditor`
+role. Its default native route is OpenCode Go `muse-spark-1.3-contributor`;
+OpenCode agent configuration or an explicit plan model can override it. Submit
+`workerAgent: "auditor"` on the ordinary plan. The three implementor personas
+remain unchanged; their model mappings do not override the selected Auditor role.
+Existing scheduling, workspaces, hooks, trajectories, repair and integration apply.
+
+`lz-fallow-report` is available in Code Mode. The bundled
+`@fallow-cli/fallow-node` dependency runs async static analysis on the server,
+using one analysis thread by default. Full timestamped JSON reports are saved in
+`design/audits/`; tool output returns their paths and summaries. Scans cover dead
+code/dependencies, duplication, health/complexity/CSS, architecture and feature
+flags. Optional local-model semantic search is not downloaded or started.
+
+Auditor confirms findings against real callers, saves before/after reports,
+simplifies the assigned system and runs relevant checks with automatic fixes.
+Architect reviews the diff and behavior before integration, steering the same
+worker if needed. Reports and line counts inform review; they do not gate work.
+
 ## Architect experience and authority
 
 The user selects **Architect** from the Desktop agent dropdown before starting a session and describes the feature they want. Architect carries that request through planning, dispatch requests, and any decisions needed to reach acceptance:

@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "./worker-agent.ts"
 import type { HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
 import type { AttemptRow, NodeRow, PlanRow } from "./store.ts"
@@ -298,7 +299,7 @@ export function terminalWorkerContinuationProblem(
     worker.id !== attempt.session_id ||
     worker.projectID !== facts.projectID ||
     worker.directory !== attempt.workspace ||
-    worker.agent !== "lazers-implementor" ||
+    !isWorkerAgent(worker.agent) ||
     worker.archived ||
     worker.metadata?.lazersAttemptID !== attempt.id
   )

@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "../runner/worker-agent.ts"
 import {
   constants,
   closeSync,
@@ -520,12 +521,12 @@ export class ProjectIndex {
   }
 
   private async publicationFor(principal: Principal) {
-    if (!this.host || principal.agent !== "lazers-implementor") return undefined
+    if (!this.host || !isWorkerAgent(principal.agent)) return undefined
     try {
       const worker = await this.host.session(principal.sessionID)
       if (
         !worker ||
-        !this.sameSession(worker, principal.sessionID, "lazers-implementor", this.root) ||
+        !this.sameSession(worker, principal.sessionID, principal.agent, this.root) ||
         !worker.parentID
       )
         return undefined

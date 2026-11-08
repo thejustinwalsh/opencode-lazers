@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "./worker-agent.ts"
 import { z } from "zod"
 import type { HostBackgroundObservation, HostMessage, HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
@@ -151,7 +152,7 @@ export function observeReviewInput(worker: HostSession, binding: ReviewInputBind
     worker.id !== binding.sessionID ||
     worker.projectID !== binding.projectID ||
     worker.directory !== binding.workspace ||
-    worker.agent !== "lazers-implementor" ||
+    !isWorkerAgent(worker.agent) ||
     worker.archived ||
     worker.metadata?.lazersAttemptID !== binding.attemptID
   )

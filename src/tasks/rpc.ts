@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
@@ -29,7 +30,7 @@ function matchesCurrentWorker(
     worker.id === target.attempt.sessionID &&
     worker.projectID === projectID &&
     !worker.archived &&
-    worker.agent === "lazers-implementor" &&
+    isWorkerAgent(worker.agent) &&
     worker.metadata?.lazersAttemptID === target.attempt.id &&
     isAbsolute(worker.directory) &&
     isAbsolute(target.attempt.workspace) &&

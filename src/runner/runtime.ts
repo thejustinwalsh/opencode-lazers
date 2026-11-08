@@ -1,3 +1,4 @@
+import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import {
   evaluatePrerequisiteIntegration,
   type PrerequisiteIntegrationRow,
@@ -596,7 +597,7 @@ export class TaskRuntime {
       worker.id !== latest.session_id ||
       worker.projectID !== this.projectID ||
       worker.directory !== latest.workspace ||
-      worker.agent !== "lazers-implementor" ||
+      !isWorkerAgent(worker.agent) ||
       worker.archived ||
       worker.metadata?.lazersAttemptID !== latest.id
     )
@@ -1057,7 +1058,7 @@ export class TaskRuntime {
       session.id !== attempt.session_id ||
       session.projectID !== this.projectID ||
       session.directory !== attempt.workspace ||
-      session.agent !== "lazers-implementor" ||
+      !isWorkerAgent(session.agent) ||
       session.metadata?.lazersAttemptID !== attempt.id
     )
       return "Retained worker ownership or location is unavailable"
@@ -1142,7 +1143,7 @@ export class TaskRuntime {
       worker.id !== attempt.session_id ||
       worker.projectID !== this.projectID ||
       worker.directory !== attempt.workspace ||
-      worker.agent !== "lazers-implementor" ||
+      !isWorkerAgent(worker.agent) ||
       worker.archived ||
       worker.metadata?.lazersAttemptID !== attempt.id ||
       (worker.parentID !== plan.owner &&
@@ -2801,7 +2802,7 @@ export class TaskRuntime {
     let continuedOwner: string | undefined
     const configuredWorker =
       command.action === "run" && !JSON.parse(old.body).workerModel
-        ? await this.host.workerModel?.()
+        ? await this.host.workerModel?.(workerAgent(JSON.parse(old.body).workerAgent))
         : undefined
     const target = command.action === "reassign" ? command.targetSessionID : old.owner
     let ownerSession: HostSession | null | undefined
@@ -4499,12 +4500,12 @@ export class TaskRuntime {
       const selectedModel = proposal.workerModel ?? configuredWorker
       const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
       const nodeRouteDecisions = proposal.nodes.map((node) =>
-        node.persona
+        node.persona && proposal.workerAgent !== "auditor"
           ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
           : null,
       )
       const everyNodeHasRoute = proposal.nodes.every((node, index) =>
-        node.persona
+        node.persona && proposal.workerAgent !== "auditor"
           ? nodeRouteDecisions[index]?.status === "resolved"
           : selectedModel !== undefined,
       )
@@ -7369,13 +7370,14 @@ export class TaskRuntime {
     const configuredImplementor = input.workerModel
       ? null
       : persona
-        ? ((await this.host.workerModel?.()) ?? null)
+        ? ((await this.host.workerModel?.(workerAgent(input.workerAgent))) ?? null)
         : plan.model
           ? ModelPolicy.parse(JSON.parse(plan.model))
           : null
-    const routeDecision = persona
-      ? this.resolveTaskDispatchRoute(input, task.id, persona, configuredImplementor)
-      : undefined
+    const routeDecision =
+      persona && input.workerAgent !== "auditor"
+        ? this.resolveTaskDispatchRoute(input, task.id, persona, configuredImplementor)
+        : undefined
     if (routeDecision?.status === "unavailable") {
       this.hold(plan, `No native worker route is available for the ${persona} persona`)
       return
@@ -7420,7 +7422,7 @@ export class TaskRuntime {
         : null,
     })
     const policy = {
-      agent: "lazers-implementor",
+      agent: workerAgent(input.workerAgent),
       workspaceMode: input.workspaceMode,
       model,
       ...(routeDecision ? { routeDecision } : {}),
@@ -7987,7 +7989,7 @@ export class TaskRuntime {
         await this.host.create({
           id: attempt.session_id,
           parentID: plan.owner,
-          agent: "lazers-implementor",
+          agent: workerAgent(JSON.parse(attempt.policy).agent),
           model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           directory: attempt.workspace,
           title: `LAZERS · ${this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100)}`,
@@ -8107,8 +8109,8 @@ export class TaskRuntime {
           model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           ...(retainedRepair ? { moveIfNeeded: false } : {}),
           text: retainedRepair
-            ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow the implementor role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
-            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
+            ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
+            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
         })
         this.receipt(
           effect,
@@ -11023,7 +11025,7 @@ export class TaskRuntime {
       worker.id !== attempt.session_id ||
       worker.projectID !== this.projectID ||
       worker.directory !== attempt.workspace ||
-      worker.agent !== "lazers-implementor" ||
+      !isWorkerAgent(worker.agent) ||
       worker.archived ||
       worker.metadata?.lazersAttemptID !== attempt.id ||
       !this.adoptionWorkerIdle(attempt, worker)
@@ -11894,7 +11896,7 @@ export class TaskRuntime {
         session.id !== attempt.session_id ||
         session.projectID !== this.projectID ||
         session.directory !== workspace ||
-        session.agent !== "lazers-implementor" ||
+        !isWorkerAgent(session.agent) ||
         session.metadata?.lazersAttemptID !== attempt.id ||
         session.busy !== false ||
         session.pendingInput === true ||

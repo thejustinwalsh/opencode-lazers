@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "./runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { z } from "zod"
@@ -306,7 +307,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
               result(
                 () => withRepository((connection) => new TaskReads(connection).get(input)),
                 true,
-                context.agent === "lazers-implementor" ? taskInstructions : JSON.stringify,
+                isWorkerAgent(context.agent) ? taskInstructions : JSON.stringify,
               ),
             ),
           ),

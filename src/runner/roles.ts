@@ -1,3 +1,7 @@
+import { isWorkerAgent } from "./worker-agent.ts"
+import auditSource from "../auditor.md" with { type: "text" }
+import { Model } from "@opencode/schema/model"
+import { Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Tool } from "@opencode/schema/tool"
@@ -33,23 +37,35 @@ export function registerWorker(
         (registration) => Effect.sync(() => registration.dispose()),
       ))
     yield* ctx.agent.transform((editor) =>
-      editor.update(Agent.ID.make("lazers-implementor"), (agent) => {
-        agent.name = Agent.Name.make("LAZERS implementor")
-        agent.description = "Runtime-managed task implementation"
-        agent.mode = "subagent"
-        agent.hidden = true
-        agent.system = source.trim()
-        // Add denials only. Normal host/user/project coding permissions remain authoritative.
-        agent.permissions = [
-          { action: "subagent", resource: "*", effect: "deny" },
-          { action: "lz-research", resource: "*", effect: "deny" },
-          { action: "lz-submit-plan", resource: "*", effect: "deny" },
-          { action: "lz-plan-command", resource: "*", effect: "deny" },
-          { action: "lz-submit-task", resource: "*", effect: "deny" },
-        ]
-        // Preserve the model/effort selected in native OpenCode configuration.
-        delete agent.steps
-      }),
+      ["lazers-implementor", "auditor"].forEach((id) =>
+        editor.update(Agent.ID.make(id), (agent) => {
+          agent.name = Agent.Name.make(id === "auditor" ? "Auditor" : "LAZERS implementor")
+          agent.description =
+            id === "auditor"
+              ? "Simplifies code using Fallow; Architect reviews before integration"
+              : "Runtime-managed task implementation"
+          agent.mode = "subagent"
+          agent.hidden = true
+          agent.system = [source.trim(), ...(id === "auditor" ? [auditSource.trim()] : [])].join(
+            "\n\n",
+          )
+          if (id === "auditor")
+            agent.model ??= Schema.decodeUnknownSync(Model.Ref)({
+              providerID: "opencode-go",
+              id: "muse-spark-1.3-contributor",
+            })
+          // Add denials only. Normal host/user/project coding permissions remain authoritative.
+          agent.permissions = [
+            { action: "subagent", resource: "*", effect: "deny" },
+            { action: "lz-research", resource: "*", effect: "deny" },
+            { action: "lz-submit-plan", resource: "*", effect: "deny" },
+            { action: "lz-plan-command", resource: "*", effect: "deny" },
+            { action: "lz-submit-task", resource: "*", effect: "deny" },
+          ]
+          // Preserve the model/effort selected in native OpenCode configuration.
+          delete agent.steps
+        }),
+      ),
     )
     const attempt = (sessionID: string) =>
       store.atomic((db) =>
@@ -75,7 +91,7 @@ export function registerWorker(
         if (quarantineError) return Effect.fail(new Tool.Error({ message: quarantineError }))
         const owned = attempt(call.sessionID)
         if (!owned) {
-          if (call.agent === "lazers-implementor" && !quarantinedSession(store, call.sessionID))
+          if (isWorkerAgent(call.agent) && !quarantinedSession(store, call.sessionID))
             return Effect.fail(
               new Tool.Error({ message: "Implementor requires an admitted runtime assignment" }),
             )

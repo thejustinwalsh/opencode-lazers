@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "../runner/worker-agent.ts"
 import { DateTime } from "effect"
 import { createHash } from "node:crypto"
 import type { Database } from "bun:sqlite"
@@ -1263,7 +1264,7 @@ export class ProgressRecorder {
     messageID: string
     message: unknown
   }): { sequence: number; text: string } {
-    if (input.agent !== "lazers-implementor")
+    if (!isWorkerAgent(input.agent))
       throw new Error("Only an assigned LAZERS implementor may report progress")
     const parsed = ProgressInput.parse({ message: input.message })
     const stats = privacyStats()
@@ -1287,7 +1288,7 @@ export class ProgressRecorder {
   }
 
   recordToolHook(call: ToolCall): number | undefined {
-    if (call.tool === "lz-report-progress" || call.agent !== "lazers-implementor") return undefined
+    if (call.tool === "lz-report-progress" || !isWorkerAgent(call.agent)) return undefined
     const stats = privacyStats()
     const payload: Record<string, unknown> = {
       tool: safeText(call.tool, stats, 160),

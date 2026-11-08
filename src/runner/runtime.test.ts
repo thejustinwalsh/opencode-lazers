@@ -59,6 +59,7 @@ function fixture(
     repair?: boolean
     wrongFirstB?: boolean
     skillSuggestions?: string[]
+    workerAgent?: "auditor"
     workerModel?: { providerID: string; id: string; variant?: string }
     personas?: (WorkerPersona | undefined)[]
     startOnly?: boolean
@@ -426,6 +427,7 @@ function fixture(
     return {
       requestID: config.requestID ?? "plan-request",
       objective: `Implement ${files.map((file) => file.name).join(" and ")}`,
+      ...(options.workerAgent ? { workerAgent: options.workerAgent } : {}),
       workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
       baseCommit: base,
       ...(options.workerModel ? { workerModel: options.workerModel } : {}),
@@ -12995,3 +12997,25 @@ test.each([false, true])(
     ).toHaveLength(0)
   },
 )
+
+test("Auditor dispatch retains its role and selected model and waits for Architect review", async () => {
+  const model = { providerID: "opencode-go", id: "muse-spark-1.3-contributor" }
+  const f = fixture({ shared: true, human: true, workerAgent: "auditor", personas: ["systems"] })
+  const requested: unknown[] = []
+  f.host.workerModel = async (agent) => {
+    requested.push(agent)
+    return model
+  }
+  await f.runtime.command(
+    { requestID: "audit-run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(requested).toContain("auditor")
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.sessions.get(attempt.session_id)!.agent).toBe("auditor")
+  expect(JSON.parse(attempt.policy)).toMatchObject({ agent: "auditor", model })
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(f.store.plan(f.receipt.planID)!.reason).toContain("correct:human")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})

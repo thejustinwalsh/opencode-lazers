@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { WorkerAgent } from "./worker-agent.ts"
 import { TaskProposalSchema } from "../task.ts"
 
 export const TaskState = z.enum([
@@ -85,6 +86,9 @@ export const PlanInput = z
       ),
     baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
     workspaceMode: z.enum(["shared", "isolated"]).default("shared"),
+    workerAgent: WorkerAgent.optional().describe(
+      "Runtime worker role. Use auditor for audit/refactor requests; Architect reviews its result before integration.",
+    ),
     workerModel: ModelPolicy.optional().describe(
       "Exact user-authorized native provider, model and optional variant/effort; otherwise inherit the configured implementor. LAZERS does not catalog-validate or substitute the selected route.",
     ),

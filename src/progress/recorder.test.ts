@@ -174,126 +174,129 @@ function toolEvent(type: string, id: string, data: Record<string, unknown>, crea
   }
 }
 
-test("hook, native tool events, and retained recovery coalesce into one durable identity", () => {
-  const fixture = makeFixture()
-  let secondRepository: TaskRepository | undefined
-  let reopened: TaskRepository | undefined
-  try {
-    fixture.store.atomic((db) =>
-      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
-    )
-    const recorder = new ProgressRecorder(fixture.store, "project")
-    const otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
-    secondRepository = otherRepository
-    const otherStore = new RunnerStore(otherRepository)
-    const otherRecorder = new ProgressRecorder(otherStore, "project")
+test.each(["lazers-implementor", "auditor"])(
+  "%s hooks, native events and recovery coalesce into one durable identity",
+  (agent) => {
+    const fixture = makeFixture()
+    let secondRepository: TaskRepository | undefined
+    let reopened: TaskRepository | undefined
+    try {
+      fixture.store.atomic((db) =>
+        db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+      )
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
+      secondRepository = otherRepository
+      const otherStore = new RunnerStore(otherRepository)
+      const otherRecorder = new ProgressRecorder(otherStore, "project")
 
-    const toolID = "native-call-7"
-    const call = {
-      tool: "Bash",
-      sessionID: workerSession,
-      agent: "lazers-implementor",
-      messageID: "assistant-message-7",
-      callID: toolID,
-      status: "completed" as const,
-      result: {
-        content: [{ type: "text" as const, text: "Tests passed; token=canary-secret-value" }],
-      },
-    }
-    recorder.recordNativeEvent(
-      toolEvent(
-        "session.tool.called",
-        "event-call",
-        {
-          assistantMessageID: call.messageID,
-          id: toolID,
-          input: { script: "private-input" },
-          executed: true,
+      const toolID = "native-call-7"
+      const call = {
+        tool: "Bash",
+        sessionID: workerSession,
+        agent,
+        messageID: "assistant-message-7",
+        callID: toolID,
+        status: "completed" as const,
+        result: {
+          content: [{ type: "text" as const, text: "Tests passed; token=canary-secret-value" }],
         },
-        100,
-      ),
-    )
-    otherRecorder.recordToolHook(call)
-    recorder.recordNativeEvent(
-      toolEvent(
-        "session.tool.success",
-        "event-success",
-        {
-          assistantMessageID: call.messageID,
-          id: toolID,
-          content: [{ type: "text", text: "Tests passed; token=canary-secret-value" }],
-          executed: true,
-        },
-        110,
-      ),
-    )
-    recorder.recordNativeEvent(
-      toolEvent(
-        "session.tool.success",
-        "event-success",
-        { assistantMessageID: call.messageID, id: toolID, content: [], executed: true },
-        110,
-      ),
-    )
-    recorder.reconcileMessages(workerSession, [
-      {
-        id: call.messageID,
-        type: "assistant",
-        time: { created: 90 },
-        content: [
+      }
+      recorder.recordNativeEvent(
+        toolEvent(
+          "session.tool.called",
+          "event-call",
           {
-            type: "tool",
+            assistantMessageID: call.messageID,
             id: toolID,
-            name: "Bash",
-            state: {
-              status: "completed",
-              input: { authorization: "do-not-retain-this-input" },
-              content: [{ type: "text", text: "Tests passed; token=canary-secret-value" }],
-            },
+            input: { script: "private-input" },
+            executed: true,
           },
-        ],
-      },
-    ])
+          100,
+        ),
+      )
+      otherRecorder.recordToolHook(call)
+      recorder.recordNativeEvent(
+        toolEvent(
+          "session.tool.success",
+          "event-success",
+          {
+            assistantMessageID: call.messageID,
+            id: toolID,
+            content: [{ type: "text", text: "Tests passed; token=canary-secret-value" }],
+            executed: true,
+          },
+          110,
+        ),
+      )
+      recorder.recordNativeEvent(
+        toolEvent(
+          "session.tool.success",
+          "event-success",
+          { assistantMessageID: call.messageID, id: toolID, content: [], executed: true },
+          110,
+        ),
+      )
+      recorder.reconcileMessages(workerSession, [
+        {
+          id: call.messageID,
+          type: "assistant",
+          time: { created: 90 },
+          content: [
+            {
+              type: "tool",
+              id: toolID,
+              name: "Bash",
+              state: {
+                status: "completed",
+                input: { authorization: "do-not-retain-this-input" },
+                content: [{ type: "text", text: "Tests passed; token=canary-secret-value" }],
+              },
+            },
+          ],
+        },
+      ])
 
-    const rows = fixture.store.progressFacts([firstAttemptID])
-    expect(rows).toHaveLength(3) // tool, native assistant start and the recovery coverage gap
-    const callRow = rows.find((row) => row.call_id === toolID)!
-    expect(callRow).toMatchObject({
-      project_id: "project",
-      plan_id: fixture.attempts[0]!.plan_id,
-      task_id: fixture.task.id,
-      attempt_id: firstAttemptID,
-      session_id: workerSession,
-      message_id: call.messageID,
-      kind: "tool",
-    })
-    expect(JSON.parse(callRow.sources_json).sort()).toEqual([
-      "native-event",
-      "recovery",
-      "tool-hook",
-    ])
-    expect(JSON.parse(callRow.event_ids_json).sort()).toEqual(["event-call", "event-success"])
-    expect(JSON.parse(callRow.payload)).toMatchObject({ tool: "Bash", status: "succeeded" })
-    expect(callRow.payload).not.toContain("private-input")
-    expect(callRow.payload).not.toContain("do-not-retain-this-input")
-    expect(callRow.payload).not.toContain("canary-secret-value")
+      const rows = fixture.store.progressFacts([firstAttemptID])
+      expect(rows).toHaveLength(3) // tool, native assistant start and the recovery coverage gap
+      const callRow = rows.find((row) => row.call_id === toolID)!
+      expect(callRow).toMatchObject({
+        project_id: "project",
+        plan_id: fixture.attempts[0]!.plan_id,
+        task_id: fixture.task.id,
+        attempt_id: firstAttemptID,
+        session_id: workerSession,
+        message_id: call.messageID,
+        kind: "tool",
+      })
+      expect(JSON.parse(callRow.sources_json).sort()).toEqual([
+        "native-event",
+        "recovery",
+        "tool-hook",
+      ])
+      expect(JSON.parse(callRow.event_ids_json).sort()).toEqual(["event-call", "event-success"])
+      expect(JSON.parse(callRow.payload)).toMatchObject({ tool: "Bash", status: "succeeded" })
+      expect(callRow.payload).not.toContain("private-input")
+      expect(callRow.payload).not.toContain("do-not-retain-this-input")
+      expect(callRow.payload).not.toContain("canary-secret-value")
 
-    const dbPath = fixture.repository.path
-    const projectDirectory = fixture.repository.projectDirectory
-    otherRepository.close()
-    secondRepository = undefined
-    fixture.repository.close()
-    reopened = new TaskRepository(dbPath, projectDirectory)
-    const reopenedStore = new RunnerStore(reopened)
-    const recoveredRows = reopenedStore.progressFacts([firstAttemptID])
-    expect(recoveredRows.map((row) => row.seq)).toEqual(rows.map((row) => row.seq))
-    expect(recoveredRows.filter((row) => row.call_id === toolID)).toHaveLength(1)
-  } finally {
-    secondRepository?.close()
-    reopened?.close()
-    fixture.close()
-  }
-})
+      const dbPath = fixture.repository.path
+      const projectDirectory = fixture.repository.projectDirectory
+      otherRepository.close()
+      secondRepository = undefined
+      fixture.repository.close()
+      reopened = new TaskRepository(dbPath, projectDirectory)
+      const reopenedStore = new RunnerStore(reopened)
+      const recoveredRows = reopenedStore.progressFacts([firstAttemptID])
+      expect(recoveredRows.map((row) => row.seq)).toEqual(rows.map((row) => row.seq))
+      expect(recoveredRows.filter((row) => row.call_id === toolID)).toHaveLength(1)
+    } finally {
+      secondRepository?.close()
+      reopened?.close()
+      fixture.close()
+    }
+  },
+)
 
 test("two database connections allocate unique ordered sequences and reports resolve identity", async () => {
   const fixture = makeFixture()
