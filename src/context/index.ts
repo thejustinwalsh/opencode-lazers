@@ -581,11 +581,16 @@ export class ProjectIndex {
     return files
   }
 
-  async manifest(principal: Principal, paths: string[] = []) {
+  private async selectPermitted(principal: Principal, paths: string[], search?: string) {
     principal.signal?.throwIfAborted()
     const snapshot = await this.snapshotFor(principal)
-    const selected = this.selectedFiles(snapshot, paths)
+    const selected = this.selectedFiles(snapshot, paths, search)
     const matches = await this.permittedFiles(snapshot, principal, selected)
+    return { snapshot, matches }
+  }
+
+  async manifest(principal: Principal, paths: string[] = []) {
+    const { snapshot, matches } = await this.selectPermitted(principal, paths)
     const limited = matches.slice(0, 100)
     return {
       snapshotID: snapshot.id,
@@ -601,11 +606,11 @@ export class ProjectIndex {
     }
   }
   async evidence(principal: Principal, focus: Focus) {
-    principal.signal?.throwIfAborted()
-    const snapshot = await this.snapshotFor(principal)
-    const paths = focus.paths ?? []
-    const selected = this.selectedFiles(snapshot, paths, focus.search)
-    const matches = await this.permittedFiles(snapshot, principal, selected)
+    const { snapshot, matches } = await this.selectPermitted(
+      principal,
+      focus.paths ?? [],
+      focus.search,
+    )
     const limited = matches.slice(0, 50)
     const sources = limited.map((f) => {
       const lines = f.content.split("\n"),
