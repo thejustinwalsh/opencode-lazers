@@ -472,11 +472,12 @@ test("captured history pages stay fixed while ten live status reads use no nativ
         const statusReport = finalStatus.report as {
           trajectory: { events: Array<{ id: string; status?: string; result?: string }> }
         }
-        expect(
-          statusReport.trajectory.events.find(
-            (event) => event.id === `progress:${runningSequence}`,
-          ),
-        ).toMatchObject({ status: "succeeded", result: "finished safely" })
+        const completed = statusReport.trajectory.events.find(
+          (event) => event.id === `progress:${runningSequence}`,
+        )
+        expect(completed).toMatchObject({ status: "succeeded" })
+        // Native live observations retain completion metadata, not tool bodies.
+        expect(completed?.result).toBeUndefined()
       }
       if (refresh === 0 || refresh === 2 || refresh === 5) {
         if (cursor) {
