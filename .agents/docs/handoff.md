@@ -54,8 +54,13 @@ messages had no running tool handles, so do not invent a tool wait or restart.
 Reobserve the same session. Latest Desktop steering also requires visible stuck reasons and one-click Ask
 Architect, reusing/waking a coordinator with task context and automatic recovery
 without human input unless needed. It owns activation, probes and integration.
-At Unix1794173884831 its verify-retained tool was still running the original
-LZ-182 candidate checks (ten-minute timeout); do not submit duplicate retries.
+Retained operation e6bfc062 completed task checks after334139ms, exit1, not
+timedOut: adopted-descendant.test.ts phase/task-bound test timed out at10s,
+followed by SQLITE_CANTOPEN and git-status errors. Receipt output truncated.
+Architect was informed through Desktop and at Unix1794174185034 was inspecting
+the failed operation through lz-inspect-plan; no Root state advance. Same native
+Luna Max probe agent e4300c5d7ffe… is active preparing persisted session/fixtures.
+Do not duplicate either operation or infer root cause from timeout alone.
 
 LZ-131 original Luna Max worker `ses_e8e85ff547f941e2b3e960621c3db6dd` is natively
 succeeded/idle. Attemptf2db78ed-e317-4a70-bdaf-199260af162a, plan
