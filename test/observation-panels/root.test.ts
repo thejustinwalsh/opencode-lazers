@@ -3119,9 +3119,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-filter-status")).toBeNull()
     expect(containerA.querySelector("[data-decision-status]")).not.toBeNull()
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
-    expect(containerA.textContent).not.toContain(
-      "Select a producer-backed configuration or chart point to inspect its evidence.",
-    )
+    expect(containerA.textContent).not.toContain("Select a model to compare.")
     const taskSelectButton = containerA.querySelector<HTMLButtonElement>(
       ".lazers-models-task-select button",
     )

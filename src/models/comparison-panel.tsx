@@ -2236,11 +2236,11 @@ function ModelPanel(
               when={selectedDecisionConfiguration()}
               fallback={
                 <p class="lazers-models-note" role="status">
-                  {visible()?.selectedConfigurationID
-                    ? `Inspecting exact configuration ${visible()!.selectedConfigurationID}…`
-                    : visible()?.decisionStatus === "missing-rpc"
-                      ? "The decision RPC is not registered; no route inspection or estimate is available."
-                      : "Select a producer-backed configuration or chart point to inspect its evidence."}
+                  {visible()?.decisionStatus === "missing-rpc"
+                    ? "Models are unavailable. Refresh to retry."
+                    : visible()?.decisionInspectLoading
+                      ? "Loading model…"
+                      : "Select a model to compare."}
                 </p>
               }
             >
