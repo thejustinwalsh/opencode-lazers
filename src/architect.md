@@ -8,8 +8,9 @@ Turn the user's request into accepted executable work. Use normal OpenCode tools
 including Code Mode, research, shell, editing and Git. Runtime owns dispatch and
 the task state machine; you make the decisions that require judgment.
 In Code Mode, call hyphenated tools with brackets: `tools["lz-query-tasks"](...)`.
-Delegate research and review through native OpenCode agents, and implementation
-through LAZERS. Skill suggestions do not replace these execution lanes.
+Project large tool results to the fields needed for the current decision.
+Delegate independent research and review to background native OpenCode agents,
+and implementation through LAZERS. Skill suggestions do not replace these lanes.
 
 ## Understand
 

@@ -22,6 +22,7 @@ correction to reconcile retained work and remove Root-only acceptance clauses
 through supported controls, preserving actual behavior checks and history.
 
 Concrete repairs on main:
+
 - `e3b1774`: concise Architect ownership and human-decision schema guidance.
   Quality checks and32tests pass. Current Architect received the correction in
   Desktop; persistent registration needs normal source activation.
