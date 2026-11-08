@@ -12,6 +12,10 @@ import type { ArchitectSourceResult } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
 import { parseOutcomeOwnership } from "./inbox.ts"
+import type {
+  PrerequisiteIntegrationRow,
+  TaskPrerequisiteIntegrationRow,
+} from "./prerequisite-proof.ts"
 
 export type PlanRow = {
   id: string
@@ -420,6 +424,55 @@ export type ProgressRow = {
   message_id: string | null
   dedupe_key: string
   payload: string
+}
+
+export type SchedulingPlanFact = PlanRow & {
+  sequence: number
+  priority: number
+  node_count: number
+  last_attempt_policy: string | null
+}
+
+export type SchedulingNodeFact = NodeRow & {
+  sequence: number
+  priority: number
+  task_body: string
+  reference: string | null
+  scope_payload: string | null
+}
+
+export type SchedulingReservationFact = AttemptRow & {
+  task_body: string
+  scope_payload: string | null
+  quarantine_phase: string | null
+  quarantine_plan_id: string | null
+  quarantine_session_id: string | null
+  quarantine_message_id: string | null
+  quarantine_workspace: string | null
+  quarantine_hold_reason: string | null
+  quarantine_review_input_json: string | null
+}
+
+export type SchedulingFactSnapshot = {
+  projectDirectory: string
+  repositoryVersion: number
+  plans: SchedulingPlanFact[]
+  totalPlanCount: number
+  plansComplete: boolean
+  totalNodeCount: number
+  nodes: SchedulingNodeFact[]
+  nodesComplete: boolean
+  coveredPlanNodeCount: number
+  dependencies: Array<{ plan_id: string; prerequisite: string; successor: string }>
+  reservations: SchedulingReservationFact[]
+  totalReservationCount: number
+  reservationsComplete: boolean
+  adoptions: AdoptionRow[]
+  totalAdoptionCount: number
+  adoptionsComplete: boolean
+  taskIntegrations: TaskPrerequisiteIntegrationRow[]
+  planIntegrations: PrerequisiteIntegrationRow[]
+  planIntegrationsComplete: boolean
 }
 
 export function appendOutboxReceipt(previous: string | null, next: unknown) {
@@ -2937,6 +2990,11 @@ export class RunnerStore {
            WHERE d.plan_id=? AND d.successor=? AND (n.state!='accepted' OR EXISTS(
              SELECT 1 FROM runner_adoptions a WHERE a.plan_id=n.plan_id AND a.task_id=n.task_id
                AND a.state IN ('pending','task-checks','combined-checks','waiting-human')
+           ) OR NOT EXISTS(
+             SELECT 1 FROM runner_transitions ti
+             WHERE ti.plan_id=d.plan_id AND ti.task_id=d.prerequisite
+               AND ti.event='TASK_INTEGRATION_RECORDED' AND json_valid(ti.payload)
+               AND json_extract(ti.payload,'$.artifact')=n.artifact
            ))`,
         )
         .all(node.plan_id, taskID)
@@ -3315,6 +3373,235 @@ export class RunnerStore {
         )
         .all(this.repository.projectDirectory),
     )
+  }
+  taskPrerequisiteIntegrationRows(planID: string, taskIDs: readonly string[]) {
+    if (!taskIDs.length || new Set(taskIDs).size !== taskIDs.length) return []
+    const rows: TaskPrerequisiteIntegrationRow[] = []
+    for (let offset = 0; offset < taskIDs.length; offset += 100) {
+      const batch = taskIDs.slice(offset, offset + 100)
+      rows.push(
+        ...this.atomic((db) =>
+          db
+            .query<TaskPrerequisiteIntegrationRow, [string, string, ...string[]]>(
+              `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
+                 n.artifact,
+                 (SELECT tr.id FROM runner_transitions tr
+                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                    AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_id,
+                 (SELECT tr.payload FROM runner_transitions tr
+                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                    AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_payload
+               FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+               WHERE p.project_directory=? AND n.plan_id=?
+                 AND n.task_id IN (${batch.map(() => "?").join(",")})`,
+            )
+            .all(this.repository.projectDirectory, planID, ...batch),
+        ),
+      )
+    }
+    return rows
+  }
+  /** One bounded, read-only database view for the registered scheduling projection. */
+  schedulingFacts(input: { maxPlans?: number; maxNodes?: number; maxReservations?: number } = {}) {
+    const maxPlans = Math.max(1, Math.min(input.maxPlans ?? 1_000, 1_000))
+    const maxNodes = Math.max(1, Math.min(input.maxNodes ?? 10_000, 10_000))
+    const maxReservations = Math.max(1, Math.min(input.maxReservations ?? 10_000, 10_000))
+    const directory = this.repository.projectDirectory
+    return this.atomic((db): SchedulingFactSnapshot => {
+      const repositoryVersion = db
+        .query<{ version: number }, [string]>(
+          "SELECT COALESCE(MAX(id),0) AS version FROM task_changes WHERE project_directory=?",
+        )
+        .get(directory)!.version
+      const totalPlanCount = db
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) AS count FROM runner_plans WHERE project_directory=?",
+        )
+        .get(directory)!.count
+      const totalNodeCount = db
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) AS count FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=?",
+        )
+        .get(directory)!.count
+      const plans = db
+        .query<SchedulingPlanFact, [string, number]>(
+          `SELECT p.*,p.rowid AS sequence,
+             COALESCE(json_extract(p.body,'$.priority'),0) AS priority,
+             (SELECT COUNT(*) FROM runner_nodes n WHERE n.plan_id=p.id) AS node_count,
+             (SELECT a.policy FROM runner_attempts a WHERE a.plan_id=p.id
+              ORDER BY a.number DESC LIMIT 1) AS last_attempt_policy
+           FROM runner_plans p WHERE p.project_directory=?
+           ORDER BY priority DESC,p.rowid LIMIT ?`,
+        )
+        .all(directory, maxPlans)
+      const nodes = db
+        .query<SchedulingNodeFact, [string, string, number]>(
+          `WITH selected_plans AS MATERIALIZED (
+             SELECT id,rowid AS sequence,
+               COALESCE(json_extract(body,'$.priority'),0) AS priority
+             FROM runner_plans WHERE project_directory=?
+             ORDER BY priority DESC,rowid LIMIT ${maxPlans}
+           )
+           SELECT n.*,p.sequence,p.priority,t.body AS task_body,r.reference,
+             (SELECT tr.payload FROM runner_transitions tr
+              WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id AND tr.event='SCOPE_AMENDED'
+              ORDER BY tr.id DESC LIMIT 1) AS scope_payload
+           FROM runner_nodes n JOIN selected_plans p ON p.id=n.plan_id
+           JOIN tasks t ON t.project_directory=? AND t.id=n.task_id
+           LEFT JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
+           ORDER BY p.priority DESC,p.sequence,n.ordinal LIMIT ?`,
+        )
+        .all(directory, directory, maxNodes + 1)
+      if (nodes.length > maxNodes) nodes.pop()
+      const coveredPlanNodeCount = plans.reduce((sum, plan) => sum + plan.node_count, 0)
+      const planIDs = plans.map((plan) => plan.id)
+      const dependencies = planIDs.length
+        ? db
+            .query<{ plan_id: string; prerequisite: string; successor: string }, string[]>(
+              `SELECT d.plan_id,d.prerequisite,d.successor FROM runner_dependencies d
+               JOIN runner_plans p ON p.id=d.plan_id
+               WHERE p.project_directory=? AND d.plan_id IN (${planIDs.map(() => "?").join(",")})
+               ORDER BY p.rowid,d.successor,d.prerequisite`,
+            )
+            .all(directory, ...planIDs)
+        : []
+
+      const reservations = db
+        .query<SchedulingReservationFact, [string, string, number]>(
+          `WITH selected_plans AS MATERIALIZED (
+             SELECT id,rowid AS sequence,COALESCE(json_extract(body,'$.priority'),0) AS priority
+             FROM runner_plans WHERE project_directory=?
+             ORDER BY priority DESC,rowid LIMIT 1000
+           )
+           SELECT a.*,t.body AS task_body,
+             (SELECT tr.payload FROM runner_transitions tr
+              WHERE tr.plan_id=a.plan_id AND tr.task_id=a.task_id AND tr.event='SCOPE_AMENDED'
+              ORDER BY tr.id DESC LIMIT 1) AS scope_payload,
+             q.phase AS quarantine_phase,q.plan_id AS quarantine_plan_id,
+             q.session_id AS quarantine_session_id,q.assigned_message_id AS quarantine_message_id,
+             q.workspace AS quarantine_workspace,q.hold_reason AS quarantine_hold_reason,
+             q.review_input_json AS quarantine_review_input_json
+           FROM runner_attempts a JOIN selected_plans p ON p.id=a.plan_id
+           JOIN tasks t ON t.project_directory=? AND t.id=a.task_id
+           LEFT JOIN runner_source_quarantines q ON q.attempt_id=a.id
+           WHERE a.state IN ('preparing','running','verifying')
+           ORDER BY p.priority DESC,p.sequence,a.started_at,a.number LIMIT ?`,
+        )
+        .all(directory, directory, maxReservations + 1)
+      const totalReservationCount = db
+        .query<{ count: number }, [string]>(
+          `WITH selected_plans AS MATERIALIZED (
+             SELECT id FROM runner_plans WHERE project_directory=?
+             ORDER BY COALESCE(json_extract(body,'$.priority'),0) DESC,rowid LIMIT 1000
+           ) SELECT COUNT(*) AS count FROM runner_attempts a JOIN selected_plans p ON p.id=a.plan_id
+             WHERE a.state IN ('preparing','running','verifying')`,
+        )
+        .get(directory)!.count
+      const reservationsComplete = reservations.length <= maxReservations
+      if (!reservationsComplete) reservations.pop()
+
+      const adoptions = db
+        .query<AdoptionRow, [string, number]>(
+          `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE p.project_directory=? AND a.state IN ('pending','task-checks','combined-checks','waiting-human')
+           ORDER BY p.rowid,a.created_at,a.id LIMIT ?`,
+        )
+        .all(directory, maxReservations + 1)
+      const totalAdoptionCount = db
+        .query<{ count: number }, [string]>(
+          `SELECT COUNT(*) AS count FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE p.project_directory=? AND a.state IN ('pending','task-checks','combined-checks','waiting-human')`,
+        )
+        .get(directory)!.count
+      const adoptionsComplete = adoptions.length <= maxReservations
+      if (!adoptionsComplete) adoptions.pop()
+
+      const nodeTaskIDs = [...new Set(nodes.map((node) => node.task_id))]
+      const taskIntegrations: TaskPrerequisiteIntegrationRow[] = []
+      for (let offset = 0; offset < nodeTaskIDs.length; offset += 100) {
+        const batch = nodeTaskIDs.slice(offset, offset + 100)
+        taskIntegrations.push(
+          ...db
+            .query<TaskPrerequisiteIntegrationRow, [string, ...string[]]>(
+              `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
+                 n.artifact,
+                 (SELECT tr.id FROM runner_transitions tr
+                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                    AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_id,
+                 (SELECT tr.payload FROM runner_transitions tr
+                  WHERE tr.plan_id=n.plan_id AND tr.task_id=n.task_id
+                    AND tr.event='TASK_INTEGRATION_RECORDED' ORDER BY tr.id DESC LIMIT 1) AS integration_payload
+               FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+               WHERE p.project_directory=? AND n.task_id IN (${batch.map(() => "?").join(",")})`,
+            )
+            .all(directory, ...batch),
+        )
+      }
+
+      const planInputs = plans.flatMap((plan) => {
+        try {
+          const parsed = PlanInput.safeParse(JSON.parse(plan.body))
+          return parsed.success ? [parsed.data] : []
+        } catch {
+          return []
+        }
+      })
+      const prerequisiteIDs = [...new Set(planInputs.flatMap((plan) => plan.afterPlans ?? []))]
+      const prerequisiteLimit = 10_000
+      const selectedPrerequisites = prerequisiteIDs.slice(0, prerequisiteLimit)
+      const planIntegrations: PrerequisiteIntegrationRow[] = []
+      for (let offset = 0; offset < selectedPrerequisites.length; offset += 100) {
+        const batch = selectedPrerequisites.slice(offset, offset + 100)
+        planIntegrations.push(
+          ...db
+            .query<PrerequisiteIntegrationRow, [string, ...string[]]>(
+              `SELECT p.id AS plan_id,p.project_directory,p.state,p.artifact,
+                 accepted.id AS accepted_id,accepted.version AS accepted_version,
+                 accepted.payload AS accepted_payload,
+                 integration.id AS integration_id,integration.version AS integration_version,
+                 integration.payload AS integration_payload,
+                 (SELECT tr.id FROM runner_transitions tr
+                  WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='CANCEL_REQUESTED'
+                  ORDER BY tr.id DESC LIMIT 1) AS invalidation_id
+               FROM runner_plans p
+               LEFT JOIN runner_transitions accepted ON accepted.id=(
+                 SELECT tr.id FROM runner_transitions tr
+                 WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='PLAN_ACCEPTED'
+                 ORDER BY tr.id DESC LIMIT 1
+               )
+               LEFT JOIN runner_transitions integration ON integration.id=(
+                 SELECT tr.id FROM runner_transitions tr
+                 WHERE tr.plan_id=p.id AND tr.task_id IS NULL AND tr.event='INTEGRATION_RECORDED'
+                 ORDER BY tr.id DESC LIMIT 1
+               )
+               WHERE p.project_directory=? AND p.id IN (${batch.map(() => "?").join(",")})
+               ORDER BY p.id`,
+            )
+            .all(directory, ...batch),
+        )
+      }
+      return {
+        projectDirectory: directory,
+        repositoryVersion,
+        plans,
+        totalPlanCount,
+        plansComplete: plans.length === totalPlanCount,
+        totalNodeCount,
+        nodes,
+        nodesComplete: nodes.length === coveredPlanNodeCount,
+        coveredPlanNodeCount,
+        dependencies,
+        reservations,
+        totalReservationCount,
+        reservationsComplete,
+        adoptions,
+        totalAdoptionCount,
+        adoptionsComplete,
+        taskIntegrations,
+        planIntegrations,
+        planIntegrationsComplete: prerequisiteIDs.length <= prerequisiteLimit,
+      }
+    })
   }
   progressFacts(attemptIDs: readonly string[], limit = 10_001): ProgressRow[] {
     if (!attemptIDs.length) return []

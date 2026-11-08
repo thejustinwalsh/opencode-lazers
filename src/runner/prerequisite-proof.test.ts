@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import {
+  evaluateTaskPrerequisiteIntegration,
   evaluatePrerequisiteIntegration,
   type PrerequisiteIntegrationRow,
+  type TaskPrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
 
 const directory = "/project"
@@ -153,4 +155,76 @@ test("changed evidence and ancestry are rechecked on every decision without a ca
     ).toBeUndefined()
     expect(calls).toBe(failAt + 1)
   }
+})
+
+test("task prerequisites require a current recorded landing and fresh artifact/head ancestry", () => {
+  const taskID = "task-a"
+  const currentBranch = "main"
+  const integratedHead = "d".repeat(40)
+  const taskRow = (): TaskPrerequisiteIntegrationRow => ({
+    plan_id: "plan",
+    task_id: taskID,
+    project_directory: directory,
+    node_state: "accepted",
+    artifact,
+    integration_id: 12,
+    integration_payload: JSON.stringify({ artifact, branch: currentBranch, head: integratedHead }),
+  })
+  const gitCalls: string[][] = []
+  const successfulGit = (_directory: string, args: string[]) => {
+    gitCalls.push(args)
+    if (args[0] === "rev-parse") return baseline
+    return ""
+  }
+  expect(
+    evaluateTaskPrerequisiteIntegration(directory, currentBranch, [taskID], [], successfulGit),
+  ).toMatchObject({ status: "waiting" })
+  expect(
+    evaluateTaskPrerequisiteIntegration(
+      directory,
+      currentBranch,
+      [taskID],
+      [taskRow()],
+      successfulGit,
+      baseline,
+    ),
+  ).toEqual({ status: "ready", baseline })
+  expect(gitCalls).toEqual([
+    ["rev-parse", `${baseline}^{commit}`],
+    ["merge-base", "--is-ancestor", artifact, integratedHead],
+    ["merge-base", "--is-ancestor", integratedHead, baseline],
+    ["merge-base", "--is-ancestor", artifact, baseline],
+  ])
+  for (const modified of [
+    { ...taskRow(), node_state: "queued" },
+    { ...taskRow(), project_directory: "/foreign" },
+    { ...taskRow(), artifact: null },
+    { ...taskRow(), integration_payload: "{broken" },
+    {
+      ...taskRow(),
+      integration_payload: JSON.stringify({ artifact, branch: "other", head: integratedHead }),
+    },
+  ]) {
+    gitCalls.length = 0
+    expect(
+      evaluateTaskPrerequisiteIntegration(
+        directory,
+        currentBranch,
+        [taskID],
+        [modified as TaskPrerequisiteIntegrationRow],
+        successfulGit,
+        baseline,
+      ).status,
+    ).toBe("waiting")
+    expect(gitCalls).toEqual([])
+  }
+  expect(
+    evaluateTaskPrerequisiteIntegration(
+      directory,
+      currentBranch,
+      [taskID, taskID],
+      [taskRow()],
+      successfulGit,
+    ),
+  ).toMatchObject({ status: "waiting" })
 })

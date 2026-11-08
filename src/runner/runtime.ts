@@ -1,6 +1,9 @@
 import {
   evaluatePrerequisiteIntegration,
+  evaluateTaskPrerequisiteIntegration,
+  type IntegrationDecision,
   type PrerequisiteIntegrationRow,
+  type TaskPrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
@@ -62,6 +65,8 @@ import type {
   TerminalWorkerContinuationFacts,
 } from "./interrupted-continuation.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
+import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
+import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import {
   DispatchRouteDecisionSchema,
@@ -73,6 +78,8 @@ import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { SourceMessagesInspectPlanSchema } from "./inspection.ts"
 import { sharedScheduler } from "./scheduler-coordinator.ts"
+import { selectSchedulingCandidates } from "./scheduling-selection.ts"
+import type { SchedulingReservation } from "./scheduling-selection.ts"
 import {
   matchesReviewInputAlias,
   observeReviewInput,
@@ -327,6 +334,7 @@ export class TaskRuntime {
   private readonly requestTick: () => Promise<void>
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly modelMappingResolver: ModelMappingResolver
+  private readonly schedulingRead: TaskSchedulingRead
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -336,6 +344,7 @@ export class TaskRuntime {
   ) {
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
+    this.schedulingRead = new TaskSchedulingRead(store, this.now)
     this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
     this.architectPromptHook = options.architectPromptHook ?? false
     this.requestTick = options.requestTick ?? (() => this.tick())
@@ -347,6 +356,10 @@ export class TaskRuntime {
   }
   get dataDirectory() {
     return join(dirname(this.store.repository.path), "runner")
+  }
+
+  readScheduling(input: SchedulingInput): Promise<SchedulingPage> {
+    return this.schedulingRead.read(input)
   }
 
   private retainedVerificationWorkspacePath(operationID: string, phase: "task" | "combined") {
@@ -6813,30 +6826,39 @@ export class TaskRuntime {
       .map((attempt) => ({
         shared: attempt.workspace === this.directory,
         scopes: this.store.effectiveWriteScope(attempt.task_id),
+        taskID: attempt.task_id,
       }))
     occupied.push(
       ...this.store.activeAdoptions().map((adoption) => ({
         shared: false,
         scopes: this.store.effectiveWriteScope(adoption.task_id),
+        taskID: adoption.task_id,
       })),
     )
-    const ready = nodes.filter(
-      (node) =>
-        ["queued", "ready"].includes(node.state) &&
-        this.store.execution(node.task_id)!.waitingOn.length === 0,
+    const ready = nodes.filter((node) => {
+      if (
+        !["queued", "ready"].includes(node.state) ||
+        this.store.execution(node.task_id)!.waitingOn.length > 0
+      )
+        return false
+      const prerequisites = this.taskDependencyIDs(input, node)
+      return (
+        prerequisites.length === 0 ||
+        this.taskDependencyIntegration(plan!, input, node).status === "ready"
+      )
+    })
+    const selection = selectSchedulingCandidates(
+      input.workspaceMode,
+      ready.map((node) => ({
+        taskID: node.task_id,
+        scopes: this.store.effectiveWriteScope(node.task_id),
+      })),
+      occupied as SchedulingReservation[],
     )
-    const selected: NodeRow[] = []
-    if (input.workspaceMode === "shared") {
-      // A shared checkout is a single-writer resource, including across plans.
-      if (occupied.length === 0 && ready[0]) selected.push(ready[0])
-    } else if (!occupied.some((entry) => entry.shared)) {
-      for (const node of ready) {
-        const scope = this.store.effectiveWriteScope(node.task_id)
-        if (occupied.some((entry) => scopePatternsConflict(entry.scopes, scope))) continue
-        selected.push(node)
-        occupied.push({ shared: false, scopes: scope })
-      }
-    }
+    const selected = selection.selectedTaskIDs.flatMap((taskID) => {
+      const node = ready.find((candidate) => candidate.task_id === taskID)
+      return node ? [node] : []
+    })
     if (selected.length) {
       await Promise.all(
         selected.map(async (node) => {
@@ -7287,40 +7309,70 @@ export class TaskRuntime {
   }
 
   private dependencySource(plan: PlanRow, input: PlanInput, node: NodeRow): string {
+    const prerequisites = this.taskDependencyIDs(input, node)
+    if (!prerequisites.length) return input.baseCommit
+    const proof = this.taskDependencyIntegration(plan, input, node)
+    if (proof.status !== "ready") throw new Error(proof.reason)
+    return proof.baseline
+  }
+
+  private taskDependencyIDs(input: PlanInput, node: NodeRow): string[] {
     const dependencies = new Map<string, string[]>()
     for (const edge of input.dependencies) {
-      const predecessors = dependencies.get(edge.successor) ?? []
-      predecessors.push(edge.prerequisite)
-      dependencies.set(edge.successor, predecessors)
+      const prerequisites = dependencies.get(edge.successor) ?? []
+      prerequisites.push(edge.prerequisite)
+      dependencies.set(edge.successor, prerequisites)
     }
     const ancestors = new Set<string>()
     const visit = (taskID: string) => {
-      for (const prerequisite of dependencies.get(taskID) ?? [])
-        if (!ancestors.has(prerequisite)) {
-          ancestors.add(prerequisite)
-          visit(prerequisite)
-        }
+      for (const prerequisite of dependencies.get(taskID) ?? []) {
+        if (ancestors.has(prerequisite)) continue
+        ancestors.add(prerequisite)
+        visit(prerequisite)
+      }
     }
     visit(node.task_id)
-    if (!ancestors.size) return input.baseCommit
-    const byTask = new Map(
-      this.store.nodes(plan.id).map((candidate) => [candidate.task_id, candidate]),
-    )
-    const attempts = this.store.attempts(plan.id)
     const order = new Map(input.integrationOrder.map((taskID, index) => [taskID, index]))
-    const artifacts = [...ancestors]
-      .map((taskID) => ({ taskID, node: byTask.get(taskID) }))
-      .filter((entry) => entry.node?.state === "accepted")
-      .sort((a, b) => order.get(a.taskID)! - order.get(b.taskID)!)
-      .map(
-        ({ taskID, node: predecessor }) =>
-          attempts
-            .filter((attempt) => attempt.task_id === taskID && attempt.state === "accepted")
-            .at(-1)?.artifact ?? predecessor!.artifact,
-      )
-    if (artifacts.length !== ancestors.size || artifacts.some((artifact) => !artifact))
-      throw new Error("Accepted dependency artifact is missing")
-    return combineArtifacts(this.directory, input.baseCommit, artifacts as string[])
+    return [...ancestors].toSorted(
+      (left, right) =>
+        (order.get(left) ?? Number.MAX_SAFE_INTEGER) -
+        (order.get(right) ?? Number.MAX_SAFE_INTEGER),
+    )
+  }
+
+  private taskDependencyIntegration(
+    plan: PlanRow,
+    input: PlanInput,
+    node: NodeRow,
+    candidateBaseline?: string,
+    capturedRows?: readonly TaskPrerequisiteIntegrationRow[],
+    capturedBranch?: string,
+  ): IntegrationDecision {
+    const prerequisites = this.taskDependencyIDs(input, node)
+    if (!prerequisites.length)
+      return {
+        status: "ready",
+        baseline: candidateBaseline ?? input.baseCommit,
+      }
+    let branch: string
+    try {
+      branch = capturedBranch ?? git(this.directory, ["branch", "--show-current"])
+    } catch {
+      return { status: "unknown", reason: "The integrated source branch could not be read." }
+    }
+    if (!branch)
+      return { status: "waiting", reason: "Task source integration requires the reviewed branch." }
+    const rows = capturedRows
+      ? capturedRows.filter((row) => row.plan_id === plan.id && prerequisites.includes(row.task_id))
+      : this.store.taskPrerequisiteIntegrationRows(plan.id, prerequisites)
+    return evaluateTaskPrerequisiteIntegration(
+      this.directory,
+      branch,
+      prerequisites,
+      rows,
+      git,
+      candidateBaseline,
+    )
   }
 
   private integratedPrerequisiteBaseline(
@@ -7429,12 +7481,21 @@ export class TaskRuntime {
       retryRequest && retryRequest.attemptID === attempts.at(-1)?.id
         ? retryRequest.selectedBaseline
         : null
-    const base =
-      selectedBaseline ??
-      attempts.at(-1)?.artifact ??
-      (input.workspaceMode === "shared"
-        ? git(this.directory, ["rev-parse", "HEAD"])
-        : this.dependencySource(plan, input, node))
+    const previousBase = selectedBaseline ?? attempts.at(-1)?.artifact ?? undefined
+    const taskPrerequisites = this.taskDependencyIDs(input, node)
+    const base = taskPrerequisites.length
+      ? (() => {
+          const candidate = previousBase ?? this.dependencySource(plan, input, node)
+          const proof = this.taskDependencyIntegration(plan, input, node, candidate)
+          if (proof.status !== "ready") throw new Error(proof.reason)
+          if (proof.baseline !== candidate)
+            throw new Error("The prerequisite baseline changed before dispatch")
+          return candidate
+        })()
+      : (previousBase ??
+        (input.workspaceMode === "shared"
+          ? git(this.directory, ["rev-parse", "HEAD"])
+          : this.dependencySource(plan, input, node)))
     const workspace =
       input.workspaceMode === "shared" ? this.directory : join(this.dataDirectory, "worktrees", id)
     const text = JSON.stringify({
@@ -7625,7 +7686,62 @@ export class TaskRuntime {
     if (recovery && !this.startupRecoveryAuthorityCurrent(plan, currentAttempt, recovery))
       return false
 
-    const prerequisites = PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? []
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const taskNode = this.store
+      .nodes(planID)
+      .find((node) => node.task_id === currentAttempt.task_id)
+    if (!taskNode) return false
+    const taskPrerequisites = this.taskDependencyIDs(input, taskNode)
+    if (taskPrerequisites.length) {
+      const proof = this.taskDependencyIntegration(
+        plan,
+        input,
+        taskNode,
+        currentAttempt.base_commit,
+      )
+      if (proof.status !== "ready" || proof.baseline !== currentAttempt.base_commit) return false
+      try {
+        const treeHead = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
+        if (!isCommitID(treeHead) || !isCommitID(currentAttempt.base_commit)) return false
+        git(currentAttempt.workspace, [
+          "merge-base",
+          "--is-ancestor",
+          currentAttempt.base_commit,
+          treeHead,
+        ])
+        const taskChanges = changedPaths(currentAttempt.workspace, currentAttempt.base_commit)
+        const admittedPrompt = this.store.effects(planID).some((effect) => {
+          if (
+            effect.attempt_id !== currentAttempt.id ||
+            effect.kind !== "prompt" ||
+            effect.state !== "completed"
+          )
+            return false
+          const payload = JSON.parse(effect.payload) as {
+            sessionID?: unknown
+            workspace?: unknown
+            messageID?: unknown
+          }
+          return (
+            payload.sessionID === currentAttempt.session_id &&
+            payload.workspace === currentAttempt.workspace &&
+            payload.messageID === currentAttempt.message_id
+          )
+        })
+        if ((treeHead !== currentAttempt.base_commit || taskChanges.length > 0) && !admittedPrompt)
+          return false
+        if (
+          scopeViolations(taskChanges, this.store.effectiveWriteScope(currentAttempt.task_id))
+            .length > 0 ||
+          git(currentAttempt.workspace, ["ls-files", "-u", "-z"])
+        )
+          return false
+      } catch {
+        return false
+      }
+    }
+
+    const prerequisites = input.afterPlans ?? []
     if (!prerequisites.length) return true
 
     try {
