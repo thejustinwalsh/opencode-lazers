@@ -102,6 +102,7 @@ SAME182worker to keep hot reads responsive and reuse unchanged scheduling/source
 work without weakening dispatch freshness. No new task, hashes or polling were
 introduced. Improvement has not yet been measured. Reproduction script:
 /private/tmp/lz182-read-performance-observation.ts.
+
 # Updated Tasks candidate observation
 
 At Unix ms 1794094403548/1794094403607, Root reran the same real project read-only scheduling observation against LZ-182's updated asynchronous candidate, awaiting the result. First page: 121.76 ms cold, 58.21 ms repeated. Earlier candidate readings were 235.88/157.28 ms. Workload coverage remained 149 plans, 175 nodes, 13 active reservations; first page 100 plans / 94,025 bytes. Repository version was 1037842 for both updated reads.
@@ -119,4 +120,3 @@ Cause in current `src/tasks/scheduling-read.ts`: `planProof`/`taskProof` avoid t
 Reproduction `/private/tmp/lz182-transient-proof-observation.test.ts` failed one assertion; no-failure control `/private/tmp/lz182-transient-proof-control.test.ts` passed. Both use disposable SQLite/Git fixtures and clean them up. This is a candidate review finding, not a claim that runtime dispatch itself is blocked by this read-only UI cache.
 
 The worker's broader native test command completed in 198.98 seconds with **709 passing / 19 failing** across 49 files (8,877 assertions). Root read the exact completed tool result, not an observation timeout. Failures include dependency execution, retained successor chains, serial shared children, integration and cleanup fixtures. Their causes still require worker diagnosis against the changed integration-before-successor contract; they are not automatically unrelated or waived by the seven focused scheduling passes. Full retained output is `/private/tmp/lz182-broad-test-output.txt`. The current original worker is still active repairing the cache finding; no restart or duplicate suite was launched by Root.
-
