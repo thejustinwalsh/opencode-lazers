@@ -12,10 +12,10 @@ Read-only native SDK `snapshot` and legacy `radar` calls independently failed in
 
 The accepted LZ-129 `liveRadar` RPC succeeded against the same real project and current Architect session:
 
-| Scope | Observed at, Unix ms | Elapsed | Returned data | Response bytes |
-| --- | --- | --- | --- | --- |
-| Session | 1794090231569 | 73 ms | 1 session, 1 route, no current calls or flows | 2,390 |
-| Project | 1794090231745 | 189 ms | 12 managed sessions, 50 routes, 126 calls, 233 flows | 250,319 |
+| Scope   | Observed at, Unix ms | Elapsed | Returned data                                        | Response bytes |
+| ------- | -------------------- | ------- | ---------------------------------------------------- | -------------- |
+| Session | 1794090231569        | 73 ms   | 1 session, 1 route, no current calls or flows        | 2,390          |
+| Project | 1794090231745        | 189 ms  | 12 managed sessions, 50 routes, 126 calls, 233 flows | 250,319        |
 
 Project freshness reported current runner state and connected native events. Inventory, progress, payload and journal coverage were bounded; these counts are returned records, not complete project totals. It read 687 source rows / 659,811 source bytes, made 24 source queries, 1 inventory read and 9 selected native-session reads, with zero native context loads. These are single observations under active work, not a controlled performance benchmark.
 
