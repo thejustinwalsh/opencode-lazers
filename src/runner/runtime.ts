@@ -1658,6 +1658,32 @@ export class TaskRuntime {
       )
   }
 
+  private retainedRepairAttemptAccepted(plan: PlanRow, attempt: AttemptRow, taskRevision: number) {
+    if (attempt.state === "accepted") return true
+    if (attempt.state !== "failed") return false
+    const accepted = this.store.latestTransition<{ operationID?: string }>(
+      plan.id,
+      attempt.task_id,
+      "RETAINED_TASK_CANDIDATE_ACCEPTED",
+    )
+    const operationID = accepted?.operationID
+    if (!operationID) return false
+    const operation = this.store.atomic((db) => retainedVerification(db, operationID))
+    return Boolean(
+      operation &&
+      operation.projectDirectory === this.directory &&
+      operation.projectID === this.projectID &&
+      operation.planID === plan.id &&
+      operation.taskID === attempt.task_id &&
+      operation.taskRevision === taskRevision &&
+      operation.attemptID === attempt.id &&
+      operation.artifact === attempt.artifact &&
+      operation.originalSessionID === attempt.session_id &&
+      operation.originalMessageID === attempt.message_id &&
+      this.retainedTaskCandidateAccepted(operation),
+    )
+  }
+
   private async prepareRetainedRepair(
     plan: PlanRow,
     command: PlanCommand,
@@ -1698,7 +1724,7 @@ export class TaskRuntime {
       !attempt ||
       attempt.id !== command.attemptID ||
       node.state !== "accepted" ||
-      attempt.state !== "accepted" ||
+      !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
       !admitted ||
       admitted.revision !== task.revision ||
       task.provenance.projectID !== this.projectID ||
@@ -3239,7 +3265,7 @@ export class TaskRuntime {
           !attempt ||
           node.state !== "accepted" ||
           attempt.id !== retainedRepair.attemptID ||
-          attempt.state !== "accepted" ||
+          !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
           attempt.message_id !== retainedRepair.previousMessageID ||
           attempt.session_id !== retainedRepair.sessionID ||
           attempt.workspace !== retainedRepair.workspace ||
@@ -3305,9 +3331,14 @@ export class TaskRuntime {
           .run(plan.id, task.id, retainedRepair.artifact).changes
         const updatedAttempt = db
           .query(
-            "UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=? AND state='accepted' AND message_id=?",
+            "UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=? AND state=? AND message_id=?",
           )
-          .run(retainedRepair.messageID, attempt.id, retainedRepair.previousMessageID).changes
+          .run(
+            retainedRepair.messageID,
+            attempt.id,
+            attempt.state,
+            retainedRepair.previousMessageID,
+          ).changes
         const updatedPlan = db
           .query(
             "UPDATE runner_plans SET state='running',reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
@@ -3323,6 +3354,7 @@ export class TaskRuntime {
           expectedVersion: command.expectedVersion,
           attemptID: attempt.id,
           previousMessageID: retainedRepair.previousMessageID,
+          previousAttemptState: attempt.state,
           messageID: retainedRepair.messageID,
           sessionID: attempt.session_id,
           workspace: attempt.workspace,

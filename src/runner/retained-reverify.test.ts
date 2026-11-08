@@ -1141,6 +1141,93 @@ function retainedVerifyCommand(f: Awaited<ReturnType<typeof failedFixture>>, req
   }
 }
 
+async function acceptedFailedAttemptFixture() {
+  const f = await failedFixture()
+  const control = await registeredPlanCommand(f.runtime)
+  await control.execute(retainedVerifyCommand(f, "accept-retained-failed-attempt"))
+  for (let i = 0; i < 6; i++) await f.runtime.tick()
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(f.store.attempts(f.planID)[0]?.state).toBe("failed")
+  const command = {
+    requestID: "repair-retained-accepted-failed-attempt",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "retained-repair" as const,
+    taskID: f.task.id,
+    attemptID: f.attempt.id,
+    artifact: f.artifact,
+    reason: "Resolve the actual combined integration conflict in the original worker",
+  }
+  return { ...f, control, command }
+}
+
+test("retained acceptance repairs the same failed-history attempt without rewriting its failure", async () => {
+  const f = await acceptedFailedAttemptFixture()
+  const original = f.store.attempts(f.planID)[0]!
+  const history = () =>
+    f.store.atomic((db) =>
+      db.query("SELECT * FROM runner_transitions WHERE plan_id=? ORDER BY id").all(f.planID),
+    )
+  const oldHistory = history()
+  const oldPromptCount = f.prompts.length
+  f.host.prompt = async (input) => {
+    f.prompts.push({ sessionID: input.sessionID, id: input.id })
+    writeFileSync(join(input.directory, "result.txt"), "retained candidate\nconflict resolved\n")
+    git(input.directory, ["add", "result.txt"])
+    git(input.directory, ["commit", "-m", "resolve combined conflict"])
+    const worker = f.sessions.get(input.sessionID)!
+    worker.messages.push({ id: input.id, text: input.text })
+    worker.turn = { inputID: input.id, state: "completed" }
+    if (worker.background?.state === "observed") worker.background.inputID = input.id
+  }
+  const result = await f.control.execute(f.command)
+  expect(result).toMatchObject({ status: "retained-repair-requested", attemptID: original.id })
+  expect(await f.control.execute(f.command)).toEqual(result)
+  expect(history().slice(0, oldHistory.length)).toEqual(oldHistory)
+  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_REPAIR_REQUESTED")).toMatchObject({
+    previousAttemptState: "failed",
+    artifact: original.artifact,
+  })
+  await f.runtime.tick()
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: original.id,
+    number: original.number,
+    session_id: original.session_id,
+    workspace: original.workspace,
+    policy: original.policy,
+  })
+  expect(f.prompts).toHaveLength(oldPromptCount + 1)
+  expect(f.prompts.at(-1)?.sessionID).toBe(original.session_id)
+}, 30_000)
+
+for (const timing of ["before admission", "during native observation"]) {
+  test(`failed-history repair rejects missing retained acceptance ${timing}`, async () => {
+    const f = await acceptedFailedAttemptFixture()
+    const original = f.store.attempts(f.planID)[0]!
+    const oldPromptCount = f.prompts.length
+    const removeAcceptance = () =>
+      f.store.atomic((db) =>
+        db
+          .query("DELETE FROM runner_transitions WHERE plan_id=? AND event=?")
+          .run(f.planID, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+      )
+    if (timing === "before admission") removeAcceptance()
+    else
+      f.host.waitForSession = async () => {
+        removeAcceptance()
+      }
+    await expect(f.control.execute(f.command)).rejects.toThrow(
+      timing === "before admission"
+        ? "latest accepted task and attempt"
+        : "assignment changed before admission",
+    )
+    expect(f.store.attempts(f.planID)).toEqual([original])
+    expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+    expect(f.prompts).toHaveLength(oldPromptCount)
+  }, 30_000)
+}
+
 function writeInjectedPrivatePackage(candidateWorkspace: string): void {
   const dependencyRoot = realpathSync(join(candidateWorkspace, "node_modules"))
   const packageDirectory = join(dependencyRoot, "retained-fixture-dependency")
