@@ -98,7 +98,7 @@ export default Plugin.define({
       yield* registerModelTools(ctx, repository)
       yield* registerModelsServer(ctx, repository).pipe(Effect.orDie)
       yield* registerArchitect(ctx)
-      yield* registerAuditTools(ctx)
+      yield* registerAuditTools(ctx, repository)
       const runnerStore = new RunnerStore(repository)
       const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
       const host = nativeHost(ctx, repository)

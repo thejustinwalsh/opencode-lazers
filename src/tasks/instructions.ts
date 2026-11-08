@@ -70,6 +70,9 @@ export function taskInstructions(detail: TaskDetail): string {
     section("Assumptions", proposal.assumptions) +
     (proposal.guidance ? `\n\n## Implementation guidance (advisory)\n${proposal.guidance}` : "") +
     attachedAdvice +
+    (detail.auditHistory
+      ? `\n\n## Audit history\n${detail.auditHistory.runCount} saved runs; latest ${detail.auditHistory.latestRunID}. Use lz-query-audits with taskID ${task.id}, then lz-get-audit for relevant findings and decisions.`
+      : "") +
     section(
       "Verification",
       proposal.verification.map(

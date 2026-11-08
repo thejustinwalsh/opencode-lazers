@@ -196,6 +196,8 @@ const quarantineReads = new Set([
   "lz-get-task-instructions",
   "lz-query-tasks",
   "lz-inspect-trajectory",
+  "lz-query-audits",
+  "lz-get-audit",
   "lz-report-progress",
   "lz-verify-handoff",
   "lz-submit-handoff",

@@ -21,8 +21,10 @@ Existing scheduling, workspaces, hooks, trajectories, repair and integration app
 
 `lz-fallow-report` is available in Code Mode. The bundled
 `@fallow-cli/fallow-node` dependency runs async static analysis on the server,
-using one analysis thread by default. Full timestamped JSON reports are saved in
-`design/audits/`; tool output returns their paths and summaries. Scans cover dead
+using one analysis thread by default. Full reports, findings and append-only
+dispositions live in the task SQLite database, linked to task/attempt/session
+with Unix millisecond timestamps. `lz-query-audits` and `lz-get-audit` retrieve
+history; replaceable JSON exports survive worker checkout cleanup. Scans cover dead
 code/dependencies, duplication, health/complexity/CSS, architecture and feature
 flags. Optional local-model semantic search is not downloaded or started.
 

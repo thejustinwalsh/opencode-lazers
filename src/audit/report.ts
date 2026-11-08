@@ -1,60 +1,98 @@
-import { mkdir, writeFile, realpath } from "node:fs/promises"
-import { join } from "node:path"
+import { realpath, readFile } from "node:fs/promises"
+import { AuditHistory } from "./history.ts"
+import type { AuditActor, AuditRun } from "./history.ts"
 
-/** Async native analysis runs on the host, never the Desktop renderer. */
-export async function fallowReport(root: string, threads = 1, signal?: AbortSignal) {
-  const workspace = await realpath(root)
-  const startedAt = Date.now()
-  const reportPath = join(workspace, "design", "audits", `${startedAt}-${crypto.randomUUID()}.json`)
-  const fallow = await import("@fallow-cli/fallow-node")
-  const options = { root: workspace, threads, explain: true }
-  const scans = {
-    deadCode: () => fallow.detectDeadCode(options),
-    duplication: () => fallow.detectDuplication(options),
-    health: () => fallow.computeHealth({ ...options, css: true }),
-    architecture: () => fallow.detectArchitecture(options),
-    featureFlags: () => fallow.detectFeatureFlags(options),
+export type AuditRequest = {
+  requestID: string
+  workspace: string
+  threads?: number
+  taskID?: string
+  phase?: AuditRun["phase"]
+  baselineRunID?: string
+}
+async function result(history: AuditHistory, runID: string) {
+  const output = history.summary(history.get(runID))
+  try {
+    await history.export(runID)
+    return output
+  } catch (error) {
+    return { ...output, exportError: error instanceof Error ? error.message : String(error) }
   }
-  const reports: Record<string, unknown> = {}
-  const analyses: Array<{ name: string; summary?: unknown; error?: string }> = []
-  // Avoid competing full-repository scans; one worker thread keeps interactive work responsive.
-  for (const [name, scan] of Object.entries(scans)) {
-    signal?.throwIfAborted()
-    try {
-      const report = await scan()
-      reports[name] = report
-      analyses.push({
-        name,
-        summary:
-          "summary" in report
-            ? report.summary
-            : "stats" in report
-              ? report.stats
-              : { totalFlags: report.total_flags },
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      reports[name] = { error: message }
-      analyses.push({ name, error: message })
+}
+/** Persist each native result before proceeding; worktree files are never the history authority. */
+export async function fallowReport(
+  history: AuditHistory,
+  input: AuditRequest,
+  actor: AuditActor,
+  signal?: AbortSignal,
+) {
+  const start = history.start({ ...input, workspace: await realpath(input.workspace) }, actor)
+  if (!start.created) return result(history, start.run.runID)
+  const runID = start.run.runID
+  try {
+    const fallow = await import("@fallow-cli/fallow-node")
+    const options = { root: start.run.workspace, threads: input.threads ?? 1, explain: true }
+    const scans = {
+      deadCode: () => fallow.detectDeadCode(options),
+      duplication: () => fallow.detectDuplication(options),
+      health: () => fallow.computeHealth({ ...options, css: true }),
+      architecture: () => fallow.detectArchitecture(options),
+      featureFlags: () => fallow.detectFeatureFlags(options),
     }
+    for (const [name, scan] of Object.entries(scans)) {
+      signal?.throwIfAborted()
+      let report: unknown, failure: string | undefined
+      try {
+        report = await scan()
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error)
+      }
+      history.section(runID, name, report, failure)
+    }
+    signal?.throwIfAborted()
+    history.finish(runID)
+  } catch (error) {
+    history.finish(runID, error instanceof Error ? error.message : String(error))
+    await result(history, runID)
+    throw error
   }
-  const finishedAt = Date.now()
-  await mkdir(join(workspace, "design", "audits"), { recursive: true })
-  await writeFile(
-    reportPath,
-    JSON.stringify(
-      {
-        schemaVersion: 1,
-        source: "@fallow-cli/fallow-node",
-        workspace,
-        startedAt,
-        finishedAt,
-        reports,
-      },
-      null,
-      2,
-    ) + "\n",
-    { flag: "wx" },
+  return result(history, runID)
+}
+
+export async function importAudit(
+  history: AuditHistory,
+  input: AuditRequest & { path: string },
+  actor: AuditActor,
+) {
+  const source: unknown = JSON.parse(await readFile(input.path, "utf8"))
+  if (
+    !source ||
+    typeof source !== "object" ||
+    !("reports" in source) ||
+    !source.reports ||
+    typeof source.reports !== "object" ||
+    Array.isArray(source.reports)
   )
-  return { reportPath, startedAt, finishedAt, analyses }
+    throw new Error("Expected a saved Fallow report with a reports object")
+  const start = history.start(
+    { ...input, phase: input.phase ?? "inspection", sourcePath: input.path },
+    actor,
+  )
+  if (start.created) {
+    // Imported metadata is provenance from the file, not a claim of current task ownership.
+    const { reports, ...metadata } = source
+    history.importedMetadata(start.run.runID, metadata)
+    for (const [name, report] of Object.entries(reports)) {
+      const error =
+        report &&
+        typeof report === "object" &&
+        "error" in report &&
+        typeof report.error === "string"
+          ? report.error
+          : undefined
+      history.section(start.run.runID, name, report, error)
+    }
+    history.finish(start.run.runID)
+  }
+  return result(history, start.run.runID)
 }

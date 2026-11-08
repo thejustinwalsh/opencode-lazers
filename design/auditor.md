@@ -30,12 +30,31 @@ platform-specific native optional dependency. The library loads only when
 sequentially with one analysis thread by default, configurable per call. There
 is no renderer scan, daemon, recurring timer or local inference model.
 
-The tool saves full JSON in `design/audits/<unix-ms>-<uuid>.json` and returns its
-path and summaries. Include that directory in an audit task's write scope.
-Reports contain workspace and start/finish Unix millisecond timestamps, findings
-and individual scan errors. They cover dead code/dependencies, duplication,
-complexity/CSS health, architecture and feature flags. Optional model-based
-similar-code search is not started; it needs a separate model companion.
+The task SQLite database stores each run and its complete native report sections,
+linked to project, task, plan, attempt and session. Worker association comes from
+the runtime assignment, not model claims. Start, section capture, finish and
+finding decisions carry Unix millisecond timestamps. Each analysis is committed
+before the next starts; errors and interrupted runs retain their saved results.
+The first scan defaults to baseline; follow-ups link to it. Request identities
+make exact tool retries return the existing run without rescanning.
+
+- `lz-fallow-report`: scan and return run ID, summaries and export location.
+- `lz-query-audits`: browse project/task/attempt/plan history.
+- `lz-get-audit`: page structured findings, filter by analysis/path, optionally
+  retrieve original JSON or regenerate its export.
+- `lz-record-audit-finding`: append an assessment and rationale, optionally
+  linking a follow-up run. Previous decisions remain readable.
+- `lz-import-audit`: preserve a legacy report without rerunning analysis;
+  imported metadata remains provenance, not inferred worker ownership.
+
+All five tools are available in Code Mode with native permissions. Task details
+include a compact history locator. JSON exports live in `audits/<runID>.json`
+beside the task database, outside worktrees. SQLite remains authoritative when
+an export is missing or cannot be written; exports can be regenerated after
+checkout removal. No report write scope or separate audit service is needed.
+Reports cover dead code/dependencies, duplication, complexity/CSS health,
+architecture and feature flags. Optional model-based similar-code search is not
+started; it needs a separate model companion.
 
 Auditor saves before/after reports, confirms actual callers and dynamic entry
 points, removes/consolidates/refactors code, runs automatic quality fixes and
@@ -54,6 +73,10 @@ maintainability, not a zero-finding target or raw line count.
 ## Validation
 
 Native Fallow fixture analysis saves all five reports and leaves source intact.
+History tests cover native assignment, before/after links, append-only decisions,
+partial/interrupted persistence, project isolation, import, DB reopen and export
+regeneration after checkout removal. Tool tests exercise all five registrations
+and native permission denial. History never establishes task completion.
 A runner integration test dispatches Auditor with the selected route and retains
 the same attempt while awaiting Architect review. Both worker roles pass the
 same native-hook/retained-event coalescing test. Broader integration and runtime

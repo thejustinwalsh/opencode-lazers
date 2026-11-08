@@ -116,6 +116,9 @@ export const GetOutput = z.discriminatedUnion("status", [
     classificationHistory: z.array(TaskClassificationRevision),
     classificationAtRevision: TaskClassificationRevision.nullable().optional(),
     advice: TaskAdviceSnapshot.nullable().default(null),
+    auditHistory: z
+      .strictObject({ runCount: z.int().positive(), latestRunID: z.uuid().nullable() })
+      .optional(),
     reference: TaskReferenceSchema,
     disposition: TaskDispositionRecord.optional(),
     /** Raw node lifecycle, if planned, distinct from plan-level blocked presentation. */

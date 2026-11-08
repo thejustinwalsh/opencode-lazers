@@ -1,3 +1,4 @@
+import { taskAuditHistory } from "../audit/history.ts"
 import { createHash } from "node:crypto"
 import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
@@ -174,6 +175,7 @@ export class TaskReads {
     const reference = this.repository.referenceFor(task.id)
     if (!reference) throw new Error("Task reference is missing from this repository")
     const advice = taskAdviceSnapshot(this.repository, task.id)
+    const auditHistory = taskAuditHistory(this.repository, task.id)
     const execution = this.effectiveExecution(task.id)
     if (!execution)
       return GetOutput.parse({
@@ -182,6 +184,7 @@ export class TaskReads {
         classification: classifications.current,
         classificationHistory: classifications.history,
         advice,
+        ...(auditHistory ? { auditHistory } : {}),
         ...(query.classificationRevision !== undefined
           ? {
               classificationAtRevision:
@@ -218,6 +221,7 @@ export class TaskReads {
       classification: classifications.current,
       classificationHistory: classifications.history,
       advice,
+      ...(auditHistory ? { auditHistory } : {}),
       ...(query.classificationRevision !== undefined
         ? {
             classificationAtRevision:

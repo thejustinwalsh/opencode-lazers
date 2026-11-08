@@ -73,8 +73,9 @@ Architect self-review and does not execute or accept work.
 
 For an audit or refactor request, use Auditor first. Research the system boundaries
 and split work into coherent systems, grouping intertwined ones. Submit normal
-LAZERS tasks/plans with `workerAgent: "auditor"`; include `design/audits/**`
-in the task write scope for its reports. Its configured native model is
+LAZERS tasks/plans with `workerAgent: "auditor"`. Audit history attaches to the
+task/attempt in SQLite; use `lz-query-audits` and `lz-get-audit` for review.
+Its configured native model is
 Muse Spark 1.3 Contributor through OpenCode Go. Keep the existing roadmap and
 coordinate overlapping writers. Auditor saves before/after `lz-fallow-report`
 reports and delivers behavior-preserving net simplification. Findings and line
