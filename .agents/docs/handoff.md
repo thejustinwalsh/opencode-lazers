@@ -13,13 +13,11 @@ show an actionable reason in Tasks and offer one-click Architect investigation.
 Recoverable failures should continue without human coordination. This end-to-end
 behavior and the one-click action are **not yet proven delivered**.
 
-At Unix1794171886759, complete read-only scheduling projection covered156plans,
-182nodes and12reservations: no eligible/selected tasks; native active map empty.
-Immediate chain: LZ-182 blocked on old verification failure; LZ-185 waits for182;
-LZ-187 waits for185 plus integrated186. LZ-184 waits on documentation write scope.
-These are delivery holds, not an empty backlog. Architect has the user's explicit
-correction to reconcile retained work and remove Root-only acceptance clauses
-through supported controls, preserving actual behavior checks and history.
+Scheduling diagnostic caution: an external `TaskSchedulingRead` process lacks
+OpenCode's process-local source-guard registry and can overreport quarantined
+reservations. It is not dispatch authority. Current concrete serialization:
+LZ-181 is active; LZ-182 preparation and queued LZ-164 overlap its scope.
+LZ-192 depends on181/182. Native service observations determine actual holds.
 
 Concrete repairs on main:
 
@@ -38,10 +36,13 @@ Concrete repairs on main:
 - `4abb300`: confirmed native131 retained-repair rejection fixed. Accepted task +
   historical failed attempt now uses the existing durable retained acceptance for
   admission, including an atomic recheck. Failure history and same-worker identity
-  remain. Quality and78repair/reverify tests/888assertions pass. Delivered to native
-  Architect for review/activation/retry; live success is not yet confirmed.
-- `c2f3be6`: concise Architect guidance to background independent reviews and
-  project large Code Mode results. Quality and registration test pass.
+  remain. Quality and78repair/reverify tests/888assertions pass. Native Architect reviewed and activated the fix. Its131 retry passed the
+  repaired admission guard, then encountered a reservation hold; repair completion
+  and integration remain unproven.
+- `f67ef0d`: Architect uses proportional independent review and projects large
+  Code Mode results. Quality and registration test pass.
+- `3ada1c3`: native bridge exposes HTML summary disclosures.20tests/93assertions,
+  quality and GUI build pass; composed into review candidate66927d5.
 - `c3a5f9c`: owned native bridge exposes semantic menus/options/tabs;20tests pass.
 - `b06e079`/`b9870d6`: verification agents may confirm a safe fixture snapshot;
   a persisted empty native session and temporary fixtures are normal setup work.
@@ -57,6 +58,20 @@ attempt4d691f62-10c6-456f-b862-72cf665c4bb6, original native worker
 ses_12ba163aca2a4703a19aa82430adb1ab, at Unix1794174681139. Confirmed live
 OpenAI Luna Max at1794174802710, reading task and source index; no pending permissions.
 Do not duplicate the feature or add a second scheduler/periodic model-prompt loop.
+
+
+At Unix1794178701718, Architect promoted existing worker correction
+msg_558cad67a8e54bec924bff59b9c320c7c from queue to steer using native
+session.inbox.update. Subsequently the item left the inbox and appeared in the
+same worker transcript; worker remained running. Three older coordination inputs
+were still queued. Queue delivery had deferred the urgent correction behind the
+long current turn. Do not infer implementation success from consumption.
+The correction supersedes stale task requirements for hash/config/environment
+baseline comparison and removes new raw forced Git worktree lifecycle. Preserve
+async checks, actual results, mechanical autofixes and same-worker identity.
+Inspect the draft for actual removal, then let Architect verify/integrate.
+Architect also reconciled a stale permission hold after the exact native worker
+location reported no pending request; no permission was bypassed.
 
 Architect also submitted LZ-192, task03e3c72a-d563-4abe-a0bb-5ddf9d217843,
 plan680b665f-e461-45bc-8f35-c8283bd026f8, priority95, waiting on182 and181.
