@@ -211,7 +211,7 @@ describe("owned native Desktop adapter", () => {
     expect(hint).not.toContain("abc123456789")
   })
 
-  test("rendered native menus and tabs are actionable without exposing navigation links", () => {
+  test("rendered native menus, tabs and disclosures are actionable without exposing navigation links", () => {
     const dom = new Window()
     try {
       dom.document.body.innerHTML = `
@@ -220,6 +220,7 @@ describe("owned native Desktop adapter", () => {
         <div role="menuitemcheckbox">Include other sessions</div>
         <div role="option">Project tasks</div>
         <div role="tab">Radar</div>
+        <details><summary>Activity and holds</summary><p>Fixture failure</p></details>
         <a href="https://example.test" role="menuitem">External link</a>`
       for (const element of dom.document.body.querySelectorAll("*")) {
         element.setAttribute("style", "opacity:1")
@@ -228,7 +229,7 @@ describe("owned native Desktop adapter", () => {
         })
       }
       const snapshot = dom.eval(BOUNDED_DOM_SNAPSHOT_SCRIPT) as {
-        elements: Array<{ name: string; role: string }>
+        elements: Array<{ name: string; role: string; tag: string }>
       }
       expect(snapshot.elements.map((element) => element.name)).toEqual([
         "Completed",
@@ -236,8 +237,10 @@ describe("owned native Desktop adapter", () => {
         "Include other sessions",
         "Project tasks",
         "Radar",
+        "Activity and holds",
       ])
       expect(snapshot.elements[0]?.role).toBe("menuitem")
+      expect(snapshot.elements.at(-1)).toMatchObject({ tag: "summary", role: "button" })
     } finally {
       void dom.happyDOM.close()
     }
