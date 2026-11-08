@@ -5,36 +5,43 @@ roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. This file is a locator; native runtime/API state is authoritative.
 Older details remain in Git history and linked reports.
 
-## Restart recovery update — 2026-11-08
+## Current review boundary — 2026-11-08
 
-Root recovered committed review compositions through native OpenCode worktree API
-into durable sibling checkouts:
-`/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz182-review-recovered`
-(HEAD fed8d3f) and sibling `lz184-review-recovered` (HEAD24969ce). `/private/tmp`
-review checkouts and their uncommitted logs disappeared. Old native remove with
-force:false rejects their missing paths; registrations remain, branches preserved.
-Do not recreate or report old temporary processes as live.
+Both review checkouts were recovered through native OpenCode worktree.create into
+`/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/`. Old /private/tmp checkouts
+and uncommitted logs vanished. Native non-forced removal rejects the missing old
+paths; registrations remain and committed branches are preserved.
 
-Use durable ignored `.cache/driver/client.ts` and `state.ts` for read-only SDK
-state; Service.discover connects to the existing service. At Unix1794152923710,
-main Architect ses_e568438ebffeaoFbF9nBb942XM, original Tasks worker
-ses_ddabe399ccb84ea982cba703ac87341c, current Radar worker
-ses_fdb5a452d2f1458fbf405249263fa30c and native Luna source reviewer
-ses_e4427a3dbffeOyojjAt0iCyOmw were all active. Revalidate handles.
-Architect resumed retained Tasks attempt47d66efc and Radar current attemptacb55d57
-without replacing them. Original Radar7a0a684f/artifact8919a20 remain preserved.
+- `lz182-review-recovered`: compositionc0cfd370, includes original worker repair
+  6dbae67. Original worker735tests pass; Root composition99tests+verify+GUI build
+  pass. Real read-only DB scope checks149projectplans,103ArchitectSessionplans,
+  zero unrelatedSessionplans. Report `design/reviews/lz182-fae-source-review-20261107.md`.
+- `lz184-review-recovered`: composition9da5220, includes original8919a20 and
+  current worker correctionc983c0a, Root boundary tests61c17a7 and contract updates.
+  Full relevant suite227pass/0fail; quality/build pass. Six old integration
+  expectations were reconciled with exact-view lookup and metadata-only live
+  observations, with scope/limit/redaction assertions preserved. Report
+  `design/reviews/lz184-combined-validation-20261108.md`.
 
-User wants project-specific durable sibling worktrees. Architect received the
-request through Desktop and is researching consistent runtime creation/recovery;
-existing production worktrees already survive in OpenCode data. See
-`design/reviews/worktree-storage-recovery-20261108.md` (a8793a3).
+Neither feature has connected Desktop/Terra acceptance or canonical activation.
+Both native workers are finished and clean: Tasks ses_ddabe399ccb84ea982cba703ac87341c,
+Radar current ses_fdb5a452d2f1458fbf405249263fa30c. Preserve original attempts/history.
+Root owns review/activation; do not start replacement implementation attempts.
 
-Recovered Radar composition passes verify+GUI build but broader tests find218pass,
-6fail. Do not activate/accept yet. Read
-`design/reviews/lz184-combined-validation-20261108.md` (a86ef43) and durable checkout
-`.cache/review/` logs. Relay findings to Architect/current worker once Desktop
-unlocks: CUA explicitly reported locked and user unlock request is pending.
-Current Main has not yet received these new failures. No model prompts through SDK.
+Architect ses_e568438ebffeaoFbF9nBb942XM is waiting on its native question about
+one workspace lifecycle task versus widening existing tasks. Answer **one lifecycle
+task**. Native Luna workspace research is complete; see
+`design/reviews/worktree-storage-recovery-20261108.md`. Preserve old recorded paths,
+change four fresh path producers, retain native API/cleanup. Research and source
+review sessions are finished; no further polling needed.
+
+Computer Use repeatedly explicitly reports macOS locked. User unlock request is
+pending. After unlock: answer Architect, relay both corrected compositions and
+completed reviews, stage/observe actual Tasks and Radar at narrow/wide sizes,
+request native Terra High screenshot review, then coordinate integration/acceptance
+and original roadmap continuation. Do not infer live acceptance from tests. No
+model prompts through SDK. Durable ignored `.cache/driver/client.ts` discovers the
+existing service; `state.ts` and bounded public-output helpers are available.
 
 ## Working rules
 
