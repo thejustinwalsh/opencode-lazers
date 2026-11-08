@@ -120,3 +120,26 @@ Cause in current `src/tasks/scheduling-read.ts`: `planProof`/`taskProof` avoid t
 Reproduction `/private/tmp/lz182-transient-proof-observation.test.ts` failed one assertion; no-failure control `/private/tmp/lz182-transient-proof-control.test.ts` passed. Both use disposable SQLite/Git fixtures and clean them up. This is a candidate review finding, not a claim that runtime dispatch itself is blocked by this read-only UI cache.
 
 The worker's broader native test command completed in 198.98 seconds with **709 passing / 19 failing** across 49 files (8,877 assertions). Root read the exact completed tool result, not an observation timeout. Failures include dependency execution, retained successor chains, serial shared children, integration and cleanup fixtures. Their causes still require worker diagnosis against the changed integration-before-successor contract; they are not automatically unrelated or waived by the seven focused scheduling passes. Full retained output is `/private/tmp/lz182-broad-test-output.txt`. The current original worker is still active repairing the cache finding; no restart or duplicate suite was launched by Root.
+
+## Post-restart service sample — 2026-11-08
+
+At approximately 10:51 America/Detroit, OpenCode service PID1754 was observed at
+94.6% CPU while two implementors, two native Luna reviews and Architect's pending
+interview were present. A subsequent reading was20.8%; these are samples during
+active work, not an idle baseline or sustained-load conclusion. Physical footprint
+reported by a three-second native stack sample was1.6GB, peak3.7GB. Main thread
+spent164/228 sampled stacks in `kevent64`; other active stacks include SQLite
+execution/JSON conversion, with stripped native frames. The capture does not map
+those operations to a particular plugin query or establish a root cause. Native
+wait stacks dominate totals across threads and must not be treated as CPU work.
+
+Local capture: `.cache/driver/opencode-service-20261108.sample.txt` (ignored).
+The sample used the existing service and did not restart or interrupt workers.
+Separate video processing and macOS indexing were also using CPU; no attribution
+of their work to LAZERS is established. Data-volume free space was29GiB.
+
+The recovered Radar composition now finishes formatter/lint/typecheck in roughly
+0.6 seconds and GUI build in2.84 seconds, compared with the observed pre-restart
+multi-second formatting and72.82-second typecheck. This establishes changed
+conditions, not a plugin performance fix. Controlled active/idle comparison and
+function-level profiling remain required before closing the battery concern.
