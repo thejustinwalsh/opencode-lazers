@@ -70,3 +70,20 @@ review composition as `61c17a7`. Actual UTF-8 path boundary and serialized-total
 truncation cases pass:7 tests /26 assertions,43ms. `bun run verify` also passes.
 No production logic changed. This closes the source review's test gap but leaves
 the six broader failures and connected Desktop/Terra acceptance outstanding.
+
+## Contract reconciliation — broader suite now passing
+
+Root investigated all six differences. Native live observations intentionally omit
+tool-result bodies while retaining completion metadata; exact view-session lookup
+adds one native get per inventory read and may add a current/unavailable view row.
+Root updated the old integration expectations in the isolated review composition.
+Foreign sessions remain excluded; unavailable rows remain explicitly unavailable;
+the test counts one exact get per inventory read plus managed-session misses, not
+unbounded context loading. History body-truncation assertions remain unchanged.
+
+Actual full relevant run after reconciliation: **227 pass /0 fail, 2,735 assertions,
+31 files,27.38 seconds**. `bun run verify` passes with automatic formatting/lint.
+Logs: `.cache/review/contracts-{quality,full-tests}.log` in the durable checkout.
+Only test files changed during this reconciliation; no production behavior was
+modified to force these results. Connected Desktop and Terra review are still
+required. No task acceptance or canonical source activation has been claimed.
