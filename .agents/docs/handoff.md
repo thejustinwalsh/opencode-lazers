@@ -30,8 +30,10 @@ Concrete repairs on main:
   destination collision checks. Quality passes;87retained verification/isolation
   and source-quarantine tests pass, plus an additional active/uncommitted-writer
   preservation test. Architect was told to review, activate through supported
-  lifecycle at a normal safe boundary, then retry LZ-182 itself. **Activation and
-  native retry success are not confirmed.** Do not stop healthy work to force it.
+  lifecycle at a normal safe boundary, then retry LZ-182 itself. **Native retry entered task checks** in operation
+  e6bfc062-781e-4f5a-860e-4c2ec368f58f at Unix1794173717620 after a Luna Max
+  read-only review found no material issue. Admission is unblocked; check success,
+  integration and dependent dispatch remain unproven. Do not stop healthy work.
 - `c3a5f9c`: owned native bridge exposes semantic menus/options/tabs;20tests pass.
 - `b06e079`/`b9870d6`: verification agents may confirm a safe fixture snapshot;
   a persisted empty native session and temporary fixtures are normal setup work.
@@ -49,8 +51,11 @@ or add a second scheduler, daemon or periodic model-prompt loop.
 Architect `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol6.1High. Last authoritative
 native active map at Unix1794173276623 showed Architect running; the last30
 messages had no running tool handles, so do not invent a tool wait or restart.
-Reobserve the same session. Last pending Desktop steering handed it041a9d8 and
-native fixture setup guidance. It owns activation, probes and integration.
+Reobserve the same session. Latest Desktop steering also requires visible stuck reasons and one-click Ask
+Architect, reusing/waking a coordinator with task context and automatic recovery
+without human input unless needed. It owns activation, probes and integration.
+At Unix1794173884831 its verify-retained tool was still running the original
+LZ-182 candidate checks (ten-minute timeout); do not submit duplicate retries.
 
 LZ-131 original Luna Max worker `ses_e8e85ff547f941e2b3e960621c3db6dd` is natively
 succeeded/idle. Attemptf2db78ed-e317-4a70-bdaf-199260af162a, plan
