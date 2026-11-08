@@ -64,3 +64,9 @@ does not override the observed six broader test failures or live acceptance work
 
 Current worker reports the connected Desktop/Terra walkthrough remains unperformed.
 Computer Use remains explicitly locked; Root's follow-up is awaiting unlock.
+
+Root added the two missing file-target output boundary tests to the isolated
+review composition as `61c17a7`. Actual UTF-8 path boundary and serialized-total
+truncation cases pass:7 tests /26 assertions,43ms. `bun run verify` also passes.
+No production logic changed. This closes the source review's test gap but leaves
+the six broader failures and connected Desktop/Terra acceptance outstanding.
