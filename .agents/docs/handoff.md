@@ -5,6 +5,43 @@ roadmap is implemented, verified, integrated and cleaned, then propose observed
 improvements. This file is a locator; native runtime/API state is authoritative.
 Older details remain in Git history and linked reports.
 
+## Current priority: autonomous delivery and visible recovery
+
+User correction: Architect owns routine verification, live product probes,
+review, integration, cleanup and recovery. No Root/external-driver acceptance
+step. Human input is only for material decisions or required authorization.
+Stuck tasks must show the actionable reason and provide one-click Architect
+investigation; recoverable failures should continue without human coordination.
+`e3b1774` updates concise Architect and schema guidance; quality and32tests pass.
+Guidance activation awaits a normal quiet reload; current Architect also received
+these corrections through Desktop. Do not add another task-state implementation
+or a periodic model-prompt loop.
+
+At Unix1794171886759, complete read-only scheduling projection covered156plans,
+182nodes and12reservations: zero selected/eligible tasks; native active map was
+empty. Immediate chain: LZ-182 blocked on recorded check failure; LZ-185 waits
+for182; LZ-187 waits for185 and integrated186. LZ-184 waits on out-of-scope
+`design/reviews/radar-connected-baseline-20261107.md` and `design/roadmap.md`.
+Architect was resumed through Desktop to reconcile these retained results,
+legitimate documentation scope and Root-only clauses using existing controls,
+then perform native verification/integration and release dependencies. Preserve
+actual checks, product behavior, original workers/results and failure history.
+
+Root's combined review checkout `lz182-review-recovered` now composes current
+main throughc3a5f9c without conflicts. Actual combined checks:320UI/observation
+tests and66audit/native-tool tests pass, quality and GUI build pass after
+installing the newly pinned Fallow dependency with frozen lockfile. The isolated
+owned Desktop opened Tasks and state-filter choices, but empty data does not
+prove populated groups/live behavior. It was cleaned by the owned launcher;
+no isolated instance remains. `c3a5f9c` fixes semantic menu/tab visibility in the
+owned native interaction bridge, with20tests passing. Architect takes over the
+remaining native acceptance. Root observes/repairs concrete tool/runtime defects.
+
+LZ-186 is now accepted/integrated and its owned worker checkout was removed
+natively. Architect merged7afd88b as0d0fa9b; independent combined checks33tests
+and quality pass. Baseline and follow-up runs remain in SQLite. Remaining audits
+keep their dependency order; they have not completed merely because186 landed.
+
 ## Current priority: Auditor dogfood and durable history
 
 Implemented and committed:
@@ -72,7 +109,7 @@ paths; registrations remain and committed branches are preserved.
 Neither feature has connected Desktop/Terra acceptance or canonical activation.
 Both native workers are finished and clean: Tasks ses_ddabe399ccb84ea982cba703ac87341c,
 Radar current ses_fdb5a452d2f1458fbf405249263fa30c. Preserve original attempts/history.
-Root owns review/activation; do not start replacement implementation attempts.
+Architect owns native verification, review and integration; do not start replacement implementation attempts.
 
 Architect ses_e568438ebffeaoFbF9nBb942XM is waiting on its native question about
 one workspace lifecycle task versus widening existing tasks. Answer **one lifecycle
@@ -90,8 +127,8 @@ existing service; `state.ts` and bounded public-output helpers are available.
 ## Working rules
 
 - Model prompts through Desktop CUA; read-only SDK/SQLite diagnostics are allowed.
-  No production SQL repair. Root fixes concrete blockers and reviews/integrates;
-  ordinary implementation uses native Architect and LAZERS.
+  No production SQL repair. Root diagnoses concrete blockers and observes; Architect owns delivery,
+  recovery, verification and integration through LAZERS.
 - Architect OpenAI `gpt-6.1-sol/high`; implementors/research OpenAI `gpt-6-luna/max`.
   Use native Tera High for actual screenshot review, not mockup-to-components.
 - Preserve original workers, useful work, attempts and failure history. Native
