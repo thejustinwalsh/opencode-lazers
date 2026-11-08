@@ -1,5 +1,7 @@
 # Models containment correction: connected review
 
+**Complete:** LZ-172 is accepted and integrated at native plan version138. Source landed in main `c94debf`; both the original worker checkout and Root review checkout are removed. The rest of this report preserves the observations leading to that result.
+
 Original worker candidate `0233df0` was merged into Root's existing native review branch as `e6ef0819ae498a367d8156f2a6c70c45c2f8866c`. Canonical pricing producer and WebGPU source are preserved. Automatic formatting/lint fixes, type checks, GUI build and **72 tests / 1,707 assertions across eight files** passed on this composition. Native worker recorded 60 required tests / 1,643 assertions passing. No new checkout or worker was created.
 
 Root staged the composed GUI at Unix ms1794096096230 through normal bundle watch. Reversible preview metadata: `/private/tmp/lz172-023-current-preview.json`; source is still unmerged in main.
@@ -29,3 +31,9 @@ The same native Terra High reviewer viewed all four screenshots and reported a v
 Source is now integrated into main as **`c94debfe4d48beccdb457100e1c233ec4c801436`**, including original worker `0233df0`, composed review and Root copy correction. Canonical automatic quality checks and GUI build passed, and the canonical GUI is loaded. The ignored preview is ended; `/private/tmp/lz172-023-current-preview.json` and its backup remain historical rollback metadata. This accepts the scoped LZ-172 visual/interaction correction against its design direction. Supported native acceptance/integration recording and non-forced owned checkout cleanup remain for Architect/Root to complete; residual performance and broader Models roadmap are not declared complete.
 
 Additional actual artifacts: [host appearance](artifacts/lz172-023-desktop/lz172-023-light-georgia-125.png), [upper scrolling](artifacts/lz172-023-desktop/lz172-023-light-georgia-125-scrolled.png), [independent lower scrolling](artifacts/lz172-023-desktop/lz172-023-lower-scroll.png), [canonical empty state](artifacts/lz172-023-desktop/lz172-023-empty-canonical.png).
+
+## Native finalization and cleanup
+
+At Unix ms1794097668196, readback shows plan09cb85ba-dc17-40ed-adff-c0e7e50ad135 **integrated / version138**, task and original attempt accepted at artifact0233df0fd7867dc58e45b95861b4ac42e2ac8545. Native Architect recorded the existing Root human observation, task landing, reconciliation and plan integration through ordinary supported controls. No production SQL mutation or worker replacement was used.
+
+Both checkout paths are absent on direct readback. Root's separate clean, fully merged review checkout was removed with OpenCode's native `worktree.remove` and `force:false` at Unix ms1794097608884: [receipt](artifacts/lz172-023-desktop/root-review-cleanup.json). Original worker cleanup completed through runtime. Canonical source/history, committed images, model files and the active Tasks/Radar work were preserved. The preview metadata is historical; do not rebuild from the removed review directory.
