@@ -59,7 +59,6 @@ ses_12ba163aca2a4703a19aa82430adb1ab, at Unix1794174681139. Confirmed live
 OpenAI Luna Max at1794174802710, reading task and source index; no pending permissions.
 Do not duplicate the feature or add a second scheduler/periodic model-prompt loop.
 
-
 At Unix1794178701718, Architect promoted existing worker correction
 msg_558cad67a8e54bec924bff59b9c320c7c from queue to steer using native
 session.inbox.update. Subsequently the item left the inbox and appeared in the
@@ -69,7 +68,11 @@ long current turn. Do not infer implementation success from consumption.
 The correction supersedes stale task requirements for hash/config/environment
 baseline comparison and removes new raw forced Git worktree lifecycle. Preserve
 async checks, actual results, mechanical autofixes and same-worker identity.
-Inspect the draft for actual removal, then let Architect verify/integrate.
+Root subsequently observed removal of the new hash/config baseline machinery
+and raw forced baseline worktrees from the draft. The cleanup correction
+msg_ef7444413eeb4719a2ac306c5c75c447a also reached the worker; its draft now
+preserves command exit results and records processCleanup separately. Relevant
+behavior tests, final quality checks, commit and integration remain pending.
 Architect also reconciled a stale permission hold after the exact native worker
 location reported no pending request; no permission was bypassed.
 
@@ -105,25 +108,46 @@ Composition with accepted130 has two real test-file conflicts. Native repair
 rejected the accepted-node/failed-attempt combination;4abb300 fixes that blocker.
 Architect owns activation, original-worker conflict repair and integration.
 
-Native research/probe sessions e4304131effe…, e4300c5d7ffe… and e42fe8386ffe…
-finished. Future delegated research uses OpenAI Luna Max; actual screenshot review
-uses Tera High. Probe agent cleaned its owned instance wz6jVA after reporting
-only a blank-draft baseline. Its report is in the combined review checkout at
-`.cache/review/native182184-results.md`. Root supplied the native empty-session
-setup lesson afterward; this is not populated Tasks/Radar acceptance.
+## Preserved UI work and current native walkthrough
 
-## Preserved UI work
-
-Existing native review checkout:
+Review checkout:
 `/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz182-review-recovered`.
-It combines Tasks/Radar and main throughc3a5f9c, HEAD7d5355b. Quality/build,
-320UI/observation tests and66audit/native-tool tests pass. No Root-owned isolated
-verification instance remains; the native probe agent's instance was also cleaned.
-Architect takes over remaining populated/live/visual acceptance and integration.
-Do not create replacement implementors. Original Radar worker:
-`ses_fdb5a452d2f1458fbf405249263fa30c`; original Tasks worker:
-`ses_ddabe399ccb84ea982cba703ac87341c`.
-Source reviews: `design/reviews/lz182-fae-source-review-20261107.md` and
+Candidate66927d5 composes Tasks/Radar with the native summary-control fix3ada1c3.
+Earlier quality/build,320UI/observation tests and66audit/native-tool tests passed;
+this does not establish current live acceptance. Preserve existing review images.
+
+Native Luna Max probe `ses_e4300c5d7ffeNSzVZm3oOZpWzU` owns the live walkthrough.
+Current owned root ends `lazers-full-instance-9TcU4T`, owner
+06a0c8a9-1305-4fb3-a083-11e588e6cef5, service25100 and Desktop25116.
+Its canary project/session and four explicitly synthetic, unrun fixture tasks are
+inside that root. No real canary worker has run yet. Root M9uBRq was cleaned
+through supported cleanup retry; do not reuse it.
+
+OpenAI connection is absent in the owned instance. The native sign-in dialog
+appeared, but its Open browser action did not open a Chrome tab (Root checked
+through Computer Use). Root can drive the normal user-facing authorization URL.
+Architect has been asked to cancel/close the old attempt through native controls
+and renew one sequential connection if its URL cannot be recovered. Do not keep
+investigating an inaccessible expired attempt or run concurrent flows. Do not
+copy credentials or substitute the default free model. The intended canary route
+is OpenAI Luna Max; real-worker verification is authorized, not blanket forbidden.
+
+The same probe compacted after a long setup run without completing the real
+walkthrough. Treat that as an observed delivery inefficiency, not acceptance.
+Native disclosure clicks, real managed Radar activity and cleanup remain pending.
+Previous report: candidate `.cache/review/native182184-results.md`.
+
+Tera High screenshot review found held/failed reasons hidden in collapsed details,
+inconsistent waiting/blocked labels and crowded Radar retry messaging. It was a
+fixture screenshot review, not real worker/failure acceptance. Reuse LZ-192 for
+one-click Ask Architect and visible holds; do not create UI microtasks per label.
+
+Architect is reviewing independent retained work and whether audit188's after187
+edge is a real producer dependency or only ordering preference. Research route
+is OpenAI Luna Max; native Auditor remains the configured Muse Contributor.
+No new parallel audit has been proven dispatched. Original Tasks/Radar workers,
+attempts and retained artifacts remain intact. Source reviews:
+`design/reviews/lz182-fae-source-review-20261107.md` and
 `design/reviews/lz184-combined-validation-20261108.md`.
 
 ## Auditor delivered
