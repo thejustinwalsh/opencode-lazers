@@ -35,6 +35,13 @@ Concrete repairs on main:
   e6bfc062-781e-4f5a-860e-4c2ec368f58f at Unix1794173717620 after a Luna Max
   read-only review found no material issue. Admission is unblocked; check success,
   integration and dependent dispatch remain unproven. Do not stop healthy work.
+- `4abb300`: confirmed native131 retained-repair rejection fixed. Accepted task +
+  historical failed attempt now uses the existing durable retained acceptance for
+  admission, including an atomic recheck. Failure history and same-worker identity
+  remain. Quality and78repair/reverify tests/888assertions pass. Delivered to native
+  Architect for review/activation/retry; live success is not yet confirmed.
+- `c2f3be6`: concise Architect guidance to background independent reviews and
+  project large Code Mode results. Quality and registration test pass.
 - `c3a5f9c`: owned native bridge exposes semantic menus/options/tabs;20tests pass.
 - `b06e079`/`b9870d6`: verification agents may confirm a safe fixture snapshot;
   a persisted empty native session and temporary fixtures are normal setup work.
@@ -76,9 +83,12 @@ Do not duplicate either operation or infer root cause from timeout alone.
 LZ-131 original Luna Max worker `ses_e8e85ff547f941e2b3e960621c3db6dd` is natively
 succeeded/idle. Attemptf2db78ed-e317-4a70-bdaf-199260af162a, plan
 96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0. It committed25c3e0f after8061a93,
-protecting replayed native endpoint generation attribution. Worker reports split
-checks passing; original plan still blocked on `Verification endpoints exited
-with code1`. Architect must review/check/integrate via existing retained flows.
+protecting replayed native endpoint generation attribution. Retained operation
+0d270b94-4ece-416a-8dc0-8a930cc24900 passed265tests/3583assertions and quality.
+Task node is accepted; original attempt remains failed, preserving history.
+Composition with accepted130 has two real test-file conflicts. Native repair
+rejected the accepted-node/failed-attempt combination;4abb300 fixes that blocker.
+Architect owns activation, original-worker conflict repair and integration.
 
 Native research/probe sessions e4304131effe…, e4300c5d7ffe… and e42fe8386ffe…
 finished. Future delegated research uses OpenAI Luna Max; actual screenshot review
