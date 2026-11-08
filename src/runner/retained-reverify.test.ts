@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import {
   existsSync,
   mkdirSync,
@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -676,7 +677,7 @@ test.each([
   "input",
   "route",
   "repair",
-  "conflict",
+  "same-task-conflict",
   "uncertain-effect",
   "outside-scope",
   "stale-revision",
@@ -707,7 +708,7 @@ test.each([
         operationID: crypto.randomUUID(),
       })
     }
-    if (kind === "conflict") await addCompetingAttempt(f, "none")
+    if (kind === "same-task-conflict") await addCompetingSameTask(f)
     if (kind === "uncertain-effect")
       f.store.atomic((db) =>
         db
@@ -783,7 +784,7 @@ test.each(["disposition", "owner", "input"])(
   },
 )
 
-test.each(["archive", "role", "project", "competing-attempt"])(
+test.each(["archive", "role", "project", "competing-same-task"])(
   "repair admission rechecks %s after its final worker observations",
   async (kind) => {
     const f = await heldRepairFixture()
@@ -799,7 +800,7 @@ test.each(["archive", "role", "project", "competing-attempt"])(
         if (kind === "archive") owner.archived = true
         if (kind === "role") owner.agent = "implementor"
         if (kind === "project") owner.projectID = "another-project"
-        if (kind === "competing-attempt") await addCompetingAttempt(f, "none")
+        if (kind === "competing-same-task") await addCompetingSameTask(f)
       }
       return observed
     }
@@ -1078,6 +1079,30 @@ async function addCompetingAttempt(
   }
 }
 
+async function addCompetingSameTask(f: Awaited<ReturnType<typeof fixture>>) {
+  const original = f.store
+    .attempts(f.planID)
+    .filter((item) => item.task_id === f.task.id)
+    .at(-1)!
+  f.store.atomic((db) =>
+    db
+      .query(
+        `
+    INSERT INTO runner_attempts(id,plan_id,project_directory,task_id,number,session_id,message_id,
+      workspace,base_commit,artifact,policy,state,started_at,token_count,tool_count,retry_count,cost)
+    SELECT ?,plan_id,project_directory,task_id,number+1,?,?,workspace,base_commit,NULL,policy,
+      'running',started_at,NULL,0,0,NULL FROM runner_attempts WHERE id=?
+  `,
+      )
+      .run(
+        crypto.randomUUID(),
+        `competing-${crypto.randomUUID()}`,
+        `input-${crypto.randomUUID()}`,
+        original.id,
+      ),
+  )
+}
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((done) => {
@@ -1229,48 +1254,87 @@ test("unrecorded running candidate qualifies under an idle hold and continues th
 }, 30_000)
 
 test.each(["none", "held", "misbound", "unguarded"] as const)(
-  "retained verification still blocks a same-scope %s live source reservation",
+  "isolated verification proceeds beside a same-scope %s source without changing it",
   async (quarantine) => {
     const f = await failedFixture()
     const old = await addCompetingAttempt(f, quarantine)
-    expect(sourceReservationExcluded(f.store, old.attempt, { mode: "isolated" })).toBe(false)
-    const checksBefore = f.store.atomic(
-      (db) =>
-        db
-          .query<{ count: number }, []>(
-            "SELECT COUNT(*) AS count FROM runner_retained_verification_checks",
-          )
-          .get()!.count,
+    const promptCount = f.prompts.length
+    const sourceHead = git(old.workspace, ["rev-parse", "HEAD"])
+    const result = await f.runtime.command(
+      retainedVerifyCommand(f, `isolated-check-${quarantine}`),
+      "owner",
     )
-    await expect(
-      f.runtime.command(retainedVerifyCommand(f, `reject-active-${quarantine}`), "owner"),
-    ).rejects.toThrow("A conflicting active implementation attempt prevents retained verification")
-    expect(
-      f.store.atomic(
-        (db) =>
-          db
-            .query<{ count: number }, []>(
-              "SELECT COUNT(*) AS count FROM runner_retained_verifications",
-            )
-            .get()!.count,
-      ),
-    ).toBe(0)
-    expect(
-      f.store.atomic(
-        (db) =>
-          db
-            .query<{ count: number }, []>(
-              "SELECT COUNT(*) AS count FROM runner_retained_verification_checks",
-            )
-            .get()!.count,
-      ),
-    ).toBe(checksBefore)
+    expect(result).toMatchObject({ status: "retained-verification-requested" })
+    expect(f.store.plan(f.planID)?.state).toBe("accepted")
+    expect(f.prompts).toHaveLength(promptCount)
     expect(f.store.attempts(old.planID)).toEqual([old.attempt])
     expect(f.store.plan(old.planID)).toEqual(old.plan)
-    expect(sourceQuarantine(f.store, old.attemptID)).toEqual(old.quarantine)
+    // The scheduler may refresh the unrelated quarantine's diagnostic hold;
+    // its source binding and resource ownership must remain intact.
+    const quarantineAfter = sourceQuarantine(f.store, old.attemptID)
+    expect(quarantineAfter).toEqual(
+      old.quarantine
+        ? {
+            ...old.quarantine,
+            hold_reason: quarantineAfter?.hold_reason ?? old.quarantine.hold_reason,
+            updated_at: quarantineAfter?.updated_at ?? old.quarantine.updated_at,
+          }
+        : old.quarantine,
+    )
     expect(f.store.effects(old.planID)).toEqual(old.effects)
+    expect(f.sessions.get(old.sessionID)).toEqual(old.worker)
+    expect(git(old.workspace, ["rev-parse", "HEAD"])).toBe(sourceHead)
   },
 )
+
+test("isolated repaired-candidate verification proceeds beside an unrelated same-scope writer", async () => {
+  const f = await heldRepairFixture()
+  const competing = await addCompetingAttempt(f, "none")
+  const prompts = [...f.prompts]
+  await f.control.execute(f.request)
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(f.prompts).toEqual(prompts)
+  expect(f.store.attempts(competing.planID)).toEqual([competing.attempt])
+  expect(f.sessions.get(competing.sessionID)).toEqual(competing.worker)
+})
+
+test("isolated checks preserve an actively editing worker and its uncommitted source", async () => {
+  const f = await failedFixture()
+  const old = await addCompetingAttempt(f, "none")
+  const activeWorker = { ...old.worker, agent: "lazers-implementor", archived: false, busy: true }
+  f.sessions.set(old.sessionID, activeWorker)
+  writeFileSync(join(old.workspace, "result.txt"), "worker is editing this file\n")
+  const sourceStatus = git(old.workspace, ["status", "--porcelain"])
+  const prompts = [...f.prompts]
+  await f.runtime.command(retainedVerifyCommand(f, "beside-active-writer"), "owner")
+  expect(f.store.plan(f.planID)?.state).toBe("accepted")
+  expect(f.sessions.get(old.sessionID)).toEqual(activeWorker)
+  expect(f.store.attempts(old.planID)).toEqual([old.attempt])
+  expect(readFileSync(join(old.workspace, "result.txt"), "utf8")).toBe(
+    "worker is editing this file\n",
+  )
+  expect(git(old.workspace, ["status", "--porcelain"])).toBe(sourceStatus)
+  expect(f.prompts).toEqual(prompts)
+})
+
+test("retained verification refuses a physical destination alias of another worker", async () => {
+  const f = await failedFixture()
+  const old = await addCompetingAttempt(f, "none")
+  const operationID = crypto.randomUUID()
+  const destination = join(f.runtime.dataDirectory, "worktrees", `retained-${operationID}-task`)
+  mkdirSync(dirname(destination), { recursive: true })
+  symlinkSync(old.workspace, destination, "dir")
+  const randomID = spyOn(crypto, "randomUUID").mockReturnValue(operationID)
+  try {
+    await expect(
+      f.runtime.command(retainedVerifyCommand(f, "physical-collision"), "owner"),
+    ).rejects.toThrow("uses this task or verification checkout")
+  } finally {
+    randomID.mockRestore()
+  }
+  expect(f.store.attempts(old.planID)).toEqual([old.attempt])
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+})
 
 test(
   "owner verifies an exact failed-attempt candidate with zero replacement prompts",

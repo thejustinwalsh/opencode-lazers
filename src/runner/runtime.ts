@@ -754,9 +754,11 @@ export class TaskRuntime {
     attemptID: string,
     taskWorkspace: string,
   ) {
-    const taskScope = this.store.effectiveWriteScope(taskID)
-    // Exclude only a valid sealed source quarantine, and only from this physical
-    // destination reserved for the isolated retained check.
+    // Checks use private worktrees/resources, not an implementor's source scope.
+    // Serialize shared authority and physical destinations, not unrelated paths
+    // with the same relative names in different checkouts.
+    const occupiesDestination = (workspace: string | null | undefined) =>
+      Boolean(workspace && samePhysicalWorkspace(workspace, taskWorkspace))
     const competingAttempt = this.store
       .plans()
       .flatMap((candidatePlan) => this.store.attempts(candidatePlan.id))
@@ -764,26 +766,30 @@ export class TaskRuntime {
         (candidate) =>
           candidate.id !== attemptID &&
           ["preparing", "running", "verifying"].includes(candidate.state) &&
-          scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)) &&
-          !sourceReservationExcluded(this.store, candidate, {
-            mode: "isolated",
-            workspace: taskWorkspace,
-          }),
+          (candidate.task_id === taskID || occupiesDestination(candidate.workspace)),
       )
     if (competingAttempt)
-      throw new Error("A conflicting active implementation attempt prevents retained verification")
+      throw new Error(
+        "A conflicting active implementation attempt uses this task or verification checkout",
+      )
     const conflictingAdoption = this.store
       .activeAdoptions()
-      .find((candidate) =>
-        scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)),
+      .find(
+        (candidate) =>
+          candidate.plan_id === planID ||
+          candidate.task_id === taskID ||
+          occupiesDestination(candidate.task_workspace) ||
+          occupiesDestination(candidate.combined_workspace),
       )
     if (conflictingAdoption)
       throw new Error("A conflicting descendant adoption prevents retained verification")
     const conflictingVerification = this.store.atomic((db) =>
-      activeRetainedVerifications(db, this.directory).find((candidate) =>
-        candidate.planID !== planID || candidate.taskID !== taskID
-          ? scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.taskID))
-          : true,
+      activeRetainedVerifications(db, this.directory).find(
+        (candidate) =>
+          candidate.planID === planID ||
+          candidate.taskID === taskID ||
+          occupiesDestination(candidate.taskWorkspace) ||
+          occupiesDestination(candidate.combinedWorkspace),
       ),
     )
     if (conflictingVerification)
