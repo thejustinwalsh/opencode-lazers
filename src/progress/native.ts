@@ -553,6 +553,23 @@ export function registerProgress(
       }),
     )
 
+    yield* ctx.tool.hook("execute.before", (call) =>
+      Effect.sync(() => {
+        try {
+          recorder.recordToolTargets({
+            tool: call.tool,
+            sessionID: call.sessionID,
+            agent: call.agent,
+            messageID: call.messageID,
+            callID: call.id,
+            input: call.input,
+          })
+        } catch {
+          // Target-only observation must not alter native tool permission or outcome.
+        }
+      }),
+    )
+
     const readNativeSession = (sessionID: string) =>
       Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) }))
     const matchesBinding = (session: Session.Info, binding: NativeIdleBinding) =>

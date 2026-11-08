@@ -33,6 +33,11 @@ import { taskTitle } from "../tasks/presentation.ts"
 import { RadarLayout } from "./layout-ipc.ts"
 import { RadarMapInspector, RadarMapView } from "./map-view.tsx"
 import { createRadarMapModel } from "./map-model.ts"
+import { RadarMonitorState } from "./monitor-state.ts"
+import type { RadarMonitorData } from "./monitor-state.ts"
+import { createRadarMonitorTransport } from "./monitor-transport.ts"
+import { RadarMonitorView } from "./monitor-view.tsx"
+import { radarErrorMessage } from "./monitor-state.ts"
 
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
@@ -116,7 +121,7 @@ function selectedCheck(
   return timelineChecks(snapshot, planID).find((check) => checkKey(check) === id)
 }
 
-function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
+function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: () => void }) {
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
@@ -533,6 +538,9 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
           </span>
         </div>
         <div class="lazers-radar-controls">
+          <Ui.Button variant="ghost" onClick={props.onBack}>
+            Live monitor
+          </Ui.Button>
           <Show when={prefs().view !== "map" ? snapshot() : undefined}>
             {(value) => (
               <div class="lazers-radar-pickers">
@@ -1382,6 +1390,182 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
         </Show>
       </div>
     </div>
+  )
+}
+
+function emptyRadarMonitorData(key = ""): RadarMonitorData {
+  return {
+    key,
+    loading: true,
+    stale: true,
+    resynchronizing: true,
+    error: "",
+    connection: "connecting",
+    selectedSessionID: null,
+    historyLoading: false,
+    historyError: "",
+  }
+}
+
+function RadarLiveMonitorPanel(
+  props: PanelProps & { ctx: RadarContext; onOpenDiagnostics: () => void },
+) {
+  const ctx = props.ctx
+  const frame = usePanel()
+  const [stateData, setStateData] = createSignal<RadarMonitorData>(emptyRadarMonitorData())
+  const state = new RadarMonitorState(setStateData)
+  const location = createLatest(
+    () => {
+      if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
+      return {
+        client: props.session.server.client,
+        session: props.session.id,
+        server: props.session.server.id,
+        directory: props.session.directory,
+      }
+    },
+    async (source, signal) => {
+      const result = await source.client.location.get(
+        { location: { directory: source.directory } },
+        { signal },
+      )
+      return { ...source, ...radarProjectIdentity(result.project) }
+    },
+  )
+  const current = () => {
+    if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
+    const value = location.latest
+    return value &&
+      value.session === props.session.id &&
+      value.server === props.session.server.id &&
+      value.directory === props.session.directory &&
+      !location.loading
+      ? value
+      : undefined
+  }
+  const projectKey = () => {
+    const value = current()
+    return value ? JSON.stringify([value.server, value.project]) : ""
+  }
+  const prefs = () => {
+    const key = projectKey()
+    if (!key) return initial
+    const value = ctx.stores.radarView(props.session).value?.projects[key] ?? initialProject
+    return { ...initial, ...value[value.scope], scope: value.scope }
+  }
+  const save = (change: Partial<typeof initial>) => {
+    const key = projectKey()
+    if (!key) return
+    const store = ctx.stores.radarView(props.session)
+    store.update((draft) => {
+      const value = draft.projects[key] ?? initialProject
+      const scope = change.scope ?? value.scope
+      const nextView = { ...value[scope], ...change, scope }
+      draft.projects[key] =
+        scope === "session"
+          ? { ...value, scope, session: nextView }
+          : { ...value, scope, project: nextView }
+    })
+  }
+  onCleanup(() => state.close())
+
+  createKeyed(
+    () => {
+      const value = current()
+      if (!value || !frame.visible() || !ctx.stores.radarView(props.session).ready())
+        return undefined
+      const view = prefs()
+      const key = JSON.stringify([
+        value.server,
+        value.project,
+        value.session,
+        view.scope,
+        view.includeUnmanagedSessions,
+      ])
+      return { value, key, view }
+    },
+    ({ value, key, view }) => {
+      const observationScope: ObservationScope = { kind: view.scope, sessionID: value.session }
+      const transport = createRadarMonitorTransport(
+        () => props.session.server.client.rpc(Observability),
+        value.directory,
+        () => props.session.server.connected,
+        value.projectID,
+      )
+      state.connect(
+        key,
+        value.projectID,
+        observationScope,
+        transport,
+        view.includeUnmanagedSessions,
+      )
+      onCleanup(() => state.close())
+    },
+    {
+      equals: (left, right) => left.key === right.key && left.value.client === right.value.client,
+      otherwise: () => state.close(),
+    },
+  )
+
+  const expectedKey = () => {
+    const value = current()
+    return value
+      ? JSON.stringify([
+          value.server,
+          value.project,
+          value.session,
+          prefs().scope,
+          prefs().includeUnmanagedSessions,
+        ])
+      : ""
+  }
+  const visibleData = () => {
+    const data = stateData()
+    return data.key === expectedKey() ? data : emptyRadarMonitorData(expectedKey())
+  }
+  const scope = (): ObservationScope => ({ kind: prefs().scope, sessionID: props.session.id })
+
+  return (
+    <Show
+      when={current()}
+      fallback={
+        <div class="lazers-radar lazers-radar-monitor">
+          <div class="lazers-radar-note" role={location.error ? "alert" : "status"}>
+            {location.error
+              ? `Project identity is unavailable. ${radarErrorMessage(location.error)}`
+              : "Resolving the authorized project location…"}
+          </div>
+        </div>
+      }
+    >
+      <RadarMonitorView
+        data={visibleData}
+        scope={scope()}
+        anchorSessionID={props.session.id}
+        includeUnmanagedSessions={prefs().includeUnmanagedSessions}
+        monoFont={ctx.appearance.font("mono")}
+        onScopeChange={(next) => save({ scope: next })}
+        onIncludeUnmanagedSessionsChange={(include) => save({ includeUnmanagedSessions: include })}
+        onSelectSession={(sessionID) => state.selectSession(sessionID)}
+        onRefresh={() => state.refreshNow()}
+        onLoadMoreHistory={() => state.loadMoreHistory()}
+        onOpenDiagnostics={props.onOpenDiagnostics}
+      />
+    </Show>
+  )
+}
+
+function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
+  const [diagnosticsOpen, setDiagnosticsOpen] = createSignal(false)
+  return (
+    <Show
+      when={diagnosticsOpen()}
+      fallback={
+        <RadarLiveMonitorPanel {...props} onOpenDiagnostics={() => setDiagnosticsOpen(true)} />
+      }
+    >
+      <RadarDiagnosticsPanel {...props} onBack={() => setDiagnosticsOpen(false)} />
+    </Show>
   )
 }
 

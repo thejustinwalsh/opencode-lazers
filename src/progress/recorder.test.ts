@@ -295,6 +295,217 @@ test("hook, native tool events, and retained recovery coalesce into one durable 
   }
 })
 
+test("requested file targets enrich only the exact active call without changing native outcomes", () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+    )
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const call = {
+      tool: "read",
+      sessionID: workerSession,
+      agent: "lazers-implementor",
+      messageID: "msg-file-call",
+      callID: "call-shared",
+      input: {
+        path: "src/visible.ts",
+        body: "never store this file body",
+        password: "never store this credential",
+      },
+    }
+    expect(recorder.recordToolTargets(call)).toBeGreaterThan(0)
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.input.started",
+        "input-file-call",
+        { assistantMessageID: call.messageID, id: call.callID, name: call.tool },
+        10_000,
+      ),
+    )
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.failed",
+        "failed-file-call",
+        {
+          assistantMessageID: call.messageID,
+          id: call.callID,
+          error: { type: "ToolError", message: "failed after requesting the file" },
+        },
+        10_100,
+      ),
+    )
+    recorder.recordToolHook({
+      tool: call.tool,
+      sessionID: call.sessionID,
+      agent: call.agent,
+      messageID: call.messageID,
+      callID: call.callID,
+      status: "error",
+      error: new Tool.Error({ message: "same call failed" }),
+    })
+    expect(
+      recorder.recordToolTargets({
+        ...call,
+        messageID: "stale-message",
+        input: { path: "src/secret.ts" },
+      }),
+    ).toBeUndefined()
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.input.started",
+        "conflicting-input",
+        {
+          assistantMessageID: "stale-message",
+          id: call.callID,
+          name: "edit",
+        },
+        10_200,
+      ),
+    )
+
+    const rows = fixture.store.progressFacts([firstAttemptID])
+    const fact = rows.find((row) => row.call_id === call.callID)!
+    const payload = JSON.parse(fact.payload)
+    expect(payload).toMatchObject({
+      tool: "read",
+      status: "failed",
+      fileTargets: { coverage: "observed", operation: "read", paths: ["src/visible.ts"] },
+    })
+    expect(fact.message_id).toBe(call.messageID)
+    expect(fact.payload).not.toContain("never store this file body")
+    expect(fact.payload).not.toContain("never store this credential")
+
+    const completedCall = {
+      ...call,
+      messageID: "msg-completed-read",
+      callID: "call-completed-read",
+    }
+    recorder.recordToolTargets(completedCall)
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.input.started",
+        "completed-read-input",
+        {
+          assistantMessageID: completedCall.messageID,
+          id: completedCall.callID,
+          name: completedCall.tool,
+        },
+        10_250,
+      ),
+    )
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.success",
+        "completed-read-terminal",
+        {
+          assistantMessageID: completedCall.messageID,
+          id: completedCall.callID,
+          content: [{ type: "text", text: "NATIVE READ BODY DECOY" }],
+        },
+        10_260,
+      ),
+    )
+    recorder.recordToolHook({
+      ...completedCall,
+      status: "completed",
+      result: { content: [{ type: "text", text: "HOOK READ BODY DECOY" }] } as never,
+    })
+    recorder.reconcileMessages(workerSession, [
+      {
+        id: completedCall.messageID,
+        type: "assistant",
+        content: [
+          {
+            type: "tool",
+            id: completedCall.callID,
+            name: "read",
+            state: {
+              status: "completed",
+              input: { path: "src/visible.ts", content: "RECOVERED READ BODY DECOY" },
+              content: [{ type: "text", text: "RECOVERED READ BODY DECOY" }],
+            },
+          },
+        ],
+      },
+    ])
+    const completedFact = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === completedCall.callID)!
+    expect(JSON.parse(completedFact.payload)).toMatchObject({
+      status: "succeeded",
+      fileTargets: { coverage: "observed", operation: "read", paths: ["src/visible.ts"] },
+    })
+    for (const decoy of [
+      "NATIVE READ BODY DECOY",
+      "HOOK READ BODY DECOY",
+      "RECOVERED READ BODY DECOY",
+    ])
+      expect(completedFact.payload).not.toContain(decoy)
+
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(secondAttemptID),
+    )
+    expect(
+      recorder.recordToolTargets({
+        ...call,
+        sessionID: "ses-accepted",
+        messageID: "msg-second-session",
+        input: { path: "src/second-session.ts" },
+      }),
+    ).toBeGreaterThan(0)
+    const collisionRows = fixture.store
+      .progressFacts([firstAttemptID, secondAttemptID])
+      .filter((row) => row.call_id === call.callID)
+    expect(collisionRows).toHaveLength(2)
+    expect(
+      collisionRows.map((row) => [row.session_id, JSON.parse(row.payload).fileTargets.paths[0]]),
+    ).toEqual([
+      ["ses-failed", "src/visible.ts"],
+      ["ses-accepted", "src/second-session.ts"],
+    ])
+
+    const terminalFirst = "call-terminal-first"
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.failed",
+        "terminal-first-event",
+        {
+          assistantMessageID: "msg-terminal-first",
+          id: terminalFirst,
+          error: { type: "ToolError", message: "terminal observed first" },
+        },
+        10_300,
+      ),
+    )
+    expect(
+      recorder.recordToolTargets({
+        ...call,
+        callID: terminalFirst,
+        messageID: "msg-terminal-first",
+      }),
+    ).toBeUndefined()
+    const terminalFact = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === terminalFirst)!
+    expect(JSON.parse(terminalFact.payload)).toMatchObject({ status: "failed" })
+    expect(JSON.parse(terminalFact.payload).fileTargets).toBeUndefined()
+
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(firstAttemptID),
+    )
+    expect(
+      recorder.recordToolTargets({
+        ...call,
+        callID: "late-after-assignment-terminal",
+        messageID: "late-message",
+      }),
+    ).toBeUndefined()
+  } finally {
+    fixture.close()
+  }
+})
+
 test("two database connections allocate unique ordered sequences and reports resolve identity", async () => {
   const fixture = makeFixture()
   let secondRepository: TaskRepository | undefined
