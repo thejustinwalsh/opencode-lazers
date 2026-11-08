@@ -460,11 +460,19 @@ export function comparisonChartOptions(
   const selectedLabelData = [...selectedLabels.values()]
   const labelPosition = (tokensValue: number) =>
     largestTokenValue > 0 && tokensValue >= largestTokenValue * 0.68 ? "left" : "right"
+  const selectedLabelAlignment = (tokensValue: number) => {
+    if (largestTokenValue <= 0) return "center" as const
+    const relativePosition = tokensValue / largestTokenValue
+    if (relativePosition <= 0.32) return "left" as const
+    if (relativePosition >= 0.68) return "right" as const
+    return "center" as const
+  }
   const fontSize = layout.fontSize
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
-  const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.48)), 8, 18)
+  const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.66)), 8, 18)
   const boundedSelectedLabels = selectedLabelData.map((item) => ({
     ...item,
+    alignment: selectedLabelAlignment(item.tokens),
     visibleLabel: chartModelEffortLabel(item.label, item.route, labelLimit),
   }))
   const axisTitleFontSize = Math.min(
@@ -684,6 +692,7 @@ export function comparisonChartOptions(
             show: true,
             formatter: item.visibleLabel,
             position: "top",
+            align: item.alignment,
             distance: 6,
           },
         })),
@@ -704,7 +713,17 @@ export function comparisonChartOptions(
           borderRadius: 2,
           padding: [2, 4],
         },
-        labelLayout: { moveOverlap: "shiftY", hideOverlap: false },
+        labelLayout: ({ labelRect }: { labelRect: { x: number; width: number } }) => {
+          const plotLeft = layout.grid.left + 1
+          const plotRight = layout.width - layout.grid.right - 1
+          const dx =
+            labelRect.x < plotLeft
+              ? plotLeft - labelRect.x
+              : labelRect.x + labelRect.width > plotRight
+                ? plotRight - labelRect.x - labelRect.width
+                : 0
+          return { dx, moveOverlap: "shiftY", hideOverlap: false }
+        },
       },
     ],
   } satisfies EChartsCoreOption

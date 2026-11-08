@@ -1953,7 +1953,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const initialSVGGeometry = await settleChart()
     expect(initialSVGGeometry).toContain("Tokens / accepted task")
     expect(initialSVGGeometry).toContain("USD / task")
-    expect(initialSVGGeometry).toContain("preview-effort")
+    expect(initialSVGGeometry).toContain("preview-effo")
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
       draft.font = "Test Mono"
     })

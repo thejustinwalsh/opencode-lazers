@@ -488,7 +488,7 @@ test("selected point and every reference amount kind receive readable identity l
       })
     }
     expect(identities?.label).toMatchObject({ show: true })
-    expect(identities?.labelLayout).toMatchObject({ hideOverlap: false })
+    expect(typeof identities?.labelLayout).toBe("function")
   }
 
   const unplottable = chartReference("missing:selected", "partial", null)

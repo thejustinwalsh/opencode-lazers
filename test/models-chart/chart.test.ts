@@ -41,7 +41,13 @@ type RenderedOption = {
           configurationID?: string
           symbolSize?: number
           markKind?: string
-          label?: { show?: boolean; formatter?: string; position?: string; distance?: number }
+          label?: {
+            show?: boolean
+            formatter?: string
+            position?: string
+            align?: string
+            distance?: number
+          }
         }
       | number[]
     >
@@ -246,8 +252,9 @@ function reference(
 function routedRangeReference(
   configurationID: string,
   route: { providerID: string; modelID: string; variant: string | null },
+  tokensPerAcceptedTask = 20_000,
 ) {
-  const entry = reference(configurationID, "conditional", 20_000)
+  const entry = reference(configurationID, "conditional", tokensPerAcceptedTask)
   entry.label = `GPT-6 Luna · ${route.providerID} / ${route.modelID}${route.variant ? ` · ${route.variant}` : ""}`
   entry.estimate = ModelDecisionReferenceEstimateSchema.parse({ ...entry.estimate, route })
   return entry
@@ -267,6 +274,61 @@ function pricedRangeReference(configurationID: string, tokens: number) {
 
 function size(element: object, width: number, height: number) {
   sizes.set(element, { width, height })
+}
+
+function renderedBadgeBounds(host: unknown, modelLine: string) {
+  type SvgElement = {
+    tagName: string
+    hasAttribute: (name: string) => boolean
+    getAttribute: (name: string) => string | null
+  }
+  type LabelText = SvgElement & {
+    textContent: string | null
+    parentElement: { children: ArrayLike<SvgElement> } | null
+  }
+  const svgHost = host as {
+    querySelectorAll: (selector: string) => ArrayLike<LabelText>
+  }
+  const label = Array.from(svgHost.querySelectorAll("svg text")).find(
+    (text) => text.textContent?.trim() === modelLine,
+  )
+  const background = Array.from(label?.parentElement?.children ?? []).find(
+    (shape) => shape.tagName === "path" && shape.hasAttribute("paint-order"),
+  )
+  if (!background) throw new Error(`No rendered selected badge background for ${modelLine}`)
+  const transform = /translate\(\s*([-+\d.]+)[ ,]+([-+\d.]+)/.exec(
+    background.getAttribute("transform") ?? "",
+  )
+  const x = transform?.[1]
+  const y = transform?.[2]
+  const points = [
+    ...(background.getAttribute("d") ?? "").matchAll(
+      /[ML]\s*([-+\d.]+)[ ,]+([-+\d.]+)|A\s*[-+\d.]+\s+[-+\d.]+\s+[-+\d.]+\s+[-+\d.]+\s+[-+\d.]+\s+([-+\d.]+)\s+([-+\d.]+)/g,
+    ),
+  ].map((match) => [Number(match[1] ?? match[3]), Number(match[2] ?? match[4])])
+  if (!x || !y || points.length < 2)
+    throw new Error(`Unable to read rendered selected badge geometry for ${modelLine}`)
+  return {
+    left: Number(x) + Math.min(...points.map((point) => point[0]!)),
+    right: Number(x) + Math.max(...points.map((point) => point[0]!)),
+    bottom: Number(y) + Math.max(...points.map((point) => point[1]!)),
+  }
+}
+
+function expectSelectedBadgeInsidePlot(
+  host: unknown,
+  chart: RenderedOption,
+  viewport: { width: number; height: number },
+  modelLine: string,
+) {
+  const bounds = renderedBadgeBounds(host, modelLine)
+  const grid = chart.grid?.[0]
+  const plotLeft = Number(grid?.left ?? 0)
+  const plotRight = viewport.width - Number(grid?.right ?? 0)
+  const plotBottom = viewport.height - Number(grid?.bottom ?? 0)
+  expect(bounds.left).toBeGreaterThanOrEqual(plotLeft - 1)
+  expect(bounds.right).toBeLessThanOrEqual(plotRight + 1)
+  expect(bounds.bottom).toBeLessThan(plotBottom)
 }
 
 async function until(predicate: () => boolean) {
@@ -831,7 +893,7 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
     { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: "max" },
   ] as const
   const references = routes.map((route, index) =>
-    routedRangeReference(`global:route-${index}`, route),
+    routedRangeReference(`global:route-${index}`, route, index === 0 ? 0 : 20_000),
   )
   const viewports = [
     { width: 330, height: 190 },
@@ -879,13 +941,14 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
               (datum) =>
                 !Array.isArray(datum) && datum.configurationID === reference.configurationID,
             )
+        const expectedAlignment = index === 0 ? "left" : "right"
         await until(() => {
           const datum = selectedName()
           return (
             !Array.isArray(datum) &&
             typeof datum?.name === "string" &&
             normalizedSvgLabelTexts().some((label) => label.includes("GPT-6 Luna")) &&
-            normalizedSvgLabelTexts().includes("max") &&
+            normalizedSvgLabelTexts().includes(datum.label?.formatter?.split("\n")[1] ?? "") &&
             datum.configurationID === reference.configurationID
           )
         })
@@ -895,12 +958,19 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
         expect(visibleLabel).toBe("GPT-6 Luna · max")
         expect(visibleLabel).not.toMatch(/[pme]:/)
         expect(normalizedSvgLabelTexts().some((label) => label.includes("GPT-6 Luna"))).toBe(true)
-        expect(normalizedSvgLabelTexts()).toContain("max")
+        const [visibleModelLine, visibleEffortLine] = datum.label?.formatter?.split("\n") ?? []
+        expect(visibleModelLine).toContain("GPT-6 Luna")
+        expect(visibleEffortLine).toBeTruthy()
+        expect(visibleEffortLine?.length).toBeLessThanOrEqual(18)
+        expect(normalizedSvgLabelTexts()).toContain(visibleEffortLine!)
         expect(datum).toMatchObject({
           configurationID: reference.configurationID,
           markKind: "selected-identity",
-          value: [20_000, 0.00000008],
+          value: [index === 0 ? 0 : 20_000, 0.00000008],
         })
+        expect(datum.label?.position).toBe("top")
+        expect(datum.label?.align).toBe(expectedAlignment)
+        expectSelectedBadgeInsidePlot(host, option(), viewport, visibleModelLine!)
 
         const rangeData = option()
           .series?.find((series) => series.id === "openrouter-conditional-ranges")
@@ -909,7 +979,7 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
           )
         expect(rangeData).toMatchObject({
           configurationID: reference.configurationID,
-          value: [20_000, 0.00000004, 0.00000012],
+          value: [index === 0 ? 0 : 20_000, 0.00000004, 0.00000012],
           markKind: "reference",
         })
 
@@ -1044,7 +1114,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     expect(renderedLabelText).toContain("Kimi K2.5")
     expect(renderedLabelText).toContain("thinking")
     expect(renderedLabelText).toContain("Qwen 7")
-    expect(renderedLabelText).toContain("preview-effort")
+    expect(renderedLabelText).toContain("preview")
     const narrow = option()
     expect(narrow.xAxis?.[0]?.splitNumber).toBe(2)
     expect(narrow.yAxis?.[0]?.splitNumber).toBe(2)
@@ -1071,7 +1141,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     const [badgeModel, badgeEffort] = badgeText.split("\n")
     expect(badgeText.length).toBeLessThanOrEqual(37)
     expect(badgeModel).toContain("Qwen 7")
-    expect(badgeEffort).toMatch(/^preview-effort/)
+    expect(badgeEffort).toMatch(/^preview/)
     expect(badgeEffort?.length).toBeLessThanOrEqual(18)
     const svgText = Array.from(host.querySelectorAll("svg text"))
     expect(svgText.some((text) => text.textContent?.includes(badgeModel ?? ""))).toBe(true)
@@ -1089,7 +1159,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
         selected && !Array.isArray(selected) ? (selected.label?.formatter ?? "") : ""
       const [currentModel, currentEffort] = formatter.split("\n")
       expect(currentModel).toContain("Qwen 7")
-      expect(currentEffort).toMatch(/^preview-effort/)
+      expect(currentEffort).toMatch(/^preview/)
       expect(currentEffort?.length).toBeLessThanOrEqual(18)
       const badgeBaselines = currentText
         .filter((text) => [currentModel, currentEffort].includes(text.textContent?.trim()))
@@ -1110,6 +1180,7 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     expect(medium.xAxis?.[0]?.splitNumber).toBeGreaterThan(narrow.xAxis?.[0]?.splitNumber ?? 0)
     expect(svg()?.textContent).toContain("Tokens / accepted task")
     assertSelectedBadgeClearsXAxis()
+    expectSelectedBadgeInsidePlot(host, medium, { width: 450, height: 230 }, badgeModel!)
 
     size(host, 960, 320)
     observer.trigger()
