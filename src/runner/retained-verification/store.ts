@@ -713,6 +713,7 @@ function appendRetainedCaptureRows(
   label: string,
   rows: Iterable<unknown>,
   count: { value: number },
+  validate?: (row: unknown) => void,
 ): void {
   hash.update(`${label}\n`)
   let rowsRead = 0
@@ -723,6 +724,7 @@ function appendRetainedCaptureRows(
       throw new Error(
         "Selected retained-verification history is too large to capture; narrow the task selection and restart without the cursor",
       )
+    validate?.(row)
     hash.update(JSON.stringify(row) ?? "undefined").update("\n")
   }
   hash.update(`rows:${rowsRead}\n`)
@@ -791,7 +793,9 @@ function retainedHistoryCapture(
       `operation:${taskID}`,
       db
         .query<Record<string, unknown>, [string, string, string, number]>(
-          `SELECT id,task_id,generation,state,
+          `SELECT id,task_id,generation,
+             CASE WHEN length(state)<=32 THEN state ELSE NULL END AS state,
+             (length(state)>32) AS state_too_large,
              CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
              (length(payload)>65536) AS payload_too_large
            FROM runner_retained_verifications
@@ -800,6 +804,17 @@ function retainedHistoryCapture(
         )
         .iterate(projectDirectory, planID, taskID, generation),
       count,
+      (row) => {
+        if (
+          typeof row === "object" &&
+          row !== null &&
+          "state_too_large" in row &&
+          row.state_too_large === 1
+        )
+          throw new Error(
+            "Selected retained-verification history contains an oversized operation state and cannot be captured safely",
+          )
+      },
     )
     if (tables.checks)
       appendRetainedCaptureRows(
@@ -854,7 +869,7 @@ function retainedHistoryCapture(
         `evidence:${taskID}`,
         db
           .query<Record<string, unknown>, [string, string, string, number]>(
-            `SELECT DISTINCT operations.generation,
+            `SELECT DISTINCT operations.generation,evidence.generation,
                CASE WHEN length(evidence.phase)<=16 THEN evidence.phase ELSE '' END AS phase,
                CASE WHEN evidence.task_id IS NULL OR length(evidence.task_id)<=64
                  THEN evidence.task_id ELSE NULL END AS task_id,
@@ -864,7 +879,7 @@ function retainedHistoryCapture(
              JOIN runner_retained_verifications AS operations ON operations.id=evidence.operation_id
              WHERE operations.project_directory=? AND operations.plan_id=?
                AND operations.task_id=? AND operations.generation<=?
-             ORDER BY operations.generation,evidence.phase,evidence.task_id,
+             ORDER BY operations.generation,evidence.generation,evidence.phase,evidence.task_id,
                evidence.assertion_id,evidence.artifact`,
           )
           .iterate(projectDirectory, planID, taskID, generation),

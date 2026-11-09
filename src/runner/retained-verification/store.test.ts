@@ -403,6 +403,75 @@ test("selected operation, generation, check, resource, and evidence changes inva
   }
 })
 
+test("cursor capture detects evidence generation rebinding", () => {
+  const db = fixture()
+  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
+  const waiting = operation(selectedPlan, taskA, 3, "waiting-human")
+  createRetainedVerification(db, projectDirectory, waiting)
+  db.query(
+    `INSERT INTO runner_retained_verification_evidence(
+      id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
+    ) VALUES(?,?,3,'task',?,'approval',?,'private approval evidence',3)`,
+  ).run(crypto.randomUUID(), waiting.id, taskA, waiting.artifact)
+  const requirements = new Map([
+    [
+      taskA,
+      {
+        planRevision: 1,
+        planVersion: 1,
+        taskRevision: 1,
+        taskAssertionIDs: ["approval"],
+        combinedAssertionIDs: [],
+      },
+    ],
+  ])
+  const first = retainedVerificationsForInspection(
+    db,
+    projectDirectory,
+    selectedPlan,
+    [taskA],
+    1,
+    undefined,
+    requirements,
+  )
+  expect(first.latest[0]?.humanEvidence).toEqual({
+    status: "known",
+    phase: "task",
+    missingAssertionIDs: [],
+  })
+  expect(first.history.nextCursor).toBeString()
+
+  db.query(
+    "UPDATE runner_retained_verification_evidence SET generation=99 WHERE operation_id=?",
+  ).run(waiting.id)
+  expect(() =>
+    retainedVerificationsForInspection(
+      db,
+      projectDirectory,
+      selectedPlan,
+      [taskA],
+      1,
+      first.history.nextCursor!,
+      requirements,
+    ),
+  ).toThrow("Selected retained-verification history changed since this capture")
+})
+
+test("cursor capture rejects oversized corrupt operation state without exposing it", () => {
+  const db = fixture()
+  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
+  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 3, "failed"))
+  const oversizedState = "corrupt-state-".repeat(150_000)
+  db.query(
+    `UPDATE runner_retained_verifications SET state=?
+     WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=1`,
+  ).run(oversizedState, projectDirectory, selectedPlan, taskA)
+
+  expect(() =>
+    retainedVerificationsForInspection(db, projectDirectory, selectedPlan, [taskA], 1),
+  ).toThrow("oversized operation state and cannot be captured safely")
+})
+
 test("absent optional retained tables stay absent and inspection does not write", () => {
   const db = fixture(false)
   const tableNames = () =>
