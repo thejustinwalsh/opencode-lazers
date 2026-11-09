@@ -191,5 +191,7 @@ constraints. No new task, stopped worker, or System One change. At the next nati
 observation Architect was researching that exact draft and the same worker was
 still writing. The same worker subsequently received native user input
 msg_1bdca3f6d001hiq44jRVDw0V5n at Unix1794185534829 with the concrete correction
-and resumed its model turn. This proves input consumption; changed behavior
-remains unproven.
+and resumed its model turn. Subsequent source inspection confirmed removal of those count gates and whole-result
+size-omission rejection. The worker now streams produced source into the retained
+artifact and records skipped-file reasons. Executable and native behavior remain
+unproven until its tests and real upstream call finish.
