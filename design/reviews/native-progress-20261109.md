@@ -190,3 +190,17 @@ The previously stale Tasks view caught up after a native filter-button click:
 selected LZ-199 showed Accepted and worker rows no longer showed blanket Active.
 No reload or service restart was performed. Background panel freshness remains
 an observation to investigate, not proof the runtime had stopped.
+
+The same worker committed review repair `fa5ba05` after quality and 685 runner
+tests/8,710 assertions passed. Native task and plan checks also passed; plan
+behavior receipt ended at Unix1794205158142 with exit0 and no timeout. Architect
+automatically resumed and reused the same independent reviewer. That reviewer
+confirmed the original shutdown/completion-event fixes but found two remaining
+cancellation defects: uncertainty can skip interrupting sibling workers, and a
+restart receipt cut can leave cancellation ignoring a valid published receipt.
+Architect dispatched both corrections through native controls to the SAME
+worker/attempt, observed active at Unix1794205397157. This is a second automatic
+review-to-repair cycle; it is not final delivery. No driver prompt caused it.
+
+Computer Use subsequently explicitly reported macOS locked. Root requested
+unlock once; Desktop/Radar checks are pending while native work continues.

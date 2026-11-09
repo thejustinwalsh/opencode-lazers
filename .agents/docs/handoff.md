@@ -25,11 +25,13 @@ worker `ses_325a8b20d34449fe9ac4100bcb0a35a2`, attempt
 runtime task-level verification also passed and node is accepted. The declared
 plan-level behavior check also passed (exit0, no timeout). Runtime plan became
 accepted and Architect automatically resumed at Unix1794203003814 to review the
-exact candidate. Review found uncertain-cleanup shutdown and missing retained
-completion-event defects, plus an inherited cancellation gap. Architect resumed
-the SAME worker/attempt through native repair controls; it is active correcting
-those findings. Integration, activation and cleanup remain unproven. Preserve
-all original drafts and retained work.
+exact candidate. Repair `fa5ba05` passed quality, 685 runner tests/8,710
+assertions and native task/plan verification. Architect automatically resumed
+and reused its reviewer. Original shutdown/completion-event fixes now look
+correct; re-review found cancellation can skip sibling interruption and miss a
+published receipt after restart. Architect again resumed the SAME worker/attempt
+through native controls to fix those two cases. Integration, activation and
+cleanup remain unproven. Preserve all original drafts and retained work.
 
 LZ-200, plan `a543e146-60f0-49a8-bdd7-c3df7265cda7`, is queued after LZ-199 and
 preserved LZ-182. It implements the user's configurable project limit of three
