@@ -16,8 +16,8 @@ is OpenAI Sol6.1 **default**, not confirmed High. Parent Architect is Sol High.
 
 Quality checks passed. The first completed full runner run returned **600 pass,
 78 fail,1 error;7924 assertions across678 tests in325.84 seconds**, native
-message `msg_1bea0a5b0001hDpvxkcMz0c92r`, completed **1794199892833**. The worker
-remains active; implementation completion and integration are unproven. This
+message `msg_1bea0a5b0001hDpvxkcMz0c92r`, completed **1794199892833**. Implementation
+completion and integration are unproven. This
 result replaces any inference that focused passes established a complete draft.
 Some displayed failures concern intermediate async states; fixture assumptions
 and actual implementation defects still require investigation, not assertion
@@ -31,6 +31,29 @@ workflow. The latter mismatch is detailed in
 do not establish corrected tests or live behavior. Independent LZ-164 returned
 `b935f5f` with74 tests passing; the shortcut candidate's native source reviewer
 found no substantive issue. Their integration remains a separate observation.
+
+### Routine scope question interrupted coordination
+
+The takeover worker then asked permission to adapt affected runner test fixtures
+outside its write scope, preserving behavioral assertions. Child form
+`frm_1bea625030018ZZwJ5bKLvXJjy` was absent from parent session form reads but
+subsequently appeared in the parent Desktop. The driver's initial claim that it
+was invisible there was premature. Even minimized, it replaced the parent
+composer; no parent model notification/decision was established by its display.
+
+The driver dismissed the routine question to restore the parent composer and
+requested Architect-owned scope resolution in native message
+`msg_1bea97f740013wVcWnVco2i5GU` at **1794200142406**. Dismissal unexpectedly
+aborted the worker's model turn at **1794200113270**. Native activity is idle,
+while its attempt/node still read running at the next DB observation. The same
+checkout and changes remain; no reset or new attempt was performed by the driver.
+Architect must resolve scope and resume the same worker through existing controls.
+
+This is driver assistance and a recovery defect, not autonomous success. Existing
+recovery work must bring routine worker questions to Architect and reconcile
+interrupted/idle execution truthfully. Human questions remain for material intent
+or authorization. Do not solve it with a new quota, stricter verification gate,
+or a claim that question display proves coordination.
 
 ## Observed facts
 
