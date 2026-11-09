@@ -77,3 +77,58 @@ retry scheduler, generic task-versioning system or quota was created.
 Until that runtime follow-up path is delivered, this record and Architect
 continuity retain the manual reassessment obligation. Do not misrepresent the
 documentation as a scheduled runtime concern or functioning handoff tool.
+
+## Reassessment after the observable checkpoint
+
+Independent read-only investigation confirms the stop/admission correction is
+discriminating, not a weakened test: it observes a real running check before
+allowing stop, then requires a terminated process group, `timedOut: false`, a
+nonzero recovered result and no replay. Native `msg_1be172605…` reports **1 pass,
+16 assertions** under the default test timeout.
+
+The full adopted-descendant run in `msg_1be17757d…` is **22 pass, 2 fail, 1 error**.
+The failed/READY case exceeded five seconds; its subsequent storage error is
+consistent with activity surviving fixture teardown, not proof of release. The
+mutating-check case exposes asynchronous re-entry into the old unconditional
+clean-worktree check before retaining the exact check result.
+
+The worker has since changed that implementation and its activity-aware waits;
+the helper deadline was reduced rather than enlarged. Those later changes are
+not verified by the failed run. Keep publication's branch/HEAD/index/worktree/tree
+fences: a matching receipt must not become general ownership proof for arbitrary
+dirt.
+
+**Disposition remains continue the original worker, acceptance withheld.** This
+is a concrete changed approach with observed progress; takeover is not justified.
+No new generic debugging round was issued for those adoption failures.
+
+### Discovered retained-repair lineage defect
+
+Normal repair admission for both LZ-194 and LZ-193 rejects **before reservation**
+because it equates the original assigned message with the currently completed
+native input. In the investigated LZ-194 case, a captured owned background-shell
+completion synthetic is the actual successful terminal input; fresh idle evidence
+binds it to the original attempt/session/workspace and reports zero background
+jobs. Missing idle is not the cause.
+
+No inspected existing control repairs this accepted-state mismatch: tagged
+review-input reconciliation requires running/verifying work; narrow interrupted
+repair recovery requires an already cancelled repair; retained verification runs
+checks rather than implementation. Preserve both accepted workers unchanged.
+Do not manufacture cancellation, rewrite assignment IDs, ignore all synthetics,
+fabricate idle or prompt/replace them manually.
+
+This same-lifecycle correction is attached to existing LZ-181 in advice 7. Reuse
+trusted captured native-input lineage, preserve original assignment separately
+from observed terminal input, and carry the latter through final admission and
+dispatch revalidation. Cover success and stale/foreign/uncaptured/active rejection
+within already authorized runtime tests or `test/runner/**`. An attempted addition
+of `src/runner/retained-repair.test.ts` was refused due to LZ-182's reservation;
+that path was **not** authorized and the refusal was not bypassed.
+
+The **next reassessment** is the corrected full adoption-suite result plus focused
+retained-lineage regression, or an explicit blocker/terminal outcome first. A
+repeated unresolved failure without concrete progress again requires Architect
+investigation and ownership disposition before further steering. Only reviewed
+root correction followed by ordinary successful repair admission can unblock the
+accepted workers; no integration or cleanup is claimed for them.
