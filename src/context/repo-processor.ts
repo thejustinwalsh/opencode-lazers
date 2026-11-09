@@ -3,8 +3,7 @@ import type { CliOptions } from "repomix"
 import { createReadStream, createWriteStream, statSync, unlinkSync } from "node:fs"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
-import { isAbsolute } from "node:path"
-import { parentPort } from "node:worker_threads"
+import { isAbsolute, posix } from "node:path"
 
 export type RepoProcessingInput = {
   snapshotID: string
@@ -72,6 +71,27 @@ function validRepositoryPath(path: string) {
   )
 }
 
+function repositoryUrlRef(value: string) {
+  try {
+    const url = new URL(value)
+    if (!["github.com", "www.github.com"].includes(url.hostname.toLowerCase())) return undefined
+    const parts = url.pathname.split("/").filter(Boolean)
+    if (parts.length >= 4 && (parts[2] === "tree" || parts[2] === "commit"))
+      return parts.slice(3).join("/")
+  } catch {
+    // Other accepted Git remote forms are resolved by Repomix's parser.
+  }
+  return undefined
+}
+
+function validOmittedRepositoryPath(path: string) {
+  return (
+    path.length > 0 &&
+    !posix.isAbsolute(path) &&
+    !path.split("/").some((part) => part === ".." || part === "." || part.length === 0)
+  )
+}
+
 function assertPatterns(patterns: string[]) {
   for (const pattern of patterns) {
     const hasControlCharacter = [...pattern].some((character) => {
@@ -109,8 +129,9 @@ export async function processRepositorySnapshot(
   assertPatterns(input.include)
   assertPatterns(input.exclude)
   const parsed = parseRemoteValue(input.repository)
-  const selectedRef = input.ref ?? parsed.remoteBranch
-  const refSelection = input.ref ? "argument" : parsed.remoteBranch ? "repository-url" : "default"
+  const urlRef = repositoryUrlRef(input.repository) ?? parsed.remoteBranch
+  const selectedRef = input.ref ?? urlRef
+  const refSelection = input.ref ? "argument" : urlRef ? "repository-url" : "default"
   const options: CliOptions = {
     remoteBranch: selectedRef,
     output: input.sourceFile,
@@ -135,7 +156,9 @@ export async function processRepositorySnapshot(
   }
 
   try {
-    const result = await runRemote(parsed.repoUrl, options)
+    // Keep URL-embedded refs intact; Repomix's remote action resolves tree URLs,
+    // including refs containing slashes, before reducing them to a repository URL.
+    const result = await runRemote(input.repository, options)
     const packed = result.packResult
     const sourceFilePaths = packed.processedFiles.map((file) => file.path)
     const unsafePaths = sourceFilePaths.filter((path) => !validRepositoryPath(path))
@@ -148,13 +171,13 @@ export async function processRepositorySnapshot(
     if (!sourceStat.isFile() || sourceStat.size === 0)
       throw new Error("Repomix returned an empty repository snapshot")
     const skippedFiles: { path: string; reason: string }[] = packed.skippedFiles.map((file) => {
-      if (!validRepositoryPath(file.path))
+      if (!validOmittedRepositoryPath(file.path))
         throw new Error("Repomix returned a skipped path outside the selected repository")
       return { path: file.path, reason: file.reason }
     })
     for (const file of packed.suspiciousFilesResults ?? []) {
       if (file.type !== "file") continue
-      if (!validRepositoryPath(file.filePath))
+      if (!validOmittedRepositoryPath(file.filePath))
         throw new Error("Repomix returned a security-omitted path outside the selected repository")
       skippedFiles.push({ path: file.filePath, reason: "security-check" })
     }
@@ -200,21 +223,4 @@ export async function processRepositorySnapshot(
   } finally {
     removeIfPresent(input.sourceFile)
   }
-}
-
-if (parentPort) {
-  const port = parentPort
-  port.on("message", async (input: RepoProcessingInput) => {
-    try {
-      await processRepositorySnapshot(input)
-      port.postMessage({ ok: true })
-    } catch (error) {
-      port.postMessage({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      port.close()
-    }
-  })
 }

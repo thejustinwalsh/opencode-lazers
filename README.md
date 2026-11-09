@@ -161,6 +161,8 @@ artifact containing both provenance and the produced source. Omitted files and
 reasons, filters, requested/default ref selection, Repomix version and compression
 basis are retained; an unknown resolved revision stays unknown. Pass the returned
 `snapshotID` to the same tool to read the saved artifact without another fetch.
+Older registered artifacts may expire under cache pressure; the newest complete
+artifact is retained, including when it alone exceeds the 256 MiB retention target.
 Remote configuration and file processors remain disabled, and native tool
 permission is checked before network access. This tool complements, rather than
 replaces, Architect workspace publications and normal source access.

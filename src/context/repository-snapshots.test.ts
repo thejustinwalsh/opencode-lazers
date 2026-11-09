@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import {
   closeSync,
+  existsSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -15,7 +16,11 @@ import { join } from "node:path"
 import { runRemoteAction } from "repomix"
 import type { CliOptions } from "repomix"
 import { TaskRepository } from "../storage.ts"
-import { RepositorySnapshotStore, type RepositorySnapshotWorker } from "./repository-snapshots.ts"
+import {
+  RepositorySnapshotStore,
+  runRepositoryWorker,
+  type RepositorySnapshotWorker,
+} from "./repository-snapshots.ts"
 import { processRepositorySnapshot } from "./repo-processor.ts"
 
 const cleanups: (() => void)[] = []
@@ -23,13 +28,14 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup()
 })
 
-function fixture(worker: RepositorySnapshotWorker) {
+function fixture(worker: RepositorySnapshotWorker, cacheLimitBytes?: number) {
   const root = mkdtempSync(join(tmpdir(), "lazers-repo-snapshot-"))
   const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
   const store = new RepositorySnapshotStore(
     join(root, "context", "repositories"),
     repository,
     worker,
+    cacheLimitBytes,
   )
   cleanups.push(() => {
     store.close()
@@ -37,6 +43,16 @@ function fixture(worker: RepositorySnapshotWorker) {
     rmSync(root, { recursive: true, force: true })
   })
   return { root, store }
+}
+
+async function waitForStagedSource(directory: string) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const filename = readdirSync(directory).find((name) => name.startsWith(".source-"))
+    if (filename) return join(directory, filename)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error("Background worker did not stage its source file")
 }
 
 test("external snapshots keep full source, selection and omitted-file provenance while bounding tool output", async () => {
@@ -123,6 +139,118 @@ test("external snapshots keep full source, selection and omitted-file provenance
   })
 })
 
+test("URL refs with slashes reach Repomix intact and ref provenance distinguishes URL, argument, and default", async () => {
+  const calls: { repository: string; remoteBranch: string | undefined }[] = []
+  const source = "## Compressed selection\nexport const selected = true;\n"
+  const remote: typeof runRemoteAction = async (repository, options) => {
+    calls.push({ repository, remoteBranch: options.remoteBranch })
+    writeFileSync(options.output!, source)
+    return {
+      packResult: {
+        processedFiles: [
+          { path: "src/selected.ts", content: "export const selected = true;", level: "compress" },
+        ],
+        skippedFiles: [],
+        totalCharacters: source.length,
+        totalTokens: 12,
+      } as unknown as Awaited<ReturnType<typeof runRemoteAction>>["packResult"],
+      config: {} as Awaited<ReturnType<typeof runRemoteAction>>["config"],
+    }
+  }
+  const f = fixture((input) => processRepositorySnapshot(input, remote))
+  const treeURL = "https://github.com/owner/project/tree/release/2026"
+  const tree = await f.store.create({ repository: treeURL, include: ["src/**"], exclude: [] })
+  const explicit = await f.store.create({
+    repository: treeURL,
+    ref: "hotfix/explicit",
+    include: ["src/**"],
+    exclude: [],
+  })
+  const defaultRef = await f.store.create({
+    repository: "owner/default",
+    include: ["src/**"],
+    exclude: [],
+  })
+
+  expect(calls).toEqual([
+    { repository: treeURL, remoteBranch: "release/2026" },
+    { repository: treeURL, remoteBranch: "hotfix/explicit" },
+    { repository: "owner/default", remoteBranch: undefined },
+  ])
+  expect(tree).toMatchObject({
+    repository: "https://github.com/owner/project.git",
+    requestedRef: "release/2026",
+    refSelection: "repository-url",
+    resolvedRevision: null,
+    source: expect.stringContaining("export const selected = true"),
+  })
+  expect(explicit).toMatchObject({ requestedRef: "hotfix/explicit", refSelection: "argument" })
+  expect(defaultRef).toMatchObject({ requestedRef: null, refSelection: "default" })
+})
+
+test("long POSIX backslash paths in omission metadata do not discard useful source", async () => {
+  const source = "## Compressed source\nexport const available = true;\n"
+  const omittedPath = `assets/${"nested".repeat(180)}\\large-map.json`
+  const remote: typeof runRemoteAction = async (_repository, options) => {
+    writeFileSync(options.output!, source)
+    return {
+      packResult: {
+        processedFiles: [
+          {
+            path: "src/available.ts",
+            content: "export const available = true;",
+            level: "compress",
+          },
+        ],
+        skippedFiles: [{ path: omittedPath, reason: "size-limit" }],
+        totalCharacters: source.length,
+        totalTokens: 12,
+      } as unknown as Awaited<ReturnType<typeof runRemoteAction>>["packResult"],
+      config: {} as Awaited<ReturnType<typeof runRemoteAction>>["config"],
+    }
+  }
+  const f = fixture((input) => processRepositorySnapshot(input, remote))
+  const result = await f.store.create({ repository: "owner/project", include: [], exclude: [] })
+
+  expect(omittedPath.length).toBeGreaterThan(1024)
+  expect(result.source).toContain("export const available = true")
+  expect(result.selection.omittedFiles).toEqual([{ path: omittedPath, reason: "size-limit" }])
+  expect(f.store.read(result.snapshotID).selection.omittedFiles).toEqual(
+    result.selection.omittedFiles,
+  )
+})
+
+test("cache pressure expires older snapshots instead of rejecting later useful output", async () => {
+  const source = "## Compressed source\nexport const retained = true;\n"
+  const remote: typeof runRemoteAction = async (_repository, options) => {
+    writeFileSync(options.output!, source)
+    return {
+      packResult: {
+        processedFiles: [
+          { path: "src/retained.ts", content: "export const retained = true;", level: "compress" },
+        ],
+        skippedFiles: [],
+        totalCharacters: source.length,
+        totalTokens: 12,
+      } as unknown as Awaited<ReturnType<typeof runRemoteAction>>["packResult"],
+      config: {} as Awaited<ReturnType<typeof runRemoteAction>>["config"],
+    }
+  }
+  const f = fixture((input) => processRepositorySnapshot(input, remote), 1)
+  const request = { repository: "owner/project", include: [], exclude: [] }
+  const first = await f.store.create(request)
+  const second = await f.store.create(request)
+
+  expect(second.source).toContain("export const retained = true")
+  expect(f.store.read(second.snapshotID).source).toBe(second.source)
+  expect(() => f.store.read(first.snapshotID)).toThrow("Repository snapshot is unavailable")
+  expect(
+    readdirSync(join(f.root, "context", "repositories")).filter((name) =>
+      /^repo-[a-f0-9-]{36}\.json\.md$/.test(name),
+    ),
+  ).toHaveLength(1)
+})
+
 test("remote failures and cancellation never publish partial snapshots or hide the earlier artifact", async () => {
   const source = "## Existing complete snapshot\nexport const stable = true;\n"
   let shouldFail = false
@@ -177,6 +305,70 @@ test("remote failures and cancellation never publish partial snapshots or hide t
   controller.abort()
   await expect(pending).rejects.toThrow("cancelled")
   expect(readdirSync(join(f.root, "cancelled", "repositories"))).toEqual([])
+})
+
+test("actual background cancellation terminates the worker and removes partial staging", async () => {
+  const f = fixture((input, signal, workers) =>
+    runRepositoryWorker(input, signal, workers, {
+      workerURL: new URL("./repository-snapshot-worker-fixture.ts", import.meta.url),
+      timeoutMs: 10_000,
+    }),
+  )
+  const directory = join(f.root, "context", "repositories")
+  const controller = new AbortController()
+  const pending = f.store.create(
+    { repository: "owner/project", include: [], exclude: [] },
+    controller.signal,
+  )
+  const stagedSource = await waitForStagedSource(directory)
+
+  expect(readFileSync(stagedSource, "utf8")).toBe("unpublished partial source")
+  controller.abort(new Error("background cancellation"))
+  await expect(pending).rejects.toThrow("background cancellation")
+  expect(readdirSync(directory)).toEqual([])
+})
+
+test("actual background timeout removes staging and publishes no artifact", async () => {
+  const f = fixture((input, signal, workers) =>
+    runRepositoryWorker(input, signal, workers, {
+      workerURL: new URL("./repository-snapshot-worker-fixture.ts", import.meta.url),
+      timeoutMs: 100,
+    }),
+  )
+  const directory = join(f.root, "context", "repositories")
+  await expect(
+    f.store.create({ repository: "owner/project", include: [], exclude: [] }),
+  ).rejects.toThrow("Remote Repomix research exceeded 100ms")
+  expect(readdirSync(directory)).toEqual([])
+})
+
+test("background processing ignores inherited remote trust and disables repository config execution", async () => {
+  const f = fixture((input, signal, workers) =>
+    runRepositoryWorker(input, signal, workers, {
+      workerURL: new URL("./repository-snapshot-policy-worker-fixture.ts", import.meta.url),
+    }),
+  )
+  const previousTrust = process.env.REPOMIX_REMOTE_TRUST_CONFIG
+  const previousMarker = process.env.LAZERS_REPO_SNAPSHOT_CONFIG_MARKER
+  const marker = join(f.root, "remote-config-executed")
+  process.env.REPOMIX_REMOTE_TRUST_CONFIG = "true"
+  process.env.LAZERS_REPO_SNAPSHOT_CONFIG_MARKER = marker
+  try {
+    const result = await f.store.create({
+      repository: "owner/project",
+      include: [],
+      exclude: [],
+    })
+    expect(result.source).toContain("export const safe = true")
+    expect(existsSync(marker)).toBe(false)
+    expect(result.snapshotFile.startsWith(`${f.store.cacheDirectory}/`)).toBe(true)
+    expect(f.store.read(result.snapshotID).source).toBe(result.source)
+  } finally {
+    if (previousTrust === undefined) delete process.env.REPOMIX_REMOTE_TRUST_CONFIG
+    else process.env.REPOMIX_REMOTE_TRUST_CONFIG = previousTrust
+    if (previousMarker === undefined) delete process.env.LAZERS_REPO_SNAPSHOT_CONFIG_MARKER
+    else process.env.LAZERS_REPO_SNAPSHOT_CONFIG_MARKER = previousMarker
+  }
 })
 
 test("source beyond prior 32/64 MiB gates is streamed completely and reusable beyond the bounded preview", async () => {

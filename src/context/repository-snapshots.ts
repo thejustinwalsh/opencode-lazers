@@ -13,7 +13,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs"
-import { basename, dirname, isAbsolute, join, relative } from "node:path"
+import { basename, dirname, isAbsolute, join, posix, relative } from "node:path"
 import { Worker } from "node:worker_threads"
 import type { TaskRepository } from "../storage.ts"
 import type { RepoProcessingInput, RepositorySnapshotMetadata } from "./repo-processor.ts"
@@ -62,9 +62,10 @@ export type RepositorySnapshotWorker = (
   signal?: AbortSignal,
   workers?: Set<Worker>,
 ) => Promise<void>
+export type RepositoryWorkerOptions = { workerURL?: URL; timeoutMs?: number }
 type SnapshotFile = { metadata: RepositorySnapshotMetadata; bodyOffset: number; bytes: number }
 
-const maxCacheBytes = 256 * 1024 * 1024
+const cacheTargetBytes = 256 * 1024 * 1024
 const maxResponseSourceBytes = 128 * 1024
 const maxResponseListItems = 100
 const orphanGraceMs = 60_000
@@ -109,13 +110,15 @@ function workerEnvironment(): NodeJS.ProcessEnv {
   return env
 }
 
-function runRepositoryWorker(
+export function runRepositoryWorker(
   input: RepoProcessingInput,
   signal?: AbortSignal,
   workers?: Set<Worker>,
+  options: RepositoryWorkerOptions = {},
 ) {
   signal?.throwIfAborted()
-  const worker = new Worker(new URL("./repo-processor.ts", import.meta.url), {
+  const timeoutMs = options.timeoutMs ?? 180_000
+  const worker = new Worker(options.workerURL ?? new URL("./repo-worker.ts", import.meta.url), {
     env: workerEnvironment(),
     resourceLimits: { maxOldGenerationSizeMb: 512, maxYoungGenerationSizeMb: 128, stackSizeMb: 8 },
   })
@@ -123,8 +126,15 @@ function runRepositoryWorker(
   return new Promise<void>((resolve, reject) => {
     let settled = false
     const timer = setTimeout(
-      () => fail(new Error("Remote Repomix research exceeded 180 seconds")),
-      180_000,
+      () =>
+        fail(
+          new Error(
+            options.timeoutMs === undefined
+              ? "Remote Repomix research exceeded 180 seconds"
+              : `Remote Repomix research exceeded ${timeoutMs}ms`,
+          ),
+        ),
+      timeoutMs,
     )
     const finish = () => {
       if (settled) return false
@@ -193,6 +203,14 @@ function validRepositoryPath(path: string) {
   )
 }
 
+function validOmittedRepositoryPath(path: string) {
+  return (
+    path.length > 0 &&
+    !posix.isAbsolute(path) &&
+    !path.split("/").some((part) => part === ".." || part === "." || part.length === 0)
+  )
+}
+
 function validMetadata(value: unknown, snapshotID: string): value is RepositorySnapshotMetadata {
   if (!value || typeof value !== "object") return false
   const metadata = value as Partial<RepositorySnapshotMetadata>
@@ -224,7 +242,7 @@ function validMetadata(value: unknown, snapshotID: string): value is RepositoryS
       (file) =>
         file &&
         typeof file.path === "string" &&
-        validRepositoryPath(file.path) &&
+        validOmittedRepositoryPath(file.path) &&
         typeof file.reason === "string",
     ) &&
     Number.isSafeInteger(metadata.metrics?.files) &&
@@ -303,6 +321,7 @@ export class RepositorySnapshotStore {
     cacheDirectory: string,
     private readonly repository: TaskRepository,
     private readonly worker: RepositorySnapshotWorker = runRepositoryWorker,
+    private readonly cacheLimitBytes = cacheTargetBytes,
   ) {
     const parent = dirname(cacheDirectory)
     mkdirSync(parent, { recursive: true, mode: 0o700 })
@@ -359,13 +378,42 @@ export class RepositorySnapshotStore {
     }
   }
 
-  private assertCacheCapacity(size: number) {
-    let total = size
-    for (const name of readdirSync(this.cacheDirectory)) {
-      if (!/^repo-[a-f0-9-]{36}\.json\.md$/.test(name)) continue
-      total += statSync(join(this.cacheDirectory, name)).size
+  private registerSnapshot(snapshotID: string, filename: string, createdAt: number, bytes: number) {
+    const evictedFiles = this.repository.atomic((db) => {
+      db.query("INSERT INTO context_repo_snapshots VALUES(?,?,?,?)").run(
+        snapshotID,
+        filename,
+        createdAt,
+        bytes,
+      )
+      const snapshots = db
+        .query<{ snapshot_id: string; file: string; bytes: number }, []>(
+          "SELECT snapshot_id,file,bytes FROM context_repo_snapshots ORDER BY created_at ASC,rowid ASC",
+        )
+        .all()
+      let total = snapshots.reduce((sum, snapshot) => sum + snapshot.bytes, 0)
+      const evicted: string[] = []
+      for (const snapshot of snapshots) {
+        if (total <= this.cacheLimitBytes) break
+        if (
+          snapshot.snapshot_id === snapshotID ||
+          !idPattern.test(snapshot.snapshot_id) ||
+          snapshot.file !== `repo-${snapshot.snapshot_id}.json.md`
+        )
+          continue
+        db.query("DELETE FROM context_repo_snapshots WHERE snapshot_id=?").run(snapshot.snapshot_id)
+        total -= snapshot.bytes
+        evicted.push(snapshot.file)
+      }
+      return evicted
+    })
+    for (const file of evictedFiles) {
+      try {
+        removeIfPresent(join(this.cacheDirectory, file))
+      } catch {
+        // A deleted registry entry is unavailable; orphan-file cleanup is best-effort.
+      }
     }
-    if (total > maxCacheBytes) throw new Error("Repository snapshot cache exceeds 256 MiB")
   }
 
   private evictOrphans() {
@@ -459,18 +507,10 @@ export class RepositorySnapshotStore {
       signal?.throwIfAborted()
       const staged = this.openArtifact(temporaryArtifact, snapshotID)
       try {
-        this.assertCacheCapacity(staged.bytes)
         signal?.throwIfAborted()
         linkSync(temporaryArtifact, file)
         try {
-          this.repository.atomic((db) => {
-            db.query("INSERT INTO context_repo_snapshots VALUES(?,?,?,?)").run(
-              snapshotID,
-              filename,
-              staged.metadata.fetchedAt,
-              staged.bytes,
-            )
-          })
+          this.registerSnapshot(snapshotID, filename, staged.metadata.fetchedAt, staged.bytes)
           published = true
         } catch (error) {
           removeIfPresent(file)
