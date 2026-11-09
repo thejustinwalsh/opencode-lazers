@@ -17,18 +17,24 @@ Runtime/API/DB state is authoritative. Architect is
 LZ-199 (`efde8d1`), LZ-164 (`6b571c0`) and LZ-197 (`51fd20c`). Composition
 quality, 79 focused tests/505 assertions and GUI build passed.
 
-Activation handoff is stalled: Architect's native background shell reloaded its
-own location, disappearing before writing its final receipt or resuming Architect.
-Native shell `sh_1bf108a43001Rz2VwOv24xTSLs` is NotFound; process/output are gone.
-Live SourceFence registration changed from `d9facf6c-dc15-4266-b192-4910aa890535`
-to `6c780b33-2688-47d5-8461-2241f713c8d8` on service PID1754. Reload appears to
-have taken effect; exact live feature behavior is still unproven. Native plans
-remain accepted/blocked, not integrated. Architect and workers are idle. Do not
-rerun merges or fabricate a completion receipt. The existing receipt is
-`.cache/driver/reviewed-activation-20261109.json`; diagnosis is in
-`design/reviews/native-progress-20261109.md`. Report this to Architect through
-Desktop when unlocked, then use native integration/probe/cleanup controls.
-Root requested unlock once; Computer Use explicitly reported the lock.
+Activation lost its completion notification when Architect's background shell
+reloaded its own location. After unlock, the driver resumed Architect through
+Desktop (message `msg_1bf108a4f001wKLXT8KgFkmCsx`, Unix1794226355863).
+Architect subsequently recorded LZ-199 integrated and attempted LZ-197 cleanup;
+that checkout is dirty and preserved. LZ-164's real registered inspector exposed
+cursor invalidation during ordinary telemetry, now assigned to active Luna Max
+worker LZ-201 (`ses_b7c5d4e2b3b142b3b041481d5570a4d7`). LZ-195's SAME
+retained worker is also active after normal repair resumed successfully.
+
+User clarified that implementors build, test and commit; Architect owns branch
+synchronization, rebasing, conflicts and integration. Architect acknowledged this
+in `msg_1c047f9b0001jULEs5x90iSW65`, committing to correct stale LZ-182 advice
+and undertake composition itself. LZ-182's session is about 20 hours old, but its
+latest resumed run lasted 211.112 seconds and is now idle. Its recent Git calls
+were read-only; `fae0967` and `6dbae67` remain preserved. Do not resume it merely
+to inspect a moving integration baseline. Definition updates and successful
+integration still require observation. The driver relay is assistance, not proof
+of autonomous correction. See `design/reviews/native-progress-20261109.md`.
 
 Original LZ-181 and the unstarted replacement LZ-198 are cancelled, with useful
 work/history preserved. Do not resume the original failed worker. The user's
@@ -46,7 +52,7 @@ correct; re-review found cancellation can skip sibling interruption and miss a
 published receipt after restart. Architect again resumed the SAME worker/attempt
 through native controls to fix those two cases. Final `30b013d` passed quality,
 698 runner tests/8,925 assertions, native task/plan checks and scoped re-review.
-Source is merged as above; runtime integration, live probes and cleanup remain
+Source and runtime integration are recorded; full live probes and cleanup remain
 unproven. Preserve all original drafts and retained work.
 
 LZ-200, plan `a543e146-60f0-49a8-bdd7-c3df7265cda7`, is queued after LZ-199 and
@@ -60,8 +66,8 @@ LZ-164's same-worker correction `22b5abc` and LZ-197's shortcut candidate
 integration/probe/cleanup records still need reconciliation. LZ-195's
 corrected handoff candidate `1e68969` still has an Architect-role defect in its
 verify wrapper: worker-only draft saving blocks review of an existing draft.
-Normal retained repair is waiting on LZ-199. LZ-196 (automatic recovery consumer)
-waits on LZ-195/LZ-199; LZ-192 (visible recovery) waits on LZ-196/LZ-182.
+Normal retained repair has resumed the original worker after LZ-199 integration.
+LZ-196 (automatic recovery consumer) waits on LZ-195/LZ-199; LZ-192 (visible recovery) waits on LZ-196/LZ-182.
 Preserve original workers for LZ-182, LZ-193 and LZ-194 repair after the runtime
 fix; do not replace retained work with fresh implementations.
 

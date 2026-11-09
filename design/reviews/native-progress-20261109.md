@@ -250,3 +250,38 @@ inspect actual source/runtime state and continue native probes/integration/
 cleanup. Root performed read-only diagnosis and no SQL repair, merge replay,
 manual runtime-state advance or inference call. Desktop relay awaits the already
 requested unlock.
+
+## Desktop recovery and integration ownership correction
+
+After unlock the driver resumed the existing Architect through Desktop, message
+`msg_1bf108a4f001wKLXT8KgFkmCsx` at Unix1794226355863. This is a driver
+intervention after the lost activation continuation, not autonomous recovery.
+Architect recorded LZ-199 integrated, preserved LZ-197's dirty checkout after
+cleanup refused it, and exercised LZ-164's real registered history tool. Paging
+invalidated under ordinary telemetry; Architect created LZ-201 and dispatched
+Luna Max. The same original LZ-195 worker also resumed through native retained
+repair. Both sessions were confirmed active, rather than inferred from plan state.
+
+The user noticed LZ-182's approximately 20-hour-old session. Its latest busy/idle
+interval is Unix1794226748074–1794226959186: 211.112 seconds, not 20 hours of
+continuous inference. Recent Git calls inspected history, content and ancestry;
+no recent rebase/merge mutation was observed. The worker stopped unchanged at
+`6dbae67` because stale advice told it to wait for the reviewed takeover baseline.
+Both `fae0967` and `6dbae67` remain retained. This was wasted coordination work,
+not lost implementation. Architect should handle composition and integration.
+
+The driver's Desktop relay clarified the user's role ownership. Input initially
+appeared unreliable and could not be claimed delivered. Subsequent read-only
+inspection confirmed Architect's acknowledgment in
+`msg_1c047f9b0001jULEs5x90iSW65`: it accepted responsibility for the synchronization
+mistake, promised to correct stale advice/guidance, and undertook composition in
+an Architect-owned native worktree. Completion of those edits and integration is
+still unproven. Do not describe acknowledgment as a completed fix.
+
+A GUI-only native View → Reload restored an available local-model indicator
+without changing inference settings; it did not prove inference behavior. Before
+reload, Settings reported “The main-process provider changed without exact
+retirement evidence.” All six switches stayed on and unload stayed Never.
+Desktop screenshots and AX/input sometimes disagreed afterward; connected panel
+and inference qualification remain open. No inference API call or SQL mutation
+was used to bypass Desktop during this recovery.
