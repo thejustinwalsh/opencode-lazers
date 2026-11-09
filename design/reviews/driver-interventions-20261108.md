@@ -119,3 +119,19 @@ Architect publication across real worktrees, structured reads and dispatch.
 Native activation/use and comparative token savings remain to observe. Architect
 already has a published snapshot for the current project. Original LZ-181 worker
 continues, most recently running its broad retained-verification suite.
+
+At Unix1794184290178, supported source activation confirmed `29ee18b` effective:
+LAZERS server/GUI active, worker guidance uses the canonical single fetch, and
+the original LZ-181 session remained running. Actual new worker-bundle consumption
+and comparative savings remain unproven. The remote-repository research feature
+was subsequently submitted through the existing Desktop Architect chat, with
+pinned Repomix remote-action source findings and official docs; no duplicate
+worker or custom remote-clone service was created by the driver.
+
+Subsequent observer discovery failures were rechecked against the same service,
+not treated as terminal. An authenticated `/api/info` request returned HTTP200
+in3ms for existing PID1754/version2.2.6. A later normal observer call recovered:
+Architect was actively reading remote/context integration code, and original
+LZ-181 worker was patching retained-reverify.test.ts. This shows continued work;
+it does not establish why the earlier discovery probes failed or prove the
+remaining test failures resolved.
