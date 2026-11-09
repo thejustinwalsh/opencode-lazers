@@ -494,8 +494,19 @@ export class ObservationChangeTracker {
     )
   }
 
-  trackScopedSessions(sessionIDs: Iterable<string>, preferredSessionID?: string) {
-    this.scopedSessionIDs = new Set([...sessionIDs].slice(0, 500))
+  trackScopedSessions(
+    sessionIDs: Iterable<string>,
+    preferredSessionID?: string,
+    options: { retainInterests?: boolean } = {},
+  ) {
+    const selected = new Set(options.retainInterests ? this.scopedSessionIDs : [])
+    for (const sessionID of sessionIDs) {
+      selected.delete(sessionID)
+      selected.add(sessionID)
+    }
+    this.scopedSessionIDs = new Set(
+      options.retainInterests ? [...selected].slice(-500) : [...selected].slice(0, 500),
+    )
     this.preferredLiveSessionID =
       preferredSessionID && this.scopedSessionIDs.has(preferredSessionID)
         ? preferredSessionID

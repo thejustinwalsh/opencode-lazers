@@ -751,8 +751,6 @@ function historyItem(row: LiveProgressRow, stats: ReturnType<typeof privacyStats
 export class LiveRadarReader {
   private readonly source: LiveReadStore
   private readonly schedulerKey: string
-  private readonly trackedSessionIDs = new Set<string>()
-  private trackedSessionIDsTruncated = false
 
   constructor(
     store: RunnerStore,
@@ -771,35 +769,6 @@ export class LiveRadarReader {
       projectID,
       secret,
     )
-  }
-
-  private trackSessions(
-    tracker: ObservationChangeTracker,
-    sessionIDs: Iterable<string>,
-    preferredSessionID?: string,
-  ) {
-    const incoming = [...new Set(sessionIDs)]
-    const preferred = preferredSessionID ? incoming.indexOf(preferredSessionID) : -1
-    if (preferred >= 0) incoming.splice(preferred, 1)
-    for (const sessionID of incoming) {
-      this.trackedSessionIDs.delete(sessionID)
-      this.trackedSessionIDs.add(sessionID)
-      if (this.trackedSessionIDs.size > LIVE_LIMITS.retainedStateEntries) {
-        this.trackedSessionIDs.delete(this.trackedSessionIDs.values().next().value!)
-        this.trackedSessionIDsTruncated = true
-      }
-    }
-    if (preferredSessionID) {
-      this.trackedSessionIDs.delete(preferredSessionID)
-      this.trackedSessionIDs.add(preferredSessionID)
-      if (this.trackedSessionIDs.size > LIVE_LIMITS.retainedStateEntries) {
-        const evictable = [...this.trackedSessionIDs].find((id) => id !== preferredSessionID)
-        if (evictable) this.trackedSessionIDs.delete(evictable)
-        this.trackedSessionIDsTruncated = true
-      }
-    }
-    tracker.trackScopedSessions(this.trackedSessionIDs, preferredSessionID)
-    return this.trackedSessionIDs.size
   }
 
   async radar(
@@ -822,6 +791,38 @@ export class LiveRadarReader {
     signal: AbortSignal,
     streamEpoch: string,
   ): Promise<LiveRadarResponse> {
+    const trackedSessionIDs = new Set<string>()
+    let trackedSessionIDsTruncated = false
+    const trackSessions = (
+      tracker: ObservationChangeTracker,
+      sessionIDs: Iterable<string>,
+      preferredSessionID?: string,
+    ) => {
+      const incoming = [...new Set(sessionIDs)]
+      const preferred = preferredSessionID ? incoming.indexOf(preferredSessionID) : -1
+      if (preferred >= 0) incoming.splice(preferred, 1)
+      for (const sessionID of incoming) {
+        trackedSessionIDs.delete(sessionID)
+        trackedSessionIDs.add(sessionID)
+        if (trackedSessionIDs.size > LIVE_LIMITS.retainedStateEntries) {
+          trackedSessionIDs.delete(trackedSessionIDs.values().next().value!)
+          trackedSessionIDsTruncated = true
+        }
+      }
+      if (preferredSessionID) {
+        trackedSessionIDs.delete(preferredSessionID)
+        trackedSessionIDs.add(preferredSessionID)
+        if (trackedSessionIDs.size > LIVE_LIMITS.retainedStateEntries) {
+          const evictable = [...trackedSessionIDs].find((id) => id !== preferredSessionID)
+          if (evictable) trackedSessionIDs.delete(evictable)
+          trackedSessionIDsTruncated = true
+        }
+      }
+      // Event interest spans visible panel scopes; coverage belongs only to this read.
+      tracker.trackScopedSessions(trackedSessionIDs, preferredSessionID, { retainInterests: true })
+      return trackedSessionIDs.size
+    }
+
     const request = LiveRadarInput.parse(input)
     signal.throwIfAborted()
     const nativeRevision = tracker.nativeRevision
@@ -842,7 +843,7 @@ export class LiveRadarReader {
     signal.throwIfAborted()
 
     const managedIDs = [...source.assignments.keys()]
-    this.trackSessions(tracker, [...managedIDs, request.scope.sessionID], request.scope.sessionID)
+    trackSessions(tracker, [...managedIDs, request.scope.sessionID], request.scope.sessionID)
     const nativeByID = new Map<string, RadarNativeSession>()
     const seenNativeIDs = new Set<string>()
     const inspectNative = (session: RadarNativeSession) => {
@@ -1091,7 +1092,7 @@ export class LiveRadarReader {
       throw new Error("Bounded native session reads exceeded their declared call budget")
     const boundedCandidates = candidates.slice(0, LIVE_LIMITS.sessions)
     if (candidates.length > boundedCandidates.length) inventoryTruncated = true
-    let retainedStateEntries = this.trackSessions(
+    let retainedStateEntries = trackSessions(
       tracker,
       boundedCandidates.map((candidate) => candidate.id),
       request.scope.sessionID,
@@ -1327,7 +1328,7 @@ export class LiveRadarReader {
         nativeMetadataBoundary: "raw-selected-fields-after-adapter" as const,
         nativeContextLoads: 0 as const,
         retainedStateEntries,
-        retainedStateTruncated: this.trackedSessionIDsTruncated,
+        retainedStateTruncated: trackedSessionIDsTruncated,
         responseBytes: 0,
       },
       limits: LIVE_LIMITS,
@@ -1344,7 +1345,7 @@ export class LiveRadarReader {
       ).length
     }
     updateSessionCoverage()
-    retainedStateEntries = this.trackSessions(
+    retainedStateEntries = trackSessions(
       tracker,
       response.sessions.map((session) => session.sessionID),
       request.scope.sessionID,
@@ -1369,7 +1370,7 @@ export class LiveRadarReader {
       }
       updateSessionCoverage()
       dropUnreturnedRoutes(response)
-      retainedStateEntries = this.trackSessions(
+      retainedStateEntries = trackSessions(
         tracker,
         response.sessions.map((session) => session.sessionID),
         request.scope.sessionID,
@@ -1378,7 +1379,7 @@ export class LiveRadarReader {
       responseBytes = measuredResponseBytes(response)
     }
     dropUnreturnedRoutes(response)
-    retainedStateEntries = this.trackSessions(
+    retainedStateEntries = trackSessions(
       tracker,
       response.sessions.map((session) => session.sessionID),
       request.scope.sessionID,

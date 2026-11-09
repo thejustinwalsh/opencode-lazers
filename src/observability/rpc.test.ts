@@ -1554,10 +1554,9 @@ test("registered live RPCs keep current reads bounded and page selected progress
           }),
         ),
       )
-    expect(lastRetainedState!.coverage.retainedStateEntries).toBe(
-      lastRetainedState!.limits.retainedStateEntries,
-    )
-    expect(lastRetainedState!.coverage.retainedStateTruncated).toBe(true)
+    // S8-6: prior panel scopes are event interests, not this response's retained state.
+    expect(lastRetainedState!.coverage.retainedStateEntries).toBe(1)
+    expect(lastRetainedState!.coverage.retainedStateTruncated).toBe(false)
     expect(lastRetainedState!.sessions.map((session) => session.sessionID)).toEqual([
       "ses-retained-32",
     ])

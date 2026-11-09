@@ -478,3 +478,68 @@ test("late exact Project-view host result is fenced after cancellation", async (
     fixture.close()
   }
 })
+
+test("S8-6 a large project read cannot leave later session reads truncated or widen their retained scope", async () => {
+  const fixture = makeFixture()
+  const secret = new Uint8Array(32).fill(93)
+  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+  tracker.initialize()
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let hold = false
+  const host: RadarSessionHost = {
+    get: async (id) => {
+      if (hold && id === "ses-owner") {
+        entered.resolve()
+        await release.promise
+      }
+      return nativeSession(id, "project", fixture.directory, "implementor")
+    },
+    project: async () => ({ sessions: [], truncated: false }),
+    descendants: async () => ({ sessions: [], truncated: false }),
+  }
+  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, host)
+  try {
+    fixture.store.atomic((db) => {
+      for (let index = 0; index < 34; index++)
+        db.query(
+          `INSERT INTO runner_attempts
+        (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at,tool_count,retry_count)
+        SELECT ?,plan_id,task_id,?, ?,?,workspace,base_commit,policy,'running',started_at,tool_count,retry_count FROM runner_attempts WHERE id=?`,
+        ).run(
+          crypto.randomUUID(),
+          index + 10,
+          `ses-scope-${index}`,
+          `msg-scope-${index}`,
+          firstAttemptID,
+        )
+    })
+    const read = (kind: "session" | "project", sessionID: string) =>
+      reads.liveRadar(
+        { scope: { kind, sessionID }, includeUnmanagedSessions: false },
+        tracker,
+        new AbortController().signal,
+        tracker.streamEpoch,
+      )
+    const wide = await read("project", "ses-owner")
+    expect(wide.coverage.retainedStateTruncated).toBe(true)
+    for (const sessionID of ["ses-failed", "ses-accepted"]) {
+      const narrow = await read("session", sessionID)
+      expect(narrow.coverage.retainedStateTruncated).toBe(false)
+      expect(narrow.coverage.retainedStateEntries).toBe(1)
+      expect(tracker.hasScopedSession(sessionID)).toBe(true)
+    }
+    hold = true
+    const pendingWide = read("project", "ses-owner")
+    await entered.promise
+    const simultaneousNarrow = await read("session", "ses-failed")
+    release.resolve()
+    const completedWide = await pendingWide
+    expect(simultaneousNarrow.coverage.retainedStateTruncated).toBe(false)
+    expect(simultaneousNarrow.coverage.retainedStateEntries).toBe(1)
+    expect(completedWide.coverage.retainedStateTruncated).toBe(true)
+  } finally {
+    tracker.close()
+    fixture.close()
+  }
+})

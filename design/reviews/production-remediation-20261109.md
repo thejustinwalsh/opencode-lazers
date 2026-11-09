@@ -518,3 +518,25 @@ and targeted DOM render: **12 pass**, 97 assertions. `bun run build:gui` passed,
 including bundle evaluation; existing ONNX CJS `import.meta` warnings remain and
 are not changed here. Logs: `s9-usage-{behavior,panel,gui-build}.log` in the
 baseline directory. Desktop visual activation has not been observed.
+
+## Wave 4: S8-6
+
+Moved retained-session selection and its truncation flag from registration fields
+into each live read. A genuinely over-capacity project read still reports its
+omission; a later or overlapping one-session read reports its own one-entry,
+non-truncated state. No new timer, subscriber or persistence path is introduced.
+
+The first integration run exposed two dependencies on the old union: one test
+asserted 32 retained entries after 33 independent one-session reads (amended with
+an S8-6 comment), and another correctly required events from a separately visible
+unmanaged panel to keep invalidating it. Preserved that event behavior by retaining
+interests in the tracker's existing bounded 500-session interest set, independently
+of each response's 32-entry retained-state accounting. Other tracker consumers
+keep replacement selection. This is not the separate S8 publisher/queue redesign;
+its duplicate subscription/delivery findings remain open.
+
+`bun run verify` passed. Live-reader/change-tracker/registered RPC behavior:
+**29 pass**, 491 assertions, including overlapping scope reads and the unmanaged
+event negative regression. Log: `s8-scope-behavior.log` in the baseline directory.
+The controlled event-traffic test again recorded zero read failures; this is not a
+Desktop performance measurement.
