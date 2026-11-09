@@ -153,3 +153,23 @@ of the consolidated startup path, not measured token savings or completion.
 Subsequent direct source reads proceeded normally. Both workers remained active
 at the next native session observation. Remote-source implementation, real
 upstream probe, acceptance and integration are still pending.
+
+## Radar acceptance/integration gap observed during parallel work
+
+Opening Project Radar while both implementers were natively active showed
+`[object Object]`, no operational rows and a Refresh action; Refresh reproduced.
+[Desktop capture](radar-project-overflow-20261108.png). The authenticated location
+lookup succeeded. Calling Radar with its actual scoped session input reproduced
+rpc.internal; service logs at2026-11-09T00:42:50Z and00:44:06Z disclose the cause:
+`Observation scope is too large; narrow it`, also from snapshot. Main panel still
+uses the legacy readers. This is not a worker execution failure.
+
+Read-only task inspection located the existing remedy: LZ-184 plan
+ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c,
+accepted attemptacb55d57-bd3e-42fe-8459-42a97309f2fd/artifact
+89edd14b0cadad49b8b3cb84d733ce56ff82f549. Its plan is blocked on the authored
+connected-radar-agent-monitor:human live acceptance, not integrated. Its task
+already requires legacy-fails/live-succeeds and readable RPC errors. Driver
+reported the actual defect through Desktop and asked Architect to finish that
+existing product acceptance/integration path while preserving181/193. No cap was
+raised, acceptance recorded, or new duplicate task created by the driver.
