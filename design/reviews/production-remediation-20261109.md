@@ -62,7 +62,7 @@ implementation option as the decision when his answer differs from both options.
 | 2   | Always value actual model/effort/tokens at current published market prices; historical billing accuracy is not a product goal. Retain execution identity and measured tokens. Land exact-decimal substitution and three-way equality test before merging pricers.                                          |
 | 3   | Accept the assigned input or a durably reconciled review-input alias.                                                                                                                                                                                                                                      |
 | 4   | Durable current owner plus exact session/attempt binding establishes authority; native parentage remains launch history.                                                                                                                                                                                   |
-| 5   | Justin asks whether one mixed record in linear time is intended and what Opus recommended. Explained separate durable invocation records in one chronological timeline; clarification between one timeline and one database record is pending. No dependent identity fix yet.                              |
+| 5   | Separate stored commentary and automatic-tool invocation records, displayed together in one chronological timeline. Justin confirmed Opus's recommended correction; use the existing invocation UUID and preserve both facts.                                                                              |
 | 6   | A present task/session must have useful tracked data. An unavailable label is not an adequate product outcome. Before changing inventory semantics, distinguish optional native inventory acquisition from durable managed-session facts; do not fabricate successful reads.                               |
 | 7   | Explicit user settings must be predictable and honored, especially agent model bindings. Packaged defaults fill unset settings rather than replacing user choices.                                                                                                                                         |
 | 8   | After Architect merges work, terminate the worker and remove its branch; workers must not continue after integration. Preserve unmerged/dirty work and history; use native cleanup and the existing absence proof. Integration ordering and old-session holds must be corrected together.                  |
@@ -429,3 +429,18 @@ case (expected accepted, remains running); it is not resolved or relabeled by
 this correction. Full output: `s7-behavior.log` in the baseline directory.
 Native Desktop recurrence/acceptance and post-activation rate measurements remain
 unproven. No model turn was launched or worker resumed for this reproduction.
+
+### Wave 3 full-suite comparison
+
+At unchanged code commit `974c7d8`, the full suite ran from Unix ms
+1794251686235 to 1794252062532: **1,769 pass / 4 fail**, 1,773 tests across
+180 files, 19,720 assertions, 376.23 seconds. The distinct failures are exactly
+the original four listed above; no new failures. The Wave 2 fixture corrections
+also survived this full run. Logs: `wave-3.{log,json}` in the baseline directory.
+
+Read-only native inspection confirmed the original Architect, original LZ-185
+worker and cancelled replacement remain inactive; the Architect's last message
+retains the remediation hold. Their work has not been resumed or discarded.
+F-S4-3, F-S3-1 and S7-5 code/behavior corrections are complete; native recurrence
+and rate measurements are still outstanding, so production symptom closure is
+not claimed. No Wave 3 item required another reconciliation decision.
