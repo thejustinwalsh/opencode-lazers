@@ -55,3 +55,41 @@ Automatic quality checks pass. This repairs retained reconstruction; it does not
 claim immediate live-event capture, complete historical recovery, cost attribution
 or native activation. Production data was inspected read-only and not backfilled
 by the driver. Current Architect and original worker remained active afterward.
+
+## Native activation and subsequent behavior
+
+`efc0752` repairs worker registration overwriting native permissions with only
+delegation denials. Live inspection confirmed ordinary source reads required
+approval before the fix. Registration now preserves native defaults, existing
+configured rules and delegation denials without accumulating duplicates. The
+role test checks configured-rule preservation and replay; automatic quality
+checks pass.
+
+After checking active tools and pending worker requests, the driver used the
+supported server-wide `location.reload`. The first agent lookup returned
+AgentNotFound during re-registration; a subsequent read confirmed LAZERS active
+and normal worker permissions. At Unix1794182835792 both updated agent definitions
+were effective, the original worker remained running and no permissions were
+pending. It subsequently completed grep and read calls; pending requests were
+still zero at1794183170964. This establishes recovery of ordinary reads, not
+completion of LZ-181.
+
+The two historical steering messages remain available through native message
+lookup with creation times1794178689056 and1794178996780. Current context had23
+messages and no user/synthetic inputs after compaction, so context reconstruction
+alone cannot recover those older inputs. The driver did not backfill production
+rows. Durable capture across compaction remains a known gap.
+
+Desktop reported renderer crash code5. Exported logs locate it at19:01:54.402
+America/Detroit, before the server reload, with no causal exception in renderer
+logs. The driver exported `/Users/tjw/Downloads/opencode-debug-20261109T000921.zip`
+and relaunched through the native alert. Computer Use attached to the paused
+canary afterward; the driver quit only that test Desktop and reattached to main.
+Native workers continued. Main settings still reported inference detach timeout;
+no inference flags or model files were changed. Crash cause remains unproven.
+
+Driver message `msg_1bda6484f001tSl2tUpuRiGGt8`, created1794183162285,
+reported activated fixes and a concrete LZ-181 test finding: many of56 failures
+originated in a fixture expecting acceptance after five synchronous ticks despite
+new asynchronous verification. Architect received this for same-worker steering,
+not as a new task. Subsequent correction and full-suite success remain unproven.
