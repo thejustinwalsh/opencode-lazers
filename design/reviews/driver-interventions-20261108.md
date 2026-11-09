@@ -281,3 +281,35 @@ and foreign-session/attempt tests cover the intended distinction.
 Quality and102recorder/native/idle tests/787assertions pass. Source activation
 and recovery of the actual held193 attempt remain to observe. No durable idle
 report was fabricated or production DB edited by Driver.
+
+## Follow-up: native recovery and Desktop input loss (2026-11-09)
+
+Architect reviewed and activated f27cc71. Its retained native transcript at
+Unix1794188155983 reports that LZ-193's fresh idle handoff succeeded. The existing
+candidate then reached broader checks and repair; this proves recovery past the
+idle association defect, not final task acceptance or integration. LZ-181's
+original worker and the owned-instance verifier remained active.
+
+At approximately 01:44–01:48 UTC, Driver attempted to relay the user's OpenRouter
+clarification through main Desktop. Composer click/paste and accessibility value
+assignment left it empty. Read-only transcript and inbox checks found no submitted
+correction, so delivery was not credited. The accessibility body also lost most
+message content and the local inference indicator showed Error. Driver used the
+native View → Reload action for the renderer only; backend sessions remained
+running. Recovery and cause remain unproven. No GPU setting, model route, service,
+worker or task state was changed. A process sample showed the main renderer at
+56.9% CPU and service at19.2%; this single sample does not establish causality.
+
+View Reload left a blank renderer. Driver captured a three-second stack sample
+at /private/tmp/lz-renderer-20261109.sample.txt, then used OpenCode → Restart.
+The relaunched main Desktop restored editable composer input: Driver observed
+the full correction in the field before Return, then the submitted user bubble
+and empty composer. The local model indicator resumed Loading. Backend workers
+were not stopped. This establishes UI/input recovery, not the root cause or GPU
+qualification. Earlier failed submissions were not resent until their absence
+was confirmed in both transcript and inbox.
+
+The separate user-requested Sol audit found durable tool history limited to
+assigned workers and missing distinct Code Mode inner calls. Its pre-change
+findings are in tool-call-failures-20261109.md. The proportional hook/guidance
+repair is being implemented separately; no native activation is claimed yet.
