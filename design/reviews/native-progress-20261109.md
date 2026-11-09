@@ -77,3 +77,16 @@ not a submitted/reviewed handoff through the still-unimplemented public tools.
 Preserve the work and evaluate Architect's subsequent disposition. LZ-195 owns
 the dedicated handoff workflow; no replacement worker or new constraint was added
 by the driver.
+
+## Restored restart coverage
+
+The same LZ-181 worker restored the removed completed-check restart scenario as
+`restart after completed adoption checks does not replay either phase` in
+`src/runner/adopted-descendant.test.ts`. Read-only inspection confirms it records
+both check logs, reopens the runtime, checks the waiting state and unchanged log
+lengths, and verifies both check records remain completed.
+
+Native `msg_1be6f37f1001IhcOEpbPTAJ8Dr` runs that exact test filter and reports
+**1 pass, 0 fail, 8 assertions**. This corrects the earlier missing-coverage
+finding; it does not establish that the latest full adoption suite or quality
+check passes. No driver code edit or implementation advice was sent.
