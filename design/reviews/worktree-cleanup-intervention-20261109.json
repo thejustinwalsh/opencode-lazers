@@ -145,6 +145,22 @@
       "nativeInventoryPresent": false,
       "cachedLocationPresent": false,
       "observedAt": 1794235906057
+    },
+    {
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/422b1e78-34b1-442c-baa6-407c1fb64f6c",
+      "state": "removed",
+      "reason": "LZ195 final9c5e434 reviewed and integrated as59b9578; runtime plan version37 completed native non-forced removal and cache retirement; independent absence confirmed",
+      "nativeInventoryPresent": false,
+      "cachedLocationPresent": false,
+      "observedAt": 1794237532997
+    },
+    {
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz195-architect-review-20261109",
+      "state": "removed",
+      "reason": "Architect-owned LZ195 review finished; clean checkout with identical main tree and no missing non-merge commits; native force:false removal confirmed, no active session at location and cache evicted",
+      "nativeInventoryPresent": false,
+      "cachedLocationPresent": false,
+      "observedAt": 1794237532997
     }
   ],
   "retained": [
@@ -168,19 +184,6 @@
       "refs": [],
       "planStatesAsOfInventory": [],
       "head": "98d7c050e7703e7b6e9a6e434b68259257f2d876",
-      "gitStatusReadable": true,
-      "dirty": false,
-      "headInMain": false,
-      "nativeForegroundActive": false,
-      "reason": "HEAD not included in main; preserve unmerged source/composition"
-    },
-    {
-      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/422b1e78-34b1-442c-baa6-407c1fb64f6c",
-      "nativeStrategy": "git",
-      "observedAt": 1794230015404,
-      "refs": ["LZ-195"],
-      "planStatesAsOfInventory": ["running"],
-      "head": "157bd523a16be3a80276317cb39ef14e5aa0fb65",
       "gitStatusReadable": true,
       "dirty": false,
       "headInMain": false,
@@ -1827,15 +1830,15 @@
     }
   ],
   "afterKiB": {
-    "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees": 77848016,
+    "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees": 77080584,
     "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees": 2457096,
     "/Users/tjw/.local/share/opencode/worktree/b5da4c": 1477784
   },
-  "endedAt": 1794235994077,
-  "finalNativeInventoryCount": 130,
-  "removedCount": 14,
-  "reclaimedKiB": 7426576,
-  "reclaimedGiB": 7.0825347900390625,
+  "endedAt": 1794237620131,
+  "finalNativeInventoryCount": 129,
+  "removedCount": 16,
+  "reclaimedKiB": 8194008,
+  "reclaimedGiB": 7.814414978027344,
   "integrationRetry": {
     "planID": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
     "result": "Fresh native integrated cleanup retry still reported worker activity not conclusively idle; no repeated blind retries or bypass"

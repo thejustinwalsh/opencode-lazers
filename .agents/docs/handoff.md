@@ -4,6 +4,46 @@ Updated 2026-11-09. Goal remains active: native Architect/LAZERS must deliver th
 whole roadmap, then propose improvements from observation. Runtime/API/DB state
 is authoritative; this file is a locator. Earlier detail remains in Git history.
 
+## Cleanup-first continuation and cancellation waits
+
+This continuation supersedes older delivery observations below; native state is
+authoritative. LZ-185 stays first, in its SAME recovered worker. LZ-195 final
+`9c5e434` is reviewed and integrated in main `59b9578`, with native worker removal
+and cache retirement confirmed. It preserves worker provenance and unavailable/
+disabled limitations. Main quality, 11 registered controls / 133 assertions and
+38 recovery tests / 515 assertions passed. LZ-201/LZ-164 are also integrated;
+actual registered history paging is recorded in
+`design/reviews/retained-inspection-live-20261109.md`. Manual cleanup is not proof
+that LZ-185's automatic repair works.
+
+Required sequence: **LZ-185 → LZ-154 → explicit SAME-worker LZ-182 continuation**.
+LZ-154 no longer waits on Models/Tasks: those were coordination dependencies, not
+functional producers. Its real prerequisites are LZ-185/LZ-199/LZ-195, reusing
+`src/recovery/tools.ts` and `src/recovery/journal.ts`. LZ-182 remains temporarily
+cancelled, not rejected or integrated. Original source, attempt and Architect
+composition `1f3efb0` remain preserved. After cleanup/steering integration,
+Architect explicitly continues that attempt for authorized-dependent continuation
+and scheduling reads with 101 blocking reservations, preserving negative controls;
+then composes, reviews, qualifies and integrates Tasks. Ownership guidance already
+landed as `b42f512`; feature composition has not.
+
+LZ-189 retains genuine source prerequisites; LZ-200 still requires Tasks source.
+LZ-196 consumes LZ-154/LZ-195/LZ-199; LZ-192 consumes LZ-196/LZ-182/LZ-200. LZ-200
+retains the single project-configurable limit, explicitly 3 here, across
+implementers, Auditors and research/review helpers; Architect excluded. It is not
+implemented yet.
+
+Silent cancellation waits were reproduced: `runtime.ts:7376–7380` returns when
+cross-plan integrated-source proof is absent, while `store.ts:2952–2988` exposes
+only same-plan dependency waits. Public tasks consequently reported queued with
+no reason and empty waitingOn. Proportional correction stays in existing work:
+LZ-200 produces canonical prerequisite identity/state/wait reasons; LZ-196 routes
+changed incidents and concrete deferred follow-up to the current Architect;
+LZ-192 displays those facts and the owner action. Intentional cleanup deferral
+must remain visible. Cancellation neither proves integration nor authorizes
+automatic redispatch. Reads stay nonmutating; source gates and truthful unknowns
+remain intact. Implementation and connected qualification are still pending.
+
 ## Standing driver role
 
 Follow AGENTS.md → Dogfood driver role. Codex is the human developer in this
@@ -36,10 +76,11 @@ The worktree audit found 141 present additional checkouts and about 82.8 GiB acr
 the two audited folders. Fifty clean merged checkouts map to 38 cleanup-blocked
 plans; all 44 associated sessions were inactive in the foreground observation.
 A fresh runtime cleanup retry still reproduced the stale idle hold. Architect
-subsequently removed 11 settled verification/review worktrees through native
-non-forced APIs. Independent disk/native/cache checks confirmed all 11 absent;
-folder allocation fell 5.6 GiB. LZ-185's automatic repair and the 50 worker-checkout
-holds remain unresolved. Exact observations and subsequent updates:
+subsequently recorded 16 native non-forced removals, including LZ-195's worker
+and review checkout; independent disk/native/cache checks confirmed absence.
+Net allocation fell 7.8144 GiB across the same measured roots, while retained
+workers could allocate files. This manual intervention is not automatic recovery.
+LZ-185's repair and remaining historical holds remain unresolved. Exact records:
 `design/reviews/worktree-cleanup-audit-20261109.md`,
 `design/reviews/worktree-lifecycle-inventory-20261109.json`, and
 `design/reviews/worktree-cleanup-intervention-20261109.json`.
@@ -64,7 +105,7 @@ normal telemetry; main quality and 23 focused tests/214 assertions passed. See
 `design/reviews/retained-inspection-live-20261109.md`. Their earlier fixes
 were retained through concrete native review-to-repair cycles. LZ-193/LZ-194
 repairs remain pending with original workers preserved. LZ-196 (automatic recovery)
-waits on LZ-195/LZ-199; LZ-192 (visible recovery) waits on LZ-196/LZ-182. LZ-200
+waits on LZ-154/LZ-195/LZ-199; LZ-192 waits on LZ-196/LZ-182/LZ-200. LZ-200
 is the queued configurable limit of 3 across all delegated roles, Architect
 excluded; the limit is not implemented yet.
 
@@ -80,9 +121,10 @@ LZ-182's plan is now cancelled, not completed. Its original and Architect-owned
 checkouts/commits remain present. The driver found LZ-154/LZ-189/LZ-192/LZ-200
 still depending on that cancelled plan and raised the gap through Desktop in
 `msg_1c0d4b4f30012lDKUBjRgwBYv0` (Unix1794236539424), keeping cleanup first.
-Architect rewired LZ-154; the other three old prerequisite edges and a replacement
-path for the retained Tasks feature are still unresolved at this observation.
-Do not lose that feature or claim routine cancellation handled these dependents.
+Architect rewired LZ-154 and retained the other three genuine source edges.
+The explicit same-worker continuation at the top now supplies the retained Tasks
+path; implementation and connected qualification remain open. Do not claim
+routine cancellation itself handled these dependents.
 See the latest section of `design/reviews/native-progress-20261109.md`.
 
 ## Delivery and preservation

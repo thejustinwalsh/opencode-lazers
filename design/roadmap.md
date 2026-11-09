@@ -3,25 +3,51 @@
 LAZERS builds itself through OpenCode Desktop. The goal is accepted software
 changes with clear intent, efficient execution and little manual intervention.
 
-## Current delivery front — 2026-11-08
+## Current delivery front — 2026-11-09
 
 Native runtime state is authoritative. Source integration, live product behavior,
-acceptance and cleanup are separate facts. Priority remains Models →
-Tasks/Trajectory → Radar, with independent work in parallel.
+acceptance and cleanup are separate facts. Urgent cleanup comes first: LZ-185 →
+LZ-154 → explicit SAME-worker LZ-182 correction and feature integration. The full
+Models/Tasks/Trajectory/Radar roadmap remains required, with independent work
+under normal admission; cancellation is not source integration or rejection.
+
+LZ-154's Models/Tasks links were artificial coordination dependencies and are
+replaced by its actual producers LZ-185/LZ-199/LZ-195. LZ-189 retains genuine
+retained-source prerequisites. After Tasks lands, LZ-200 and LZ-189 can progress;
+LZ-196 consumes LZ-154/LZ-195/LZ-199, and LZ-192 consumes LZ-196/LZ-182/LZ-200.
+
+The cancelled-prerequisite silent wait is a producer/consumer gap, not grounds to
+bypass integration proof: runtime returns on absent cross-plan source proof but
+the public execution projection reports only intra-plan waits. Extend existing
+LZ-200 canonical selection/wait facts with prerequisite identity and cancelled/
+failed/held state; LZ-196 delivers a deduplicated current-owner follow-up, and
+LZ-192 exposes the reason and owner action. Keep intentional cleanup deferral
+visible, clear waits only on genuine state/source changes, and never automatically
+redispatch cancelled workers. Cover public task/inspection/Tasks entrypoints,
+restart and dependency changes without reads mutating lifecycle. This correction
+is planned, not implemented.
 
 | Lane                         | Current work                                                                                                                                                                                                                  | Remaining boundary                                                                                                                                                                       |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Models                       | LZ-172 is accepted and integrated at native plan version138. Worker0233df0 and the consumer-copy cleanup landed in main c94debf; actual Desktop/Terra review and interaction checks passed. Both owned checkouts are removed. | Continue broader pricing/persona/metrics roadmap and residual read-latency/performance work; the scoped LZ-172 correction is complete.                                                   |
-| Tasks                        | LZ-182 retains its original Luna candidate. Latest attempt is preparing; its worker is idle. LZ-181 currently overlaps the runner scope.                                                                                      | Finish preparation, review and live ordering/grouping/dispatch checks; integrate and clean up.                                                                                           |
+| Tasks                        | LZ-182 is temporarily cancelled for cleanup; original worker, source and Architect composition are preserved, not integrated.                                                                                                 | After LZ-185/LZ-154, explicitly continue the same attempt for continuation-admission and >100-reservation read fixes; Architect composes, reviews, qualifies and integrates.             |
 | Trajectory                   | Current-market valuation was observed on LZ-137. LZ-131 has retained timestamp/replay work; its historical failed attempt remains recorded.                                                                                   | Complete retained repair/integration and observe Unix lifecycle endpoints, duplicate correction and historical/live navigation.                                                          |
 | Retained recovery            | LZ-178 has an accepted attempt but its plan is blocked on the original173 live acceptance. LZ-173 retains accepted work in a running plan.                                                                                    | Finish the original173 recovery walkthrough and disposition through native controls; retain useful work and history.                                                                     |
-| Verification and metrics     | Original LZ-181 Luna Max worker is running and repairing asynchronous verification tests. LZ-183 has no worker attempt. The isolated verification service is now authorized for ChatGPT usage.                                | Pass remaining behavior tests, review and integrate181; deliver managed usage valuation and the real failure/correction/reprobe walkthroughs.                                            |
+| Verification and metrics     | LZ-199 is the integrated LZ-181 completion contract; the original failed LZ-181 worker remains stopped and preserved. LZ-183 remains planned.                                                                                 | Deliver remaining managed valuation and genuine failure/correction/reprobe walkthroughs; do not replay completed activation checks because a final receipt was lost.                     |
 | Native inference             | 4cf173b repairs a reproduced reconnect dead end. Local chat and d1 decision calls succeeded after activation; inference switches and idle setting were preserved.                                                             | Preserve working inference during integration. Whole-product freeze, CPU and battery acceptance remain open.                                                                             |
 | Architect continuity         | Advice tools and durable continuation foundations are integrated.                                                                                                                                                             | Remaining ownership, stale-observation and renewal repairs; old historical holds must be reconciled through product tools without Root SQL mutations.                                    |
 | Performance                  | Integrated Astra optimizations and measured bounded improvements remain available.                                                                                                                                            | Residual service/renderer/GPU CPU and battery behavior remain open; no overall performance success claim.                                                                                |
 | Radar                        | LZ-184 source landed in main bd2896d. Quality,206tests/1747assertions and GUI build passed. Actual Desktop shows both workers, tool durations/file targets, history pagination, scope switching and keyboard divider control. | Finish remaining narrow/short geometry, scroll, reconnect/reset and run-long interaction checks. Plan live acceptance is still open. See reviews/radar-live-integration-gap-20261109.md. |
 | Remote source research       | LZ-193 Luna Max worker is implementing one-call compressed repository snapshots. Quality and22tests/178assertions passed; arbitrary count gates were removed from the draft.                                                  | Complete actual upstream probe, behavior review, integration and cleanup; no delivered-tool claim yet.                                                                                   |
 | Recovery / handoff / release | Existing foundations and original qualification chain remain in scope.                                                                                                                                                        | Complete proactive recovery, reviewed handoff disposition, two real implementer verification walkthroughs, audio follow-through and package/install/upgrade/cross-machine verification.  |
+
+LZ-185 owns automatic stale-activity reconciliation and cleanup convergence after
+integration/cancellation/restart; manually reclaimed worktrees are not proof of
+that repair. LZ-195 is integrated as `59b9578` with honest unavailable/disabled
+handoff finalization. LZ-201/LZ-164 are integrated and actually paged existing
+retained history without changing lifecycle. LZ-200's single project limit of 3
+across implementers, Auditors and research/review helpers (Architect excluded)
+remains unimplemented.
 
 Current identities, controls and observations are in the
 [handoff](../.agents/docs/handoff.md). The latest Models
