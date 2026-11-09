@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Exit, Fiber, Queue, Stream } from "effect"
-import { ObservationReads } from "./read.ts"
+import { ObservationReadChangedError, ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
+import { operationalReads } from "../../test/radar/operational.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import {
   makeFixture,
@@ -11,7 +12,12 @@ import {
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
-import { LiveHistoryOutput, LiveRadarOutput, SnapshotOutput } from "./contract.ts"
+import {
+  LiveHistoryOutput,
+  LiveRadarOutput,
+  SnapshotOutput,
+  type RadarRequestInput,
+} from "./contract.ts"
 
 type LiveScope = { kind: "session"; sessionID: string } | { kind: "project"; sessionID: string }
 type LiveHandlers = {
@@ -24,6 +30,77 @@ type LiveHandlers = {
 type RegisteredHandlers = LiveHandlers & {
   snapshot(input: { scope: LiveScope }): Effect.Effect<unknown>
 }
+
+test.each([2, 3])(
+  "S8-1 destructive Radar retries at most three reads after %s changes",
+  async (changes) => {
+    const fixture = makeFixture()
+    const reads = operationalReads(fixture, "project", new Uint8Array(32).fill(82))
+    const original = reads.radar.bind(reads)
+    let calls = 0
+    reads.radar = async (...args) => {
+      if (++calls <= changes) throw new ObservationReadChangedError("native")
+      return original(...args)
+    }
+    type Handler = (
+      input: RadarRequestInput,
+      context: {
+        error(type: string, message: string, data: unknown): unknown
+      },
+    ) => Effect.Effect<unknown, unknown>
+    let radar: Handler | undefined
+    const ctx = {
+      rpc: {
+        register: (_definition: unknown, methods: { radar: Handler }) => {
+          radar = methods.radar
+          return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+        },
+      },
+      session: {
+        get: ({ sessionID }: { sessionID: string }) =>
+          Effect.succeed({
+            id: sessionID,
+            projectID: "project",
+            agent: "architect",
+            time: {},
+          }),
+      },
+      permission: { assert: () => Effect.void },
+      event: { subscribe: () => Stream.never },
+    } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+    try {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerObservability(ctx, reads, "project")
+            return yield* radar!(
+              { scope: { kind: "project", sessionID: "ses-owner" } },
+              {
+                error: (type, message, data) => ({ type, message, data }),
+              },
+            ).pipe(
+              Effect.match({
+                onFailure: (error) => ({ error }),
+                onSuccess: () => ({ success: true }),
+              }),
+            )
+          }),
+        ),
+      )
+      expect(calls).toBe(3)
+      if (changes === 2) expect(result).toEqual({ success: true })
+      else
+        expect(result).toMatchObject({
+          error: {
+            type: "observation_changed",
+            data: { source: "native", recovery: "retry" },
+          },
+        })
+    } finally {
+      fixture.close()
+    }
+  },
+)
 
 function insertLiveProgress(
   fixture: ReturnType<typeof makeFixture>,
@@ -1610,7 +1687,9 @@ test("first inventory preserves selected unmanaged events and retrieves managed 
     await Bun.sleep(20)
     expect(published).toEqual([])
     delayedInventory.resolve({ sessions: inventory, truncated: true })
-    await expect(firstRead).rejects.toThrow("changed during the live read")
+    // S8-1: a consistent snapshot remains usable; later events drive catch-up.
+    const firstResponse = LiveRadarOutput.parse(await firstRead)
+    expect(firstResponse.boundary.eventSequence).toBe(0)
     await Effect.runPromise(
       Effect.promise(async () => {
         for (let index = 0; index < 400 && !published.length; index++) await Bun.sleep(5)
@@ -2069,7 +2148,7 @@ test("native metadata bounds distinguish raw selected fields from sanitized outp
   }
 })
 
-test("a held inventory read rejects event and disconnect races at its captured boundary", async () => {
+test("S8-1 a held inventory read returns its captured boundary across events and disconnect", async () => {
   const fixture = makeFixture()
   const secret = new Uint8Array(32).fill(76)
   const nativeSession = radarNativeSession(
@@ -2170,13 +2249,16 @@ test("a held inventory read rejects event and disconnect races at its captured b
         }),
       ),
     )
-    expect(Exit.isFailure(exit)).toBe(true)
+    // S8-1: non-destructive live reads do not reject a coherent older boundary.
+    expect(Exit.isSuccess(exit)).toBe(true)
+    if (Exit.isSuccess(exit))
+      expect(LiveRadarOutput.parse(exit.value).boundary.eventSequence).toBe(0)
   } finally {
     fixture.close()
   }
 })
 
-test("a held inventory read rejects a newer runner revision before returning its stale projection", async () => {
+test("S8-1 a held inventory read retains its consistent runner snapshot during writes", async () => {
   const fixture = makeFixture()
   const nativeSession = radarNativeSession(
     "ses-failed",
@@ -2277,7 +2359,10 @@ test("a held inventory read rejects a newer runner revision before returning its
     expect(after).toBeGreaterThan(before)
     releaseInventory.resolve({ sessions: [nativeSession], truncated: false })
     const exit = await Effect.runPromise(Fiber.await(pending))
-    expect(Exit.isFailure(exit)).toBe(true)
+    // S8-1: WAL supplied a consistent snapshot; later writes do not invalidate it.
+    expect(Exit.isSuccess(exit)).toBe(true)
+    if (Exit.isSuccess(exit))
+      expect(LiveRadarOutput.parse(exit.value).boundary.runnerRevision).toBe(before)
   } finally {
     fixture.close()
   }

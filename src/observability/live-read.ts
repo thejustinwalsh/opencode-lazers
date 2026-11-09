@@ -17,7 +17,6 @@ import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
 import {
   LIVE_LIMITS,
   LiveReadStore,
-  LiveSourceChangedError,
   type LiveProgressRow,
   type LiveSourceSnapshot,
 } from "./live-store.ts"
@@ -841,8 +840,6 @@ export class LiveRadarReader {
       signal,
     )
     signal.throwIfAborted()
-    if (nativeRevision !== tracker.nativeRevision || eventSequence !== tracker.sequence)
-      throw new LiveSourceChangedError()
 
     const managedIDs = [...source.assignments.keys()]
     this.trackSessions(tracker, [...managedIDs, request.scope.sessionID], request.scope.sessionID)
@@ -1037,7 +1034,6 @@ export class LiveRadarReader {
       if (nativeMetadataTruncated && nativeInventory === "complete") nativeInventory = "bounded"
     }
 
-    this.source.verifyRunnerRevision(source.runnerRevision, source, signal)
     for (const assignment of source.assignments.values()) {
       const native = nativeByID.get(assignment.sessionID)
       if (native && !assignment.workspaceOmitted && native.directory.length > 0)
@@ -1101,8 +1097,6 @@ export class LiveRadarReader {
       request.scope.sessionID,
     )
     signal.throwIfAborted()
-    if (nativeRevision !== tracker.nativeRevision || eventSequence !== tracker.sequence)
-      throw new LiveSourceChangedError()
     const liveSignalSnapshot = tracker.peekLiveSignals(
       new Set(boundedCandidates.map((candidate) => candidate.id)),
     )

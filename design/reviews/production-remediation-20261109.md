@@ -244,3 +244,27 @@ or cleanup was performed. Quality checks passed; 374 store/runtime/retained-repa
 tests passed with 5,999 assertions. A further 79 retained-reverification tests
 passed with 925 assertions. No new behavior failures appeared. No native activation
 or claim of installed scheduler recovery yet.
+
+## Wave 2: S8-1
+
+Removed `verifyRunnerRevision`, the second-WAL-snapshot revalidation in
+`readCurrent`, both event/native-revision rejection checks in non-destructive
+live reads, and their now-unused error class. Responses retain the captured runner,
+native and event boundary; existing event catch-up and gap handling remain.
+The legacy diagnostic projection still consumes native events destructively and
+keeps its guard. Its source-change failures now receive up to three reads total
+and a declared `observation_changed` RPC failure rather than an opaque defect.
+
+Amended the original defect-asserting inventory test and two further held-read
+cases to assert successful responses at the captured boundary across native events,
+disconnects and DB writes. Their S8-1 comments name the corrected contract. Added
+three-attempt recovery/exhaustion coverage for the guarded diagnostic reader.
+
+Acceptance traffic test: 367 native events plus runner writes over 2,009.04 ms
+(182.7 events/s), 123 successful live responses, 0 failures. Every returned event
+boundary was no greater than the then-current tracker sequence; older boundaries
+were observed, establishing that the test overlapped actual events with host
+awaits. This is a real-module traffic test with a controlled native-host fixture,
+not a Desktop production-load observation. All 58 observability behavior tests
+passed (869 assertions), as did `bun run verify` and `git diff --check`.
+Installed-service activation and live Desktop acceptance remain unproven.

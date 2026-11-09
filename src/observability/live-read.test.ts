@@ -29,6 +29,68 @@ function nativeSession(
   }
 }
 
+test("S8-1 live reads remain available during sustained native events and runner writes", async () => {
+  const fixture = makeFixture()
+  const secret = new Uint8Array(32).fill(81)
+  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+  tracker.initialize()
+  const host: RadarSessionHost = {
+    get: async (id) => {
+      await Bun.sleep(12)
+      return nativeSession(id, "project", fixture.directory, "implementor")
+    },
+    project: async () => ({ sessions: [], truncated: false }),
+    descendants: async () => ({ sessions: [], truncated: false }),
+  }
+  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, host)
+  let events = 0
+  let successes = 0
+  let failures = 0
+  let olderBoundaries = 0
+  const started = performance.now()
+  const timer = setInterval(() => {
+    events++
+    tracker.native({
+      id: `event-${events}`,
+      type: "session.tool.progress",
+      durable: { aggregateID: "ses-failed", seq: events },
+      data: { sessionID: "ses-failed", id: "active-tool", name: "edit" },
+    })
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID),
+    )
+  }, 4)
+  try {
+    while (performance.now() - started < 2_000) {
+      let response: LiveRadarResponse
+      try {
+        response = await reads.liveRadar(
+          { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+          tracker,
+          new AbortController().signal,
+          tracker.streamEpoch,
+        )
+      } catch {
+        failures++
+        await Bun.sleep(2)
+        continue
+      }
+      successes++
+      expect(response.boundary.eventSequence).toBeLessThanOrEqual(tracker.sequence)
+      if (response.boundary.eventSequence < tracker.sequence) olderBoundaries++
+    }
+    const durationMs = performance.now() - started
+    expect(events / (durationMs / 1_000)).toBeGreaterThanOrEqual(100)
+    expect(successes / (successes + failures)).toBeGreaterThanOrEqual(0.95)
+    expect(olderBoundaries).toBeGreaterThan(0)
+    console.info("S8-1 traffic", { events, successes, failures, durationMs })
+  } finally {
+    clearInterval(timer)
+    tracker.close()
+    fixture.close()
+  }
+})
+
 test("bounded live read and separately selected history carry only attributed file targets", async () => {
   const fixture = makeFixture()
   try {

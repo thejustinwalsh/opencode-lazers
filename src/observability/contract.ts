@@ -754,7 +754,16 @@ export const Observability = Rpc.define({
       input: ProgressDiagnosticsInput,
       output: ProgressDiagnosticsOutput,
     },
-    radar: { input: RadarInput, output: RadarOutput },
+    radar: {
+      input: RadarInput,
+      output: RadarOutput,
+      errors: {
+        observation_changed: z.strictObject({
+          source: z.enum(["native", "runner"]),
+          recovery: z.literal("retry"),
+        }),
+      },
+    },
     liveRadar: { input: LiveRadarInput, output: LiveRadarOutput },
     liveHistory: {
       input: LiveHistoryInput,

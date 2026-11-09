@@ -8,6 +8,7 @@ import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { Observability, type ObservationChange } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
+import { ObservationReadChangedError } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { databaseChanges } from "../database-events.ts"
 import { LiveHistoryUnavailableError } from "./live-store.ts"
@@ -157,7 +158,7 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
-      radar: (input) =>
+      radar: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
             await authorize(
@@ -167,10 +168,28 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               "read",
             )
-            return reads.radar(input, tracker, signal)
+            for (let attempt = 1; ; attempt++) {
+              signal.throwIfAborted()
+              try {
+                return await reads.radar(input, tracker, signal)
+              } catch (error) {
+                if (!(error instanceof ObservationReadChangedError) || attempt === 3) throw error
+              }
+            }
           },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof ObservationReadChangedError
+              ? Effect.fail(
+                  context.error("observation_changed", error.message, {
+                    source: error.source,
+                    recovery: "retry",
+                  }),
+                )
+              : Effect.die(new Error(safeError(error, privacyStats()))),
+          ),
+        ),
       liveRadar: (input) =>
         Effect.tryPromise({
           try: async (signal) => {

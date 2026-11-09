@@ -654,6 +654,15 @@ function stateTransitionSet() {
   return output
 }
 
+export class ObservationReadChangedError extends Error {
+  constructor(readonly source: "native" | "runner") {
+    super(
+      `${source === "native" ? "Native" : "Runner"} observation changed while reading; retry the radar projection`,
+    )
+    this.name = "ObservationReadChangedError"
+  }
+}
+
 export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
@@ -1681,10 +1690,7 @@ export class ObservationReads {
           )
       }
 
-      if (tracker.nativeRevision !== nativeRevision)
-        throw new Error(
-          "Native observation changed while reading; restart from a fresh radar projection",
-        )
+      if (tracker.nativeRevision !== nativeRevision) throw new ObservationReadChangedError("native")
       const latest = connection.store.atomic((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
@@ -1693,9 +1699,7 @@ export class ObservationReads {
         source.stamp.repositoryVersion !== latest.repositoryVersion ||
         source.stamp.sourceFingerprint !== latest.sourceFingerprint
       )
-        throw new Error(
-          "Runner observation changed while reading; restart from a fresh radar projection",
-        )
+        throw new ObservationReadChangedError("runner")
       const boundary = tracker.boundary(latest, source.transitions.at(-1)?.id ?? 0)
       tracker.takeLiveEvents(selectedSet)
       return RadarOutput.parse({

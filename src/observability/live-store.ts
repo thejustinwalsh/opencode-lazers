@@ -128,13 +128,6 @@ const CursorPayload = z.strictObject({
   beforeSequence: z.int().positive(),
 })
 
-export class LiveSourceChangedError extends Error {
-  constructor() {
-    super("Observation changed during the live read; retry from a fresh boundary")
-    this.name = "LiveSourceChangedError"
-  }
-}
-
 export class LiveHistoryUnavailableError extends Error {
   constructor(readonly reason: "invalid-cursor" | "session-unavailable" | "changed-during-read") {
     super(
@@ -402,20 +395,6 @@ export class LiveReadStore {
     private readonly secret: Uint8Array,
   ) {}
 
-  verifyRunnerRevision(expected: number | null, metrics: LiveStoreMetrics, signal: AbortSignal) {
-    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
-    try {
-      signal.throwIfAborted()
-      const latest = connection.store.atomic((db) => {
-        const available = tableExists(db, metrics, "observation_revisions")
-        return revisionIfAvailable(db, metrics, available, this.projectDirectory)
-      })
-      if (expected !== latest) throw new LiveSourceChangedError()
-    } finally {
-      connection.close()
-    }
-  }
-
   readCurrent(sessionID: string | null, signal: AbortSignal): LiveSourceSnapshot {
     const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
     const metrics: LiveStoreMetrics = {
@@ -590,11 +569,6 @@ export class LiveReadStore {
       })
 
       signal.throwIfAborted()
-      const latestRevision = connection.store.atomic((db) => {
-        const available = tableExists(db, metrics, "observation_revisions")
-        return revisionIfAvailable(db, metrics, available, this.projectDirectory)
-      })
-      if (source.runnerRevision !== latestRevision) throw new LiveSourceChangedError()
       return { ...source, ...metrics }
     } finally {
       connection.close()
