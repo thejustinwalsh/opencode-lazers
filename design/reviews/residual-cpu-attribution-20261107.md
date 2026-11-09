@@ -105,3 +105,24 @@ JS-attributed facility is currently available, stop at this lead rather than
 recreating the removed profiler or creating/replacing a task or worker. Keep
 LZ-135's gate separate. This single active observation neither clears nor
 blocks the independent Models → Tasks/Trajectory → Radar roadmap.
+
+## Follow-through: 2026-11-09 04:33 UTC
+
+A fresh process snapshot identifies current service PID1754 at56.8% CPU; main
+Desktop PID53628 is0.1%, renderer53657 and GPU helper53652 are0.0%. These are
+instantaneous process readings, not a quiet baseline or battery measurement.
+Architect and a native Luna worker were active; no service or GPU setting changed.
+
+One read-only `sample 1754 3` completed at local2026-11-08 23:33:27.930. It
+reports2.9GB physical footprint,7.9GB peak. Of1435 main-thread sample observations,
+437 descend through `sqlite3LockAndPrepare`/`sqlite3Prepare`;426 reach
+`sqlite3ReadSchema`, with398 in `sqlite3InitOne`. The initiating JIT/CLI frames
+remain unsymbolized. As before, this identifies a subsystem lead, not which
+database or JavaScript caller caused it. Sample counts are not CPU percentages.
+This short sampling operation perturbs the target; no overhead comparison was
+performed. Raw capture: `/private/tmp/lazers-service-1754-20261109.sample.txt`.
+
+Current `TaskRepository` retains its connection and opens lazily after closure;
+source inspection does not support claiming every transaction opens a database.
+No code edit, source attribution, reload or performance acceptance follows from
+this observation. Existing performance work still needs JS/DB correlation.
