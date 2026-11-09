@@ -152,3 +152,17 @@ Architect must explicitly use the existing steering/reassessment flow when a
 running worker needs a correction, then review the actual result. This does not
 justify treating all optional stored advice as a mandatory interrupt. The
 latest recovery criteria remain an implementation-review gap in that candidate.
+
+After the user unlocked Desktop, the report and both review gaps reached native
+Architect exactly once in message `msg_1be8f6d8b001okzhfCWRkdlio7` at
+**1794198441250**. A delayed native input left a second unsent driver draft;
+it was cleared, not sent. Architect read this report in
+`msg_1be8f8d35001qSoW5R5eubl1JR`.
+
+Architect then withdrew the zero-attempt takeover plan
+`a53a46d2-8e4d-4bc7-8e2b-6ce55a1ca924` through native cancellation in
+`msg_1be9128e0001X6J9DVLvCGNEds`, explicitly because its replacement contract
+still repeated retired baseline/environment obligations. No new implementation
+worker had started. The original preserved patch, untracked modules and failure
+history remain; a corrected contract, completed takeover and live recovery proof
+are still pending. This is driver-assisted correction, not autonomous success.
