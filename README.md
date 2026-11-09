@@ -153,6 +153,18 @@ The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract m
 
 The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lz-project-refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
 
+Normally permitted Architects and workers can also use `lz-repo-snapshot` for
+one-call external source research. It fetches the requested repository/ref and
+include/exclude selection through Repomix in a background worker, returns a
+bounded preview of the compressed source, and identifies one complete reusable
+artifact containing both provenance and the produced source. Omitted files and
+reasons, filters, requested/default ref selection, Repomix version and compression
+basis are retained; an unknown resolved revision stays unknown. Pass the returned
+`snapshotID` to the same tool to read the saved artifact without another fetch.
+Remote configuration and file processors remain disabled, and native tool
+permission is checked before network access. This tool complements, rather than
+replaces, Architect workspace publications and normal source access.
+
 ### 6 Measurement and learning
 
 **Status:** Trajectory and usage records are available; comparative model conclusions require matched real work and external acceptance.

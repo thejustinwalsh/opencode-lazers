@@ -12,6 +12,9 @@ import { ProjectIndex } from "./index.ts"
 import { nativeContextPermission, registerContextTools } from "./tools.ts"
 import { registerTaskTools } from "../tools.ts"
 import { validProposal } from "../../test/proposal.ts"
+import { runRemoteAction } from "repomix"
+import type { RepositorySnapshotWorker } from "./repository-snapshots.ts"
+import { processRepositorySnapshot } from "./repo-processor.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -33,7 +36,7 @@ afterEach(() => {
   for (const clean of cleanup.splice(0)) clean()
 })
 
-async function setup(deniedAction?: string) {
+async function setup(deniedAction?: string, repositoryWorker?: RepositorySnapshotWorker) {
   const root = mkdtempSync(join(tmpdir(), "lazers-context-tools-"))
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "README.md"), "cached project source")
@@ -44,6 +47,8 @@ async function setup(deniedAction?: string) {
     join(root, "cache"),
     repository,
     async (path) => !deniedPaths.has(path),
+    undefined,
+    repositoryWorker,
   )
   const tools = new Map<string, RegisteredTool>()
   const assertions: string[] = []
@@ -175,6 +180,74 @@ test("native permission and Architect role both gate refresh; reads remain avail
     "lz-project-index",
     "lz-project-read",
   ])
+})
+
+test("permitted Architect and worker can discover, invoke, and reread the one-call repository snapshot tool", async () => {
+  const source = "## Compressed external source\nexport const feature = true;\n"
+  const remote: typeof runRemoteAction = async (_repository, options) => {
+    writeFileSync(options.output!, source)
+    return {
+      packResult: {
+        processedFiles: [
+          { path: "src/feature.ts", content: "export const feature = true;", level: "compress" },
+        ],
+        skippedFiles: [],
+        totalCharacters: source.length,
+        totalTokens: 20,
+      } as unknown as Awaited<ReturnType<typeof runRemoteAction>>["packResult"],
+      config: {} as Awaited<ReturnType<typeof runRemoteAction>>["config"],
+    }
+  }
+  const worker: RepositorySnapshotWorker = (input) => processRepositorySnapshot(input, remote)
+  const f = await setup(undefined, worker)
+  const tool = f.tools.get("lz-repo-snapshot")!
+  expect(
+    tool.description.startsWith(
+      "When researching external repositories or dependencies, get a compressed source snapshot in one call.",
+    ),
+  ).toBe(true)
+  expect(tool.options).toMatchObject({
+    codemode: true,
+    pinned: true,
+    permission: "lz-repo-snapshot",
+  })
+
+  const first = await Effect.runPromise(
+    tool.execute(
+      { repository: "owner/project", include: ["src/**"], exclude: [] },
+      callContext("architect"),
+    ),
+  )
+  expect(first.output.source).toContain("Compressed external source")
+  expect(first.output.reused).toBe(false)
+  expect(first.output.selection.files).toEqual(["src/feature.ts"])
+  const reread = await Effect.runPromise(
+    tool.execute({ snapshotID: first.output.snapshotID }, callContext("lazers-implementor")),
+  )
+  expect(reread.output).toMatchObject({
+    snapshotID: first.output.snapshotID,
+    source: first.output.source,
+    reused: true,
+  })
+  expect(f.assertions).toEqual(["lz-repo-snapshot", "lz-repo-snapshot"])
+})
+
+test("repository snapshot permission denial prevents any fetch or packing", async () => {
+  let fetches = 0
+  const f = await setup("lz-repo-snapshot", async () => {
+    fetches++
+  })
+  const tool = f.tools.get("lz-repo-snapshot")!
+  await expect(
+    Effect.runPromise(
+      tool.execute(
+        { repository: "owner/project", include: [], exclude: [] },
+        callContext("lazers-implementor"),
+      ),
+    ),
+  ).rejects.toThrow("Permission denied")
+  expect(fetches).toBe(0)
+  expect(f.assertions).toEqual(["lz-repo-snapshot"])
 })
 
 test("native permission denial prevents Architect refresh from creating a snapshot", async () => {
