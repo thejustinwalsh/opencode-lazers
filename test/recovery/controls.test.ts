@@ -62,6 +62,7 @@ type HandoffReview = {
   fingerprint: string
   limitation: string | null
   errors?: string[]
+  answers?: Record<string, unknown>
   draftID: string
   draftVersion: number
   reviewID: string
@@ -71,9 +72,14 @@ type HandoffFinalization = {
   report: {
     reportID: string
     reviewStatus: string
+    limitation: string | null
     finalizedBy: { sessionID: string }
     review: { reviewer: { sessionID: string }; round: number }
-    reviewResult?: { fingerprint: string; status: string }
+    reviewResult?: {
+      fingerprint: string
+      status: string
+      answers?: Record<string, unknown>
+    }
   }
 }
 type HandoffRead = {
@@ -902,6 +908,207 @@ test("registered Architect finalizes the terminal result after three consumed re
   expect(store.getReviewRound(request.record.requestID, roundThree.reviewID, 3)).toMatchObject({
     reviewer: { sessionID: "ses-accepted", agent: "lazers-implementor", role: "worker" },
     outcome: { status: "feedback" },
+  })
+})
+
+test("registered verify-to-submit preserves exhausted unavailable review status without model answers", async () => {
+  const f = await setup()
+  const request = await f.invoke<HandoffRequest>(
+    "lz-request-handoff",
+    {
+      requestID: "architect-exhausted-unavailable-review",
+      sourceAttemptID: secondAttemptID,
+      request: {
+        purpose: "Preserve the unavailable review limitation after all rounds are consumed.",
+        references: [{ kind: "trajectory", reference: "attempt:current" }],
+      },
+    },
+    architect("unavailable-request"),
+  )
+
+  let workerResult: HandoffReview | undefined
+  let finalEvidence: Array<{ kind: "trajectory"; reference: string }> = []
+  for (let round = 1; round <= 3; round++) {
+    finalEvidence = [{ kind: "trajectory", reference: `attempt:unavailable-round-${round}` }]
+    workerResult = await f.invoke<HandoffReview>(
+      "lz-verify-handoff",
+      round === 1
+        ? {
+            requestID: request.record.requestID,
+            draftID: crypto.randomUUID(),
+            draft: draft(),
+            evidence: finalEvidence,
+          }
+        : {
+            requestID: request.record.requestID,
+            draftVersion: workerResult!.draftVersion,
+            reviewID: workerResult!.reviewID,
+            evidence: finalEvidence,
+          },
+      worker(`unavailable-worker-round-${round}`),
+    )
+    expect(workerResult.round).toBe(round)
+  }
+  if (!workerResult) throw new Error("The unavailable review chain did not run")
+  expect(workerResult).toMatchObject({ status: "completed_with_concerns", answers: {} })
+  expect(f.reviewInputs).toHaveLength(3)
+
+  const store = new HandoffStore(f.fixture.repository)
+  const persisted = store.getReviewRound(request.record.requestID, workerResult.reviewID, 3)
+  expect(persisted?.outcome).toMatchObject({
+    status: "unavailable",
+    result: { status: "completed_with_concerns", answers: {} },
+  })
+  if (!persisted?.outcome) throw new Error("The unavailable outcome was not persisted")
+
+  const architectReview = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftVersion: workerResult.draftVersion,
+      reviewID: workerResult.reviewID,
+      evidence: finalEvidence,
+    },
+    architect("unavailable-architect-review"),
+  )
+  expect(architectReview).toMatchObject({
+    status: "completed_with_concerns",
+    round: 3,
+    answers: {},
+  })
+  expect(f.reviewInputs).toHaveLength(3)
+
+  const finalized = await f.invoke<HandoffFinalization>(
+    "lz-submit-handoff",
+    {
+      finalizationID: crypto.randomUUID(),
+      requestID: request.record.requestID,
+      draftVersion: workerResult.draftVersion,
+      reviewID: workerResult.reviewID,
+      round: architectReview.round,
+      fingerprint: architectReview.fingerprint,
+    },
+    architect("unavailable-submit"),
+  )
+  expect(finalized.report).toMatchObject({
+    reviewStatus: "unavailable",
+    limitation: persisted.outcome.limitation,
+    reviewResult: {
+      status: "completed_with_concerns",
+      answers: {},
+    },
+  })
+})
+
+test("registered verify-to-submit preserves exhausted disabled review status without model answers", async () => {
+  const f = await setup()
+  const request = await f.invoke<HandoffRequest>(
+    "lz-request-handoff",
+    {
+      requestID: "architect-exhausted-disabled-review",
+      sourceAttemptID: secondAttemptID,
+      request: {
+        purpose: "Preserve the disabled review limitation after all rounds are consumed.",
+        references: [{ kind: "trajectory", reference: "attempt:current" }],
+      },
+    },
+    architect("disabled-request"),
+  )
+
+  const store = new HandoffStore(f.fixture.repository)
+  const sourceWorker = {
+    sessionID: "ses-accepted",
+    agent: "lazers-implementor",
+    role: "worker" as const,
+  }
+  const saved = store.saveDraft(
+    {
+      requestID: request.record.requestID,
+      draftID: crypto.randomUUID(),
+      draft: draft(),
+    },
+    sourceWorker,
+  )
+  if (saved.status === "conflict") throw new Error(saved.message)
+
+  let modelCalls = 0
+  const disabledReviewer = new HandoffReviewer(
+    store,
+    {
+      systemOne: async () => {
+        modelCalls++
+        throw new Error("Disabled review must not invoke local inference")
+      },
+    },
+    () => {},
+    () => false,
+  )
+  const reviewID = crypto.randomUUID()
+  let workerResult: Awaited<ReturnType<typeof disabledReviewer.review>> | undefined
+  let finalEvidence: Array<{ kind: "trajectory"; reference: string }> = []
+  for (let round = 1; round <= 3; round++) {
+    finalEvidence = [{ kind: "trajectory", reference: `attempt:disabled-round-${round}` }]
+    workerResult = await disabledReviewer.review(
+      {
+        requestID: request.record.requestID,
+        draftVersion: saved.record.draftVersion,
+        reviewID,
+        evidence: finalEvidence,
+      },
+      sourceWorker,
+      new AbortController().signal,
+    )
+    if (!("round" in workerResult)) throw new Error("The disabled review round was not returned")
+    expect(workerResult.round).toBe(round)
+  }
+  if (!workerResult || !("fingerprint" in workerResult))
+    throw new Error("The disabled review chain did not produce a terminal result")
+  expect(workerResult).toMatchObject({ status: "completed_with_concerns", answers: {} })
+  expect(modelCalls).toBe(0)
+
+  const persisted = store.getReviewRound(request.record.requestID, reviewID, 3)
+  expect(persisted?.outcome).toMatchObject({
+    status: "disabled",
+    result: { status: "completed_with_concerns", answers: {} },
+  })
+  if (!persisted?.outcome) throw new Error("The disabled outcome was not persisted")
+
+  const architectReview = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftVersion: saved.record.draftVersion,
+      reviewID,
+      evidence: finalEvidence,
+    },
+    architect("disabled-architect-review"),
+  )
+  expect(architectReview).toMatchObject({
+    status: "completed_with_concerns",
+    round: 3,
+    answers: {},
+  })
+  expect(f.reviewInputs).toHaveLength(0)
+
+  const finalized = await f.invoke<HandoffFinalization>(
+    "lz-submit-handoff",
+    {
+      finalizationID: crypto.randomUUID(),
+      requestID: request.record.requestID,
+      draftVersion: saved.record.draftVersion,
+      reviewID,
+      round: architectReview.round,
+      fingerprint: architectReview.fingerprint,
+    },
+    architect("disabled-submit"),
+  )
+  expect(finalized.report).toMatchObject({
+    reviewStatus: "disabled",
+    limitation: "Local handoff review is disabled; no semantic findings were established.",
+    reviewResult: {
+      status: "completed_with_concerns",
+      answers: {},
+    },
   })
 })
 

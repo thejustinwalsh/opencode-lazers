@@ -1038,9 +1038,12 @@ export class HandoffStore {
       )
         throw new Error("Review result is missing, stale, or belongs to another draft/caller")
 
-      const finalizationStatus = authorization
-        ? this.finalizationStatusFromResult(authorization.result)
-        : this.finalizationStatus(review.outcome!)
+      const finalizationStatus =
+        authorization &&
+        review.outcome!.status !== "unavailable" &&
+        review.outcome!.status !== "disabled"
+          ? this.finalizationStatusFromResult(authorization.result)
+          : this.finalizationStatus(review.outcome!)
       const concerns = authorization
         ? this.reviewResultConcerns(authorization.result)
         : review.outcome!.concerns
