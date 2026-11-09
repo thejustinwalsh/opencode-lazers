@@ -890,9 +890,9 @@ test("registered live RPCs keep current reads bounded and page selected progress
     expect(first.coverage).toMatchObject({
       foreignSessionsExcluded: 1,
       nativeInventoryReads: 1,
-      nativeSessionReads: 0,
+      nativeSessionReads: 1,
       nativeContextLoads: 0,
-      retainedStateEntries: 2,
+      retainedStateEntries: 3,
       nativeMetadataBoundary: "raw-selected-fields-after-adapter",
       journal: "legacy-or-unavailable",
       journalTruncated: true,
@@ -901,6 +901,8 @@ test("registered live RPCs keep current reads bounded and page selected progress
       "ses-accepted",
       "ses-failed",
     ])
+    // The exact view lookup is counted, but an unavailable session is not invented.
+    expect(first.sessions.find((session) => session.sessionID === "ses-owner")).toBeUndefined()
     expect(first.sessions.some((session) => session.sessionID === "ses-foreign-private")).toBe(
       false,
     )
@@ -1378,8 +1380,16 @@ test("registered live RPCs keep current reads bounded and page selected progress
       await Effect.runPromise(handlers!.liveRadar({ scope, includeUnmanagedSessions: true })),
     )
     expect(unavailableInventory.freshness.nativeInventory).toBe("unavailable")
-    expect(unavailableInventory.sessions).toHaveLength(1)
-    expect(unavailableInventory.sessions[0]).toMatchObject({
+    expect(unavailableInventory.sessions).toHaveLength(2)
+    expect(
+      unavailableInventory.sessions.find((session) => session.sessionID === "ses-owner"),
+    ).toMatchObject({
+      isViewSession: true,
+      availability: "unavailable",
+    })
+    expect(
+      unavailableInventory.sessions.find((session) => session.sessionID === "ses-failed"),
+    ).toMatchObject({
       sessionID: "ses-failed",
       classification: "managed",
       availability: "available",
@@ -1400,7 +1410,8 @@ test("registered live RPCs keep current reads bounded and page selected progress
       boundedInventory.limits.nativeMetadataBytes,
     )
     expect(projectReads).toBe(7)
-    expect(nativeGetReads).toBe(2)
+    // Each inventory read also looks up its exact view; two managed misses add two reads.
+    expect(nativeGetReads).toBe(projectReads + 2)
     expect(trajectoryContextReads).toBe(0)
 
     delayNextGet = true
@@ -1611,7 +1622,7 @@ test("first inventory preserves selected unmanaged events and retrieves managed 
       await Effect.runPromise(handlers!.liveRadar({ scope, includeUnmanagedSessions: true })),
     )
     expect(response.coverage.inventoryTruncated).toBe(true)
-    expect(response.coverage.nativeSessionReads).toBe(1)
+    expect(response.coverage.nativeSessionReads).toBe(2)
     expect(managedReads).toBe(2)
     expect(response.sessions.some((session) => session.sessionID === "ses-failed")).toBe(true)
     const unmanaged = response.sessions.find(
@@ -1857,16 +1868,19 @@ test("managed sessions stay visible when unmanaged inventory precedes the bounde
     )
     expect(response.freshness.nativeInventory).toBe("bounded")
     expect(response.coverage.inventoryTruncated).toBe(true)
-    expect(response.sessions.map((session) => session.sessionID)).toEqual(["ses-failed"])
-    expect(response.sessions[0]).toMatchObject({
+    expect(response.sessions.map((session) => session.sessionID)).toEqual([
+      "ses-owner",
+      "ses-failed",
+    ])
+    expect(response.sessions.find((session) => session.sessionID === "ses-failed")).toMatchObject({
       classification: "managed",
       availability: "available",
     })
     expect(response.coverage.nativeInventoryReads).toBe(1)
-    expect(response.coverage.nativeSessionReads).toBe(1)
-    expect(response.coverage.retainedStateEntries).toBe(1)
+    expect(response.coverage.nativeSessionReads).toBe(2)
+    expect(response.coverage.retainedStateEntries).toBe(2)
     expect(projectReads).toBe(1)
-    expect(exactReads).toBe(1)
+    expect(exactReads).toBe(2)
   } finally {
     fixture.close()
   }
@@ -1971,8 +1985,11 @@ test("a selected unmanaged native event invalidates the registered live view", a
         }),
       ),
     )
-    expect(response.sessions.map((session) => session.sessionID)).toEqual(["ses-unmanaged-live"])
-    expect(response.coverage.retainedStateEntries).toBe(1)
+    expect(response.sessions.map((session) => session.sessionID)).toEqual([
+      "ses-owner",
+      "ses-unmanaged-live",
+    ])
+    expect(response.coverage.retainedStateEntries).toBe(2)
   } finally {
     fixture.close()
   }
@@ -2416,7 +2433,7 @@ test("journal hydration is capped across distinct sessions rather than starving 
       (edge) => edge.sourceEventType === "session.step.started",
     )
     const hydratedEventIDs = hydratedEdges.map((edge) => edge.sourceEventID)
-    expect(response.sessions).toHaveLength(17)
+    expect(response.sessions).toHaveLength(18)
     expect(response.coverage.journalTruncated).toBe(true)
     expect(hydratedEventIDs).toHaveLength(16)
     expect(new Set(hydratedEventIDs).size).toBe(16)

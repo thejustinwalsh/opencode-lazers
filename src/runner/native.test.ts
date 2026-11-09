@@ -717,9 +717,9 @@ test("scope instructions require matching readback rather than trusting a succes
   expect(puts).toBe(1)
 })
 
-test("worker guidance teaches focused LAZERS discovery and optional progressive skill use", () => {
-  expect(workerInstructions).toContain("lz-project-index")
-  expect(workerInstructions).toContain("lz-project-read")
+test("worker guidance teaches bundled task discovery and optional progressive skill use", () => {
+  expect(workerInstructions).toContain('tools["lz-get-task"](...)')
+  expect(workerInstructions).toContain("read the working source directly as needed")
   expect(workerInstructions).toContain("optional\nnative skill")
   expect(workerInstructions).toContain("unavailable suggestion does not block")
   expect(workerInstructions).toContain("Do not launch subagents")

@@ -119,3 +119,141 @@ Architect publication across real worktrees, structured reads and dispatch.
 Native activation/use and comparative token savings remain to observe. Architect
 already has a published snapshot for the current project. Original LZ-181 worker
 continues, most recently running its broad retained-verification suite.
+
+At Unix1794184290178, supported source activation confirmed `29ee18b` effective:
+LAZERS server/GUI active, worker guidance uses the canonical single fetch, and
+the original LZ-181 session remained running. Actual new worker-bundle consumption
+and comparative savings remain unproven. The remote-repository research feature
+was subsequently submitted through the existing Desktop Architect chat, with
+pinned Repomix remote-action source findings and official docs; no duplicate
+worker or custom remote-clone service was created by the driver.
+
+Subsequent observer discovery failures were rechecked against the same service,
+not treated as terminal. An authenticated `/api/info` request returned HTTP200
+in3ms for existing PID1754/version2.2.6. A later normal observer call recovered:
+Architect was actively reading remote/context integration code, and original
+LZ-181 worker was patching retained-reverify.test.ts. This shows continued work;
+it does not establish why the earlier discovery probes failed or prove the
+remaining test failures resolved.
+
+## Native single-fetch use and parallel remote-source feature
+
+Architect submitted LZ-193, task1f8714b6-38d5-42da-8347-39ffc513c813,
+and started plane8bf7885-fd38-4170-8ce6-cbb1d68cb2c4 through native controls.
+The new worker ses_dd92813879ab4e0da0f5d1c8b5a197d4 started at
+Unix1794184771769 and uses OpenAI gpt-6-luna/max. It ran concurrently with the
+original LZ-181 worker; neither was replaced by the driver.
+
+Its first completed Code Mode call, msg_1bdbef93c001haDoyWUCxmtBOb,
+returned a7160-character readable task bundle: objective/acceptance, guidance,
+verification, references, optional skills, and cached source context for
+src/context/index.ts, processor.ts, tools.ts and src/index.ts. Source included
+focused original lines and compressed outlines. This proves live consumption
+of the consolidated startup path, not measured token savings or completion.
+Subsequent direct source reads proceeded normally. Both workers remained active
+at the next native session observation. Remote-source implementation, real
+upstream probe, acceptance and integration are still pending.
+
+## Radar acceptance/integration gap observed during parallel work
+
+Opening Project Radar while both implementers were natively active showed
+`[object Object]`, no operational rows and a Refresh action; Refresh reproduced.
+[Desktop capture](radar-project-overflow-20261108.png). The authenticated location
+lookup succeeded. Calling Radar with its actual scoped session input reproduced
+rpc.internal; service logs at2026-11-09T00:42:50Z and00:44:06Z disclose the cause:
+`Observation scope is too large; narrow it`, also from snapshot. Main panel still
+uses the legacy readers. This is not a worker execution failure.
+
+Read-only task inspection located the existing remedy: LZ-184 plan
+ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c,
+accepted attemptacb55d57-bd3e-42fe-8459-42a97309f2fd/artifact
+89edd14b0cadad49b8b3cb84d733ce56ff82f549. Its plan is blocked on the authored
+connected-radar-agent-monitor:human live acceptance, not integrated. Its task
+already requires legacy-fails/live-succeeds and readable RPC errors. Driver
+reported the actual defect through Desktop and asked Architect to finish that
+existing product acceptance/integration path while preserving181/193. No cap was
+raised, acceptance recorded, or new duplicate task created by the driver.
+
+## Early LZ-193 rejection-gate steering
+
+While the original worker was actively writing LZ-193, driver inspection found
+its first repo-processor.ts draft rejected more than20 path patterns or5000
+files, and rejected the whole result when Repomix skipped any size-limit file.
+The product ask called for useful one-call compressed research; it did not supply
+those count limits. Treating an upstream omission as a complete tool failure
+would reintroduce the rejected narrow-and-retry interaction. The task's bounded
+response wording did not justify those implementation gates.
+
+Driver reported the concrete draft behavior to Architect through Desktop and
+requested same-worker steering: useful returned source and saved artifact,
+explicit omissions, and resource handling grounded in actual transport/memory
+constraints. No new task, stopped worker, or System One change. At the next native
+observation Architect was researching that exact draft and the same worker was
+still writing. The same worker subsequently received native user input
+msg_1bdca3f6d001hiq44jRVDw0V5n at Unix1794185534829 with the concrete correction
+and resumed its model turn. Subsequent source inspection confirmed removal of those count gates and whole-result
+size-omission rejection. The worker now streams produced source into the retained
+artifact and records skipped-file reasons. Executable and native behavior remain
+unproven until its tests and real upstream call finish.
+
+## Delivered Radar native interaction after source landing
+
+Architect composed/reviewed the retained Radar source and landed it asbd2896d;
+its composed checks passed206tests/1747assertions, quality and GUI build. The
+reviewer's earlier primary-wiring concern was explicitly retracted after exact
+tree inspection; it must not be treated as a product defect. Delivery was the gap.
+
+Driver found the live monitor already visible in main Desktop after landing.
+Command search was opened and escaped; no extra reload command was executed.
+Project view showed connected updates and both original Luna Max workers with
+correct task/attempt associations. Selecting LZ-193 exposed15recent tool calls
+with durations; current patch calls had requested-file targets. Selecting
+src/context/repository-snapshots.test.ts updated the lower Selected call detail.
+[Actual selected-worker capture](radar-live-worker-20261108.png). Observations
+were relayed to Architect through Desktop for its existing acceptance flow.
+
+This resolves the observed legacy-reader blank default view; it is not full
+layout/reconnect/history qualification. Raw IDs, noisy coverage labels and
+unavailable historical rows remain visible polish issues. No narrow/short-size,
+divider keyboard or scroll-stability claim is made. Both original workers kept
+running; no additional inference or fixture was launched for this observation.
+
+The subsequent native Radar walkthrough exercised keyboard Up/Down on the
+focused divider (split value changed with focus retained), expanded LZ-193
+history and loaded older records (30to40returned), switched to Session scope
+(exactly1returned Current Architect) and restored Project activity. Driver
+reported these observations through Desktop. No server disconnect or worker
+interruption. Narrow/short dimensions, independent scroll retention and
+reconnect/reset remain unobserved; no full qualification claim follows.
+
+## Approved isolated verification authentication completed
+
+User explicitly approved isolated OpenCode access and ChatGPT test usage. Driver
+renewed the expired OAuth attempt through that existing instance's native
+integration API and opened its returned OpenAI URL in Chrome. OpenAI displayed
+Authorization successful. A native integration read confirmed one OpenAI OAuth
+connection labeled LAZERS owned verification in root
+lazers-full-instance-9TcU4T. No main credentials were copied or provider settings
+changed. No screenshot containing the callback authorization code was retained;
+the completed browser tab was closed.
+
+Driver handed the existing service, paused probe agent and retained fixtures back
+to Architect through main Desktop, explicitly yielding isolated-window ownership.
+Its Desktop had previously been quit; reopening and candidate refresh/qualification
+remain native probe work. No model test was invoked by Driver during sign-in.
+
+## LZ-181 remaining failures traced to missing canonical repair
+
+The retained suite reached60pass/2fail. Comparing exact source showed main's
+4abb300 retained-repair admission helper was absent from the original worker
+runtime: main invokes retainedRepairAttemptAccepted, while its worktree still
+requires attempt.state accepted. The newer failed-history tests were present.
+The worker's public progress report treated this as a separate guard to preserve;
+older coordination input had requested incorporating the existing fix but had
+not resulted in that source change.
+
+Driver reported the precise source discrepancy through Desktop and requested
+same-worker reconciliation of existing4abb300, including its atomic recheck.
+This is integration drift, not justification for weakening tests, changing the
+acceptance policy or adding a task/gate. No worker source or production DB was
+changed by Driver. Delivery and post-correction results remain to observe.

@@ -6,25 +6,29 @@ export function operationalReads(
   fixture: ReturnType<typeof makeFixture>,
   projectID = "project",
   secret = new Uint8Array(32).fill(5),
+  additionalSessions: RadarNativeSession[] = [],
 ) {
-  const sessions: RadarNativeSession[] = [...fixture.sessions.values()].map((session) => ({
-    id: session.id,
-    projectID,
-    parentID: session.parentID,
-    directory: fixture.store.repository.projectDirectory,
-    agent: "worker",
-    model: session.model
-      ? {
-          providerID: session.model.providerID,
-          id: session.model.id,
-          variant: session.model.variant ?? null,
-        }
-      : null,
-    archived: false,
-    busy: session.busy,
-    createdAt: session.time.created,
-    updatedAt: session.time.updated,
-  }))
+  const sessions: RadarNativeSession[] = [
+    ...[...fixture.sessions.values()].map((session) => ({
+      id: session.id,
+      projectID,
+      parentID: session.parentID,
+      directory: fixture.store.repository.projectDirectory,
+      agent: "worker",
+      model: session.model
+        ? {
+            providerID: session.model.providerID,
+            id: session.model.id,
+            variant: session.model.variant ?? null,
+          }
+        : null,
+      archived: false,
+      busy: session.busy,
+      createdAt: session.time.created,
+      updatedAt: session.time.updated,
+    })),
+    ...additionalSessions,
+  ]
   const byID = new Map(sessions.map((session) => [session.id, session]))
   const nativeSessions: RadarSessionHost = {
     get: async (id) => byID.get(id) ?? null,

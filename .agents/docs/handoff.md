@@ -4,6 +4,36 @@ Updated 2026-11-08. Goal remains active: native Architect/LAZERS must deliver th
 whole roadmap, then propose improvements from observation. Runtime/API/DB state
 is authoritative; this file is a locator. Earlier detail remains in Git history.
 
+## Latest native observations (Unix1794185198017)
+
+Main commits29ee18b/ba6b5f4 consolidate worker startup into `lz-get-task` and
+record actual native use: LZ-193 received full readable task/guidance and focused
+cached Repomix source in one Code Mode call. Old `lz-get-task-instructions` is
+removed; direct reads remain available. No comparative savings measured yet.
+
+Two original OpenAI Luna Max workers are concurrently active: LZ-181 session
+ses_12ba163aca2a4703a19aa82430adb1ab continues asynchronous verification/test
+repair; LZ-193 session ses_dd92813879ab4e0da0f5d1c8b5a197d4 implements remote
+compressed repository snapshots in plane8bf7885-fd38-4170-8ce6-cbb1d68cb2c4.
+LZ-193 task1f8714b6-38d5-42da-8347-39ffc513c813, attempt
+c49fbc65-db5c-44ca-bd42-e142dca7fb09. Neither is accepted/integrated yet.
+
+Project Radar's actual legacy `[object Object]`/scope-limit failure led to the
+reviewed LZ-184 source landing at bd2896d. Exact accepted89edd14 was composed with
+the preserved Radar review checkout and current main; quality,206tests/1747
+assertions and GUI build passed. Runtime recorded task source integration only,
+at plan version43. A fresh actual live read exposes attributed file targets and
+both original181/193 workers remain busy. Actual main Desktop now shows the live
+monitor without extra webview reload. Root exercised worker/call-target detail,
+keyboard divider focus/split, history pagination30→40 and Session/Project roundtrip;
+Terra reviewed the actual capture. Narrow/short geometry, scroll retention,
+reconnect/reset, full-run selection stability and source navigation remain open,
+as do cancellation/full-history coverage. The plan's connected-radar-agent-monitor
+gate remains open. Do not duplicate the task,
+inflate caps or promote node/source acceptance to complete Radar qualification.
+See design/reviews/radar-live-integration-gap-20261109.md; original screenshot
+and interventions remain in design/reviews/driver-interventions-20261108.md.
+
 ## Priority: autonomous delivery and visible recovery
 
 User correction: Architect owns routine verification, product probes, review,

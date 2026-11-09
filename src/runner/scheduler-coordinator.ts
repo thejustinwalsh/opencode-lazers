@@ -21,6 +21,11 @@ type Group = {
   running?: { owner: symbol; done: Promise<void>; waiters: Waiter[] }
 }
 
+export type SchedulerProjectStatus = {
+  status: "scheduled" | "draining" | "registered" | "absent" | "unknown"
+  participants: number
+}
+
 const systemClock: Clock = {
   now: () => performance.now(),
   set: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -100,6 +105,18 @@ export class SchedulerCoordinator {
       errors: this.errors,
       wakeups: this.wakeups,
     }
+  }
+
+  /** Read only the exact project-key group; process-wide totals stay diagnostic-only. */
+  projectStatus(key: string): SchedulerProjectStatus {
+    const group = this.groups.get(key)
+    if (!group) return { status: "absent", participants: 0 }
+    const participants = group.participants.size
+    if (group.running) return { status: "draining", participants }
+    if (participants > 0 && Number.isFinite(group.dueAt))
+      return { status: "scheduled", participants }
+    if (participants > 0) return { status: "registered", participants }
+    return { status: "unknown", participants: 0 }
   }
 
   private delay(value: number) {
