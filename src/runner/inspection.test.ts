@@ -526,6 +526,58 @@ test("selected full inspection projects latest retained generations and bounded 
   )
 })
 
+test("direct retained-history cursor capture pages without writing lifecycle or evidence facts", () => {
+  const f = fixture()
+  const plan = f.store.submit(
+    {
+      ...f.input,
+      requestID: "retained-read-only-pages",
+      nodes: [{ taskID: f.first.id, revision: 1 as const }],
+      dependencies: [],
+      integrationOrder: [f.first.id],
+    },
+    "owner",
+  )
+  f.store.atomic(ensureRetainedVerificationTables)
+  for (const generation of [1, 2, 3])
+    f.store.atomic((db) =>
+      createRetainedVerification(
+        db,
+        f.projectDirectory,
+        retainedOperation(f.projectDirectory, plan.planID, f.first.id, generation, "failed"),
+      ),
+    )
+  const facts = () =>
+    f.store.atomic((db) => ({
+      changes: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
+        .changes,
+      operations: db.query("SELECT * FROM runner_retained_verifications").all(),
+      checks: db.query("SELECT * FROM runner_retained_verification_checks").all(),
+      resources: db.query("SELECT * FROM runner_retained_verification_resources").all(),
+      evidence: db.query("SELECT * FROM runner_retained_verification_evidence").all(),
+    }))
+  const before = facts()
+  const first = inspectPlan(f.store, {
+    planID: plan.planID,
+    view: "retained-verifications",
+    limit: 1,
+  }) as {
+    history: { records: Array<{ generation: number }>; nextCursor: string | null }
+  }
+  const second = inspectPlan(f.store, {
+    planID: plan.planID,
+    view: "retained-verifications",
+    limit: 1,
+    cursor: first.history.nextCursor!,
+  }) as { history: { records: Array<{ generation: number }> } }
+
+  expect(first.history.records).toMatchObject([{ generation: 2 }])
+  expect(second.history.records).toMatchObject([{ generation: 1 }])
+  expect(JSON.stringify(first)).not.toContain("PRIVATE_REASON_CANARY")
+  expect(JSON.stringify(first)).not.toContain("retained-verification-workspace-canary")
+  expect(facts()).toEqual(before)
+})
+
 test("retained verification view binds human evidence to exact candidate and generation", () => {
   const f = fixture()
   const task = f.repository.insert({

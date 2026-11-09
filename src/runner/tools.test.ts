@@ -11,6 +11,8 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { fingerprint } from "../identity.ts"
 import { validProposal } from "../../test/proposal.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
+import { registerToolCallWrappers } from "../progress/tool-observation.ts"
 import { TaskRepository } from "../storage.ts"
 import type { ArchitectObservedMessage } from "./store.ts"
 import { RunnerStore } from "./store.ts"
@@ -745,11 +747,14 @@ test("registered selected full inspection reads retained verification without ru
 
     const tools = new Map<string, RegisteredTool>()
     const editor: ToolEditor = {
-      add: (tool) => tools.set(tool.name, tool),
-      list: () => [],
-      get: () => undefined,
+      add: (tool) => tools.set(tool.name, Object.assign(tool, { id: tool.name })),
+      list: () => [...tools.values()] as never,
+      get: (id) => tools.get(id) as never,
       namespace: () => {},
-      update: () => {},
+      update: (id, update) => {
+        const entry = tools.get(id)
+        if (entry) update(entry as never)
+      },
       remove: () => {},
     }
     let permissionChecks = 0
@@ -758,6 +763,10 @@ test("registered selected full inspection reads retained verification without ru
     let inferenceCalls = 0
     const ctx = {
       location: { directory: projectDirectory },
+      session: {
+        get: () =>
+          Effect.succeed({ projectID: "project", location: { directory: projectDirectory } }),
+      },
       permission: { assert: () => (permissionChecks++, Effect.void) },
       model: { list: () => (inferenceCalls++, Effect.succeed({ data: [] })) },
       tool: {
@@ -777,10 +786,10 @@ test("registered selected full inspection reads retained verification without ru
       ),
     } as unknown as TaskRuntime
     await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
+    const progress = new ProgressRecorder(store, "project")
+    await Effect.runPromise(Effect.scoped(registerToolCallWrappers(ctx, progress, "project")))
     const inspect = tools.get("lz-inspect-plan")!
     const before = store.atomic((db) => ({
-      changes: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
-        .changes,
       operations: db
         .query("SELECT id,generation,state,payload FROM runner_retained_verifications")
         .all(),
@@ -795,9 +804,15 @@ test("registered selected full inspection reads retained verification without ru
         )
         .all(),
       evidence: db.query("SELECT * FROM runner_retained_verification_evidence").all(),
-      nodes: db.query("SELECT plan_id,task_id,state,version FROM runner_nodes").all(),
-      attempts: db.query("SELECT id,plan_id,task_id,state FROM runner_attempts").all(),
-      effects: db.query("SELECT id,plan_id,task_id,state FROM runner_effects").all(),
+      nodes: db
+        .query("SELECT plan_id,task_id,state,version FROM runner_nodes WHERE plan_id=?")
+        .all(plan.planID),
+      attempts: db
+        .query("SELECT id,plan_id,task_id,state FROM runner_attempts WHERE plan_id=?")
+        .all(plan.planID),
+      effects: db
+        .query("SELECT id,plan_id,task_id,state FROM runner_effects WHERE plan_id=?")
+        .all(plan.planID),
     }))
     const result = await Effect.runPromise(
       inspect.execute({ planID: plan.planID, full: true }, callContext("architect")),
@@ -828,6 +843,37 @@ test("registered selected full inspection reads retained verification without ru
       history: { records: Array<{ generation: number }>; nextCursor: string | null }
     }
     expect(firstPage.history.nextCursor).toBeString()
+    store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts(
+          id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,
+          base_commit,policy,state,started_at,tool_count,retry_count
+        ) VALUES(?,?,?,?,1,?,?,? ,?,'{}','running',?,0,0)`,
+        )
+        .run(
+          "unrelated-progress-attempt",
+          foreignPlan.planID,
+          projectDirectory,
+          foreignTask.id,
+          "ses-unrelated-progress",
+          "msg-unrelated-progress",
+          projectDirectory,
+          "b".repeat(40),
+          Date.now(),
+        ),
+    )
+    expect(
+      progress.report({
+        sessionID: "ses-unrelated-progress",
+        agent: "lazers-implementor",
+        callID: "unrelated-progress-call",
+        messageID: "msg-unrelated-progress",
+        message: "Unrelated worker progress",
+      }).sequence,
+    ).toBeGreaterThan(0)
+    expect(store.claim("unrelated-scheduler")).toBeGreaterThan(0)
+    expect(store.move(foreignPlan.planID, foreignTask.id, "READY")).toBe("ready")
     const secondPageResult = await Effect.runPromise(
       inspect.execute(
         {
@@ -870,8 +916,6 @@ test("registered selected full inspection reads retained verification without ru
       ),
     ).rejects.toThrow()
     const after = store.atomic((db) => ({
-      changes: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
-        .changes,
       operations: db
         .query("SELECT id,generation,state,payload FROM runner_retained_verifications")
         .all(),
@@ -886,9 +930,15 @@ test("registered selected full inspection reads retained verification without ru
         )
         .all(),
       evidence: db.query("SELECT * FROM runner_retained_verification_evidence").all(),
-      nodes: db.query("SELECT plan_id,task_id,state,version FROM runner_nodes").all(),
-      attempts: db.query("SELECT id,plan_id,task_id,state FROM runner_attempts").all(),
-      effects: db.query("SELECT id,plan_id,task_id,state FROM runner_effects").all(),
+      nodes: db
+        .query("SELECT plan_id,task_id,state,version FROM runner_nodes WHERE plan_id=?")
+        .all(plan.planID),
+      attempts: db
+        .query("SELECT id,plan_id,task_id,state FROM runner_attempts WHERE plan_id=?")
+        .all(plan.planID),
+      effects: db
+        .query("SELECT id,plan_id,task_id,state FROM runner_effects WHERE plan_id=?")
+        .all(plan.planID),
     }))
     const latest = output.retainedVerifications.latest[0]!
     expect(latest.state).toBe("accepted")
@@ -915,6 +965,10 @@ test("registered selected full inspection reads retained verification without ru
     expect(JSON.stringify(output)).not.toContain("ENVIRONMENT_CONTENT_CANARY")
     expect(JSON.stringify(output)).not.toContain("RESOURCE_CANARY")
     expect(after).toEqual(before)
+    expect(progress.toolCalls("ses_test").length).toBeGreaterThan(0)
+    expect(progress.toolCalls("ses_test").some((call) => call.tool === "lz-inspect-plan")).toBe(
+      true,
+    )
     expect(permissionChecks).toBe(5)
     expect(runtimeCalls).toBe(0)
     expect(nativeCalls).toBe(0)
