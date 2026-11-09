@@ -637,3 +637,27 @@ and a matcher observation proving that a denied file's content is never visited.
 `bun run verify` passed; context and real-worktree reuse: **24 pass**, 166
 assertions. Log: `s11-search-behavior.log` in the baseline directory. This closes
 the selection/permission/allocation defect; no live Desktop memory claim is made.
+
+## Wave 5: F-S14-9
+
+The main-process layout service lazily creates and reuses its ELK worker/API,
+terminates it in the existing disposer, and recreates it after failure. An idle
+worker death is reported once to the next caller; an in-flight death rejects its
+pending request through the existing adapter. Pending requests now also reject
+on an unexpected zero-code exit. Cancellation still rejects obsolete layouts.
+No layout work moves to the renderer. Geometry, cache keys, bounded IPC and
+accessible failure fallback are unchanged.
+
+Tests require two distinct layout keys to retain one thread ID; a real worker
+terminated between calls produces a rejected second call and a successful third
+on a new thread. Disposal is checked and all test services are disposed even on
+failure. `bun run verify` passed; layout tests **9 pass**, 42 assertions; GUI
+build and renderer-global-free bundle evaluation passed (existing ONNX
+`import.meta` warnings remain). Logs: `s14-worker-reuse.log` and
+`s14-worker-gui-build.log` in the baseline directory.
+
+A separate real-module probe over six distinct keys measured 96.94 ms initially,
+then 4.63 / 4.02 / 3.43 / 3.21 / 3.19 ms, all on thread 1. Results and driver:
+`s14-layout-perf.{json,ts}` in the baseline directory. This Bun-hosted worker probe
+is not an Electron Desktop CPU measurement; the review's 0.2–0.6 ms warm figures
+are not claimed as reproduced.

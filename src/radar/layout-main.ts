@@ -38,7 +38,6 @@ function workerAdapter(worker: Worker): MainWorker {
     }
   })
   worker.on("exit", (code) => {
-    if (code === 0) return
     for (const id of pending) {
       pending.delete(id)
       adapter.onmessage?.({
@@ -59,20 +58,47 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 export function createRadarLayoutService(workerSource: string, options?: { eval: boolean }) {
+  let current: { worker: Worker; api: InstanceType<typeof ELK>; pending: number } | undefined
+  let idleFailure: Error | undefined
+  let disposed = false
+  const acquire = () => {
+    if (current) return current
+    const worker = new Worker(workerSource, options)
+    const factory = (() => workerAdapter(worker)) as unknown as () => globalThis.Worker
+    const entry = { worker, api: new ELK({ workerFactory: factory }), pending: 0 }
+    current = entry
+    const failed = (error: Error) => {
+      if (current !== entry) return
+      current = undefined
+      if (!disposed && entry.pending === 0) idleFailure = error
+    }
+    worker.on("error", failed)
+    worker.on("exit", (code) => failed(new Error(`ELK worker exited with code ${code}`)))
+    return entry
+  }
   return {
     async layout(input: RadarLayoutInput, signal: AbortSignal): Promise<RadarLayoutResult> {
       signal.throwIfAborted()
-      const worker = new Worker(workerSource, options)
-      try {
-        const factory = (() => workerAdapter(worker)) as unknown as () => globalThis.Worker
-        const api = new ELK({ workerFactory: factory })
-        const startedAt = performance.now()
-        const graph = await abortable(api.layout(elkGraph(input)), signal)
-        signal.throwIfAborted()
-        return radarLayoutResult(input, graph, performance.now() - startedAt, worker.threadId)
-      } finally {
-        await worker.terminate()
+      if (disposed) throw new Error("ELK layout service is disposed")
+      if (idleFailure) {
+        const error = idleFailure
+        idleFailure = undefined
+        throw error
       }
+      const entry = acquire()
+      entry.pending++
+      const startedAt = performance.now()
+      const layout = entry.api.layout(elkGraph(input)).finally(() => entry.pending--)
+      const graph = await abortable(layout, signal)
+      signal.throwIfAborted()
+      return radarLayoutResult(input, graph, performance.now() - startedAt, entry.worker.threadId)
+    },
+    async dispose() {
+      disposed = true
+      idleFailure = undefined
+      const entry = current
+      current = undefined
+      if (entry) await entry.worker.terminate()
     },
   }
 }
@@ -84,5 +110,6 @@ export function setupRadarLayoutMain(ctx: MainContext) {
   })
   return async () => {
     provider.dispose()
+    await service.dispose()
   }
 }

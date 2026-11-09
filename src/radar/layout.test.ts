@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
+import type { Worker } from "node:worker_threads"
 import { Schema } from "effect"
 import { fileURLToPath } from "node:url"
 import { createRoot } from "solid-js"
@@ -7,6 +8,16 @@ import { clampSplit, splitFromPointer } from "./layout.ts"
 import { createRadarLayoutService } from "./layout-main.ts"
 import { createStableRadarLayout, RadarLayoutCoordinator } from "./layout-state.ts"
 import { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
+
+const services: ReturnType<typeof createRadarLayoutService>[] = []
+afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.dispose()))
+})
+function layoutService(source: string, options?: { eval: boolean }) {
+  const service = createRadarLayoutService(source, options)
+  services.push(service)
+  return service
+}
 
 function layoutInput(key: string): RadarLayoutInput {
   return {
@@ -88,7 +99,7 @@ test("multiple pointer moves, short panels, and boundary keys stay in range", ()
 })
 
 test("ELK places grouped nodes and typed edges in a separate native worker thread", async () => {
-  const service = createRadarLayoutService(workerPath())
+  const service = layoutService(workerPath())
   const input = {
     key: "layout-test",
     scopeKey: "project",
@@ -122,7 +133,11 @@ test("ELK places grouped nodes and typed edges in a separate native worker threa
   } as const
 
   const first = await service.layout(input, new AbortController().signal)
-  const second = await service.layout(input, new AbortController().signal)
+  const second = await service.layout(
+    { ...input, key: "different-key" },
+    new AbortController().signal,
+  )
+  expect(second.workerThreadId).toBe(first.workerThreadId)
   expect(first.workerThreadId).toBeGreaterThan(0)
   expect(first.width).toBeGreaterThan(0)
   expect(first.height).toBeGreaterThan(0)
@@ -150,7 +165,7 @@ test("IPC accepts large ELK graph and group extents while retaining individual m
     })),
     edges: [],
   }
-  const service = createRadarLayoutService(workerPath())
+  const service = layoutService(workerPath())
   const result = await service.layout(input, new AbortController().signal)
   expect(result.height).toBeGreaterThan(2000)
   expect(result.groups[0]!.height).toBeGreaterThan(2000)
@@ -167,7 +182,7 @@ test("IPC accepts large ELK graph and group extents while retaining individual m
 })
 
 test("an aborted ELK request rejects instead of publishing obsolete layout", async () => {
-  const service = createRadarLayoutService(workerPath())
+  const service = layoutService(workerPath())
   const controller = new AbortController()
   controller.abort(new Error("scope changed"))
   await expect(
@@ -222,4 +237,29 @@ test("late scope layout responses cannot overwrite the newest geometry", async (
   pending.get("old-scope")!(resultFor(layoutInput("old-scope")))
   expect(await old).toBeUndefined()
   expect(calls).toEqual(["old-scope", "new-scope"])
+})
+
+test("F-S14-9 an idle worker exit is reported once and the next request recovers", async () => {
+  let created: Worker | undefined
+  const capture: Parameters<typeof process.on<"worker">>[1] = (worker) => {
+    created = worker
+  }
+  process.once("worker", capture)
+  const service = layoutService(workerPath())
+  try {
+    const first = await service.layout(layoutInput("first"), new AbortController().signal)
+    await created!.terminate()
+    await expect(
+      service.layout(layoutInput("after-exit"), new AbortController().signal),
+    ).rejects.toThrow("ELK worker exited")
+    const recovered = await service.layout(layoutInput("recovered"), new AbortController().signal)
+    expect(recovered.workerThreadId).toBeGreaterThan(0)
+    expect(recovered.workerThreadId).not.toBe(first.workerThreadId)
+    await service.dispose()
+    await expect(
+      service.layout(layoutInput("disposed"), new AbortController().signal),
+    ).rejects.toThrow("disposed")
+  } finally {
+    process.off("worker", capture)
+  }
 })
