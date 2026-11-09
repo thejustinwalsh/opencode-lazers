@@ -333,3 +333,19 @@ log and confirms all three contents survive independently. Quality passes;
 33owned-lifecycle tests/180assertions pass. Native reopen and product walkthrough
 remain to observe after Architect resumes the same verifier. No worker code or
 production DB was changed for this repair.
+
+Follow-up native execution: main e3077d4's supported reopen command succeeded at
+2026-11-09 01:58:51UTC, retaining root9TcU4T and service25100, and recording
+Desktop55511. The native bridge returned the existing verification-only canary
+and its four disposable tasks. Root opened the actual State menu (Open, Queued,
+Running, Blocked/waiting, Completed, Failed/exhausted, Cancelled, All) and changed
+Failed/exhausted to Completed. The empty completed list matched the fixture's
+lack of completed work; this does not qualify completed-row navigation.
+
+Later input was refused because the owned window was not focused, even after
+focus plus a fresh snapshot. Snapshot confirmed the filter remained Completed;
+no uncertain input was replayed, fixture work dispatched, or probe accepted.
+The supported launcher defect is recovered natively. Focus reliability and the
+full Tasks/Radar walkthrough remain open. The bridge snapshot is retained only
+in ignored .cache/driver/owned-current-snapshot.json; no full product completion
+is claimed from this fixture interaction.
