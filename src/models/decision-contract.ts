@@ -294,7 +294,7 @@ export const ModelDecisionPricePinSchema = z
 export type ModelDecisionPricePin = z.infer<typeof ModelDecisionPricePinSchema>
 
 export const ModelDecisionNativeCostSchema = z.strictObject({
-  status: z.enum(["available", "partial", "unknown"]),
+  status: z.enum(["available", "partial", "unknown", "unmetered"]),
   totalUSD: Nonnegative.nullable(),
   source: z.literal("native-reported"),
   note: z.string().max(2000),

@@ -118,6 +118,7 @@ type SessionData = {
   usageCategories: KnownUsageMarketSession["categories"]
   nativeUSD: number | null
   nativeComplete: boolean
+  nativeUnmetered: boolean
   observedAt: number | null
   shared: boolean
 }
@@ -529,6 +530,7 @@ function buildSessionData(
       usageCategories,
       nativeUSD: nativeValue,
       nativeComplete: native?.status === "observed" && native.valueUSD !== null,
+      nativeUnmetered: native?.status === "unmetered",
       observedAt: attempts.length
         ? Math.max(...attempts.map((attempt) => attempt.startedAt))
         : null,
@@ -1159,11 +1161,15 @@ function buildSnapshotData(
         (session) => session.nativeComplete && session.nativeUSD !== null,
       )
     const nativeReportedCost = {
-      status: nativeComplete
-        ? ("available" as const)
-        : nativeValues.some((value) => value !== null)
-          ? ("partial" as const)
-          : ("unknown" as const),
+      status:
+        cohort.sessions.size > 0 &&
+        [...cohort.sessions.values()].every((session) => session.nativeUnmetered)
+          ? ("unmetered" as const)
+          : nativeComplete
+            ? ("available" as const)
+            : nativeValues.some((value) => value !== null)
+              ? ("partial" as const)
+              : ("unknown" as const),
       totalUSD: nativeComplete ? sumValues(nativeValues) : null,
       source: "native-reported" as const,
       note: "Retained native/session-reported charges are diagnostic and are not market-equivalent prices.",

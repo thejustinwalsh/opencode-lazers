@@ -441,6 +441,14 @@ function costContributions(input: {
   return input.sessions.map((session) => {
     const attempts = input.attempts.filter((attempt) => attempt.sessionID === session.sessionID)
     const sessionFacts = facts.filter((fact) => fact.sessionID === session.sessionID)
+    const numericCosts = [
+      ...sessionFacts.map((fact) => fact.usage?.costUSD),
+      ...attempts.map((attempt) => attempt.recordedCostUSD),
+    ].filter((value): value is number => typeof value === "number")
+    const unmetered =
+      numericCosts.length > 0 &&
+      numericCosts.every((value) => value === 0) &&
+      USAGE_CATEGORIES.some((category) => (session.categories[category].value ?? 0) > 0)
     const cumulative = sessionFacts
       .filter(
         (fact) =>
@@ -486,8 +494,8 @@ function costContributions(input: {
         sessionID: session.sessionID,
         attemptIDs: session.attemptIDs,
         basis: "cumulative-session-snapshot" as const,
-        valueUSD: cumulativeCost,
-        status: "observed" as const,
+        valueUSD: unmetered ? null : cumulativeCost,
+        status: unmetered ? ("unmetered" as const) : ("observed" as const),
         source: "runner-progress-store cumulative session snapshot",
         measurementCount: 1,
         missingMeasurements: 0,
@@ -518,8 +526,10 @@ function costContributions(input: {
         sessionID: session.sessionID,
         attemptIDs: session.attemptIDs,
         basis: "attempt-session-cumulative-snapshot" as const,
-        valueUSD: attemptCosts.reduce((largest, cost) => Math.max(largest, cost.value), 0),
-        status: "observed" as const,
+        valueUSD: unmetered
+          ? null
+          : attemptCosts.reduce((largest, cost) => Math.max(largest, cost.value), 0),
+        status: unmetered ? ("unmetered" as const) : ("observed" as const),
         source:
           "largest retained runner_attempt.cost for this unique session; contributions are not summed",
         measurementCount: attemptCosts.length,
@@ -570,8 +580,12 @@ function costContributions(input: {
         sessionID: session.sessionID,
         attemptIDs: session.attemptIDs,
         basis: observed ? ("retained-additive-step-subtotal" as const) : ("unavailable" as const),
-        valueUSD: observed ? subtotalUSD : null,
-        status: observed ? ("partial" as const) : ("missing" as const),
+        valueUSD: observed && !unmetered ? subtotalUSD : null,
+        status: unmetered
+          ? ("unmetered" as const)
+          : observed
+            ? ("partial" as const)
+            : ("missing" as const),
         source: observed
           ? "deduplicated worker-progress additive steps; subtotal only, not a cumulative session cost"
           : "No numeric cost was present in the retained additive steps",
@@ -645,13 +659,16 @@ function reportedWorkerCost(
     cumulativeSessions === contributions.length &&
     contributions.every((item) => item.status === "observed")
   const allMissing = contributions.every((item) => item.status === "missing")
+  const allUnmetered = contributions.every((item) => item.status === "unmetered")
   const status = overflow
     ? "unavailable"
-    : allCumulative
-      ? "observed"
-      : allMissing
-        ? "missing"
-        : "partial"
+    : allUnmetered
+      ? "unmetered"
+      : allCumulative
+        ? "observed"
+        : allMissing
+          ? "missing"
+          : "partial"
   return {
     valueUSD: status === "observed" ? subtotalUSD : null,
     subtotalUSD: overflow ? null : hasSubtotal ? subtotalUSD : null,

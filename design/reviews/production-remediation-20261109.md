@@ -480,3 +480,21 @@ legacy diagnostics; canonical market pricing and repricing remain separate.
 249 assertions; only the original commentary/automatic-fact baseline failure
 remains. Log: `s9-cost-behavior.log` in the baseline directory. No native state,
 usage or price data was changed.
+
+## Wave 4: F-S10-2
+
+Added `unmetered` to contribution, reported-cost and Models decision schemas.
+When all numeric reported measurements for a session are zero and observed usage
+is positive, its diagnostic cost is null/unmetered. The classification covers
+cumulative snapshots, attempt scalars and additive steps. All-unmetered totals
+propagate to decision rows; mixed metered/unmetered sessions retain their known
+subtotal without claiming a complete total. Zero-token cumulative/attempt zeros
+remain observed zeros. Original measurements remain stored unchanged.
+
+Tests explicitly cover 1,000 tokens/zero reported cost, zero tokens/zero cost,
+all three measurement paths, mixed sessions, and decision-row propagation. Market
+valuations are asserted unchanged against identical usage with a nonzero reported
+charge. `bun run verify` passed. Valuation/decision reader: **39 pass**, 400
+assertions; server/decision-contract integration: **40 pass**, 493 assertions.
+Logs: `s10-unmetered-{behavior,integration}.log` in the baseline directory.
+No subscription charge is substituted for the canonical current market value.

@@ -2093,3 +2093,30 @@ test("F-S10-4 identical complete single-session cohorts have one exact price acr
     fixture.close()
   }
 })
+
+test("F-S10-2 decision rows propagate unmetered subscription diagnostics without changing market prices", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openai", modelID: "fixture-model", variant: "high" }
+  for (const attempt of [fixture.attempts.failed, fixture.attempts.accepted])
+    rewriteAttemptFacts(fixture.path, fixture.projectID, attempt.id, route, [1000])
+  const db = new Database(fixture.path, { strict: true })
+  try {
+    db.query(
+      "UPDATE runner_progress SET payload=json_set(payload,'$.usage.costUSD',0) WHERE task_id=? AND kind IN ('step','usage-snapshot')",
+    ).run(fixture.tasks.retry!.id)
+  } finally {
+    db.close()
+  }
+  const source = cachedOpenRouterReader(fixture)
+  try {
+    const input = inputFor(fixture.projectDirectory)
+    const rows = await source.reader.rows({ ...input, limit: 100 })
+    const row = rows.rows.find((item) => item.configuration.route.modelID === route.modelID)
+    assert.ok(row)
+    expect(row.nativeReportedCost).toMatchObject({ status: "unmetered", totalUSD: null })
+    expect(row.efficiency.currentMarketUSDPerAcceptedTask).toBeGreaterThan(0)
+  } finally {
+    source.close()
+    fixture.close()
+  }
+})

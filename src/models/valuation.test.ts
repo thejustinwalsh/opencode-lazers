@@ -1304,3 +1304,56 @@ test("nonfinite monetary multiplication is unavailable and never serialized as a
   })
   expect(JSON.stringify(result)).not.toContain("Infinity")
 })
+
+test.each([0, 1000])(
+  "F-S10-2 zero reported cost with %s tokens preserves market pricing and distinguishes unmetered usage",
+  (tokens) => {
+    const usage = { input: tokens, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+    const worker = attempt({ recordedCostUSD: 0, sessionUsage: usage })
+    const snapshot = usageSnapshot({ id: "zero-cost", sequence: 1, at: 1100, costUSD: 0 })
+    snapshot.usage = { ...usage, costUSD: 0 }
+    const result = project([worker], [snapshot], nativeMillionTokenIndex)
+    const priced = project(
+      [{ ...worker, recordedCostUSD: 1 }],
+      [{ ...snapshot, usage: { ...usage, costUSD: 1 } }],
+      nativeMillionTokenIndex,
+    )
+    expect(result.marketEquivalentCost).toEqual(priced.marketEquivalentCost)
+    expect(result.reportedWorkerCost).toMatchObject({
+      status: tokens ? "unmetered" : "observed",
+      valueUSD: tokens ? null : 0,
+      subtotalUSD: tokens ? null : 0,
+    })
+    expect(result.reportedWorkerCost.contributions[0]).toMatchObject({
+      status: tokens ? "unmetered" : "observed",
+      valueUSD: tokens ? null : 0,
+    })
+    const scalar = project([worker], [], nativeMillionTokenIndex)
+    expect(scalar.reportedWorkerCost.status).toBe(tokens ? "unmetered" : "observed")
+    const step = stepCost({ id: "zero-step", messageID: "zero-step", at: 1100, costUSD: 0 })
+    const additive = project(
+      [{ ...worker, recordedCostUSD: null }],
+      [{ ...step, usage: { ...usage, costUSD: 0 } }],
+      nativeMillionTokenIndex,
+    )
+    expect(additive.reportedWorkerCost.contributions[0]?.status).toBe(
+      tokens ? "unmetered" : "partial",
+    )
+  },
+)
+
+test("F-S10-2 mixed metered and unmetered sessions preserve the known subtotal without claiming a total", () => {
+  const result = project(
+    [
+      attempt({ recordedCostUSD: 0 }),
+      attempt({ id: "attempt-b", sessionID: "session-b", recordedCostUSD: 1 }),
+    ],
+    [],
+    nativeMillionTokenIndex,
+  )
+  expect(result.reportedWorkerCost).toMatchObject({
+    status: "partial",
+    valueUSD: null,
+    subtotalUSD: 1,
+  })
+})
