@@ -60,11 +60,24 @@ through supported native controls, and make scheduler cleanup converge after
 integration, cancellation and restart. Active work and useful dirty/unmerged work
 must remain available. Cleanup holds do not invalidate implemented behavior.
 
-## Observation boundary
+## Native response and remaining work
 
-The driver relayed this user-requested priority through Desktop; delivery must be
-confirmed from the native conversation before claiming Architect consumed it.
+Desktop delivered the user request as `msg_1c05d4b2000121a5B1mx57bWkj`.
+Architect inspected the inventory and native adapter, extended LZ-185's existing
+scope, attached advice and changed its plan to priority 4000 with no `afterPlans`.
+The schedule transition is Unix1794229335457. Its reason explicitly preserves
+active writers and assigns later composition to Architect rather than worker
+rebasing. The model route remains OpenAI Luna Max. At this observation the node
+is queued with no attempt; scheduling priority is not proof of dispatch.
+
+Architect also retried LZ-174's existing native integration/cleanup command with
+fresh inventory. Plan `f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23` returned to
+`cleanup-blocked`, version 30, with the same idle-observation reason. Its removal
+effect remains uncertain with that error. This reproduces the hold; it does not
+establish removal or reclaimed space.
+
 No SQL repair, forced Git removal, new daemon, source hashing gate or fabricated
-idle receipt was used. Required follow-through is actual native reconciliation,
-removal receipts and before/after disk observations, plus subsequent automatic
-cleanup under the corrected scheduler lifecycle.
+idle receipt was used. The Desktop request is a user-directed driver intervention.
+Required follow-through is implementation, meaningful checks, actual native
+reconciliation/removal receipts and before/after disk observations, plus
+subsequent automatic cleanup under the corrected scheduler lifecycle.
