@@ -1,5 +1,11 @@
 # LZ-181 recovery disposition — 2026-11-09
 
+> **Current disposition:** the user explicitly requested a one-time takeover.
+> The continuation decisions below are history, not current instructions.
+> LZ-199 is the sole authoritative completion contract; LZ-181 and the unstarted
+> LZ-198 proposal are superseded. Their contradictory baseline/equality gates
+> are retired, not obligations overridden by optional advice.
+
 ## Decision
 
 Continue the same original worker, attempt and useful draft. The adoption failure
@@ -132,3 +138,45 @@ repeated unresolved failure without concrete progress again requires Architect
 investigation and ownership disposition before further steering. Only reviewed
 root correction followed by ordinary successful repair admission can unblock the
 accepted workers; no integration or cleanup is claimed for them.
+
+## One-time takeover and consumed correction
+
+The user diagnosis in `lz181-runaway-trajectory-20261109.md` identifies both worker
+and coordination failures. Original constraints retained obligations later
+rejected as advisory overrides; continued targeted gains did not close repeated
+broad failures; added related work expanded the unfinished boundary. The claimed
+external Root reservation was not user authority and no external repair is pending.
+
+The original worker was stopped through owned runtime controls. Its complete
+tracked diff and untracked modules are preserved, and native foreground/input/
+approval/location-shell inventories were empty. Historical background certainty
+remains unknown: this is not a cleanup certificate. The backup archive identifies
+preserved bytes only, never feature correctness.
+
+The first unstarted takeover proposal repeated retired requirements and reserved
+more files than necessary. It was withdrawn, not executed. LZ-199 incorporates the
+actual user-retired baseline/environment/configuration/`unchanged` decisions into
+one binding contract and narrows writes to the real implementation seams. This
+allows independent LZ-164 inspection work to continue. Its owned completion
+attempt has actually dispatched; passing source/behavior evidence remains pending.
+
+LZ-182's unsent conflicting preparation and its named held verification generation
+were stopped through supported controls, preserving its original session, work,
+artifact and failed receipts. Continue that same worker after reviewed takeover
+source integration; do not count this coordination hold as discarded work or
+fulfilled acceptance. Independent workers were not cancelled.
+
+LZ-195 is being corrected in its same retained worker. A normal retained-repair
+input carries the economic/current-contract correction, and native steering
+`msg_1be9e5c54001FIi5jyLb2brAwM` adds the requested two-tool public handoff semantics.
+Native `msg_1be9f008b001iXglhzPeVs8QEU` actually reads
+`recovery-controls-review-20261109.md`; subsequent reads inspect the public tool
+and review schemas. This establishes consumption, **not implementation completion**.
+Review the committed result for structured-data `lz-verify-handoff`, reviewed
+finalization through `lz-submit-handoff`, and the economic/remaining-work guidance.
+
+Future recovery judgment belongs to existing LZ-195/196: measured usage and
+available market valuation, failed approaches, demonstrated progress, scope
+changes, retained value, remaining work and takeover overhead inform a reasoned
+action and next reassessment condition. No quotas, automatic frontier takeover,
+sunk-cost continuation or new valuation subsystem is authorized.
