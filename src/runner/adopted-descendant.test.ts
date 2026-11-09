@@ -17,6 +17,7 @@ import type { OutcomeInboxEntry } from "./inbox.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 import { git, verificationEnvironmentIdentity } from "./artifacts.ts"
+import { verificationActivitiesForDatabase } from "./verification-activities.ts"
 
 type Mode = "failed-task" | "blocked-combined"
 type TestFixture = ReturnType<typeof fixture>
@@ -26,7 +27,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-function fixture(mode: Mode, sharedAssertionID?: string) {
+function fixture(mode: Mode, sharedAssertionID?: string, options: { manualTicks?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "lazers-adopt-descendant-"))
   const data = mkdtempSync(join(tmpdir(), "lazers-adopt-data-"))
   git(root, ["init", "--initial-branch=main"])
@@ -306,6 +307,7 @@ function fixture(mode: Mode, sharedAssertionID?: string) {
     acceptance: taskAcceptance,
   }
   const submitted = store.submit(planInput, "owner") as { planID: string }
+  const runtimeOptions = options.manualTicks ? { requestTick: () => Promise.resolve() } : {}
   const f = {
     root,
     data,
@@ -331,7 +333,7 @@ function fixture(mode: Mode, sharedAssertionID?: string) {
     host,
     planID: submitted.planID,
     planInput,
-    runtime: new TaskRuntime(store, host, "project"),
+    runtime: new TaskRuntime(store, host, "project", undefined, runtimeOptions),
     get loseNextWorktreeResponse() {
       return loseNextWorktreeResponse
     },
@@ -358,7 +360,7 @@ function fixture(mode: Mode, sharedAssertionID?: string) {
       f.repository = new TaskRepository(repositoryPath, root)
       f.store = new RunnerStore(f.repository)
       f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-      f.runtime = new TaskRuntime(f.store, host, "project")
+      f.runtime = new TaskRuntime(f.store, host, "project", undefined, runtimeOptions)
     },
   }
   cleanups.push(async () => {
@@ -386,17 +388,139 @@ async function drive(runtime: TaskRuntime, count = 3) {
   for (let index = 0; index < count; index++) await runtime.tick()
 }
 
+async function waitForAdoptionCondition(
+  f: TestFixture,
+  adoptionID: string,
+  description: string,
+  complete: () => boolean,
+  awaitOwnedCheck = false,
+) {
+  const deadline = Date.now() + 1_200
+  let ticks = 0
+  let maxTickMs = 0
+  let activityWaits = 0
+  let activityWaitMs = 0
+  while (true) {
+    if (complete()) return
+    const tickStarted = Date.now()
+    await f.runtime.tick()
+    ticks++
+    maxTickMs = Math.max(maxTickMs, Date.now() - tickStarted)
+    if (complete()) return
+    if (awaitOwnedCheck) {
+      const active = verificationActivitiesForDatabase(f.repository.path).find(
+        (activity) => activity.state === "running" && activity.metadata.adoptionID === adoptionID,
+      )
+      if (active) {
+        const waitStarted = Date.now()
+        await active.settled
+        activityWaits++
+        activityWaitMs += Date.now() - waitStarted
+        if (complete()) return
+        // Settle a launched check first, then reconcile its durable receipt
+        // before considering any diagnostic deadline.
+        const reconcileStarted = Date.now()
+        await f.runtime.tick()
+        ticks++
+        maxTickMs = Math.max(maxTickMs, Date.now() - reconcileStarted)
+        if (complete()) return
+        continue
+      }
+    }
+    if (Date.now() >= deadline) break
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  if (complete()) return
+  throw new Error(
+    `${description} did not settle: ${JSON.stringify({
+      plan: { state: f.store.plan(f.planID)?.state, reason: f.store.plan(f.planID)?.reason },
+      adoption: {
+        state: f.store.adoption(adoptionID)?.state,
+        reason: f.store.adoption(adoptionID)?.reason,
+        taskWorkspace: f.store.adoption(adoptionID)?.task_workspace,
+        combinedWorkspace: f.store.adoption(adoptionID)?.combined_workspace,
+      },
+      checks: f.store.adoptionChecks(adoptionID).map((check) => {
+        let receipt: Record<string, unknown> | undefined
+        try {
+          const value = check.receipt
+            ? JSON.parse(check.receipt)
+            : existsSync(check.receipt_path)
+              ? JSON.parse(readFileSync(check.receipt_path, "utf8"))
+              : undefined
+          if (value && typeof value === "object") receipt = value as Record<string, unknown>
+        } catch {
+          receipt = undefined
+        }
+        return {
+          phase: check.phase,
+          state: check.state,
+          receipt: receipt
+            ? {
+                exitCode: receipt.exitCode,
+                timedOut: receipt.timedOut,
+                stdout: receipt.stdout,
+                stderr: receipt.stderr,
+              }
+            : false,
+        }
+      }),
+      activities: verificationActivitiesForDatabase(f.repository.path).map((activity) => ({
+        state: activity.state,
+        metadata: activity.metadata,
+        error: activity.error instanceof Error ? activity.error.message : activity.error,
+      })),
+      ticks,
+      maxTickMs,
+      activityWaits,
+      activityWaitMs,
+    })}`,
+  )
+}
+
+async function waitForAdoptionState(f: TestFixture, adoptionID: string, state: string) {
+  const complete = () => {
+    if (f.store.adoption(adoptionID)?.state !== state) return false
+    const plan = f.store.plan(f.planID)
+    if (state === "accepted" || state === "cancelled") return plan?.state === state
+    return true
+  }
+  const wait = () =>
+    waitForAdoptionCondition(f, adoptionID, `adoption state ${state}`, complete, true)
+  await wait()
+  if (state === "held") return
+  // Activity settlement can schedule a tick immediately before its waiter sees
+  // the intermediate state; drain that queued tick before a test mutates inputs.
+  await f.runtime.tick()
+  if (!complete()) await wait()
+}
+
 async function strand(f: TestFixture) {
   await f.runtime.command(
     { requestID: "run-plan", planID: f.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime, 2)
+  const expectedNodeState = f.initialValue === "bad" ? "failed" : "accepted"
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    await f.runtime.tick()
+    const active = verificationActivitiesForDatabase(f.repository.path).filter(
+      (activity) => activity.state === "running",
+    )
+    await Promise.all(active.map((activity) => activity.settled))
+    const node = f.store.nodes(f.planID)[0]
+    if (
+      f.store.plan(f.planID)?.state === "blocked" &&
+      node?.state === expectedNodeState &&
+      active.length === 0
+    )
+      break
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
   const node = f.store.nodes(f.planID)[0]!
   const attempt = f.store.attempts(f.planID)[0]!
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  if (f.initialValue === "bad") expect(node.state).toBe("failed")
-  else expect(node.state).toBe("accepted")
+  expect(node.state).toBe(expectedNodeState)
   expect(attempt.artifact).toBe(node.artifact)
   return { node, attempt }
 }
@@ -634,7 +758,7 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("pending")
   const worktreeCount = f.events.filter((event) => event.startsWith("worktree:")).length
   await f.reopen()
-  await drive(f.runtime, 2)
+  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
   const taskWorkspace = JSON.parse(uncertain.payload).workspace
   expect(f.events.filter((event) => event === `worktree:${taskWorkspace}`)).toHaveLength(1)
   expect(f.events.filter((event) => event.startsWith("worktree:")).length).toBe(worktreeCount + 1)
@@ -655,14 +779,9 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   const completedGraphChecks = readFileSync(f.graphLog, "utf8").length
   expect(completedTaskChecks).toBe(2)
   expect(completedGraphChecks).toBe(1)
-  await f.reopen()
-  await drive(f.runtime, 1)
-  expect(f.store.adoption(adoption.id)?.state).toBe("waiting-human")
-  expect(readFileSync(f.taskLog, "utf8").length).toBe(completedTaskChecks)
-  expect(readFileSync(f.graphLog, "utf8").length).toBe(completedGraphChecks)
 
   await recordHumanEvidence(f, adoption.id, candidate, true)
-  await drive(f.runtime, 2)
+  await waitForAdoptionState(f, adoption.id, "accepted")
   expect(f.store.adoption(adoption.id)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
   expect(f.store.nodes(f.planID)[0]).toMatchObject({ state: "accepted", artifact: candidate })
@@ -681,7 +800,33 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   expectOutboxPreserved(f, oldOutcomes)
   await integratePlan(f)
   expect(f.store.plan(f.planID)?.state).toBe("integrated")
-})
+}, 15_000)
+
+test("restart after completed adoption checks does not replay either phase", async () => {
+  const f = fixture("failed-task")
+  const { node, attempt } = await strand(f)
+  const candidate = landCandidate(f, node.artifact!)
+  const requested = (await f.runtime.command(
+    adoptionCommand(f, attempt.id, node.artifact!, candidate),
+    "owner",
+  )) as { adoptionID: string }
+  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
+  const taskChecks = readFileSync(f.taskLog, "utf8").length
+  const combinedChecks = readFileSync(f.graphLog, "utf8").length
+  expect(
+    f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
+  ).toBe(true)
+
+  await f.reopen()
+  await f.runtime.tick()
+
+  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  expect(readFileSync(f.taskLog, "utf8").length).toBe(taskChecks)
+  expect(readFileSync(f.graphLog, "utf8").length).toBe(combinedChecks)
+  expect(
+    f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
+  ).toBe(true)
+}, 15_000)
 
 test("accepted task with blocked combined check adopts a descendant without rewriting acceptance or landing receipts", async () => {
   const f = fixture("blocked-combined")
@@ -719,7 +864,7 @@ test("accepted task with blocked combined check adopts a descendant without rewr
   }
   expect(requested.combinedArtifact).toBe(candidate)
   await recordHumanEvidence(f, requested.adoptionID, candidate, false)
-  await drive(f.runtime)
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
 
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
@@ -788,7 +933,7 @@ test("adoption scope uses the latest reviewed integration baseline, not interven
   )) as { adoptionID: string }
   expect(f.store.adoption(requested.adoptionID)?.reviewed_baseline).toBe(reviewedBaseline)
   await recordHumanEvidence(f, requested.adoptionID, candidate, false)
-  await drive(f.runtime, 3)
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
 })
@@ -825,10 +970,9 @@ test("adoption verifies reviewed main with independent work without widening wor
     adoptionCommand(f, attempt.id, oldArtifact, candidate),
     "owner",
   )) as { adoptionID: string }
-  await drive(f.runtime, 4)
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
   await recordHumanEvidence(f, requested.adoptionID, candidate, true)
-  await drive(f.runtime, 3)
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
   expect(f.store.effectiveWriteScope(f.task.id)).toEqual(["result.txt"])
   expect(f.store.attempts(f.planID)).toHaveLength(1)
@@ -979,11 +1123,12 @@ test.each(["task", "combined"] as const)(
       "owner",
     )) as { adoptionID: string; combinedArtifact: string }
     expect(requested.combinedArtifact).toBe(candidate)
-    await drive(f.runtime, 4)
+    await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
     expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
 
     await recordPhaseHumanEvidence(f, requested.adoptionID, firstPhase, "shared-result", candidate)
-    await drive(f.runtime, 1)
+    await f.runtime.tick()
+    await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
     expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
     expect(f.store.plan(f.planID)?.state).toBe("blocked")
     expect(
@@ -1012,21 +1157,17 @@ test.each(["task", "combined"] as const)(
       "shared-result",
       candidate,
     )
-    await drive(f.runtime, 2)
-    expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
+    await waitForAdoptionState(f, requested.adoptionID, "accepted")
   },
   10_000,
 )
 
-test("restart recovers task and combined check receipt cuts without replaying checks", async () => {
-  for (const cutPhase of ["task", "combined"] as const) {
-    const f = fixture("failed-task")
+test.each(["task", "combined"] as const)(
+  "restart recovers the %s check receipt cut without replaying checks",
+  async (cutPhase) => {
+    const f = fixture("failed-task", undefined, { manualTicks: true })
     const { node, attempt } = await strand(f)
     const candidate = landCandidate(f, node.artifact!)
-    const requested = (await f.runtime.command(
-      adoptionCommand(f, attempt.id, node.artifact!, candidate),
-      "owner",
-    )) as { adoptionID: string }
     const complete = f.store.completeAdoptionCheck.bind(f.store)
     let cut = false
     f.store.completeAdoptionCheck = (adoptionID, phase, checkID, receipt, fence) => {
@@ -1036,9 +1177,30 @@ test("restart recovers task and combined check receipt cuts without replaying ch
       }
       return complete(adoptionID, phase, checkID, receipt, fence)
     }
-    await drive(f.runtime, 1)
+    const requested = (await f.runtime.command(
+      adoptionCommand(f, attempt.id, node.artifact!, candidate),
+      "owner",
+    )) as { adoptionID: string }
+    try {
+      await waitForAdoptionCondition(
+        f,
+        requested.adoptionID,
+        `${cutPhase} receipt cut`,
+        () =>
+          cut &&
+          f.store.adoptionChecks(requested.adoptionID, cutPhase)[0]?.state === "intended" &&
+          existsSync(f.store.adoptionChecks(requested.adoptionID, cutPhase)[0]!.receipt_path),
+        true,
+      )
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== `simulated ${cutPhase} receipt database cut`
+      )
+        throw error
+    }
     expect(cut).toBe(true)
-    expect(f.store.adoptionChecks(requested.adoptionID, cutPhase)[0]?.state).toBe("uncertain")
+    expect(f.store.adoptionChecks(requested.adoptionID, cutPhase)[0]?.state).toBe("intended")
     const checkCountsBeforeRestart = {
       task: existsSync(f.taskLog) ? readFileSync(f.taskLog, "utf8").length : 0,
       combined: existsSync(f.graphLog) ? readFileSync(f.graphLog, "utf8").length : 0,
@@ -1051,7 +1213,7 @@ test("restart recovers task and combined check receipt cuts without replaying ch
     ).length
 
     await f.reopen()
-    await drive(f.runtime, 2)
+    await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
 
     expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
     expect(
@@ -1067,8 +1229,9 @@ test("restart recovers task and combined check receipt cuts without replaying ch
     expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
       admissionsBeforeRestart,
     )
-  }
-})
+  },
+  15_000,
+)
 
 test("only active worker reservations with conflicting write scopes block adoption", async () => {
   for (const [label, scope, blocked] of [
@@ -1095,8 +1258,7 @@ test("irrelevant environment churn is ignored while check inputs and operation e
   const candidate = landCandidate(f, node.artifact!)
   const firstCommand = adoptionCommand(f, attempt.id, node.artifact!, candidate)
   const first = (await f.runtime.command(firstCommand, "owner")) as { adoptionID: string }
-  await drive(f.runtime, 1)
-  expect(f.store.adoption(first.adoptionID)?.state).toBe("waiting-human")
+  await waitForAdoptionState(f, first.adoptionID, "waiting-human")
   await recordHumanEvidence(f, first.adoptionID, candidate, true)
 
   const currentEnvironment = verificationEnvironmentIdentity()
@@ -1114,7 +1276,7 @@ test("irrelevant environment churn is ignored while check inputs and operation e
     if (oldLanguage === undefined) delete process.env.LANG
     else process.env.LANG = oldLanguage
   }
-  expect(f.store.adoption(first.adoptionID)?.state).toBe("accepted")
+  await waitForAdoptionState(f, first.adoptionID, "accepted")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(
     f.store.adoptionChecks(first.adoptionID).every((check) => check.state === "completed"),
@@ -1131,8 +1293,7 @@ test("changed verification command input invalidates completed adoption receipts
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await drive(f.runtime, 1)
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
   await recordHumanEvidence(f, requested.adoptionID, candidate, true)
   const taskRow = f.store.atomic((db) =>
     db.query<{ body: string }, [string]>("SELECT body FROM tasks WHERE id=?").get(f.task.id)!,
@@ -1151,7 +1312,7 @@ test("changed verification command input invalidates completed adoption receipts
   expect(readFileSync(f.taskLog, "utf8")).toHaveLength(2)
   expect(readFileSync(f.graphLog, "utf8")).toHaveLength(1)
   expect(f.events.filter((event) => /^(create|prompt):/.test(event))).toHaveLength(2)
-})
+}, 15_000)
 
 test("owner-session loss after verification holds instead of publishing acceptance", async () => {
   const f = fixture("failed-task")
@@ -1161,15 +1322,14 @@ test("owner-session loss after verification holds instead of publishing acceptan
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await drive(f.runtime, 1)
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
   await recordHumanEvidence(f, requested.adoptionID, candidate, true)
   f.store.atomic((db) =>
     db.query("UPDATE runner_outbox SET state='consumed' WHERE plan_id=?").run(f.planID),
   )
   f.sessions.get("owner")!.archived = true
   await f.runtime.tick()
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("held")
+  await waitForAdoptionState(f, requested.adoptionID, "held")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
@@ -1179,25 +1339,39 @@ test("candidate index changes during combined verification invalidate publicatio
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
+  writeFileSync(f.graphGate, "wait\n")
   const requested = (await f.runtime.command(
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
+  await waitForAdoptionCondition(f, requested.adoptionID, "combined verification barrier", () =>
+    existsSync(f.graphStarted),
+  )
+  const combinedActivity = verificationActivitiesForDatabase(f.repository.path).find(
+    (activity) =>
+      activity.metadata.adoptionID === requested.adoptionID &&
+      activity.metadata.phase === "combined",
+  )
+  expect(combinedActivity?.state).toBe("running")
   await recordHumanEvidence(f, requested.adoptionID, candidate, true)
-  writeFileSync(f.graphGate, "wait\n")
-  const tick = f.runtime.tick()
-  for (let i = 0; i < 500 && !existsSync(f.graphStarted); i++) await Bun.sleep(10)
-  expect(existsSync(f.graphStarted)).toBe(true)
   writeFileSync(join(f.root, "staged-during-verification.txt"), "new input\n")
   git(f.root, ["add", "staged-during-verification.txt"])
   writeFileSync(f.graphRelease, "go\n")
-  await tick
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("held")
+  await waitForAdoptionState(f, requested.adoptionID, "held")
+  await combinedActivity!.settled
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-  expect(
-    f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
-  ).toBe(true)
+  expect(f.store.adoptionChecks(requested.adoptionID, "task")[0]?.state).toBe("completed")
+  const combinedCheck = f.store.adoptionChecks(requested.adoptionID, "combined")[0]!
+  expect(combinedCheck.state).toBe("intended")
+  expect(existsSync(combinedCheck.receipt_path)).toBe(true)
+  expect(JSON.parse(readFileSync(combinedCheck.receipt_path, "utf8"))).toMatchObject({
+    id: "combined-check",
+    cwd: combinedCheck.workspace,
+    artifact: candidate,
+    inputIdentity: candidate,
+    exitCode: 0,
+  })
   expect(f.events.filter((event) => /^(create|prompt):/.test(event))).toHaveLength(2)
   expect(f.events.some((event) => event.startsWith("remove:"))).toBe(false)
 })
@@ -1349,15 +1523,17 @@ test("a worker activated after the final idle observation still fences adoption 
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await drive(f.runtime, 1)
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
-  f.setWorkerSessionHook(4, () =>
+  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
+  let activatedDuringFinalRead = false
+  f.setWorkerSessionHook(4, () => {
+    activatedDuringFinalRead = true
     f.store.atomic((db) =>
       db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(attempt.id),
-    ),
-  )
+    )
+  })
+  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
   await f.runtime.tick()
+  expect(activatedDuringFinalRead).toBe(true)
   f.store.atomic((db) =>
     db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id),
   )
@@ -1366,7 +1542,7 @@ test("a worker activated after the final idle observation still fences adoption 
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
   expect(f.store.attempts(f.planID)[0]).toMatchObject({ id: attempt.id, state: "failed" })
-})
+}, 15_000)
 
 test("cancellation during a fresh check fences late acceptance and preserves adoption worktrees", async () => {
   const f = fixture("failed-task")
@@ -1390,7 +1566,7 @@ test("cancellation during a fresh check fences late acceptance and preserves ado
   )
   writeFileSync(f.taskRelease, "go\n")
   await tick
-  await drive(f.runtime, 3)
+  await waitForAdoptionState(f, adoption.id, "cancelled")
   expect(f.store.adoption(adoption.id)?.state).toBe("cancelled")
   expect(f.store.plan(f.planID)?.state).toBe("cancelled")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
@@ -1426,7 +1602,7 @@ test("cancellation during combined checks prevents late plan acceptance and clea
   )
   writeFileSync(f.graphRelease, "go\n")
   await tick
-  await drive(f.runtime, 3)
+  await waitForAdoptionState(f, requested.adoptionID, "cancelled")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("cancelled")
   expect(f.store.plan(f.planID)?.state).toBe("cancelled")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
@@ -1446,7 +1622,7 @@ test("timed-out adoption checks hold without repair, new worker turns, or accept
   )) as { adoptionID: string }
   const before = f.events.filter((event) => /^(create|prompt):/.test(event)).length
   writeFileSync(f.taskTimeoutGate, "timeout\n")
-  await f.runtime.tick()
+  await waitForAdoptionState(f, requested.adoptionID, "held")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("held")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
@@ -1482,14 +1658,14 @@ test("cancel during worker observation does not create a candidate worktree or p
   )
   releaseObservation(f.sessions.get(attempt.session_id)!)
   await tick
-  await drive(f.runtime, 3)
+  await waitForAdoptionState(f, requested.adoptionID, "cancelled")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("cancelled")
   expect(f.store.plan(f.planID)?.state).toBe("cancelled")
   expect(f.events.filter((event) => event.startsWith("worktree:")).length).toBe(before)
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
 })
 
-test("successful mutating checks retain their result and wait for Architect review", async () => {
+test("successful mutating checks retain their result and require authorized candidate repair", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -1498,8 +1674,7 @@ test("successful mutating checks retain their result and wait for Architect revi
     "owner",
   )) as { adoptionID: string }
   writeFileSync(f.mutationGate, "mutate\n")
-  await f.runtime.tick()
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  await waitForAdoptionState(f, requested.adoptionID, "held")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
@@ -1509,6 +1684,13 @@ test("successful mutating checks retain their result and wait for Architect revi
       .some((effect) => effect.kind.startsWith("adoption-") && effect.state === "uncertain"),
   ).toBe(false)
   expect(f.store.adoptionChecks(requested.adoptionID, "task")[0]?.state).toBe("completed")
+  expect(
+    JSON.parse(f.store.adoptionChecks(requested.adoptionID, "task")[0]!.receipt!),
+  ).toMatchObject({
+    exitCode: 0,
+    timedOut: false,
+  })
+  expect(f.store.plan(f.planID)?.reason).toContain("authorize retained repair")
   expect(
     JSON.parse(f.store.adoptionChecks(requested.adoptionID, "task")[0]!.receipt!).unchanged,
   ).toBeUndefined()

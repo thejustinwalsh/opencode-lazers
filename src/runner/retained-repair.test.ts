@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { settleVerification } from "../../test/runner/verification-driver.ts"
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -244,7 +245,19 @@ function fixture(options: FixtureOptions = {}) {
       session.pendingForms = 0
       session.outcome = "succeeded"
       session.turn = { inputID: input.id, state: "completed" }
-      if (session.background?.state === "observed") session.background.inputID = input.id
+      if (session.background?.state === "observed")
+        Object.assign(session.background, {
+          inputID: input.id,
+          projectDirectory: root,
+          projectID: "project",
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          assignedMessageID: input.id,
+          terminalSequence: 2,
+          terminalEventID: `terminal:${input.id}`,
+          terminalMessageID: `terminal-message:${input.id}`,
+        })
       session.tokens = 150
       session.tools = 3
       if (input.text.includes("Concrete defect to repair:") && options.ambiguousRepair)
@@ -255,9 +268,11 @@ function fixture(options: FixtureOptions = {}) {
     notify: async () => {},
     interrupt: async () => {},
   }
-  const runtime = new TaskRuntime(store, host, "project")
-  cleanups.push(() => {
-    void runtime.stop()
+  const runtime = new TaskRuntime(store, host, "project", undefined, {
+    requestTick: async () => {},
+  })
+  cleanups.push(async () => {
+    await runtime.stop()
     repository.close()
     rmSync(root, { recursive: true, force: true })
     rmSync(state, { recursive: true, force: true })
@@ -289,8 +304,8 @@ async function start(f: ReturnType<typeof fixture>) {
 
 async function accept(f: ReturnType<typeof fixture>) {
   await start(f)
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
 }
 
 function retainedRepairCommand(
@@ -412,8 +427,8 @@ test("retained repair directly corrects an accepted task blocked on combined pro
     workspace: prior.workspace,
     policy: prior.policy,
   })
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.plan(f.planID)?.reason).toContain("combined:human")
@@ -477,8 +492,8 @@ test("explicit retained repair preserves accepted history and usage and re-verif
   expect(f.created).toHaveLength(1)
   expect(f.store.attempts(f.planID)).toHaveLength(1)
 
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
   const acceptedPlan = f.store.plan(f.planID)
   expect(acceptedPlan?.state).toBe("accepted")
   expect(typeof acceptedPlan?.artifact).toBe("string")
@@ -584,8 +599,8 @@ test.each(["reassignment", "renewal"] as const)(
     await f.runtime.tick()
     expect(f.prompts).toHaveLength(2)
     expect(f.prompts[1]?.sessionID).toBe(prior.session_id)
-    await f.runtime.tick()
-    await f.runtime.tick()
+    await settleVerification(f.runtime)
+    await settleVerification(f.runtime)
     expect(f.store.plan(f.planID)?.state).toBe("accepted")
     expect(f.store.attempts(f.planID)).toHaveLength(1)
     expect(f.store.attempts(f.planID)[0]).toMatchObject({ id: prior.id, state: "accepted" })
@@ -651,8 +666,8 @@ test("retained repair follows multiple continuations before reassignment without
   await f.runtime.tick()
   expect(f.prompts).toHaveLength(2)
   expect(f.prompts[1]?.sessionID).toBe(prior.session_id)
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
   expect(f.store.plan(f.planID)?.state).toBe("accepted")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
   expect(f.store.attempts(f.planID)[0]).toMatchObject({
@@ -734,7 +749,7 @@ test("repeated artifact hashes require current-generation human evidence after r
     { requestID: "run", planID: f.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  for (let index = 0; index < 6; index++) await f.runtime.tick()
+  for (let index = 0; index < 6; index++) await settleVerification(f.runtime)
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   const originalAttempt = f.store.attempts(f.planID)[0]!
   const artifact = f.store.nodes(f.planID)[0]!.artifact!
@@ -751,7 +766,7 @@ test("repeated artifact hashes require current-generation human evidence after r
     },
     "owner",
   )
-  for (let index = 0; index < 10; index++) await f.runtime.tick()
+  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   await f.runtime.command(
     {
@@ -762,12 +777,12 @@ test("repeated artifact hashes require current-generation human evidence after r
     },
     "owner",
   )
-  for (let index = 0; index < 10; index++) await f.runtime.tick()
+  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
   expect(f.store.plan(f.planID)?.state).toBe("accepted")
 
   const repair = await f.runtime.command(retainedRepairCommand(f), "owner")
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
   expect(f.store.attempts(f.planID)[0]).toMatchObject({
     id: originalAttempt.id,
     state: "verifying",
@@ -788,7 +803,7 @@ test("repeated artifact hashes require current-generation human evidence after r
     },
     "owner",
   )
-  for (let index = 0; index < 10; index++) await f.runtime.tick()
+  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   await f.runtime.command(
     {
@@ -799,7 +814,7 @@ test("repeated artifact hashes require current-generation human evidence after r
     },
     "owner",
   )
-  for (let index = 0; index < 10; index++) await f.runtime.tick()
+  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
   expect(f.store.plan(f.planID)?.state).toBe("accepted")
   expect(f.store.nodes(f.planID)[0]).toMatchObject({ state: "accepted", artifact })
   const humanEvidence = f.store.atomic((db) =>
@@ -824,7 +839,7 @@ test(
       { requestID: "run", planID: f.planID, expectedVersion: 1, action: "run" },
       "owner",
     )
-    for (let index = 0; index < 6; index++) await f.runtime.tick()
+    for (let index = 0; index < 6; index++) await settleVerification(f.runtime)
     const originalArtifact = f.store.nodes(f.planID)[0]!.artifact!
     await f.runtime.command(
       {
@@ -839,7 +854,7 @@ test(
       },
       "owner",
     )
-    for (let index = 0; index < 10; index++) await f.runtime.tick()
+    for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
     await f.runtime.command(
       {
         requestID: "original-reconcile",
@@ -849,11 +864,11 @@ test(
       },
       "owner",
     )
-    for (let index = 0; index < 10; index++) await f.runtime.tick()
+    for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
     expect(f.store.plan(f.planID)?.state).toBe("accepted")
 
     await f.runtime.command(retainedRepairCommand(f), "owner")
-    for (let index = 0; index < 4; index++) await f.runtime.tick()
+    for (let index = 0; index < 4; index++) await settleVerification(f.runtime)
     expect(f.store.plan(f.planID)?.state).toBe("blocked")
     expect(f.store.attempts(f.planID)[0]?.state).toBe("failed")
 
@@ -868,7 +883,7 @@ test(
       },
       "owner",
     )
-    for (let index = 0; index < 12; index++) await f.runtime.tick()
+    for (let index = 0; index < 12; index++) await settleVerification(f.runtime)
     expect(f.store.attempts(f.planID)).toHaveLength(2)
     expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
     expect(f.store.plan(f.planID)?.state).toBe("blocked")
@@ -991,7 +1006,7 @@ test("source-landed artifacts and tasks with dispatched transitive dependents ca
 
   const dependent = fixture({ dependent: true })
   await start(dependent)
-  await dependent.runtime.tick()
+  await settleVerification(dependent.runtime)
   expect(dependent.store.nodes(dependent.planID)[0]?.state).toBe("accepted")
   expect(dependent.store.attempts(dependent.planID)).toHaveLength(2)
   const command = retainedRepairCommand(dependent)
@@ -1036,8 +1051,8 @@ test("a failed retained repair holds the same attempt for decision without autom
   await accept(f)
   const attempt = f.store.attempts(f.planID)[0]!
   await f.runtime.command(retainedRepairCommand(f), "owner")
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
 
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
@@ -1051,8 +1066,8 @@ test("an ambiguous retained prompt is never automatically replayed", async () =>
   await accept(f)
   const attempt = f.store.attempts(f.planID)[0]!
   await f.runtime.command(retainedRepairCommand(f), "owner")
-  await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
 
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
