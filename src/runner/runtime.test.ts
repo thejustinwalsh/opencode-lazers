@@ -4642,6 +4642,90 @@ test.each([false, true])(
   },
 )
 
+test("whole-plan cancellation interrupts busy siblings while retaining uncertain check ownership", async () => {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    taskFiles: ["a", "b", "c"].map((name) => ({ name, path: `${name}.txt` })),
+    checkCommand: (_name, _path, root) =>
+      `printf "%s" "$$" > ${quote(join(root, "uncertain-pid"))}; sleep 30 >/dev/null 2>&1 & while [ ! -f ${quote(join(root, "uncertain-release"))} ]; do sleep 0.02; done; exit 0`,
+  })
+  const control = await registeredPlanCommand(f.runtime)
+  await runPlan(f)
+  await f.runtime.tick()
+  const [checked, ...siblings] = f.store.attempts(f.receipt.planID)
+  expect(siblings).toHaveLength(2)
+  f.completeWorker(checked!.session_id)
+  await f.runtime.tick()
+  await waitForPath(join(f.root, "uncertain-pid"))
+  const pid = Number(readFileSync(join(f.root, "uncertain-pid"), "utf8"))
+  const originalKill = process.kill.bind(process)
+  const kill = spyOn(process, "kill").mockImplementation(((target, signal) => {
+    if (target === -pid) {
+      if (signal === 0) return true
+      if (signal === "SIGKILL") throw new Error("fixture cannot confirm settlement")
+    }
+    return originalKill(target, signal)
+  }) as typeof process.kill)
+  try {
+    writeFileSync(join(f.root, "uncertain-release"), "go\n")
+    const activity = verificationActivitiesForDatabase(f.repository.path).find(
+      (entry) => entry.metadata.attemptID === checked!.id,
+    )!
+    await activity.settled
+    expect(activity.result).toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+      processCleanup: { state: "uncertain" },
+    })
+    const interrupted: string[] = []
+    const interrupt = f.host.interrupt
+    f.host.interrupt = async (sessionID) => {
+      interrupted.push(sessionID)
+      await interrupt(sessionID)
+    }
+    expect(siblings.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
+    await control.execute({
+      requestID: "cancel-uncertain-check-and-siblings",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    })
+    await f.runtime.tick()
+    expect(interrupted.toSorted()).toEqual(siblings.map((attempt) => attempt.session_id).toSorted())
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+    expect(f.store.plan(f.receipt.planID)?.reason).toContain("settlement is uncertain")
+    await f.runtime.tick()
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+    expect(
+      f.store
+        .attempts(f.receipt.planID)
+        .filter((attempt) => siblings.some((sibling) => sibling.id === attempt.id))
+        .every((attempt) => attempt.state === "cancelled"),
+    ).toBe(true)
+    expect(
+      f.store.attempts(f.receipt.planID).find((attempt) => attempt.id === checked!.id)?.state,
+    ).toBe("verifying")
+    expect(siblings.every((attempt) => existsSync(attempt.workspace))).toBe(true)
+    const effect = f.store
+      .effects(f.receipt.planID)
+      .find((entry) => entry.kind === "verify:content")!
+    expect(effect.state).toBe("uncertain")
+    expect(JSON.parse(effect.receipt!).result.check).toMatchObject({ exitCode: 0, timedOut: false })
+    expect(f.notifications.some((notice) => notice.text.includes('"status":"cancelled"'))).toBe(
+      false,
+    )
+  } finally {
+    kill.mockRestore()
+    try {
+      originalKill(-pid, "SIGKILL")
+    } catch {
+      // The descendant may already have exited while assertions ran.
+    }
+  }
+})
+
 test("independent isolated Git branches overlap and combined verification includes every artifact", async () => {
   const f = fixture({ independent: true, delayed: true })
   await runPlan(f)

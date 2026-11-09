@@ -3083,6 +3083,142 @@ test.each(["cancel-retained-verification", "cancel"] as const)(
   30_000,
 )
 
+for (const action of ["cancel-retained-verification", "cancel"] as const)
+  test.each(["valid", "missing", "generation", "check", "candidate", "isolation"] as const)(
+    `${action} recovers receipt-cut cancellation with %s disk evidence`,
+    async (kind) => {
+      const f = await failedFixture({ requestTick: async () => {} })
+      const control = await registeredPlanCommand(f.runtime)
+      const requested = (await control.execute(retainedVerifyCommand(f, "cancel-receipt-cut"))) as {
+        operationID: string
+      }
+      let captured = false
+      for (let tick = 0; tick < 20 && !captured; tick++) {
+        await f.runtime.tick()
+        const activity = verificationActivitiesForDatabase(f.store.repository.path).find(
+          (entry) => entry.metadata.operationID === requested.operationID,
+        )
+        if (activity) {
+          await activity.settled
+          expect(activity.state).toBe("completed")
+          forgetVerificationActivity(activity.key, activity.identity)
+          captured = true
+        }
+      }
+      expect(captured).toBe(true)
+      const row = f.store.atomic((db) =>
+        db
+          .query<
+            {
+              state: string
+              receipt_path: string
+              context_path: string
+            },
+            [string]
+          >(
+            "SELECT state,receipt_path,context_path FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+          )
+          .get(requested.operationID),
+      )!
+      expect(row.state).toBe("intended")
+      const original = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
+      const changed = structuredClone(original)
+      const isolation = changed.isolation as { generation: number; resources: { inode: number }[] }
+      if (kind === "missing") rmSync(row.receipt_path)
+      else {
+        if (kind === "generation") isolation.generation++
+        if (kind === "check") changed.id = "foreign-check"
+        if (kind === "candidate") changed.artifact = f.attempt.base_commit
+        if (kind === "isolation") isolation.resources[0]!.inode++
+        writeFileSync(row.receipt_path, JSON.stringify(changed))
+      }
+      await f.runtime.stop()
+      f.store.repository.close()
+      const repository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+      const store = new RunnerStore(repository)
+      store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+      const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+        requestTick: async () => {},
+      })
+      cleanups.unshift(async () => {
+        await runtime.stop()
+        repository.close()
+      })
+      const reopenedControl = await registeredPlanCommand(runtime)
+      const command = {
+        requestID: "cancel-after-receipt-cut",
+        planID: f.planID,
+        expectedVersion: store.plan(f.planID)!.version,
+        action,
+        ...(action === "cancel-retained-verification"
+          ? { retainedVerificationID: requested.operationID }
+          : {}),
+      }
+      const worktreesBefore = [...f.worktreeCreations]
+      const spawn = spyOn(Bun, "spawn")
+      try {
+        if (action === "cancel-retained-verification" && kind !== "valid")
+          await expect(reopenedControl.execute(command)).rejects.toThrow(
+            "cancellation remains uncertain",
+          )
+        else await reopenedControl.execute(command)
+        await runtime.tick()
+        const events = () =>
+          store
+            .activity(f.planID, f.task.id)
+            .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED")
+        const saved = store.atomic((db) =>
+          db
+            .query<{ state: string; receipt: string; cleanup_state: string }, [string]>(
+              "SELECT state,receipt,cleanup_state FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+            )
+            .get(requested.operationID),
+        )!
+        expect(saved.state).toBe(kind === "valid" ? "completed" : "uncertain")
+        expect(events()).toHaveLength(kind === "valid" ? 1 : 0)
+        if (kind === "valid") {
+          expect(JSON.parse(saved.receipt)).toEqual(original)
+          expect(saved.cleanup_state).toBe("complete")
+          expect(JSON.parse(events()[0]!.payload)).toMatchObject({
+            operationID: requested.operationID,
+            generation: 1,
+            phase: "task",
+            exitCode: 0,
+            timedOut: false,
+            passed: true,
+            cancelled: true,
+          })
+          expect(existsSync(row.context_path)).toBe(false)
+          await reopenedControl.execute(command)
+        } else {
+          expect(existsSync(row.context_path)).toBe(true)
+          const resources = store.atomic((db) =>
+            db
+              .query<{ state: string }, [string]>(
+                "SELECT state FROM runner_retained_verification_resources WHERE operation_id=?",
+              )
+              .all(requested.operationID),
+          )
+          expect(resources.length).toBeGreaterThan(0)
+          expect(resources.every((resource) => resource.state === "uncertain")).toBe(true)
+        }
+        await runtime.tick()
+        expect(events()).toHaveLength(kind === "valid" ? 1 : 0)
+        expect(store.plan(f.planID)?.state).toBe(
+          action === "cancel" ? (kind === "valid" ? "cancelled" : "cancelling") : "blocked",
+        )
+        expect(store.nodes(f.planID)[0]?.state).not.toBe("accepted")
+        expect(f.prompts).toHaveLength(1)
+        expect(f.worktreeCreations).toEqual(worktreesBefore)
+        expect(spawn).not.toHaveBeenCalled()
+        expect(verificationActivitiesForDatabase(repository.path)).toHaveLength(0)
+      } finally {
+        spawn.mockRestore()
+      }
+    },
+    30_000,
+  )
+
 test.each([false, true])(
   "retained completion events survive receipt-cut reopen=%s exactly once",
   async (receiptCut) => {

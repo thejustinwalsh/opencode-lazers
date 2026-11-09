@@ -445,6 +445,7 @@ export class TaskRuntime {
         activity.metadata.operationID === operationID,
     )
     for (const activity of activities) await this.settleCancelledRetainedActivity(activity)
+    await this.recoverCancelledRetainedChecks(operationID)
     const uncertain = activities.find((activity) => checkSettlementProblem(activity))
     const problem = uncertain
       ? checkSettlementProblem(uncertain)
@@ -545,7 +546,38 @@ export class TaskRuntime {
   }
 
   private async settleCancelledRetainedActivity(activity: VerificationActivity): Promise<void> {
-    const metadata = activity.metadata
+    await this.settleCancelledRetainedReceipt(activity.metadata, activity)
+  }
+
+  private async recoverCancelledRetainedChecks(operationID: string): Promise<void> {
+    const operation = this.store.atomic((db) => retainedVerification(db, operationID))
+    if (
+      !operation ||
+      operation.state !== "cancelled" ||
+      operation.projectDirectory !== this.directory
+    )
+      return
+    const checks = this.store.atomic((db) => retainedVerificationChecks(db, operationID))
+    for (const check of checks) {
+      if (check.state === "completed") continue
+      // These are durable bindings, not a synthesized successful activity.
+      // The disk receipt and isolation witness must independently validate.
+      await this.settleCancelledRetainedReceipt({
+        operationID,
+        generation: operation.generation,
+        phase: check.phase,
+        checkID: check.checkID,
+        workspace: check.workspace,
+        artifact: check.artifact,
+        contextPath: check.contextPath,
+      })
+    }
+  }
+
+  private async settleCancelledRetainedReceipt(
+    metadata: Record<string, unknown>,
+    activity?: VerificationActivity,
+  ): Promise<void> {
     if (
       typeof metadata.operationID !== "string" ||
       !Number.isSafeInteger(metadata.generation) ||
@@ -588,23 +620,34 @@ export class TaskRuntime {
     const procedure = retainedProcedurePlan(check.command)
     let valid = false
     try {
-      if (activity.state === "completed" && receipt && procedure.status === "supported")
+      if (
+        (!activity || activity.state === "completed") &&
+        receipt &&
+        procedure.status === "supported"
+      )
         valid = Boolean(
           row.workspace === metadata.workspace &&
           row.artifact === metadata.artifact &&
-          observeRetainedCheckIsolationWitness(row.contextPath, metadata.isolation, {
-            operationID,
-            generation,
-            phase,
-            checkID,
-            originalWorkspace: operation.originalWorkspace,
-            candidateWorkspace: row.workspace,
-            taskDatabase: this.store.repository.path,
-            projectDirectory: this.directory,
-            candidateArtifact: row.artifact,
-            projectIdentity: retainedProjectIdentity(this.directory, row.workspace, row.artifact),
-            procedurePlan: procedure.plan,
-          }) &&
+          row.contextPath === metadata.contextPath &&
+          row.workspace === this.retainedVerificationIsolatedWorkspace(operation, phase) &&
+          row.artifact === (phase === "task" ? operation.artifact : operation.combinedArtifact) &&
+          observeRetainedCheckIsolationWitness(
+            row.contextPath,
+            activity ? metadata.isolation : receipt.isolation,
+            {
+              operationID,
+              generation,
+              phase,
+              checkID,
+              originalWorkspace: operation.originalWorkspace,
+              candidateWorkspace: row.workspace,
+              taskDatabase: this.store.repository.path,
+              projectDirectory: this.directory,
+              candidateArtifact: row.artifact,
+              projectIdentity: retainedProjectIdentity(this.directory, row.workspace, row.artifact),
+              procedurePlan: procedure.plan,
+            },
+          ) &&
           this.retainedVerificationCheckReceipt(
             receipt,
             operation,
@@ -662,7 +705,7 @@ export class TaskRuntime {
           operationID,
           phase,
           checkID,
-          activity.error
+          activity?.error
             ? `Verification process termination or receipt is uncertain: ${errorText(activity.error)}`
             : "Cancelled verification receipt did not match its retained operation binding",
         ),
@@ -7202,6 +7245,13 @@ export class TaskRuntime {
     if (plan.state === "cancelling") {
       const activities = await this.cancelCheckActivities(plan.id)
       await this.reconcileCancelledCheckActivities(plan, activities, fence)
+      const cancelledOperations = this.store.atomic((db) =>
+        retainedVerificationsForPlan(db, this.directory, plan!.id).filter(
+          (operation) => operation.state === "cancelled",
+        ),
+      )
+      for (const operation of cancelledOperations)
+        await this.recoverCancelledRetainedChecks(operation.id)
       const retainedProblem = this.store.atomic((db) =>
         retainedVerificationsForPlan(db, this.directory, plan!.id).some(
           (operation) =>
@@ -7211,6 +7261,9 @@ export class TaskRuntime {
       )
       const unsettled = activities.find((activity) => checkSettlementProblem(activity))
       if (unsettled || retainedProblem) {
+        // Process uncertainty fences terminal settlement, not interruption of
+        // other owned workers. Continue cancellation without declaring idle.
+        await this.cancelWorkers(plan, fence, false)
         const reason = `Verification cancellation settlement is uncertain: ${unsettled ? checkSettlementProblem(unsettled) : "retained check resources remain unconfirmed"}`
         this.store.fenced(this.owner, fence, (db) => {
           if (this.store.plan(plan!.id)?.reason === reason) return
@@ -7405,7 +7458,7 @@ export class TaskRuntime {
       await this.finish(plan, fence)
   }
 
-  private async cancelWorkers(plan: PlanRow, fence: number) {
+  private async cancelWorkers(plan: PlanRow, fence: number, allowPlanSettlement = true) {
     const active = this.store
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
@@ -7544,6 +7597,7 @@ export class TaskRuntime {
       if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
     }
     if (
+      !allowPlanSettlement ||
       waiting ||
       this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
     )
