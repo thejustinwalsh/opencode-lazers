@@ -91,6 +91,11 @@ progress criteria.
    corrections, and paged history for the current plan Architect or exact source
    worker.
 
+An Architect reviewing or recovering an existing reservation calls
+`lz-verify-handoff` with its `requestID`, `draftVersion`, evidence, and exact
+`reviewID`. This reads and reviews the persisted worker-authored draft; the
+Architect cannot create or replace draft data.
+
 Reports and corrections preserve the original source task/attempt. They do not
 prove completion, stopped writes/background work, or authorize another writer.
 Use runtime tools for execution transitions and task acceptance.

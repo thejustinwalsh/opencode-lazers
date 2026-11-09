@@ -5,7 +5,11 @@ import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Schema } from "effect"
 import { HandoffDraft } from "../../src/recovery/handoff/schema.ts"
-import { HandoffStore } from "../../src/recovery/handoff/store.ts"
+import { HandoffReviewer } from "../../src/recovery/handoff/review.ts"
+import {
+  HANDOFF_REVIEW_RESERVATION_LEASE_MS,
+  HandoffStore,
+} from "../../src/recovery/handoff/store.ts"
 import { registerRecoveryTools } from "../../src/recovery/tools.ts"
 import { TaskRepository } from "../../src/storage.ts"
 import { makeFixture, secondAttemptID } from "../trajectory/fixture.ts"
@@ -56,6 +60,7 @@ type HandoffRequest = { record: { requestID: string; requestGeneration: number }
 type HandoffReview = {
   status: string
   limitation: string | null
+  errors?: string[]
   draftID: string
   draftVersion: number
   reviewID: string
@@ -114,6 +119,7 @@ async function setup(
   const tools = new Map<string, RegisteredTool>()
   const permissionCalls: string[] = []
   const syntheticCalls: Array<{ sessionID: string; id: string; text: string }> = []
+  const reviewInputs: unknown[] = []
   const messages = new Map<string, Array<{ id: string; type: string }>>()
   let insertedDuringRead = false
   const editor: ToolEditor = {
@@ -178,7 +184,12 @@ async function setup(
       context: ({ sessionID }: { sessionID: string }) =>
         Effect.succeed(messages.get(String(sessionID)) ?? []),
     },
-    rpc: () => ({ review: () => Effect.fail(new Error("local review is unavailable")) }),
+    rpc: () => ({
+      review: (input: unknown) => {
+        reviewInputs.push(input)
+        return Effect.fail(new Error("local review is unavailable"))
+      },
+    }),
   } as unknown as Pick<Plugin.Context, "tool" | "permission" | "location" | "session" | "rpc">
   const register = () =>
     Effect.runPromise(Effect.scoped(registerRecoveryTools(fakeContext, fixture.repository)))
@@ -189,6 +200,7 @@ async function setup(
     tools,
     permissionCalls,
     syntheticCalls,
+    reviewInputs,
     messages,
     register,
     invoke: async <T = unknown>(
@@ -535,6 +547,241 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
   } finally {
     reopenedRepository.close()
   }
+})
+
+test("registered verification lets the current Architect review only an existing worker draft", async () => {
+  const f = await setup()
+  const request = await f.invoke<HandoffRequest>(
+    "lz-request-handoff",
+    {
+      requestID: "architect-review-existing-draft",
+      sourceAttemptID: secondAttemptID,
+      request: {
+        purpose: "Review the worker's exact persisted handoff without changing its authorship.",
+        references: [{ kind: "trajectory", reference: "attempt:current" }],
+      },
+    },
+    architect("architect-review-request"),
+  )
+  const submittedDraft = draft()
+  const draftID = crypto.randomUUID()
+  const workerReview = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftID,
+      draft: submittedDraft,
+      evidence: [{ kind: "trajectory", reference: "attempt:worker-review" }],
+    },
+    worker("worker-create-draft"),
+  )
+  expect(workerReview.draftVersion).toBe(1)
+
+  const store = new HandoffStore(f.fixture.repository)
+  const persistedWorkerDraft = store.getDraft(request.record.requestID, 1)
+  expect(persistedWorkerDraft).toMatchObject({
+    draftID,
+    author: { sessionID: "ses-accepted", agent: "lazers-implementor", role: "worker" },
+    draft: submittedDraft,
+  })
+  const architectReview = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftVersion: 1,
+      evidence: [{ kind: "trajectory", reference: "attempt:architect-review" }],
+      reviewID: workerReview.reviewID,
+    },
+    architect("architect-review-existing"),
+  )
+  expect(architectReview).toMatchObject({
+    status: "unavailable",
+    draftID,
+    draftVersion: 1,
+    reviewID: workerReview.reviewID,
+    round: 2,
+  })
+  expect(store.getReviewRound(request.record.requestID, workerReview.reviewID, 2)).toMatchObject({
+    draftVersion: 1,
+    reviewer: { sessionID: "ses-owner", agent: "architect", role: "architect" },
+  })
+  expect(store.getDraft(request.record.requestID, 1)).toEqual(persistedWorkerDraft)
+  expect(f.reviewInputs).toHaveLength(2)
+  expect(f.reviewInputs[1]).toMatchObject({ state: { draft: submittedDraft } })
+
+  const changedDraft = HandoffDraft.parse({
+    ...submittedDraft,
+    remainingWork: { status: "known", value: "An Architect must not substitute this data." },
+  })
+  await expect(
+    f.invoke(
+      "lz-verify-handoff",
+      {
+        requestID: request.record.requestID,
+        draftID: crypto.randomUUID(),
+        draft: changedDraft,
+        evidence: [],
+      },
+      architect("architect-cannot-author"),
+    ),
+  ).rejects.toThrow("Architects may review only an existing worker-authored draft version")
+  expect(store.getDraft(request.record.requestID, 2)).toBeUndefined()
+
+  const changedWorkerSubmission = await f.invoke<{ status: string; message: string }>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftID,
+      draft: changedDraft,
+      evidence: [{ kind: "trajectory", reference: "attempt:changed-data" }],
+    },
+    worker("worker-changed-data"),
+  )
+  expect(changedWorkerSubmission).toMatchObject({
+    status: "conflict",
+    message: "draftID already identifies different handoff content",
+  })
+  expect(store.getDraft(request.record.requestID, 1)).toEqual(persistedWorkerDraft)
+
+  const existingDraftInput = {
+    requestID: request.record.requestID,
+    draftVersion: 1,
+    evidence: [{ kind: "trajectory" as const, reference: "attempt:architect-review" }],
+    reviewID: workerReview.reviewID,
+  }
+  await expect(
+    f.invoke(
+      "lz-verify-handoff",
+      existingDraftInput,
+      toolContext("ses-foreign", "architect", "foreign-review"),
+    ),
+  ).rejects.toThrow("Handoff caller is not the current owner of the source plan")
+  await expect(
+    f.invoke(
+      "lz-verify-handoff",
+      { ...existingDraftInput, draftVersion: 2 },
+      architect("architect-stale-draft"),
+    ),
+  ).rejects.toThrow("Draft version is not attached to this request")
+  await expect(
+    f.invoke(
+      "lz-verify-handoff",
+      { ...existingDraftInput, draftID, draft: changedDraft },
+      architect("architect-changed-data"),
+    ),
+  ).rejects.toThrow(/Unrecognized key|Invalid input/)
+  expect(f.reviewInputs).toHaveLength(2)
+})
+
+test("registered Architect verification recovers an expired worker review reservation", async () => {
+  const f = await setup()
+  const request = await f.invoke<HandoffRequest>(
+    "lz-request-handoff",
+    {
+      requestID: "architect-recover-expired-review",
+      sourceAttemptID: secondAttemptID,
+      request: {
+        purpose: "Recover the existing worker review reservation without replacing its data.",
+        references: [{ kind: "trajectory", reference: "attempt:current" }],
+      },
+    },
+    architect("architect-recovery-request"),
+  )
+  const store = new HandoffStore(f.fixture.repository)
+  const sourceWorker = {
+    sessionID: "ses-accepted",
+    agent: "lazers-implementor",
+    role: "worker" as const,
+  }
+  const saved = store.saveDraft(
+    {
+      requestID: request.record.requestID,
+      draftID: crypto.randomUUID(),
+      draft: draft(),
+    },
+    sourceWorker,
+  )
+  if (saved.status === "conflict") throw new Error(saved.message)
+
+  let enterTransport!: () => void
+  let releaseTransport!: () => void
+  const transportStarted = new Promise<void>((resolve) => (enterTransport = resolve))
+  const transportGate = new Promise<void>((resolve) => (releaseTransport = resolve))
+  const interruptedReviewer = new HandoffReviewer(
+    store,
+    {
+      systemOne: async () => {
+        enterTransport()
+        await transportGate
+        throw new Error("The original review was interrupted.")
+      },
+    },
+    () => {},
+  )
+  const reviewID = crypto.randomUUID()
+  const reviewEvidence = [{ kind: "trajectory" as const, reference: "attempt:interrupted-review" }]
+  const originalReview = interruptedReviewer.review(
+    {
+      requestID: request.record.requestID,
+      draftVersion: saved.record.draftVersion,
+      evidence: reviewEvidence,
+      reviewID,
+    },
+    sourceWorker,
+    new AbortController().signal,
+  )
+  await transportStarted
+  const reservation = store.getReviewRound(request.record.requestID, reviewID, 1)
+  expect(reservation?.outcome).toBeUndefined()
+  if (!reservation) throw new Error("Review reservation was not persisted before inference")
+  f.fixture.repository.atomic((db) => {
+    const expired = {
+      ...reservation,
+      reservedAt: new Date(Date.now() - HANDOFF_REVIEW_RESERVATION_LEASE_MS - 1).toISOString(),
+    }
+    db.query(
+      `UPDATE recovery_handoff_rounds SET payload=?
+       WHERE project_directory=? AND review_id=? AND round=?`,
+    ).run(JSON.stringify(expired), f.fixture.repository.projectDirectory, reviewID, 1)
+  })
+
+  let recovered: HandoffReview
+  try {
+    recovered = await f.invoke<HandoffReview>(
+      "lz-verify-handoff",
+      {
+        requestID: request.record.requestID,
+        draftVersion: saved.record.draftVersion,
+        evidence: reviewEvidence,
+        reviewID,
+      },
+      architect("architect-recover-review"),
+    )
+  } finally {
+    releaseTransport()
+  }
+  expect(recovered).toMatchObject({
+    status: "unavailable",
+    draftID: saved.record.draftID,
+    draftVersion: saved.record.draftVersion,
+    reviewID,
+    round: 1,
+  })
+  expect(recovered.errors?.[0]).toContain("interrupted before a result")
+  expect(f.reviewInputs).toHaveLength(0)
+  const lateWorkerReview = await originalReview
+  if (lateWorkerReview.status !== "unavailable")
+    throw new Error("The interrupted worker review did not observe the Architect's recovery")
+  expect(lateWorkerReview.reviewID).toBe(reviewID)
+  expect(lateWorkerReview.round).toBe(1)
+  const completed = store
+    .readHistory({ requestID: request.record.requestID })!
+    .events.find((event) => event.kind === "review-completed")
+  expect(completed?.data).toMatchObject({
+    reviewer: sourceWorker,
+    completedBy: { sessionID: "ses-owner", agent: "architect", role: "architect" },
+    recovered: true,
+  })
 })
 
 test("ambiguous checkpoint admission is persisted and never resent on replay", async () => {

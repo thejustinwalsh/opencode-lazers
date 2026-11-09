@@ -26,6 +26,19 @@ type RecoveryContext = Pick<Plugin.Context, "tool" | "permission" | "location" |
 const limit = z.int().positive().max(100).default(20)
 const concernLimit = z.int().positive().max(50).default(20)
 const evidence = z.array(HandoffEvidence).max(100).default([])
+const HandoffVerifyInput = z.union([
+  z.strictObject({
+    ...HandoffDraftSubmissionInput.shape,
+    evidence,
+    reviewID: z.uuid().optional(),
+  }),
+  z.strictObject({
+    requestID: HandoffDraftSubmissionInput.shape.requestID,
+    draftVersion: z.int().positive(),
+    evidence,
+    reviewID: z.uuid().optional(),
+  }),
+])
 
 function actor(call: { sessionID: string; agent: string }): HandoffActor {
   const agent = String(call.agent)
@@ -336,15 +349,11 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     editor.add({
       name: "lz-verify-handoff",
       description:
-        "Submit structured handoff data for the existing focused source-attached review. The immutable draft is persisted before review; use the returned draftVersion, reviewID and round with lz-submit-handoff to finalize this exact reviewed version. Disabled/unavailable review is an explicit limitation, never a pass; neither tool changes task acceptance or authorizes another writer.",
-      input: z.strictObject({
-        ...HandoffDraftSubmissionInput.shape,
-        evidence,
-        reviewID: z.uuid().optional(),
-      }),
+        "The assigned worker submits structured handoff data; an Architect may instead review or recover an existing worker-authored draft by requestID and draftVersion. Existing data is read as stored and cannot be replaced by the Architect. Use the returned draftVersion, reviewID and round with lz-submit-handoff to finalize this exact reviewed version. Disabled/unavailable review is an explicit limitation, never a pass; neither tool changes task acceptance or authorizes another writer.",
+      input: HandoffVerifyInput,
       output: z.unknown(),
       options: { codemode: true, permission: "lz-verify-handoff" },
-      execute: (input, call) =>
+      execute: (rawInput, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
@@ -356,30 +365,59 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async (signal) => {
+                  const input = HandoffVerifyInput.parse(rawInput)
                   const caller = actor(call)
-                  const saved = store.saveDraft(
-                    {
+                  let draftID: string
+                  let draftVersion: number
+                  let reviewInput: {
+                    requestID: string
+                    draftVersion: number
+                    evidence: typeof input.evidence
+                    reviewID?: string
+                  }
+                  if ("draftVersion" in input) {
+                    const existing = store.readReviewContext(
+                      { requestID: input.requestID, draftVersion: input.draftVersion },
+                      caller,
+                    ).draft
+                    if (existing.author.role !== "worker")
+                      throw new Error("Only an existing worker-authored draft can be reviewed")
+                    draftID = existing.draftID
+                    draftVersion = existing.draftVersion
+                    reviewInput = {
                       requestID: input.requestID,
-                      draftID: input.draftID,
-                      draft: input.draft,
-                    },
-                    caller,
-                  )
-                  if (saved.status === "conflict") return output(saved)
-                  const reviewed = await reviewer.review(
-                    {
-                      requestID: input.requestID,
-                      draftVersion: saved.record.draftVersion,
+                      draftVersion,
                       evidence: input.evidence,
                       ...(input.reviewID ? { reviewID: input.reviewID } : {}),
-                    },
-                    caller,
-                    signal,
-                  )
+                    }
+                  } else {
+                    if (caller.role !== "worker")
+                      throw new Error(
+                        "Architects may review only an existing worker-authored draft version",
+                      )
+                    const saved = store.saveDraft(
+                      {
+                        requestID: input.requestID,
+                        draftID: input.draftID,
+                        draft: input.draft,
+                      },
+                      caller,
+                    )
+                    if (saved.status === "conflict") return output(saved)
+                    draftID = saved.record.draftID
+                    draftVersion = saved.record.draftVersion
+                    reviewInput = {
+                      requestID: input.requestID,
+                      draftVersion,
+                      evidence: input.evidence,
+                      ...(input.reviewID ? { reviewID: input.reviewID } : {}),
+                    }
+                  }
+                  const reviewed = await reviewer.review(reviewInput, caller, signal)
                   return output({
                     ...reviewed,
-                    draftID: saved.record.draftID,
-                    draftVersion: saved.record.draftVersion,
+                    draftID,
+                    draftVersion,
                   })
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),
