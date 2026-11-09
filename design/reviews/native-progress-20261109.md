@@ -176,3 +176,17 @@ Runtime plan became accepted and Architect automatically resumed at
 Unix1794203003814, announcing review and then actually inspecting source and
 test output. Completion delivery/consumption worked in this instance. Review
 completion, live qualification, integration and cleanup remain unproven.
+
+Native review then identified shutdown ignoring completed checks with uncertain
+subprocess cleanup and missing normal retained-check completion activity events.
+It separately identified an inherited whole-plan cancellation gap. Architect
+inspected the findings, requested their correction within LZ-199, and dispatched
+the SAME worker session and attempt through native controls. By
+Unix1794203521121 that worker was active and reading the affected runtime paths.
+No driver prompt, SQL repair, replacement attempt or new microtask caused this
+review-to-repair continuation. Corrected behavior and final delivery are pending.
+
+The previously stale Tasks view caught up after a native filter-button click:
+selected LZ-199 showed Accepted and worker rows no longer showed blanket Active.
+No reload or service restart was performed. Background panel freshness remains
+an observation to investigate, not proof the runtime had stopped.
