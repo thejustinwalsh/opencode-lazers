@@ -5,6 +5,33 @@ value implementers after a fixed duration or token count. Preserve the useful
 draft and failure history. The goal remains completed engineering work at low
 total token, time and market-equivalent cost.
 
+## Current execution
+
+Corrected task **LZ-199** (`d9ceb8a7-6b31-4b04-b6bc-fb4129c73538`) runs in plan
+`5412cca2-3cd5-4d51-abfb-f64e1e59d685`, attempt
+`42f98841-b29b-43d1-9fb9-a1374bcfb31f`, native session
+`ses_325a8b20d34449fe9ac4100bcb0a35a2`. Its new checkout composes the preserved
+draft with current main; the original checkout remains untouched. Actual route
+is OpenAI Sol6.1 **default**, not confirmed High. Parent Architect is Sol High.
+
+Quality checks passed. The first completed full runner run returned **600 pass,
+78 fail,1 error;7924 assertions across678 tests in325.84 seconds**, native
+message `msg_1bea0a5b0001hDpvxkcMz0c92r`, completed **1794199892833**. The worker
+remains active; implementation completion and integration are unproven. This
+result replaces any inference that focused passes established a complete draft.
+Some displayed failures concern intermediate async states; fixture assumptions
+and actual implementation defects still require investigation, not assertion
+removal or blanket reclassification.
+
+LZ-195's original Luna Max worker has actually resumed retained repair and
+consumed Architect steering `msg_1be9e5c54001FIi5jyLb2brAwM`. Its current changes
+address the economic/current-contract guidance and the requested two-tool handoff
+workflow. The latter mismatch is detailed in
+[the candidate review](recovery-controls-review-20261109.md). Changes in progress
+do not establish corrected tests or live behavior. Independent LZ-164 returned
+`b935f5f` with74 tests passing; the shortcut candidate's native source reviewer
+found no substantive issue. Their integration remains a separate observation.
+
 ## Observed facts
 
 Original task `75c838e3-d292-46aa-968f-8cc5417a1ee7`, attempt
