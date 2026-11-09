@@ -53,8 +53,14 @@ type CheckpointState = {
 }
 type CheckpointResponse = { record: { observedCallID: string; reportedBy: { sessionID: string } } }
 type HandoffRequest = { record: { requestID: string; requestGeneration: number } }
-type HandoffDraftReceipt = { record: { draftVersion: number } }
-type HandoffReview = { status: string; limitation: string | null; reviewID: string; round: number }
+type HandoffReview = {
+  status: string
+  limitation: string | null
+  draftID: string
+  draftVersion: number
+  reviewID: string
+  round: number
+}
 type HandoffFinalization = { report: { reportID: string; reviewStatus: string } }
 type HandoffRead = {
   reports: Array<{ reportID: string }>
@@ -213,11 +219,11 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     "lz-request-handoff",
     "lz-submit-handoff",
     "lz-verify-handoff",
-    "lz-finalize-handoff",
     "lz-disposition-handoff",
     "lz-read-handoff",
   ])
     expect(f.tools.has(name)).toBe(true)
+  expect(f.tools.has("lz-finalize-handoff")).toBe(false)
 
   const concernID = crypto.randomUUID()
   const firstConcernInput = {
@@ -371,37 +377,78 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     architect("handoff-request"),
   )
   expect(request.record.requestID).toBe("handoff-source-request")
-  const saved = await f.invoke<HandoffDraftReceipt>(
-    "lz-submit-handoff",
-    {
-      requestID: request.record.requestID,
-      draftID: crypto.randomUUID(),
-      draft: draft(),
-    },
-    worker("handoff-draft"),
-  )
-  expect(saved.record.draftVersion).toBe(1)
+
+  const submittedDraft = draft()
+  const draftID = crypto.randomUUID()
+  await expect(
+    f.invoke(
+      "lz-submit-handoff",
+      {
+        finalizationID: crypto.randomUUID(),
+        requestID: request.record.requestID,
+        draftVersion: 1,
+        reviewID: crypto.randomUUID(),
+        round: 1,
+      },
+      worker("handoff-submit-before-review"),
+    ),
+  ).rejects.toThrow("Draft version is not attached")
   const review = await f.invoke<HandoffReview>(
     "lz-verify-handoff",
     {
       requestID: request.record.requestID,
-      draftVersion: 1,
+      draftID,
+      draft: submittedDraft,
       evidence: [{ kind: "trajectory", reference: "attempt:current" }],
     },
     worker("handoff-review"),
   )
   expect(review.status).toBe("unavailable")
   expect(review.limitation).toBeTruthy()
+  expect(review.draftID).toBe(draftID)
+  expect(review.draftVersion).toBe(1)
+
+  const revisedDraft = HandoffDraft.parse({
+    ...submittedDraft,
+    remainingWork: {
+      status: "known",
+      value: "This newer unreviewed version must not inherit the old review.",
+    },
+  })
+  const seededVersion = new HandoffStore(f.fixture.repository).saveDraft(
+    {
+      requestID: request.record.requestID,
+      draftID: crypto.randomUUID(),
+      draft: revisedDraft,
+    },
+    { sessionID: "ses-accepted", agent: "lazers-implementor", role: "worker" },
+  )
+  if (seededVersion.status === "conflict") throw new Error(seededVersion.message)
+  expect(seededVersion.record.draftVersion).toBe(2)
+  await expect(
+    f.invoke(
+      "lz-submit-handoff",
+      {
+        finalizationID: crypto.randomUUID(),
+        requestID: request.record.requestID,
+        draftVersion: seededVersion.record.draftVersion,
+        reviewID: review.reviewID,
+        round: review.round,
+      },
+      worker("handoff-stale-submit"),
+    ),
+  ).rejects.toThrow("Review result is missing, stale, or belongs to another draft/caller")
+
   const finalized = await f.invoke<HandoffFinalization>(
-    "lz-finalize-handoff",
+    "lz-submit-handoff",
     {
       finalizationID: crypto.randomUUID(),
       requestID: request.record.requestID,
-      draftVersion: 1,
+      draftVersion: review.draftVersion,
       reviewID: review.reviewID,
       round: review.round,
     },
-    worker("handoff-finalize"),
+    worker("handoff-submit"),
   )
   expect(finalized.report.reviewStatus).toBe("unavailable")
   const detail = await f.invoke<HandoffRead>(

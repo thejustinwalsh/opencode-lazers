@@ -334,30 +334,11 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     })
 
     editor.add({
-      name: "lz-submit-handoff",
-      description:
-        "Save an immutable structured handoff draft to the source request as the assigned worker. Saving is not review, finalization, task completion, or proof that writes/background work stopped.",
-      input: HandoffDraftSubmissionInput,
-      output: z.unknown(),
-      options: { codemode: true, permission: "lz-submit-handoff" },
-      execute: (input, call) =>
-        ctx.permission
-          .assert({
-            sessionID: call.sessionID,
-            agent: call.agent,
-            action: "lz-submit-handoff",
-            resources: ["*"],
-          })
-          .pipe(Effect.map(() => output(store.saveDraft(input, actor(call))))),
-    })
-
-    editor.add({
       name: "lz-verify-handoff",
       description:
-        "Run the existing focused source-attached review for an exact handoff draft. Disabled/unavailable review is returned as a limitation, never a pass. This tool neither changes task acceptance nor authorizes another writer.",
+        "Submit structured handoff data for the existing focused source-attached review. The immutable draft is persisted before review; use the returned draftVersion, reviewID and round with lz-submit-handoff to finalize this exact reviewed version. Disabled/unavailable review is an explicit limitation, never a pass; neither tool changes task acceptance or authorizes another writer.",
       input: z.strictObject({
-        requestID: z.string().min(1).max(200),
-        draftVersion: z.int().positive(),
+        ...HandoffDraftSubmissionInput.shape,
         evidence,
         reviewID: z.uuid().optional(),
       }),
@@ -374,7 +355,33 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async (signal) => output(await reviewer.review(input, actor(call), signal)),
+                try: async (signal) => {
+                  const caller = actor(call)
+                  const saved = store.saveDraft(
+                    {
+                      requestID: input.requestID,
+                      draftID: input.draftID,
+                      draft: input.draft,
+                    },
+                    caller,
+                  )
+                  if (saved.status === "conflict") return output(saved)
+                  const reviewed = await reviewer.review(
+                    {
+                      requestID: input.requestID,
+                      draftVersion: saved.record.draftVersion,
+                      evidence: input.evidence,
+                      ...(input.reviewID ? { reviewID: input.reviewID } : {}),
+                    },
+                    caller,
+                    signal,
+                  )
+                  return output({
+                    ...reviewed,
+                    draftID: saved.record.draftID,
+                    draftVersion: saved.record.draftVersion,
+                  })
+                },
                 catch: (error) => new Tool.Error({ message: String(error) }),
               }),
             ),
@@ -382,18 +389,18 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     })
 
     editor.add({
-      name: "lz-finalize-handoff",
+      name: "lz-submit-handoff",
       description:
-        "Finalize the exact reviewed draft and preserve its immutable report. A report, including a limited review, is not task acceptance or runtime authority.",
+        "Finalize the exact handoff draft version and review round returned by lz-verify-handoff. This persists the reviewed report and notification intent; it is not task completion, proof that writes/background work stopped, or authority for another writer.",
       input: HandoffFinalizeInput,
       output: z.unknown(),
-      options: { codemode: true, permission: "lz-finalize-handoff" },
+      options: { codemode: true, permission: "lz-submit-handoff" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lz-finalize-handoff",
+            action: "lz-submit-handoff",
             resources: ["*"],
           })
           .pipe(Effect.map(() => output(store.finalize(input, actor(call))))),

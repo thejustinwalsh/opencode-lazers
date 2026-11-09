@@ -6,6 +6,23 @@ export function taskInstructions(detail: TaskDetail): string {
   if (detail.status !== "found") return `Task ${detail.status}.`
   const { task } = detail,
     proposal = task.proposal
+  if (detail.disposition?.disposition === "superseded") {
+    const successors = detail.disposition.relatedTaskIDs
+    const currentContract =
+      successors.length === 1
+        ? `The supersession record identifies task ${successors[0]} as the replacement. Retrieve it with \`lz-get-task\` using that exact task ID, then follow only the replacement's current objective, acceptance, scope, constraints, and verification. Do not combine this historical contract with the replacement.`
+        : successors.length > 1
+          ? `The supersession record lists related tasks ${successors.join(", ")}, but does not identify one replacement. Ask the current Architect which task is authoritative before continuing.`
+          : "The supersession record does not identify a replacement task. Ask the current Architect for the authoritative contract before continuing."
+    return (
+      `# Task ${task.id} (${detail.reference}), revision ${task.revision} — superseded history` +
+      `\n\nThis immutable task is superseded, not an active implementation contract. Do not treat its objective, Done conditions, write scope, exclusions, constraints, assumptions, guidance, or verification as current obligations.` +
+      `\n\n## Current contract\n${currentContract}` +
+      `\n\n## Supersession record\n${detail.disposition.reason}` +
+      `\nEvidence: ${detail.disposition.evidence.map((item) => item.reference).join("; ")}` +
+      `\n\nThe full historical specification remains inspectable with \`lz-get-task\` for taskID \`${task.id}\` and \`format: "structured"\`; use it only as history.`
+    )
+  }
   const amendment = detail.activity?.findLast((event) => event.event === "SCOPE_AMENDED")
   let amendedScope: string[] = []
   if (amendment) {

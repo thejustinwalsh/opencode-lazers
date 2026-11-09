@@ -22,6 +22,34 @@ plan owner are validated by the store. Read-only inspection does not prompt or
 change runtime state. Automatic concern detection/notification and due-follow-up
 wakes are deferred to linked delivery work.
 
+## Evidence-based recovery decisions
+
+For a consequential continuation, steering, scope, handoff, or proposed takeover
+decision, put a concise rationale in the ordinary disposition reason and cite
+supporting evidence. Reuse measured usage and progress from `lz-inspect-trajectory`
+when they inform the decision. Include market-valued cost only when an applicable
+configured price source supports it; report missing usage or valuation as unknown,
+never zero, and treat session-reported charges as diagnostics rather than market
+rates. State progress or remaining work as unknown when the available evidence
+does not establish them. Weigh failed approaches, demonstrated progress, scope
+growth, retained value, and bounded remaining work. Compare the value and effort
+of the current worker's next useful step with the coordination and continuation
+overhead of continuing, handing off, or taking over. Prefer finishing a bounded
+useful outcome in the current worker when the evidence supports it; new findings
+do not automatically expand scope, and sunk effort is not a reason to continue.
+Record the next observable result or condition (or a specific time) that will
+trigger reassessment. Do not invent quotas or automatically escalate to a
+frontier/model tier; a takeover or model change requires an explicit Architect
+decision and any needed authorization.
+
+A concise rationale can say: “Continue this worker because [observed progress and
+retained value], after [failed approaches]; measured usage is [evidence or
+unknown] and market-valued cost is [source/value or unknown]. Remaining work is
+[bounded work or unknown]; compare the current worker's next step with
+[coordination/continuation overhead]. Reassess when [observable result or
+condition].” Use only decision-relevant facts and references; this is not a new
+valuation or retrospective subsystem.
+
 ## Same-worker checkpoint
 
 `lz-checkpoint-recovery-worker` requires an Architect-owned concern on the exact
@@ -49,15 +77,17 @@ progress criteria.
 1. Architect calls `lz-request-handoff` for the source attempt and provides its
    returned `requestID` to the worker. This explicit request is persisted; it does
    not automatically notify the worker.
-2. The assigned source worker saves an immutable structured draft with
-   `lz-submit-handoff`.
-3. The worker or Architect runs `lz-verify-handoff` against the exact draft. The
-   existing focused review policy is reused. Disabled or unavailable review is
-   recorded as a limitation and is never reported as a successful semantic pass.
-4. Finalize the reviewed draft with `lz-finalize-handoff`, then let the current
-   Architect record an expected-version correction with
-   `lz-disposition-handoff`.
-5. `lz-read-handoff` retrieves the attached request, bounded drafts/reports,
+2. The assigned source worker sends the complete structured handoff data to
+   `lz-verify-handoff`. It persists an immutable draft and runs the existing
+   focused review, returning the exact `draftVersion`, `reviewID` and `round`.
+   Disabled or unavailable review is recorded as a limitation, never a semantic
+   pass.
+3. The worker calls `lz-submit-handoff` with those returned identifiers and a
+   stable `finalizationID`. It finalizes that exact reviewed version and preserves
+   the durable report. There is no separate public draft-submission or third
+   finalization tool. The current Architect can then record an expected-version
+   correction with `lz-disposition-handoff`.
+4. `lz-read-handoff` retrieves the attached request, bounded drafts/reports,
    corrections, and paged history for the current plan Architect or exact source
    worker.
 
