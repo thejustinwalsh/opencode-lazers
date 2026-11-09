@@ -285,3 +285,28 @@ retirement evidence.” All six switches stayed on and unload stayed Never.
 Desktop screenshots and AX/input sometimes disagreed afterward; connected panel
 and inference qualification remain open. No inference API call or SQL mutation
 was used to bypass Desktop during this recovery.
+
+## Later activation reconciliation (Architect)
+
+The original `.cache/driver/reviewed-activation-20261109.json` remains unchanged:
+its missing final receipt is not reconstructed. Later registered runtime reads
+report LZ-199 integrated at version 25 and LZ-197 integrated at version 14, each
+with a completed native removal receipt (`removed: true`, cache evicted). LZ-197's
+only cleanup blocker was the already accepted Markdown formatter capture. Quiet
+native inventories and an exact accepted index/tree comparison preceded a
+non-forced fast-forward to that capture and the normal cleanup retry.
+
+At Unix1794228157198 a separate authenticated native observation confirmed both
+owned checkout paths absent from disk, worktree inventory and cached locations.
+Service PID 83218 and source registration
+`1b57a053-ca39-476e-bc10-f25b28bf7071` were observed then, not assumed from the
+interrupted shell. The later observation is saved separately in
+`.cache/driver/activation-later-reconciliation-20261109.json`. No completed merge
+or check was replayed, and original LZ-181 resources remain outside this cleanup.
+
+The real LZ-164 multi-page probe remains open pending LZ-201's production-wrapper
+paging repair. Connected Desktop/Tasks/Radar and inference qualification remain
+separate from source activation and cleanup. LZ-196's existing recovery scope now
+includes durable activation intent, new-registration reconciliation and current
+Architect continuation; LZ-192 consumes and demonstrates that complete chain.
+Recorded advice does not prove those outcomes have been implemented.
