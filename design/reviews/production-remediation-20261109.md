@@ -909,3 +909,39 @@ This completes the review's two repository-size operation classes in the runtime
 a new worker service. Other synchronous filesystem/diff work and the separately
 identified verification-probe store are not claimed offloaded. Physical Desktop
 CPU and responsiveness still need native observation after activation.
+
+## Wave 5 final suite comparison and remaining work
+
+At `af0477f`, the complete suite started **1794257181431** and ended
+**1794257469299** (Unix milliseconds): **1,791 pass / 4 fail**, 1,795 tests,
+181 files, 19,828 assertions, 287.82 seconds. The four failures are exactly the
+original pre-edit set: commentary/tool separation, replacement idle verification,
+trajectory history selection, and native trajectory live delivery. **No new
+full-suite failures remain.** Artifacts: `wave-5-final.{log,json}` in the baseline
+directory. This supersedes the earlier seven-failure checkpoint; those three
+additional stale broad-history assertions were corrected and remain covered.
+
+Wave 5 closes the bounded source-refresh/search, Radar recency, bounded snapshot
+materialization, retained-setup drain coupling, ELK worker reuse, runtime heavy-Git
+classes and inference transport/hash-loop corrections at module/test level.
+**F-S10-3 remains open** for synchronous decision-capture growth/latency and price
+snapshot parsing. Synchronous dependency-tree walks also remain; physical Desktop
+CPU/GPU observations after activation are still required. No whole-project
+production-readiness claim is made.
+
+### Wave 6 candidate inspection
+
+Preserved worker commit `7f86e4e7466d76284459cf159b980cf5bfb86507` and both LZ-185
+attempts. Read-only native inspection again found Architect and both workers
+inactive under the ordered-remediation hold; a separate native active-session
+query returned zero active sessions. No model prompts or resumes were sent.
+
+The retained candidate contains useful canonical sibling-worktree allocation,
+cleanup retries and cancelled-retained-workspace work, but it cannot land unchanged:
+its `assertWorktreeQuiescent` still rejects an authoritatively missing session and
+unknown background observations, and `retireCleanedWorktreeLocation` still uses
+the display-limited `plans()` query. These contradict F-S3-2, the now-corrected
+F-S4-2 ownership queries and Justin's reconciliation #8. The candidate is **not
+accepted or discarded**; reconcile its useful changes with those current contracts,
+amend the defect-asserting cleanup tests, and preserve active/dirty/unmerged work
+before any native reclamation. No worktree or branch was removed in this pass.
