@@ -194,6 +194,7 @@ function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefine
 function checkSettlementProblem(activity: VerificationActivity): string | undefined {
   if (activity.state === "failed") return errorText(activity.error)
   if (activity.state !== "completed") return "Verification is still running"
+  if (activity.metadata.kind === "retained-advance") return undefined
   const receipt = activity.result as CheckReceipt | undefined
   if (!receipt) return "Verification has no final receipt"
   if (!checkResourcesSettled(receipt))
@@ -440,14 +441,16 @@ export class TaskRuntime {
 
   private async finalizeRetainedVerificationCancellation(operationID: string): Promise<void> {
     this.retainedVerificationAborts.get(operationID)?.abort()
-    await this.retainedVerificationRuns.get(operationID)?.catch(() => undefined)
     const activities = await abortVerificationActivities(
       (activity) =>
         activity.metadata.projectDirectory === this.directory &&
-        activity.metadata.kind === "retained" &&
+        ["retained", "retained-advance"].includes(String(activity.metadata.kind)) &&
         activity.metadata.operationID === operationID,
     )
-    for (const activity of activities) await this.settleCancelledRetainedActivity(activity)
+    await this.retainedVerificationRuns.get(operationID)?.catch(() => undefined)
+    for (const activity of activities)
+      if (activity.metadata.kind === "retained")
+        await this.settleCancelledRetainedActivity(activity)
     await this.recoverCancelledRetainedChecks(operationID)
     const uncertain = activities.find((activity) => checkSettlementProblem(activity))
     const problem = uncertain
@@ -7273,14 +7276,45 @@ export class TaskRuntime {
       for (const operation of this.store.atomic((db) =>
         activeRetainedVerifications(db, this.directory),
       )) {
-        const running = this.advanceRetainedVerification(operation, fence)
+        if (this.retainedVerificationRuns.has(operation.id)) continue
+        const id = `retained-advance:${operation.id}:${operation.generation}`
+        const key = verificationActivityKey(this.store.repository.path, id)
+        const identity = fingerprint({
+          operationID: operation.id,
+          generation: operation.generation,
+        })
+        const { activity } = startVerificationActivity({
+          databasePath: this.store.repository.path,
+          key,
+          identity,
+          owner: this.owner,
+          metadata: {
+            kind: "retained-advance",
+            projectDirectory: this.directory,
+            planID: operation.planID,
+            taskID: operation.taskID,
+            attemptID: operation.attemptID,
+            operationID: operation.id,
+            generation: operation.generation,
+          },
+          run: async (signal) => {
+            try {
+              await this.advanceRetainedVerification(operation, fence, signal)
+            } catch (error) {
+              if (!signal.aborted)
+                await this.holdRetainedVerification(operation, errorText(error), fence)
+              throw error
+            }
+          },
+        })
+        const running = activity.promise
         this.retainedVerificationRuns.set(operation.id, running)
-        try {
-          await running
-        } finally {
+        const finished = () => {
           if (this.retainedVerificationRuns.get(operation.id) === running)
             this.retainedVerificationRuns.delete(operation.id)
+          forgetVerificationActivity(key, identity)
         }
+        void running.then(finished, finished)
       }
       for (let plan of this.store.runnablePlans(terminal)) {
         if (plan.state === "draft" && !this.taskStartID(plan)) continue
@@ -10334,10 +10368,12 @@ export class TaskRuntime {
     workspace: string,
     artifact: string,
     fence: number,
+    parentSignal?: AbortSignal,
   ): Promise<CheckReceipt[] | undefined> {
     const results: CheckReceipt[] = []
     for (const check of checks) {
-      if (!this.retainedVerificationLive(initial.id, initial.generation)) return undefined
+      if (parentSignal?.aborted || !this.retainedVerificationLive(initial.id, initial.generation))
+        return undefined
       const procedure = retainedProcedurePlan(check.command)
       if (procedure.status !== "supported") {
         await this.holdRetainedVerification(
@@ -10579,6 +10615,9 @@ export class TaskRuntime {
         return active.map((row) => row.canonical_path)
       })
       const controller = new AbortController()
+      const runSignal = parentSignal
+        ? AbortSignal.any([controller.signal, parentSignal])
+        : controller.signal
       this.retainedVerificationAborts.set(initial.id, controller)
       const rootDirectory = join(this.dataDirectory, "retained-verification-resources")
       let setupResource: RetainedCheckSetupResource | undefined
@@ -10600,7 +10639,7 @@ export class TaskRuntime {
           candidateArtifact: artifact,
           priorResourcePaths: prior,
           procedurePlan: procedure.plan,
-          signal: controller.signal,
+          signal: runSignal,
           dependencyInstaller: this.retainedDependencyInstaller,
           onSetupPathReserved: (path) => {
             setupResource = { path, realPath: path, device: -1, inode: -1 }
@@ -10737,10 +10776,7 @@ export class TaskRuntime {
                 setupTemporaryDirectoryLink,
               )
         this.retainedVerificationAborts.delete(initial.id)
-        if (
-          controller.signal.aborted ||
-          !this.retainedVerificationLive(initial.id, initial.generation)
-        )
+        if (runSignal.aborted || !this.retainedVerificationLive(initial.id, initial.generation))
           return undefined
         await this.holdRetainedVerification(
           initial,
@@ -10841,7 +10877,7 @@ export class TaskRuntime {
         this.startCheckActivity({
           id: activityID,
           identity: activityIdentity,
-          signal: controller.signal,
+          signal: runSignal,
           metadata: {
             kind: "retained",
             projectDirectory: this.directory,
@@ -11588,7 +11624,12 @@ export class TaskRuntime {
     })
   }
 
-  private async advanceRetainedVerification(initial: RetainedVerification, fence: number) {
+  private async advanceRetainedVerification(
+    initial: RetainedVerification,
+    fence: number,
+    signal?: AbortSignal,
+  ) {
+    if (signal?.aborted) return
     let operation = this.store.atomic((db) => retainedVerification(db, initial.id))
     if (
       !operation ||
@@ -11692,6 +11733,7 @@ export class TaskRuntime {
         workspace,
         operation.artifact,
         fence,
+        signal,
       )
       if (!taskReceipts || !this.retainedVerificationLive(operation.id, operation.generation))
         return
@@ -11906,6 +11948,7 @@ export class TaskRuntime {
       combinedWorkspace,
       combinedArtifact,
       fence,
+      signal,
     )
     if (!combinedReceipts || !this.retainedVerificationLive(operation.id, operation.generation))
       return

@@ -688,3 +688,41 @@ This closes unbounded result materialization and the deterministic volume failur
 it does not establish that a 1.28-second synchronous read is an acceptable final
 service-loop latency. The remaining query/index/projection work is not claimed
 fixed, and no Desktop CPU result is inferred.
+
+## Wave 5: F-S5-3
+
+Retained verification advancement, including dependency setup, now runs as a
+non-overlapping background activity in the existing verification-activity registry.
+The drain admits it and continues through unrelated plans rather than awaiting
+an installer. Existing operation/generation ownership, isolated resource callbacks,
+check identities and result acceptance remain. The existing operation-run map
+prevents duplicate admission; no timer or second execution service is added.
+Completed advance activities mean the step settled, never that a check passed.
+
+Cancellation aborts and joins both the parent advance and its actual check before
+reconciling resources. Parent cancellation reaches task and combined setup through
+the existing controller; shutdown's owned-activity sweeps cover the parent too.
+Unexpected advance errors go through the existing retained hold path before the
+activity settles. Normal check results and process-settlement receipts remain the
+only check authority.
+
+Extended the held-installer test to require the scheduler drain itself to return
+before release, alongside the existing independent RPC assertion. Receipt-cut
+fixtures now select the actual `retained` check activity rather than the new void
+parent step, and wait for real admission instead of 20 synchronous ticks. The
+injected-failure fixture waits for the durable held state after asynchronous
+admission; all original cleanup/ownership assertions remain. Its timeout timer is
+cleared.
+
+`bun run verify` passed. Focused cancellation/setup: **20 pass**, 279 assertions.
+The broad unchanged-production-source run covered 412 tests: all **333 runtime
+tests passed**; one of 79 retained tests exposed the submission/completion fixture
+assumption. After that test-only correction, the complete retained suite passed
+**79 / 79**, 912 assertions. Logs: `s5-setup-{focused,broad,retained-final}.log` in
+the baseline directory. No full-suite rerun or native Desktop setup observation is
+claimed yet. This removes the awaited installer from the drain; remaining
+synchronous dependency-tree walks are not claimed eliminated.
+
+A read-only native check during this increment reconfirmed the Architect and both
+preserved LZ-185 sessions inactive under the existing maintenance hold. No worker
+was resumed, prompted or discarded.

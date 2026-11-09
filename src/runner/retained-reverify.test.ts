@@ -655,6 +655,16 @@ async function waitForFixtureObservation(
   throw new Error(`${description} was not observed before the bounded deadline`)
 }
 
+async function waitForRetainedCheckActivity(f: ReturnType<typeof fixture>, operationID: string) {
+  const selected = () =>
+    verificationActivitiesForDatabase(f.store.repository.path).find(
+      (entry) => entry.metadata.kind === "retained" && entry.metadata.operationID === operationID,
+    )
+  // F-S5-3: setup admission is now asynchronous; wait for the actual check, not its parent step.
+  await waitForFixtureObservation(f, "Retained check activity", () => selected() !== undefined)
+  return selected()!
+}
+
 async function waitForFixtureEffectsSettled(f: ReturnType<typeof fixture>, description: string) {
   await waitForFixtureCondition(f, description, () => {
     const runningActivity = verificationActivitiesForDatabase(f.store.repository.path).some(
@@ -3005,13 +3015,7 @@ test.each(["cancel-retained-verification", "cancel"] as const)(
       return originalKill(pid, signal)
     }) as typeof process.kill)
     try {
-      let activity
-      for (let tick = 0; tick < 20 && !activity; tick++) {
-        await f.runtime.tick()
-        activity = verificationActivitiesForDatabase(f.store.repository.path).find(
-          (entry) => entry.metadata.operationID === result.operationID,
-        )
-      }
+      const activity = await waitForRetainedCheckActivity(f, result.operationID)
       expect(activity).toBeDefined()
       await activity!.settled
       expect(activity!.state).toBe("completed")
@@ -3092,20 +3096,10 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
       const requested = (await control.execute(retainedVerifyCommand(f, "cancel-receipt-cut"))) as {
         operationID: string
       }
-      let captured = false
-      for (let tick = 0; tick < 20 && !captured; tick++) {
-        await f.runtime.tick()
-        const activity = verificationActivitiesForDatabase(f.store.repository.path).find(
-          (entry) => entry.metadata.operationID === requested.operationID,
-        )
-        if (activity) {
-          await activity.settled
-          expect(activity.state).toBe("completed")
-          forgetVerificationActivity(activity.key, activity.identity)
-          captured = true
-        }
-      }
-      expect(captured).toBe(true)
+      const activity = await waitForRetainedCheckActivity(f, requested.operationID)
+      await activity.settled
+      expect(activity.state).toBe("completed")
+      forgetVerificationActivity(activity.key, activity.identity)
       const row = f.store.atomic((db) =>
         db
           .query<
@@ -3233,22 +3227,11 @@ test.each([false, true])(
       let reopened: TaskRepository | undefined
       try {
         if (receiptCut) {
-          let captured = false
-          for (let tick = 0; tick < 20 && !captured; tick++) {
-            await f.runtime.tick()
-            const activity = verificationActivitiesForDatabase(f.store.repository.path).find(
-              (entry) => entry.metadata.operationID === result.operationID,
-            )
-            if (activity) {
-              await activity.settled
-              expect(activity.state).toBe("completed")
-              // Model process death after the atomic disk receipt but before its
-              // DB application. A fresh process has no in-memory activity registry.
-              forgetVerificationActivity(activity.key, activity.identity)
-              captured = true
-            }
-          }
-          expect(captured).toBe(true)
+          const activity = await waitForRetainedCheckActivity(f, result.operationID)
+          await activity.settled
+          expect(activity.state).toBe("completed")
+          // Process death after the disk receipt, before its DB application.
+          forgetVerificationActivity(activity.key, activity.identity)
           expect(
             f.store
               .activity(f.planID, f.task.id)
@@ -3517,6 +3500,16 @@ test("a slow candidate dependency setup leaves unrelated plan RPCs responsive", 
       if (timer) clearTimeout(timer)
     }
     expect(responsive).toBe(true)
+    // F-S5-3: RPC responsiveness alone did not prove the scheduler drain could advance.
+    const drain = await Promise.race([
+      f.runtime.tick().then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), 2_000)
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer)
+    })
+    expect(drain).toBe(true)
     expect(released).toBe(false)
     released = true
     releaseSetup.resolve()
@@ -3955,6 +3948,8 @@ test("an injected dependency setup failure cleans registered partial resources b
     .taskWorkspace
   releaseFailure.resolve()
   await verification
+  // F-S5-3: admission returns before the background setup has settled.
+  await waitForRetainedOperationState(f, operation.id, ["held"], "Injected setup cleanup")
 
   const held = f.store.atomic((db) =>
     db
