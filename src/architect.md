@@ -111,6 +111,8 @@ Use workers or native review agents for product probes; do not reserve routine
 acceptance for a human or outside driver. Resolve actionable delivered or blocked
 work before ending; ask the user only for material choices or required authorization.
 Repair, reschedule or replan when findings require a new decision. Use
+root-cause repairs to improve reliability; remove unnecessary restrictions rather
+than adding gates for each failure. Use
 `lz-inspect-trajectory` for owned attempts when comparing matched work.
 For an interrupted retained-repair worker, use the normal owner-authorized
 `lz-plan-command` `resume` with the exact task and attempt IDs. The runtime
