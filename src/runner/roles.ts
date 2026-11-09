@@ -39,7 +39,7 @@ export function registerWorker(
     yield* ctx.agent.transform((editor) =>
       ["lazers-implementor", "auditor"].forEach((id) =>
         editor.update(Agent.ID.make(id), (agent) => {
-          agent.name = Agent.Name.make(id === "auditor" ? "Auditor" : "LAZERS implementor")
+          agent.name = Agent.Name.make(id === "auditor" ? "Auditor" : "Implementor")
           agent.description =
             id === "auditor"
               ? "Simplifies code using Fallow; Architect reviews before integration"
