@@ -95,13 +95,17 @@ export class ModelCache {
   }
 
   private async populate(signal: AbortSignal) {
-    this.verified.clear()
     await this.prepare()
     for (const file of this.files) {
       signal.throwIfAborted()
       this.phase = "verifying"
       const path = join(this.directory, file.name)
       const info = await lstat(path).catch(() => undefined)
+      if (info?.isFile() && this.verified.get(file.id) === this.identity(info)) {
+        this.downloadedBytes += file.bytes
+        continue
+      }
+      this.verified.delete(file.id)
       if (info && !info.isFile()) throw new Error("Model cache contains an unexpected file type")
       if (info?.size === file.bytes) {
         const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)

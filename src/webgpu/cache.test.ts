@@ -1,6 +1,16 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdtemp, readFile, rm, writeFile, readdir, mkdir, symlink, rename } from "node:fs/promises"
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+  readdir,
+  mkdir,
+  symlink,
+  rename,
+  open,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ModelCache } from "./cache.ts"
@@ -47,6 +57,37 @@ test("verified files persist across cache instances without another network requ
     await expect(reopened.read("../tasks.sqlite", 0, 1)).rejects.toThrow()
     await expect(reopened.read("model", 0, 2_097_153)).rejects.toThrow()
   } finally {
+    await f.cleanup()
+  }
+})
+
+test("F-S13-1 unchanged cache identity reuses verification; first use and mutation still hash", async () => {
+  const f = await fixture()
+  await mkdir(f.directory)
+  await writeFile(join(f.directory, file.name), bytes)
+  const handle = await open(join(f.directory, file.name), "r")
+  const streams = spyOn(Object.getPrototypeOf(handle), "createReadStream")
+  await handle.close()
+  try {
+    const cache = new ModelCache(f.directory, [file], f.download)
+    await cache.ensure()
+    expect(streams).toHaveBeenCalledTimes(1)
+    await cache.ensure()
+    await cache.ensure()
+    expect(streams).toHaveBeenCalledTimes(1)
+    expect(Buffer.from(await cache.read(file.id, 0, bytes.length), "base64")).toEqual(
+      Buffer.from(bytes),
+    )
+    const reopened = new ModelCache(f.directory, [file], f.download)
+    await reopened.ensure()
+    expect(streams).toHaveBeenCalledTimes(2)
+    await writeFile(join(f.directory, file.name), "XXXXXXXXX")
+    await cache.ensure()
+    expect(streams).toHaveBeenCalledTimes(3)
+    expect(f.requests()).toBe(1)
+    expect(await readFile(join(f.directory, file.name))).toEqual(Buffer.from(bytes))
+  } finally {
+    streams.mockRestore()
     await f.cleanup()
   }
 })

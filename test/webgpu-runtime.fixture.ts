@@ -480,10 +480,25 @@ try {
   )
   assert.ok(traces.every((event) => event.observedEP === "unknown"))
   automaticTicks = false
+  // F-S13-1: transport failures preserve the resident model and exact ownership.
+  const beforeTransport = { releases, attachCalls, detachCalls }
   pollFailure = { type: "rpc.unavailable", message: "Renderer mailbox unavailable" }
+  for (let index = 0; index < 3; index++) {
+    timerTick()
+    await until(() => runtime.state() === "error")
+    await Bun.sleep(20)
+  }
+  assert.match(runtime.detail(), /rpc\.unavailable: Renderer mailbox unavailable/)
+  assert.equal(lease.occupied(), true)
+  assert.equal(allocations, 1)
+  assert.deepEqual({ releases, attachCalls, detachCalls }, beforeTransport)
+  pollFailure = undefined
+  timerTick()
+  await until(() => runtime.state() === "ready")
+  assert.deepEqual({ releases, attachCalls, detachCalls }, beforeTransport)
+  pollFailure = new Error("Renderer ownership was lost")
   timerTick()
   await until(() => runtime.state() === "error")
-  assert.match(runtime.detail(), /rpc\.unavailable: Renderer mailbox unavailable/)
   assert.equal(lease.occupied(), false)
   assert.equal(broker.demand().requested, false, "Recovery must not need another user request")
   pollFailure = undefined
@@ -505,7 +520,8 @@ try {
   assert.equal(attachCalls, beforeReconnect + 2)
   assert.equal(allocations, 1)
   assert.equal(broker.demand().requested, false)
-  pollFailure = new Error("Temporary mailbox loss with detach timeout")
+  // F-S13-1: only confirmed ownership loss enters detach/reload recovery.
+  pollFailure = new Error("Renderer ownership was lost")
   hangDetach = true
   const beforeDetachReconnect = attachCalls
   timerTick()

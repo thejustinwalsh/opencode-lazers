@@ -749,3 +749,47 @@ fixture probe selected identical 5,001 rows: **117.00 ms before, 0.63 ms after**
 EXPLAIN uses the covering `runner_progress_plan_recency` index. Probe and result:
 `s8-recency-perf.{ts,json}`. This is not a production activation or Desktop CPU
 measurement; the native maintenance hold remains in place.
+
+## Wave 5: F-S13-1
+
+ModelCache retains successful file identities for its process lifetime. Repeated
+ensure/family switches skip hashing only when the same regular file has the exact
+previously verified identity. First use in a new cache instance and every identity
+change still hash; mismatches invalidate the cached identity before verification.
+Open-without-following-symlinks, before/after identity checks, pinned checksums,
+atomic downloads and read-time checks remain intact.
+
+A mailbox transport failure now keeps the resident GPU model and exact lease,
+reports the connection interruption and retries on the existing tick. Only an
+explicit broker ownership-loss response enters unload/reattach recovery. A
+successful subsequent poll restores the ordinary status without a new allocation.
+User keep-alive and feature settings are unchanged; disabling still disposes.
+
+The real renderer lifecycle fixture now distinguishes three consecutive transport
+failures (no disposal, detach, reattach or duplicate allocation) from confirmed
+ownership loss, including the existing detach-timeout recovery. Cache tests count
+actual file read streams: first use hashes, two unchanged ensures do not, a new
+instance hashes, and same-size corruption hashes and downloads a replacement.
+Existing symlink/replacement/cancellation and failed-disposal coverage remains.
+
+`bun run verify` passed. Cache, runtime fixture, lease, lifecycle and broker:
+**36 pass**, 226 assertions across five files. GUI build and bundle evaluation
+passed, with the existing ONNX `import.meta` warnings unchanged. Logs:
+`s13-behavior.log`, `s13-verify.log`, `s13-gui-build.log` in the baseline directory.
+No physical GPU/Desktop recovery observation is claimed; this fixes the proven
+source-level reload/hash loop without relaxing model integrity or lease fencing.
+
+## Wave 5: F-S10-3 re-derivation (open)
+
+Current code already projects slim decision fields and hashes serialized rows
+incrementally; the review's whole-raw-history double-serialization description
+does not fully apply at this HEAD. The valid regression test preserves complete
+decision history beyond 15,000 facts and the former 64 MiB raw-payload boundary.
+No smaller arbitrary limit was restored.
+
+A read-only production probe still measured a serious synchronous blocker:
+24,739 progress facts, 41,676,921 bytes of final decision projection, captures
+**12,428.80 / 7,948.91 / 7,979.67 ms**. The output byte count was measured after
+the timed read. No native model calls or DB writes occurred. Probe/result:
+`s10-capture-perf.{ts,json}` in the baseline directory. The finding remains open;
+incremental digesting alone did not resolve the event-loop latency.

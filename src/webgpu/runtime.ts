@@ -211,6 +211,7 @@ export function createInferenceRuntime(
     | { id: string; feature: LocalFeature; controller: AbortController; done: Promise<void> }
     | undefined
   let polling = false
+  let pollDisconnected = false
   let attachPending = false
   let disposed = false
   let unloading: Promise<void> | undefined
@@ -1123,6 +1124,10 @@ export function createInferenceRuntime(
             { owner: token, available: !active && !initializing && !switching && !recovery },
             { signal: serviceSignal() },
           )
+          if (pollDisconnected) {
+            pollDisconnected = false
+            if (!active && !initializing && !switching && !recovery) ready()
+          }
           if (response.cancelID && active?.id === response.cancelID)
             active.controller.abort(new Error("Local inference cancelled"))
           else if (response.cancelID && !active)
@@ -1144,6 +1149,15 @@ export function createInferenceRuntime(
             }
           }
         } catch (error) {
+          if (!/Renderer ownership was lost|Another renderer owns/.test(errorDetail(error))) {
+            // Transport latency does not establish loss of the broker or GPU lease.
+            pollDisconnected = true
+            fail(
+              `Local model connection interrupted: ${errorDetail(error)}. Retrying automatically.`,
+            )
+            return
+          }
+          pollDisconnected = false
           await unload()
           // A failed broker detach retains our lease after GPU disposal. Reattach
           // that same owner through the existing load backoff once transport recovers.
