@@ -310,3 +310,37 @@ separate from source activation and cleanup. LZ-196's existing recovery scope no
 includes durable activation intent, new-registration reconciliation and current
 Architect continuation; LZ-192 consumes and demonstrates that complete chain.
 Recorded advice does not prove those outcomes have been implemented.
+
+## Delivered inspector repairs and cancelled-prerequisite gap
+
+Reviewed LZ-201 source `e2833b0b` landed as `5f6b759`; the actual registered
+inspector completed a two-page retained-history read with ordinary telemetry.
+Main quality and 23 focused tests/214 assertions passed. LZ-164 and LZ-201 are
+runtime-integrated, with native cleanup recorded. Architect's exact observation
+is in `design/reviews/retained-inspection-live-20261109.md`. Ownership guidance
+landed separately as `b42f512`; LZ-182's broader retained composition has not.
+
+LZ-182 plan `b81910d7-d9a1-4014-86df-2a95f211735a` is cancelled. Read-only Git
+inspection confirmed both original `6dbae67` and Architect-owned `98d7c05`
+checkouts/commits remain present. Runtime still had four unfinished dependents
+pointing to the cancelled plan: LZ-154, LZ-189, LZ-192 and LZ-200, with no
+replacement plan attached to the retained LZ-182 task at that observation.
+The scheduler's prerequisite-baseline early return and intra-plan wait projection
+can leave these cross-plan waits silent; actual correction remains to be tested.
+
+The driver raised this through Desktop, user message
+`msg_1c0d4b4f30012lDKUBjRgwBYv0` at Unix1794236539424, explicitly keeping cleanup
+first and asking Architect to preserve the feature, reconcile dependencies and
+investigate the silent wait. This is driver assistance, not proof of automatic
+replanning. Architect inspected all four plans and rewired LZ-154 to its actual
+lifecycle/recovery prerequisites (planversion5). LZ-189/LZ-192/LZ-200 still retain
+the cancelled LZ-182 prerequisite; replacement tasking and the proportional
+runtime correction remain unproven. Current plans are authoritative afterward.
+
+LZ-195's same worker subsequently delivered `9c5e434`, preserving unavailable or
+disabled hardening status when authorized Architect finalization continues with
+concerns. Reported checks passed: quality, 11 controls tests, 38 recovery tests
+and diff validation. Architect merged it as `59b9578`; runtime records plan
+integrated at version37. This delivers the corrected handoff tool implementation;
+the queued live request/review/submission/disposition/follow-up walkthrough is
+still required and is not inferred from tests or source landing.

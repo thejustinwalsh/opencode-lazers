@@ -46,8 +46,8 @@ holds remain unresolved. Exact observations and subsequent updates:
 
 Implementors own features, checks and commits; Architect owns synchronization,
 rebasing, conflicts, composition and integration. Native ownership guidance is
-committed as `98d7c05` in Architect's LZ-182 composition checkout, alongside
-composition `79ae40e`; neither is integrated. Original LZ-182 commits `fae0967`
+landed in main as `b42f512`, separately from retained LZ-182
+composition `79ae40e`, which is not integrated. Original LZ-182 commits `fae0967`
 and `6dbae67` remain preserved. Its 20-hour-old session is not 20 hours of continuous
 inference. Architect corrected stale advice and kept that implementor idle while
 handling composition itself. Independent review found continuation-admission and
@@ -55,9 +55,13 @@ bounded scheduling-read defects; final correction/review remains open. The lates
 native verification could not start because Bun was absent from the shell PATH;
 do not call that a failed feature test or send the worker into integration work.
 
-LZ-195's SAME worker delivered handoff finalization correction `157bd523`; LZ-201's
-SAME worker delivered paging correction `e2833b0b`. Both plans are accepted;
-review/integration and real connected probes remain open. Their earlier fixes
+LZ-195's SAME worker delivered limited-review-status correction `9c5e434`, now
+source-merged as `59b9578` and runtime-integrated (version 37). Its full live
+handoff/recovery walkthrough remains open. LZ-201 correction `e2833b0b` landed in main as
+`5f6b759`. LZ-164 and LZ-201 are runtime-integrated with native cleanup confirmed.
+Architect exercised actual registered full/history reads through two pages with
+normal telemetry; main quality and 23 focused tests/214 assertions passed. See
+`design/reviews/retained-inspection-live-20261109.md`. Their earlier fixes
 were retained through concrete native review-to-repair cycles. LZ-193/LZ-194
 repairs remain pending with original workers preserved. LZ-196 (automatic recovery)
 waits on LZ-195/LZ-199; LZ-192 (visible recovery) waits on LZ-196/LZ-182. LZ-200
@@ -71,6 +75,15 @@ was empty during observed work and legacy sessions often show unknown. See
 Architect cache policy remains unproven; a scalar default is not a provider's
 cache lifetime. Existing roadmap work remains in scope; cleanup priority does
 not cancel it.
+
+LZ-182's plan is now cancelled, not completed. Its original and Architect-owned
+checkouts/commits remain present. The driver found LZ-154/LZ-189/LZ-192/LZ-200
+still depending on that cancelled plan and raised the gap through Desktop in
+`msg_1c0d4b4f30012lDKUBjRgwBYv0` (Unix1794236539424), keeping cleanup first.
+Architect rewired LZ-154; the other three old prerequisite edges and a replacement
+path for the retained Tasks feature are still unresolved at this observation.
+Do not lose that feature or claim routine cancellation handled these dependents.
+See the latest section of `design/reviews/native-progress-20261109.md`.
 
 ## Delivery and preservation
 
