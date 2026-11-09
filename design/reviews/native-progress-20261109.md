@@ -61,3 +61,19 @@ This is actual parallel implementation dispatch following a user-raised planning
 correction, not autonomous detection of the scheduling problem or completed
 recovery. Shared runtime notification delivery and Tasks integration remain open;
 the complete recovery requirement has not been reduced to the controls task.
+
+## Same-worker checkpoint usability
+
+Architect requested a LZ-181 handoff checkpoint through `lz-report-progress`.
+That tool's `ProgressInput.message` is capped at 1,200 characters. After an
+argument rejection, the worker spent six Code Mode calls measuring and shortening
+its checkpoint (1,516 down to 1,215 characters) before the accepted annotation,
+sequence **18777554** in `msg_1be5a1f42001U0twveCBrAHTsv`.
+
+This is an observed mismatch between a short progress annotation and the requested
+handoff, not six failed implementation repairs. The annotation records dirty work,
+four unresolved adoption failures and removed restart/no-replay coverage. It is
+not a submitted/reviewed handoff through the still-unimplemented public tools.
+Preserve the work and evaluate Architect's subsequent disposition. LZ-195 owns
+the dedicated handoff workflow; no replacement worker or new constraint was added
+by the driver.
