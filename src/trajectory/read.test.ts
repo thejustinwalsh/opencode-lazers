@@ -1687,3 +1687,55 @@ test.each([
     }
   },
 )
+
+test.each(["cumulative", "additive", "missing"])(
+  "S9-2 missing native sessions use the shared %s accounting selection",
+  async (basis) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      if (basis !== "missing")
+        for (const attempt of fixture.attempts) {
+          recorder.recordNativeEvent({
+            id: `retained-${attempt.session_id}`,
+            type: basis === "cumulative" ? "session.usage.updated" : "session.step.ended",
+            created: 5000,
+            data: {
+              sessionID: attempt.session_id,
+              assistantMessageID: `retained-${attempt.id}`,
+              tokens: { input: 1000, output: 2, reasoning: 1, cache: { read: 3, write: 4 } },
+            },
+          })
+        }
+      fixture.sessions.clear()
+      const report = await inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        parse({ taskID }),
+        cursorSecret,
+      )
+      const usage = report.effort.tokenUsage
+      const categories = report.effort.taskEffortBasis.usage.categories
+      for (const key of [
+        "uncachedInput",
+        "output",
+        "reasoning",
+        "cacheRead",
+        "cacheWrite",
+      ] as const)
+        expect(usage.measuredSubtotal[key]).toBe(categories[key].value)
+      expect(usage.measuredSubtotal.uncachedInput).toBe(basis === "missing" ? null : 2000)
+      if (basis === "cumulative") {
+        expect(usage.total).toEqual(usage.measuredSubtotal)
+        expect(usage.knownSessions).toBe(2)
+        expect(usage.unknownAttempts).toEqual([])
+      } else {
+        expect(usage.total).toBeNull()
+        expect(usage.unknownAttempts).toHaveLength(2)
+      }
+    } finally {
+      fixture.close()
+    }
+  },
+)

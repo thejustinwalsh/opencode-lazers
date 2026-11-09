@@ -191,11 +191,11 @@ const Report = z
       firstAttemptAt: NullableTime,
       tokenUsage: z.object({
         measuredSubtotal: z.object({
-          uncachedInput: z.number().finite(),
-          cacheRead: z.number().finite(),
-          cacheWrite: z.number().finite(),
-          output: z.number().finite(),
-          reasoning: z.number().finite(),
+          uncachedInput: z.number().finite().nullable(),
+          cacheRead: z.number().finite().nullable(),
+          cacheWrite: z.number().finite().nullable(),
+          output: z.number().finite().nullable(),
+          reasoning: z.number().finite().nullable(),
         }),
         total: z
           .object({

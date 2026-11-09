@@ -963,9 +963,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 const tokenValue = (
                   key: keyof TrajectoryReport["effort"]["tokenUsage"]["measuredSubtotal"],
                 ) => {
-                  const value =
-                    usage().total?.[key] ??
-                    (usage().knownSessions > 0 ? usage().measuredSubtotal[key] : null)
+                  const value = usage().total?.[key] ?? usage().measuredSubtotal[key]
                   return value === null ? "—" : value.toLocaleString()
                 }
                 const partial = () => usage().total === null

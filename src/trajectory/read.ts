@@ -1104,25 +1104,21 @@ export async function inspectTrajectory(
     truncatedContextSessionIDs,
   }
   const taskEffortBasis = projectTaskEffortBasis(valuationInput)
-  const totals = { uncachedInput: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 }
-  let knownSessions = 0
-  const unknownUsageAttempts: string[] = []
-  const seenSessions = new Set<string>()
-  for (const { attempt } of allAttempts) {
-    if (seenSessions.has(attempt.session_id)) continue
-    seenSessions.add(attempt.session_id)
-    const snapshot = usage(sessions.get(attempt.id) ?? null)
-    if (!snapshot) {
-      unknownUsageAttempts.push(safeText(attempt.id, stats, 128))
-      continue
-    }
-    totals.uncachedInput += snapshot.uncachedInput
-    totals.cacheRead += snapshot.cacheRead
-    totals.cacheWrite += snapshot.cacheWrite
-    totals.output += snapshot.output
-    totals.reasoning += snapshot.reasoning
-    knownSessions++
+  const categories = taskEffortBasis.usage.categories
+  const totals = {
+    uncachedInput: categories.uncachedInput.value,
+    cacheRead: categories.cacheRead.value,
+    cacheWrite: categories.cacheWrite.value,
+    output: categories.output.value,
+    reasoning: categories.reasoning.value,
   }
+  const completeSessions = taskEffortBasis.usage.sessions.filter((session) =>
+    Object.values(session.categories).every((category) => category.status === "observed"),
+  )
+  const completeSessionIDs = new Set(completeSessions.map((session) => session.sessionID))
+  const unknownUsageAttempts = allAttempts
+    .filter(({ attempt }) => !completeSessionIDs.has(attempt.session_id))
+    .map(({ attempt }) => safeText(attempt.id, stats, 128))
   const acceptedTransitions = rawPlans
     .flatMap((snapshot) => snapshot.transitions)
     .filter((event) => event.event === "ACCEPT")
@@ -1202,7 +1198,9 @@ export async function inspectTrajectory(
         "earliest runner attempt start to the task ACCEPT transition; not model-active time",
       tokenUsage: {
         measuredSubtotal: totals,
-        total: unknownUsageAttempts.length === 0 ? totals : null,
+        total: Object.values(categories).every((category) => category.status === "observed")
+          ? totals
+          : null,
         unit: "tokens",
         components: {
           uncachedInput: "OpenCode input; cache is reported separately",
@@ -1212,9 +1210,9 @@ export async function inspectTrajectory(
           reasoning: "OpenCode reasoning tokens",
         },
         source:
-          "One cumulative OpenCode session snapshot per unique worker session; never sum message or page snapshots",
-        knownSessions,
-        totalSessions: seenSessions.size,
+          "One selected contribution per unique worker session: native cumulative snapshot, otherwise retained cumulative snapshot, otherwise additive-step subtotal",
+        knownSessions: completeSessions.length,
+        totalSessions: taskEffortBasis.usage.coverage.totalUniqueSessions,
         unknownAttempts: unknownUsageAttempts,
         legacyAttemptScalarsNotAdded: attemptViews.map((attempt) => ({
           attemptID: attempt.id,

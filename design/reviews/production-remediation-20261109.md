@@ -498,3 +498,23 @@ charge. `bun run verify` passed. Valuation/decision reader: **39 pass**, 400
 assertions; server/decision-contract integration: **40 pass**, 493 assertions.
 Logs: `s10-unmetered-{behavior,integration}.log` in the baseline directory.
 No subscription charge is substituted for the canonical current market value.
+
+## Wave 4: S9-2
+
+The short trajectory token summary now derives category values, completeness and
+session coverage from the shared task-effort accounting selection. Removed its
+independent native-only aggregation loop. A missing native session can therefore
+use retained cumulative usage; additive-only history remains a partial subtotal;
+a genuinely missing category is null. Existing public field names remain. The
+panel accepts nullable category subtotals and displays available partial values
+without requiring an unrelated fully observed session. Per-attempt native usage
+still uses the existing native-only helper, so that helper is not deleted.
+
+New tests remove the native sessions and exercise retained cumulative, additive
+and entirely missing histories, asserting category-by-category agreement between
+both summaries. `bun run verify` passed. Read/accounting: **37 pass / 1 fail**,
+274 assertions, with only the baseline commentary failure. Projection/native-report
+and targeted DOM render: **12 pass**, 97 assertions. `bun run build:gui` passed,
+including bundle evaluation; existing ONNX CJS `import.meta` warnings remain and
+are not changed here. Logs: `s9-usage-{behavior,panel,gui-build}.log` in the
+baseline directory. Desktop visual activation has not been observed.
