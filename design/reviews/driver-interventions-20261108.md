@@ -388,3 +388,19 @@ count/time/token quota or automatic worker termination. Preserve useful work and
 reconcile the original writer before overlapping writes. Actual disposition and
 post-advice outcome remain to observe; no recovery success is inferred from
 message delivery.
+
+Post-advice observation changes the assessment: native message
+msg_1be11ebfc001uN1wPmaZ3yftLx ran the two restart-receipt-cut tests (2pass,
+24assertions) and the combined candidate-index mutation test (1pass,12assertions)
+successfully in the original LZ181 session. These were the stalled adoption
+cases. The same worker then continued broader runtime-fixture work. Advice6
+produced observable targeted recovery; full candidate acceptance remains open.
+Do not escalate solely from elapsed time or six heterogeneous advice revisions.
+Architect is investigating its own disposition and existing recovery roadmap;
+Driver supplied no further implementation fixes after the role correction.
+
+LZ193 repair artifact ebd9f02 and LZ194 widget artifact0fce814 subsequently reached
+accepted attempt state in the actual DB. Their worker reports include76snapshot
+behavior tests/real remote probes and12budget tests/live provider reads,
+respectively. Source integration and broader product qualification remain open.
+Architect resumed the same owned verifier, which was observed running again.
