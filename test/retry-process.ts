@@ -120,6 +120,7 @@ if (import.meta.main) {
               ? {
                   receipt,
                   get: await call("lz-get-task", {
+                    format: "structured",
                     taskID: (receipt as { taskID: string }).taskID,
                   }),
                   list: await call("lz-list-tasks", { limit: 100 }),

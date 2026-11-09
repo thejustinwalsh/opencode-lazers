@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
@@ -292,7 +293,7 @@ function reminderEffect(
       if (
         session.id !== sessionID ||
         session.projectID !== assignment.projectID ||
-        session.agent !== "lazers-implementor" ||
+        !isWorkerAgent(session.agent) ||
         session.location.directory !== assignment.workspace
       )
         return
@@ -356,7 +357,7 @@ async function reconstructSession(
   if (
     session.id !== assignment.sessionID ||
     session.projectID !== assignment.projectID ||
-    session.agent !== "lazers-implementor" ||
+    !isWorkerAgent(session.agent) ||
     session.location.directory !== assignment.workspace
   ) {
     recorder.markRecoveryGap(
@@ -575,7 +576,7 @@ export function registerProgress(
     const matchesBinding = (session: Session.Info, binding: NativeIdleBinding) =>
       session.id === binding.sessionID &&
       session.projectID === binding.projectID &&
-      session.agent === "lazers-implementor" &&
+      isWorkerAgent(session.agent) &&
       session.location.directory === binding.workspace &&
       session.metadata?.lazersAttemptID === binding.attemptID
 

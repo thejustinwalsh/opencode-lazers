@@ -59,6 +59,7 @@ function fixture(
     repair?: boolean
     wrongFirstB?: boolean
     skillSuggestions?: string[]
+    workerAgent?: "auditor"
     workerModel?: { providerID: string; id: string; variant?: string }
     personas?: (WorkerPersona | undefined)[]
     startOnly?: boolean
@@ -274,7 +275,7 @@ function fixture(
     },
     prompt: async (input) => {
       events.push(`prompt:${input.id}`)
-      expect(input.text).toContain("lz-get-task-instructions")
+      expect(input.text).toContain("lz-get-task")
       expect(input.text).not.toContain('"specification"')
       expect(input.text).not.toContain("SECRET_SKILL_BODY_CANARY")
       expect("skills" in input).toBe(false)
@@ -426,6 +427,7 @@ function fixture(
     return {
       requestID: config.requestID ?? "plan-request",
       objective: `Implement ${files.map((file) => file.name).join(" and ")}`,
+      ...(options.workerAgent ? { workerAgent: options.workerAgent } : {}),
       workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
       baseCommit: base,
       ...(options.workerModel ? { workerModel: options.workerModel } : {}),
@@ -1262,9 +1264,7 @@ test("healthy sealed review guard permits a later handoff without rescanning rev
   expect(reads).toBe(0)
   expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(true)
   expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "write")).toContain("quarantined")
-  expect(
-    sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-get-task-instructions"),
-  ).toBeUndefined()
+  expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-get-task")).toBeUndefined()
 })
 
 test("concurrent explicit pending supersessions use the plan version once", async () => {
@@ -4061,7 +4061,7 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   expect(JSON.parse(workers[0]!.policy).packet).toEqual({
     recipe: "task-tool/1",
     taskID: workers[0]!.task_id,
-    tool: "lz-get-task-instructions",
+    tool: "lz-get-task",
   })
   await drive(f.runtime)
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
@@ -4672,7 +4672,6 @@ test("completed shared plan verifies its exact artifact without touching an adva
   expect(JSON.parse(check.receipt!).check).toMatchObject({
     cwd: workspace,
     artifact: plan.artifact,
-    unchanged: true,
     exitCode: 0,
   })
 })
@@ -4809,7 +4808,6 @@ test("reconciliation retains legacy advanced-checkout receipts and verifies the 
   const fresh = JSON.parse(effects.find((effect) => effect.id !== legacyID)!.receipt!).check
   expect(fresh).toMatchObject({
     artifact: f.store.plan(f.receipt.planID)!.artifact!,
-    unchanged: true,
     exitCode: 0,
   })
   expect(fresh.cwd).not.toBe(f.root)
@@ -4849,7 +4847,7 @@ test("explicit reconcile retries conclusive combined checks after environment re
   expect(checks().find((effect) => effect.id === failed.id)?.receipt).toBe(failed.receipt)
   const fresh = checks().find((effect) => effect.id !== failed.id)!
   expect(JSON.parse(fresh.payload).verificationEpoch).toBeGreaterThan(0)
-  expect(JSON.parse(fresh.receipt!).check).toMatchObject({ exitCode: 0, unchanged: true })
+  expect(JSON.parse(fresh.receipt!).check).toMatchObject({ exitCode: 0 })
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
 
@@ -5546,6 +5544,46 @@ test("plan evidence binds to the accepted combination and remains separate from 
   expect(f.store.plan(plan.planID)!.state).toBe("accepted")
   expect(await f.runtime.command(current, "owner")).toEqual(receipt)
   expect(recorded()).toHaveLength(1)
+})
+
+test("reconcile retries a conclusively unsent route-guard prompt on the same attempt", async () => {
+  const f = fixture({ independent: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const original = f.host.prompt
+  f.host.prompt = async () => {
+    throw new Error("Worker prompt target is not the exact assigned session and route")
+  }
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
+  expect(
+    f.store.effects(f.receipt.planID).find((effect) => effect.kind === "prompt"),
+  ).toMatchObject({
+    state: "failed",
+    receipt: expect.stringContaining('"notSent":true'),
+  })
+  f.host.prompt = original
+  await f.runtime.command(
+    {
+      requestID: "reconcile-route-guard",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 8)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+    workspace: attempt.workspace,
+  })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
 })
 
 test("lost host response reconciles a real accepted prompt without creating another worker", async () => {
@@ -12997,3 +13035,25 @@ test.each([false, true])(
     ).toHaveLength(0)
   },
 )
+
+test("Auditor dispatch retains its role and selected model and waits for Architect review", async () => {
+  const model = { providerID: "opencode-go", id: "muse-spark-1.3-contributor" }
+  const f = fixture({ shared: true, human: true, workerAgent: "auditor", personas: ["systems"] })
+  const requested: unknown[] = []
+  f.host.workerModel = async (agent) => {
+    requested.push(agent)
+    return model
+  }
+  await f.runtime.command(
+    { requestID: "audit-run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(requested).toContain("auditor")
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.sessions.get(attempt.session_id)!.agent).toBe("auditor")
+  expect(JSON.parse(attempt.policy)).toMatchObject({ agent: "auditor", model })
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(f.store.plan(f.receipt.planID)!.reason).toContain("correct:human")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})

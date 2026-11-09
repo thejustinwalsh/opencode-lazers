@@ -139,11 +139,13 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   })
   expect(submitted.note).toContain("does not start execution")
   const get = await Effect.runPromise(
-    tools.get("lz-get-task")!.execute({ taskID: submitted.taskID }, context),
+    tools.get("lz-get-task")!.execute({ taskID: submitted.taskID, format: "structured" }, context),
   )
   expect(JSON.parse(String(get.content)).task.provenance.sessionID).toBe("session")
   const byReference = await Effect.runPromise(
-    tools.get("lz-get-task")!.execute({ taskID: submitted.reference }, context),
+    tools
+      .get("lz-get-task")!
+      .execute({ taskID: submitted.reference, format: "structured" }, context),
   )
   expect(JSON.parse(String(byReference.content))).toMatchObject({
     status: "found",
@@ -185,7 +187,9 @@ test("native task submission round-trips all task-kind/v1 values through effecti
     )
     expect(submitted.status).toBe("submitted")
     const detail = await Effect.runPromise(
-      tools.get("lz-get-task")!.execute({ taskID: submitted.taskID }, context),
+      tools
+        .get("lz-get-task")!
+        .execute({ taskID: submitted.taskID, format: "structured" }, context),
     )
     expect(detail.output).toMatchObject({
       status: "found",
@@ -249,7 +253,7 @@ test("Architect classification tool appends, exactly replays, and returns confli
   )
   expect(conflict).toMatchObject({ status: "conflict" })
   const detail = await Effect.runPromise(
-    tools.get("lz-get-task")!.execute({ taskID: submitted.taskID }, context),
+    tools.get("lz-get-task")!.execute({ taskID: submitted.taskID, format: "structured" }, context),
   )
   expect(detail.output).toMatchObject({
     classification: { revision: 2, classification: input.classification },
@@ -606,9 +610,9 @@ test("the registered disposition tool records reviewed fulfillment without chang
 
   const publicReadback = JSON.parse(
     String(
-      await Effect.runPromise(tools.get("lz-get-task")!.execute({ taskID }, context)).then(
-        (result) => result.content,
-      ),
+      await Effect.runPromise(
+        tools.get("lz-get-task")!.execute({ taskID, format: "structured" }, context),
+      ).then((result) => result.content),
     ),
   )
   expect(publicReadback).toMatchObject({
@@ -664,7 +668,7 @@ test("the registered disposition tool records reviewed fulfillment without chang
   const quietReadback = JSON.parse(
     String(
       await Effect.runPromise(
-        tools.get("lz-get-task")!.execute({ taskID: quietTaskID }, context),
+        tools.get("lz-get-task")!.execute({ taskID: quietTaskID, format: "structured" }, context),
       ).then((result) => result.content),
     ),
   )
@@ -820,7 +824,6 @@ test("retained tool callbacks survive disposal of the registration connection", 
   expect(receipt.status).toBe("submitted")
   for (const [name, input] of [
     ["lz-get-task", { taskID: receipt.taskID }],
-    ["lz-get-task-instructions", { taskID: receipt.taskID }],
     ["lz-list-tasks", { limit: 5 }],
     ["lz-query-tasks", {}],
   ] as const) {
@@ -861,7 +864,6 @@ test("task reads expose structured Code Mode outputs and require their own permi
   for (const [name, input] of [
     ["lz-query-tasks", {}],
     ["lz-get-task", { taskID: crypto.randomUUID() }],
-    ["lz-get-task-instructions", { taskID: crypto.randomUUID() }],
     ["lz-list-tasks", { limit: 2 }],
   ] as const) {
     await expect(
@@ -879,14 +881,15 @@ test("registered Code Mode implementor fetch yields readable instructions before
   }
   const receipt = await Effect.runPromise(tools.get("lz-submit-task")!.execute(proposal, context))
   const { taskID } = JSON.parse(String(receipt.content))
-  const instructionsTool = tools.get("lz-get-task-instructions")!
+  const instructionsTool = tools.get("lz-get-task")!
   const result = await Effect.runPromise(
     tools
-      .get("lz-get-task-instructions")!
+      .get("lz-get-task")!
       .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
   )
   expect(instructionsTool.options).toMatchObject({ codemode: true, pinned: true })
   expect(instructionsTool.output).toBeDefined()
+  expect(tools.has("lz-get-task-instructions")).toBe(false)
   const value = resultValue(result)
   if (typeof value !== "string") throw new Error("Readable Code Mode output must be a string")
   expect(typeof value).toBe("string")
@@ -910,7 +913,10 @@ test("registered Code Mode implementor fetch yields readable instructions before
   const structured = await Effect.runPromise(
     tools
       .get("lz-get-task")!
-      .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
+      .execute(
+        { taskID, format: "structured" },
+        { ...context, agent: Agent.ID.make("lazers-implementor") },
+      ),
   )
   const structuredValue = resultValue(structured)
   expect(structuredValue).toHaveProperty("task.id", taskID)
@@ -924,13 +930,13 @@ test("readable task fetch handles missing and unavailable revisions", async () =
     tools.get("lz-submit-task")!.execute(keyedProposal(), context),
   )
   const { taskID } = JSON.parse(String(receipt.content))
-  const instructions = tools.get("lz-get-task-instructions")!
+  const instructions = tools.get("lz-get-task")!
 
   const missing = await Effect.runPromise(
-    instructions.execute({ taskID: crypto.randomUUID() }, context),
+    instructions.execute({ taskID: crypto.randomUUID(), format: "instructions" }, context),
   )
   const unavailable = await Effect.runPromise(
-    instructions.execute({ taskID, revision: 2 }, context),
+    instructions.execute({ taskID, revision: 2, format: "instructions" }, context),
   )
   expect(resultValue(missing)).toBe("Task not_found.")
   expect(resultValue(unavailable)).toBe("Task revision_unavailable.")
@@ -994,7 +1000,6 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
     ["lz-submit-task", { ...keyedProposal(), objective: "Changed content" }],
     ["lz-submit-task", validProposal()],
     ["lz-get-task", { taskID: receipt.taskID }],
-    ["lz-get-task-instructions", { taskID: receipt.taskID }],
     ["lz-list-tasks", { limit: 20 }],
     ["lz-query-tasks", {}],
     [
@@ -1053,13 +1058,15 @@ test("native retries and conflicts skip inaccessible Git; canonical project scop
   try {
     // Use an accessible Git worktree, but an independent host canonical identity.
     const isolated = await nativeTools(other, { workspace: process.cwd() })
-    expect(await isolated.call("lz-get-task", { taskID: receipt.taskID })).toEqual({
+    expect(
+      await isolated.call("lz-get-task", { taskID: receipt.taskID, format: "structured" }),
+    ).toEqual({
       status: "not_found",
     })
     const isolatedInstructions = await Effect.runPromise(
       isolated.tools
-        .get("lz-get-task-instructions")!
-        .execute({ taskID: receipt.taskID }, isolated.context),
+        .get("lz-get-task")!
+        .execute({ taskID: receipt.taskID, format: "instructions" }, isolated.context),
     )
     expect(resultValue(isolatedInstructions)).toBe("Task not_found.")
     expect((await isolated.call("lz-list-tasks", { limit: 20 })).tasks).toEqual([])
@@ -1070,7 +1077,9 @@ test("native retries and conflicts skip inaccessible Git; canonical project scop
     expect(independent.status).toBe("submitted")
     expect(independent.taskID).not.toBe(receipt.taskID)
     expect((await isolated.call("lz-list-tasks", { limit: 20 })).tasks).toHaveLength(1)
-    expect(await first.call("lz-get-task", { taskID: independent.taskID })).toEqual({
+    expect(
+      await first.call("lz-get-task", { taskID: independent.taskID, format: "structured" }),
+    ).toEqual({
       status: "not_found",
     })
   } finally {

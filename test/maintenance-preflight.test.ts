@@ -345,27 +345,13 @@ test("the evaluator is deterministic and calls only injected read-only evidence 
   expect(first.executionPermitted).toBe(false)
 })
 
-test("dirty, wrong, changed, unmerged and snapshot-mismatched candidates fail closed", async () => {
+test("wrong, changed, unmerged and snapshot-mismatched candidate associations fail closed", async () => {
   const cases: Array<{
     name: string
     make: (value: Fixture) => MaintenanceReaders
     snapshot?: (value: Fixture) => void
     expected: MaintenanceReasonCode
   }> = [
-    {
-      name: "dirty working tree",
-      make: () =>
-        readers({
-          git: () => ({
-            kind: "observed",
-            root: workspace,
-            head: artifact,
-            clean: false,
-            unmerged: false,
-          }),
-        }),
-      expected: "candidate-dirty",
-    },
     {
       name: "wrong commit",
       make: () =>
@@ -1014,4 +1000,22 @@ test("spawned offline CLI accepts production bindings and leaves candidate and r
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("a dirty working tree and legacy changed flag do not invalidate a passing check", async () => {
+  const value = fixture()
+  const observed = readers()
+  const readGit = observed.git
+  observed.git = async (...args) => {
+    const result = await readGit(...args)
+    return result.kind === "observed" ? { ...result, clean: false } : result
+  }
+  const receipt = receiptSnapshot({ unchanged: false })
+  value.inspection.receipt = { status: "present", receipt }
+  observed.receipt = () => ({ kind: "present", receipt })
+  const result = await evaluateMaintenancePreflight(value.request, value.inspection, observed)
+  expect(codes(result)).not.toContain("candidate-dirty")
+  expect(codes(result)).not.toContain("runner-receipt-not-passing")
+  expect(result.candidate.status).toBe("matches")
+  expect(result.receipt.status).toBe("matches")
 })

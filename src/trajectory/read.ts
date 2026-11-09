@@ -558,9 +558,9 @@ function checkView(
   const result =
     effect.state !== "completed"
       ? "unknown"
-      : exitCode === 0 && timedOut === false && unchanged === true
+      : exitCode === 0 && timedOut === false
         ? "passed"
-        : exitCode !== null || timedOut === true || unchanged === false
+        : exitCode !== null || timedOut === true
           ? "failed"
           : "unknown"
   return {

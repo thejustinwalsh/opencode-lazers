@@ -864,19 +864,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   <details class="lazers-trajectory-payload">
                     <summary>Check output</summary>
                     <div class="lazers-trajectory-metadata">
-                      <Show when={check().timedOut !== null || check().unchanged !== null}>
-                        <p>
-                          {check().timedOut === null
-                            ? "Timeout unknown"
-                            : check().timedOut
-                              ? "Timed out"
-                              : "Not timed out"}
-                          {check().unchanged === null
-                            ? " · artifact change unknown"
-                            : check().unchanged
-                              ? " · artifact unchanged"
-                              : " · artifact changed"}
-                        </p>
+                      <Show when={check().timedOut}>
+                        <p>Timed out</p>
                       </Show>
                     </div>
                     <pre>{checkOutput(check())}</pre>

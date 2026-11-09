@@ -152,11 +152,11 @@ test("task instructions render only concise effective advice with its provenance
   const instructions = taskInstructions(detailWithAdvice)
 
   expect(instructions).toContain("## Task-attached advice (advisory, revision 2)")
-  expect(instructions).toContain("session replacement-architect")
+  expect(instructions).not.toContain("session replacement-architect")
   expect(instructions).toContain("Read the existing transaction seam")
   expect(instructions).toContain("Keep the attachment separate")
   expect(instructions).toContain("mini-skill: sqlite-transactions")
-  expect(instructions).toContain("Optional references (not retrieved)")
+  expect(instructions).toContain("Optional references")
   expect(instructions).not.toContain("Old finding")
   expect(instructions).not.toContain("Old advice")
   expect(instructions).not.toContain('"history"')

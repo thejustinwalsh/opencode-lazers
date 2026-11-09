@@ -505,6 +505,22 @@ try {
   assert.equal(attachCalls, beforeReconnect + 2)
   assert.equal(allocations, 1)
   assert.equal(broker.demand().requested, false)
+  pollFailure = new Error("Temporary mailbox loss with detach timeout")
+  hangDetach = true
+  const beforeDetachReconnect = attachCalls
+  timerTick()
+  await until(() => runtime.state() === "error")
+  assert.equal(allocations, 0, "GPU disposal completes even when broker detachment times out")
+  assert.equal(lease.occupied(), true, "The existing lease remains owned during reconnection")
+  hangDetach = false
+  pollFailure = undefined
+  wallNow += 1_000
+  timerTick()
+  await until(() => runtime.state() === "ready")
+  assert.equal(attachCalls, beforeDetachReconnect + 1)
+  assert.equal(allocations, 1)
+  assert.equal(maximum, 1, "Reconnection reuses ownership without overlapping GPU models")
+  assert.equal(broker.demand().requested, false, "Detach recovery needs no new user request")
   pollFailure = new Error("Temporary transport loss before disable")
   timerTick()
   await until(() => runtime.state() === "error")

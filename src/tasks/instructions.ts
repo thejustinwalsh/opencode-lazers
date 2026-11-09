@@ -36,12 +36,11 @@ export function taskInstructions(detail: TaskDetail): string {
   })
   const advice = detail.advice?.current
   const attachedAdvice = advice
-    ? `\n\n## Task-attached advice (advisory, revision ${advice.revision})\n` +
-      `Recorded by ${advice.provenance.agent} in session ${advice.provenance.sessionID} at ${advice.provenance.createdAt}. This does not change approved requirements, acceptance, or scope.` +
+    ? `\n\n## Task-attached advice (advisory, revision ${advice.revision})` +
       section("Research findings", advice.findings) +
       section("Implementation advice", advice.implementationAdvice) +
       section(
-        "Optional references (not retrieved)",
+        "Optional references",
         advice.references.map(
           (reference) =>
             `${reference.kind}: ${reference.reference}${reference.description ? ` — ${reference.description}` : ""}`,
@@ -70,6 +69,9 @@ export function taskInstructions(detail: TaskDetail): string {
     section("Assumptions", proposal.assumptions) +
     (proposal.guidance ? `\n\n## Implementation guidance (advisory)\n${proposal.guidance}` : "") +
     attachedAdvice +
+    (detail.auditHistory
+      ? `\n\n## Audit history\n${detail.auditHistory.runCount} saved runs; latest ${detail.auditHistory.latestRunID}. Use lz-query-audits with taskID ${task.id}, then lz-get-audit for relevant findings and decisions.`
+      : "") +
     section(
       "Verification",
       proposal.verification.map(

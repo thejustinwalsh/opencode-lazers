@@ -1,3 +1,4 @@
+import { registerAuditTools } from "./audit/tools.ts"
 import { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { registerArchitect } from "./architect.ts"
@@ -93,10 +94,11 @@ export default Plugin.define({
       )
       yield* registerContextTools(ctx, projectIndex)
       yield* registerNativeInteraction(ctx).pipe(Effect.orDie)
-      yield* registerTaskTools(ctx, repository)
+      yield* registerTaskTools(ctx, repository, projectIndex)
       yield* registerModelTools(ctx, repository)
       yield* registerModelsServer(ctx, repository).pipe(Effect.orDie)
       yield* registerArchitect(ctx)
+      yield* registerAuditTools(ctx, repository)
       const runnerStore = new RunnerStore(repository)
       const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
       const host = nativeHost(ctx, repository)

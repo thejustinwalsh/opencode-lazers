@@ -38,6 +38,7 @@
     "vite-plugin-solid": "2.11.15"
   },
   "dependencies": {
+    "@fallow-cli/fallow-node": "3.41.0",
     "@huggingface/tokenizers": "0.2.0",
     "echarts": "6.1.0",
     "elkjs": "0.12.1",

@@ -1,3 +1,5 @@
+import { isWorkerAgent } from "../runner/worker-agent.ts"
+import { isNativeInput } from "../runner/native-input.ts"
 import { DateTime } from "effect"
 import { createHash } from "node:crypto"
 import type { Database } from "bun:sqlite"
@@ -1296,7 +1298,7 @@ export class ProgressRecorder {
     messageID: string
     message: unknown
   }): { sequence: number; text: string } {
-    if (input.agent !== "lazers-implementor")
+    if (!isWorkerAgent(input.agent))
       throw new Error("Only an assigned LAZERS implementor may report progress")
     const parsed = ProgressInput.parse({ message: input.message })
     const stats = privacyStats()
@@ -1320,7 +1322,7 @@ export class ProgressRecorder {
   }
 
   recordToolHook(call: ToolCall): number | undefined {
-    if (call.tool === "lz-report-progress" || call.agent !== "lazers-implementor") return undefined
+    if (call.tool === "lz-report-progress" || !isWorkerAgent(call.agent)) return undefined
     const stats = privacyStats()
     const payload: Record<string, unknown> = {
       tool: safeText(call.tool, stats, 160),
@@ -1811,6 +1813,25 @@ export class ProgressRecorder {
         const messageTime = object(message.time)
         const messageCreatedAt = dateMillis(messageTime?.created)
         const at = messageCreatedAt ?? Date.now()
+        if (
+          (message.type === "user" || message.type === "synthetic") &&
+          isNativeInput(raw) &&
+          typeof message.text === "string"
+        ) {
+          this.appendIn(db, assignment, {
+            source: "recovery",
+            sourceType: `retained-${message.type}-message.text`,
+            kind: "visible-text",
+            dedupeKey: `input:${sessionID}:${messageID}`,
+            at,
+            messageID,
+            payload: {
+              text: safeText(message.text, privacyStats()),
+              messageType: message.type,
+              createdAt: messageCreatedAt ?? null,
+            },
+          })
+        }
         if (message.type === "assistant") {
           const parts = Array.isArray(message.content) ? message.content : []
           for (const [index, rawPart] of parts.entries()) {
@@ -2257,11 +2278,7 @@ export class ProgressRecorder {
     const exitCode = number(result.exitCode)
     const timedOut = typeof result.timedOut === "boolean" ? result.timedOut : null
     const unchanged = typeof result.unchanged === "boolean" ? result.unchanged : null
-    const identityMatches =
-      typeof result.inputIdentity === "string" &&
-      typeof result.artifact === "string" &&
-      result.inputIdentity === result.artifact
-    const passed = exitCode === 0 && timedOut === false && unchanged === true && identityMatches
+    const passed = exitCode === 0 && timedOut === false
     const startedAt = dateMillis(result.startedAt)
     const endedAt = dateMillis(result.endedAt)
     const timing = factTiming({

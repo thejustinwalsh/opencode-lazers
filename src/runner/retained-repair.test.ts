@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
@@ -879,7 +879,6 @@ test(
 type RepairRejectionCase =
   | "stale"
   | "foreign"
-  | "dirty"
   | "wrong-artifact"
   | "changed-route"
   | "changed-identity"
@@ -897,7 +896,6 @@ async function verifyRepairRejection(rejected: RepairRejectionCase) {
   const beforePlan = f.store.plan(f.planID)
   const beforeNode = f.store.nodes(f.planID)[0]
   const beforeAttempt = f.store.attempts(f.planID)[0]
-  if (rejected === "dirty") writeFileSync(join(beforeAttempt!.workspace, "untracked.txt"), "dirty")
   if (rejected === "pending-input") f.sessions.get(beforeAttempt!.session_id)!.pendingInput = true
   if (rejected === "pending-permission")
     f.sessions.get(beforeAttempt!.session_id)!.pendingPermissions = 1
@@ -937,9 +935,8 @@ async function verifyRepairRejection(rejected: RepairRejectionCase) {
   expect(f.store.latestRetainedRepair(f.planID, f.tasks[0]!.id)).toBeUndefined()
 }
 
-test("stale caller/version, wrong artifact and dirty workspace reject without lifecycle changes", async () => {
-  for (const rejected of ["stale", "foreign", "dirty"] as const)
-    await verifyRepairRejection(rejected)
+test("stale caller and version reject without lifecycle changes", async () => {
+  for (const rejected of ["stale", "foreign"] as const) await verifyRepairRejection(rejected)
 })
 
 test("wrong artifacts, changed routes and unrelated transfers reject without lifecycle changes", async () => {
@@ -1068,4 +1065,16 @@ test("an ambiguous retained prompt is never automatically replayed", async () =>
     .map((effect) => effect.state)
   expect(promptStates[0]).toBe("completed")
   expect(["completed", "uncertain"]).toContain(promptStates[1]!)
+})
+
+test("retained repair preserves uncommitted work in the original worker", async () => {
+  const f = fixture()
+  await accept(f)
+  const prior = f.store.attempts(f.planID)[0]!
+  const path = join(prior.workspace, "untracked.txt")
+  writeFileSync(path, "useful partial work")
+  const result = await f.runtime.command(retainedRepairCommand(f), "owner")
+  expect(result).toMatchObject({ status: "retained-repair-requested", attemptID: prior.id })
+  expect(readFileSync(path, "utf8")).toBe("useful partial work")
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
 })

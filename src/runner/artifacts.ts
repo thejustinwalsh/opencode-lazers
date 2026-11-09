@@ -12,6 +12,7 @@ import {
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { canonical } from "../identity.ts"
+import { checkEnvironment } from "./checks.ts"
 import type { TaskProposal } from "../task.ts"
 
 export function git(
@@ -338,7 +339,8 @@ export type CheckReceipt = {
   timedOut: boolean
   stdout: string
   stderr: string
-  unchanged: boolean
+  /** Legacy diagnostic only; never establishes or invalidates a check. */
+  unchanged?: boolean
   isolation?: unknown
 }
 
@@ -403,7 +405,7 @@ export async function runCheck(
     stderr: "pipe",
     stdin: "ignore",
     detached: true,
-    env: options.environment ? { ...options.environment } : { ...process.env },
+    env: checkEnvironment(options.environment ?? process.env),
   })
   const terminate = (timeout: boolean) => {
     if (timeout) timedOut = true
@@ -439,7 +441,6 @@ export async function runCheck(
       timedOut,
       stdout,
       stderr,
-      unchanged: artifactUnchanged(directory, artifact, options.ownedUntrackedPaths),
       ...(options.isolation === undefined ? {} : { isolation: options.isolation }),
     }
     mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })

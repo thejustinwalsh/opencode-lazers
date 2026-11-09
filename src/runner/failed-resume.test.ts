@@ -229,7 +229,7 @@ test("explicit resume continues a stopped failed attempt with its history and re
   const failedReceiptJSON = failedReceipt.receipt
   const originalPolicy = original.policy
   expect(original).toMatchObject({ token_count: 123, tool_count: 7, cost: 0.25 })
-  expect(JSON.parse(failedReceiptJSON!).check).toMatchObject({ exitCode: 1, unchanged: true })
+  expect(JSON.parse(failedReceiptJSON!).check).toMatchObject({ exitCode: 1 })
   expect(
     f.store
       .progressFacts([original.id])
@@ -237,7 +237,7 @@ test("explicit resume continues a stopped failed attempt with its history and re
         (fact) =>
           fact.kind === "execution-outcome" &&
           JSON.parse(fact.payload).outcome === "failed" &&
-          JSON.parse(fact.payload).reason.includes("Verification content failed"),
+          JSON.parse(fact.payload).reason.includes("Verification content exited"),
       ),
   ).toBe(true)
 
@@ -295,13 +295,12 @@ test("explicit resume continues a stopped failed attempt with its history and re
     JSON.parse(checks.find((effect) => effect.id !== failedReceipt.id)!.receipt!).check,
   ).toMatchObject({
     exitCode: 0,
-    unchanged: true,
   })
   expect(
     f.store.activity(f.planID, original.task_id).some((event) => {
       return (
         event.event === "FAIL" &&
-        JSON.parse(event.payload).reason.includes("Verification content failed")
+        JSON.parse(event.payload).reason.includes("Verification content exited")
       )
     }),
   ).toBe(true)

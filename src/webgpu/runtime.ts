@@ -1145,7 +1145,14 @@ export function createInferenceRuntime(
           }
         } catch (error) {
           await unload()
-          if (!owner && !models.isTainted() && !disposed && usesGPU(features())) {
+          // A failed broker detach retains our lease after GPU disposal. Reattach
+          // that same owner through the existing load backoff once transport recovers.
+          if (
+            (!owner || attachPending) &&
+            !models.isTainted() &&
+            !disposed &&
+            usesGPU(features())
+          ) {
             autoload = true
             loadFailures = 1
             nextLoadAttempt = wallNow() + 1_000

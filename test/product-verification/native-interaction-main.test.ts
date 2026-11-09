@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Window } from "happy-dom"
 import type { MainContext } from "@opencode/plugin/gui/main"
 import {
   BOUNDED_DOM_SNAPSHOT_SCRIPT,
@@ -208,6 +209,41 @@ describe("owned native Desktop adapter", () => {
     expect(hint).not.toContain("secret")
     expect(hint).not.toContain("do-not-log")
     expect(hint).not.toContain("abc123456789")
+  })
+
+  test("rendered native menus, tabs and disclosures are actionable without exposing navigation links", () => {
+    const dom = new Window()
+    try {
+      dom.document.body.innerHTML = `
+        <div role="menuitem">Completed</div>
+        <div role="menuitemradio">All</div>
+        <div role="menuitemcheckbox">Include other sessions</div>
+        <div role="option">Project tasks</div>
+        <div role="tab">Radar</div>
+        <details><summary>Activity and holds</summary><p>Fixture failure</p></details>
+        <a href="https://example.test" role="menuitem">External link</a>`
+      for (const element of dom.document.body.querySelectorAll("*")) {
+        element.setAttribute("style", "opacity:1")
+        Object.defineProperty(element, "getBoundingClientRect", {
+          value: () => ({ x: 10, y: 20, width: 100, height: 30 }),
+        })
+      }
+      const snapshot = dom.eval(BOUNDED_DOM_SNAPSHOT_SCRIPT) as {
+        elements: Array<{ name: string; role: string; tag: string }>
+      }
+      expect(snapshot.elements.map((element) => element.name)).toEqual([
+        "Completed",
+        "All",
+        "Include other sessions",
+        "Project tasks",
+        "Radar",
+        "Activity and holds",
+      ])
+      expect(snapshot.elements[0]?.role).toBe("menuitem")
+      expect(snapshot.elements.at(-1)).toMatchObject({ tag: "summary", role: "button" })
+    } finally {
+      void dom.happyDOM.close()
+    }
   })
 
   test("uses one fixed bounded rendered-DOM script without reading form values or invoking handlers", async () => {

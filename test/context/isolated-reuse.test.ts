@@ -21,6 +21,7 @@ import { ProjectIndex } from "../../src/context/index.ts"
 import type { ContextHost, ContextSession } from "../../src/context/index.ts"
 import { WorkspaceIndexUnavailable } from "../../src/context/index.ts"
 import { registerContextTools } from "../../src/context/tools.ts"
+import { validProposal } from "../proposal.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -413,6 +414,13 @@ test("a worker reads its parent's pinned snapshot, not a later workspace publica
   expect(result).toMatchObject({ snapshotID: selected.id, workspace: f.source })
   expect(result.sources[0]!.text).toBe("published source from Architect\n")
   expect(result.sources[0]!.text).not.toContain("later unrelated")
+  const taskContext = await f.workerIndex.taskContext(
+    { sessionID: "ses_worker", agent: "lazers-implementor" },
+    { ...validProposal(), context: [{ reference: "README.md:1", revision: null }] },
+  )
+  expect(taskContext.snapshotID).toBe(selected.id)
+  expect(taskContext.entries[0]!.text).toContain("published source from Architect")
+  expect(JSON.stringify(taskContext)).not.toContain("later unrelated")
   expect(f.state()).toEqual(beforeRead)
 })
 

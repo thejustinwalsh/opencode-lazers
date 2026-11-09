@@ -89,6 +89,39 @@ const EvidenceOutput = z.strictObject({
     .max(50),
 })
 
+function permittedRead<Input, Output>(
+  ctx: Plugin.Context,
+  action: string,
+  run: (
+    input: Input,
+    principal: { sessionID: string; agent: string; signal?: AbortSignal },
+  ) => Promise<Output>,
+) {
+  return (input: Input, call: { sessionID: string; agent: string }) =>
+    ctx.permission
+      .assert({
+        sessionID: call.sessionID as never,
+        agent: call.agent as never,
+        action,
+        resources: ["*"],
+      })
+      .pipe(
+        Effect.flatMap(() =>
+          Effect.tryPromise({
+            try: async (signal) => {
+              const output = await run(input, {
+                sessionID: call.sessionID,
+                agent: call.agent,
+                signal,
+              })
+              return { content: JSON.stringify(output), output }
+            },
+            catch: (error) => new Tool.Error({ message: String(error) }),
+          }),
+        ),
+      )
+}
+
 export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
   return ctx.tool.transform((editor) => {
     editor.add({
@@ -98,28 +131,9 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
       input: IndexInput,
       output: IndexOutput,
       options: { codemode: true, pinned: true, permission: "lz-project-index" },
-      execute: (input, call) =>
-        ctx.permission
-          .assert({
-            sessionID: call.sessionID,
-            agent: call.agent,
-            action: "lz-project-index",
-            resources: ["*"],
-          })
-          .pipe(
-            Effect.flatMap(() =>
-              Effect.tryPromise({
-                try: async (signal) => {
-                  const output = await index.manifest(
-                    { sessionID: call.sessionID, agent: call.agent, signal },
-                    input.paths,
-                  )
-                  return { content: JSON.stringify(output), output }
-                },
-                catch: (error) => new Tool.Error({ message: String(error) }),
-              }),
-            ),
-          ),
+      execute: permittedRead(ctx, "lz-project-index", (input, principal) =>
+        index.manifest(principal, input.paths),
+      ),
     })
     editor.add({
       name: "lz-project-refresh",
@@ -174,28 +188,9 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
       input: EvidenceInput,
       output: EvidenceOutput,
       options: { codemode: true, pinned: true, permission: "lz-project-read" },
-      execute: (input, call) =>
-        ctx.permission
-          .assert({
-            sessionID: call.sessionID,
-            agent: call.agent,
-            action: "lz-project-read",
-            resources: ["*"],
-          })
-          .pipe(
-            Effect.flatMap(() =>
-              Effect.tryPromise({
-                try: async (signal) => {
-                  const output = await index.evidence(
-                    { sessionID: call.sessionID, agent: call.agent, signal },
-                    input,
-                  )
-                  return { content: JSON.stringify(output), output }
-                },
-                catch: (error) => new Tool.Error({ message: String(error) }),
-              }),
-            ),
-          ),
+      execute: permittedRead(ctx, "lz-project-read", (input, principal) =>
+        index.evidence(principal, input),
+      ),
     })
   })
 }

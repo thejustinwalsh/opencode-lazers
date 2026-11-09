@@ -6,7 +6,7 @@ const nativeContinuations = new Set([
   "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.",
 ])
 
-function isNativeInput(message: unknown): message is { id?: string } {
+export function isNativeInput(message: unknown): message is { id?: string } {
   const value = message as
     | { type?: string; text?: unknown; metadata?: { instruction?: { paths?: unknown } } }
     | undefined

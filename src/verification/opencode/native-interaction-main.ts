@@ -25,14 +25,14 @@ export const BOUNDED_DOM_SNAPSHOT_SCRIPT = `(() => {
   };
   const clean = (value, limit) => String(value || "").replace(/\\s+/g, " ").trim().slice(0, limit);
   const controls = Array.from(document.querySelectorAll(
-    "button,[role=button],input,textarea,select,[contenteditable=true]"
+    "button,summary,[role=button],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=tab],input,textarea,select,[contenteditable=true]"
   ));
   const elements = controls.filter((element) =>
     visible(element) && !(element.tagName === "A" && element.hasAttribute("href"))
   ).slice(0, MAX_ELEMENTS).map((element, index) => {
     const rect = element.getBoundingClientRect();
     const tag = element.tagName.toLowerCase();
-    const role = clean(element.getAttribute("role") || tag, 40);
+    const role = clean(element.getAttribute("role") || (tag === "summary" ? "button" : tag), 40);
     const name = clean(element.getAttribute("aria-label") || element.getAttribute("title") ||
       element.getAttribute("placeholder") || element.innerText || element.textContent, 160);
     return {

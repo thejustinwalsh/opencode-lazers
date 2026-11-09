@@ -4,11 +4,34 @@
 
 `opencode-lazers` is an OpenCode plugin for architects who know what they want built and need consistent, affordable execution. LAZERS means specifying the target, compiling the work, and executing with precision. Success is completed work per dollar and hour, subject to the repository's quality standards.
 
-The user owns intent. Architect turns it into a verified plan and makes orchestration decisions when judgment is needed. The runtime owns execution policy and task state. Workers implement the change.
+The user owns intent. Architect turns it into a verified plan and makes orchestration decisions when judgment is needed. The runtime owns execution policy and task state. Workers implement the change. Architect owns ordinary verification, review, integration and recovery; delivery does not depend on an outside driver. Ask the user only for material choices or required authorization.
 
 LAZERS ships as one plugin package. Its scheduler and storage run inside OpenCode’s service; panels and local inference run inside OpenCode Desktop. Workers are native OpenCode sessions. There is no separate LAZERS daemon, scheduler service or inference server to install. Git, verification and builds use ordinary subprocesses through the host.
 
 For panel work, use [DESIGN.md](DESIGN.md) and its linked visual references.
+
+## Auditor
+
+Audit and refactor requests go through Architect to the runtime-managed `auditor`
+role. Its default native route is OpenCode Go `muse-spark-1.3-contributor`;
+OpenCode agent configuration or an explicit plan model can override it. Submit
+`workerAgent: "auditor"` on the ordinary plan. The three implementor personas
+remain unchanged; their model mappings do not override the selected Auditor role.
+Existing scheduling, workspaces, hooks, trajectories, repair and integration apply.
+
+`lz-fallow-report` is available in Code Mode. The bundled
+`@fallow-cli/fallow-node` dependency runs async static analysis on the server,
+using one analysis thread by default. Full reports, findings and append-only
+dispositions live in the task SQLite database, linked to task/attempt/session
+with Unix millisecond timestamps. `lz-query-audits` and `lz-get-audit` retrieve
+history; replaceable JSON exports survive worker checkout cleanup. Scans cover dead
+code/dependencies, duplication, health/complexity/CSS, architecture and feature
+flags. Optional local-model semantic search is not downloaded or started.
+
+Auditor confirms findings against real callers, saves before/after reports,
+simplifies the assigned system and runs relevant checks with automatic fixes.
+Architect reviews the diff and behavior before integration, steering the same
+worker if needed. Reports and line counts inform review; they do not gate work.
 
 ## Architect experience and authority
 
@@ -68,6 +91,12 @@ A `TaskGraph` contains versioned specifications and dependency edges. Every task
 
 Use one worker and task for a coherent outcome, including related implementation, fixes and verification. Split for independently useful deliverables, meaningful parallelism or a material risk/context boundary; each split must earn its research, dispatch, review and integration overhead. Files, layers, individual test cases and line counts do not define tasks. Keep routine discoveries and repairs with the same worker through existing scope controls. Verify at completion boundaries. Accept the graph only after its combined result meets overall acceptance.
 
+Acceptance uses command outcomes, observed product behavior and Architect review.
+Source-file hashes, clean-tree assertions and environment fingerprints do not prove
+completion or expire passing results. Record changed context for review. Commit
+successful automatic fixes with the work. Setup failures retain the same attempt;
+cleanup tracks resources independently of the feature result.
+
 ### 3 Execution policy
 
 **Status:** Implemented in the runtime and native adapters; exact route failures remain visible and are never replaced by fallback selection.
@@ -102,9 +131,9 @@ draft → ready → running → verifying → accepted
 
 `ready` requires a valid specification and admitted plan. Verification failure permits one repair by default. Cancellation, execution failure, or a missing prerequisite stop work with evidence and a concrete next action. Explicit resume/retry commands retain prior attempts and usage.
 
-`accepted` means all acceptance evidence exists, required checks pass, the diff respects scope, and required human decisions are resolved. Tests passing and a worker saying “done” are insufficient. Acceptance identifies the exact resulting revision or artifact; merging or publishing remains a separate action.
+`accepted` records the task’s required checks, behavior observations and resolved decisions for its resulting artifact. Architect reviews delivered work and decides integration. A worker’s completion message is a report, not a state transition; merging or publishing remains a separate action.
 
-Reuse a verification result only for the same relevant code, inputs, command, and environment. Edits or integration that invalidate those inputs invalidate the result. Repair receives the specific failure; repeat checks whose evidence became invalid.
+Retain check results with the code, command, timestamps and observed environment. Architect decides whether subsequent changes require another check; metadata drift does not automatically revoke a pass. Repair receives the specific failure.
 
 Completion/failure delivery and Architect decisions are separate from lifecycle transitions. Persist the outcome and evidence before notification, and prevent duplicate or stale notifications/commands from dispatching work twice. Apply configured repair or retry rules without a model call when the response is already defined. Re-enter Architect when the failure requires a new approach, changed dependencies or scope, or a user decision. A reschedule or revised plan must pass admission and retain prior attempts and usage; it does not silently restart a loop.
 
@@ -116,9 +145,11 @@ Serial tasks default to native child sessions in the shared checkout; parallel w
 
 A `ContextPacket` supplies concise repository rules, the specification and its optional skill suggestions, relevant interfaces and findings, and their source references. Reuse useful findings. Workers can progressively load a useful native skill when needed and permitted; skill bodies are not eagerly attached to task context.
 
+Workers fetch the readable task, current advice and focused cached Repomix source together with `lz-get-task`. The same tool offers `format: "structured"` for raw task/execution data. Architect publishes the reusable snapshot; worker reads do not refresh it. Missing cached context does not prevent receiving the task or reading live source normally.
+
 Persistent memory retrieval is bounded and relevant. Durable decisions retain provenance. Stable prompt prefixes may improve provider caching, but reported cache usage must demonstrate the benefit; separate sessions do not imply shared caches.
 
-The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, bound the packet, and deliver it at dispatch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal tools and can request more evidence. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a research ceremony.
+The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, and deliver focused source with the task fetch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal source tools. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a research ceremony.
 
 The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lz-project-refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
 

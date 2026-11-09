@@ -1,3 +1,4 @@
+import { isWorkerAgent } from "../runner/worker-agent.ts"
 import {
   constants,
   closeSync,
@@ -520,12 +521,12 @@ export class ProjectIndex {
   }
 
   private async publicationFor(principal: Principal) {
-    if (!this.host || principal.agent !== "lazers-implementor") return undefined
+    if (!this.host || !isWorkerAgent(principal.agent)) return undefined
     try {
       const worker = await this.host.session(principal.sessionID)
       if (
         !worker ||
-        !this.sameSession(worker, principal.sessionID, "lazers-implementor", this.root) ||
+        !this.sameSession(worker, principal.sessionID, principal.agent, this.root) ||
         !worker.parentID
       )
         return undefined
@@ -580,11 +581,16 @@ export class ProjectIndex {
     return files
   }
 
-  async manifest(principal: Principal, paths: string[] = []) {
+  private async selectPermitted(principal: Principal, paths: string[], search?: string) {
     principal.signal?.throwIfAborted()
     const snapshot = await this.snapshotFor(principal)
-    const selected = this.selectedFiles(snapshot, paths)
+    const selected = this.selectedFiles(snapshot, paths, search)
     const matches = await this.permittedFiles(snapshot, principal, selected)
+    return { snapshot, matches }
+  }
+
+  async manifest(principal: Principal, paths: string[] = []) {
+    const { snapshot, matches } = await this.selectPermitted(principal, paths)
     const limited = matches.slice(0, 100)
     return {
       snapshotID: snapshot.id,
@@ -600,11 +606,11 @@ export class ProjectIndex {
     }
   }
   async evidence(principal: Principal, focus: Focus) {
-    principal.signal?.throwIfAborted()
-    const snapshot = await this.snapshotFor(principal)
-    const paths = focus.paths ?? []
-    const selected = this.selectedFiles(snapshot, paths, focus.search)
-    const matches = await this.permittedFiles(snapshot, principal, selected)
+    const { snapshot, matches } = await this.selectPermitted(
+      principal,
+      focus.paths ?? [],
+      focus.search,
+    )
     const limited = matches.slice(0, 50)
     const sources = limited.map((f) => {
       const lines = f.content.split("\n"),
@@ -635,20 +641,20 @@ export class ProjectIndex {
     }
   }
 
-  async packet(
-    principal: Principal,
-    proposal: TaskProposal,
-    skills: { id: string; path: string; content: string; revision: string }[],
-    source: string,
-  ) {
-    const snapshot = this.loadSnapshot()
-    const visible = await this.permittedFiles(snapshot, principal)
+  async taskContext(principal: Principal, proposal: TaskProposal, findings: string[] = []) {
+    const snapshot = await this.snapshotFor(principal)
     const references = new Map<string, { start: number; end: number }[]>()
-    for (const ref of proposal.context) {
-      for (const match of ref.reference.matchAll(
-        /((?:\.?[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.(?:md|tsx?|json|yaml|yml))(?::(\d+)(?:-(\d+))?)?/g,
+    const paths = new Set(snapshot.files.map((file) => file.path))
+    for (const text of [
+      ...proposal.context.map((ref) => ref.reference),
+      proposal.guidance ?? "",
+      ...findings,
+    ]) {
+      for (const match of text.matchAll(
+        /((?:[a-zA-Z0-9_.@-]+\/)*[a-zA-Z0-9_.@-]+\.[a-zA-Z][a-zA-Z0-9]*)(?::(\d+)(?:-(\d+))?)?/g,
       )) {
         const path = match[1]!
+        if (!paths.has(path)) continue
         const ranges = references.get(path) ?? []
         if (match[2]) {
           const start = Number(match[2]),
@@ -658,91 +664,47 @@ export class ProjectIndex {
         references.set(path, ranges)
       }
     }
-    const required = ["AGENTS.md", "README.md"].filter((path) => existsSync(join(this.root, path)))
-    const missing = required.filter((path) => !visible.some((file) => file.path === path))
-    for (const path of references.keys())
-      if (existsSync(join(this.root, path)) && !visible.some((file) => file.path === path))
-        missing.push(path)
-    if (missing.length) throw new Error(`Mandatory context unavailable: ${missing.join(", ")}`)
-    const scopes = proposal.writeScope.map((pattern) => new Bun.Glob(pattern))
-    const candidates = visible.filter(
-      (file) =>
-        required.includes(file.path) ||
-        references.has(file.path) ||
-        scopes.some((scope) => scope.match(file.path)),
+    const scoped = snapshot.files.filter((file) =>
+      proposal.writeScope.some((scope) => matchesPath(scope, file.path)),
     )
-    candidates.sort(
-      (a, b) =>
-        Number(required.includes(b.path)) - Number(required.includes(a.path)) ||
-        Number(references.has(b.path)) - Number(references.has(a.path)) ||
-        Number(/(?:test|spec)\./.test(b.path)) - Number(/(?:test|spec)\./.test(a.path)) ||
-        a.path.localeCompare(b.path),
-    )
-    const entries: {
-      path: string
-      revision: string | null
-      level: "full" | "outline"
-      text: string
-    }[] = []
+    const candidates = references.size
+      ? snapshot.files.filter((file) => references.has(file.path))
+      : scoped
+    const visible = await this.permittedFiles(snapshot, principal, candidates)
     const counter = await this.tokenizer()
     const deferred: string[] = []
-    const base = {
-      task: proposal,
-      skills,
-      source,
-      snapshotID: snapshot.id,
-      freshness: "as-of-refresh",
-      refreshedAt: snapshot.createdAt,
-      recipe: "task-context/2",
-      deferred,
-      entries,
-    }
-    const limit = 24000
-    for (const file of candidates) {
-      const mandatory = required.includes(file.path) || references.has(file.path)
-      const full = mandatory || /(?:test|spec)\./.test(file.path) || file.path.endsWith(".md")
+    const entries: { path: string; level: "full" | "outline"; text: string }[] = []
+    let tokens = 0
+    for (const file of visible) {
       const ranges = references.get(file.path) ?? []
       const lines = file.content.split("\n")
-      const entry = {
-        path: file.path,
-        revision: null,
-        level: full ? ("full" as const) : ("outline" as const),
-        text: ranges.length
-          ? ranges
-              .map(
-                ({ start, end }) =>
-                  `[Lines ${start}-${Math.min(end, lines.length)}]\n${lines.slice(start - 1, end).join("\n")}`,
-              )
-              .join("\n")
-          : full
-            ? file.content
-            : file.outline,
-      }
-      entries.push(entry)
-      if (counter.countTokens(JSON.stringify(base)) > limit) {
-        entries.pop()
-        if (required.includes(file.path))
-          throw new Error(`Repository guidance exceeds reserved ${limit} tokens: ${file.path}`)
+      const outline = ranges.length === 0 && Boolean(file.outline)
+      const text = ranges.length
+        ? ranges
+            .map(
+              ({ start, end }) =>
+                `[Lines ${start}-${Math.min(end, lines.length)}]\n${lines.slice(start - 1, end).join("\n")}`,
+            )
+            .join("\n")
+        : outline
+          ? file.outline
+          : file.content
+      const cost = counter.countTokens(file.path + text)
+      if (tokens + cost > 24_000) {
         deferred.push(file.path)
+        continue
       }
+      tokens += cost
+      entries.push({ path: file.path, level: outline ? "outline" : "full", text })
     }
-    const text = JSON.stringify(base)
-    if (counter.countTokens(text) > limit)
-      throw new Error("Task and required guidance exceed context reservation")
     return {
-      text,
-      metadata: {
-        snapshotID: snapshot.id,
-        freshness: "as-of-refresh",
-        refreshedAt: snapshot.createdAt,
-        source,
-        recipe: "task-context/2",
-        deferred,
-        tokens: counter.countTokens(text),
-        encoding: "o200k_base",
-        paths: entries.map(({ path, revision, level }) => ({ path, revision, level })),
-        omitted: candidates.length - entries.length,
-      },
+      workspace: snapshot.workspace,
+      snapshotID: snapshot.id,
+      refreshedAt: snapshot.createdAt,
+      freshness: "as-of-refresh" as const,
+      tokens,
+      entries,
+      deferred,
     }
   }
   close() {

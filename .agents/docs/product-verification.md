@@ -150,6 +150,13 @@ bun src/verification/opencode/cli.ts native-status --root "$ROOT"
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind snapshot
 ```
 
+A blank composer is a draft, not a persisted session. For session panels, create
+an empty session at the candidate workspace through native `session.create`;
+this does not invoke a model. Prepare scoped disposable fixtures through the
+normal APIs/resource lifecycle, exercise them, retain results and confirm cleanup.
+Missing fixture data is setup work; fixtures must be labeled and must not be
+reported as production activity or completed implementation.
+
 After switching to an authentication browser, use `native --root "$ROOT" --kind focus --window WINDOW_ID` to activate the exact owned app/window, then use its fresh snapshot. A failed focus does not mean application activation had no effect; inspect current state before proceeding.
 
 `native-status` reports only the owned adapter state and bounded window
@@ -183,9 +190,10 @@ removes the owned logs with the test root, so record only those safe fields and
 necessary timestamps.
 
 The optional screenshot command captures the owned Desktop window, not a
-browser-tool screenshot. Use it only after a human has confirmed that the entire
-visible page is safe to retain; automatic credential filtering is best-effort,
-not a privacy guarantee:
+browser-tool screenshot. Check the fresh native snapshot and confirm that the
+visible fixture page is safe to retain before capture. The agent operating the
+fixture can make that check; routine screenshots do not require a human review.
+Automatic credential filtering is best-effort, not a privacy guarantee:
 
 ```sh
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind capture \
@@ -194,12 +202,11 @@ bun src/verification/opencode/cli.ts native --root "$ROOT" --kind capture \
 
 The command writes a new, mode-restricted PNG under
 `.agents/docs/evidence/full-instance-qualification/` in the candidate checkout.
-Only single-component `.png`, `.md`, or `.json` outputs in that task-scoped
-evidence directory are treated as probe evidence rather than material source
-changes. The manifest retains the initial candidate revision and dirty-path
-provenance; edits elsewhere, or other file types in that directory, invalidate
-the launch proof and require fresh setup/observation. This narrow evidence
-scope is not a clean-tree requirement or a general exemption for docs/data.
+The manifest retains the launch revision and source/build metadata for review.
+Source edits, documentation, screenshots and GUI rebuilds do not revoke access
+to the owned instance or invalidate recorded observations. Architect decides
+whether a changed feature needs a fresh observation. Workspace and entry paths
+still bind interactions to the owned checkout.
 Keep screenshots only when they contain no credentials, unrelated chats,
 personal data, or other sensitive material. If native delivery becomes
 pending or ambiguous, inspect only that request:

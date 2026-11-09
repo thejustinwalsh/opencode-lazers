@@ -50,7 +50,12 @@ export const TaskProposalSchema = z
                     "One workspace-relative file or directory path, used verbatim. Put explanatory prose in the assertion.",
                   ),
                 }),
-                z.strictObject({ kind: z.literal("human"), decision: text }),
+                z.strictObject({
+                  kind: z.literal("human"),
+                  decision: text.describe(
+                    "A decision or authorization explicitly requiring the user. Routine tests, product probes, code review and integration belong to workers/Architect, not a human or external driver.",
+                  ),
+                }),
               ]),
             )
             .min(1)

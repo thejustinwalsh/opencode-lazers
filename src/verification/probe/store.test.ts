@@ -648,7 +648,7 @@ test("run lifecycle, verdict, cleanup failures and transactional rollback remain
   expect(probes.updateRun(update, worker)).toMatchObject({ status: "updated", run: { version: 2 } })
 })
 
-test("durable record revisions invalidate only mismatched receipts without deleting them", () => {
+test("metadata revisions preserve observed passes and remain visible for Architect review", () => {
   const path = databasePath()
   const repository = open(path)
   const task = addTask(repository, "eligibility-task")
@@ -708,8 +708,12 @@ test("durable record revisions invalidate only mismatched receipts without delet
     architect,
   )
   if (revision.status === "conflict") throw new Error("Expected definition revision")
+  probes.updateRun(
+    finishInput(started.run.runID, "completed-before-review", 1, "completed", "passed"),
+    worker,
+  )
   const stale = probes.eligibility(started.run.runID, current)
-  expect(stale).toMatchObject({ eligible: false })
+  expect(stale).toMatchObject({ eligible: true, satisfied: true })
   expect(stale.reasons).toContain("definition-changed")
   expect(stale.reasons).toContain("procedure-definition-changed")
   expect(probes.runsForAttempt(attempt.attemptID)).toHaveLength(1)

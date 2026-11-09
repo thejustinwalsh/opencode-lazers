@@ -10,6 +10,8 @@ import { git } from "../runner/artifacts.ts"
 import { TaskRepository } from "../storage.ts"
 import { ProjectIndex } from "./index.ts"
 import { nativeContextPermission, registerContextTools } from "./tools.ts"
+import { registerTaskTools } from "../tools.ts"
+import { validProposal } from "../../test/proposal.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -36,7 +38,13 @@ async function setup(deniedAction?: string) {
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "README.md"), "cached project source")
   const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
-  const index = new ProjectIndex(root, join(root, "cache"), repository, async () => true)
+  const deniedPaths = new Set<string>()
+  const index = new ProjectIndex(
+    root,
+    join(root, "cache"),
+    repository,
+    async (path) => !deniedPaths.has(path),
+  )
   const tools = new Map<string, RegisteredTool>()
   const assertions: string[] = []
   const editor: ToolEditor = {
@@ -67,13 +75,53 @@ async function setup(deniedAction?: string) {
     },
   } as unknown as Plugin.Context
   await Effect.runPromise(Effect.scoped(registerContextTools(context, index)))
+  await Effect.runPromise(Effect.scoped(registerTaskTools(context, repository, index)))
   cleanup.push(() => {
     index.close()
     repository.close()
     rmSync(root, { recursive: true, force: true })
   })
-  return { root, index, tools, assertions }
+  return { root, index, tools, assertions, deniedPaths }
 }
+
+test("one canonical worker fetch delivers task and cached source without a discovery or refresh call", async () => {
+  const f = await setup()
+  const task = await Effect.runPromise(
+    f.tools.get("lz-submit-task")!.execute(
+      {
+        ...validProposal(),
+        idempotencyKey: "one-fetch",
+        context: [{ reference: "README.md:1", revision: null }],
+        guidance: "Start from README.md; preserve the existing contract.",
+      },
+      callContext("architect"),
+    ),
+  )
+  const taskID = JSON.parse(String(task.content)).taskID as string
+  const fetch = () =>
+    Effect.runPromise(
+      f.tools.get("lz-get-task")!.execute({ taskID }, callContext("lazers-implementor")),
+    )
+  const absent = await fetch()
+  expect(absent.output).toContain("## Done when")
+  expect(absent.output).toContain("Cached source context is unavailable")
+  const snapshot = await f.index.refresh({ sessionID: "architect", agent: "architect" })
+  writeFileSync(join(f.root, "README.md"), "live checkout changed")
+  f.assertions.length = 0
+  const result = await fetch()
+  expect(typeof result.output).toBe("string")
+  expect(result.output).toContain("## Done when")
+  expect(result.output).toContain("## Verification")
+  expect(result.output).toContain("## Implementation guidance")
+  expect(result.output).toContain("cached project source")
+  expect(result.output).toContain(snapshot.id)
+  expect(result.output).not.toContain("live checkout changed")
+  expect(result.output).not.toContain('"proposal"')
+  expect(f.assertions).toEqual(["lz-get-task"])
+  expect(f.tools.has("lz-get-task-instructions")).toBe(false)
+  f.deniedPaths.add("README.md")
+  expect((await fetch()).output).not.toContain("cached project source")
+})
 
 test("read tools report an absent index without building, and an explicit Architect refresh publishes it", async () => {
   const f = await setup()

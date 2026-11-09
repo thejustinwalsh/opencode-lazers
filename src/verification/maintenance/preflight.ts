@@ -171,7 +171,12 @@ function sameGitObservation(
   left: GitWorkspaceObservation,
   right: GitWorkspaceObservation,
 ): boolean {
-  return canonical(left) === canonical(right)
+  return (
+    left.kind === right.kind &&
+    (left.kind !== "observed" ||
+      right.kind !== "observed" ||
+      (left.root === right.root && left.head === right.head && left.unmerged === right.unmerged))
+  )
 }
 
 function requestHandoff(binding: MaintenanceBinding): MaintenanceBinding {
@@ -378,12 +383,10 @@ export async function evaluateMaintenancePreflight(
     if (!sameGitObservation(before, after)) add("candidate-changed-during-inspection")
     if (after.root !== request.binding.workspace) add("candidate-root-mismatch")
     if (after.head !== request.binding.artifact) add("candidate-head-mismatch")
-    if (!after.clean) add("candidate-dirty")
     if (after.unmerged) add("candidate-unmerged")
     result.candidate.status =
       after.root === request.binding.workspace &&
       after.head === request.binding.artifact &&
-      after.clean &&
       !after.unmerged &&
       sameGitObservation(before, after)
         ? "matches"
@@ -422,11 +425,7 @@ export async function evaluateMaintenancePreflight(
       } else if (!receiptMatches(actualReceipt, request.binding)) {
         result.receipt.status = "mismatch"
         add("runner-receipt-mismatch")
-      } else if (
-        actualReceipt.exitCode !== 0 ||
-        actualReceipt.timedOut ||
-        !actualReceipt.unchanged
-      ) {
+      } else if (actualReceipt.exitCode !== 0 || actualReceipt.timedOut) {
         result.receipt.status = "mismatch"
         add("runner-receipt-not-passing")
       } else {

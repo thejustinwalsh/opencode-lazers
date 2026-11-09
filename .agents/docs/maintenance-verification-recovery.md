@@ -11,7 +11,7 @@ and latest matching effect ordinal. It does not open the task database to prove
 that the snapshot is current.
 
 The CLI re-reads only local candidate and evidence state. Git establishes the
-workspace root, `HEAD`, tracked/untracked working-tree cleanliness, unmerged
+workspace root, `HEAD`, tracked/untracked working-tree status, unmerged
 index state. No per-file inventory is needed; a legacy `candidate.manifest`
 field is ignored regardless of its contents. Git state is sampled on both
 sides of the bound runner receipt read, which is validated against the existing
@@ -20,8 +20,8 @@ the preflight uses the existing owned-process identity comparison against a
 read-only process observation. A missing or inaccessible reader, a changed
 candidate or receipt, any binding mismatch, and a reused PID with a different
 start time fail closed with stable reason codes. There is no age-based snapshot
-TTL; mismatched source versions or changed evidence are blockers, while age
-alone is not proof either way.
+TTL. Dirty files and legacy `unchanged` flags do not invalidate a passing
+command. Binding mismatches identify the wrong task/check, not a quality judgment.
 
 The result labels source data: project/plan/task/attempt/effect facts remain
 `suppliedSnapshot`; candidate files and receipt are `revalidated`. Claims such
@@ -33,7 +33,7 @@ the network, prompt, execute checks, signal processes, change lifecycle state,
 or perform cleanup. It writes no receipt or history and does not acquire a
 runtime reservation.
 
-Even a matching clean artifact and a passing receipt cannot establish that an
+Even a matching artifact and a passing receipt cannot establish that an
 old uncertain check and its descendants are contained. A matching PID, an
 absent PID, elapsed time, an idle worker, or a stopped service is not a
 containment proof. Missing original child identity is reported explicitly; it

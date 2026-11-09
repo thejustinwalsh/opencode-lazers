@@ -14,6 +14,8 @@ import {
 } from "./tasks/contract.ts"
 import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
+import type { ProjectIndex } from "./context/index.ts"
+import { isWorkerAgent } from "./runner/worker-agent.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
 import { TaskClassificationAnnotationInput } from "./task-classification.ts"
 import {
@@ -51,7 +53,11 @@ type TaskToolContext = {
   tool: Pick<Plugin.Context["tool"], "transform">
 }
 
-export function registerTaskTools(ctx: TaskToolContext, repository: TaskRepository) {
+export function registerTaskTools(
+  ctx: TaskToolContext,
+  repository: TaskRepository,
+  index?: Pick<ProjectIndex, "taskContext">,
+) {
   // The host may retain an admitted tool callback while a plugin reload closes
   // its setup-scoped connection. Each execution owns its connection; never
   // retry a write just because its old connection was disposed.
@@ -289,9 +295,11 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lz-get-task",
       description:
-        "Retrieve a LAZERS task by its project-local LZ reference or legacy UUID as structured task and execution data. Implementors should use lz-get-task-instructions for readable instructions.",
-      input: GetInput,
-      output: GetOutput,
+        "Get a task by ID or project reference. Workers receive the complete readable task, advice, optional skill summaries and focused cached Repomix source in one call; other agents receive structured task/execution data. Optional format overrides that default. Read source directly as needed.",
+      input: GetInput.extend({
+        format: z.enum(["instructions", "structured"]).optional(),
+      }),
+      output: z.union([GetOutput, GetInstructionsOutput]),
       options: { codemode: true, pinned: true, permission: "lz-get-task" },
       execute: (input, context) =>
         ctx.permission
@@ -303,43 +311,50 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           })
           .pipe(
             Effect.flatMap(() =>
-              result(
-                () => withRepository((connection) => new TaskReads(connection).get(input)),
-                true,
-                context.agent === "lazers-implementor" ? taskInstructions : JSON.stringify,
-              ),
-            ),
-          ),
-    })
-    editor.add({
-      name: "lz-get-task-instructions",
-      description:
-        "Retrieve readable implementation instructions by project-local LZ reference or legacy UUID, including the goal, acceptance, boundaries, advisory guidance, verification and sources. Use lz-get-task when structured task and execution fields are needed.",
-      input: GetInput,
-      output: GetInstructionsOutput,
-      options: {
-        codemode: true,
-        pinned: true,
-        permission: "lz-get-task-instructions",
-      },
-      execute: (input, context) =>
-        ctx.permission
-          .assert({
-            sessionID: context.sessionID,
-            agent: context.agent,
-            action: "lz-get-task-instructions",
-            resources: ["*"],
-          })
-          .pipe(
-            Effect.flatMap(() =>
-              result(
-                () =>
-                  taskInstructions(
-                    withRepository((connection) => new TaskReads(connection).get(input)),
-                  ),
-                true,
-                (instructions) => instructions,
-              ),
+              Effect.tryPromise({
+                try: async (signal) => {
+                  const { format, ...query } = input
+                  const detail = withRepository((connection) =>
+                    new TaskReads(connection).get(query),
+                  )
+                  if (
+                    (format ?? (isWorkerAgent(context.agent) ? "instructions" : "structured")) ===
+                    "structured"
+                  )
+                    return { content: JSON.stringify(detail), output: detail }
+                  let instructions = taskInstructions(detail)
+                  if (index && detail.status === "found") {
+                    try {
+                      const advice = detail.advice?.current
+                      const source = await index.taskContext(
+                        { sessionID: context.sessionID, agent: context.agent, signal },
+                        detail.task.proposal,
+                        [
+                          ...(advice?.findings ?? []),
+                          ...(advice?.implementationAdvice ?? []),
+                          ...(advice?.references.map((ref) => ref.reference) ?? []),
+                        ],
+                      )
+                      instructions += `\n\n## Source context\nRepomix snapshot ${source.snapshotID}; workspace ${source.workspace}; refreshed ${source.refreshedAt} (Unix ms). Cached source may differ from this checkout.\n`
+                      for (const entry of source.entries) {
+                        let fence = "```"
+                        for (const match of entry.text.matchAll(/`+/g))
+                          if (match[0].length >= fence.length)
+                            fence = "`".repeat(match[0].length + 1)
+                        instructions += `\n### ${entry.path} (${entry.level})\n\n${fence}\n${entry.text}\n${fence}\n`
+                      }
+                      if (source.deferred.length)
+                        instructions += `\nAdditional source paths: ${source.deferred.join(", ")}. Read directly as needed.\n`
+                    } catch {
+                      signal.throwIfAborted()
+                      instructions +=
+                        "\n\nCached source context is unavailable. Read the referenced source directly."
+                    }
+                  }
+                  return { content: instructions, output: instructions }
+                },
+                catch: (error) => new Tool.Error({ message: String(error) }),
+              }),
             ),
           ),
     })

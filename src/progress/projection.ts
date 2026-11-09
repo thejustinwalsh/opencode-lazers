@@ -325,6 +325,12 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       break
     case "visible-text":
       view.text = typeof value.text === "string" ? safeText(value.text, stats) : ""
+      if (value.messageType === "user" || value.messageType === "synthetic") {
+        view.kind = value.messageType
+        view.messageType = value.messageType
+        view.createdAt = epochMillis(value.createdAt)
+        view.at = view.createdAt
+      }
       break
     case "step": {
       const usage = object(value.usage)
