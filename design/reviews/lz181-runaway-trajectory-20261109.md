@@ -114,3 +114,21 @@ model gate, shadow scheduler or blanket frontier takeover policy is proposed.
 The explicit takeover and one-time criteria reached native Architect messages
 `msg_1be78efe1001NNWn8IEiCeawSp` and `msg_1be79a2ce001GUId503c1oC6Xw`.
 Completion and successful subsequent autonomous recovery remain unproven.
+
+## Native follow-through
+
+Without a further driver prompt, Architect recorded advice revision1 on existing
+LZ-195 at **1794197695054** in native message
+`msg_1be837a15001u9YkOwKWBjFUCd`. The tool receipt confirms measured usage,
+failed approaches, demonstrated progress, scope growth, remaining work and
+coordination cost are now attached to that recovery task. Architect acknowledges
+its own continuation/scope decisions contributed to this incident. It directs
+reuse of existing trajectory/pricing and disposition mechanisms, with no new
+valuation engine or timer/tool-count takeover rule. This proves tasking changed;
+it does not prove the guidance was consumed, implemented or exercised live.
+
+The independent LZ-195 worker has passed quality checks and31 recovery tests at
+this observation. Native shortcut worker LZ-197 has also returned a committed
+candidate. Neither result establishes integration or the connected recovery
+outcome. The additional current-contract contradiction identified in this report
+has not yet been relayed through Desktop, which explicitly reports macOS locked.
