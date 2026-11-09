@@ -16,6 +16,30 @@ const boundedText = Schema.String.check(Schema.isMaxLength(4_000))
 const stringList = Schema.Array(shortText).check(Schema.isMaxLength(100))
 const empty = portable(Schema.Struct({}))
 
+export const NATIVE_BARE_KEYS = [
+  "Enter",
+  "Escape",
+  "Tab",
+  "Backspace",
+  "ArrowUp",
+  "ArrowDown",
+] as const
+export const NATIVE_KEYS = [...NATIVE_BARE_KEYS, "Ctrl+T"] as const
+export const NativeKey = Schema.Literals(NATIVE_KEYS)
+export type NativeKey = typeof NativeKey.Type
+
+export function parseNativeKey(value: unknown): NativeKey | undefined {
+  try {
+    return Schema.decodeUnknownSync(NativeKey)(value)
+  } catch {
+    return undefined
+  }
+}
+
+export function nativeKeyUsesModifiers(key: NativeKey): boolean {
+  return key === "Ctrl+T"
+}
+
 export const NativeProcessIdentity = Schema.Struct({
   pid: positiveInt,
   startedAt: shortText,
@@ -71,6 +95,11 @@ export const NativeWindowReference = Schema.Struct({
 })
 export type NativeWindowReference = typeof NativeWindowReference.Type
 
+export const NativeInteractionCapabilities = Schema.Struct({
+  modifiedKeys: Schema.Boolean,
+})
+export type NativeInteractionCapabilities = typeof NativeInteractionCapabilities.Type
+
 export const NativeElement = Schema.Struct({
   ref: shortText,
   role: shortText,
@@ -119,7 +148,7 @@ export const NativeOperation = Schema.Union([
     kind: Schema.Literals(["key"]),
     ...Windowed,
     snapshotID: shortText,
-    key: Schema.Literals(["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown"]),
+    key: NativeKey,
   }),
 ])
 export type NativeOperation = typeof NativeOperation.Type
@@ -153,6 +182,7 @@ export const NativeInteraction = Rpc.define({
           binding: NativeBinding,
           adapterID: shortText,
           windows: Schema.Array(NativeWindowReference).check(Schema.isMaxLength(32)),
+          capabilities: Schema.optionalKey(NativeInteractionCapabilities),
         }),
       ),
       output: empty,
@@ -165,6 +195,7 @@ export const NativeInteraction = Rpc.define({
           blocked: Schema.Boolean,
           windows: Schema.Array(NativeWindowReference).check(Schema.isMaxLength(32)),
           adapterID: Schema.optionalKey(shortText),
+          capabilities: Schema.optionalKey(NativeInteractionCapabilities),
         }),
       ),
     },
@@ -186,6 +217,7 @@ export const NativeInteraction = Rpc.define({
           binding: NativeBinding,
           adapterID: shortText,
           windows: Schema.Array(NativeWindowReference).check(Schema.isMaxLength(32)),
+          capabilities: Schema.optionalKey(NativeInteractionCapabilities),
         }),
       ),
       output: portable(Schema.NullOr(NativeCommand)),

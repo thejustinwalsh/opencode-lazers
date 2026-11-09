@@ -76,6 +76,12 @@ function broker(now = 1_000) {
 
 const snapshotOperation: NativeOperation = { kind: "snapshot", window: windowRef }
 const deliveredResult: NativeActionResult = { delivery: "delivered" }
+const modifiedKeyOperation: NativeOperation = {
+  kind: "key",
+  window: windowRef,
+  snapshotID: "snapshot-1",
+  key: "Ctrl+T",
+}
 
 describe("owned native interaction broker", () => {
   test("requires the exact owned service, root, version and adapter generation", () => {
@@ -144,6 +150,9 @@ describe("owned native interaction broker", () => {
     expect(value.result(binding, requestID)).toEqual({
       state: "completed",
       result: deliveredResult,
+    })
+    expect(value.result(binding, "bfc30312-7715-4a1a-a12f-2bb8e53f17c5")).toEqual({
+      state: "unknown",
     })
     expect(() =>
       value.enqueue({
@@ -253,5 +262,52 @@ describe("owned native interaction broker", () => {
         operation: snapshotOperation,
       }),
     ).toThrow("not freshly attached")
+  })
+
+  test("refuses modified shortcuts from a legacy adapter without delivering them", () => {
+    const { value } = broker()
+    value.attach({ binding, adapterID: "legacy-adapter", windows: [windowRef] })
+    expect(value.status(binding)).toMatchObject({
+      ready: true,
+      capabilities: { modifiedKeys: false },
+    })
+    const requestID = "afc30312-7715-4a1a-a12f-2bb8e53f17c4"
+    expect(value.enqueue({ binding, requestID, operation: modifiedKeyOperation })).toEqual({
+      state: "completed",
+    })
+    expect(value.poll({ binding, adapterID: "legacy-adapter", windows: [windowRef] })).toBeNull()
+    expect(value.result(binding, requestID)).toMatchObject({
+      state: "completed",
+      result: {
+        delivery: "not-delivered",
+        message: expect.stringContaining("does not support modified key"),
+      },
+    })
+    expect(value.status(binding).blocked).toBe(false)
+  })
+
+  test("rechecks modified-key capability at dispatch after admission", () => {
+    const { value } = broker()
+    value.attach({
+      binding,
+      adapterID: "adapter-1",
+      windows: [windowRef],
+      capabilities: { modifiedKeys: true },
+    })
+    const requestID = "bfc30312-7715-4a1a-a12f-2bb8e53f17c5"
+    expect(value.enqueue({ binding, requestID, operation: modifiedKeyOperation })).toEqual({
+      state: "queued",
+    })
+
+    value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    expect(value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })).toBeNull()
+    expect(value.result(binding, requestID)).toMatchObject({
+      state: "completed",
+      result: {
+        delivery: "not-delivered",
+        message: expect.stringContaining("does not support modified key"),
+      },
+    })
+    expect(value.status(binding).blocked).toBe(false)
   })
 })
