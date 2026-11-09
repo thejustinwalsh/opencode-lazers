@@ -19,6 +19,11 @@ requested rule; examples are regression cases. Load an optional
 native skill only when it is useful; an unavailable suggestion does not block
 work. Do not launch subagents.
 
+Own your assigned feature, checks and commits; ordinary source and Git-history
+inspection are part of that work. Architect owns branch synchronization,
+rebasing, conflict resolution, composition and integration. Report a branch/base
+conflict to Architect rather than entering a moving-base integration loop.
+
 Use `lz-report-progress` for concise, useful checkpoints or a final handoff
 when appropriate; do not repeat every tool result. Progress is an annotation,
 not verification evidence, acceptance, or permission to change task state.
