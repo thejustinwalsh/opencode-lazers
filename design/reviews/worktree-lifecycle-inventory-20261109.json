@@ -1,0 +1,4625 @@
+{
+  "recordedAt": 1794228454272,
+  "project": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+  "summary": {
+    "registered": 143,
+    "missing": 2,
+    "unmapped": 15,
+    "present": 141,
+    "mapped": 128,
+    "plan:blocked": 48,
+    "plan:cleanup-blocked": 50,
+    "plan:accepted": 4,
+    "plan:cancelled": 20,
+    "plan:running": 6
+  },
+  "worktrees": [
+    {
+      "path": "/private/tmp/lz182-review-fae0967",
+      "exists": false,
+      "head": "fed8d3f0149a0acc55af0e234206d835ec4742f7",
+      "prunable": "gitdir file points to non-existent location",
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": false,
+      "retainedChecks": []
+    },
+    {
+      "path": "/private/tmp/lz184-review-8919a20",
+      "exists": false,
+      "head": "24969cee8382e7ec5c0293cacae417cb3e01c3da",
+      "prunable": "gitdir file points to non-existent location",
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": false,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/027e143b-d6d3-4802-b5d9-54e1902f6943",
+      "exists": true,
+      "head": "be50616614828191158cf46b0478978cf58a5ed0",
+      "prunable": false,
+      "owners": ["86b248c6-fee7-4c80-beba-0de10a529e2a"],
+      "refs": ["LZ-99"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "86b248c6-fee7-4c80-beba-0de10a529e2a",
+          "attempt": "027e143b-d6d3-4802-b5d9-54e1902f6943",
+          "state": "running",
+          "session": "ses_2e7fd6bebd8d44699e381e1728ee4655"
+        },
+        {
+          "kind": "worktree",
+          "plan": "86b248c6-fee7-4c80-beba-0de10a529e2a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0375ef98-ff9b-456f-849d-2ed9da547920",
+      "exists": true,
+      "head": "5e1d9ed6756bcc3ff73911c7325b7770498e564d",
+      "prunable": false,
+      "owners": ["f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23"],
+      "refs": ["LZ-174"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
+          "attempt": "0375ef98-ff9b-456f-849d-2ed9da547920",
+          "state": "accepted",
+          "session": "ses_5210fab90d3745959a4d269dbd6ab744"
+        },
+        {
+          "kind": "worktree",
+          "plan": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/091ee91c-c6e3-43d3-b7f9-858028336150",
+      "exists": true,
+      "head": "00c20ad48129d912a7c82b35c222c77b1f562bac",
+      "prunable": false,
+      "owners": ["e48290a6-a871-42a2-94f1-c88f700c0d11"],
+      "refs": ["LZ-138"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e48290a6-a871-42a2-94f1-c88f700c0d11",
+          "attempt": "091ee91c-c6e3-43d3-b7f9-858028336150",
+          "state": "accepted",
+          "session": "ses_9e11e5a8fae643a79c50b2346bfb48a9"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e48290a6-a871-42a2-94f1-c88f700c0d11",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0ffe08e3-3365-46be-a3a1-85cb35f7112d",
+      "exists": true,
+      "head": "69d859a54d1f20ecc93b915335e35220fbf31345",
+      "prunable": false,
+      "owners": ["13d07bd2-9c4b-4f2b-9b00-0a215ee569a2"],
+      "refs": ["LZ-86", "LZ-87"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "graph-worktree",
+          "plan": "13d07bd2-9c4b-4f2b-9b00-0a215ee569a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/131b120f-4b83-4d15-83f5-226d0b49505f",
+      "exists": true,
+      "head": "dc2e9ba6d6f5ece7bdbb0d2aa5cb80a00f8aae35",
+      "prunable": false,
+      "owners": ["82cc5e08-59db-4716-9eee-8cc9e54d59d0"],
+      "refs": ["LZ-89"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "82cc5e08-59db-4716-9eee-8cc9e54d59d0",
+          "attempt": "131b120f-4b83-4d15-83f5-226d0b49505f",
+          "state": "accepted",
+          "session": "ses_ae63213e2e6143e8a9b17e3b25c1eec5"
+        },
+        {
+          "kind": "worktree",
+          "plan": "82cc5e08-59db-4716-9eee-8cc9e54d59d0",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/13ee81de-d701-4d93-bb70-3482f73acc24",
+      "exists": true,
+      "head": "eabbc170c3697284a1b9857e4f0701193379c221",
+      "prunable": false,
+      "owners": ["e5a1f367-a758-4c10-8fa6-4a392a399db1"],
+      "refs": ["LZ-114"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e5a1f367-a758-4c10-8fa6-4a392a399db1",
+          "attempt": "13ee81de-d701-4d93-bb70-3482f73acc24",
+          "state": "accepted",
+          "session": "ses_dc786e748a654416a1ac53de140c2047"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e5a1f367-a758-4c10-8fa6-4a392a399db1",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/14be7721-297d-4a70-bbdc-8652c807f943",
+      "exists": true,
+      "head": "03331c85c20c8af8a3333dc4d98accdbe9f4adfc",
+      "prunable": false,
+      "owners": ["eade12ae-74f3-48af-874b-f5950f4a41c3"],
+      "refs": ["LZ-156", "LZ-157", "LZ-158"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "attempt": "14be7721-297d-4a70-bbdc-8652c807f943",
+          "state": "accepted",
+          "session": "ses_af5f7ceb2def456db6c25a8c09096a30"
+        },
+        {
+          "kind": "worktree",
+          "plan": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/14fca257-f6e7-44ad-baa8-109167e49c50",
+      "exists": true,
+      "head": "c41648b524011574a927af3ab2a0825de8552e5d",
+      "prunable": false,
+      "owners": ["c68342dc-d51e-42cb-98ba-287067e51a5f"],
+      "refs": ["LZ-178"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "c68342dc-d51e-42cb-98ba-287067e51a5f",
+          "attempt": "14fca257-f6e7-44ad-baa8-109167e49c50",
+          "state": "accepted",
+          "session": "ses_f3b9ac74651745adb91015eb6f5a416a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "c68342dc-d51e-42cb-98ba-287067e51a5f",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/179f87e3-277d-46d1-a2ef-ed5dbd104ae4",
+      "exists": true,
+      "head": "ebd9f0290f483ac68615d59e75da73058deca70b",
+      "prunable": false,
+      "owners": ["e8bf7885-fd38-4170-8ce6-cbb1d68cb2c4"],
+      "refs": ["LZ-193"],
+      "planStates": ["accepted"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e8bf7885-fd38-4170-8ce6-cbb1d68cb2c4",
+          "attempt": "179f87e3-277d-46d1-a2ef-ed5dbd104ae4",
+          "state": "accepted",
+          "session": "ses_5ca737288c6945eea2e21644eaea05d2"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e8bf7885-fd38-4170-8ce6-cbb1d68cb2c4",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/1e591281-447c-4db7-b74f-706fa0fd7d06",
+      "exists": true,
+      "head": "4ec7e84b1f655964f362d3f2ad7630c914427f68",
+      "prunable": false,
+      "owners": ["b048598f-ab73-4494-980c-1368fa9342c7"],
+      "refs": ["LZ-94", "LZ-95"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "graph-worktree",
+          "plan": "b048598f-ab73-4494-980c-1368fa9342c7",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/1f03afdc-92ab-4776-908c-f23d3f9bd984",
+      "exists": true,
+      "head": "e2e1f86213ce3d11847e05db753d172a19692428",
+      "prunable": false,
+      "owners": ["d94042b8-eb0d-4eef-8973-2e19f4ac92a9"],
+      "refs": ["LZ-83", "LZ-84", "LZ-85"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "d94042b8-eb0d-4eef-8973-2e19f4ac92a9",
+          "attempt": "1f03afdc-92ab-4776-908c-f23d3f9bd984",
+          "state": "accepted",
+          "session": "ses_e0d649e427a44440ac5fd358e4196b12"
+        },
+        {
+          "kind": "worktree",
+          "plan": "d94042b8-eb0d-4eef-8973-2e19f4ac92a9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/20ac4537-f62a-46e6-bb52-fc9b9f22ff27",
+      "exists": true,
+      "head": "75d3d67a53c38320a04cda94d0945fefb0b2c8a3",
+      "prunable": false,
+      "owners": ["8715d804-8543-4fa6-8031-7e9bbb6847c4"],
+      "refs": ["LZ-69"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8715d804-8543-4fa6-8031-7e9bbb6847c4",
+          "attempt": "20ac4537-f62a-46e6-bb52-fc9b9f22ff27",
+          "state": "accepted",
+          "session": "ses_8bf4b3242d584cfbaf9058523ca714ae"
+        },
+        {
+          "kind": "worktree",
+          "plan": "8715d804-8543-4fa6-8031-7e9bbb6847c4",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/213639c4-fa4c-466f-8ae7-b6b869f7c1ca",
+      "exists": true,
+      "head": "6b370d7004e870062776f199444780d4c8aa80b6",
+      "prunable": false,
+      "owners": ["b0eb89b4-a071-49e2-a238-c474d53cc42f"],
+      "refs": ["LZ-33", "LZ-34"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b0eb89b4-a071-49e2-a238-c474d53cc42f",
+          "attempt": "213639c4-fa4c-466f-8ae7-b6b869f7c1ca",
+          "state": "accepted",
+          "session": "ses_b60b5730aa0e43ac82e86d004f6ec2f4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b0eb89b4-a071-49e2-a238-c474d53cc42f",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2587c2c4-2bc7-44f1-b924-9e0d4bab6670",
+      "exists": true,
+      "head": "266dd762647589fab34335383985561ce2ac571f",
+      "prunable": false,
+      "owners": ["41b4a86e-5981-4f9f-972e-3050c7762c54"],
+      "refs": ["LZ-102"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "41b4a86e-5981-4f9f-972e-3050c7762c54",
+          "attempt": "2587c2c4-2bc7-44f1-b924-9e0d4bab6670",
+          "state": "accepted",
+          "session": "ses_6748c6d9424e4c19b376fc28329d787f"
+        },
+        {
+          "kind": "worktree",
+          "plan": "41b4a86e-5981-4f9f-972e-3050c7762c54",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2678ba07-1a8e-4179-9804-f767781cab02",
+      "exists": true,
+      "head": "2e6499ff44f2c646cfab44b15c98ea45dea386b4",
+      "prunable": false,
+      "owners": ["6ecf2211-3d3a-45e8-b9e3-59ec34ff8131"],
+      "refs": ["LZ-108"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6ecf2211-3d3a-45e8-b9e3-59ec34ff8131",
+          "attempt": "2678ba07-1a8e-4179-9804-f767781cab02",
+          "state": "accepted",
+          "session": "ses_fdc4d5149cd44f4db371e13e5752b7b9"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6ecf2211-3d3a-45e8-b9e3-59ec34ff8131",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/26d6dff8-7d6a-42de-b8dd-ccd0ad823a43",
+      "exists": true,
+      "head": "05a71850637ba3dd4f105322844a9949fa84edb5",
+      "prunable": false,
+      "owners": ["d94042b8-eb0d-4eef-8973-2e19f4ac92a9"],
+      "refs": ["LZ-83", "LZ-84", "LZ-85"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "d94042b8-eb0d-4eef-8973-2e19f4ac92a9",
+          "attempt": "26d6dff8-7d6a-42de-b8dd-ccd0ad823a43",
+          "state": "accepted",
+          "session": "ses_04fc531b87a54d3f96bd4722b3318b50"
+        },
+        {
+          "kind": "worktree",
+          "plan": "d94042b8-eb0d-4eef-8973-2e19f4ac92a9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/27727aaf-1b81-4d77-963e-9b906f757bfb",
+      "exists": true,
+      "head": "29738538f7a2d2dabd763991c621ddcb6c98d8ce",
+      "prunable": false,
+      "owners": ["d9d4554c-44ff-4600-9a65-5de231f94205"],
+      "refs": ["LZ-134"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "d9d4554c-44ff-4600-9a65-5de231f94205",
+          "attempt": "27727aaf-1b81-4d77-963e-9b906f757bfb",
+          "state": "running",
+          "session": "ses_246a295ccf11456c9e582e383131978d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "d9d4554c-44ff-4600-9a65-5de231f94205",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2816ec74-a003-4786-a4be-43c618425e65",
+      "exists": true,
+      "head": "764db02cdce3c9688a8092853dc4be51ebd55018",
+      "prunable": false,
+      "owners": ["d94042b8-eb0d-4eef-8973-2e19f4ac92a9"],
+      "refs": ["LZ-83", "LZ-84", "LZ-85"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "d94042b8-eb0d-4eef-8973-2e19f4ac92a9",
+          "attempt": "2816ec74-a003-4786-a4be-43c618425e65",
+          "state": "accepted",
+          "session": "ses_f7c6e4c5fd754d55a0144d1dafde5463"
+        },
+        {
+          "kind": "worktree",
+          "plan": "d94042b8-eb0d-4eef-8973-2e19f4ac92a9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "exists": true,
+      "head": "7f8bd70348c697dede039c0f0f46c901edf2adcd",
+      "prunable": false,
+      "owners": ["a8394e90-b1dd-4510-8bb9-1a7f7f6ef0ec"],
+      "refs": ["LZ-177"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "a8394e90-b1dd-4510-8bb9-1a7f7f6ef0ec",
+          "attempt": "291bb88d-cca6-497f-82d1-d1472ba012a4",
+          "state": "accepted",
+          "session": "ses_5cd7fb530a554a3f8e3513f2624a5a1b"
+        },
+        {
+          "kind": "worktree",
+          "plan": "a8394e90-b1dd-4510-8bb9-1a7f7f6ef0ec",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/29659c51-4151-4c61-8951-4482b6089b7e",
+      "exists": true,
+      "head": "3525b11512f81849dbbfa49ba3f58de784a6c393",
+      "prunable": false,
+      "owners": ["1fab1396-5f6b-45cc-a148-5eff48182ed9"],
+      "refs": ["LZ-36"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "1fab1396-5f6b-45cc-a148-5eff48182ed9",
+          "attempt": "29659c51-4151-4c61-8951-4482b6089b7e",
+          "state": "cancelled",
+          "session": "ses_d82453d7170e4facb78c60fcc89cdbc1"
+        },
+        {
+          "kind": "worktree",
+          "plan": "1fab1396-5f6b-45cc-a148-5eff48182ed9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/29cbd76a-f700-4617-a22a-13de12362420",
+      "exists": true,
+      "head": "dbb54d2e33bbacaa48989d07ca9db189d5a61303",
+      "prunable": false,
+      "owners": ["b76de1a5-4c2b-423e-8867-0afa7e704c07"],
+      "refs": ["LZ-50"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b76de1a5-4c2b-423e-8867-0afa7e704c07",
+          "attempt": "29cbd76a-f700-4617-a22a-13de12362420",
+          "state": "failed",
+          "session": "ses_f250e0de9fce4d6bafd9db6a8cf41e64"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b76de1a5-4c2b-423e-8867-0afa7e704c07",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/29ff8540-26c0-4209-98d4-bcf8bd7a4d0f",
+      "exists": true,
+      "head": "1c1070b555a2a6b379ccb295c054aded7093da50",
+      "prunable": false,
+      "owners": ["da27ee40-9c1f-464e-8ff8-ee89bb2ee4b7"],
+      "refs": ["LZ-166"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "da27ee40-9c1f-464e-8ff8-ee89bb2ee4b7",
+          "attempt": "29ff8540-26c0-4209-98d4-bcf8bd7a4d0f",
+          "state": "accepted",
+          "session": "ses_8b64faadf1e649de80c59dd0c489e96b"
+        },
+        {
+          "kind": "worktree",
+          "plan": "da27ee40-9c1f-464e-8ff8-ee89bb2ee4b7",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2aff6bd5-ba88-48bf-8bbb-5ad78405a192",
+      "exists": true,
+      "head": "01a4006da7de5b6b0e951a35d176b7b459a0db6d",
+      "prunable": false,
+      "owners": ["04e0422b-09da-4885-97a4-d44eac9aaee0"],
+      "refs": ["LZ-63"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "04e0422b-09da-4885-97a4-d44eac9aaee0",
+          "attempt": "2aff6bd5-ba88-48bf-8bbb-5ad78405a192",
+          "state": "accepted",
+          "session": "ses_6b0df66807394d0793dc2732411aba9b"
+        },
+        {
+          "kind": "worktree",
+          "plan": "04e0422b-09da-4885-97a4-d44eac9aaee0",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2bab0265-f0c3-48a6-9956-9e80b4c233f9",
+      "exists": true,
+      "head": "9c781fa821afaf3ff0c5be5b89760ab91367225f",
+      "prunable": false,
+      "owners": ["89397376-a6ff-45bc-9e52-d212857e1521"],
+      "refs": ["LZ-101"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "89397376-a6ff-45bc-9e52-d212857e1521",
+          "attempt": "2bab0265-f0c3-48a6-9956-9e80b4c233f9",
+          "state": "accepted",
+          "session": "ses_8b90e4b253a6452e8c08347fe692a631"
+        },
+        {
+          "kind": "worktree",
+          "plan": "89397376-a6ff-45bc-9e52-d212857e1521",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2f9e5b2e-8fc8-488b-a778-5f9610b5fcdb",
+      "exists": true,
+      "head": "071b5c13a417f1fc69fe92b88660b433e1b0dfb8",
+      "prunable": false,
+      "owners": ["e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a"],
+      "refs": ["LZ-38", "LZ-39"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a",
+          "attempt": "2f9e5b2e-8fc8-488b-a778-5f9610b5fcdb",
+          "state": "accepted",
+          "session": "ses_179e4f628f2f4ba8a4e22e99214adddd"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/33e6b86d-edda-41dc-9ac4-93d195f537ea",
+      "exists": true,
+      "head": "8c8f86c2251846ee913fc60eb84ce1214d35f811",
+      "prunable": false,
+      "owners": ["8253ff59-57a5-45fd-8847-acd971438af8"],
+      "refs": ["LZ-28"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8253ff59-57a5-45fd-8847-acd971438af8",
+          "attempt": "33e6b86d-edda-41dc-9ac4-93d195f537ea",
+          "state": "failed",
+          "session": "ses_930ecf3fd619489993f8b98167853ac1"
+        },
+        {
+          "kind": "worktree",
+          "plan": "8253ff59-57a5-45fd-8847-acd971438af8",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/34a9cf97-5bef-4dc6-8685-3dcf7fc10156",
+      "exists": true,
+      "head": "e4d64addc09508e5d49936982b3af360f92b8add",
+      "prunable": false,
+      "owners": ["30c19505-7ef4-46a8-a970-bcc6227c9f76"],
+      "refs": ["LZ-119"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "30c19505-7ef4-46a8-a970-bcc6227c9f76",
+          "attempt": "34a9cf97-5bef-4dc6-8685-3dcf7fc10156",
+          "state": "accepted",
+          "session": "ses_40db7b4e59ce4749b2ceec5d0bfc9d40"
+        },
+        {
+          "kind": "worktree",
+          "plan": "30c19505-7ef4-46a8-a970-bcc6227c9f76",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/37cccee8-e028-4ea2-be82-74bc02cd960b",
+      "exists": true,
+      "head": "58f865e6d85a749da8b3671934bf5a64607b344b",
+      "prunable": false,
+      "owners": ["2eb074d5-bfbc-4a09-9ba8-a346f098b26c"],
+      "refs": ["LZ-112"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "2eb074d5-bfbc-4a09-9ba8-a346f098b26c",
+          "attempt": "37cccee8-e028-4ea2-be82-74bc02cd960b",
+          "state": "accepted",
+          "session": "ses_ad6fb14a70174e56bf317b69613a464c"
+        },
+        {
+          "kind": "worktree",
+          "plan": "2eb074d5-bfbc-4a09-9ba8-a346f098b26c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/38df5475-caa8-4469-8c68-1b330f981c80",
+      "exists": true,
+      "head": "04fe393b9b4d15a2e37b6b2bf248ecec0442be35",
+      "prunable": false,
+      "owners": ["6c98bc11-0509-49b0-b8f2-f62666e05e28"],
+      "refs": ["LZ-122"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6c98bc11-0509-49b0-b8f2-f62666e05e28",
+          "attempt": "38df5475-caa8-4469-8c68-1b330f981c80",
+          "state": "verifying",
+          "session": "ses_4c2333ab99e14396b784425511414a08"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6c98bc11-0509-49b0-b8f2-f62666e05e28",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3a16ff72-2c86-4d0e-9749-fe1c427ac260",
+      "exists": true,
+      "head": "ebb16a6ec8d12aa0117bb7de1e5d8446fd2dc771",
+      "prunable": false,
+      "owners": ["c819c4cf-79d7-4bd9-a5d6-b8f4c2ee43e0"],
+      "refs": ["LZ-46"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "c819c4cf-79d7-4bd9-a5d6-b8f4c2ee43e0",
+          "attempt": "3a16ff72-2c86-4d0e-9749-fe1c427ac260",
+          "state": "cancelled",
+          "session": "ses_a07744b93acc4b05b81b6c6da3539e18"
+        },
+        {
+          "kind": "worktree",
+          "plan": "c819c4cf-79d7-4bd9-a5d6-b8f4c2ee43e0",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3b4bad86-2aad-44d2-a17a-fb98707dcd6e",
+      "exists": true,
+      "head": "14e892811e77b321958fcd28638e6bd6334a1010",
+      "prunable": false,
+      "owners": ["b4736219-82ba-44f2-b319-f26a5095d0a2"],
+      "refs": ["LZ-147"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "attempt": "3b4bad86-2aad-44d2-a17a-fb98707dcd6e",
+          "state": "failed",
+          "session": "ses_f4eb00b5f274438a8aba61a09782395f"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3b639290-ffc8-4a2c-a5dd-a550abf18da6",
+      "exists": true,
+      "head": "efaa923d8d9e9971a5481ba3b83d6d9d3c132705",
+      "prunable": false,
+      "owners": ["d0ce36bb-3b8a-481b-b525-9e2b45c55cb6"],
+      "refs": ["LZ-57", "LZ-58"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "d0ce36bb-3b8a-481b-b525-9e2b45c55cb6",
+          "attempt": "3b639290-ffc8-4a2c-a5dd-a550abf18da6",
+          "state": "running",
+          "session": "ses_bb2a0db8dda24991a059e5a3138fc39a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "d0ce36bb-3b8a-481b-b525-9e2b45c55cb6",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3bc67a5f-2354-467d-ab99-e401dd940e8d",
+      "exists": true,
+      "head": "f8c5e2eb69427e5e6653a7d26c152e362297c4f1",
+      "prunable": false,
+      "owners": ["eade12ae-74f3-48af-874b-f5950f4a41c3"],
+      "refs": ["LZ-156", "LZ-157", "LZ-158"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "attempt": "3bc67a5f-2354-467d-ab99-e401dd940e8d",
+          "state": "accepted",
+          "session": "ses_b11e08847a034fb192a8c7b419c4fd94"
+        },
+        {
+          "kind": "worktree",
+          "plan": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3c180ffb-eefe-434c-b9eb-d7f5e75abc8e",
+      "exists": true,
+      "head": "2082900b3a6a7ef88a3fb38ffbfa07029b0b1474",
+      "prunable": false,
+      "owners": ["4bcb9aa8-f057-4254-86e7-ab43ba0ea584"],
+      "refs": ["LZ-128"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "4bcb9aa8-f057-4254-86e7-ab43ba0ea584",
+          "attempt": "3c180ffb-eefe-434c-b9eb-d7f5e75abc8e",
+          "state": "accepted",
+          "session": "ses_43c1861e25c2448cb2e5e742d5a0f25a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "4bcb9aa8-f057-4254-86e7-ab43ba0ea584",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3cac0215-de89-4d5f-9b05-694ec6a3c822",
+      "exists": true,
+      "head": "1ca1e1b43b231899fc286f7d11d6134c6dc653a4",
+      "prunable": false,
+      "owners": ["b2d491ae-b125-485e-8637-796ae194447e"],
+      "refs": ["LZ-155"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b2d491ae-b125-485e-8637-796ae194447e",
+          "attempt": "3cac0215-de89-4d5f-9b05-694ec6a3c822",
+          "state": "accepted",
+          "session": "ses_2221f33835cd4e04b453227d8a176103"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b2d491ae-b125-485e-8637-796ae194447e",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3cd4e4c5-113d-4a46-a824-75cf38c256b5",
+      "exists": true,
+      "head": "ca72008f0e648ab9ab48704e74c2c0d3d956418c",
+      "prunable": false,
+      "owners": ["8f369d22-6ca9-494e-9a38-5f4670bedc5c"],
+      "refs": ["LZ-103"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8f369d22-6ca9-494e-9a38-5f4670bedc5c",
+          "attempt": "3cd4e4c5-113d-4a46-a824-75cf38c256b5",
+          "state": "accepted",
+          "session": "ses_4e70382928c9434d81f7ee1ca4f14dc5"
+        },
+        {
+          "kind": "worktree",
+          "plan": "8f369d22-6ca9-494e-9a38-5f4670bedc5c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3d869ab8-2d97-42ef-8571-fb0da5039de1",
+      "exists": true,
+      "head": "627ca7d66b46c39082ed7f43dfbc007ca1b1edf2",
+      "prunable": false,
+      "owners": ["6b5f7053-7934-4deb-b5c5-d94c036f1dcf"],
+      "refs": ["LZ-146"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6b5f7053-7934-4deb-b5c5-d94c036f1dcf",
+          "attempt": "3d869ab8-2d97-42ef-8571-fb0da5039de1",
+          "state": "running",
+          "session": "ses_4f29a33638a64f7ba89530a9c3ec47b0"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6b5f7053-7934-4deb-b5c5-d94c036f1dcf",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/41b4bec6-2271-4c89-b974-7c3ff563659a",
+      "exists": true,
+      "head": "e5048e62df0f1ee85646f3e790c0881815a49dc8",
+      "prunable": false,
+      "owners": ["83edaac6-b169-435b-8c4b-be663e72eb24"],
+      "refs": ["LZ-125"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "83edaac6-b169-435b-8c4b-be663e72eb24",
+          "attempt": "41b4bec6-2271-4c89-b974-7c3ff563659a",
+          "state": "accepted",
+          "session": "ses_733ccaf0560045ebb947954d4b534ab1"
+        },
+        {
+          "kind": "worktree",
+          "plan": "83edaac6-b169-435b-8c4b-be663e72eb24",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/422b1e78-34b1-442c-baa6-407c1fb64f6c",
+      "exists": true,
+      "head": "c0684d2869e8809dedc9e933e9de9ee103253172",
+      "prunable": false,
+      "owners": ["1867ab0c-f696-4f3c-ad44-301569b97c8e"],
+      "refs": ["LZ-195"],
+      "planStates": ["running"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "1867ab0c-f696-4f3c-ad44-301569b97c8e",
+          "attempt": "422b1e78-34b1-442c-baa6-407c1fb64f6c",
+          "state": "running",
+          "session": "ses_ed62616086f6493389cde8b36f6dfd84"
+        },
+        {
+          "kind": "worktree",
+          "plan": "1867ab0c-f696-4f3c-ad44-301569b97c8e",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/42379578-3c87-4434-ae2d-19a5721684e5",
+      "exists": true,
+      "head": "b09f1633b621fc9eb3ffb0be17c7f4af70265a63",
+      "prunable": false,
+      "owners": ["2af3a7c6-f1ea-4c7e-a455-9b6b7a4c094d"],
+      "refs": ["LZ-43"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "2af3a7c6-f1ea-4c7e-a455-9b6b7a4c094d",
+          "attempt": "42379578-3c87-4434-ae2d-19a5721684e5",
+          "state": "accepted",
+          "session": "ses_50fc4d5372be4244b316e7f4989b7fc4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "2af3a7c6-f1ea-4c7e-a455-9b6b7a4c094d",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/431bd1a2-3330-4ff2-b278-b491381d95fe",
+      "exists": true,
+      "head": "c00d16348c4c4dd1c10a25edec2339fc99849352",
+      "prunable": false,
+      "owners": ["53e856de-c2d9-4164-bfbb-ceb3852d630d"],
+      "refs": ["LZ-104"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "53e856de-c2d9-4164-bfbb-ceb3852d630d",
+          "attempt": "431bd1a2-3330-4ff2-b278-b491381d95fe",
+          "state": "cancelled",
+          "session": "ses_6cc6c30440b04f47804b106673549ae2"
+        },
+        {
+          "kind": "worktree",
+          "plan": "53e856de-c2d9-4164-bfbb-ceb3852d630d",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/46449e1b-afad-407d-ba12-2f44e664baa2",
+      "exists": true,
+      "head": "6d548cb038c3b2d29579ef7867a005c9c2f9ab78",
+      "prunable": false,
+      "owners": ["ae8438ef-c789-4432-b225-d833aa7de558"],
+      "refs": ["LZ-96"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "ae8438ef-c789-4432-b225-d833aa7de558",
+          "attempt": "46449e1b-afad-407d-ba12-2f44e664baa2",
+          "state": "accepted",
+          "session": "ses_448240ec2b464b099f42eddac9858e00"
+        },
+        {
+          "kind": "worktree",
+          "plan": "ae8438ef-c789-4432-b225-d833aa7de558",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/47d66efc-ae2b-47d3-b853-2faf20f41a3e",
+      "exists": true,
+      "head": "6dbae6781cfb282e18eeea2c1662d328f3fc1713",
+      "prunable": false,
+      "owners": ["b81910d7-d9a1-4014-86df-2a95f211735a"],
+      "refs": ["LZ-182"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b81910d7-d9a1-4014-86df-2a95f211735a",
+          "attempt": "47d66efc-ae2b-47d3-b853-2faf20f41a3e",
+          "state": "failed",
+          "session": "ses_ddabe399ccb84ea982cba703ac87341c"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b81910d7-d9a1-4014-86df-2a95f211735a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/4d691f62-10c6-456f-b862-72cf665c4bb6",
+      "exists": true,
+      "head": "fd46b498ce2bf8358d429195f5fd99edc455047e",
+      "prunable": false,
+      "owners": ["89003fe4-16e6-4184-b86c-7cae374bd482"],
+      "refs": ["LZ-181"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "89003fe4-16e6-4184-b86c-7cae374bd482",
+          "attempt": "4d691f62-10c6-456f-b862-72cf665c4bb6",
+          "state": "cancelled",
+          "session": "ses_12ba163aca2a4703a19aa82430adb1ab"
+        },
+        {
+          "kind": "worktree",
+          "plan": "89003fe4-16e6-4184-b86c-7cae374bd482",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/4d783df7-eb05-463c-b4db-df48a5c308c5",
+      "exists": true,
+      "head": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "prunable": false,
+      "owners": ["ba5744d0-2657-4f93-b006-44ca0b176108"],
+      "refs": ["LZ-173"],
+      "planStates": ["running"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "attempt": "4d783df7-eb05-463c-b4db-df48a5c308c5",
+          "state": "accepted",
+          "session": "ses_145885557d454551815079ab36bd9c24"
+        },
+        {
+          "kind": "worktree",
+          "plan": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/541f163e-d590-40f0-b945-108bf2df7eed",
+      "exists": true,
+      "head": "a1b9219bd2463f70fa2fb1a41eb15fcec1343542",
+      "prunable": false,
+      "owners": ["6948fd6a-1b1e-4ec4-8738-0888c41e7be3"],
+      "refs": ["LZ-142"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6948fd6a-1b1e-4ec4-8738-0888c41e7be3",
+          "attempt": "541f163e-d590-40f0-b945-108bf2df7eed",
+          "state": "failed",
+          "session": "ses_0eb91864d4a3425c9f14d04a8edaa736"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6948fd6a-1b1e-4ec4-8738-0888c41e7be3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/5627d0c3-52df-47b3-a381-eba3fd582863",
+      "exists": true,
+      "head": "44bc7ee733f2832958b6772d8b3b80ca373498ad",
+      "prunable": false,
+      "owners": ["7fcc114a-9b7e-4689-8d10-2adae8943ac8"],
+      "refs": ["LZ-64", "LZ-65"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "7fcc114a-9b7e-4689-8d10-2adae8943ac8",
+          "attempt": "5627d0c3-52df-47b3-a381-eba3fd582863",
+          "state": "cancelled",
+          "session": "ses_44f086948b924e2d92d5029995877408"
+        },
+        {
+          "kind": "worktree",
+          "plan": "7fcc114a-9b7e-4689-8d10-2adae8943ac8",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/56382e52-7ef1-4ace-9369-e4039e318e09",
+      "exists": true,
+      "head": "80c5d3465206b76b1662fd28b955698b0909c024",
+      "prunable": false,
+      "owners": ["6948fd6a-1b1e-4ec4-8738-0888c41e7be3"],
+      "refs": ["LZ-142"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6948fd6a-1b1e-4ec4-8738-0888c41e7be3",
+          "attempt": "56382e52-7ef1-4ace-9369-e4039e318e09",
+          "state": "running",
+          "session": "ses_b8ffc8cf2d004610b38e0135de2d20fc"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6948fd6a-1b1e-4ec4-8738-0888c41e7be3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/59b56192-a6e3-4419-b802-df2ee7ed2e53",
+      "exists": true,
+      "head": "e05e82cde25d7adf2fb4c8e5332e5f4ebb0dcaa6",
+      "prunable": false,
+      "owners": ["b4736219-82ba-44f2-b319-f26a5095d0a2"],
+      "refs": ["LZ-147"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "attempt": "59b56192-a6e3-4419-b802-df2ee7ed2e53",
+          "state": "failed",
+          "session": "ses_6399dddaf3e34e528d9eec7d7376a746"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/5bb102d8-0316-48dd-a9b0-55b040836330",
+      "exists": true,
+      "head": "0fce8146213b3de8e1dea7ec98ae0c8eda5902d5",
+      "prunable": false,
+      "owners": ["3ca869df-c73f-4b12-8170-0eff7f12a331"],
+      "refs": ["LZ-194"],
+      "planStates": ["accepted"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "3ca869df-c73f-4b12-8170-0eff7f12a331",
+          "attempt": "5bb102d8-0316-48dd-a9b0-55b040836330",
+          "state": "accepted",
+          "session": "ses_4abd79c43ac542909e2a117935ad2804"
+        },
+        {
+          "kind": "worktree",
+          "plan": "3ca869df-c73f-4b12-8170-0eff7f12a331",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/5fab7e91-64b0-420b-b2d7-52773b30e5d9",
+      "exists": true,
+      "head": "c00d16348c4c4dd1c10a25edec2339fc99849352",
+      "prunable": false,
+      "owners": ["f2ef44ad-d60b-4ce2-ac93-66548f67a885"],
+      "refs": ["LZ-100"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "f2ef44ad-d60b-4ce2-ac93-66548f67a885",
+          "attempt": "5fab7e91-64b0-420b-b2d7-52773b30e5d9",
+          "state": "accepted",
+          "session": "ses_186dbc76c2a64b3cbd0ff0fcd4836ff9"
+        },
+        {
+          "kind": "worktree",
+          "plan": "f2ef44ad-d60b-4ce2-ac93-66548f67a885",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/61a7c76a-0fc6-4add-b3f6-51dd910ef302",
+      "exists": true,
+      "head": "3c6cfb98407a94fe9ad6e0eea2a93cac5d136774",
+      "prunable": false,
+      "owners": ["23e0d5fe-dfcc-477c-9af5-cf139c05ddc9"],
+      "refs": ["LZ-107"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "23e0d5fe-dfcc-477c-9af5-cf139c05ddc9",
+          "attempt": "61a7c76a-0fc6-4add-b3f6-51dd910ef302",
+          "state": "accepted",
+          "session": "ses_7a0d93eed9f34b35a8addaf413c3ca94"
+        },
+        {
+          "kind": "worktree",
+          "plan": "23e0d5fe-dfcc-477c-9af5-cf139c05ddc9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/62437cd4-37ee-4b5f-9f34-c23ad0b8eda8",
+      "exists": true,
+      "head": "8dad5df84de66137147c06992d14893e6c0ec9bf",
+      "prunable": false,
+      "owners": ["145cde90-22ae-4521-b58a-cd0147f1eb55"],
+      "refs": ["LZ-168", "LZ-169"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "145cde90-22ae-4521-b58a-cd0147f1eb55",
+          "attempt": "62437cd4-37ee-4b5f-9f34-c23ad0b8eda8",
+          "state": "failed",
+          "session": "ses_c7aacb8be1d6422a9ce23b88768500d4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "145cde90-22ae-4521-b58a-cd0147f1eb55",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/62f727b7-a83f-4f77-8c6c-9a28afb86d1e",
+      "exists": true,
+      "head": "4944810674a649af20da3cbe0ed7eee112a667cc",
+      "prunable": false,
+      "owners": ["338bebc5-557a-4135-86dc-de7a4c304975"],
+      "refs": ["LZ-115", "LZ-116"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "338bebc5-557a-4135-86dc-de7a4c304975",
+          "attempt": "62f727b7-a83f-4f77-8c6c-9a28afb86d1e",
+          "state": "accepted",
+          "session": "ses_6a1639f0497c4ccb9aeb1d57f113872d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "338bebc5-557a-4135-86dc-de7a4c304975",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/6b931415-04fa-4885-a99e-6ed363be9dd4",
+      "exists": true,
+      "head": "92052632ef1b15f8b11c965c752c3e6af9d72fc3",
+      "prunable": false,
+      "owners": ["13d07bd2-9c4b-4f2b-9b00-0a215ee569a2"],
+      "refs": ["LZ-86", "LZ-87"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "13d07bd2-9c4b-4f2b-9b00-0a215ee569a2",
+          "attempt": "6b931415-04fa-4885-a99e-6ed363be9dd4",
+          "state": "accepted",
+          "session": "ses_d7d432f12a434d569349ceed74068c81"
+        },
+        {
+          "kind": "worktree",
+          "plan": "13d07bd2-9c4b-4f2b-9b00-0a215ee569a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/6c5b0677-3a6e-4956-ad23-cb8e3f54f70c",
+      "exists": true,
+      "head": "59cf8f8d23c027c0cb0b8c4e7fe8a72bfafee43c",
+      "prunable": false,
+      "owners": ["9f7c80ad-a799-443e-8a40-f294e15f9d50"],
+      "refs": ["LZ-151", "LZ-152"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "9f7c80ad-a799-443e-8a40-f294e15f9d50",
+          "attempt": "6c5b0677-3a6e-4956-ad23-cb8e3f54f70c",
+          "state": "accepted",
+          "session": "ses_06ae893559b2433d88f788baaf2e966c"
+        },
+        {
+          "kind": "worktree",
+          "plan": "9f7c80ad-a799-443e-8a40-f294e15f9d50",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/6e764af8-eaec-448e-8ba3-7fb53a1b3870",
+      "exists": true,
+      "head": "d891ea1f577629efde1e6d98c649510ad82a7a94",
+      "prunable": false,
+      "owners": ["6c9cc71f-0897-4287-a44a-c52ec0c2c8a3"],
+      "refs": ["LZ-71"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6c9cc71f-0897-4287-a44a-c52ec0c2c8a3",
+          "attempt": "6e764af8-eaec-448e-8ba3-7fb53a1b3870",
+          "state": "accepted",
+          "session": "ses_ae6165e7d2eb43a0a7b4e30f3d842375"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6c9cc71f-0897-4287-a44a-c52ec0c2c8a3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/6ed80fb1-7192-4da0-a17c-e034ce14c0bc",
+      "exists": true,
+      "head": "8ebdce96529d8ec154905e2b9d20211c6818dba1",
+      "prunable": false,
+      "owners": ["c5ff050c-0b5b-4f22-8b48-f729e26f4d94"],
+      "refs": ["LZ-77"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "c5ff050c-0b5b-4f22-8b48-f729e26f4d94",
+          "attempt": "6ed80fb1-7192-4da0-a17c-e034ce14c0bc",
+          "state": "accepted",
+          "session": "ses_a4de6965d7cb4c259db83fc85f7bb1c8"
+        },
+        {
+          "kind": "worktree",
+          "plan": "c5ff050c-0b5b-4f22-8b48-f729e26f4d94",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/73a87f31-e426-4a18-b660-16d9b2b3c199",
+      "exists": true,
+      "head": "673e7bd2c2904978e0e75ec6bc9388022d9eb520",
+      "prunable": false,
+      "owners": ["e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a"],
+      "refs": ["LZ-38", "LZ-39"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a",
+          "attempt": "73a87f31-e426-4a18-b660-16d9b2b3c199",
+          "state": "cancelled",
+          "session": "ses_eb06e02908524b91b32a465069df2b69"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/74699dea-a51a-428e-883f-1d865b3e015e",
+      "exists": true,
+      "head": "1bb8f82a99ac3e83885b7afd11a7f983a3d46162",
+      "prunable": false,
+      "owners": ["13d07bd2-9c4b-4f2b-9b00-0a215ee569a2"],
+      "refs": ["LZ-86", "LZ-87"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "13d07bd2-9c4b-4f2b-9b00-0a215ee569a2",
+          "attempt": "74699dea-a51a-428e-883f-1d865b3e015e",
+          "state": "accepted",
+          "session": "ses_73b4591aa4234c25baaf4af2acdea8d1"
+        },
+        {
+          "kind": "worktree",
+          "plan": "13d07bd2-9c4b-4f2b-9b00-0a215ee569a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/75b07aa8-bb93-4da4-abb2-db6d86a73d12",
+      "exists": true,
+      "head": "997c84c4573bedaa57477254a12a0cf47e145c0d",
+      "prunable": false,
+      "owners": ["49201384-47b2-4ef6-a018-bd83a42d7c16"],
+      "refs": ["LZ-62"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "graph-worktree",
+          "plan": "49201384-47b2-4ef6-a018-bd83a42d7c16",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/76f764e5-e0b9-437e-bcd2-ae612e9b4afe",
+      "exists": true,
+      "head": "ee6960ff80116f503d7043f885998a7b71aae0e1",
+      "prunable": false,
+      "owners": ["7fcc114a-9b7e-4689-8d10-2adae8943ac8"],
+      "refs": ["LZ-64", "LZ-65"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "7fcc114a-9b7e-4689-8d10-2adae8943ac8",
+          "attempt": "76f764e5-e0b9-437e-bcd2-ae612e9b4afe",
+          "state": "cancelled",
+          "session": "ses_4f4066c3848c4ba3bb14855fd66cac39"
+        },
+        {
+          "kind": "worktree",
+          "plan": "7fcc114a-9b7e-4689-8d10-2adae8943ac8",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/789d156b-4714-4913-8ffb-936a0a6fdc2d",
+      "exists": true,
+      "head": "75a880d8cdcae8477bdad7c5dc16aaa724babf95",
+      "prunable": false,
+      "owners": ["e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a"],
+      "refs": ["LZ-38", "LZ-39"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a",
+          "attempt": "789d156b-4714-4913-8ffb-936a0a6fdc2d",
+          "state": "failed",
+          "session": "ses_7bf6e0f1ce484eccbfed6a287051a59a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7a0a684f-3b59-4a54-aeb4-9636bc420b86",
+      "exists": true,
+      "head": "8919a20eabbe7ca725611866a3c66d90f3405934",
+      "prunable": false,
+      "owners": ["ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c"],
+      "refs": ["LZ-184"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c",
+          "attempt": "7a0a684f-3b59-4a54-aeb4-9636bc420b86",
+          "state": "failed",
+          "session": "ses_8fe4234c54ee42f4848e0e2e7ad86462"
+        },
+        {
+          "kind": "worktree",
+          "plan": "ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7a262dc8-8d59-42a6-999d-bf29564a15aa",
+      "exists": true,
+      "head": "05d23553a063631ffcb2d8847e6cad0dfdfd5904",
+      "prunable": false,
+      "owners": ["40b9de31-bf51-4ae6-ac5a-e2d386a1637a"],
+      "refs": ["LZ-78"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "40b9de31-bf51-4ae6-ac5a-e2d386a1637a",
+          "attempt": "7a262dc8-8d59-42a6-999d-bf29564a15aa",
+          "state": "accepted",
+          "session": "ses_b6e112931c9c43d7a45fc16fe789c468"
+        },
+        {
+          "kind": "worktree",
+          "plan": "40b9de31-bf51-4ae6-ac5a-e2d386a1637a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7d7be832-a7e0-480e-95f2-50cfe2b94841",
+      "exists": true,
+      "head": "08911cefd0138689ca727ccaeaefac64667a876c",
+      "prunable": false,
+      "owners": ["b048598f-ab73-4494-980c-1368fa9342c7"],
+      "refs": ["LZ-94", "LZ-95"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b048598f-ab73-4494-980c-1368fa9342c7",
+          "attempt": "7d7be832-a7e0-480e-95f2-50cfe2b94841",
+          "state": "accepted",
+          "session": "ses_72e0e79759074032ae71ac765fc09523"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b048598f-ab73-4494-980c-1368fa9342c7",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/805fadf8-efa5-4df6-ac48-bd4e1443f02c",
+      "exists": true,
+      "head": "2ad21e7c4bce696c6f0e5d2966a409d1b1221a0f",
+      "prunable": false,
+      "owners": ["002c3469-5346-4d74-a21f-6991eb52eeec"],
+      "refs": ["LZ-180"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "002c3469-5346-4d74-a21f-6991eb52eeec",
+          "attempt": "805fadf8-efa5-4df6-ac48-bd4e1443f02c",
+          "state": "accepted",
+          "session": "ses_dc161541d1334b14a156704f789ab9f5"
+        },
+        {
+          "kind": "worktree",
+          "plan": "002c3469-5346-4d74-a21f-6991eb52eeec",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8385e4f3-9756-4685-8154-45bba2270c1e",
+      "exists": true,
+      "head": "f170a6bfc3fb7d0a7601f0c504eda576d2e75f55",
+      "prunable": false,
+      "owners": ["8b8cfc52-6d00-4487-aea2-bf504562d40b"],
+      "refs": ["LZ-117"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8b8cfc52-6d00-4487-aea2-bf504562d40b",
+          "attempt": "8385e4f3-9756-4685-8154-45bba2270c1e",
+          "state": "accepted",
+          "session": "ses_9301408722e6471c96c55eb07cfd7cf2"
+        },
+        {
+          "kind": "worktree",
+          "plan": "8b8cfc52-6d00-4487-aea2-bf504562d40b",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/83daf09a-0112-484e-af40-57ff1ff6e554",
+      "exists": true,
+      "head": "08b2a4726564a43adec77238aa8315ae5dc7eebc",
+      "prunable": false,
+      "owners": ["1fab1396-5f6b-45cc-a148-5eff48182ed9"],
+      "refs": ["LZ-36"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "1fab1396-5f6b-45cc-a148-5eff48182ed9",
+          "attempt": "83daf09a-0112-484e-af40-57ff1ff6e554",
+          "state": "failed",
+          "session": "ses_63fe4a90c94a4d85aeb2f78bc11232a4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "1fab1396-5f6b-45cc-a148-5eff48182ed9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/87c14979-917d-4495-9fa6-90bb3aaeff17",
+      "exists": true,
+      "head": "4ff1775667d088285d7d6e477e7b1132be35a542",
+      "prunable": false,
+      "owners": ["e48290a6-a871-42a2-94f1-c88f700c0d11"],
+      "refs": ["LZ-138"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e48290a6-a871-42a2-94f1-c88f700c0d11",
+          "attempt": "87c14979-917d-4495-9fa6-90bb3aaeff17",
+          "state": "failed",
+          "session": "ses_28780d1d92544da880d3db3496c8a29d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e48290a6-a871-42a2-94f1-c88f700c0d11",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8806c6f8-5409-40dc-b8ea-ad3da4c6ca69",
+      "exists": true,
+      "head": "3aa4a5547ab1bffafa533e251060f2840973c79e",
+      "prunable": false,
+      "owners": ["99e4f80d-ced8-4556-8c1b-969483dc52d3"],
+      "refs": ["LZ-123"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "99e4f80d-ced8-4556-8c1b-969483dc52d3",
+          "attempt": "8806c6f8-5409-40dc-b8ea-ad3da4c6ca69",
+          "state": "accepted",
+          "session": "ses_6ec892235ce24155bb0ac0c869512743"
+        },
+        {
+          "kind": "worktree",
+          "plan": "99e4f80d-ced8-4556-8c1b-969483dc52d3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8bc20618-e418-4edc-81b2-20a085edd9f8",
+      "exists": true,
+      "head": "bff60132ade3bd5bfafdb92886d32392dae6eaf3",
+      "prunable": false,
+      "owners": ["9f7c80ad-a799-443e-8a40-f294e15f9d50"],
+      "refs": ["LZ-151", "LZ-152"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "9f7c80ad-a799-443e-8a40-f294e15f9d50",
+          "attempt": "8bc20618-e418-4edc-81b2-20a085edd9f8",
+          "state": "accepted",
+          "session": "ses_ba3fb8caf0734f65b0d68cc6db11e0b9"
+        },
+        {
+          "kind": "worktree",
+          "plan": "9f7c80ad-a799-443e-8a40-f294e15f9d50",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8c417015-b558-4fdc-8315-9bbcb5fb01c4",
+      "exists": true,
+      "head": "6ea1091a20a62c1604d6be6a0b89d8c9fd9e4b9c",
+      "prunable": false,
+      "owners": ["9ed449d7-66d2-49a6-9297-fbe9a226f7a5"],
+      "refs": ["LZ-80"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "9ed449d7-66d2-49a6-9297-fbe9a226f7a5",
+          "attempt": "8c417015-b558-4fdc-8315-9bbcb5fb01c4",
+          "state": "accepted",
+          "session": "ses_975268e96ac74fa4b5d3c19c862c8bfd"
+        },
+        {
+          "kind": "worktree",
+          "plan": "9ed449d7-66d2-49a6-9297-fbe9a226f7a5",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8f8168a0-406b-4889-bc9d-543d37f1f537",
+      "exists": true,
+      "head": "6dbae6781cfb282e18eeea2c1662d328f3fc1713",
+      "prunable": false,
+      "owners": ["b81910d7-d9a1-4014-86df-2a95f211735a"],
+      "refs": ["LZ-182"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b81910d7-d9a1-4014-86df-2a95f211735a",
+          "attempt": "8f8168a0-406b-4889-bc9d-543d37f1f537",
+          "state": "verifying",
+          "session": "ses_ff11bd70e1d74a24a3fbd7aaf27a217b"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b81910d7-d9a1-4014-86df-2a95f211735a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/906f0e53-b2d2-4eb9-9a42-2569926a0176",
+      "exists": true,
+      "head": "39ca20dd5a6040b38c2d80428303bb1c6886fb04",
+      "prunable": false,
+      "owners": ["a9c4ade6-3df4-4164-9672-afefe3099f2e"],
+      "refs": ["LZ-74"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "a9c4ade6-3df4-4164-9672-afefe3099f2e",
+          "attempt": "906f0e53-b2d2-4eb9-9a42-2569926a0176",
+          "state": "accepted",
+          "session": "ses_59097d8889e2491e9b3d311e20a90d9e"
+        },
+        {
+          "kind": "worktree",
+          "plan": "a9c4ade6-3df4-4164-9672-afefe3099f2e",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/941526b0-62de-4578-b82e-f2a458c95358",
+      "exists": true,
+      "head": "970be061fd3c50eb70c60a679807a6de9ffa8cb5",
+      "prunable": false,
+      "owners": ["8253ff59-57a5-45fd-8847-acd971438af8"],
+      "refs": ["LZ-28"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8253ff59-57a5-45fd-8847-acd971438af8",
+          "attempt": "941526b0-62de-4578-b82e-f2a458c95358",
+          "state": "cancelled",
+          "session": "ses_0837d798635a4b10a58e1fdc9175854f"
+        },
+        {
+          "kind": "worktree",
+          "plan": "8253ff59-57a5-45fd-8847-acd971438af8",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/95779e09-273c-4715-90d4-79b0ae2a0a57",
+      "exists": true,
+      "head": "49a1170543fe00cc0e176361d796998107686295",
+      "prunable": false,
+      "owners": ["c77f4a05-dc2a-4194-bad4-21f3079328a5"],
+      "refs": ["LZ-76"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "c77f4a05-dc2a-4194-bad4-21f3079328a5",
+          "attempt": "95779e09-273c-4715-90d4-79b0ae2a0a57",
+          "state": "cancelled",
+          "session": "ses_95ecef3d88f34e2787af30c8c17eb36d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "c77f4a05-dc2a-4194-bad4-21f3079328a5",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/95bdbbf5-0266-4dea-a905-ed36be9b80ec",
+      "exists": true,
+      "head": "af229f4e33afdd1204c927e0df6a5b29cb65d94e",
+      "prunable": false,
+      "owners": ["9263091c-486e-42cc-9d27-18f866ee24dc"],
+      "refs": ["LZ-121"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "9263091c-486e-42cc-9d27-18f866ee24dc",
+          "attempt": "95bdbbf5-0266-4dea-a905-ed36be9b80ec",
+          "state": "accepted",
+          "session": "ses_d695b77ca32d48b2962cf000f652121c"
+        },
+        {
+          "kind": "worktree",
+          "plan": "9263091c-486e-42cc-9d27-18f866ee24dc",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/967a2afe-baac-44c6-8a75-32a6f2958457",
+      "exists": true,
+      "head": "3ed15c3afe003c94dfecab0684f29d20c7db0058",
+      "prunable": false,
+      "owners": ["f4b36a89-917f-4eb4-94a4-8f05b7649766"],
+      "refs": ["LZ-53"],
+      "planStates": ["accepted"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "f4b36a89-917f-4eb4-94a4-8f05b7649766",
+          "attempt": "967a2afe-baac-44c6-8a75-32a6f2958457",
+          "state": "accepted",
+          "session": "ses_054fb9b47c9345719b3e562462921977"
+        },
+        {
+          "kind": "worktree",
+          "plan": "f4b36a89-917f-4eb4-94a4-8f05b7649766",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/98724b83-605f-4a9a-9383-f4e3a24b3428",
+      "exists": true,
+      "head": "574331f3612984d44492553b8e91c85017f05c89",
+      "prunable": false,
+      "owners": ["bb47fbce-be29-446c-b783-a74d62383ff7"],
+      "refs": ["LZ-97"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "bb47fbce-be29-446c-b783-a74d62383ff7",
+          "attempt": "98724b83-605f-4a9a-9383-f4e3a24b3428",
+          "state": "accepted",
+          "session": "ses_0ec8c285a334405a8ff465cba3cec555"
+        },
+        {
+          "kind": "worktree",
+          "plan": "bb47fbce-be29-446c-b783-a74d62383ff7",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460",
+      "exists": true,
+      "head": "486614baefe8a66868b26baeba210e0782ae061d",
+      "prunable": false,
+      "owners": ["49201384-47b2-4ef6-a018-bd83a42d7c16"],
+      "refs": ["LZ-62"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "49201384-47b2-4ef6-a018-bd83a42d7c16",
+          "attempt": "99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460",
+          "state": "accepted",
+          "session": "ses_6871bdee1ee345c28a38e1daa742d4ef"
+        },
+        {
+          "kind": "worktree",
+          "plan": "49201384-47b2-4ef6-a018-bd83a42d7c16",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/9b25d8d0-1a78-4659-8538-4116225c2338",
+      "exists": true,
+      "head": "18cad5676204c05fcf93eb674acd898de43a0440",
+      "prunable": false,
+      "owners": ["446f3b7a-987c-41c4-85ae-8328a0322d54"],
+      "refs": ["LZ-111"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "446f3b7a-987c-41c4-85ae-8328a0322d54",
+          "attempt": "9b25d8d0-1a78-4659-8538-4116225c2338",
+          "state": "accepted",
+          "session": "ses_6dd98bf92c294110b56db579d051a2c2"
+        },
+        {
+          "kind": "worktree",
+          "plan": "446f3b7a-987c-41c4-85ae-8328a0322d54",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/9da24dd0-2975-45b3-97cc-9eb30758bc1c",
+      "exists": true,
+      "head": "55026a84e8a88884f8dadb617343cab3d0cc0bd7",
+      "prunable": false,
+      "owners": ["b0eb89b4-a071-49e2-a238-c474d53cc42f"],
+      "refs": ["LZ-33", "LZ-34"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b0eb89b4-a071-49e2-a238-c474d53cc42f",
+          "attempt": "9da24dd0-2975-45b3-97cc-9eb30758bc1c",
+          "state": "cancelled",
+          "session": "ses_637143f3b0ab4ceb8b30190c2f8ebf9a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b0eb89b4-a071-49e2-a238-c474d53cc42f",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/9fdce7eb-600f-4c4f-9248-43cd2d256bf5",
+      "exists": true,
+      "head": "d1b2b74a30e95005aa93c14d2fdac6461a93eae8",
+      "prunable": false,
+      "owners": ["4195aed2-f292-4678-9ed1-f0cf9d9e4e39"],
+      "refs": ["LZ-124"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "4195aed2-f292-4678-9ed1-f0cf9d9e4e39",
+          "attempt": "9fdce7eb-600f-4c4f-9248-43cd2d256bf5",
+          "state": "accepted",
+          "session": "ses_3b16dfcec0f142f1bbafee8659c941f6"
+        },
+        {
+          "kind": "worktree",
+          "plan": "4195aed2-f292-4678-9ed1-f0cf9d9e4e39",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/a53e61a9-c185-495d-a02b-bb66feed16b2",
+      "exists": true,
+      "head": "95904a75b60b553fa1971d30f42842d6030d9f85",
+      "prunable": false,
+      "owners": ["446f3b7a-987c-41c4-85ae-8328a0322d54"],
+      "refs": ["LZ-111"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "446f3b7a-987c-41c4-85ae-8328a0322d54",
+          "attempt": "a53e61a9-c185-495d-a02b-bb66feed16b2",
+          "state": "cancelled",
+          "session": "ses_9beafbec965d49fd889055d530236469"
+        },
+        {
+          "kind": "worktree",
+          "plan": "446f3b7a-987c-41c4-85ae-8328a0322d54",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/a5b2e958-ef15-4c4d-9b52-c740ad4fab8a",
+      "exists": true,
+      "head": "a448d4c560e31cf1120e56a7b381d9e827584e38",
+      "prunable": false,
+      "owners": ["b048598f-ab73-4494-980c-1368fa9342c7"],
+      "refs": ["LZ-94", "LZ-95"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b048598f-ab73-4494-980c-1368fa9342c7",
+          "attempt": "a5b2e958-ef15-4c4d-9b52-c740ad4fab8a",
+          "state": "accepted",
+          "session": "ses_61d99279dbdb430f95baa4abc74ad73a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b048598f-ab73-4494-980c-1368fa9342c7",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/a6ee844e-e8da-4b0c-adfe-13aed1f69e5d",
+      "exists": true,
+      "head": "46b4d274758a2b5e3c1ff55fb54b0dc60f3cb56c",
+      "prunable": false,
+      "owners": ["b6e9aab5-0a11-4ca7-aeae-aab0e5f4f134"],
+      "refs": ["LZ-59"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "b6e9aab5-0a11-4ca7-aeae-aab0e5f4f134",
+          "attempt": "a6ee844e-e8da-4b0c-adfe-13aed1f69e5d",
+          "state": "accepted",
+          "session": "ses_99ce3f97084a412eb8a1e4e6bdc6eef7"
+        },
+        {
+          "kind": "worktree",
+          "plan": "b6e9aab5-0a11-4ca7-aeae-aab0e5f4f134",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/a79ce707-a048-4324-83d4-cec0c2bcf8e3",
+      "exists": true,
+      "head": "44bc7ee733f2832958b6772d8b3b80ca373498ad",
+      "prunable": false,
+      "owners": ["7fcc114a-9b7e-4689-8d10-2adae8943ac8"],
+      "refs": ["LZ-64", "LZ-65"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "7fcc114a-9b7e-4689-8d10-2adae8943ac8",
+          "attempt": "a79ce707-a048-4324-83d4-cec0c2bcf8e3",
+          "state": "failed",
+          "session": "ses_534b5c181ba949b393631717d15cb97f"
+        },
+        {
+          "kind": "worktree",
+          "plan": "7fcc114a-9b7e-4689-8d10-2adae8943ac8",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/abcec5dc-7feb-4de1-a9dd-73da004cfb74",
+      "exists": true,
+      "head": "b6237f1e60ec0aa769b867749578f93642fa9e54",
+      "prunable": false,
+      "owners": ["67f3790e-17a9-4cf3-97bf-c21eef98a3ca"],
+      "refs": ["LZ-67"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "67f3790e-17a9-4cf3-97bf-c21eef98a3ca",
+          "attempt": "abcec5dc-7feb-4de1-a9dd-73da004cfb74",
+          "state": "accepted",
+          "session": "ses_226e542b12a047dd973a6c3be0bc479e"
+        },
+        {
+          "kind": "worktree",
+          "plan": "67f3790e-17a9-4cf3-97bf-c21eef98a3ca",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/acb55d57-bd3e-42fe-8459-42a97309f2fd",
+      "exists": true,
+      "head": "b11f7149d2df2deede6a3307a7bca07de5597cf5",
+      "prunable": false,
+      "owners": ["ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c"],
+      "refs": ["LZ-184"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c",
+          "attempt": "acb55d57-bd3e-42fe-8459-42a97309f2fd",
+          "state": "accepted",
+          "session": "ses_fdb5a452d2f1458fbf405249263fa30c"
+        },
+        {
+          "kind": "worktree",
+          "plan": "ebea76ad-f3bd-4f6b-9d3f-1e356e032b9c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ad12b78c-f5ec-43e8-ad16-d46aefc39eb4",
+      "exists": true,
+      "head": "e64c90d252348a874b4cc209410a86262c0cd71e",
+      "prunable": false,
+      "owners": ["d1bc1882-be6e-42a2-9626-ab018c595227"],
+      "refs": ["LZ-56"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "d1bc1882-be6e-42a2-9626-ab018c595227",
+          "attempt": "ad12b78c-f5ec-43e8-ad16-d46aefc39eb4",
+          "state": "accepted",
+          "session": "ses_25f4655386a4407f99a500949a5fa3b3"
+        },
+        {
+          "kind": "worktree",
+          "plan": "d1bc1882-be6e-42a2-9626-ab018c595227",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ad71de48-4c50-4c43-8cd5-cd425a3a1d5d",
+      "exists": true,
+      "head": "06b635b7b0aa45e852ee0a129b2da27895398691",
+      "prunable": false,
+      "owners": ["97f2a349-df1b-4783-a6c1-fe33c72b80d9"],
+      "refs": ["LZ-60"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "97f2a349-df1b-4783-a6c1-fe33c72b80d9",
+          "attempt": "ad71de48-4c50-4c43-8cd5-cd425a3a1d5d",
+          "state": "cancelled",
+          "session": "ses_85031c4fcb00477db9f4f72ae57e77c7"
+        },
+        {
+          "kind": "worktree",
+          "plan": "97f2a349-df1b-4783-a6c1-fe33c72b80d9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/addfb6ee-15f5-4b2a-8d09-d0864708dbac",
+      "exists": true,
+      "head": "028c53ec923eb51fcf08b310c963fcee6551f5ac",
+      "prunable": false,
+      "owners": ["2aa51f63-fd41-4510-92a6-6bad700d8880"],
+      "refs": ["LZ-110"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "2aa51f63-fd41-4510-92a6-6bad700d8880",
+          "attempt": "addfb6ee-15f5-4b2a-8d09-d0864708dbac",
+          "state": "accepted",
+          "session": "ses_34c9ce29a6d548cda5ffa21144ad41aa"
+        },
+        {
+          "kind": "worktree",
+          "plan": "2aa51f63-fd41-4510-92a6-6bad700d8880",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/adoption-6c1eacfc-fb7d-456a-b69d-0a2d320676a2-combined",
+      "exists": true,
+      "head": "57288dc8946df0ec28ea208e253e4e45029623fb",
+      "prunable": false,
+      "owners": ["b4736219-82ba-44f2-b319-f26a5095d0a2"],
+      "refs": ["LZ-147"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "adoption-combined-worktree",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/adoption-6c1eacfc-fb7d-456a-b69d-0a2d320676a2-task",
+      "exists": true,
+      "head": "57288dc8946df0ec28ea208e253e4e45029623fb",
+      "prunable": false,
+      "owners": ["b4736219-82ba-44f2-b319-f26a5095d0a2"],
+      "refs": ["LZ-147"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "adoption-task-worktree",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/adoption-b34bd52a-4f1d-449c-8f58-45be3daa4e72-combined",
+      "exists": true,
+      "head": "88b35f579922f0ff4dd811391b3682b7694fbde4",
+      "prunable": false,
+      "owners": ["b4736219-82ba-44f2-b319-f26a5095d0a2"],
+      "refs": ["LZ-147"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "adoption-combined-worktree",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/adoption-b34bd52a-4f1d-449c-8f58-45be3daa4e72-task",
+      "exists": true,
+      "head": "88b35f579922f0ff4dd811391b3682b7694fbde4",
+      "prunable": false,
+      "owners": ["b4736219-82ba-44f2-b319-f26a5095d0a2"],
+      "refs": ["LZ-147"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "adoption-task-worktree",
+          "plan": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b05fddca-13f9-464e-b7ec-e7025f904ec4",
+      "exists": true,
+      "head": "401349b788b8d914357d58e06ae64cf4a3db6e07",
+      "prunable": false,
+      "owners": ["f11e1754-064c-4c28-9888-d488a36ec03d"],
+      "refs": ["LZ-120"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "f11e1754-064c-4c28-9888-d488a36ec03d",
+          "attempt": "b05fddca-13f9-464e-b7ec-e7025f904ec4",
+          "state": "accepted",
+          "session": "ses_69f9beee35f94445a9e898788a72f131"
+        },
+        {
+          "kind": "worktree",
+          "plan": "f11e1754-064c-4c28-9888-d488a36ec03d",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b20b9aa7-8466-43a7-83eb-57f48408eedc",
+      "exists": true,
+      "head": "b9b7ad2525c7d531781c432f16f5e60592ab9755",
+      "prunable": false,
+      "owners": ["9bd413fb-a195-4946-af73-a66766d271e6"],
+      "refs": ["LZ-61"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "9bd413fb-a195-4946-af73-a66766d271e6",
+          "attempt": "b20b9aa7-8466-43a7-83eb-57f48408eedc",
+          "state": "accepted",
+          "session": "ses_1f1d4570c48f412697ca0e56ccef3893"
+        },
+        {
+          "kind": "worktree",
+          "plan": "9bd413fb-a195-4946-af73-a66766d271e6",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b2e9df85-6318-406c-acd6-15a30ffb00e9",
+      "exists": true,
+      "head": "c96c3a16efa71307857018c7921c58effb71d9bc",
+      "prunable": false,
+      "owners": ["1eb72f8a-2cc5-41ec-a827-a255d867153c"],
+      "refs": ["LZ-90", "LZ-91"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "1eb72f8a-2cc5-41ec-a827-a255d867153c",
+          "attempt": "b2e9df85-6318-406c-acd6-15a30ffb00e9",
+          "state": "accepted",
+          "session": "ses_f68c9b20d5d046be8b14e03ab9757f15"
+        },
+        {
+          "kind": "worktree",
+          "plan": "1eb72f8a-2cc5-41ec-a827-a255d867153c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b56e01fb-e7da-425c-9dbd-02a0ad55d7e1",
+      "exists": true,
+      "head": "06b635b7b0aa45e852ee0a129b2da27895398691",
+      "prunable": false,
+      "owners": ["97f2a349-df1b-4783-a6c1-fe33c72b80d9"],
+      "refs": ["LZ-60"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "97f2a349-df1b-4783-a6c1-fe33c72b80d9",
+          "attempt": "b56e01fb-e7da-425c-9dbd-02a0ad55d7e1",
+          "state": "failed",
+          "session": "ses_a135f77d907b45be80a8eeeb42ac28a6"
+        },
+        {
+          "kind": "worktree",
+          "plan": "97f2a349-df1b-4783-a6c1-fe33c72b80d9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c",
+      "exists": true,
+      "head": "9f68dcf4511252450eece192dd45441a9ee125c4",
+      "prunable": false,
+      "owners": ["6d178295-0a17-41f9-91dd-f903e617b69d"],
+      "refs": ["LZ-70"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6d178295-0a17-41f9-91dd-f903e617b69d",
+          "attempt": "ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c",
+          "state": "accepted",
+          "session": "ses_f96b29058c6347e294d7e0889ad3e627"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6d178295-0a17-41f9-91dd-f903e617b69d",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/bd377e53-04fe-4a96-a21f-a1a6caf50e04",
+      "exists": true,
+      "head": "f9a13e6b889ba763aab7da5c216b6fd0c24cc604",
+      "prunable": false,
+      "owners": ["96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0"],
+      "refs": ["LZ-130", "LZ-131"],
+      "planStates": ["running"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "attempt": "bd377e53-04fe-4a96-a21f-a1a6caf50e04",
+          "state": "accepted",
+          "session": "ses_cad1e927bb344bf2b061d8590c5b739d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c49fbc65-db5c-44ca-bd42-e142dca7fb09",
+      "exists": true,
+      "head": "5acc7fbd3c2351ab74aa3771cb5c5c92febc64fb",
+      "prunable": false,
+      "owners": ["e8bf7885-fd38-4170-8ce6-cbb1d68cb2c4"],
+      "refs": ["LZ-193"],
+      "planStates": ["accepted"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e8bf7885-fd38-4170-8ce6-cbb1d68cb2c4",
+          "attempt": "c49fbc65-db5c-44ca-bd42-e142dca7fb09",
+          "state": "failed",
+          "session": "ses_dd92813879ab4e0da0f5d1c8b5a197d4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e8bf7885-fd38-4170-8ce6-cbb1d68cb2c4",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c5fbffb0-b7b4-457a-805d-6380022f2951",
+      "exists": true,
+      "head": "f65d8cc23582506603ebb69b86ef56cb3067cf59",
+      "prunable": false,
+      "owners": ["e7308bed-1fe9-4c8a-b688-122abe42e1a3"],
+      "refs": ["LZ-75"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e7308bed-1fe9-4c8a-b688-122abe42e1a3",
+          "attempt": "c5fbffb0-b7b4-457a-805d-6380022f2951",
+          "state": "accepted",
+          "session": "ses_19fd0710d651419091bf1891f2d97045"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e7308bed-1fe9-4c8a-b688-122abe42e1a3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c87b1f86-4b4f-47c4-9388-8998ee9a1bf0",
+      "exists": true,
+      "head": "22b5abc8d804f5944cc896fe19c53e359fdf2a24",
+      "prunable": false,
+      "owners": ["55dab61a-08b2-4b40-b540-cb0e2b8a54b4"],
+      "refs": ["LZ-164"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "55dab61a-08b2-4b40-b540-cb0e2b8a54b4",
+          "attempt": "c87b1f86-4b4f-47c4-9388-8998ee9a1bf0",
+          "state": "accepted",
+          "session": "ses_50224094d17147efbfc8e422bd8afb53"
+        },
+        {
+          "kind": "worktree",
+          "plan": "55dab61a-08b2-4b40-b540-cb0e2b8a54b4",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c9a6481f-83fb-4fe5-b79e-65059ca999f5",
+      "exists": true,
+      "head": "b16344daf41b6f3dabed593a1ceea36d3497db06",
+      "prunable": false,
+      "owners": ["8f369d22-6ca9-494e-9a38-5f4670bedc5c"],
+      "refs": ["LZ-103"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8f369d22-6ca9-494e-9a38-5f4670bedc5c",
+          "attempt": "c9a6481f-83fb-4fe5-b79e-65059ca999f5",
+          "state": "failed",
+          "session": "ses_6da1ede0e4094aa0a468a2b1f051407d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "8f369d22-6ca9-494e-9a38-5f4670bedc5c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ce6df060-a8ef-4ae8-8c40-02a25bc532c8",
+      "exists": true,
+      "head": "eccb16ea5d8d801c27b90e23386c5ffa79d60b3d",
+      "prunable": false,
+      "owners": ["96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0"],
+      "refs": ["LZ-130", "LZ-131"],
+      "planStates": ["running"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "attempt": "ce6df060-a8ef-4ae8-8c40-02a25bc532c8",
+          "state": "failed",
+          "session": "ses_6b3b53592fd24c6dba8bd25d423311e4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d0930725-f837-40e7-8992-892f66ec1010",
+      "exists": true,
+      "head": "374a5997d665ad13d7eb3828933e2b3e09b1ce13",
+      "prunable": false,
+      "owners": ["cc65e13d-9b72-411e-a9de-41a996a3f951"],
+      "refs": ["LZ-135"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "cc65e13d-9b72-411e-a9de-41a996a3f951",
+          "attempt": "d0930725-f837-40e7-8992-892f66ec1010",
+          "state": "running",
+          "session": "ses_671fad53a1b548679a7afc4472879ed2"
+        },
+        {
+          "kind": "worktree",
+          "plan": "cc65e13d-9b72-411e-a9de-41a996a3f951",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d2e45d4c-ccad-44ce-b9de-079c1589cb62",
+      "exists": true,
+      "head": "0e13a75d85852756ea958c92f4f89c8188ad0148",
+      "prunable": false,
+      "owners": ["e5a078b8-5364-49d2-a571-0710c70e8bbb"],
+      "refs": ["LZ-82"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e5a078b8-5364-49d2-a571-0710c70e8bbb",
+          "attempt": "d2e45d4c-ccad-44ce-b9de-079c1589cb62",
+          "state": "accepted",
+          "session": "ses_71af5e28c324495b9ac5770def2b53bf"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e5a078b8-5364-49d2-a571-0710c70e8bbb",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d46b2ef4-82a6-41de-aa0d-85679e1c2313",
+      "exists": true,
+      "head": "70841f352c9e58a3ab6ce4aed4fe264ea7ab5694",
+      "prunable": false,
+      "owners": ["7a3bea3f-0c7e-4f3f-ae7b-970e343cc177"],
+      "refs": ["LZ-92"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "7a3bea3f-0c7e-4f3f-ae7b-970e343cc177",
+          "attempt": "d46b2ef4-82a6-41de-aa0d-85679e1c2313",
+          "state": "accepted",
+          "session": "ses_a512a656f213468ca34aed6e884ddc88"
+        },
+        {
+          "kind": "worktree",
+          "plan": "7a3bea3f-0c7e-4f3f-ae7b-970e343cc177",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d63243f2-4f6c-4a14-b26b-4a72200d073b",
+      "exists": true,
+      "head": "c6f380c5ce01b22966b39f429ffb8954e44de491",
+      "prunable": false,
+      "owners": ["8fdab5bc-c948-48b3-baab-8938215b85b7"],
+      "refs": ["LZ-141"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "8fdab5bc-c948-48b3-baab-8938215b85b7",
+          "attempt": "d63243f2-4f6c-4a14-b26b-4a72200d073b",
+          "state": "running",
+          "session": "ses_9f38dcf3886440938e167596f2517a32"
+        },
+        {
+          "kind": "worktree-recovery",
+          "plan": "8fdab5bc-c948-48b3-baab-8938215b85b7",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d6ab75c2-6029-4d85-92d9-ef3625a1a060",
+      "exists": true,
+      "head": "3cef0217178935ed8c3fa8e1ccecf52e13238fed",
+      "prunable": false,
+      "owners": ["e931108e-a9f1-48f3-b514-27093e2e514c"],
+      "refs": ["LZ-109"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "e931108e-a9f1-48f3-b514-27093e2e514c",
+          "attempt": "d6ab75c2-6029-4d85-92d9-ef3625a1a060",
+          "state": "accepted",
+          "session": "ses_132537f1527748b0ba6b5eb9709fcab8"
+        },
+        {
+          "kind": "worktree",
+          "plan": "e931108e-a9f1-48f3-b514-27093e2e514c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/daaa4562-e093-4ed7-98a4-dce2dd5e35b3",
+      "exists": true,
+      "head": "a59d4524af30c6ad136d46afe2252d9fdc423be5",
+      "prunable": false,
+      "owners": ["70a65e9f-ac48-4b76-9a1a-5e6cb74ae87e"],
+      "refs": ["LZ-201"],
+      "planStates": ["running"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "70a65e9f-ac48-4b76-9a1a-5e6cb74ae87e",
+          "attempt": "daaa4562-e093-4ed7-98a4-dce2dd5e35b3",
+          "state": "running",
+          "session": "ses_b7c5d4e2b3b142b3b041481d5570a4d7"
+        },
+        {
+          "kind": "worktree",
+          "plan": "70a65e9f-ac48-4b76-9a1a-5e6cb74ae87e",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/dd65c71f-4864-4bdd-a412-03856c5c72c4",
+      "exists": true,
+      "head": "0d809b469140437122b9d747b40797218e93f362",
+      "prunable": false,
+      "owners": ["916474c0-4f49-4c42-80dd-718ff3c20ba3"],
+      "refs": ["LZ-139"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "916474c0-4f49-4c42-80dd-718ff3c20ba3",
+          "attempt": "dd65c71f-4864-4bdd-a412-03856c5c72c4",
+          "state": "running",
+          "session": "ses_620c358ef5094d448751694fd5b7e898"
+        },
+        {
+          "kind": "worktree-recovery",
+          "plan": "916474c0-4f49-4c42-80dd-718ff3c20ba3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ddf7020a-8294-4b9b-9182-86e9d27a37f9",
+      "exists": true,
+      "head": "19fc631408546a49d2e8ca90409bb69b12d0f12a",
+      "prunable": false,
+      "owners": ["338bebc5-557a-4135-86dc-de7a4c304975"],
+      "refs": ["LZ-115", "LZ-116"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "338bebc5-557a-4135-86dc-de7a4c304975",
+          "attempt": "ddf7020a-8294-4b9b-9182-86e9d27a37f9",
+          "state": "accepted",
+          "session": "ses_fd943fc824d94a23a6b73d6927fc62f4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "338bebc5-557a-4135-86dc-de7a4c304975",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/dffe9628-84f2-42cc-8774-109a2c610717",
+      "exists": true,
+      "head": "a6223ad9116b8ba60fbf1cc87d574320f4cd81e6",
+      "prunable": false,
+      "owners": ["27506b73-91ec-45ba-923d-55b844f2f09e"],
+      "refs": ["LZ-68"],
+      "planStates": ["cancelled"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "27506b73-91ec-45ba-923d-55b844f2f09e",
+          "attempt": "dffe9628-84f2-42cc-8774-109a2c610717",
+          "state": "cancelled",
+          "session": "ses_7792aab8db1843c5bce9ca688a5632d6"
+        },
+        {
+          "kind": "worktree",
+          "plan": "27506b73-91ec-45ba-923d-55b844f2f09e",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/e10ac4af-372c-45d7-bb63-98a5d7c2dfa8",
+      "exists": true,
+      "head": "7aabc4704265a997147ed869fadb8473293bf9e7",
+      "prunable": false,
+      "owners": ["21625514-8f61-4f9e-be16-65a609f4710e"],
+      "refs": ["LZ-79"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "21625514-8f61-4f9e-be16-65a609f4710e",
+          "attempt": "e10ac4af-372c-45d7-bb63-98a5d7c2dfa8",
+          "state": "accepted",
+          "session": "ses_833e712f73f849b3a3f5f1e28e3ba5f4"
+        },
+        {
+          "kind": "worktree",
+          "plan": "21625514-8f61-4f9e-be16-65a609f4710e",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/e4df3b54-9e1f-4c9b-807d-51decfdadf44",
+      "exists": true,
+      "head": "6d0b70546ebd866a637938b986b8bcc5a25f02e5",
+      "prunable": false,
+      "owners": ["c0b3a66b-9a57-4e7a-a1f0-a64ab629e24a"],
+      "refs": ["LZ-105"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "c0b3a66b-9a57-4e7a-a1f0-a64ab629e24a",
+          "attempt": "e4df3b54-9e1f-4c9b-807d-51decfdadf44",
+          "state": "accepted",
+          "session": "ses_fb6f7d1ea66f41c99f75e2f7dafc1cfe"
+        },
+        {
+          "kind": "worktree",
+          "plan": "c0b3a66b-9a57-4e7a-a1f0-a64ab629e24a",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed12b420-2b5a-4f02-b707-d56f3090b942",
+      "exists": true,
+      "head": "eb972cf27c15a6ef7c3320b616bd0224ca85ed10",
+      "prunable": false,
+      "owners": ["bf37ca92-e165-456b-8903-0aa256d85019"],
+      "refs": ["LZ-93"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "bf37ca92-e165-456b-8903-0aa256d85019",
+          "attempt": "ed12b420-2b5a-4f02-b707-d56f3090b942",
+          "state": "accepted",
+          "session": "ses_75e56cb9af5346ea8371be6e3759dedd"
+        },
+        {
+          "kind": "worktree",
+          "plan": "bf37ca92-e165-456b-8903-0aa256d85019",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "exists": true,
+      "head": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55",
+      "prunable": false,
+      "owners": ["0dab6e0d-6ad1-4902-a315-4066f5dee32c"],
+      "refs": ["LZ-72"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+          "attempt": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+          "state": "verifying",
+          "session": "ses_136dd90605a14fc0a6e7ce9e0edc1413"
+        },
+        {
+          "kind": "worktree",
+          "plan": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f251e2dd-de6a-4980-84e8-d381c5a64eb5",
+      "exists": true,
+      "head": "e3a928a72da8485a4ff9d68647208b95e9440969",
+      "prunable": false,
+      "owners": ["1eb72f8a-2cc5-41ec-a827-a255d867153c"],
+      "refs": ["LZ-90", "LZ-91"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "1eb72f8a-2cc5-41ec-a827-a255d867153c",
+          "attempt": "f251e2dd-de6a-4980-84e8-d381c5a64eb5",
+          "state": "accepted",
+          "session": "ses_ba517716fd51444b81d6141f3d0ccb1d"
+        },
+        {
+          "kind": "worktree",
+          "plan": "1eb72f8a-2cc5-41ec-a827-a255d867153c",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f2db78ed-e317-4a70-bdaf-199260af162a",
+      "exists": true,
+      "head": "25c3e0f62ae7cee1044315cdf0d466c14edd4e0a",
+      "prunable": false,
+      "owners": ["96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0"],
+      "refs": ["LZ-130", "LZ-131"],
+      "planStates": ["running"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "attempt": "f2db78ed-e317-4a70-bdaf-199260af162a",
+          "state": "failed",
+          "session": "ses_e8e85ff547f941e2b3e960621c3db6dd"
+        },
+        {
+          "kind": "worktree",
+          "plan": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f3f9850e-94d7-45e0-bb0f-0050e7b57f49",
+      "exists": true,
+      "head": "23a408dafcac8b9741ed373fe39a15c7e215b484",
+      "prunable": false,
+      "owners": ["6ab01b37-b923-4145-9436-0a9292f62d36"],
+      "refs": ["LZ-106"],
+      "planStates": ["cleanup-blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "6ab01b37-b923-4145-9436-0a9292f62d36",
+          "attempt": "f3f9850e-94d7-45e0-bb0f-0050e7b57f49",
+          "state": "accepted",
+          "session": "ses_556dcf0ecd034ef2acb0cb541f78d57a"
+        },
+        {
+          "kind": "worktree",
+          "plan": "6ab01b37-b923-4145-9436-0a9292f62d36",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": [],
+      "gitInspection": {
+        "statusRead": true,
+        "dirty": false,
+        "statusEntries": 0,
+        "headInMain": true,
+        "ancestryExit": 0
+      }
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f6c063ba-695f-4f41-8101-42d9ef57321e",
+      "exists": true,
+      "head": "e743a6e24e618a8be456681b9a4c0a3f18c12b30",
+      "prunable": false,
+      "owners": ["145cde90-22ae-4521-b58a-cd0147f1eb55"],
+      "refs": ["LZ-168", "LZ-169"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "145cde90-22ae-4521-b58a-cd0147f1eb55",
+          "attempt": "f6c063ba-695f-4f41-8101-42d9ef57321e",
+          "state": "accepted",
+          "session": "ses_eab54443be664e52902ecdfe7b0aea47"
+        },
+        {
+          "kind": "worktree",
+          "plan": "145cde90-22ae-4521-b58a-cd0147f1eb55",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f9c183b6-55e0-4bb8-99a1-4c6e084654ea",
+      "exists": true,
+      "head": "ad45e8a6ce5ef1069dc13edef7264e3ea7655a97",
+      "prunable": false,
+      "owners": ["83b8b87e-974f-4b34-9830-4166343427e9"],
+      "refs": ["LZ-81"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "83b8b87e-974f-4b34-9830-4166343427e9",
+          "attempt": "f9c183b6-55e0-4bb8-99a1-4c6e084654ea",
+          "state": "accepted",
+          "session": "ses_8873c19750294f4d83ef3d6f31ab4308"
+        },
+        {
+          "kind": "worktree",
+          "plan": "83b8b87e-974f-4b34-9830-4166343427e9",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/fb309498-2cb0-4594-a3f1-c4211c3a5608",
+      "exists": true,
+      "head": "2bbf8a33d23a525f1fd35228203364f9245f5247",
+      "prunable": false,
+      "owners": ["145cde90-22ae-4521-b58a-cd0147f1eb55"],
+      "refs": ["LZ-168", "LZ-169"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "145cde90-22ae-4521-b58a-cd0147f1eb55",
+          "attempt": "fb309498-2cb0-4594-a3f1-c4211c3a5608",
+          "state": "accepted",
+          "session": "ses_8fb7834c899145518ac38b7082c98743"
+        },
+        {
+          "kind": "worktree",
+          "plan": "145cde90-22ae-4521-b58a-cd0147f1eb55",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ff55fda4-7c0d-4a43-b295-cdc29deefd1d",
+      "exists": true,
+      "head": "b01121b2645ae5e7b9104556e635e89517059693",
+      "prunable": false,
+      "owners": ["eade12ae-74f3-48af-874b-f5950f4a41c3"],
+      "refs": ["LZ-156", "LZ-157", "LZ-158"],
+      "planStates": ["blocked"],
+      "links": [
+        {
+          "kind": "attempt",
+          "plan": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "attempt": "ff55fda4-7c0d-4a43-b295-cdc29deefd1d",
+          "state": "accepted",
+          "session": "ses_507e57d6901a4928bfddd1e46d8f846b"
+        },
+        {
+          "kind": "worktree",
+          "plan": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "state": "completed"
+        }
+      ],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-0d270b94-4ece-416a-8dc0-8a930cc24900-task",
+      "exists": true,
+      "head": "25c3e0f62ae7cee1044315cdf0d466c14edd4e0a",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": [
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-0d270b94-4ece-416a-8dc0-8a930cc24900-task",
+          "operation_id": "0d270b94-4ece-416a-8dc0-8a930cc24900",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "operation_state": "held"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-0d270b94-4ece-416a-8dc0-8a930cc24900-task",
+          "operation_id": "0d270b94-4ece-416a-8dc0-8a930cc24900",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0",
+          "operation_state": "held"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-1798eb6a-6b3b-44ee-afe9-31cbc6c46934-task",
+      "exists": true,
+      "head": "6622ebfc4fd51007b94090aab73d3177b1318586",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": [
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-1798eb6a-6b3b-44ee-afe9-31cbc6c46934-task",
+          "operation_id": "1798eb6a-6b3b-44ee-afe9-31cbc6c46934",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
+          "operation_state": "cancelled"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-1798eb6a-6b3b-44ee-afe9-31cbc6c46934-task",
+          "operation_id": "1798eb6a-6b3b-44ee-afe9-31cbc6c46934",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
+          "operation_state": "cancelled"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-1798eb6a-6b3b-44ee-afe9-31cbc6c46934-task",
+          "operation_id": "1798eb6a-6b3b-44ee-afe9-31cbc6c46934",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
+          "operation_state": "cancelled"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-34d2518c-4a7a-41ad-bb69-59943b6fd87d-task",
+      "exists": true,
+      "head": "b01121b2645ae5e7b9104556e635e89517059693",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": [
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-34d2518c-4a7a-41ad-bb69-59943b6fd87d-task",
+          "operation_id": "34d2518c-4a7a-41ad-bb69-59943b6fd87d",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "operation_state": "cancelled"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-34d2518c-4a7a-41ad-bb69-59943b6fd87d-task",
+          "operation_id": "34d2518c-4a7a-41ad-bb69-59943b6fd87d",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "eade12ae-74f3-48af-874b-f5950f4a41c3",
+          "operation_state": "cancelled"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-41d43759-1eae-40fd-8d8a-fb5a0d3babb9-task",
+      "exists": true,
+      "head": "b01121b2645ae5e7b9104556e635e89517059693",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-combined",
+      "exists": true,
+      "head": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": [
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-combined",
+          "operation_id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+          "phase": "combined",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "operation_state": "held"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-combined",
+          "operation_id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+          "phase": "combined",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "operation_state": "held"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-combined",
+          "operation_id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+          "phase": "combined",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "operation_state": "held"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-task",
+      "exists": true,
+      "head": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": [
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-task",
+          "operation_id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "operation_state": "held"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-task",
+          "operation_id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "operation_state": "held"
+        },
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e5c0d438-21c0-4b21-9039-ec9d246264f6-task",
+          "operation_id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "ba5744d0-2657-4f93-b006-44ca0b176108",
+          "operation_state": "held"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e6bfc062-781e-4f5a-860e-4c2ec368f58f-task",
+      "exists": true,
+      "head": "6dbae6781cfb282e18eeea2c1662d328f3fc1713",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": [
+        {
+          "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-e6bfc062-781e-4f5a-860e-4c2ec368f58f-task",
+          "operation_id": "e6bfc062-781e-4f5a-860e-4c2ec368f58f",
+          "phase": "task",
+          "state": "completed",
+          "cleanup_state": "complete",
+          "plan_id": "b81910d7-d9a1-4014-86df-2a95f211735a",
+          "operation_state": "cancelled"
+        }
+      ]
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-f0a3a894-5a30-4c07-b57a-ea44c4eed7bf-task",
+      "exists": true,
+      "head": "b01121b2645ae5e7b9104556e635e89517059693",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/worktree/b5da4c/lz129-combined-review-20261106",
+      "exists": true,
+      "head": "3a116f145dbd7bbb6369cb5ffd9cf5275717a39d",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/.local/share/opencode/worktree/b5da4c/lz173-canonical-integration-20261107",
+      "exists": true,
+      "head": "1981d7aeb6f853d08091bf221661e9af84200547",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz182-architect-compose-20261109",
+      "exists": true,
+      "head": "98d7c050e7703e7b6e9a6e434b68259257f2d876",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz182-review-recovered",
+      "exists": true,
+      "head": "95db91a84c9134fa62fa6be2e7bb1bdb8cfe02f7",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    },
+    {
+      "path": "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz184-review-recovered",
+      "exists": true,
+      "head": "7be32be69df94cd1bc4ea0f1f82b6c9315d897e9",
+      "prunable": false,
+      "owners": [],
+      "refs": [],
+      "planStates": [],
+      "links": [],
+      "nativeRegistered": true,
+      "retainedChecks": []
+    }
+  ],
+  "note": "Read-only Git/DB association inventory. Unmapped is not proof disposable; presence, active native processes, dirty/untracked work and integration must be reconciled before native removal.",
+  "nativeInventory": {
+    "count": 142,
+    "gitOnly": ["/private/tmp/lz182-review-fae0967", "/private/tmp/lz184-review-8919a20"],
+    "nativeOnly": ["/Users/tjw/Documents/ChatGPT/opencode-lazers"]
+  },
+  "diskKiB": {
+    "runnerWorktrees": 84454708,
+    "siblingWorktrees": 2406228,
+    "availableDataVolume": "27 GiB at observation"
+  },
+  "cleanupBlockedPlans": [
+    {
+      "id": "9bd413fb-a195-4946-af73-a66766d271e6",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "67f3790e-17a9-4cf3-97bf-c21eef98a3ca",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "8715d804-8543-4fa6-8031-7e9bbb6847c4",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "6d178295-0a17-41f9-91dd-f903e617b69d",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "6c9cc71f-0897-4287-a44a-c52ec0c2c8a3",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "a9c4ade6-3df4-4164-9672-afefe3099f2e",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "e7308bed-1fe9-4c8a-b688-122abe42e1a3",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "40b9de31-bf51-4ae6-ac5a-e2d386a1637a",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "21625514-8f61-4f9e-be16-65a609f4710e",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "e5a078b8-5364-49d2-a571-0710c70e8bbb",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "13d07bd2-9c4b-4f2b-9b00-0a215ee569a2",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "82cc5e08-59db-4716-9eee-8cc9e54d59d0",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "1eb72f8a-2cc5-41ec-a827-a255d867153c",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "7a3bea3f-0c7e-4f3f-ae7b-970e343cc177",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "bf37ca92-e165-456b-8903-0aa256d85019",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "b048598f-ab73-4494-980c-1368fa9342c7",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "bb47fbce-be29-446c-b783-a74d62383ff7",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "f2ef44ad-d60b-4ce2-ac93-66548f67a885",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "89397376-a6ff-45bc-9e52-d212857e1521",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "41b4a86e-5981-4f9f-972e-3050c7762c54",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "8f369d22-6ca9-494e-9a38-5f4670bedc5c",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "c0b3a66b-9a57-4e7a-a1f0-a64ab629e24a",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "6ab01b37-b923-4145-9436-0a9292f62d36",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "23e0d5fe-dfcc-477c-9af5-cf139c05ddc9",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "e931108e-a9f1-48f3-b514-27093e2e514c",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "2eb074d5-bfbc-4a09-9ba8-a346f098b26c",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "e5a1f367-a758-4c10-8fa6-4a392a399db1",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "338bebc5-557a-4135-86dc-de7a4c304975",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "30c19505-7ef4-46a8-a970-bcc6227c9f76",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "f11e1754-064c-4c28-9888-d488a36ec03d",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "9263091c-486e-42cc-9d27-18f866ee24dc",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "99e4f80d-ced8-4556-8c1b-969483dc52d3",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "4195aed2-f292-4678-9ed1-f0cf9d9e4e39",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "83edaac6-b169-435b-8c4b-be663e72eb24",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "b4736219-82ba-44f2-b319-f26a5095d0a2",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "a8394e90-b1dd-4510-8bb9-1a7f7f6ef0ec",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "id": "002c3469-5346-4d74-a21f-6991eb52eeec",
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    }
+  ],
+  "cleanupBlockedGitInspection": {
+    "inspected": 50,
+    "cleanHeadsInMain": 50,
+    "dirty": 0,
+    "headsNotInMain": 0,
+    "note": "Clean merged source alone does not establish inactive host processes or ownership release."
+  },
+  "cleanupBlockedSessionObservation": {
+    "observedAt": 1794228817899,
+    "sessions": [
+      {
+        "id": "ses_5210fab90d3745959a4d269dbd6ab744",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0375ef98-ff9b-456f-849d-2ed9da547920",
+        "time": {
+          "created": 1794002577376,
+          "updated": 1794065432441,
+          "busy": 1794064267719,
+          "idle": 1794065432677
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_ae63213e2e6143e8a9b17e3b25c1eec5",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/131b120f-4b83-4d15-83f5-226d0b49505f",
+        "time": {
+          "created": 1793726862027,
+          "updated": 1793727843600,
+          "busy": 1793726864045,
+          "idle": 1793727843612
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_dc786e748a654416a1ac53de140c2047",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/13ee81de-d701-4d93-bb70-3482f73acc24",
+        "time": {
+          "created": 1793792501330,
+          "updated": 1793793165393,
+          "busy": 1793792504354,
+          "idle": 1793793165424
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_8bf4b3242d584cfbaf9058523ca714ae",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/20ac4537-f62a-46e6-bb52-fc9b9f22ff27",
+        "time": {
+          "created": 1793639864152,
+          "updated": 1793641338328,
+          "busy": 1793639866516,
+          "idle": 1793641338346
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_6748c6d9424e4c19b376fc28329d787f",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2587c2c4-2bc7-44f1-b924-9e0d4bab6670",
+        "time": {
+          "created": 1793743495192,
+          "updated": 1793745291060,
+          "busy": 1793743500353,
+          "idle": 1793745291107
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_5cd7fb530a554a3f8e3513f2624a5a1b",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+        "time": {
+          "created": 1794075834453,
+          "updated": 1794077415011,
+          "busy": 1794075835617,
+          "idle": 1794077415140
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_8b90e4b253a6452e8c08347fe692a631",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/2bab0265-f0c3-48a6-9956-9e80b4c233f9",
+        "time": {
+          "created": 1793742708336,
+          "updated": 1793743229162,
+          "busy": 1793742713321,
+          "idle": 1793743229177
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_40db7b4e59ce4749b2ceec5d0bfc9d40",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/34a9cf97-5bef-4dc6-8685-3dcf7fc10156",
+        "time": {
+          "created": 1793804915041,
+          "updated": 1793807000861,
+          "busy": 1793804916324,
+          "idle": 1793807000985
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_ad6fb14a70174e56bf317b69613a464c",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/37cccee8-e028-4ea2-be82-74bc02cd960b",
+        "time": {
+          "created": 1793790524419,
+          "updated": 1793797068418,
+          "busy": 1793790533400,
+          "idle": 1793792598479
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_f4eb00b5f274438a8aba61a09782395f",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3b4bad86-2aad-44d2-a17a-fb98707dcd6e",
+        "time": {
+          "created": 1793919607408,
+          "updated": 1793949611539,
+          "busy": 1793943644967,
+          "idle": 1793943746886
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_4e70382928c9434d81f7ee1ca4f14dc5",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3cd4e4c5-113d-4a46-a824-75cf38c256b5",
+        "time": {
+          "created": 1793746063016,
+          "updated": 1793799457494,
+          "busy": 1793799148859,
+          "idle": 1793799457581
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_733ccaf0560045ebb947954d4b534ab1",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/41b4bec6-2271-4c89-b974-7c3ff563659a",
+        "time": {
+          "created": 1793811646088,
+          "updated": 1793812530057,
+          "busy": 1793811649162,
+          "idle": 1793812530104
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_6399dddaf3e34e528d9eec7d7376a746",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/59b56192-a6e3-4419-b802-df2ee7ed2e53",
+        "time": {
+          "created": 1793942369967,
+          "updated": 1793945822136,
+          "busy": 1793944774084,
+          "idle": 1793945822244
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_186dbc76c2a64b3cbd0ff0fcd4836ff9",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/5fab7e91-64b0-420b-b2d7-52773b30e5d9",
+        "time": {
+          "created": 1793741964699,
+          "updated": 1793743855534,
+          "busy": 1793741970326,
+          "idle": 1793743855562
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_7a0d93eed9f34b35a8addaf413c3ca94",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/61a7c76a-0fc6-4add-b3f6-51dd910ef302",
+        "time": {
+          "created": 1793745560063,
+          "updated": 1793747341768,
+          "busy": 1793747021609,
+          "idle": 1793747341821
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_6a1639f0497c4ccb9aeb1d57f113872d",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/62f727b7-a83f-4f77-8c6c-9a28afb86d1e",
+        "time": {
+          "created": 1793793951000,
+          "updated": 1793794932906,
+          "busy": 1793793960939,
+          "idle": 1793794932984
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_d7d432f12a434d569349ceed74068c81",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/6b931415-04fa-4885-a99e-6ed363be9dd4",
+        "time": {
+          "created": 1793724920563,
+          "updated": 1793726431270,
+          "busy": 1793724924091,
+          "idle": 1793726431286
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_ae6165e7d2eb43a0a7b4e30f3d842375",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/6e764af8-eaec-448e-8ba3-7fb53a1b3870",
+        "time": {
+          "created": 1793648763730,
+          "updated": 1793649758971,
+          "busy": 1793648766344,
+          "idle": 1793649758988
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_73b4591aa4234c25baaf4af2acdea8d1",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/74699dea-a51a-428e-883f-1d865b3e015e",
+        "time": {
+          "created": 1793724920558,
+          "updated": 1793725389224,
+          "busy": 1793724924126,
+          "idle": 1793725389236
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_b6e112931c9c43d7a45fc16fe789c468",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7a262dc8-8d59-42a6-999d-bf29564a15aa",
+        "time": {
+          "created": 1793654093862,
+          "updated": 1793655094753,
+          "busy": 1793654096618,
+          "idle": 1793655094769
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_72e0e79759074032ae71ac765fc09523",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7d7be832-a7e0-480e-95f2-50cfe2b94841",
+        "time": {
+          "created": 1793735104656,
+          "updated": 1793736129876,
+          "busy": 1793735110030,
+          "idle": 1793736129894
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_dc161541d1334b14a156704f789ab9f5",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/805fadf8-efa5-4df6-ac48-bd4e1443f02c",
+        "time": {
+          "created": 1794078965795,
+          "updated": 1794081442186,
+          "busy": 1794078966933,
+          "idle": 1794081442385
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_6ec892235ce24155bb0ac0c869512743",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8806c6f8-5409-40dc-b8ea-ad3da4c6ca69",
+        "time": {
+          "created": 1793807250108,
+          "updated": 1793808614953,
+          "busy": 1793807250897,
+          "idle": 1793808615054
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_59097d8889e2491e9b3d311e20a90d9e",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/906f0e53-b2d2-4eb9-9a42-2569926a0176",
+        "time": {
+          "created": 1793650632282,
+          "updated": 1793651197314,
+          "busy": 1793650634382,
+          "idle": 1793651197328
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_d695b77ca32d48b2962cf000f652121c",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/95bdbbf5-0266-4dea-a905-ed36be9b80ec",
+        "time": {
+          "created": 1793806155775,
+          "updated": 1793806591674,
+          "busy": 1793806156762,
+          "idle": 1793806591711
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_0ec8c285a334405a8ff465cba3cec555",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/98724b83-605f-4a9a-9383-f4e3a24b3428",
+        "time": {
+          "created": 1793736662489,
+          "updated": 1793741361614,
+          "busy": 1793738657743,
+          "idle": 1793741362029
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_3b16dfcec0f142f1bbafee8659c941f6",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/9fdce7eb-600f-4c4f-9248-43cd2d256bf5",
+        "time": {
+          "created": 1793807873677,
+          "updated": 1793808447612,
+          "busy": 1793807874396,
+          "idle": 1793808447674
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_61d99279dbdb430f95baa4abc74ad73a",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/a5b2e958-ef15-4c4d-9b52-c740ad4fab8a",
+        "time": {
+          "created": 1793735104659,
+          "updated": 1793735420397,
+          "busy": 1793735110008,
+          "idle": 1793735420412
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_226e542b12a047dd973a6c3be0bc479e",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/abcec5dc-7feb-4de1-a9dd-73da004cfb74",
+        "time": {
+          "created": 1793639337610,
+          "updated": 1793640302809,
+          "busy": 1793639340640,
+          "idle": 1793640302827
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_69f9beee35f94445a9e898788a72f131",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b05fddca-13f9-464e-b7ec-e7025f904ec4",
+        "time": {
+          "created": 1793808996255,
+          "updated": 1793810221037,
+          "busy": 1793808997346,
+          "idle": 1793810221095
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_1f1d4570c48f412697ca0e56ccef3893",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b20b9aa7-8466-43a7-83eb-57f48408eedc",
+        "time": {
+          "created": 1793647395980,
+          "updated": 1793649218398,
+          "busy": 1793647398003,
+          "idle": 1793649218427
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_f68c9b20d5d046be8b14e03ab9757f15",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/b2e9df85-6318-406c-acd6-15a30ffb00e9",
+        "time": {
+          "created": 1793728512361,
+          "updated": 1793730868641,
+          "busy": 1793728515631,
+          "idle": 1793730868670
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_f96b29058c6347e294d7e0889ad3e627",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c",
+        "time": {
+          "created": 1793644510628,
+          "updated": 1793645038214,
+          "busy": 1793644515257,
+          "idle": 1793645038235
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_19fd0710d651419091bf1891f2d97045",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c5fbffb0-b7b4-457a-805d-6380022f2951",
+        "time": {
+          "created": 1793650944059,
+          "updated": 1793652080220,
+          "busy": 1793650947965,
+          "idle": 1793652080266
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_6da1ede0e4094aa0a468a2b1f051407d",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c9a6481f-83fb-4fe5-b79e-65059ca999f5",
+        "time": {
+          "created": 1793743856705,
+          "updated": 1793745865809,
+          "busy": 1793743863581,
+          "idle": 1793745865850
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_71af5e28c324495b9ac5770def2b53bf",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d2e45d4c-ccad-44ce-b9de-079c1589cb62",
+        "time": {
+          "created": 1793655464252,
+          "updated": 1793655725112,
+          "busy": 1793655466252,
+          "idle": 1793655725145
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_a512a656f213468ca34aed6e884ddc88",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d46b2ef4-82a6-41de-aa0d-85679e1c2313",
+        "time": {
+          "created": 1793729525118,
+          "updated": 1793730077940,
+          "busy": 1793729527288,
+          "idle": 1793730077953
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_132537f1527748b0ba6b5eb9709fcab8",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d6ab75c2-6029-4d85-92d9-ef3625a1a060",
+        "time": {
+          "created": 1793746514284,
+          "updated": 1793789928813,
+          "busy": 1793789905048,
+          "idle": 1793789928841
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_fd943fc824d94a23a6b73d6927fc62f4",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ddf7020a-8294-4b9b-9182-86e9d27a37f9",
+        "time": {
+          "created": 1793794951886,
+          "updated": 1793796547524,
+          "busy": 1793794957977,
+          "idle": 1793796547600
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_833e712f73f849b3a3f5f1e28e3ba5f4",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/e10ac4af-372c-45d7-bb63-98a5d7c2dfa8",
+        "time": {
+          "created": 1793654230861,
+          "updated": 1793655116052,
+          "busy": 1793654233082,
+          "idle": 1793655116069
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_fb6f7d1ea66f41c99f75e2f7dafc1cfe",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/e4df3b54-9e1f-4c9b-807d-51decfdadf44",
+        "time": {
+          "created": 1793744925499,
+          "updated": 1793745940612,
+          "busy": 1793744933259,
+          "idle": 1793745940730
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_75e56cb9af5346ea8371be6e3759dedd",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed12b420-2b5a-4f02-b707-d56f3090b942",
+        "time": {
+          "created": 1793731493283,
+          "updated": 1793732240269,
+          "busy": 1793731497207,
+          "idle": 1793732240285
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_ba517716fd51444b81d6141f3d0ccb1d",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f251e2dd-de6a-4980-84e8-d381c5a64eb5",
+        "time": {
+          "created": 1793727476920,
+          "updated": 1793728507832,
+          "busy": 1793727478958,
+          "idle": 1793728507845
+        },
+        "activeAfter": null
+      },
+      {
+        "id": "ses_556dcf0ecd034ef2acb0cb541f78d57a",
+        "found": true,
+        "activeBefore": null,
+        "agent": "lazers-implementor",
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f3f9850e-94d7-45e0-bb0f-0050e7b57f49",
+        "time": {
+          "created": 1793800071491,
+          "updated": 1793806340863,
+          "busy": 1793802483941,
+          "idle": 1793806340987
+        },
+        "activeAfter": null
+      }
+    ],
+    "note": "Foreground activity observation only; native background/control reconciliation is still required before removal."
+  }
+}
