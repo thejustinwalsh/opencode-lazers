@@ -133,6 +133,14 @@ export const SnapshotOutput = z.strictObject({
   transitions: z.array(RecordedTransition).max(10_000),
   attempts: z.array(TimelineAttempt).max(10_000),
   checks: z.array(TimelineCheck).max(10_000),
+  coverage: z
+    .strictObject({
+      workTruncated: z.boolean(),
+      transitionsTruncated: z.boolean(),
+      attemptsTruncated: z.boolean(),
+      checksTruncated: z.boolean(),
+    })
+    .optional(),
 })
 
 // Complete current recorded topology, independent of execution-history volume.

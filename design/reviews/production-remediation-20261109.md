@@ -661,3 +661,30 @@ then 4.63 / 4.02 / 3.43 / 3.21 / 3.19 ms, all on thread 1. Results and driver:
 `s14-layout-perf.{json,ts}` in the baseline directory. This Bun-hosted worker probe
 is not an Electron Desktop CPU measurement; the review's 0.2–0.6 ms warm figures
 are not claimed as reproduced.
+
+## Wave 5: S8-2
+
+Projection-source SQL now selects at most 10,001 newest transitions, attempts and
+check rows before materialization. The extra row determines omission flags; public
+history keeps 10,000 rows in chronological order. Snapshot responses expose
+optional additive coverage fields (all current responses fill them), and Radar's
+existing work-truncated flag includes history omissions. Removed the post-hoc
+volume exception. The RPC passes cancellation through; the reader checks it
+before opening storage, between bounded queries and before final projection
+readback. This is cooperative cancellation, not interruption of a running SQLite
+statement.
+
+Added a 10,050-transition project test for latest-window ordering, boundary,
+omission flags, schema acceptance and pre-abort. Amended the existing broad-read
+failure assertion with S8-2 while retaining its targeted read/paging/isolation
+checks. `bun run verify` passed. Observation readers/RPC and Radar projection/
+presentation: **46 pass**, 482 assertions. Log: `s8-bounded-history.log`.
+
+A separate **read-only production-DB module probe**, with no native session/model
+calls, returned a usable Project snapshot in **1,278.10 ms**: 10,000 transitions,
+188 attempts, 969 checks, truthful transition/work truncation, no volume exception.
+Script/result: `s8-production-snapshot.{ts,json}` in the baseline directory.
+This closes unbounded result materialization and the deterministic volume failure;
+it does not establish that a 1.28-second synchronous read is an acceptable final
+service-loop latency. The remaining query/index/projection work is not claimed
+fixed, and no Desktop CPU result is inferred.

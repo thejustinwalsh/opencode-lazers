@@ -98,7 +98,7 @@ export function registerObservability(
     const rpc = yield* ctx.rpc.register(Observability, {
       snapshot: (input) =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             await authorize(
               ctx,
               input.scope,
@@ -106,7 +106,7 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               "read",
             )
-            return reads.snapshot(input.scope, tracker)
+            return reads.snapshot(input.scope, tracker, signal)
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),

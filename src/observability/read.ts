@@ -307,7 +307,9 @@ function loadProjectionSource(
   scope: ObservationScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted()
   const topology = loadTopologySource(db, projectDirectory, scope, secret, extraSessionIDs)
   const planIDs = [...topology.associations.planIDs]
   const placeholders = planIDs.map(() => "?").join(",")
@@ -315,17 +317,19 @@ function loadProjectionSource(
     ? db
         .query<TransitionRecord, string[]>(
           `SELECT id,plan_id,task_id,version,event,payload,created_at FROM runner_transitions
-           WHERE plan_id IN (${placeholders}) ORDER BY id`,
+           WHERE plan_id IN (${placeholders}) ORDER BY id DESC LIMIT 10001`,
         )
         .all(...planIDs)
     : []
+  signal?.throwIfAborted()
   const attempts = planIDs.length
     ? db
         .query<AttemptIdentity, string[]>(
-          `SELECT id,task_id,plan_id,number,state,started_at FROM runner_attempts WHERE plan_id IN (${placeholders}) ORDER BY started_at,number,id`,
+          `SELECT id,task_id,plan_id,number,state,started_at FROM runner_attempts WHERE plan_id IN (${placeholders}) ORDER BY started_at DESC,number DESC,id DESC LIMIT 10001`,
         )
         .all(...planIDs)
     : []
+  signal?.throwIfAborted()
   const checks = planIDs.length
     ? db
         .query<CheckRecord, string[]>(
@@ -334,13 +338,24 @@ function loadProjectionSource(
           json_extract(receipt,'$.check.endedAt') AS ended_at,
           json_extract(receipt,'$.check.exitCode') AS exit_code
          FROM runner_effects WHERE plan_id IN (${placeholders})
-          AND (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%') ORDER BY rowid`,
+          AND (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%') ORDER BY rowid DESC LIMIT 10001`,
         )
         .all(...planIDs)
     : []
-  if (transitions.length > 10_000 || attempts.length > 10_000 || checks.length > 10_000)
-    throw new Error("Observation scope is too large; narrow it")
-  return { ...topology, transitions, attempts, checks }
+  signal?.throwIfAborted()
+  const historyCoverage = {
+    transitionsTruncated: transitions.length > 10_000,
+    attemptsTruncated: attempts.length > 10_000,
+    checksTruncated: checks.length > 10_000,
+  }
+  return {
+    ...topology,
+    transitions: transitions.slice(0, 10_000).reverse(),
+    attempts: attempts.slice(0, 10_000).reverse(),
+    checks: checks.slice(0, 10_000).reverse(),
+    historyCoverage,
+    historyTruncated: Object.values(historyCoverage).some(Boolean),
+  }
 }
 
 function loadTaskObservationSource(
@@ -470,7 +485,7 @@ function loadRadarSource(
       outbox: [] as RadarOutboxRecord[],
       progress: [] as ProgressRow[],
       progressTruncated: false,
-      workTruncated: projection.tasks.length > 1000,
+      workTruncated: projection.tasks.length > 1000 || projection.historyTruncated,
       managedSessionIDs,
     }
   }
@@ -576,6 +591,7 @@ function loadRadarSource(
     progress: progress.slice(0, 5_000),
     progressTruncated: progressRows.length > 5_000,
     workTruncated:
+      projection.historyTruncated ||
       projection.tasks.length > 1000 ||
       radarPlans.length > 1000 ||
       radarAttempts.length > 10_000 ||
@@ -1778,14 +1794,26 @@ export class ObservationReads {
     }
   }
 
-  snapshot(scope: ObservationScope, tracker: ObservationChangeTracker): SnapshotResponse {
+  snapshot(
+    scope: ObservationScope,
+    tracker: ObservationChangeTracker,
+    signal?: AbortSignal,
+  ): SnapshotResponse {
+    signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
     )
     try {
       const projection = connection.store.atomic((db) =>
-        loadProjectionSource(db, this.store.repository.projectDirectory, scope, this.secret),
+        loadProjectionSource(
+          db,
+          this.store.repository.projectDirectory,
+          scope,
+          this.secret,
+          [],
+          signal,
+        ),
       )
       const visibleTaskIDs = new Set(projection.tasks.map((task) => task.id))
       const stats = privacyStats()
@@ -1853,6 +1881,7 @@ export class ObservationReads {
           recordedAt: row.created_at,
         }
       })
+      signal?.throwIfAborted()
       const latest = connection.store.atomic((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
@@ -1876,6 +1905,7 @@ export class ObservationReads {
         transitions,
         attempts,
         checks,
+        coverage: { ...projection.historyCoverage, workTruncated: projection.historyTruncated },
       }
     } finally {
       connection.close()

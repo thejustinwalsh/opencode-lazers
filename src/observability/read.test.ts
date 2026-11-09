@@ -607,10 +607,11 @@ test("target trajectory reads survive unrelated project transition volume and ke
       )
     const fullScopeSequence = maxSequence()
 
-    // The broad projection remains bounded; targeted reads must not inherit its failure.
-    expect(() => reads.snapshot(scope, tracker)).toThrow(
-      "Observation scope is too large; narrow it",
-    )
+    // S8-2: the broad projection now returns bounded history with explicit omissions.
+    const broad = reads.snapshot(scope, tracker)
+    expect(broad.transitions).toHaveLength(10_000)
+    expect(broad.coverage?.workTruncated).toBe(true)
+    expect(broad.boundary.transitionSequence).toBe(fullScopeSequence)
     const taskTrajectory = await reads.trajectory({ scope, taskID, limit: 20 }, tracker)
     expect(taskTrajectory.boundary.transitionSequence).toBe(fullScopeSequence)
     expect((taskTrajectory.report as { task: { id: string } }).task.id).toBe(taskID)
@@ -2084,6 +2085,42 @@ test("Radar retains observation ordering when the host lacks JSONB iteration", a
     expect(after.coverage).toEqual(before.coverage)
   } finally {
     fallback?.mockRestore()
+    fixture.close()
+  }
+})
+
+test("S8-2 project snapshots retain the newest bounded history and expose omissions", () => {
+  const fixture = makeFixture()
+  const secret = new Uint8Array(32).fill(51)
+  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+  tracker.initialize()
+  try {
+    fixture.store.atomic((db) => {
+      const insert = db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'TEST_HISTORY','{}',?)",
+      )
+      for (let index = 0; index < 10_050; index++) insert.run(fixture.receipt.planID, taskID, index)
+    })
+    const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
+    const snapshot = reads.snapshot({ kind: "project", sessionID: "ses-owner" }, tracker)
+    expect(SnapshotOutput.safeParse(snapshot).success).toBe(true)
+    expect(snapshot.transitions).toHaveLength(10_000)
+    expect(snapshot.coverage).toEqual({
+      workTruncated: true,
+      transitionsTruncated: true,
+      attemptsTruncated: false,
+      checksTruncated: false,
+    })
+    expect(snapshot.transitions[0]!.sequence).toBeGreaterThan(3)
+    expect(snapshot.transitions.at(-1)!.sequence).toBe(10_053)
+    expect(snapshot.boundary.transitionSequence).toBe(10_053)
+    const cancelled = new AbortController()
+    cancelled.abort(new Error("snapshot closed"))
+    expect(() =>
+      reads.snapshot({ kind: "project", sessionID: "ses-owner" }, tracker, cancelled.signal),
+    ).toThrow("snapshot closed")
+  } finally {
+    tracker.close()
     fixture.close()
   }
 })
