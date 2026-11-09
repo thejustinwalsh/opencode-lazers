@@ -35,6 +35,7 @@ function fixture() {
   roots.push(temporary)
   const root = join(temporary, "project")
   mkdirSync(root)
+  roots.push(`${root}.worktrees`)
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "seed.txt"), "baseline\n")
   git(root, ["add", "seed.txt"])

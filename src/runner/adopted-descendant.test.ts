@@ -29,6 +29,7 @@ afterEach(async () => {
 
 function fixture(mode: Mode, sharedAssertionID?: string, options: { manualTicks?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "lazers-adopt-descendant-"))
+  const worktreeParent = `${realpathSync(root)}.worktrees`
   const data = mkdtempSync(join(tmpdir(), "lazers-adopt-data-"))
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "seed.txt"), "baseline\n")
@@ -367,7 +368,10 @@ function fixture(mode: Mode, sharedAssertionID?: string, options: { manualTicks?
     await f.runtime.stop()
     try {
       for (const directory of await host.worktrees())
-        if (directory !== root && existsSync(directory)) {
+        if (
+          existsSync(directory) &&
+          (!existsSync(root) || realpathSync(directory) !== realpathSync(root))
+        ) {
           try {
             git(root, ["worktree", "remove", "--force", directory])
           } catch {
@@ -378,6 +382,7 @@ function fixture(mode: Mode, sharedAssertionID?: string, options: { manualTicks?
       // The temporary repository may already have been removed.
     }
     f.repository.close()
+    rmSync(worktreeParent, { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })
     rmSync(data, { recursive: true, force: true })
   })
@@ -936,7 +941,7 @@ test("adoption scope uses the latest reviewed integration baseline, not interven
   await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
-})
+}, 15_000)
 
 test("adoption verifies reviewed main with independent work without widening worker scope", async () => {
   const f = fixture("failed-task")
@@ -1544,7 +1549,7 @@ test("a worker activated after the final idle observation still fences adoption 
   expect(f.store.attempts(f.planID)[0]).toMatchObject({ id: attempt.id, state: "failed" })
 }, 15_000)
 
-test("cancellation during a fresh check fences late acceptance and preserves adoption worktrees", async () => {
+test("cancellation during a fresh check fences acceptance and cleans the settled adoption workspace", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -1576,10 +1581,13 @@ test("cancellation during a fresh check fences late acceptance and preserves ado
       .effects(f.planID)
       .some((effect) => effect.kind.startsWith("adoption-") && effect.state === "completed"),
   ).toBe(true)
-  expect(f.events.some((event) => event.startsWith("remove:"))).toBe(false)
+  const taskWorkspace = f.store
+    .effects(f.planID)
+    .find((effect) => effect.kind === "adoption-task-worktree")!
+  expect(f.events).toContain(`remove:${JSON.parse(taskWorkspace.receipt!).workspace}`)
 })
 
-test("cancellation during combined checks prevents late plan acceptance and cleanup", async () => {
+test("cancellation during combined checks prevents acceptance and cleans settled adoption workspaces", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -1609,7 +1617,14 @@ test("cancellation during combined checks prevents late plan acceptance and clea
   expect(f.store.attempts(f.planID)).toHaveLength(1)
   expect(f.store.adoptionChecks(requested.adoptionID, "task")[0]?.state).toBe("completed")
   expect(f.store.adoptionChecks(requested.adoptionID, "combined")[0]?.state).toBe("completed")
-  expect(f.events.some((event) => event.startsWith("remove:"))).toBe(false)
+  const adoptionWorkspaces = f.store
+    .effects(f.planID)
+    .filter((effect) => effect.kind.startsWith("adoption-") && effect.kind.endsWith("worktree"))
+    .map((effect) => JSON.parse(effect.receipt!).workspace as string)
+  expect(adoptionWorkspaces.length).toBeGreaterThan(0)
+  expect(adoptionWorkspaces.every((workspace) => f.events.includes(`remove:${workspace}`))).toBe(
+    true,
+  )
 })
 
 test("timed-out adoption checks hold without repair, new worker turns, or acceptance", async () => {

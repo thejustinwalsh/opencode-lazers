@@ -81,6 +81,7 @@ import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { SourceMessagesInspectPlanSchema } from "./inspection.ts"
 import { sharedScheduler } from "./scheduler-coordinator.ts"
+import { canonicalProjectWorktreePath } from "./workspace-location.ts"
 import {
   matchesReviewInputAlias,
   observeReviewInput,
@@ -121,6 +122,7 @@ import {
   retainedVerification,
   retainedVerificationChecks,
   retainedVerificationsForPlan,
+  retainedVerificationsForProject,
   saveRetainedVerification,
   setRetainedVerificationCheckCleanup,
   setRetainedVerificationWorkspace,
@@ -237,6 +239,7 @@ function pathEntryExists(path: string): boolean {
   }
 }
 export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
+const WORKTREE_CLEANUP_FALLBACK_MS = 10_000
 
 export type TaskRuntimeOptions = {
   architectIdleWindowMs?: number
@@ -731,8 +734,7 @@ export class TaskRuntime {
   }
 
   private retainedVerificationWorkspacePath(operationID: string, phase: "task" | "combined") {
-    const canonicalDataDirectory = join(realpathSync(dirname(this.store.repository.path)), "runner")
-    return join(canonicalDataDirectory, "worktrees", `retained-${operationID}-${phase}`)
+    return canonicalProjectWorktreePath(this.directory, `retained-${operationID}-${phase}`)
   }
 
   private resolveTaskDispatchRoute(
@@ -7174,6 +7176,10 @@ export class TaskRuntime {
             this.retainedVerificationRuns.delete(operation.id)
         }
       }
+      const terminalCleanupPlanIDs = this.store
+        .plans()
+        .filter((plan) => ["cleanup-blocked", "cancelled"].includes(plan.state))
+        .map((plan) => plan.id)
       for (let plan of this.store
         .plans()
         .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))
@@ -7206,6 +7212,30 @@ export class TaskRuntime {
         await this.step(plan, fence)
         if (heartbeatFailed) throw heartbeatError
       }
+      for (const planID of terminalCleanupPlanIDs) {
+        const plan = this.store.plan(planID)
+        if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) continue
+        if (!this.pendingOwnedWorktreeCleanup(plan)) continue
+        if (plan.state === "cleanup-blocked") {
+          if (!(await this.worktreeCleanupFactsChanged(plan))) continue
+          const reopened = this.store.fenced(this.owner, fence, (db) => {
+            const changed = db
+              .query(
+                "UPDATE runner_plans SET state='cleaning',reason=NULL,version=version+1 WHERE id=? AND state='cleanup-blocked'",
+              )
+              .run(plan.id).changes
+            if (changed)
+              this.store.record(plan.id, null, "CLEANUP_RETRY_SCHEDULED", {
+                reason: plan.reason,
+                source: "scheduler-reconciliation",
+              })
+            return changed === 1
+          })
+          if (reopened) await this.cleanupWorktrees(this.store.plan(plan.id)!, fence)
+        } else if (await this.worktreeCleanupFactsChanged(plan))
+          await this.cleanupWorktrees(plan, fence, "cancellation")
+      }
+      await this.reconcileTerminalRetainedVerifications(fence)
       await this.deliver(fence)
     } finally {
       await heartbeat?.dispose()
@@ -8028,7 +8058,9 @@ export class TaskRuntime {
         ? git(this.directory, ["rev-parse", "HEAD"])
         : this.dependencySource(plan, input, node))
     const workspace =
-      input.workspaceMode === "shared" ? this.directory : join(this.dataDirectory, "worktrees", id)
+      input.workspaceMode === "shared"
+        ? this.directory
+        : canonicalProjectWorktreePath(this.directory, id)
     const text = JSON.stringify({
       taskID: task.id,
       revision: task.revision,
@@ -9944,7 +9976,13 @@ export class TaskRuntime {
     const proposed = this.retainedVerificationWorkspacePath(initial.id, phase)
     const workspace = field ?? proposed
     const native = await this.host.worktrees()
-    const present = native.find((item) => samePhysicalWorkspace(item, workspace))
+    const candidates =
+      fieldState === "reserved" || fieldState === "uncertain"
+        ? startupWorktreeCandidates(workspace)
+        : [workspace]
+    const present = native.find((item) =>
+      candidates.some((candidate) => samePhysicalWorkspace(item, candidate)),
+    )
     if (present) {
       let mismatches: string[]
       try {
@@ -9955,7 +9993,7 @@ export class TaskRuntime {
         const conflicts = git(actual, ["ls-files", "-u", "-z"])
         const pendingCheck = this.store.atomic((db) =>
           retainedVerificationChecks(db, initial.id, phase).find(
-            (check) => check.workspace === workspace && check.artifact === artifact,
+            (check) => check.workspace === actual && check.artifact === artifact,
           ),
         )
         const pendingActivity = pendingCheck
@@ -9978,7 +10016,10 @@ export class TaskRuntime {
           (pendingActivity || pendingCheck.receipt || existsSync(pendingCheck.receiptPath)),
         )
         mismatches = [
-          ...(actual !== realpathSync(workspace) ? ["noncanonical-path"] : []),
+          ...(actual !== realpathSync(present) ? ["noncanonical-path"] : []),
+          ...(realpathSync(dirname(actual)) !== realpathSync(dirname(workspace))
+            ? ["unexpected-parent"]
+            : []),
           ...(samePhysicalWorkspace(actual, initial.originalWorkspace)
             ? ["original-workspace"]
             : []),
@@ -10036,10 +10077,11 @@ export class TaskRuntime {
       )
       return undefined
     }
-    if (existsSync(workspace)) {
+    const unregisteredPath = candidates.find((candidate) => existsSync(candidate))
+    if (unregisteredPath) {
       await this.holdRetainedVerification(
         initial,
-        `Retained ${phase} verification checkout path exists without native worktree ownership; preserve ${workspace}`,
+        `Retained ${phase} verification checkout path exists without native worktree ownership; preserve ${unregisteredPath}`,
         fence,
       )
       return undefined
@@ -10083,14 +10125,16 @@ export class TaskRuntime {
     })
     if (!reserved || !this.retainedVerificationLive(initial.id, initial.generation))
       return undefined
+    let returnedWorkspace: string | undefined
     try {
       mkdirSync(dirname(workspace), { recursive: true, mode: 0o700 })
-      const actual = await this.host.worktree({ directory: workspace, base: artifact })
+      returnedWorkspace = await this.host.worktree({ directory: workspace, base: artifact })
+      const actual = realpathSync(returnedWorkspace)
       const canonical = realpathSync(actual)
       const currentNative = await this.host.worktrees()
       if (
         !currentNative.some((item) => samePhysicalWorkspace(item, canonical)) ||
-        canonical !== realpathSync(workspace) ||
+        realpathSync(dirname(canonical)) !== realpathSync(dirname(workspace)) ||
         samePhysicalWorkspace(canonical, initial.originalWorkspace) ||
         samePhysicalWorkspace(canonical, this.directory) ||
         realpathSync(git(canonical, ["rev-parse", "--show-toplevel"])) !== canonical ||
@@ -10138,7 +10182,13 @@ export class TaskRuntime {
       this.store.fenced(this.owner, fence, (db) => {
         const current = retainedVerification(db, initial.id)
         if (!current || current.generation !== initial.generation) return
-        setRetainedVerificationWorkspace(db, current, phase, workspace, "uncertain")
+        setRetainedVerificationWorkspace(
+          db,
+          current,
+          phase,
+          returnedWorkspace ?? workspace,
+          "uncertain",
+        )
       })
       await this.holdRetainedVerification(
         initial,
@@ -11154,42 +11204,174 @@ export class TaskRuntime {
   ): Promise<"complete" | "failed" | "pending"> {
     const workspace = this.retainedVerificationIsolatedWorkspace(operation, phase)
     const state = phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
-    if (!workspace || state !== "owned") return state === "removed" ? "complete" : "pending"
+    if (!workspace) return "complete"
+    if (!state) return "pending"
+    const artifact = phase === "task" ? operation.artifact : operation.combinedArtifact
+    if (!artifact) return "pending"
+    let recordedWorkspace = workspace
     try {
-      const native = await this.host.worktrees()
-      const owned = native.find((item) => samePhysicalWorkspace(item, workspace))
-      if (!owned) {
-        if (existsSync(workspace))
-          throw new Error("Checkout is not in the native worktree inventory")
-        this.store.fenced(this.owner, fence, (db) => {
-          const current = retainedVerification(db, operation.id)
-          if (current?.generation === operation.generation)
-            setRetainedVerificationWorkspace(db, current, phase, workspace, "removed")
-        })
-        return "complete"
+      const checks = this.store.atomic((db) => retainedVerificationChecks(db, operation.id, phase))
+      for (const check of checks) {
+        if (check.state !== "completed" || !check.receipt)
+          throw new Error("Retained check activity is not conclusively complete")
+        const receipt = JSON.parse(check.receipt) as CheckReceipt
+        if (!checkResourcesSettled(receipt))
+          throw new Error("Retained check process cleanup remains uncertain")
+        if (check.cleanupState !== "complete") {
+          const resourcesCleaned = this.cleanupRetainedCheckSetup(
+            operation,
+            phase,
+            check.checkID,
+            this.dataDirectory,
+            workspace,
+            undefined,
+            undefined,
+            undefined,
+          )
+          if (resourcesCleaned)
+            await this.cleanupRetainedCheckResources(
+              operation,
+              phase,
+              check.checkID,
+              check.contextPath,
+              receipt.isolation,
+              fence,
+            )
+        }
       }
-      if (
-        !samePhysicalWorkspace(owned, workspace) ||
-        git(owned, ["rev-parse", "--show-toplevel"]) !== realpathSync(owned)
+      const remainingResources = this.store.atomic((db) =>
+        db
+          .query<{ state: string }, [string, string]>(
+            "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=?",
+          )
+          .all(operation.id, phase)
+          .some((resource) => resource.state !== "removed"),
       )
-        throw new Error("Checkout canonical identity changed")
-      await this.host.removeWorktree(owned)
-      if (
-        existsSync(workspace) ||
-        (await this.host.worktrees()).some((item) => samePhysicalWorkspace(item, workspace))
+      const checkCleanupPending = this.store.atomic((db) =>
+        retainedVerificationChecks(db, operation.id, phase).some(
+          (check) => check.cleanupState !== "complete",
+        ),
       )
-        throw new Error("Native adapter did not confirm checkout removal")
-      const retired = await this.host.retireWorktreeLocation?.(workspace)
-      if (
-        retired === "active-session" ||
-        retired === "unavailable" ||
-        retired === "current-location"
+      if (remainingResources || checkCleanupPending)
+        throw new Error("Retained verification check resources remain unsettled")
+
+      const candidates =
+        state === "reserved" || state === "uncertain"
+          ? startupWorktreeCandidates(workspace)
+          : [workspace]
+      const native = await this.host.worktrees()
+      const matches = native.filter((item) =>
+        candidates.some((candidate) => resolve(item) === resolve(candidate)),
       )
+      if (matches.length > 1)
+        throw new Error("Multiple native worktrees match the retained workspace reservation")
+      const owned = matches[0]
+      if (!owned) {
+        const existing = candidates.filter((candidate) => existsSync(candidate))
+        const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => resolve(line.slice("worktree ".length)))
+        const registered = candidates.filter((candidate) =>
+          gitWorktrees.includes(resolve(candidate)),
+        )
+        if (existing.length > 1 || registered.length > 1)
+          throw new Error(
+            "Multiple retained workspace paths exist; preserve them for reconciliation",
+          )
+        if (existing.length && !registered.length)
+          throw new Error("Retained checkout exists without native ownership; preserve it")
+        if (registered.length) {
+          recordedWorkspace = registered[0]!
+          const removalIntent = this.store.fenced(this.owner, fence, (db) => {
+            const current = retainedVerification(db, operation.id)
+            if (!current || current.generation !== operation.generation) return false
+            setRetainedVerificationWorkspace(db, current, phase, recordedWorkspace, "owned")
+            this.store.record(
+              operation.planID,
+              operation.taskID,
+              "RETAINED_VERIFICATION_WORKSPACE_REMOVAL_INTENDED",
+              {
+                operationID: operation.id,
+                generation: operation.generation,
+                phase,
+                workspace: recordedWorkspace,
+              },
+            )
+            return true
+          })
+          if (!removalIntent) return "pending"
+          await this.host.removeWorktree(recordedWorkspace)
+        }
+        const nativeAfterAbsent = await this.host.worktrees()
+        const gitAfterAbsent = git(this.directory, ["worktree", "list", "--porcelain"])
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => resolve(line.slice("worktree ".length)))
+        if (
+          nativeAfterAbsent.some((item) =>
+            candidates.some((candidate) => resolve(item) === resolve(candidate)),
+          ) ||
+          gitAfterAbsent.some((item) =>
+            candidates.some((candidate) => resolve(item) === resolve(candidate)),
+          ) ||
+          candidates.some((candidate) => existsSync(candidate))
+        )
+          throw new Error("Retained native workspace removal is not confirmed absent")
+      } else {
+        recordedWorkspace = owned
+        if (
+          realpathSync(dirname(owned)) !== realpathSync(dirname(workspace)) ||
+          samePhysicalWorkspace(owned, operation.originalWorkspace) ||
+          samePhysicalWorkspace(owned, this.directory) ||
+          realpathSync(git(owned, ["rev-parse", "--show-toplevel"])) !== realpathSync(owned) ||
+          git(owned, ["rev-parse", "HEAD"]) !== artifact ||
+          git(owned, ["status", "--porcelain", "--untracked-files=all"]) ||
+          git(owned, ["ls-files", "-u", "-z"])
+        )
+          throw new Error("Retained checkout identity or clean state changed; preserve it")
+        const removalIntent = this.store.fenced(this.owner, fence, (db) => {
+          const current = retainedVerification(db, operation.id)
+          if (!current || current.generation !== operation.generation) return false
+          setRetainedVerificationWorkspace(db, current, phase, owned, "owned")
+          this.store.record(
+            operation.planID,
+            operation.taskID,
+            "RETAINED_VERIFICATION_WORKSPACE_REMOVAL_INTENDED",
+            {
+              operationID: operation.id,
+              generation: operation.generation,
+              phase,
+              workspace: owned,
+            },
+          )
+          return true
+        })
+        if (!removalIntent) return "pending"
+        await this.host.removeWorktree(owned)
+      }
+      const currentNative = await this.host.worktrees()
+      const currentGit = git(this.directory, ["worktree", "list", "--porcelain"])
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => resolve(line.slice("worktree ".length)))
+      if (
+        candidates.some((candidate) => existsSync(candidate)) ||
+        currentGit.some((item) =>
+          candidates.some((candidate) => resolve(item) === resolve(candidate)),
+        ) ||
+        currentNative.some((item) =>
+          candidates.some((candidate) => resolve(item) === resolve(candidate)),
+        )
+      )
+        throw new Error("Native adapter did not confirm retained checkout removal")
+      const retired = await this.host.retireWorktreeLocation?.(recordedWorkspace)
+      if (retired !== undefined && retired !== "evicted" && retired !== "not-loaded")
         throw new Error(`Native checkout location retirement is ${retired}`)
       this.store.fenced(this.owner, fence, (db) => {
         const current = retainedVerification(db, operation.id)
         if (current?.generation === operation.generation)
-          setRetainedVerificationWorkspace(db, current, phase, workspace, "removed")
+          setRetainedVerificationWorkspace(db, current, phase, recordedWorkspace, "removed")
       })
       this.store.record(
         operation.planID,
@@ -11199,7 +11381,7 @@ export class TaskRuntime {
           operationID: operation.id,
           generation: operation.generation,
           phase,
-          workspace,
+          workspace: recordedWorkspace,
           cleanupState: "complete",
           forcedDeletion: false,
         },
@@ -11209,7 +11391,7 @@ export class TaskRuntime {
       this.store.fenced(this.owner, fence, (db) => {
         const current = retainedVerification(db, operation.id)
         if (current?.generation === operation.generation)
-          setRetainedVerificationWorkspace(db, current, phase, workspace, "uncertain")
+          setRetainedVerificationWorkspace(db, current, phase, recordedWorkspace, "uncertain")
       })
       this.store.record(
         operation.planID,
@@ -11219,13 +11401,200 @@ export class TaskRuntime {
           operationID: operation.id,
           generation: operation.generation,
           phase,
-          workspace,
+          workspace: recordedWorkspace,
           cleanupState: "failed",
           reason: errorText(error),
           forcedDeletion: false,
         },
       )
       return "failed"
+    }
+  }
+
+  private async reconcileTerminalRetainedVerifications(fence: number): Promise<void> {
+    const operations = this.store
+      .atomic((db) => retainedVerificationsForProject(db, this.directory))
+      .filter((operation) => ["accepted", "failed", "cancelled"].includes(operation.state))
+    if (!operations.length) return
+
+    let native: string[]
+    let gitWorktrees: string[]
+    try {
+      native = await this.host.worktrees()
+      gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => resolve(line.slice("worktree ".length)))
+    } catch {
+      return
+    }
+
+    for (const original of operations) {
+      let operation = this.store.atomic((db) => retainedVerification(db, original.id))
+      if (
+        !operation ||
+        operation.generation !== original.generation ||
+        !["accepted", "failed", "cancelled"].includes(operation.state)
+      )
+        continue
+      if (operation.state === "cancelled") {
+        try {
+          await this.recoverCancelledRetainedChecks(operation.id)
+        } catch {
+          // Keep the terminal operation and its native resources discoverable.
+        }
+        operation = this.store.atomic((db) => retainedVerification(db, original.id))
+        if (!operation || operation.generation !== original.generation) continue
+      }
+
+      let cleanupComplete = true
+      const workspaceResults = new Map<"task" | "combined", "complete" | "failed" | "pending">()
+      for (const phase of ["task", "combined"] as const) {
+        const workspace = this.retainedVerificationIsolatedWorkspace(operation, phase)
+        const workspaceState =
+          phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
+        const checks = this.store.atomic((db) =>
+          retainedVerificationChecks(db, operation!.id, phase),
+        )
+        let checksSettled = true
+        for (const check of checks) {
+          if (check.state !== "completed" || !check.receipt) {
+            checksSettled = false
+            break
+          }
+          let receipt: CheckReceipt
+          try {
+            receipt = JSON.parse(check.receipt) as CheckReceipt
+          } catch {
+            checksSettled = false
+            break
+          }
+          if (!checkResourcesSettled(receipt)) {
+            checksSettled = false
+            break
+          }
+          const resourcePending = this.store.atomic((db) =>
+            db
+              .query<{ state: string }, [string, string, string]>(
+                "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=? AND check_id=?",
+              )
+              .all(operation!.id, phase, check.checkID)
+              .some((resource) => resource.state !== "removed"),
+          )
+          if (check.cleanupState !== "complete" || resourcePending) {
+            const setupClean = this.cleanupRetainedCheckSetup(
+              operation,
+              phase,
+              check.checkID,
+              this.dataDirectory,
+              workspace ?? check.workspace,
+              undefined,
+              undefined,
+              undefined,
+            )
+            if (setupClean)
+              await this.cleanupRetainedCheckResources(
+                operation,
+                phase,
+                check.checkID,
+                check.contextPath,
+                receipt.isolation,
+                fence,
+              )
+          }
+        }
+        const refreshedChecks = this.store.atomic((db) =>
+          retainedVerificationChecks(db, operation!.id, phase),
+        )
+        const remainingResources = this.store.atomic((db) =>
+          db
+            .query<{ state: string }, [string, string]>(
+              "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=?",
+            )
+            .all(operation!.id, phase)
+            .some((resource) => resource.state !== "removed"),
+        )
+        checksSettled &&= refreshedChecks.every(
+          (check) =>
+            check.state === "completed" &&
+            Boolean(check.receipt) &&
+            check.cleanupState === "complete",
+        )
+        checksSettled &&= !remainingResources
+
+        const candidates =
+          workspace && (workspaceState === "reserved" || workspaceState === "uncertain")
+            ? startupWorktreeCandidates(workspace)
+            : workspace
+              ? [workspace]
+              : []
+        const inventoryHasWorkspace = candidates.some(
+          (candidate) =>
+            native.some((entry) => resolve(entry) === resolve(candidate)) ||
+            gitWorktrees.includes(resolve(candidate)) ||
+            existsSync(candidate),
+        )
+        const workspaceNeedsCleanup = Boolean(
+          workspace && (workspaceState !== "removed" || inventoryHasWorkspace),
+        )
+        if (!checksSettled) {
+          if (workspaceNeedsCleanup) {
+            workspaceResults.set(phase, "pending")
+            cleanupComplete = false
+          }
+          if (refreshedChecks.length || remainingResources) cleanupComplete = false
+          continue
+        }
+        if (workspaceNeedsCleanup) {
+          const result = await this.removeRetainedVerificationWorkspace(operation, phase, fence)
+          workspaceResults.set(phase, result)
+          if (result !== "complete") cleanupComplete = false
+        } else if (workspaceState !== null && workspaceState !== "removed") {
+          workspaceResults.set(phase, "pending")
+          cleanupComplete = false
+        }
+      }
+
+      const refreshed = this.store.atomic((db) => retainedVerification(db, operation!.id))
+      if (!refreshed || refreshed.generation !== operation.generation) continue
+      const taskResult = workspaceResults.get("task")
+      const combinedResult = workspaceResults.get("combined")
+      const workspaceUnresolved = [
+        [refreshed.taskWorkspace, refreshed.taskWorkspaceState, taskResult],
+        [refreshed.combinedWorkspace, refreshed.combinedWorkspaceState, combinedResult],
+      ].some(
+        ([workspace, state, result]) =>
+          Boolean(workspace) && (state !== "removed" || (result && result !== "complete")),
+      )
+      cleanupComplete &&= !workspaceUnresolved
+      const cleanupState = cleanupComplete ? "complete" : "failed"
+      if (refreshed.cleanupState !== cleanupState) {
+        this.store.fenced(this.owner, fence, (db) => {
+          const current = retainedVerification(db, refreshed.id)
+          if (!current || current.generation !== refreshed.generation) return
+          saveRetainedVerification(db, {
+            ...current,
+            cleanupState,
+            updatedAt: this.now(),
+          })
+          this.store.record(
+            current.planID,
+            current.taskID,
+            cleanupComplete
+              ? "RETAINED_VERIFICATION_TERMINAL_CLEANUP_COMPLETED"
+              : "RETAINED_VERIFICATION_TERMINAL_CLEANUP_PENDING",
+            {
+              operationID: current.id,
+              generation: current.generation,
+              workspaces: {
+                task: current.taskWorkspaceState,
+                combined: current.combinedWorkspaceState,
+              },
+              results: Object.fromEntries(workspaceResults),
+            },
+          )
+        })
+      }
     }
   }
 
@@ -12262,10 +12631,8 @@ export class TaskRuntime {
       return workspace
     }
     if (!this.adoptionIsLive(adoption.id)) return undefined
-    const workspace = join(
-      realpathSync(dirname(this.dataDirectory)),
-      "runner",
-      "worktrees",
+    const workspace = canonicalProjectWorktreePath(
+      this.directory,
       `adoption-${adoption.id}-${phase}`,
     )
     const effect = this.effect(
@@ -12911,7 +13278,7 @@ export class TaskRuntime {
       )
         workspace = matchingAttempt.workspace
       else {
-        const proposed = join(this.dataDirectory, "worktrees", crypto.randomUUID())
+        const proposed = canonicalProjectWorktreePath(this.directory, crypto.randomUUID())
         const effect = this.effect(
           plan.id,
           null,
@@ -13057,7 +13424,12 @@ export class TaskRuntime {
       )
     })
   }
-  private assertAdoptionWorkspaceQuiescent(plan: PlanRow, effect: EffectRow, workspace: string) {
+  private assertAdoptionWorkspaceQuiescent(
+    plan: PlanRow,
+    effect: EffectRow,
+    workspace: string,
+    allowCancelled = false,
+  ) {
     const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
     if (typeof payload.adoptionID !== "string")
       throw new Error("Adoption worktree ownership is missing; preserve the workspace")
@@ -13068,7 +13440,7 @@ export class TaskRuntime {
     if (
       !adoption ||
       adoption.plan_id !== plan.id ||
-      adoption.state !== "accepted" ||
+      (adoption.state !== "accepted" && !(allowCancelled && adoption.state === "cancelled")) ||
       expectedWorkspace !== workspace
     )
       throw new Error("Adoption worktree is not owned by an accepted adoption; preserve it")
@@ -13105,8 +13477,24 @@ export class TaskRuntime {
     }
   }
 
-  private assertGraphWorkspaceQuiescent(plan: PlanRow, workspace: string) {
-    if (!plan.artifact) throw new Error("Combined artifact is missing; preserve the workspace")
+  private assertGraphWorkspaceQuiescent(plan: PlanRow, workspace: string, allowCancelled = false) {
+    const source = this.store.effects(plan.id).find((effect) => {
+      if (effect.kind !== "graph-worktree" || effect.state !== "completed") return false
+      try {
+        return JSON.parse(effect.receipt ?? "{}").workspace === workspace
+      } catch {
+        return false
+      }
+    })
+    let sourceArtifact: unknown
+    try {
+      sourceArtifact = JSON.parse(source?.receipt ?? "{}").base
+    } catch {
+      sourceArtifact = undefined
+    }
+    const artifact = plan.artifact ?? (allowCancelled ? sourceArtifact : undefined)
+    if (typeof artifact !== "string")
+      throw new Error("Combined artifact is missing; preserve the workspace")
     const checks = PlanInput.parse(JSON.parse(plan.body)).verification
     const effects = this.store.effects(plan.id)
     for (const check of checks) {
@@ -13114,7 +13502,7 @@ export class TaskRuntime {
         if (effect.kind !== `graph-verify:${check.id}`) return false
         try {
           const payload = JSON.parse(effect.payload) as { workspace?: unknown; artifact?: unknown }
-          return payload.workspace === workspace && payload.artifact === plan.artifact
+          return payload.workspace === workspace && payload.artifact === artifact
         } catch {
           return false
         }
@@ -13139,8 +13527,8 @@ export class TaskRuntime {
         receipt.id !== check.id ||
         receipt.command !== check.command ||
         receipt.cwd !== workspace ||
-        receipt.artifact !== plan.artifact ||
-        receipt.inputIdentity !== plan.artifact
+        receipt.artifact !== artifact ||
+        receipt.inputIdentity !== artifact
       )
         throw new Error(
           "Combined worktree check activity is not conclusively complete; preserve it",
@@ -13148,17 +13536,22 @@ export class TaskRuntime {
     }
   }
 
-  private async assertWorktreeQuiescent(plan: PlanRow, effect: EffectRow, workspace: string) {
+  private async assertWorktreeQuiescent(
+    plan: PlanRow,
+    effect: EffectRow,
+    workspace: string,
+    allowCancelled = false,
+  ) {
     if (effect.kind.startsWith("adoption-")) {
       if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Adoption worktree unexpectedly has an attempt owner; preserve it")
-      this.assertAdoptionWorkspaceQuiescent(plan, effect, workspace)
+      this.assertAdoptionWorkspaceQuiescent(plan, effect, workspace, allowCancelled)
       return
     }
     if (effect.kind === "graph-worktree") {
       if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
-      this.assertGraphWorkspaceQuiescent(plan, workspace)
+      this.assertGraphWorkspaceQuiescent(plan, workspace, allowCancelled)
       return
     }
     const attempts = this.store
@@ -13168,23 +13561,36 @@ export class TaskRuntime {
       throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
     for (const attempt of attempts) {
       const session = await this.host.session(attempt.session_id, { messages: true })
+      if (!session)
+        throw new Error(
+          "Owned worker session is unavailable; preserve the worktree for reconciliation",
+        )
+      const blockers: string[] = []
+      if (session.id !== attempt.session_id) blockers.push("session identity changed")
+      if (session.projectID !== this.projectID) blockers.push("project identity changed")
+      if (session.directory !== workspace) blockers.push("worker location changed")
+      if (!isWorkerAgent(session.agent)) blockers.push("session is no longer an implementor")
+      if (session.metadata?.lazersAttemptID !== attempt.id)
+        blockers.push("attempt ownership changed")
+      if (session.busy !== false) blockers.push("worker execution is active or unknown")
+      if (session.pendingInput === true) blockers.push("worker has pending input")
+      if (session.observationUnstable) blockers.push("native worker observation is unstable")
+      if ((session.pendingPermissions ?? 0) !== 0)
+        blockers.push("worker has pending permission requests")
+      if ((session.pendingForms ?? 0) !== 0) blockers.push("worker has pending forms")
+      if (!session.outcome) blockers.push("worker outcome is unknown")
+      if (!["completed", "interrupted"].includes(session.turn?.state ?? "unknown"))
+        blockers.push("worker turn is not conclusively terminal")
+      const backgroundReason = this.backgroundBlockReason(session, attempt, true)
       if (
-        !session ||
-        session.id !== attempt.session_id ||
-        session.projectID !== this.projectID ||
-        session.directory !== workspace ||
-        !isWorkerAgent(session.agent) ||
-        session.metadata?.lazersAttemptID !== attempt.id ||
-        session.busy !== false ||
-        session.pendingInput === true ||
-        session.observationUnstable ||
-        (session.pendingPermissions ?? 0) !== 0 ||
-        (session.pendingForms ?? 0) !== 0 ||
-        !session.outcome ||
-        !["completed", "interrupted"].includes(session.turn?.state ?? "unknown") ||
-        this.backgroundBlockReason(session, attempt, true)
+        backgroundReason &&
+        !this.isPriorContinuationBackground(attempt, session.background, session.turn?.inputID)
       )
-        throw new Error("Owned worktree worker activity is not conclusively idle; preserve it")
+        blockers.push(backgroundReason)
+      if (blockers.length)
+        throw new Error(
+          `Owned worktree worker is not conclusively idle; preserve it: ${blockers.join("; ")}`,
+        )
     }
   }
 
@@ -13253,8 +13659,189 @@ export class TaskRuntime {
       return "unavailable"
     }
   }
-  private async cleanupWorktrees(plan: PlanRow, fence: number) {
-    const cleanupCurrent = () => this.store.plan(plan.id)?.state === "cleaning"
+  private pendingOwnedWorktreeCleanup(plan: PlanRow): boolean {
+    const creationKinds = new Set([
+      "worktree",
+      "worktree-recovery",
+      "graph-worktree",
+      "adoption-task-worktree",
+      "adoption-combined-worktree",
+    ])
+    const effects = this.store.effects(plan.id)
+    return effects.some((effect) => {
+      if (!creationKinds.has(effect.kind) || effect.state !== "completed" || !effect.receipt)
+        return false
+      try {
+        const workspace = JSON.parse(effect.receipt).workspace
+        return (
+          typeof workspace === "string" &&
+          !effects.some(
+            (candidate) =>
+              candidate.kind === "worktree-remove" &&
+              JSON.parse(candidate.payload).workspace === workspace &&
+              candidate.state === "completed",
+          )
+        )
+      } catch {
+        return false
+      }
+    })
+  }
+
+  private worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, workspace: string): string {
+    const target = resolve(workspace)
+    const effects = this.store
+      .effects(plan.id)
+      .filter((effect) => effect.kind !== "worktree-remove")
+    const attempts = this.store
+      .attempts(plan.id)
+      .filter((attempt) => resolve(attempt.workspace) === target)
+    const sessions = attempts.map((attempt) => ({
+      sessionID: attempt.session_id,
+      assignment: this.progress.assignmentForSession(attempt.session_id) ?? null,
+    }))
+    const idleRevisions = this.store.atomic((db) => {
+      if (!attempts.length) return []
+      const sessionIDs = attempts.map((attempt) => attempt.session_id)
+      try {
+        const rows = db
+          .query<{ session_id: string; revision: number }, [string, ...string[]]>(
+            `SELECT session_id,revision FROM runner_native_idle
+             WHERE project_directory=? AND session_id IN (${sessionIDs.map(() => "?").join(",")})
+             ORDER BY session_id`,
+          )
+          .all(this.directory, ...sessionIDs)
+        const revisions = new Map(rows.map((row) => [row.session_id, row.revision]))
+        return sessionIDs.map((sessionID) => [sessionID, revisions.get(sessionID) ?? null])
+      } catch {
+        // Old databases or unavailable native-idle storage rely on the bounded native fallback.
+        return null
+      }
+    })
+    const owners = this.store.atomic((db) =>
+      db
+        .query<
+          { plan_id: string; id: string; task_id: string; session_id: string; state: string },
+          [string, string]
+        >(
+          `SELECT plan_id,id,task_id,session_id,state FROM runner_attempts
+           WHERE project_directory=? AND workspace=? ORDER BY plan_id,id`,
+        )
+        .all(this.directory, workspace),
+    )
+    let adoptionFacts: unknown = null
+    try {
+      const payload = JSON.parse(source.payload) as { adoptionID?: unknown }
+      if (typeof payload.adoptionID === "string") {
+        const adoption = this.store.adoption(payload.adoptionID)
+        adoptionFacts = {
+          id: adoption?.id ?? null,
+          state: adoption?.state ?? null,
+          taskWorkspace: adoption?.task_workspace ?? null,
+          combinedWorkspace: adoption?.combined_workspace ?? null,
+          checks: (["task", "combined"] as const).flatMap((phase) =>
+            this.store.adoptionChecks(payload.adoptionID as string, phase).map((check) => ({
+              phase,
+              checkID: check.check_id,
+              state: check.state,
+              receipt: check.receipt ? fingerprint(check.receipt) : null,
+            })),
+          ),
+        }
+      }
+    } catch {
+      adoptionFacts = { unavailable: true }
+    }
+
+    return fingerprint({
+      plan: { id: plan.id, revision: plan.revision, owner: plan.owner, artifact: plan.artifact },
+      workspace: target,
+      workspaceExists: existsSync(workspace),
+      attempts: attempts.map((attempt) => ({
+        id: attempt.id,
+        taskID: attempt.task_id,
+        state: attempt.state,
+        messageID: attempt.message_id,
+        sessionID: attempt.session_id,
+        artifact: attempt.artifact,
+      })),
+      sessions,
+      idleRevisions,
+      owners,
+      adoptionFacts,
+      source: {
+        kind: source.kind,
+        payload: fingerprint(source.payload),
+        receipt: source.receipt ? fingerprint(source.receipt) : null,
+      },
+      effects: effects.map((effect) => ({
+        id: effect.id,
+        kind: effect.kind,
+        state: effect.state,
+        payload: fingerprint(effect.payload),
+        receipt: effect.receipt ? fingerprint(effect.receipt) : null,
+      })),
+    })
+  }
+
+  private async worktreeCleanupFactsChanged(plan: PlanRow): Promise<boolean> {
+    const creationKinds = new Set([
+      "worktree",
+      "worktree-recovery",
+      "graph-worktree",
+      "adoption-task-worktree",
+      "adoption-combined-worktree",
+    ])
+    const effects = this.store.effects(plan.id)
+    for (const source of effects) {
+      if (!creationKinds.has(source.kind) || source.state !== "completed" || !source.receipt)
+        continue
+      let workspace: string | undefined
+      try {
+        workspace = JSON.parse(source.receipt).workspace
+      } catch {
+        continue
+      }
+      if (typeof workspace !== "string") continue
+      const removal = effects.find(
+        (effect) =>
+          effect.kind === "worktree-remove" && JSON.parse(effect.payload).workspace === workspace,
+      )
+      if (!removal) return true
+      if (removal.state === "completed") continue
+      let previousFacts: unknown
+      let previousCheckedAt: unknown
+      try {
+        const receipt = JSON.parse(removal.receipt ?? "{}") as {
+          retryFacts?: unknown
+          retryCheckedAt?: unknown
+        }
+        previousFacts = receipt.retryFacts
+        previousCheckedAt = receipt.retryCheckedAt
+      } catch {
+        previousFacts = undefined
+      }
+      if (typeof previousCheckedAt !== "number") return true
+      let currentFacts: string | undefined
+      try {
+        currentFacts = this.worktreeCleanupRetryFacts(plan, source, workspace)
+      } catch {
+        // A local signal read failure never authorizes cleanup; the bounded native fallback retries.
+      }
+      if (currentFacts !== undefined && currentFacts !== previousFacts) return true
+      const elapsed = this.now() - previousCheckedAt
+      if (elapsed < 0 || elapsed >= WORKTREE_CLEANUP_FALLBACK_MS) return true
+    }
+    return false
+  }
+
+  private async cleanupWorktrees(
+    plan: PlanRow,
+    fence: number,
+    mode: "integration" | "cancellation" = "integration",
+  ) {
+    const expectedState = mode === "integration" ? "cleaning" : "cancelled"
+    const cleanupCurrent = () => this.store.plan(plan.id)?.state === expectedState
     if (!cleanupCurrent()) return
     const owned = [
       ...new Set(
@@ -13284,34 +13871,55 @@ export class TaskRuntime {
           ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
       let removalStarted = false
+      let retryFacts: string | undefined
+      let sourceEffectForCleanup: EffectRow | undefined
       try {
+        const sourceEffect = this.store.effects(plan.id).find((entry) => {
+          if (
+            ![
+              "worktree",
+              "worktree-recovery",
+              "graph-worktree",
+              "adoption-task-worktree",
+              "adoption-combined-worktree",
+            ].includes(entry.kind) ||
+            entry.state !== "completed"
+          )
+            return false
+          try {
+            return JSON.parse(entry.receipt ?? "{}").workspace === workspace
+          } catch {
+            return false
+          }
+        })
+        sourceEffectForCleanup = sourceEffect
+        if (!sourceEffect)
+          throw new Error("Owned worktree has no completed creation receipt; preserve it")
+        try {
+          retryFacts = this.worktreeCleanupRetryFacts(plan, sourceEffect, workspace)
+        } catch {
+          retryFacts = fingerprint({
+            planID: plan.id,
+            sourceID: sourceEffect.id,
+            workspace: resolve(workspace),
+            workspaceExists: existsSync(workspace),
+            retryFactsUnavailable: true,
+          })
+        }
         const listed = await this.host.worktrees()
         if (!cleanupCurrent()) {
           this.abandonCleanupEffect(effect, fence)
           return
         }
-        if (listed.includes(workspace)) {
-          const sourceEffect = this.store.effects(plan.id).find((entry) => {
-            if (
-              ![
-                "worktree",
-                "worktree-recovery",
-                "graph-worktree",
-                "adoption-task-worktree",
-                "adoption-combined-worktree",
-              ].includes(entry.kind) ||
-              entry.state !== "completed"
-            )
-              return false
-            try {
-              return JSON.parse(entry.receipt ?? "{}").workspace === workspace
-            } catch {
-              return false
-            }
-          })
-          if (!sourceEffect)
-            throw new Error("Owned worktree has no completed creation receipt; preserve it")
-          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace)
+        const target = resolve(workspace)
+        const listedWorkspace = listed.some((entry) => resolve(entry) === target)
+        const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => resolve(line.slice("worktree ".length)))
+        const gitRegistered = gitWorktrees.includes(target)
+        if (listedWorkspace && existsSync(workspace)) {
+          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation")
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
@@ -13326,20 +13934,53 @@ export class TaskRuntime {
           }
           removalStarted = true
           await this.host.removeWorktree(workspace)
+        } else if (listedWorkspace || gitRegistered) {
+          // A disappeared directory can still have a native/Git registration.
+          // Ask the recorded native strategy to retire that exact owned path;
+          // never substitute filesystem deletion or force removal.
+          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation")
+          removalStarted = true
+          await this.host.removeWorktree(workspace)
         } else if (existsSync(workspace))
           throw new Error(
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )
+        const remainingNative = await this.host.worktrees()
+        const remainingGit = git(this.directory, ["worktree", "list", "--porcelain"])
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => resolve(line.slice("worktree ".length)))
+        if (
+          remainingNative.some((entry) => resolve(entry) === target) ||
+          remainingGit.includes(target) ||
+          existsSync(workspace)
+        )
+          throw new Error(`Native worktree removal is not confirmed absent: ${workspace}`)
         const cacheRetirement = await this.retireCleanedWorktreeLocation(
           plan,
           workspace,
           cleanupCurrent,
         )
         if (!cleanupCurrent()) return
+        if (!(["unsupported", "not-loaded", "evicted"] as string[]).includes(cacheRetirement))
+          throw new Error(`Native worktree location retirement is ${cacheRetirement}`)
         this.receipt(effect, { workspace, removed: true, native: true, cacheRetirement }, fence)
         if (!cleanupCurrent()) return
       } catch (error) {
         const reason = errorText(error)
+        if (!retryFacts && sourceEffectForCleanup) {
+          try {
+            retryFacts = this.worktreeCleanupRetryFacts(plan, sourceEffectForCleanup, workspace)
+          } catch {
+            retryFacts = fingerprint({
+              planID: plan.id,
+              sourceID: sourceEffectForCleanup.id,
+              workspace: resolve(workspace),
+              workspaceExists: existsSync(workspace),
+              retryFactsUnavailable: true,
+            })
+          }
+        }
         if (!cleanupCurrent() && !removalStarted) {
           this.abandonCleanupEffect(effect, fence)
           return
@@ -13347,30 +13988,54 @@ export class TaskRuntime {
         let blocked = false
         this.store.fenced(this.owner, fence, (db) => {
           db.query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?").run(
-            JSON.stringify({ error: reason }),
+            JSON.stringify({
+              error: reason,
+              ...(retryFacts
+                ? { retryFacts, retryCheckedAt: this.now() }
+                : { retryCheckedAt: this.now() }),
+            }),
             effect.id,
           )
           blocked =
             db
               .query(
-                "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state='cleaning'",
+                mode === "integration"
+                  ? "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state='cleaning'"
+                  : "UPDATE runner_plans SET reason=?,version=version+1 WHERE id=? AND state='cancelled' AND (reason IS NULL OR reason<>?)",
               )
-              .run(reason, plan.id).changes === 1
-          if (blocked) this.store.record(plan.id, null, "CLEANUP_BLOCKED", { workspace, reason })
+              .run(...(mode === "integration" ? [reason, plan.id] : [reason, plan.id, reason]))
+              .changes === 1
+          if (blocked)
+            this.store.record(
+              plan.id,
+              null,
+              mode === "integration" ? "CLEANUP_BLOCKED" : "CANCELLATION_CLEANUP_HELD",
+              { workspace, reason },
+            )
         })
         if (!blocked) return
-        this.outcome(
-          plan.id,
-          {
-            status: "cleanup-blocked",
-            reason,
-            artifact: plan.artifact,
-            allowedActions: ["integrated"],
-          },
-          true,
-        )
+        if (mode === "integration")
+          this.outcome(
+            plan.id,
+            {
+              status: "cleanup-blocked",
+              reason,
+              artifact: plan.artifact,
+              allowedActions: ["integrated"],
+            },
+            true,
+          )
         return
       }
+    }
+    if (mode === "cancellation") {
+      this.store.fenced(this.owner, fence, (db) => {
+        db.query(
+          "UPDATE runner_plans SET reason=NULL,version=version+1 WHERE id=? AND state='cancelled'",
+        ).run(plan.id)
+        this.store.record(plan.id, null, "CANCELLED_WORKTREES_RECONCILED", { directories: owned })
+      })
+      return
     }
     let integrated = false
     this.store.fenced(this.owner, fence, (db) => {

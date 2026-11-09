@@ -4,6 +4,16 @@ Follow the progressive dogfood order in README.md. Read .agents/docs/opencode-ap
 
 Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Use `bun test` when behavior tests are introduced. LAZERS is one reusable plugin package.
 
+New isolated runner, adoption, retained-verification and combined-check worktrees
+use the OpenCode native API under `<canonical-project-root>.worktrees` (for this
+project, `/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees`). The canonical
+root is the OpenCode project root, not the current participant checkout or plugin
+data directory. Record and reuse the native API's returned directory, including a
+collision-adjusted leaf. Existing recorded paths remain authoritative and are not
+relocated; shared serial execution stays in its current checkout. Follow
+[workspace lifecycle](.agents/docs/workspace-lifecycle.md) for native review,
+recovery and non-forced cleanup.
+
 Always auto-fix formatting and lint as part of checks. Use `bun run verify`
 (`bun fmt && bun lint --fix && bun fmt && bun check`) plus relevant behavior
 tests. Commit mechanical fixes with the change; do not ask a model to repair

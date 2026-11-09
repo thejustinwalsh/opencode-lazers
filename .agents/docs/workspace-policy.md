@@ -11,6 +11,14 @@ resulting commits, integration result and cleanup outcome. Native `directory`
 means the parent destination; `branch` means the starting ref. Preserve the
 returned directory when the host handles a name collision.
 
+Fresh isolated attempts, retained task/combined verification, descendant adoption
+task/combined checks, and combined graph checks request the canonical project's
+sibling parent `<canonical-project-root>.worktrees`. Resolve the canonical root
+from OpenCode's project identity, never from the participant's current directory
+or plugin data directory. Existing attempt, adoption and verification records
+keep their actual path across restart; do not move or reallocate them. Shared
+serial execution remains in its existing checkout.
+
 Child creation inherits its parent's location. In pinned OpenCode 2.2.5,
 `session.create` ignores the supplied `location` when `parentID` is present.
 For isolated work, use `session.move`, await native session completion with
@@ -18,8 +26,9 @@ For isolated work, use `session.move`, await native session completion with
 queued. Shared children retain their inherited checkout.
 
 Review the changes and checks, integrate them, and verify the combined result.
-For this dogfood run the driver performs review and merge; the user waived PR
-and human-review stops. Normal production flow may use PR review and merge.
+Architect owns review, integration, recovery and native cleanup; implementors own
+their assigned code, checks and commits. Delivery is not acceptance, and cleanup
+does not erase accepted work or its history.
 
 Reconcile the task ledger with native worktree inventory. After integration,
 remove each owned worktree through OpenCode with `force: false`. Preserve dirty,

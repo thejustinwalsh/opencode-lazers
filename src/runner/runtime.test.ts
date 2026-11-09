@@ -509,6 +509,7 @@ function fixture(
   cleanup.push(async () => {
     await runtime.stop()
     repository.close()
+    rmSync(`${realpathSync(root)}.worktrees`, { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })
     if (options.shared) rmSync(stateDirectory, { recursive: true, force: true })
   })

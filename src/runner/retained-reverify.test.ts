@@ -51,6 +51,10 @@ import {
 } from "./retained-verification/store.ts"
 import { retainedProcedurePlan } from "./retained-verification/procedure.ts"
 import { registerRunnerTools } from "./tools.ts"
+import {
+  canonicalProjectWorktreeParent,
+  canonicalProjectWorktreePath,
+} from "./workspace-location.ts"
 
 type RegisteredRunnerTool = Parameters<ToolEditor["add"]>[0]
 
@@ -450,6 +454,7 @@ function fixture(
     else process.env.HOME = originalHome
     if (originalVerificationDB === undefined) delete process.env.LAZERS_VERIFICATION_SQLITE
     else process.env.LAZERS_VERIFICATION_SQLITE = originalVerificationDB
+    rmSync(canonicalProjectWorktreeParent(root), { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })
     rmSync(state, { recursive: true, force: true })
   })
@@ -1827,7 +1832,7 @@ test("retained verification refuses a physical destination alias of another work
   const f = await failedFixture()
   const old = await addCompetingAttempt(f, "none")
   const operationID = crypto.randomUUID()
-  const destination = join(f.runtime.dataDirectory, "worktrees", `retained-${operationID}-task`)
+  const destination = canonicalProjectWorktreePath(f.root, `retained-${operationID}-task`)
   mkdirSync(dirname(destination), { recursive: true })
   symlinkSync(old.workspace, destination, "dir")
   const randomID = spyOn(crypto, "randomUUID").mockReturnValue(operationID)
