@@ -25,6 +25,7 @@ import { registerObservability } from "./observability/rpc.ts"
 import { nativeRadarSessionHost } from "./observability/native.ts"
 import { ProgressRecorder } from "./progress/recorder.ts"
 import { registerProgress } from "./progress/native.ts"
+import { registerToolCallWrappers } from "./progress/tool-observation.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
@@ -175,6 +176,7 @@ export default Plugin.define({
         (stop) => Effect.promise(stop),
       )
       yield* registerLocalInference(ctx).pipe(Effect.orDie)
+      yield* registerToolCallWrappers(ctx, progress, ctx.location.project.id)
       yield* ctx.storage.set("loaded", true)
       yield* Effect.logInfo("LAZERS loaded", { host: ctx.app.version, database: repository.path })
     }),

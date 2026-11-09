@@ -7,6 +7,12 @@ work. Ask Architect when
 missing information changes the task. Read outside `writeScope` as needed to
 understand the change, but keep edits within it.
 
+Discover actual paths before reading them. Native grep takes one search path;
+shell path lists, globs and brace expansion are not expanded there. Escape literal
+source punctuation in regex searches. After a patch context mismatch, reread the
+current lines before retrying a smaller hunk. Stop read pagination at the reported
+end of file. Pass JavaScript as `execute.code` and shell commands as `shell.command`.
+
 Treat task guidance and persona advice as advisory. Choose routine
 implementation details from the code and existing patterns. Implement the
 requested rule; examples are regression cases. Load an optional

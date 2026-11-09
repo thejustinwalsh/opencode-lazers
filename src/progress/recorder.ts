@@ -84,8 +84,46 @@ type ToolCall = {
   callID: string
   status: "completed" | "error"
   result?: Tool.Result
-  error?: Tool.Error
+  error?: unknown
 }
+
+export type ToolInvocation = {
+  sessionID: string
+  messageID: string
+  agent: string
+  tool: string
+  identityKind: "native-call" | "local-invocation"
+  invocationID: string
+  nativeCallID: string | null
+  parentCallID: string | null
+  contextCallID: string
+  localInvocationID: string | null
+}
+
+export type ToolCallRow = {
+  project_directory: string
+  project_id: string
+  session_id: string
+  identity_kind: ToolInvocation["identityKind"]
+  invocation_id: string
+  native_call_id: string | null
+  parent_call_id: string | null
+  context_call_id: string
+  local_invocation_id: string | null
+  message_id: string | null
+  agent: string | null
+  tool: string | null
+  plan_id: string | null
+  task_id: string | null
+  attempt_id: string | null
+  first_observed_at: number
+  last_observed_at: number
+  sources_json: string
+  event_ids_json: string
+  payload: string
+}
+
+type ToolFact = Omit<Fact, "source"> & { source: ProgressSource | "tool-wrapper" }
 
 type JsonObject = Record<string, unknown>
 
@@ -124,6 +162,7 @@ const timingSourceRank: Record<string, number> = {
   recovery: 2,
   runtime: 2,
   "tool-hook": 1,
+  "tool-wrapper": 1,
 }
 
 const object = (value: unknown): JsonObject | undefined =>
@@ -509,6 +548,7 @@ function normalizeStepRouteEvidence(payload: JsonObject): void {
 function observationIdentity(item: JsonObject): string {
   return (
     text(item.eventID) ??
+    text(item.observationID) ??
     `${text(item.source) ?? "unknown"}:${text(item.eventType) ?? "unknown"}:${number(item.at) ?? "unknown"}`
   )
 }
@@ -1275,9 +1315,267 @@ export class ProgressRecorder {
     )
   }
 
-  private appendForSession(sessionID: string, fact: Fact): number | undefined {
+  /** Canonical tool-call history; runner_progress remains its assigned-worker projection. */
+  toolCalls(sessionID: string): ToolCallRow[] {
+    return this.store.atomic((db) =>
+      db
+        .query<ToolCallRow, [string, string]>(
+          `SELECT * FROM native_tool_calls WHERE project_directory=? AND session_id=?
+           ORDER BY first_observed_at,identity_kind,invocation_id`,
+        )
+        .all(this.store.repository.projectDirectory, sessionID),
+    )
+  }
+
+  private appendToolCallIn(
+    db: Database,
+    sessionID: string,
+    fact: ToolFact,
+    invocation?: ToolInvocation,
+  ): void {
+    if (!fact.callID) return
+    const directory = this.store.repository.projectDirectory
+    const identityKind = invocation?.identityKind ?? "native-call"
+    const invocationID = invocation?.invocationID ?? fact.callID
+    let previous = db
+      .query<ToolCallRow, [string, string, string, string]>(
+        `SELECT * FROM native_tool_calls WHERE project_directory=? AND session_id=?
+         AND identity_kind=? AND invocation_id=?`,
+      )
+      .get(directory, sessionID, identityKind, invocationID)
+    const incomingTool = text(fact.payload.tool)
+    if (!previous && identityKind === "native-call" && incomingTool) {
+      const unmatched = db
+        .query<ToolCallRow, [string, string, string, string]>(
+          `SELECT * FROM native_tool_calls WHERE project_directory=? AND session_id=?
+         AND identity_kind='local-invocation' AND context_call_id=? AND tool=?
+         AND parent_call_id IS NULL LIMIT 2`,
+        )
+        .all(directory, sessionID, fact.callID, incomingTool)
+      if (unmatched.length === 1) {
+        // A later native observation resolves an initially unknown context. The
+        // real callback UUID survives; no guessed child identity is introduced.
+        const local = unmatched[0]!
+        db.query(
+          `UPDATE native_tool_calls SET identity_kind='native-call',invocation_id=?,native_call_id=?
+          WHERE project_directory=? AND session_id=? AND identity_kind='local-invocation' AND invocation_id=?`,
+        ).run(invocationID, fact.callID, directory, sessionID, local.invocation_id)
+        previous = {
+          ...local,
+          identity_kind: "native-call",
+          invocation_id: invocationID,
+          native_call_id: fact.callID,
+        }
+      }
+    }
+    if (
+      previous &&
+      ((previous.tool && incomingTool && previous.tool !== incomingTool) ||
+        (previous.message_id && fact.messageID && previous.message_id !== fact.messageID))
+    )
+      // Some Code Mode hooks share the outer ID. Never overwrite the outer tool
+      // with an inner name; project-owned wrappers record their own local identity.
+      return
+    const assignment = this.assignmentQuery(db, "session", sessionID)
+    const observedAt = Date.now()
+    const incoming = { ...fact.payload }
+    if (incoming.status && !incoming.statusProvenance)
+      incoming.statusProvenance = { source: fact.source, sourceType: fact.sourceType ?? fact.kind }
+    const prior = previous ? (object(JSON.parse(previous.payload)) ?? {}) : {}
+    if (targetOnlyTool(previous?.tool ?? incomingTool)) delete incoming.content
+    const payload = mergeFactPayload("tool", prior, incoming)
+    const agent = text(payload.agent) ?? previous?.agent ?? null
+    const sources = [
+      ...new Set([...(previous ? parseIDs(previous.sources_json) : []), fact.source]),
+    ].toSorted()
+    const eventIDs = [
+      ...new Set([
+        ...(previous ? parseIDs(previous.event_ids_json) : []),
+        ...(fact.eventID ? [fact.eventID] : []),
+      ]),
+    ]
+    const payloadText = JSON.stringify(payload)
+    const sourcesText = JSON.stringify(sources)
+    const eventIDsText = JSON.stringify(eventIDs)
+    if (!previous) {
+      db.query(
+        `INSERT INTO native_tool_calls
+         (project_directory,project_id,session_id,identity_kind,invocation_id,native_call_id,parent_call_id,context_call_id,local_invocation_id,
+          message_id,agent,tool,plan_id,task_id,attempt_id,first_observed_at,last_observed_at,
+          sources_json,event_ids_json,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        directory,
+        this.projectID,
+        sessionID,
+        identityKind,
+        invocationID,
+        invocation ? invocation.nativeCallID : fact.callID,
+        invocation?.parentCallID ?? null,
+        invocation?.contextCallID ?? fact.callID,
+        invocation?.localInvocationID ?? null,
+        fact.messageID ?? null,
+        agent,
+        incomingTool ?? null,
+        assignment?.planID ?? null,
+        assignment?.taskID ?? null,
+        assignment?.attemptID ?? null,
+        observedAt,
+        observedAt,
+        sourcesText,
+        eventIDsText,
+        payloadText,
+      )
+    } else if (
+      previous.payload !== payloadText ||
+      previous.sources_json !== sourcesText ||
+      previous.event_ids_json !== eventIDsText ||
+      previous.agent !== agent ||
+      (!previous.tool && incomingTool) ||
+      (!previous.attempt_id && assignment)
+    ) {
+      db.query(
+        `UPDATE native_tool_calls SET message_id=COALESCE(message_id,?),agent=?,tool=COALESCE(tool,?),
+         plan_id=COALESCE(plan_id,?),task_id=COALESCE(task_id,?),attempt_id=COALESCE(attempt_id,?),
+         last_observed_at=?,sources_json=?,event_ids_json=?,payload=?
+         WHERE project_directory=? AND session_id=? AND identity_kind=? AND invocation_id=?`,
+      ).run(
+        fact.messageID ?? null,
+        agent,
+        incomingTool ?? null,
+        assignment?.planID ?? null,
+        assignment?.taskID ?? null,
+        assignment?.attemptID ?? null,
+        Math.max(previous.last_observed_at, observedAt),
+        sourcesText,
+        eventIDsText,
+        payloadText,
+        directory,
+        sessionID,
+        identityKind,
+        invocationID,
+      )
+    }
+  }
+
+  recordToolBefore(call: Omit<ToolCall, "status" | "result" | "error">): void {
+    const at = Date.now()
+    const stats = privacyStats()
+    this.store.atomic((db) =>
+      this.appendToolCallIn(db, call.sessionID, {
+        source: "tool-hook",
+        sourceType: "tool-hook.execute.before",
+        kind: "tool",
+        dedupeKey: `tool:${call.sessionID}:${call.callID}`,
+        at,
+        callID: call.callID,
+        messageID: call.messageID,
+        payload: {
+          tool: safeText(call.tool, stats, 160),
+          agent: safeText(call.agent, stats, 200),
+          observations: [
+            {
+              source: "tool-hook",
+              observationID: "tool-hook.execute.before",
+              eventType: "tool-hook.execute.before",
+              at,
+              unit: EPOCH_MILLIS,
+              meaning: "Hook observation time; not an execution boundary",
+            },
+          ],
+        },
+      }),
+    )
+  }
+
+  /** The UUID identifies this observed callback invocation, never a native child call. */
+  beginToolInvocation(call: Omit<ToolCall, "status" | "result" | "error">): ToolInvocation {
+    return this.store.atomic((db) => {
+      const parent = db
+        .query<{ tool: string | null }, [string, string, string]>(
+          `SELECT tool FROM native_tool_calls WHERE project_directory=? AND session_id=?
+         AND identity_kind='native-call' AND invocation_id=?`,
+        )
+        .get(this.store.repository.projectDirectory, call.sessionID, call.callID)
+      const direct = parent?.tool === call.tool
+      const localInvocationID = direct ? null : crypto.randomUUID()
+      const invocation: ToolInvocation = {
+        sessionID: call.sessionID,
+        messageID: call.messageID,
+        agent: call.agent,
+        tool: call.tool,
+        identityKind: direct ? "native-call" : "local-invocation",
+        invocationID: localInvocationID ?? call.callID,
+        nativeCallID: direct ? call.callID : null,
+        parentCallID: parent?.tool === "execute" ? call.callID : null,
+        contextCallID: call.callID,
+        localInvocationID,
+      }
+      this.recordToolInvocationIn(db, invocation)
+      return invocation
+    })
+  }
+
+  private recordToolInvocationIn(db: Database, invocation: ToolInvocation, call?: ToolCall): void {
+    const at = Date.now()
+    const stats = privacyStats()
+    const payload: JsonObject = {
+      tool: safeText(invocation.tool, stats, 160),
+      agent: safeText(invocation.agent, stats, 200),
+      observations: [
+        {
+          source: "tool-wrapper",
+          observationID: call ? "tool-wrapper.execute.after" : "tool-wrapper.execute.before",
+          eventType: call ? "tool-wrapper.execute.after" : "tool-wrapper.execute.before",
+          at,
+          unit: EPOCH_MILLIS,
+          meaning: "Project-owned callback observation; not a native execution endpoint",
+        },
+      ],
+    }
+    if (call) {
+      payload.status = call.status === "error" ? "failed" : "succeeded"
+      if (call.status === "error") payload.error = errorView(call.error, stats)
+      // Successful arbitrary structured output is not an error/progress contract.
+    }
+    this.appendToolCallIn(
+      db,
+      invocation.sessionID,
+      {
+        source: "tool-wrapper",
+        sourceType: call ? "tool-wrapper.execute.after" : "tool-wrapper.execute.before",
+        kind: "tool",
+        dedupeKey: invocation.invocationID,
+        at,
+        callID: invocation.contextCallID,
+        messageID: invocation.messageID,
+        payload,
+      },
+      invocation,
+    )
+  }
+
+  endToolInvocation(invocation: ToolInvocation, outcome: Pick<ToolCall, "status" | "error">): void {
+    this.store.atomic((db) =>
+      this.recordToolInvocationIn(db, invocation, {
+        ...invocation,
+        callID: invocation.contextCallID,
+        ...outcome,
+      }),
+    )
+  }
+
+  private appendForSession(
+    sessionID: string,
+    fact: Fact,
+    verifiedToolSession?: boolean,
+  ): number | undefined {
     return this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
+      if (
+        fact.kind === "tool" &&
+        (verifiedToolSession || (verifiedToolSession === undefined && assignment))
+      )
+        this.appendToolCallIn(db, sessionID, fact)
       return assignment ? this.appendIn(db, assignment, fact) : undefined
     })
   }
@@ -1339,11 +1637,22 @@ export class ProgressRecorder {
   }
 
   recordToolHook(call: ToolCall): number | undefined {
-    if (call.tool === "lz-report-progress" || !isWorkerAgent(call.agent)) return undefined
+    const at = Date.now()
     const stats = privacyStats()
     const payload: Record<string, unknown> = {
       tool: safeText(call.tool, stats, 160),
+      agent: safeText(call.agent, stats, 200),
       status: call.status === "error" ? "failed" : "succeeded",
+      observations: [
+        {
+          source: "tool-hook",
+          observationID: "tool-hook.execute.after",
+          eventType: "tool-hook.execute.after",
+          at,
+          unit: EPOCH_MILLIS,
+          meaning: "Hook observation time; not an execution boundary",
+        },
+      ],
     }
     if (call.status === "error") {
       const error = errorView(call.error, stats)
@@ -1353,15 +1662,21 @@ export class ProgressRecorder {
       if (content !== undefined) payload.content = content
       // Tool.Result.output is arbitrary data, not a public-content contract.
     }
-    return this.appendForSession(call.sessionID, {
+    const fact: Fact = {
       source: "tool-hook",
       sourceType: "tool-hook.execute.after",
       kind: "tool",
       dedupeKey: `tool:${call.sessionID}:${call.callID}`,
-      at: Date.now(),
+      at,
       callID: call.callID,
       messageID: call.messageID,
       payload,
+    }
+    return this.store.atomic((db) => {
+      this.appendToolCallIn(db, call.sessionID, fact)
+      if (call.tool === "lz-report-progress" || !isWorkerAgent(call.agent)) return undefined
+      const assignment = this.assignmentQuery(db, "session", call.sessionID)
+      return assignment ? this.appendIn(db, assignment, fact) : undefined
     })
   }
 
@@ -1464,7 +1779,7 @@ export class ProgressRecorder {
     })
   }
 
-  recordNativeEvent(value: unknown): number | undefined {
+  recordNativeEvent(value: unknown, verifiedToolSession?: boolean): number | undefined {
     const event = object(value)
     const data = object(event?.data)
     const type = text(event?.type)
@@ -1786,7 +2101,7 @@ export class ProgressRecorder {
         payload: { text: safeText(data.text, stats) },
       }
     }
-    return fact ? this.appendForSession(sessionID, fact) : undefined
+    return fact ? this.appendForSession(sessionID, fact, verifiedToolSession) : undefined
   }
 
   /** Reconcile only retained public session messages; it never invokes execution. */
@@ -2201,7 +2516,7 @@ export class ProgressRecorder {
       const error = errorView(state?.error, stats)
       if (error !== undefined) payload.error = error
     }
-    this.appendIn(db, assignment, {
+    const fact: Fact = {
       source: "recovery",
       sourceType: "retained-assistant-tool",
       kind: "tool",
@@ -2210,7 +2525,9 @@ export class ProgressRecorder {
       callID: toolID,
       messageID,
       payload,
-    })
+    }
+    this.appendToolCallIn(db, assignment.sessionID, fact)
+    this.appendIn(db, assignment, fact)
   }
 
   recordSessionSnapshot(sessionID: string, value: unknown): number | undefined {

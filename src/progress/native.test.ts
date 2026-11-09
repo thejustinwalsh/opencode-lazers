@@ -315,6 +315,137 @@ test("registered execute.before records only an assigned bounded requested targe
   }
 })
 
+test("registered tool hooks retain unassigned agents and isolate lookup or storage failures", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const ctx = makeContext(fixture, { holdEvents: true })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          for (const agent of ["architect", "researcher", "auditor", "build"]) {
+            const call = {
+              tool: "shell",
+              sessionID: Session.ID.make(`ses-${agent}`),
+              agent: Agent.ID.make(agent),
+              messageID: SessionMessage.ID.make("msg_observed"),
+              id: Tool.CallID.make(agent),
+              input: {},
+            }
+            yield* ctx.before()!(call as never)
+            yield* ctx.after()!({
+              ...call,
+              status: "error",
+              error: new Tool.Error({ message: "Invalid arguments: command missing" }),
+            } as never)
+            expect(recorder.toolCalls(call.sessionID)).toHaveLength(1)
+            expect(recorder.toolCalls(call.sessionID)[0]).toMatchObject({ agent, attempt_id: null })
+          }
+          recorder.recordToolHook = () => {
+            throw new Error("storage unavailable")
+          }
+          yield* ctx.after()!({
+            tool: "shell",
+            ...callContext("ses-build", "unavailable"),
+            status: "error",
+            error: new Tool.Error({ message: "original failure" }),
+          } as never)
+        }),
+      ),
+    )
+    const broken = makeContext(fixture, {
+      holdEvents: true,
+      readSession: () => {
+        throw new Error("lookup unavailable")
+      },
+    })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(broken.context, recorder, "project")
+          yield* broken.before()!({
+            tool: "shell",
+            ...callContext("ses-unknown", "lookup"),
+            input: {},
+          } as never)
+          yield* broken.after()!({
+            tool: "shell",
+            ...callContext("ses-unknown", "lookup"),
+            status: "completed",
+            result: {},
+          } as never)
+        }),
+      ),
+    )
+    expect(recorder.toolCalls("ses-unknown")).toHaveLength(0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("unassigned native terminal errors are captured only by their actual project and location", async () => {
+  const fixture = makeFixture()
+  try {
+    for (const own of [true, false]) {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const sessionID = own ? "ses-unassigned-own" : "ses-unassigned-foreign"
+      const ctx = makeContext(fixture, {
+        events: [
+          {
+            id: `evt-input-${own}`,
+            type: "session.tool.input.started",
+            created: DateTime.makeUnsafe(1000),
+            data: {
+              sessionID,
+              id: "native-error",
+              assistantMessageID: "msg_observed",
+              name: "shell",
+            },
+          },
+          {
+            id: `evt-failure-${own}`,
+            type: "session.tool.failed",
+            created: DateTime.makeUnsafe(1100),
+            data: {
+              sessionID,
+              id: "native-error",
+              assistantMessageID: "msg_observed",
+              executed: false,
+              error: { message: "Implementor requires an admitted runtime assignment" },
+            },
+          },
+        ],
+        readSession: () =>
+          Effect.succeed({
+            projectID: own ? "project" : "foreign",
+            location: { directory: fixture.directory },
+          }),
+      })
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(ctx.context, recorder, "project")
+            yield* Effect.promise(() => waitForNativeState(async () => ctx.subscriptions() > 0))
+            if (own)
+              yield* Effect.promise(() =>
+                waitForNativeState(async () =>
+                  recorder
+                    .toolCalls(sessionID)
+                    .some((row) => JSON.parse(row.payload).status === "failed"),
+                ),
+              )
+            else yield* Effect.yieldNow
+          }),
+        ),
+      )
+      expect(recorder.toolCalls(sessionID)).toHaveLength(own ? 1 : 0)
+    }
+  } finally {
+    fixture.close()
+  }
+})
+
 function nativeLivenessFixture(
   fixture: ReturnType<typeof makeFixture>,
   options: Parameters<typeof makeNativeLivenessFixture>[0] = {},

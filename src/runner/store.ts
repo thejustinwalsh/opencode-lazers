@@ -797,6 +797,22 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_progress_attempt_seq
         ON runner_progress(project_directory,attempt_id,seq);
+      CREATE TABLE IF NOT EXISTS native_tool_calls (
+        project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
+        session_id TEXT NOT NULL, identity_kind TEXT NOT NULL
+          CHECK(identity_kind IN ('native-call','local-invocation')),
+        invocation_id TEXT NOT NULL, native_call_id TEXT, parent_call_id TEXT,
+        context_call_id TEXT NOT NULL, local_invocation_id TEXT,
+        message_id TEXT, agent TEXT, tool TEXT,
+        plan_id TEXT, task_id TEXT, attempt_id TEXT,
+        first_observed_at INTEGER NOT NULL, last_observed_at INTEGER NOT NULL,
+        sources_json TEXT NOT NULL, event_ids_json TEXT NOT NULL, payload TEXT NOT NULL,
+        PRIMARY KEY(project_directory,session_id,identity_kind,invocation_id)
+      );
+      CREATE INDEX IF NOT EXISTS native_tool_calls_session
+        ON native_tool_calls(project_directory,session_id,first_observed_at);
+      CREATE INDEX IF NOT EXISTS native_tool_calls_parent
+        ON native_tool_calls(project_directory,session_id,parent_call_id);
       CREATE TABLE IF NOT EXISTS runner_progress_reminders (
         attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
         session_id TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE, ownership_json TEXT NOT NULL,

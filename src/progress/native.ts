@@ -10,6 +10,7 @@ import type { NativeIdleBinding, NativeIdleTerminal } from "../runner/native-idl
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
 import { resolveNativeInputID } from "../runner/native-input.ts"
+import { toolObservationScope } from "./tool-observation.ts"
 import type { ProgressAssignment, ProgressRecorder } from "./recorder.ts"
 import {
   registerProgressReconstruction,
@@ -446,6 +447,11 @@ export function registerProgress(
       }
     }
     const projectDirectory = recorder.store.repository.projectDirectory
+    const toolScope = toolObservationScope(
+      ctx,
+      projectID,
+      ctx.location?.directory ?? projectDirectory,
+    )
     const bindingFor = (sessionID: string) =>
       idleBinding(recorder.assignmentForSession(sessionID), projectDirectory)
     const trace = (
@@ -537,7 +543,8 @@ export function registerProgress(
     )
 
     yield* ctx.tool.hook("execute.after", (call) =>
-      Effect.sync(() => {
+      Effect.promise(async () => {
+        if (!(await toolScope.owns(call.sessionID))) return
         try {
           recorder.recordToolHook({
             tool: call.tool,
@@ -555,7 +562,19 @@ export function registerProgress(
     )
 
     yield* ctx.tool.hook("execute.before", (call) =>
-      Effect.sync(() => {
+      Effect.promise(async () => {
+        if (!(await toolScope.owns(call.sessionID))) return
+        try {
+          recorder.recordToolBefore({
+            tool: call.tool,
+            sessionID: call.sessionID,
+            agent: call.agent,
+            messageID: call.messageID,
+            callID: call.id,
+          })
+        } catch {
+          // Tool observation cannot reject a native call.
+        }
         try {
           recorder.recordToolTargets({
             tool: call.tool,
@@ -966,6 +985,8 @@ export function registerProgress(
       const rawSessionID = object(object(event)?.data)?.sessionID
       const type = typeof rawType === "string" ? rawType : undefined
       const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
+      if (sessionID && (type === "session.deleted" || type === "session.moved"))
+        toolScope.forget(sessionID)
       if (sessionID) reconstruction.changed(sessionID)
       if (
         observing &&
@@ -1066,7 +1087,9 @@ export function registerProgress(
         }
       }
       try {
-        recorder.recordNativeEvent(event)
+        const toolSession =
+          sessionID && type?.startsWith("session.tool.") ? await toolScope.owns(sessionID) : false
+        recorder.recordNativeEvent(event, Boolean(toolSession))
       } catch {
         // A later retained-session reconciliation can recover public event facts.
       }
