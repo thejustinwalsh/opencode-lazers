@@ -1,3 +1,4 @@
+import { panelErrorMessage as errorMessage } from "../panel-error.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
 import type { TrajectoryResponse } from "../observability/contract.ts"
 import { readTaskEffortBasis } from "./comparison-presentation.ts"
@@ -211,10 +212,6 @@ function decisionStatus(context: ModelDecisionContext, online: boolean): ModelDe
   return "ready"
 }
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
 function routesMatch(left: ModelPolicy | null, right: ModelPolicy | null) {
   return left === null
     ? right === null
@@ -423,7 +420,7 @@ export class ModelComparisonPanelState {
         if (generation === this.generation && request === this.comparisonRequest && !signal.aborted)
           this.update({
             comparisonLoading: false,
-            comparisonError: error instanceof Error ? error.message : String(error),
+            comparisonError: errorMessage(error),
             comparisonStale: Boolean(this.data.comparison),
             stale: true,
           })
@@ -513,7 +510,7 @@ export class ModelComparisonPanelState {
         if (generation === this.generation && !signal.aborted)
           this.update({
             sourceRefresh: "failed",
-            sourceRefreshError: error instanceof Error ? error.message : String(error),
+            sourceRefreshError: errorMessage(error),
             stale: true,
           })
       } finally {
@@ -1065,7 +1062,7 @@ export class ModelComparisonPanelState {
         if (generation === this.generation && !signal.aborted)
           this.update({
             tasksLoading: false,
-            tasksError: error instanceof Error ? error.message : String(error),
+            tasksError: errorMessage(error),
             stale: true,
           })
       }
@@ -1169,10 +1166,7 @@ export class ModelComparisonPanelState {
       }
     } else {
       this.update({
-        taskError:
-          detailResult.reason instanceof Error
-            ? detailResult.reason.message
-            : String(detailResult.reason),
+        taskError: errorMessage(detailResult.reason),
       })
     }
     if (!isCurrent()) return
@@ -1209,10 +1203,7 @@ export class ModelComparisonPanelState {
       }
     } else {
       this.update({
-        effortError:
-          effortResult.reason instanceof Error
-            ? effortResult.reason.message
-            : String(effortResult.reason),
+        effortError: errorMessage(effortResult.reason),
       })
     }
     if (!isCurrent()) return
@@ -1256,7 +1247,7 @@ export class ModelComparisonPanelState {
       )
         this.update({
           settingsLoading: false,
-          settingsError: error instanceof Error ? error.message : String(error),
+          settingsError: errorMessage(error),
         })
       return undefined
     }

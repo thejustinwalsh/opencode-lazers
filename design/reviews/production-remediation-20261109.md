@@ -52,22 +52,23 @@ The separate retained-verification workspace cleanup finding remains open too.
 
 ## Reconciliation register
 
-All eleven questions were presented through native structured question prompts.
-All are pending at this record; no dependent decision has been inferred.
+All eleven questions were presented through structured question prompts. Justin
+answered on 2026-11-09. Record his product intent rather than treating an offered
+implementation option as the decision when his answer differs from both options.
 
-| #   | Fact to reconcile                                                          | State                                                                        |
-| --- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 1   | Active/terminal semantics across plans, nodes, attempts and resources      | Pending Justin                                                               |
-| 2   | Canonical cost, unmetered charges, exact money and token basis             | Pending Justin; blocks S9/S10 money changes                                  |
-| 3   | Assigned worker input versus reconciled review-input alias                 | Pending Justin                                                               |
-| 4   | Durable current authority versus frozen launch parentage                   | Pending Justin                                                               |
-| 5   | Commentary identity versus automatic tool-fact identity                    | Pending Justin                                                               |
-| 6   | Four-state versus three-state native inventory completeness                | Pending Justin                                                               |
-| 7   | Packaged defaults versus user agent permissions/request settings           | Pending Justin                                                               |
-| 8   | Cleanup of clean, merged, unreserved work with absent/unknown old sessions | Pending Justin; native cleanup integration held                              |
-| 9   | Shared sanitized panel errors versus universal trajectory redaction        | Pending Justin; blocks F-S14-1                                               |
-| 10  | Canonical divider range, step and arrow semantics                          | Pending Justin; review's final arrow wording contradicts earlier description |
-| 11  | XState snapshot authority versus runtime/store lifecycle                   | Pending Justin                                                               |
+| #   | Decision and implementation boundary                                                                                                                                                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Justin expects shared XState workflows and consistent vocabulary. Explained the concrete divergence: an accepted plan ends normal execution, whereas an accepted task can enter repair. Do not silently equate domain-specific states or introduce a third lifecycle authority; align with #11.            |
+| 2   | Always value actual model/effort/tokens at current published market prices; historical billing accuracy is not a product goal. Retain execution identity and measured tokens. Land exact-decimal substitution and three-way equality test before merging pricers.                                          |
+| 3   | Accept the assigned input or a durably reconciled review-input alias.                                                                                                                                                                                                                                      |
+| 4   | Durable current owner plus exact session/attempt binding establishes authority; native parentage remains launch history.                                                                                                                                                                                   |
+| 5   | Justin asks whether one mixed record in linear time is intended and what Opus recommended. Explained separate durable invocation records in one chronological timeline; clarification between one timeline and one database record is pending. No dependent identity fix yet.                              |
+| 6   | A present task/session must have useful tracked data. An unavailable label is not an adequate product outcome. Before changing inventory semantics, distinguish optional native inventory acquisition from durable managed-session facts; do not fabricate successful reads.                               |
+| 7   | Explicit user settings must be predictable and honored, especially agent model bindings. Packaged defaults fill unset settings rather than replacing user choices.                                                                                                                                         |
+| 8   | After Architect merges work, terminate the worker and remove its branch; workers must not continue after integration. Preserve unmerged/dirty work and history; use native cleanup and the existing absence proof. Integration ordering and old-session holds must be corrected together.                  |
+| 9   | Redact keys at record time, before DB persistence. Shared public panel error formatting may preserve actionable messages without arbitrary object serialization. Existing trajectory privacy protection remains in this increment; this does not establish that all persistence writers have been audited. |
+| 10  | Arrow keys move the divider in their direction; Down enlarges the upper pane.                                                                                                                                                                                                                              |
+| 11  | XState is the intended authority for every workflow state machine and transition, enabling common inspection/rendering and future decision engines. Do not remove XState under the review's deletion proposal. Bounded correctness fixes remain separate from broader authority alignment.                 |
 
 ## Wave 1: S1-1
 
@@ -91,6 +92,27 @@ src/runner/source-fence-rpc.test.ts`: 8 pass / 0 fail, 51 assertions.
 The full suite has not been rerun after this increment. Wave 1 remains open
 until F-S14-1 is resolved; installed service behavior has not been reloaded.
 
+## Wave 1: F-S14-1
+
+Before the fix, structured RPC failures reproduced `[object Object]` in all eleven
+new regression cases (Tasks, Radar and nine Models fields). The shared
+`panelErrorMessage()` now extracts the existing public message/recovery fields,
+strips control characters and retains the existing display bound without coercing
+unknown objects. Tasks, Radar and Models use it; trajectory's existing privacy
+formatter is preserved. This is message formatting, not a replacement for
+record-time credential redaction.
+
+Symbol searches also found raw coercion in the graph layout error state and its
+native worker adapter. Both now use the same helper. All tested error fields
+reject `[object Object]`, including activity, optional topology, monitor reads
+and graph layout. A structured layout rejection retains its actionable message.
+
+Checks: final `bun run verify` and `git diff --check` passed;
+73 behavior tests / 488 assertions across the shared helper and four panel
+controllers passed. Layout behavior tests: 8 pass / 0 fail, 37 assertions.
+The post-wave full-suite comparison remains pending.
+No installed-service activation or native visual acceptance is claimed.
+
 ## Re-derived findings and coordination
 
 - S6-4/F-S4-9's absent handoff-tool premise no longer matches HEAD:
@@ -103,3 +125,49 @@ until F-S14-1 is resolved; installed service behavior has not been reloaded.
   in `msg_1c128cd09001gM8Zbnk6Z45AK6`. This is user-directed driver coordination,
   not autonomous recovery. Keep the hold until the ordered remediation and
   relevant reconciliation allow integration.
+
+### Cleanup candidate and interrupted verification
+
+The original LZ-185 worker completed candidate
+`7f86e4e7466d76284459cf159b980cf5bfb86507` in its clean retained checkout.
+Runtime `verify:lifecycle` started at Unix1794242830182 and produced an exit-137
+receipt at Unix1794242936933, with `timedOut: false` and process-group cleanup
+marked terminated. The captured tail showed passing tests, not a failing
+assertion. This does not establish why the process was killed or a code defect.
+The 600,000 ms check timeout was not reported as exceeded.
+
+The runtime recorded `REPAIR` at Unix1794242940297 and dispatched replacement
+attempt `b1616897-5aaf-4ab0-b4f9-d71f1d0ba615` at Unix1794242943950,
+despite the driver coordination's intention to preserve the same worker. The
+initial hold was a coordinator instruction, not a deterministic execution pause.
+Driver request `msg_1c13d5a5f001mbEHlgk1l2LO39` (Unix1794243386360)
+asked Architect to contain replacement activity with native controls and retain
+both attempts' work. Native state subsequently confirmed plan cancellation
+(version 14, Unix1794243424937), a cancelled and idle replacement, and the original candidate still
+attached to its failed attempt. No source integration or activation occurred.
+
+Architect is investigating the interruption. Scope-stop interruption being
+misclassified as verification failure is a hypothesis relevant to S5-1, not a
+diagnosis. Preserve the receipt and useful replacement changes. This operational
+containment is driver assistance, not autonomous recovery or a completed
+cleanup-policy fix. The stopped plan needs explicit reconciliation when its
+ordered remediation and Justin's decision #8 permit continuation.
+
+Architect completed its read-only diagnosis in
+`msg_1c13f3625001acFF3xt45SB8hm`: quality phase passed, then the behavior-test
+phase ended at Unix1794242907961 after 77,779 ms, with 154 printed passes and
+zero printed failures. The later durable receipt was recorded at
+Unix1794242936933. Reload/watch-stop logs overlap this interval but do not
+establish causation. Final native confirmations
+`msg_1c140b806001RYfh77RfltSHxR` and `msg_1c140f519001RVtDiCF0qz9Moc`
+leave the plan stopped; both sessions are absent from the foreground-active map,
+both checkouts and replacement dirty edits remain preserved. No resume, retry,
+integration or activation was performed after containment.
+
+## Remaining decisions and continuation
+
+Reconciliation #5's storage identity clarification remains pending. #1 and #6
+record product intent rather than a selection between the original offered
+implementation options; resolve their concrete semantics when their dependent
+increments are reached. Wave 1 is unblocked by #9. Continue the review's ordered
+waves, with current-code symbol checks and bounded corrections.

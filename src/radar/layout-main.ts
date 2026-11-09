@@ -1,6 +1,7 @@
 import type { MainContext } from "@opencode/plugin/gui/main"
 import { Worker } from "node:worker_threads"
 import ELK from "elkjs/lib/elk-api.js"
+import { panelErrorMessage } from "../panel-error.ts"
 import { RadarLayout } from "./layout-ipc.ts"
 import type { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
 import { elkGraph, radarLayoutResult } from "./layout-graph.ts"
@@ -30,7 +31,7 @@ function workerAdapter(worker: Worker): MainWorker {
     adapter.onmessage?.({ data } as MessageEvent)
   })
   worker.on("error", (error) => {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = panelErrorMessage(error)
     for (const id of pending) {
       pending.delete(id)
       adapter.onmessage?.({ data: { id, error: { message } } } as MessageEvent)

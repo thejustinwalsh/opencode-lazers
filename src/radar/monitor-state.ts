@@ -1,3 +1,4 @@
+import { panelErrorMessage } from "../panel-error.ts"
 import type {
   LiveHistoryResponse,
   LiveRadarResponse,
@@ -31,36 +32,6 @@ const blank = (key = ""): RadarMonitorData => ({
   historyLoading: false,
   historyError: "",
 })
-
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-/** Turn native/RPC error envelopes into concise, non-coercive user-facing text. */
-export function radarErrorMessage(value: unknown): string {
-  const error = object(value)
-  const data = object(error?.data)
-  const nested = object(error?.error)
-  const candidates = [
-    error?.message,
-    data?.message,
-    data?.reason,
-    nested?.message,
-    typeof value === "string" ? value : undefined,
-  ]
-  const message = candidates.find((candidate) => typeof candidate === "string" && candidate.trim())
-  if (typeof message !== "string") return "The live observation failed without a readable error."
-  const recovery = data?.recovery
-  let safe = ""
-  for (const character of message) {
-    const code = character.codePointAt(0)!
-    safe += code <= 0x1f || (code >= 0x7f && code <= 0x9f) ? " " : character
-  }
-  safe = safe.trim().slice(0, 320)
-  return typeof recovery === "string" ? `${safe} Recovery: ${recovery}.` : safe
-}
 
 function scopeMatches(live: LiveRadarResponse, scope: ObservationScope) {
   return (
@@ -279,8 +250,8 @@ export class RadarMonitorState {
           resynchronizing: true,
           connection: transport.online() ? "connected" : "disconnected",
           error: this.data.live
-            ? `Live refresh failed; showing the last observation. ${radarErrorMessage(error)}`
-            : `Live observation is unavailable. ${radarErrorMessage(error)}`,
+            ? `Live refresh failed; showing the last observation. ${panelErrorMessage(error)}`
+            : `Live observation is unavailable. ${panelErrorMessage(error)}`,
         })
       }
     } while (this.refreshPending && this.current(epoch, transport, signal))
@@ -306,7 +277,7 @@ export class RadarMonitorState {
           resynchronizing: true,
           connection: transport.online() ? "reconnecting" : "disconnected",
           error: transport.online()
-            ? `Live updates disconnected; reconnecting. ${radarErrorMessage(error)}`
+            ? `Live updates disconnected; reconnecting. ${panelErrorMessage(error)}`
             : "Server disconnected; showing the last live observation.",
         })
         await delay(signal)
@@ -390,7 +361,7 @@ export class RadarMonitorState {
       })
     } catch (error) {
       if (this.epoch === epoch && this.historyEpoch === historyEpoch && !controller.signal.aborted)
-        this.update({ historyLoading: false, historyError: radarErrorMessage(error) })
+        this.update({ historyLoading: false, historyError: panelErrorMessage(error) })
     } finally {
       parentSignal.removeEventListener("abort", abort)
     }

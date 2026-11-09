@@ -1,3 +1,4 @@
+import { panelErrorMessage } from "../panel-error.ts"
 import type {
   StartTaskInput,
   StartTaskResult,
@@ -302,13 +303,7 @@ export class TaskPanelState {
             }
           } catch (error) {
             if (signal.aborted || generation !== this.generation) return
-            const message =
-              typeof error === "object" &&
-              error !== null &&
-              "message" in error &&
-              typeof error.message === "string"
-                ? error.message.trim().slice(0, 400)
-                : ""
+            const message = panelErrorMessage(error, "")
             topologyError = message
               ? `Execution links unavailable: ${message}. Showing ungrouped tasks.`
               : "Execution links unavailable. Showing ungrouped tasks."
@@ -360,7 +355,7 @@ export class TaskPanelState {
       else if (this.data.selectedID) await this.select(this.data.selectedID, true)
     } catch (error) {
       if (generation === this.generation && !signal.aborted) {
-        this.update({ loading: false, stale: true, error: String(error) })
+        this.update({ loading: false, stale: true, error: panelErrorMessage(error) })
       }
     } finally {
       if (generation === this.generation) {
@@ -411,7 +406,7 @@ export class TaskPanelState {
       )
     } catch (error) {
       if (generation === this.generation && !this.controller.signal.aborted)
-        this.update({ stale: true, error: String(error) })
+        this.update({ stale: true, error: panelErrorMessage(error) })
     } finally {
       if (generation === this.generation) {
         this.refreshing = false
@@ -449,7 +444,7 @@ export class TaskPanelState {
       }
     } catch (error) {
       if (generation === this.generation && request === this.detailRequest && !signal.aborted) {
-        this.update({ error: String(error), stale: true })
+        this.update({ error: panelErrorMessage(error), stale: true })
         this.retryRead(generation)
       }
     }
@@ -522,7 +517,7 @@ export class TaskPanelState {
         if (!signal.aborted) throw new Error("Task update connection closed")
       } catch (error) {
         if (generation !== this.generation || signal.aborted) return
-        this.update({ stale: true, error: String(error) })
+        this.update({ stale: true, error: panelErrorMessage(error) })
         await new Promise<void>((resolve) => {
           const done = () => {
             clearTimeout(timer)

@@ -1,3 +1,4 @@
+import { panelErrorMessage } from "../panel-error.ts"
 import type {
   ObservationChange,
   ObservationScope,
@@ -143,7 +144,7 @@ export class RadarPanelState {
             (value.scope.kind === "session" && value.scope.sessionID === scope.sessionID))
         const radarError =
           radarResult.status === "rejected"
-            ? String(radarResult.reason)
+            ? panelErrorMessage(radarResult.reason)
             : radar && !scopeMatches(radar)
               ? radar.projectID !== this.sync.projectID
                 ? "The operational observation belongs to another project."
@@ -151,7 +152,7 @@ export class RadarPanelState {
               : ""
         const snapshotError =
           snapshotResult.status === "rejected"
-            ? String(snapshotResult.reason)
+            ? panelErrorMessage(snapshotResult.reason)
             : snapshot && !scopeMatches(snapshot)
               ? snapshot.projectID !== this.sync.projectID
                 ? "The lifecycle observation belongs to another project."
@@ -233,8 +234,8 @@ export class RadarPanelState {
           stale: true,
           resynchronizing: true,
           error: this.data.snapshot
-            ? `Refresh failed; showing the last observation. ${String(error)}`
-            : `Observation is unavailable. ${String(error)}`,
+            ? `Refresh failed; showing the last observation. ${panelErrorMessage(error)}`
+            : `Observation is unavailable. ${panelErrorMessage(error)}`,
         })
       }
     } while (
@@ -292,7 +293,7 @@ export class RadarPanelState {
           stale: true,
           resynchronizing: true,
           error: transport.online()
-            ? `Update stream disconnected; resynchronizing. ${String(error)}`
+            ? `Update stream disconnected; resynchronizing. ${panelErrorMessage(error)}`
             : "Server disconnected; showing the last observation.",
         })
         await this.waitForReconnect(signal)

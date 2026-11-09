@@ -97,6 +97,35 @@ function snapshots() {
   }
 }
 
+test("F-S14-1 Radar read errors preserve the readable RPC envelope message", async () => {
+  const message = "Observation scope is too large; narrow it"
+  const queue = new EventQueue<ObservationChange>()
+  const fail = async () => {
+    throw { type: "observation_error", data: { message } }
+  }
+  const state = new RadarPanelState(() => {})
+  try {
+    state.connect(
+      "rpc-error",
+      "project",
+      { kind: "project", sessionID: "ses-reader" },
+      {
+        snapshot: fail,
+        radar: fail,
+        changes: (signal) => changesFrom(queue, signal),
+        online: () => true,
+      },
+    )
+    await until(() => Boolean(state.data.error))
+    // F-S14-1: a rejected RPC must retain its actionable message in the alert.
+    expect(state.data.error).not.toContain("[object Object]")
+    expect(state.data.error).toContain(message)
+  } finally {
+    state.close()
+    queue.close()
+  }
+})
+
 test("an idle event subscription performs no repeated projections and changes still refresh", async () => {
   const { fixture, session, sessionRadar } = snapshots()
   const radar = await sessionRadar

@@ -37,7 +37,7 @@ import { RadarMonitorState } from "./monitor-state.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import { createRadarMonitorTransport } from "./monitor-transport.ts"
 import { RadarMonitorView } from "./monitor-view.tsx"
-import { radarErrorMessage } from "./monitor-state.ts"
+import { panelErrorMessage } from "../panel-error.ts"
 
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
@@ -1532,7 +1532,7 @@ function RadarLiveMonitorPanel(
         <div class="lazers-radar lazers-radar-monitor">
           <div class="lazers-radar-note" role={location.error ? "alert" : "status"}>
             {location.error
-              ? `Project identity is unavailable. ${radarErrorMessage(location.error)}`
+              ? `Project identity is unavailable. ${panelErrorMessage(location.error)}`
               : "Resolving the authorized project location…"}
           </div>
         </div>

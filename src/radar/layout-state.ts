@@ -1,5 +1,6 @@
 import { createRenderEffect, createSignal, onCleanup } from "solid-js"
 import type { Accessor } from "solid-js"
+import { panelErrorMessage } from "../panel-error.ts"
 import type { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
 
 export type RadarLayoutClient = {
@@ -88,7 +89,7 @@ export function createStableRadarLayout(
       })
       .catch((error: unknown) => {
         if (!current || controller.signal.aborted) return
-        setState({ key: currentInput.key, error: String(error), loading: false })
+        setState({ key: currentInput.key, error: panelErrorMessage(error), loading: false })
       })
     onCleanup(() => {
       current = false

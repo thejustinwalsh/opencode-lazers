@@ -22,7 +22,7 @@ import {
   ModelDecisionRowsOutputSchema,
 } from "./decision-contract.ts"
 import type { ModelDecisionContext, ModelDecisionFilters } from "./decision-contract.ts"
-import type { ModelComparisonTransport } from "./comparison-state.ts"
+import type { ModelComparisonPanelData, ModelComparisonTransport } from "./comparison-state.ts"
 import { ModelComparisonPanelState } from "./comparison-state.ts"
 import {
   decisionConfigurations,
@@ -484,6 +484,54 @@ function coherentDecisionPage(
       context,
     }),
   }
+}
+
+const panelErrorMessage = "Observation scope is too large; narrow it"
+const rejectPanelRPC = async () => {
+  throw { type: "observation_error", data: { message: panelErrorMessage } }
+}
+const panelErrorCases = [
+  { field: "comparisonError", overrides: { comparison: rejectPanelRPC } },
+  { field: "sourceRefreshError", overrides: { refreshSources: rejectPanelRPC } },
+  { field: "settingsError", overrides: { settings: rejectPanelRPC } },
+  { field: "tasksError", overrides: { queryTasks: rejectPanelRPC } },
+  { field: "taskError", overrides: { getTask: rejectPanelRPC } },
+  { field: "effortError", overrides: { trajectoryStatus: rejectPanelRPC } },
+  { field: "catalogError", overrides: { catalog: rejectPanelRPC } },
+  { field: "decisionError", overrides: { decisionOverview: rejectPanelRPC } },
+  { field: "decisionInspectError", overrides: { decisionInspect: rejectPanelRPC } },
+] satisfies Array<{
+  field: keyof ModelComparisonPanelData
+  overrides: Partial<ModelComparisonTransport>
+}>
+
+for (const { field, overrides } of panelErrorCases) {
+  test(`F-S14-1 Models ${field} preserves the readable RPC envelope message`, async () => {
+    const filters = decisionRead.filters
+    const good = coherentDecisionPage("/repo", filters, "snapshot:panel-errors")
+    const state = new ModelComparisonPanelState(() => {})
+    try {
+      state.connect(
+        `rpc-error-${field}`,
+        "project-a",
+        "/repo",
+        transport({
+          decisionOverview: async () => good.overview,
+          decisionRows: async () => good.rows,
+          decisionConfigurations: async () => good.configurations,
+          ...overrides,
+        }),
+        { selectedTaskID: null, selectedCandidateID: null },
+        filters,
+      )
+      await until(() => Boolean(state.data[field]))
+      // F-S14-1: cover every Models error field, including selected-task failures.
+      expect(state.data[field]).not.toContain("[object Object]")
+      expect(state.data[field]).toContain(panelErrorMessage)
+    } finally {
+      state.close()
+    }
+  })
 }
 
 test("decision controller rejects mismatched snapshot, scope, and filters without publishing mixed pages", async () => {

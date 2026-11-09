@@ -2,9 +2,10 @@ import { expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { Schema } from "effect"
 import { fileURLToPath } from "node:url"
+import { createRoot } from "solid-js"
 import { clampSplit, splitFromPointer } from "./layout.ts"
 import { createRadarLayoutService } from "./layout-main.ts"
-import { RadarLayoutCoordinator } from "./layout-state.ts"
+import { createStableRadarLayout, RadarLayoutCoordinator } from "./layout-state.ts"
 import { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
 
 function layoutInput(key: string): RadarLayoutInput {
@@ -36,6 +37,29 @@ function workerPath() {
     ? packaged
     : fileURLToPath(new URL("./elk-worker.cjs", import.meta.url))
 }
+
+test("F-S14-1 layout failures retain readable messages without object coercion", async () => {
+  await new Promise<void>((resolve, reject) => {
+    createRoot((dispose) => {
+      const state = createStableRadarLayout(() => layoutInput("failure"), {
+        layout: async () => {
+          throw { data: { message: "Reconnect layout service" } }
+        },
+      })
+      setTimeout(() => {
+        try {
+          expect(state.error()).toBe("Reconnect layout service")
+          expect(state.error()).not.toContain("[object Object]")
+          resolve()
+        } catch (error) {
+          reject(error)
+        } finally {
+          dispose()
+        }
+      }, 0)
+    })
+  })
+})
 
 test("Radar split uses live wrapped-header geometry and explicit percentage bounds", () => {
   for (const headerHeight of [40, 84, 126]) {

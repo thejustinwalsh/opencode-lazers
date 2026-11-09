@@ -335,6 +335,7 @@ test("ordinary list refresh retains observed activity until replacement or a fai
     await state.refresh()
     expect(state.data.currentActivity[taskID]).toBeUndefined()
     expect(state.data.activityError).toBe("Current activity is unavailable.")
+    expect(state.data.activityError).not.toContain("[object Object]")
   } finally {
     pending.resolve()
     state.close()
@@ -800,6 +801,27 @@ test("read failures retain stale scoped data and recovery preserves the selected
     await state.refresh()
     expect(state.data.stale).toBe(false)
     expect(state.data.selectedID).toBe(selected)
+  } finally {
+    state.close()
+  }
+})
+
+test("F-S14-1 task read errors preserve the readable RPC envelope message", async () => {
+  const message = "Observation scope is too large; narrow it"
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "rpc-error",
+      "/project",
+      transport(async () => {
+        throw { type: "observation_error", data: { message } }
+      }),
+      {},
+    )
+    await until(() => Boolean(state.data.error))
+    // F-S14-1: plain RPC envelopes must never become object-coercion text.
+    expect(state.data.error).not.toContain("[object Object]")
+    expect(state.data.error).toContain(message)
   } finally {
     state.close()
   }
