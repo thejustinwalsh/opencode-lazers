@@ -16,7 +16,10 @@ export function ensureObservationRevision(db: Database) {
     "runner_transitions",
   ]
   for (const table of [...direct, ...related]) {
-    const columns = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all()
+    const columns = db
+      .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+      .all()
+      .filter(({ name }) => table !== "runner_progress" || name !== "latest_observed_at")
     for (const event of ["INSERT", "UPDATE", "DELETE"]) {
       const changed =
         event === "UPDATE"

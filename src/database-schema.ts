@@ -20,7 +20,7 @@ export const schemaModules = {
     tables: ["task_advice"],
   },
   runner: {
-    generation: 2,
+    generation: 3,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",

@@ -1,3 +1,4 @@
+import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
@@ -875,6 +876,24 @@ export class RunnerStore {
         // event time or the time this additive migration happens to run.
         if (!progressColumns.has("recorded_at"))
           db.exec("ALTER TABLE runner_progress ADD COLUMN recorded_at INTEGER")
+        if (!progressColumns.has("latest_observed_at")) {
+          db.exec("ALTER TABLE runner_progress ADD COLUMN latest_observed_at REAL")
+          db.exec(
+            `UPDATE runner_progress SET latest_observed_at=${progressRecencySQL("runner_progress")}`,
+          )
+        }
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS runner_progress_plan_recency
+            ON runner_progress(plan_id,latest_observed_at DESC,seq DESC);
+          CREATE TRIGGER IF NOT EXISTS runner_progress_recency_inserted
+          AFTER INSERT ON runner_progress BEGIN
+            UPDATE runner_progress SET latest_observed_at=${progressRecencySQL("NEW")} WHERE seq=NEW.seq;
+          END;
+          CREATE TRIGGER IF NOT EXISTS runner_progress_recency_updated
+          AFTER UPDATE OF at,payload ON runner_progress BEGIN
+            UPDATE runner_progress SET latest_observed_at=${progressRecencySQL("NEW")} WHERE seq=NEW.seq;
+          END;
+        `)
         const attemptColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_attempts)")

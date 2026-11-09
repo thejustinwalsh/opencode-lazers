@@ -726,3 +726,26 @@ synchronous dependency-tree walks are not claimed eliminated.
 A read-only native check during this increment reconfirmed the Architect and both
 preserved LZ-185 sessions inactive under the existing maintenance hold. No worker
 was resumed, prompted or discarded.
+
+## Wave 5: S8-3
+
+Radar now selects progress identities through a derived observation-recency index
+before fetching payloads. Runner schema generation 3 backfills the exact existing
+ordering once, then maintains it transactionally for inserts and legacy payload
+updates. Recently coalesced observations remain visible after 5,000 later rows;
+selecting by insertion sequence alone would violate that existing contract.
+Read-only older schemas retain the legacy query until their normal migration.
+
+Migration preserves original facts, timestamps, payloads and recovery-change
+counts. Derived-only updates do not emit extra recovery facts or observation
+revisions. A legacy payload update refreshes the index while emitting exactly one
+of each original change notification. This is an index, not a new evidence or
+acceptance authority.
+
+`bun run verify` passed. Migration, observation readers/revisions, recorder,
+storage and runner-store tests: **94 pass**, 1,239 assertions across six files.
+Log: `s8-recency-behavior.log` in the baseline directory. A separate 25,000-row
+fixture probe selected identical 5,001 rows: **117.00 ms before, 0.63 ms after**;
+EXPLAIN uses the covering `runner_progress_plan_recency` index. Probe and result:
+`s8-recency-perf.{ts,json}`. This is not a production activation or Desktop CPU
+measurement; the native maintenance hold remains in place.

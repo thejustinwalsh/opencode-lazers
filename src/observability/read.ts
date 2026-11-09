@@ -1,3 +1,4 @@
+import { progressRecencySQL } from "../progress/recency.ts"
 import type { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
 import type { ProgressRow } from "../runner/store.ts"
@@ -520,58 +521,36 @@ function loadRadarSource(
        WHERE plan_id IN (${placeholders}) ORDER BY rowid LIMIT 10001`,
     )
     .all(...planIDs)
-  const hasRecordedAt = db
-    .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
-    .all()
-    .some((column) => column.name === "recorded_at")
-  const recordedAtColumn = hasRecordedAt ? "g.recorded_at" : "NULL AS recorded_at"
-  // JSONB iteration avoids serializing each observation object to JSON text and
-  // reparsing it for every timestamp access. Older host SQLite builds retain the
-  // same query semantics through json_each.
-  let observations = "json_each"
-  try {
-    db.query("SELECT value FROM jsonb_each('[]')").all()
-    observations = "jsonb_each"
-  } catch {
-    // jsonb_each was added in SQLite 3.51; no database/schema change is needed.
-  }
-  // Sort only row identities and observation times. Carrying every payload through
-  // SQLite's history sort repeatedly copies large tool/step records into its temp
-  // B-tree; fetch the unchanged records by primary key after selecting the window.
+  const progressColumns = new Set(
+    db
+      .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
+      .all()
+      .map(({ name }) => name),
+  )
+  const recordedAtColumn = progressColumns.has("recorded_at")
+    ? "g.recorded_at"
+    : "NULL AS recorded_at"
+  // Current schemas maintain observation recency transactionally. Older read-only
+  // stores retain the exact legacy ordering until their normal schema upgrade.
+  const recentProgress = progressColumns.has("latest_observed_at")
+    ? `SELECT g.seq,g.latest_observed_at AS latest_at
+         FROM runner_progress g
+        WHERE g.plan_id IN (${placeholders})
+        ORDER BY g.latest_observed_at DESC,g.seq DESC LIMIT 5001`
+    : `SELECT g.seq,${progressRecencySQL("g")} AS latest_at
+         FROM runner_progress g
+        WHERE g.plan_id IN (${placeholders})
+        ORDER BY latest_at DESC,g.seq DESC LIMIT 5001`
   const progressRows = db
     .query<ProgressRow, (string | number)[]>(
-      `WITH scoped AS MATERIALIZED (
-         SELECT g.seq,g.at,
-                 (SELECT MAX(
-                    CASE WHEN observation.type='object' THEN
-                      CASE WHEN json_type(observation.value,'$.at') IN ('integer','real') THEN
-                        CASE WHEN json_extract(observation.value,'$.at')
-                          BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308
-                        THEN json_extract(observation.value,'$.at') END
-                      END
-                    END
-                  )
-                  FROM ${observations}(
-                    CASE WHEN json_valid(g.payload) THEN
-                      CASE WHEN json_type(g.payload,'$.observations')='array'
-                        THEN g.payload ELSE '{"observations":[]}' END
-                    ELSE '{"observations":[]}'
-                    END,
-                    '$.observations'
-                  ) AS observation) AS observed_at
-           FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
-          WHERE p.project_directory=? AND g.plan_id IN (${placeholders})
-       )
+      `WITH recent AS MATERIALIZED (${recentProgress})
         SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
                g.session_id,g.at,${recordedAtColumn},g.source,g.sources_json,g.kind,
                g.event_ids_json,g.call_id,g.message_id,g.dedupe_key,g.payload
-          FROM runner_progress g JOIN (
-            SELECT seq,max(at, COALESCE(observed_at,at)) AS latest_at FROM scoped
-            ORDER BY latest_at DESC, seq DESC LIMIT 5001
-          ) recent ON recent.seq=g.seq
+          FROM runner_progress g JOIN recent ON recent.seq=g.seq
          ORDER BY recent.latest_at DESC, g.seq DESC`,
     )
-    .all(projectDirectory, ...planIDs)
+    .all(...planIDs)
   const progress = progressRows.slice(0, 5_000).sort((left, right) => left.seq - right.seq)
 
   for (const plan of radarPlans) managedSessionIDs.add(plan.owner)
