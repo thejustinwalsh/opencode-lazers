@@ -154,3 +154,12 @@ roles and excluding Architect, was delivered through Desktop. Architect created
 LZ-200 and plan `a543e146-60f0-49a8-bdd7-c3df7265cda7`, with dependencies on
 LZ-199 and preserved LZ-182. The setting is not implemented or active yet.
 This observation introduced no worker steering, restart or product code edit.
+
+During the scheduler's subsequent verification, its real `bun test` subprocess
+was running under service PID1754 while the worker session was natively idle.
+The selected LZ-199 Tasks view still displayed `Running` and `Worker Active`;
+the DB node was `verifying`. This does not demonstrate a hung worker, but the
+panel fails to distinguish active verification from worker execution. Preserve
+this observation for the existing task-status/recovery UI work rather than
+creating a second status system. Architect was idle during this check; automatic
+review after verification completes remains to be observed.
