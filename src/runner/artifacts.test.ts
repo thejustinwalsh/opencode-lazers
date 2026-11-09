@@ -417,7 +417,7 @@ test("artifact evidence never uses paths outside the workspace or follows symlin
   }
 })
 
-test("worker commits are retained and their committed changes remain subject to scope checks", () => {
+test("worker commits are retained and their committed changes remain subject to scope checks", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-worker-commit-"))
   try {
     git(root, ["init", "--initial-branch=main"])
@@ -439,19 +439,19 @@ test("worker commits are retained and their committed changes remain subject to 
     git(root, ["add", "source.txt"])
     commit("worker implementation")
     const head = git(root, ["rev-parse", "HEAD"])
-    const artifact = commitArtifact(root, base, ["source.txt"])
+    const artifact = await commitArtifact(root, base, ["source.txt"])
     expect(artifact.commit).toBe(head)
     expect(artifact.paths).toEqual(["source.txt"])
-    expect(() => commitArtifact(root, base, ["other.txt"])).toThrow("Out-of-scope")
+    await expect(commitArtifact(root, base, ["other.txt"])).rejects.toThrow("Out-of-scope")
     writeFileSync(join(root, "source.txt"), "repair")
-    const dirty = commitArtifact(root, base, ["source.txt"])
+    const dirty = await commitArtifact(root, base, ["source.txt"])
     expect(git(root, ["rev-parse", `${dirty.commit}^`])).toBe(head)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("isolated rebases exclude reviewed main changes while retaining worker scope checks", () => {
+test("isolated rebases exclude reviewed main changes while retaining worker scope checks", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-rebased-worker-"))
   try {
     git(root, ["init", "--initial-branch=main"])
@@ -486,25 +486,29 @@ test("isolated rebases exclude reviewed main changes while retaining worker scop
       "main",
     ])
     const candidate = git(root, ["rev-parse", "HEAD"])
-    expect(commitArtifact(root, base, ["source.txt"], true, reviewed)).toEqual({
+    expect(await commitArtifact(root, base, ["source.txt"], true, reviewed)).toEqual({
       commit: candidate,
       identity: candidate,
       paths: ["source.txt"],
       scopeBase: reviewed,
     })
     // Shared execution still compares against its admitted baseline.
-    expect(() => commitArtifact(root, base, ["source.txt"], false, reviewed)).toThrow(
+    await expect(commitArtifact(root, base, ["source.txt"], false, reviewed)).rejects.toThrow(
       "Out-of-scope",
     )
-    expect(commitArtifact(root, reviewed, ["source.txt"], true, base).scopeBase).toBe(reviewed)
+    expect((await commitArtifact(root, reviewed, ["source.txt"], true, base)).scopeBase).toBe(
+      reviewed,
+    )
     writeFileSync(join(root, "escape.txt"), "unreviewed worker edit")
-    expect(() => commitArtifact(root, base, ["source.txt"], true, reviewed)).toThrow("escape.txt")
+    await expect(commitArtifact(root, base, ["source.txt"], true, reviewed)).rejects.toThrow(
+      "escape.txt",
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("divergent isolated repairs compare against the safe merge of admitted and incorporated work", () => {
+test("divergent isolated repairs compare against the safe merge of admitted and incorporated work", async () => {
   const fixture = divergentBaselineFixture()
   const { root, base, incorporated, reviewedHead, workerHead } = fixture
   try {
@@ -512,13 +516,13 @@ test("divergent isolated repairs compare against the safe merge of admitted and 
     expect(git(root, ["merge-base", base, incorporated])).toBe(fixture.origin)
 
     // Shared execution still measures from the admitted base, not isolated review ancestry.
-    expect(() => commitArtifact(root, base, ["repair/**"], false, reviewedHead)).toThrow(
+    await expect(commitArtifact(root, base, ["repair/**"], false, reviewedHead)).rejects.toThrow(
       "reviewed.txt",
     )
 
     mkdirSync(join(root, "repair"), { recursive: true })
     writeFileSync(join(root, "repair", "fix.ts"), "repair")
-    const artifact = commitArtifact(root, base, ["repair/**"], true, reviewedHead)
+    const artifact = await commitArtifact(root, base, ["repair/**"], true, reviewedHead)
 
     expect(artifact.paths).toEqual(["repair/fix.ts"])
     expect(artifact.commit).toBe(artifact.identity)
@@ -533,7 +537,7 @@ test("divergent isolated repairs compare against the safe merge of admitted and 
   }
 })
 
-test("edits to reviewed paths and unauthorized files remain violations in every Git state", () => {
+test("edits to reviewed paths and unauthorized files remain violations in every Git state", async () => {
   const variants = ["committed", "staged", "unstaged", "untracked"] as const
   for (const variant of variants) {
     const fixture = divergentBaselineFixture()
@@ -548,7 +552,9 @@ test("edits to reviewed paths and unauthorized files remain violations in every 
       }
 
       const violation = variant === "untracked" ? "unauthorized.txt" : "reviewed.txt"
-      expect(() => commitArtifact(root, base, ["repair/**"], true, reviewedHead)).toThrow(violation)
+      await expect(commitArtifact(root, base, ["repair/**"], true, reviewedHead)).rejects.toThrow(
+        violation,
+      )
       if (variant === "committed") {
         expect(git(root, ["rev-parse", "HEAD"])).not.toBe(workerHead)
       } else {
@@ -565,7 +571,7 @@ test("edits to reviewed paths and unauthorized files remain violations in every 
   }
 })
 
-test("reviewed content copied without shared ancestry is not exempted", () => {
+test("reviewed content copied without shared ancestry is not exempted", async () => {
   const root = initRepository("lazers-copied-reviewed-artifact-")
   try {
     writeFileSync(join(root, "origin.txt"), "shared origin")
@@ -581,7 +587,7 @@ test("reviewed content copied without shared ancestry is not exempted", () => {
     const workerHead = commitAll(root, "copy reviewed content without ancestry")
 
     expect(git(root, ["merge-base", workerHead, reviewedHead])).toBe(origin)
-    expect(() => commitArtifact(root, base, ["repair/**"], true, reviewedHead)).toThrow(
+    await expect(commitArtifact(root, base, ["repair/**"], true, reviewedHead)).rejects.toThrow(
       "copied.txt",
     )
   } finally {
@@ -589,7 +595,7 @@ test("reviewed content copied without shared ancestry is not exempted", () => {
   }
 })
 
-test("conflicting virtual baselines fail before staging even when the worker resolved its merge", () => {
+test("conflicting virtual baselines fail before staging even when the worker resolved its merge", async () => {
   const root = initRepository("lazers-conflicting-artifact-baseline-")
   try {
     writeFileSync(join(root, "conflict.txt"), "origin")
@@ -610,7 +616,7 @@ test("conflicting virtual baselines fail before staging even when the worker res
     mkdirSync(join(root, "repair"), { recursive: true })
     writeFileSync(join(root, "repair", "allowed.ts"), "must remain unstaged")
 
-    expect(() => commitArtifact(root, base, ["repair/**"], true, reviewedHead)).toThrow(
+    await expect(commitArtifact(root, base, ["repair/**"], true, reviewedHead)).rejects.toThrow(
       "conflict-free reviewed artifact baseline",
     )
     expect(git(root, ["rev-parse", "HEAD"])).toBe(workerHead)
@@ -621,7 +627,7 @@ test("conflicting virtual baselines fail before staging even when the worker res
   }
 })
 
-test("ambiguous reviewed ancestry fails closed before staging", () => {
+test("ambiguous reviewed ancestry fails closed before staging", async () => {
   const root = initRepository("lazers-ambiguous-artifact-baseline-")
   try {
     writeFileSync(join(root, "origin.txt"), "origin")
@@ -644,7 +650,7 @@ test("ambiguous reviewed ancestry fails closed before staging", () => {
     git(root, ["checkout", "first"])
     mkdirSync(join(root, "repair"), { recursive: true })
     writeFileSync(join(root, "repair", "allowed.ts"), "must remain unstaged")
-    expect(() => commitArtifact(root, origin, ["repair/**"], true, reviewedHead)).toThrow(
+    await expect(commitArtifact(root, origin, ["repair/**"], true, reviewedHead)).rejects.toThrow(
       "unique merge base",
     )
     expect(git(root, ["diff", "--cached", "--name-only"])).toBe("")

@@ -26,24 +26,31 @@ const execFileAsync = promisify(execFile)
 export async function gitAsync(
   directory: string,
   args: string[],
+  input?: string,
   environment: Record<string, string> = {},
 ): Promise<string> {
   try {
-    const result = await execFileAsync("git", args, {
+    const running = execFileAsync("git", args, {
       cwd: directory,
       encoding: "utf8",
       timeout: 30000,
       maxBuffer: 8 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...environment },
     })
+    running.child.stdin?.end(input)
+    const result = await running
     return result.stdout.trimEnd()
   } catch (error) {
     const stderr =
       error && typeof error === "object" && "stderr" in error && typeof error.stderr === "string"
         ? error.stderr
         : ""
+    const stdout =
+      error && typeof error === "object" && "stdout" in error && typeof error.stdout === "string"
+        ? error.stdout
+        : ""
     throw new Error(
-      `git ${args[0]} failed: ${(stderr || (error instanceof Error ? error.message : "unknown")).slice(0, 2000)}`,
+      `git ${args[0]} failed: ${(stderr || stdout || (error instanceof Error ? error.message : "unknown")).slice(0, 2000)}`,
       { cause: error },
     )
   }
@@ -102,7 +109,11 @@ export function scopePatternsConflict(left: string[], right: string[]): boolean 
 }
 
 /** Merge branch artifacts in caller-supplied deterministic order without moving a checkout. */
-export function combineArtifacts(directory: string, base: string, artifacts: string[]): string {
+export async function combineArtifacts(
+  directory: string,
+  base: string,
+  artifacts: string[],
+): Promise<string> {
   const isAncestor = (ancestor: string, descendant: string) => {
     try {
       git(directory, ["merge-base", "--is-ancestor", ancestor, descendant])
@@ -118,24 +129,21 @@ export function combineArtifacts(directory: string, base: string, artifacts: str
       combined = artifact
       continue
     }
-    const result = spawnSync("git", ["merge-tree", "--write-tree", combined, artifact], {
-      cwd: directory,
-      encoding: "utf8",
-      timeout: 30000,
-      maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    })
-    if (result.status !== 0) {
-      const detail = (result.stdout || result.stderr || result.error?.message || "unknown").trim()
+    let merged: string
+    try {
+      merged = await gitAsync(directory, ["merge-tree", "--write-tree", combined, artifact])
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown"
       throw new Error(
         `Conflicting accepted artifacts ${combined} and ${artifact}: ${detail.slice(0, 1500)}`,
+        { cause: error },
       )
     }
-    const tree = result.stdout.trim().split(/\s/, 1)[0]
+    const tree = merged.trim().split(/\s/, 1)[0]
     if (!tree || !/^[a-f0-9]{40,64}$/.test(tree))
       throw new Error("Git did not return a tree for combined artifacts")
     const fixedDate = "2000-01-01T00:00:00+00:00"
-    combined = git(
+    combined = await gitAsync(
       directory,
       [
         "-c",
@@ -158,18 +166,26 @@ export function combineArtifacts(directory: string, base: string, artifacts: str
   return combined
 }
 
-export function changedPaths(directory: string, base = "HEAD"): string[] {
+function changedPathCommands(base: string) {
   return [
-    ...new Set(
-      [
-        ...git(directory, ["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
-        ...git(directory, ["diff", "--cached", "--name-only", "--no-renames", "-z", base]).split(
-          "\0",
-        ),
-        ...git(directory, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
-      ].filter(Boolean),
-    ),
-  ].sort()
+    ["diff", "--name-only", "--no-renames", "-z", base],
+    ["diff", "--cached", "--name-only", "--no-renames", "-z", base],
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+  ]
+}
+
+function collectChangedPaths(results: string[]): string[] {
+  return [...new Set(results.flatMap((result) => result.split("\0")).filter(Boolean))].sort()
+}
+
+export function changedPaths(directory: string, base = "HEAD"): string[] {
+  return collectChangedPaths(changedPathCommands(base).map((args) => git(directory, args)))
+}
+
+async function changedPathsAsync(directory: string, base = "HEAD"): Promise<string[]> {
+  const results: string[] = []
+  for (const args of changedPathCommands(base)) results.push(await gitAsync(directory, args))
+  return collectChangedPaths(results)
 }
 
 /** Fingerprint the actual editable candidate bytes without staging or mutating them. */
@@ -235,24 +251,25 @@ function singleMergeBase(directory: string, left: string, right: string): string
   return bases[0]!
 }
 
-function mergedScopeTree(directory: string, base: string, incorporated: string): string {
+async function mergedScopeTree(
+  directory: string,
+  base: string,
+  incorporated: string,
+): Promise<string> {
   // Check the merge base first: Git can synthesize one when the history is
   // criss-crossed, but that would make the scope exemption ambiguous.
   singleMergeBase(directory, base, incorporated)
-  const result = spawnSync("git", ["merge-tree", "--write-tree", base, incorporated], {
-    cwd: directory,
-    encoding: "utf8",
-    timeout: 30000,
-    maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  })
-  if (result.status !== 0) {
-    const detail = (result.stdout || result.stderr || result.error?.message || "unknown").trim()
+  let merged: string
+  try {
+    merged = await gitAsync(directory, ["merge-tree", "--write-tree", base, incorporated])
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown"
     throw new Error(
       `Cannot safely construct a conflict-free reviewed artifact baseline: ${detail.slice(0, 1500)}`,
+      { cause: error },
     )
   }
-  const tree = result.stdout.trim()
+  const tree = merged.trim()
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tree))
     throw new Error("Git did not return a tree for the reviewed artifact baseline")
   if (git(directory, ["cat-file", "-t", tree]) !== "tree")
@@ -261,45 +278,50 @@ function mergedScopeTree(directory: string, base: string, incorporated: string):
 }
 
 /** Select the same reviewed comparison baseline used when an isolated artifact is verified. */
-export function reviewedScopeBase(
+export async function reviewedScopeBase(
   directory: string,
   base: string,
   head: string,
   reviewedHead?: string,
-): string {
+): Promise<string> {
   let scopeBase = base
   if (reviewedHead) {
     const common = singleMergeBase(directory, head, reviewedHead)
     const baseRelation = singleMergeBase(directory, base, common)
     if (baseRelation === base) scopeBase = common
-    else if (baseRelation !== common) scopeBase = mergedScopeTree(directory, base, common)
+    else if (baseRelation !== common) scopeBase = await mergedScopeTree(directory, base, common)
   }
   return scopeBase
 }
 
 /** Only a private runtime-created worktree may be snapshotted. Never stages origin. */
-export function commitArtifact(
+export async function commitArtifact(
   directory: string,
   base: string,
   scope: string[],
   snapshot = true,
   reviewedHead?: string,
-): { commit: string; paths: string[]; identity: string; scopeBase: string } {
+): Promise<{ commit: string; paths: string[]; identity: string; scopeBase: string }> {
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
-  const scopeBase = reviewedScopeBase(directory, base, head, snapshot ? reviewedHead : undefined)
-  const paths = changedPaths(directory, scopeBase)
+  const scopeBase = await reviewedScopeBase(
+    directory,
+    base,
+    head,
+    snapshot ? reviewedHead : undefined,
+  )
+  const paths = await changedPathsAsync(directory, scopeBase)
   const violations = scopeViolations(paths, scope)
   if (violations.length) throw new ArtifactScopeViolation(violations)
-  if (changedPaths(directory).length === 0)
+  if ((await changedPathsAsync(directory)).length === 0)
     return { commit: head, paths, identity: head, scopeBase }
   if (!snapshot)
     throw new Error(
       "Commit task edits before verification; shared checkout was not staged by runtime",
     )
-  git(directory, ["add", "--all"])
-  const tree = git(directory, ["write-tree"])
-  const commit = git(
+  await gitAsync(directory, ["add", "--all"])
+  const tree = await gitAsync(directory, ["write-tree"])
+  const commit = await gitAsync(
     directory,
     [
       "-c",

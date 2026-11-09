@@ -870,3 +870,42 @@ status call sites changed; the final run covers all current changes.
 artifact callers.** Small `rev-parse` / ancestry reads remain synchronous, as
 recommended. The change does not claim native Desktop CPU results or completion
 of every Git event-loop blocker.
+
+### F-S5-11 / F-S3-4 artifact operations
+
+Artifact combination, reviewed virtual-baseline merges and candidate snapshots
+now await the same `gitAsync`: `merge-tree`, `commit-tree`, staging, write-tree
+and snapshot path enumeration run outside the service loop. Small immutable
+ancestry/identity reads remain synchronous. Synchronous and asynchronous path
+enumeration share the same commands and result reducer, not separate scope rules.
+Fixed synthetic commit dates, ancestry checks, scope exceptions, conflicts and
+the prohibition on staging a shared checkout remain unchanged.
+
+Plan-level human acceptance computes its immutable combined artifact before the
+command transaction; the existing version/owner CAS still decides publication.
+Verification rechecks current authority after snapshot work and before publishing
+it. Finish rechecks accepted inputs after combining. Dispatch checks its owner,
+control epoch, plan definition and target-node state after awaited dependency work.
+
+The first dispatch recheck incorrectly compared the whole plan version and caused
+14 local regression failures (**440 pass / 14 fail**, 172.14 seconds). A valid
+sibling dispatch advances that version, so the guard suppressed parallel work.
+Removed that overconstraint; the relevant owner/control/definition/node predicates
+preserve cancellation without serializing siblings. The original failed log is
+retained as `s5-async-artifacts-broad.log`. All eight targeted parallel/cancellation
+tests then passed (157 assertions), and the complete four-file regression rerun
+passed **454 / 454**, 6,743 assertions, 167.29 seconds
+(`s5-async-artifacts-final.log`). No failed assertion was weakened. `bun run verify`
+passes; artifact tests now await the same results/rejections as before.
+
+A real-module two-branch probe held Git's merge open behind a temporary fixture
+barrier: **10 periodic JavaScript callbacks ran while Git was held**; JavaScript
+released it before completion; both branch contents appeared in the combined
+artifact; checkout HEAD stayed unchanged; fixture removal was confirmed.
+Driver/result: `s5-async-combine-probe.{ts,json}` in the baseline directory.
+
+This completes the review's two repository-size operation classes in the runtime
+(status plus merge/commit-tree) without converting all metadata reads or adding
+a new worker service. Other synchronous filesystem/diff work and the separately
+identified verification-probe store are not claimed offloaded. Physical Desktop
+CPU and responsiveness still need native observation after activation.

@@ -893,11 +893,15 @@ export class TaskRuntime {
     return baseline
   }
 
-  private adoptionArtifactScopeViolations(attempt: AttemptRow, artifact: string, branch: string) {
+  private async adoptionArtifactScopeViolations(
+    attempt: AttemptRow,
+    artifact: string,
+    branch: string,
+  ) {
     // Worker scope belongs to its patch. The owner reviews the integrated branch
     // separately, and fresh checks qualify that exact descendant.
     const reviewed = this.reviewedAdoptionBaseline(branch, attempt.base_commit, artifact)
-    const base = reviewedScopeBase(this.directory, attempt.base_commit, artifact, reviewed)
+    const base = await reviewedScopeBase(this.directory, attempt.base_commit, artifact, reviewed)
     const paths = git(this.directory, ["diff", "--name-only", "--no-renames", "-z", base, artifact])
       .split("\0")
       .filter(Boolean)
@@ -1032,7 +1036,7 @@ export class TaskRuntime {
       throw new Error("Reviewed candidate must be a strict descendant of the old artifact")
     git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
     const reviewedBaseline = this.reviewedAdoptionBaseline(branch, oldArtifact, descendantCommit)
-    const violations = this.adoptionArtifactScopeViolations(latest, oldArtifact, branch)
+    const violations = await this.adoptionArtifactScopeViolations(latest, oldArtifact, branch)
     if (violations.length)
       throw new Error(
         `Worker artifact contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
@@ -1045,7 +1049,7 @@ export class TaskRuntime {
         throw new Error("Combined adoption requires every other task's accepted artifact")
       return other.artifact
     })
-    const combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+    const combinedArtifact = await combineArtifacts(this.directory, input.baseCommit, branches)
     const seed = {
       taskID: task.id,
       taskRevision: task.revision,
@@ -1350,7 +1354,7 @@ export class TaskRuntime {
     let combinedArtifact: string | null = null
     if (branches.every((branch): branch is string => branch !== null)) {
       try {
-        combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+        combinedArtifact = await combineArtifacts(this.directory, input.baseCommit, branches)
       } catch {
         // Task acceptance is independent; the ordinary plan-ready integration
         // path will report a combined artifact conflict after this task passes.
@@ -3634,6 +3638,24 @@ export class TaskRuntime {
       )
         throw new Error("Retained repair recovery changed during final native revalidation")
     }
+    let humanCombinedArtifact: string | undefined
+    if (
+      command.action === "human-evidence" &&
+      !command.taskID &&
+      !command.retainedVerificationID &&
+      !command.adoptionID
+    ) {
+      const input = PlanInput.parse(JSON.parse(old.body))
+      const nodes = this.store.nodes(old.id)
+      const ordered = input.integrationOrder.map((id) => nodes.find((node) => node.task_id === id))
+      if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
+        throw new Error("Plan evidence requires all accepted task artifacts")
+      humanCombinedArtifact = await combineArtifacts(
+        this.directory,
+        input.baseCommit,
+        ordered.map((node) => node!.artifact!),
+      )
+    }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -4484,11 +4506,7 @@ export class TaskRuntime {
           )
           if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
             throw new Error("Plan evidence requires all accepted task artifacts")
-          artifact = combineArtifacts(
-            this.directory,
-            input.baseCommit,
-            ordered.map((node) => node!.artifact!),
-          )
+          artifact = humanCombinedArtifact ?? null
           assertions = input.acceptance
         }
         const assertion = assertions.find((item) => item.id === command.assertionID)
@@ -8018,7 +8036,7 @@ export class TaskRuntime {
     )
   }
 
-  private dependencySource(plan: PlanRow, input: PlanInput, node: NodeRow): string {
+  private async dependencySource(plan: PlanRow, input: PlanInput, node: NodeRow): Promise<string> {
     const dependencies = new Map<string, string[]>()
     for (const edge of input.dependencies) {
       const predecessors = dependencies.get(edge.successor) ?? []
@@ -8113,6 +8131,7 @@ export class TaskRuntime {
   }
 
   private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
+    const dispatchEpoch = this.store.planControlEpoch(plan.id)
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
     const first = attempts[0]
@@ -8167,7 +8186,7 @@ export class TaskRuntime {
       attempts.at(-1)?.artifact ??
       (input.workspaceMode === "shared"
         ? git(this.directory, ["rev-parse", "HEAD"])
-        : this.dependencySource(plan, input, node))
+        : await this.dependencySource(plan, input, node))
     const workspace =
       input.workspaceMode === "shared" ? this.directory : join(this.dataDirectory, "worktrees", id)
     const text = JSON.stringify({
@@ -8205,7 +8224,21 @@ export class TaskRuntime {
       costEstimate: { status: "unavailable", currency: "USD", kind: "equivalent-api" },
     }
     let attempt!: AttemptRow
-    this.store.fenced(this.owner, fence, (db) => {
+    const admitted = this.store.fenced(this.owner, fence, (db) => {
+      const current = this.store.plan(plan.id)
+      const currentNode = this.store
+        .nodes(plan.id)
+        .find((candidate) => candidate.task_id === node.task_id)
+      if (
+        !current ||
+        current.state !== "running" ||
+        current.owner !== plan.owner ||
+        current.revision !== plan.revision ||
+        current.body !== plan.body ||
+        this.store.planControlEpoch(plan.id) !== dispatchEpoch ||
+        currentNode?.state !== node.state
+      )
+        return false
       if (
         this.store
           .activeAdoptions()
@@ -8234,7 +8267,9 @@ export class TaskRuntime {
         Date.now(),
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
+      return true
     })
+    if (!admitted) return
     const admissionPlan = this.store.plan(plan.id)!
     const admissionOwner = admissionPlan.owner
     const admissionEpoch = this.store.planControlEpoch(plan.id)
@@ -9467,7 +9502,7 @@ export class TaskRuntime {
     if (!verificationCurrent()) return
     const preparation = this.prepareVerificationCandidate(plan, attempt, proposal, fence)
     if (preparation !== "ready") return
-    let artifact: ReturnType<typeof commitArtifact>
+    let artifact: Awaited<ReturnType<typeof commitArtifact>>
     try {
       const head = git(attempt.workspace, ["rev-parse", "HEAD"])
       const checkedCandidate = this.store.effects(plan.id).some((effect) => {
@@ -9488,7 +9523,7 @@ export class TaskRuntime {
         )
       })
       const retainFixes = checkedCandidate && this.preparationAllowed(attempt)
-      artifact = commitArtifact(
+      artifact = await commitArtifact(
         attempt.workspace,
         attempt.base_commit,
         this.store.effectiveWriteScope(attempt.task_id),
@@ -9497,12 +9532,14 @@ export class TaskRuntime {
           ? git(this.directory, ["rev-parse", "HEAD"])
           : undefined,
       )
-      // A private snapshot must be the durable candidate before yielding to a
-      // subprocess. Recreating commit-tree on each tick changes its identity
+      if (!verificationCurrent()) return
+      // Publish the private snapshot before starting checks. Recreating
+      // commit-tree on each tick changes its identity
       // and can strand an otherwise valid receipt (or supersede worker edits).
       if ((attempt.workspace !== this.directory || retainFixes) && artifact.commit !== head)
         git(attempt.workspace, ["update-ref", "HEAD", artifact.commit, head])
     } catch (error) {
+      if (!verificationCurrent()) return
       try {
         this.progress.recordAttemptOutcome(
           attempt.id,
@@ -9665,7 +9702,7 @@ export class TaskRuntime {
       // Capture automatic fixes in the delivered source; cleanliness is not a pass/fail condition.
       if (!artifactUnchanged(attempt.workspace, artifact.commit)) {
         const previousHead = git(attempt.workspace, ["rev-parse", "HEAD"])
-        artifact = commitArtifact(
+        artifact = await commitArtifact(
           attempt.workspace,
           attempt.base_commit,
           this.store.effectiveWriteScope(attempt.task_id),
@@ -9674,6 +9711,7 @@ export class TaskRuntime {
             ? git(this.directory, ["rev-parse", "HEAD"])
             : undefined,
         )
+        if (!verificationCurrent()) return
         if (artifact.commit !== previousHead)
           git(attempt.workspace, ["update-ref", "HEAD", artifact.commit, previousHead])
         this.store.fenced(this.owner, fence, (db) => {
@@ -11826,7 +11864,7 @@ export class TaskRuntime {
       if (!allNodesReady) return
       let combinedArtifact: string
       try {
-        combinedArtifact = combineArtifacts(
+        combinedArtifact = await combineArtifacts(
           this.directory,
           input.baseCommit,
           input.integrationOrder.map((taskID) => byTask.get(taskID)!.artifact!),
@@ -12296,7 +12334,7 @@ export class TaskRuntime {
     )
     if (reviewedBaseline !== adoption.reviewed_baseline)
       throw new Error("Reviewed adoption baseline changed during adoption")
-    const violations = this.adoptionArtifactScopeViolations(
+    const violations = await this.adoptionArtifactScopeViolations(
       attempt,
       oldArtifact,
       adoption.target_branch,
@@ -12312,7 +12350,7 @@ export class TaskRuntime {
         throw new Error("Combined adoption requires every other accepted artifact")
       return other.artifact
     })
-    const combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+    const combinedArtifact = await combineArtifacts(this.directory, input.baseCommit, branches)
     if (combinedArtifact !== adoption.combined_artifact)
       throw new Error("Combined artifact inputs changed during adoption")
     return { plan, input, task, node, attempt }
@@ -13044,11 +13082,13 @@ export class TaskRuntime {
     }
     let artifact: string
     try {
-      artifact = combineArtifacts(this.directory, input.baseCommit, branches)
+      artifact = await combineArtifacts(this.directory, input.baseCommit, branches)
     } catch (error) {
+      if (!acceptedInputsCurrent()) return
       this.hold(plan, `Combined artifact conflict: ${errorText(error)}`)
       return
     }
+    if (!acceptedInputsCurrent()) return
     const attempts = this.store.attempts(plan.id)
     const shared =
       JSON.parse(plan.body).workspaceMode === undefined

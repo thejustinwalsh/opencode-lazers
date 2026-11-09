@@ -4875,7 +4875,7 @@ test("independent isolated Git branches overlap and combined verification includ
   expect(git(f.root, ["show", `${plan.artifact}:a.txt`])).toBe("a")
   expect(git(f.root, ["show", `${plan.artifact}:b.txt`])).toBe("b")
   expect(
-    combineArtifacts(
+    await combineArtifacts(
       f.root,
       f.base,
       f.store.nodes(plan.id).map((node) => node.artifact!),
@@ -6259,7 +6259,7 @@ test("plan evidence binds to the accepted combination and remains separate from 
   await drive(f.runtime, 10)
   expect(f.store.plan(plan.planID)!.reason).toContain("native:human")
   expect(f.store.nodes(plan.planID).every((node) => node.state === "accepted")).toBe(true)
-  const artifact = combineArtifacts(
+  const artifact = await combineArtifacts(
     f.root,
     f.base,
     f.input.integrationOrder.map(
