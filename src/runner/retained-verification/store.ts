@@ -869,7 +869,8 @@ function retainedHistoryCapture(
         `evidence:${taskID}`,
         db
           .query<Record<string, unknown>, [string, string, string, number]>(
-            `SELECT DISTINCT operations.generation,evidence.generation,
+            `SELECT DISTINCT operations.generation AS operation_generation,
+               evidence.generation AS evidence_generation,
                CASE WHEN length(evidence.phase)<=16 THEN evidence.phase ELSE '' END AS phase,
                CASE WHEN evidence.task_id IS NULL OR length(evidence.task_id)<=64
                  THEN evidence.task_id ELSE NULL END AS task_id,

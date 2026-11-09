@@ -457,6 +457,80 @@ test("cursor capture detects evidence generation rebinding", () => {
   ).toThrow("Selected retained-verification history changed since this capture")
 })
 
+test("cursor capture detects evidence rebinding to an older operation", () => {
+  const db = fixture()
+  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
+  const waiting = operation(selectedPlan, taskA, 3, "waiting-human")
+  createRetainedVerification(db, projectDirectory, waiting)
+  const olderOperationID = db
+    .query<{ id: string }, [string, string, string, number]>(
+      `SELECT id FROM runner_retained_verifications
+       WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=?`,
+    )
+    .get(projectDirectory, selectedPlan, taskA, 1)!.id
+  db.query(
+    `INSERT INTO runner_retained_verification_evidence(
+      id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
+    ) VALUES(?,?,3,'task',?,'approval',?,'private approval evidence',3)`,
+  ).run(crypto.randomUUID(), waiting.id, taskA, waiting.artifact)
+  const requirements = new Map([
+    [
+      taskA,
+      {
+        planRevision: 1,
+        planVersion: 1,
+        taskRevision: 1,
+        taskAssertionIDs: ["approval"],
+        combinedAssertionIDs: [],
+      },
+    ],
+  ])
+  const first = retainedVerificationsForInspection(
+    db,
+    projectDirectory,
+    selectedPlan,
+    [taskA],
+    1,
+    undefined,
+    requirements,
+  )
+  expect(first.latest[0]?.humanEvidence).toEqual({
+    status: "known",
+    phase: "task",
+    missingAssertionIDs: [],
+  })
+  expect(first.history.nextCursor).toBeString()
+
+  db.query(
+    "UPDATE runner_retained_verification_evidence SET operation_id=? WHERE operation_id=?",
+  ).run(olderOperationID, waiting.id)
+  const fresh = retainedVerificationsForInspection(
+    db,
+    projectDirectory,
+    selectedPlan,
+    [taskA],
+    1,
+    undefined,
+    requirements,
+  )
+  expect(fresh.latest[0]?.humanEvidence).toEqual({
+    status: "known",
+    phase: "task",
+    missingAssertionIDs: ["approval"],
+  })
+  expect(() =>
+    retainedVerificationsForInspection(
+      db,
+      projectDirectory,
+      selectedPlan,
+      [taskA],
+      1,
+      first.history.nextCursor!,
+      requirements,
+    ),
+  ).toThrow("Selected retained-verification history changed since this capture")
+})
+
 test("cursor capture rejects oversized corrupt operation state without exposing it", () => {
   const db = fixture()
   createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
