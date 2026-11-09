@@ -217,3 +217,36 @@ and defaults it to 30 minutes. This path does not select idle timing by executio
 provider/model. The user's requested provider/model-aware cache policy remains
 unproven. Reconcile it with existing renewal work LZ-28 and model settings during
 the roadmap audit. Do not infer a provider's real cache lifetime from this default.
+
+## Source landed; activation continuation failed
+
+Native plan checks for `30b013d` passed and Architect automatically resumed.
+Its reused reviewer cleared the correction delta. Architect then launched native
+background shell `sh_1bf108a43001Rz2VwOv24xTSLs`, running its one-shot activation
+helper after native idle. The helper merged LZ-199 as `efde8d1`, LZ-164 as
+`6b571c0`, and LZ-197 as `51fd20c`. Main composition quality, 79 tests/505
+assertions and GUI build all passed; working tree was clean.
+
+The helper called `client.location.reload()` before recording completion.
+Its process and advertised output file disappeared; native `shell.get` returns
+ShellNotFoundError. The partial receipt retains merges and passing checks but
+has no final result/error/registrationAfter. Read-only SourceFence status shows
+registration changed from `d9facf6c-dc15-4266-b192-4910aa890535` to
+`6c780b33-2688-47d5-8461-2241f713c8d8` on the same service PID1754. This supports
+reload having occurred; it does not prove the live features work.
+
+Pinned OpenCode `packages/core/src/shell.ts` lines149–160 interrupt pending shell
+waits and clear the shell registry on location teardown; its process handles are
+scope-bound. The helper therefore depended on completion notification from the
+scope it destroyed. Architect and workers are now natively idle; runtime plans
+remain accepted/blocked, without integration/cleanup records. This is a real
+lifecycle continuation failure after useful source landed, not grounds to undo
+the merges or repeat tests blindly.
+
+Proportional correction to evaluate with Architect: preserve activation outcome
+and continuation intent across the reload boundary using existing durable
+coordination, then reconcile and notify from the new registration. Recovery must
+inspect actual source/runtime state and continue native probes/integration/
+cleanup. Root performed read-only diagnosis and no SQL repair, merge replay,
+manual runtime-state advance or inference call. Desktop relay awaits the already
+requested unlock.

@@ -13,8 +13,22 @@ native questions. Observe outcomes rather than supplying unsolicited steering.
 ## Current native observations (2026-11-09)
 
 Runtime/API/DB state is authoritative. Architect is
-`ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol6.1High; it was idle at the last
-observation while scheduler verification was actually running.
+`ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol6.1High. Main now includes reviewed
+LZ-199 (`efde8d1`), LZ-164 (`6b571c0`) and LZ-197 (`51fd20c`). Composition
+quality, 79 focused tests/505 assertions and GUI build passed.
+
+Activation handoff is stalled: Architect's native background shell reloaded its
+own location, disappearing before writing its final receipt or resuming Architect.
+Native shell `sh_1bf108a43001Rz2VwOv24xTSLs` is NotFound; process/output are gone.
+Live SourceFence registration changed from `d9facf6c-dc15-4266-b192-4910aa890535`
+to `6c780b33-2688-47d5-8461-2241f713c8d8` on service PID1754. Reload appears to
+have taken effect; exact live feature behavior is still unproven. Native plans
+remain accepted/blocked, not integrated. Architect and workers are idle. Do not
+rerun merges or fabricate a completion receipt. The existing receipt is
+`.cache/driver/reviewed-activation-20261109.json`; diagnosis is in
+`design/reviews/native-progress-20261109.md`. Report this to Architect through
+Desktop when unlocked, then use native integration/probe/cleanup controls.
+Root requested unlock once; Computer Use explicitly reported the lock.
 
 Original LZ-181 and the unstarted replacement LZ-198 are cancelled, with useful
 work/history preserved. Do not resume the original failed worker. The user's
@@ -30,8 +44,10 @@ assertions and native task/plan verification. Architect automatically resumed
 and reused its reviewer. Original shutdown/completion-event fixes now look
 correct; re-review found cancellation can skip sibling interruption and miss a
 published receipt after restart. Architect again resumed the SAME worker/attempt
-through native controls to fix those two cases. Integration, activation and
-cleanup remain unproven. Preserve all original drafts and retained work.
+through native controls to fix those two cases. Final `30b013d` passed quality,
+698 runner tests/8,925 assertions, native task/plan checks and scoped re-review.
+Source is merged as above; runtime integration, live probes and cleanup remain
+unproven. Preserve all original drafts and retained work.
 
 LZ-200, plan `a543e146-60f0-49a8-bdd7-c3df7265cda7`, is queued after LZ-199 and
 preserved LZ-182. It implements the user's configurable project limit of three
@@ -39,9 +55,9 @@ across ALL delegated agents, excluding Architect, with durable overflow queuing,
 priority/dependency refill and truthful waiting reasons. No such limit is active
 yet. Native worktrees already support parallel coding.
 
-Independent LZ-164 is accepted after same-worker correction `22b5abc` (75 focused
-tests); native review/integration remain pending. LZ-197's shortcut candidate
-`36a661b` has a clear native source review but remains unintegrated. LZ-195's
+LZ-164's same-worker correction `22b5abc` and LZ-197's shortcut candidate
+`36a661b` passed native review and are source-merged as above. Their native
+integration/probe/cleanup records still need reconciliation. LZ-195's
 corrected handoff candidate `1e68969` still has an Architect-role defect in its
 verify wrapper: worker-only draft saving blocks review of an existing draft.
 Normal retained repair is waiting on LZ-199. LZ-196 (automatic recovery consumer)
