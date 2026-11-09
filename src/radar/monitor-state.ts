@@ -188,6 +188,7 @@ export class RadarMonitorState {
         const latestSequence = this.latestEventSequence
         const behindEvents =
           latestSequence !== undefined && response.boundary.eventSequence < latestSequence
+        const recovering = epochChanged || (this.data.resynchronizing && behindEvents)
         const shouldRefresh = behindEvents && !this.refreshPending
         const currentConnection = transport.online() ? "connected" : "disconnected"
         const priorSelectedSessionID = this.data.selectedSessionID
@@ -232,8 +233,7 @@ export class RadarMonitorState {
           currentConnection !== "connected" ||
           response.freshness.runner !== "current" ||
           response.freshness.nativeEvents !== "connected" ||
-          epochChanged ||
-          behindEvents
+          recovering
         this.lastEventSequence = response.boundary.eventSequence
         this.lastSeenSequence = Math.max(
           this.lastSeenSequence ?? response.boundary.eventSequence,
@@ -247,14 +247,14 @@ export class RadarMonitorState {
           live: response,
           loading: false,
           stale,
-          resynchronizing: epochChanged || behindEvents,
+          resynchronizing: recovering,
           connection: currentConnection,
           error:
             response.freshness.runner === "unavailable"
               ? "Runner observation is unavailable; session activity is incomplete."
               : response.freshness.nativeEvents !== "connected"
                 ? "Native event coverage is unavailable; activity may be incomplete."
-                : behindEvents
+                : recovering && behindEvents
                   ? "A live event arrived during refresh; synchronizing again."
                   : epochChanged
                     ? "The event stream reset; synchronizing a new baseline."
@@ -325,8 +325,8 @@ export class RadarMonitorState {
     if (change.sequence <= (previous ?? -1)) return
     this.lastSeenSequence = change.sequence
     this.update({
-      stale: true,
-      resynchronizing: gap,
+      stale: this.data.stale || gap,
+      resynchronizing: this.data.resynchronizing || gap,
       connection: "connected",
       error: gap ? "Live event gap detected; synchronizing a fresh observation." : this.data.error,
     })

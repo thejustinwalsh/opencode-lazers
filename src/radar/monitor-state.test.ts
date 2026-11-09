@@ -236,3 +236,37 @@ test("event gaps are visible and trigger live resynchronization", async () => {
   expect(state.data.live?.boundary.eventSequence).toBeGreaterThanOrEqual(1)
   state.close()
 })
+
+test.each([false, true])(
+  "routine updates stay connected while a real gap stays visible: gap=%s",
+  async (gap) => {
+    const pending = deferred<LiveRadarResponse>()
+    const catchup = deferred<LiveRadarResponse>()
+    const fake = fakeTransport({
+      radar: (count) =>
+        count === 1 ? Promise.resolve(live(1)) : count === 2 ? pending.promise : catchup.promise,
+    })
+    const state = new RadarMonitorState(() => {})
+    state.connect("project-key", "project", projectScope, fake.transport, false)
+    try {
+      await until(() => Boolean(state.data.live))
+      expect(state.data.stale).toBe(false)
+      fake.emit(gap ? 3 : 2, gap)
+      await until(() => fake.liveReads() === 2)
+      expect(state.data.stale).toBe(gap)
+      fake.emit(gap ? 4 : 3)
+      await Bun.sleep(1)
+      expect(state.data.stale).toBe(gap)
+      pending.resolve(live(gap ? 3 : 2))
+      await until(() => fake.liveReads() === 3)
+      expect(state.data.stale).toBe(gap)
+      expect(state.data.resynchronizing).toBe(gap)
+      catchup.resolve(live(gap ? 4 : 3))
+      await until(() => state.data.live?.boundary.eventSequence === (gap ? 4 : 3))
+      expect(state.data.stale).toBe(false)
+      expect(state.data.resynchronizing).toBe(false)
+    } finally {
+      state.close()
+    }
+  },
+)
