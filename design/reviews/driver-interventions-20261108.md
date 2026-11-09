@@ -225,3 +225,19 @@ history and loaded older records (30to40returned), switched to Session scope
 reported these observations through Desktop. No server disconnect or worker
 interruption. Narrow/short dimensions, independent scroll retention and
 reconnect/reset remain unobserved; no full qualification claim follows.
+
+## Approved isolated verification authentication completed
+
+User explicitly approved isolated OpenCode access and ChatGPT test usage. Driver
+renewed the expired OAuth attempt through that existing instance's native
+integration API and opened its returned OpenAI URL in Chrome. OpenAI displayed
+Authorization successful. A native integration read confirmed one OpenAI OAuth
+connection labeled LAZERS owned verification in root
+lazers-full-instance-9TcU4T. No main credentials were copied or provider settings
+changed. No screenshot containing the callback authorization code was retained;
+the completed browser tab was closed.
+
+Driver handed the existing service, paused probe agent and retained fixtures back
+to Architect through main Desktop, explicitly yielding isolated-window ownership.
+Its Desktop had previously been quit; reopening and candidate refresh/qualification
+remain native probe work. No model test was invoked by Driver during sign-in.
