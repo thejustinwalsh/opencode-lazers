@@ -947,7 +947,12 @@ test("native location activation restores pending and sealed quarantine after re
 
 test("failed or mismatched native activation retains sealed resources and recovers only a current exact guard", async () => {
   const f = await retainedSourceFixture()
-  let dispose = f.install()
+  const guards = [f.install()]
+  const install = () => {
+    const guard = f.install()
+    guards.push(guard)
+    return guard
+  }
   let failure:
     | "unavailable"
     | "database"
@@ -960,11 +965,11 @@ test("failed or mismatched native activation retains sealed resources and recove
   const adapter = attachNativeQuarantineHost(f, {
     probe: async () => {
       if (failure === "unavailable") throw new Error("Location activation unavailable")
-      dispose = f.install()
+      const dispose = install()
       if (failure === "disposed") dispose()
       if (failure === "superseded") {
         const stale = dispose.registrationID
-        f.install()
+        install()
         return { registrationID: stale }
       }
       return failure === "database"
@@ -991,7 +996,8 @@ test("failed or mismatched native activation retains sealed resources and recove
     "superseded",
   ] as const) {
     failure = mismatch
-    dispose()
+    // S1-1: remove every fixture scope; disposing one restores installed survivors.
+    for (const dispose of guards.splice(0)) dispose()
     await f.runtime.tick()
     expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
     expect(sourceQuarantine(f.store, f.retained.id)?.hold_reason).toBeString()

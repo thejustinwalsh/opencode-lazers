@@ -89,8 +89,7 @@ disabled. Those expectations now assert restoration, with S1-1 comments.
 Checks: `bun run verify` passed, including automatic formatting/lint and strict
 typecheck. `bun test src/runner/source-quarantine.test.ts
 src/runner/source-fence-rpc.test.ts`: 8 pass / 0 fail, 51 assertions.
-The full suite has not been rerun after this increment. Wave 1 remains open
-until F-S14-1 is resolved; installed service behavior has not been reloaded.
+The installed service has not been explicitly reloaded to activate this increment.
 
 ## Wave 1: F-S14-1
 
@@ -110,7 +109,7 @@ and graph layout. A structured layout rejection retains its actionable message.
 Checks: final `bun run verify` and `git diff --check` passed;
 73 behavior tests / 488 assertions across the shared helper and four panel
 controllers passed. Layout behavior tests: 8 pass / 0 fail, 37 assertions.
-The post-wave full-suite comparison remains pending.
+The full-suite comparison is recorded below.
 No installed-service activation or native visual acceptance is claimed.
 
 ## Re-derived findings and coordination
@@ -171,3 +170,26 @@ record product intent rather than a selection between the original offered
 implementation options; resolve their concrete semantics when their dependent
 increments are reached. Wave 1 is unblocked by #9. Continue the review's ordered
 waves, with current-code symbol checks and bounded corrections.
+
+## Wave 1 full-suite comparison
+
+At `4b9bf98`, the unchanged-source run started Unix1794247076063 and finished
+Unix1794247421691: 1,746 pass / 7 fail, 1,753 tests across 180 files, 19,332
+assertions, 345.55 s. Logs: `/private/tmp/lazers-remediation-baseline-20261109/wave-1.{log,json}`.
+The four baseline failures remain. Three additional failures were investigated:
+
+- S1-1's native-activation test left installed predecessor fixture guards alive
+  while disposing only its newest registration, then expected no guard coverage.
+  The corrected test disposes all fixture registrations before each activation
+  failure scenario. It preserves every mismatch/hold assertion and now passes
+  (1 test, 45 assertions); this is a test-lifetime correction for the restored
+  survivor contract, not a weaker production guard.
+- Two owned-Desktop process identity tests returned observation-unavailable in
+  the restricted shell. The identical tests passed with macOS process inspection
+  available (2 tests, 10 assertions), without code changes. Do not label these
+  assertion failures as random timing noise; this run used a different process
+  inspection environment from the baseline.
+
+This is not a claim that the entire suite is green, nor that the full suite was
+rerun after the fixture correction. Wave 1's new failure was corrected and checked
+in isolation; the baseline four remain open under their owning findings.
