@@ -349,3 +349,10 @@ The supported launcher defect is recovered natively. Focus reliability and the
 full Tasks/Radar walkthrough remain open. The bridge snapshot is retained only
 in ignored .cache/driver/owned-current-snapshot.json; no full product completion
 is claimed from this fixture interaction.
+
+Main Desktop coordination follow-up: repeated paste left the composer unchanged,
+but native typeText inserted a concise correction, which was verified in the
+field before Return and then in the submitted user bubble. Architect resumed
+and received373e296 plus the successful owned reopen result. Prefer verified
+typing for now; the paste-specific failure is not proof the entire renderer is
+frozen. No additional restart was needed for this recovery.

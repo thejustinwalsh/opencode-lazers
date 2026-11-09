@@ -345,3 +345,11 @@ This demonstrates that the source is effective in at least those loaded
 locations; it does not prove a coordinated reload of every historical worktree,
 nor coverage of the unsupported inner-call boundaries described above. Null-agent
 retained recovery rows remain null rather than being assigned an invented role.
+
+After review correction373e296, a read-only inspection at Unix1794190017167
+confirmed both migrated identity columns exist in the actual project DB.
+Fresh Architect shell/read calls with null attempt links and calls from all
+three active worker attempts were recorded around Unix1794190010000. A genuine
+worker patch failure has role attribution, native-call identity, and terminal
+observation Unix1794189967293. This supersedes the earlier live-failure observation
+gap for native worker calls; unsupported caught inner-call boundaries remain.
