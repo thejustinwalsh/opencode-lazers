@@ -1598,6 +1598,58 @@ test("malformed retained evidence stays visibly partial rather than becoming an 
   }
 })
 
+test("F-S10-3 decision pagination advances across a full malformed page without losing later facts", () => {
+  const fixture = makeLedgerFixture()
+  const writer = new Database(fixture.path, { strict: true })
+  let reader: ReturnType<typeof openReadOnlyObservationLedger> | undefined
+  try {
+    insertRetainedFacts(
+      fixture,
+      fixture.attempts.failed.id,
+      (function* () {
+        for (let index = 0; index < 513; index++)
+          yield {
+            at: 50_000 + index,
+            kind: "step" as const,
+            messageID: `malformed-page-${index}`,
+            payload: { measurementBasis: "additive-step-measurement", usage: completeUsage(1) },
+          }
+      })(),
+    )
+    writer
+      .query(
+        "UPDATE runner_progress SET payload='not-json' WHERE message_id LIKE 'malformed-page-%' AND message_id!='malformed-page-512'",
+      )
+      .run()
+    reader = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+    const first = reader.readDecision()
+    assert.equal(first.status, "captured")
+    if (first.status !== "captured") return
+    expect(first.notes).toContain(
+      "512 retained decision progress facts have malformed JSON and were excluded.",
+    )
+    expect(
+      first.progressFacts.filter((fact) => fact.messageID === "malformed-page-512"),
+    ).toHaveLength(1)
+    expect(
+      first.progressFacts.filter(
+        (fact) =>
+          typeof fact.messageID === "string" && fact.messageID.startsWith("malformed-page-"),
+      ).length,
+    ).toBe(1)
+    const repeated = reader.readDecision()
+    assert.equal(repeated.status, "captured")
+    if (repeated.status === "captured") {
+      expect(repeated.progressFacts).toEqual(first.progressFacts)
+      expect(repeated.sourceFingerprint).toBe(first.sourceFingerprint)
+    }
+  } finally {
+    reader?.close()
+    writer.close()
+    fixture.close()
+  }
+})
+
 test("an ordered-source quote refresh reprices market efficiency without changing retained work or charges", async () => {
   const fixture = makeLedgerFixture()
   const route = { providerID: "openai", modelID: "fixture-model", variant: "high" }

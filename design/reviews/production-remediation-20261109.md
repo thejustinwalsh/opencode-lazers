@@ -793,3 +793,29 @@ A read-only production probe still measured a serious synchronous blocker:
 the timed read. No native model calls or DB writes occurred. Probe/result:
 `s10-capture-perf.{ts,json}` in the baseline directory. The finding remains open;
 incremental digesting alone did not resolve the event-loop latency.
+
+### F-S10-3 measured access-path correction
+
+CPU profiling attributed about **95%** of capture time to SQLite `all`/`get`,
+including 77.3% in paginated progress reads and 14.5% in the separate malformed-JSON
+count. EXPLAIN showed every page using the project/dedupe index and a temporary
+sort. A read-only query comparison over the same 24,739 facts measured
+**5,015.38 ms** on that path versus **136.95 ms** seeking the sequence primary key.
+Artifacts: `s10-capture-profile.md`, `s10-query-plan.{ts,jsonl}`.
+
+Decision capture now explicitly seeks sequence order and counts malformed records
+inside that same pass, guarding JSON projection before extraction. The existing
+512-row pages, cancellation checks, project/task association, complete-history
+contract and incremental digest remain. No new row gate or truncation was added.
+A regression with 512 malformed records followed by a valid record verifies that
+pagination advances, reports the exact excluded count and preserves later facts
+and stable snapshot identity. The >15,000-fact / >64 MiB raw-history test remains.
+
+`bun run verify` passed. Decision and observation-ledger tests: **19 pass**,
+247 assertions (`s10-query-behavior.log`). A repeated read-only production probe
+returned the same fact count and final serialized size in
+**2,432.70 / 1,219.35 / 1,226.43 ms** (`s10-capture-after.json`), versus the prior
+12,428.80 / 7,948.91 / 7,979.67 ms. This removes the measured repeated-scan defect,
+but **F-S10-3 remains open** for synchronous growth and repeated price-snapshot
+parsing. A 1.2-second warm main-thread read is not claimed acceptable. No production
+data was changed, and no native Desktop CPU improvement is claimed.

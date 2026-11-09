@@ -422,10 +422,13 @@ function fingerprintAndSize(value: Record<string, unknown>) {
   return { fingerprint: digest.digest("hex"), bytes }
 }
 
+// F-S10-3: sequence pagination must seek the rowid, not re-sort the project's
+// dedupe index on every page. Keep invalid JSON in the pass so counting it does
+// not require another full payload scan.
 const DECISION_PROGRESS_SQL = `
   SELECT r.seq,r.project_id,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
          r.source,r.sources_json,r.kind,r.event_ids_json,r.call_id,r.message_id,r.dedupe_key,
-         json_object(
+         CASE WHEN json_valid(r.payload) THEN json_object(
            'measurementBasis',json_extract(r.payload,'$.measurementBasis'),
            'usage',CASE WHEN json_type(r.payload,'$.usage')='object'
              THEN json(json_extract(r.payload,'$.usage')) ELSE NULL END,
@@ -454,20 +457,13 @@ const DECISION_PROGRESS_SQL = `
              THEN json_object('endpoints',json_object('completedAt',
                json(json_extract(r.payload,'$.timing.endpoints.completedAt'))))
              ELSE NULL END
-         ) AS payload
-  FROM runner_progress r
+         ) ELSE NULL END AS payload
+  FROM runner_progress r NOT INDEXED
   JOIN runner_plans p ON p.id=r.plan_id
   JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
   WHERE r.project_directory=? AND p.project_directory=? AND r.seq>?
-    AND r.kind IN ('step','usage-snapshot') AND json_valid(r.payload)
+    AND r.kind IN ('step','usage-snapshot')
   ORDER BY r.seq LIMIT ?`
-
-function rowCount(db: Database, sql: string, values: [string, string]): number {
-  const row = db.query<{ count: number }, [string, string]>(sql).get(...values)
-  if (!row || !Number.isSafeInteger(row.count) || row.count < 0)
-    throw new Error("Observation ledger row count is unavailable")
-  return row.count
-}
 
 function readDecisionProgress(
   db: Database,
@@ -479,15 +475,7 @@ function readDecisionProgress(
   invalidCount: number
   notes: string[]
 } {
-  const invalidCount = rowCount(
-    db,
-    `SELECT COUNT(*) AS count FROM runner_progress r
-     JOIN runner_plans p ON p.id=r.plan_id
-     JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
-     WHERE r.project_directory=? AND p.project_directory=?
-       AND r.kind IN ('step','usage-snapshot') AND NOT json_valid(r.payload)`,
-    [projectDirectory, projectDirectory],
-  )
+  let invalidCount = 0
   const facts: Record<string, unknown>[] = []
   const digest = createHash("sha256")
   const notes: string[] = []
@@ -500,14 +488,21 @@ function readDecisionProgress(
     signal?.throwIfAborted()
     const limit = DECISION_PROGRESS_BATCH_SIZE
     const batch = db
-      .query<RawProgress, [string, string, number, number]>(DECISION_PROGRESS_SQL)
+      .query<
+        Omit<RawProgress, "payload"> & { payload: string | null },
+        [string, string, number, number]
+      >(DECISION_PROGRESS_SQL)
       .all(projectDirectory, projectDirectory, afterSequence, limit)
     for (const row of batch) {
       afterSequence = row.seq
+      if (row.payload === null) {
+        invalidCount++
+        continue
+      }
       if (!parseObject(row.payload)) unreadablePayloads++
       if (!parseArray(row.sources_json)) unreadableSourceLineage++
       if (!parseArray(row.event_ids_json)) unreadableEventLineage++
-      const fact = decisionProgressFact(row, stats)
+      const fact = decisionProgressFact({ ...row, payload: row.payload }, stats)
       if (!fact) continue
       facts.push(fact)
       // Length-prefix each projected row so the digest is independent of page
