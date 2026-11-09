@@ -138,3 +138,19 @@ Independent LZ-195 continues implementing recovery controls. LZ-197's worker
 reported commit `2978a2a`, quality checks, 61 product-verification tests and GUI
 build passing, then became idle. Architect review, integration and native shortcut
 verification remain unproven; a worker report alone does not establish them.
+
+## Recovery candidate and shared delegation limit
+
+At Unix1794202341216, the preserved LZ-181 takeover worker for LZ-199 reported
+commit `159f4c9`. Its actual full runner log records 679 tests passing, zero
+failures and 8,629 assertions across 33 files in 346.89 seconds; quality checks
+also passed. The preceding full run had 676 passes and two failures, following
+the earlier 600-pass/78-failure run. Runtime subsequently moved LZ-199 into
+`verifying` without a new driver prompt. Architect review, native product
+observations, integration and dependent recovery remain unproven.
+
+The user's shared project concurrency limit of three, covering all delegated
+roles and excluding Architect, was delivered through Desktop. Architect created
+LZ-200 and plan `a543e146-60f0-49a8-bdd7-c3df7265cda7`, with dependencies on
+LZ-199 and preserved LZ-182. The setting is not implemented or active yet.
+This observation introduced no worker steering, restart or product code edit.
