@@ -86,3 +86,22 @@ uses 2 seconds. Architect confirmed the repeated observations and recorded nativ
 follow-up disposition `3ae45e71-b783-469c-b437-c5ab966eb763`, preserving the current
 worker. Its response `msg_1c10d846d0010HcX0otqRwHTcU` reports steering for cheap
 unchanged ticks and cleanup after facts change. Those results remain unproven.
+
+## Subsequent draft checks
+
+Native worker message `msg_1c1205324001G6d19M9vDEf1cx` passed both focused tests:
+2 tests, 37 assertions. The scale test uses 38 plans / 50 checkouts and asserts
+zero native inventory reads, zero session reads with messages and zero traced
+Git calls over eight unchanged ticks. Changed idle/source/ownership facts and
+missing workspace state trigger reconciliation. This is useful behavior-test
+coverage, not live production CPU or automatic backlog cleanup proof.
+
+A remaining draft review case is mixed completed and held removals in one plan.
+`worktreeCleanupFactsChanged()` searches only noncompleted removal effects and
+returns true if none is found for a creation effect. Thus a completed removal
+can select the plan again while another workspace is held. `cleanupWorktrees()`
+skips the completed removal, then lists native worktrees for the held one. Check
+whether this still repeats expensive work on unchanged ticks; the current scale
+fixture seeds all removal effects as uncertain and does not cover that mixed
+state. This is a source-supported draft finding awaiting Architect disposition,
+not a measured production regression or a new acceptance ceremony.
