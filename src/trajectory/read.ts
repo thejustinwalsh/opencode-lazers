@@ -1123,12 +1123,6 @@ export async function inspectTrajectory(
     totals.reasoning += snapshot.reasoning
     knownSessions++
   }
-  const recordedCosts = allAttempts
-    .map(({ attempt }) => numberOrNull(attempt.cost))
-    .filter((value): value is number => value !== null)
-  const missingCostAttempts = allAttempts
-    .filter(({ attempt }) => numberOrNull(attempt.cost) === null)
-    .map(({ attempt }) => safeText(attempt.id, stats, 128))
   const acceptedTransitions = rawPlans
     .flatMap((snapshot) => snapshot.transitions)
     .filter((event) => event.event === "ACCEPT")
@@ -1238,11 +1232,15 @@ export async function inspectTrajectory(
         source: "Sum of runner_attempt.retry_count once per attempt",
       },
       recordedCost: {
-        workerAttemptSubtotalUsd: recordedCosts.reduce((total, value) => total + value, 0),
+        workerAttemptSubtotalUsd: taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.valueUSD,
+        status: taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.status,
         workerScope: "LAZERS attempt rows only",
         provenance:
           "Legacy runner scalar; source model, price date, and billing basis are not persisted",
-        unknownContributions: missingCostAttempts,
+        unknownContributions:
+          taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.missingAttemptIDs.map((id) =>
+            safeText(id, stats, 128),
+          ),
         apiEquivalentTotalUsd: marketEquivalentCost?.valueUSD ?? null,
         apiEquivalentSubtotalUsd: marketEquivalentCost?.subtotalUSD ?? null,
         apiEquivalentStatus: marketEquivalentCost?.status ?? "unknown",

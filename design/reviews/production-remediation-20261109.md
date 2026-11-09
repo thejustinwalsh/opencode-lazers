@@ -466,3 +466,17 @@ scenario's value. `bun run verify` passed; valuation, reference-estimate,
 known-usage market and decision-reader behavior files: **61 pass**, 594 assertions.
 Output: `s10-decimal-behavior.log` in the baseline directory. No live pricing
 refresh or inference was performed; this is arithmetic/projection validation.
+
+## Wave 4: S9-1
+
+The short recorded-cost summary now projects the existing accounting result,
+including its `missing` / `partial` / `worker-attempt-only` status, rather than
+re-summing the same rows with an empty-array zero. The all-unknown defect assertion
+is amended with the finding ID. Added complete-zero, partial-positive and
+complete-positive cases requiring agreement between both projections. These are
+legacy diagnostics; canonical market pricing and repricing remain separate.
+
+`bun run verify` passed. Trajectory read/accounting behavior: **34 pass / 1 fail**,
+249 assertions; only the original commentary/automatic-fact baseline failure
+remains. Log: `s9-cost-behavior.log` in the baseline directory. No native state,
+usage or price data was changed.

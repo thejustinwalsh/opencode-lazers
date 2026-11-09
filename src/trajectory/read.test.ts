@@ -508,7 +508,9 @@ test("task reports include unsuccessful and accepted attempts, usage categories,
     expect(report.effort.tokenUsage.legacyAttemptScalarsNotAdded).toHaveLength(2)
     expect(report.effort.toolCalls.count).toBe(5)
     expect(report.effort.providerRetries.count).toBe(1)
-    expect(report.effort.recordedCost.workerAttemptSubtotalUsd).toBe(0)
+    // S9-1: an entirely unknown cost is not an observed zero.
+    expect(report.effort.recordedCost.workerAttemptSubtotalUsd).toBeNull()
+    expect(report.effort.recordedCost.status).toBe("missing")
     expect(report.effort.recordedCost.apiEquivalentTotalUsd).toBeNull()
     expect(report.effort.recordedCost.unknownContributions).toHaveLength(2)
     expect(report.plans[0]?.checks.map((check) => check.result)).toContain("failed")
@@ -1648,3 +1650,40 @@ test("trajectory reads leave seeded task, attempt, progress, effect, transition,
     fixture.close()
   }
 })
+
+test.each([
+  { costs: [0, 0], subtotal: 0, status: "worker-attempt-only" },
+  { costs: [null, 2.5], subtotal: 2.5, status: "partial" },
+  { costs: [1.25, 2.5], subtotal: 3.75, status: "worker-attempt-only" },
+])(
+  "S9-1 short and full recorded-cost summaries agree for $status / $subtotal",
+  async ({ costs, subtotal, status }) => {
+    const fixture = makeFixture()
+    try {
+      fixture.store.atomic((db) => {
+        fixture.attempts.forEach((attempt, i) =>
+          db
+            .query("UPDATE runner_attempts SET cost=? WHERE id=?")
+            .run(costs[i] ?? null, attempt.id),
+        )
+      })
+      const report = await inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        parse({ taskID }),
+        cursorSecret,
+      )
+      expect(report.effort.recordedCost.workerAttemptSubtotalUsd).toBe(subtotal)
+      expect(report.effort.recordedCost.status).toBe(status)
+      expect(report.effort.recordedCost.workerAttemptSubtotalUsd).toBe(
+        report.effort.taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.valueUSD,
+      )
+      expect(report.effort.recordedCost.status).toBe(
+        report.effort.taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.status,
+      )
+    } finally {
+      fixture.close()
+    }
+  },
+)
