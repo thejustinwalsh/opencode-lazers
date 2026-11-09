@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   constants,
   fstatSync,
   lstatSync,
+  readFileSync,
+  readlinkSync,
   openSync,
   closeSync,
   mkdirSync,
@@ -12,7 +15,8 @@ import {
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { canonical } from "../identity.ts"
-import { checkEnvironment } from "./checks.ts"
+import { checkEnvironment, checkSucceeded } from "./checks.ts"
+import { recognizedVerificationPhases } from "./quality-failure.ts"
 import type { TaskProposal } from "../task.ts"
 
 export function git(
@@ -136,6 +140,28 @@ export function changedPaths(directory: string, base = "HEAD"): string[] {
       ].filter(Boolean),
     ),
   ].sort()
+}
+
+/** Fingerprint the actual editable candidate bytes without staging or mutating them. */
+export function workingTreeIdentity(directory: string, base: string): string {
+  const hash = createHash("sha256")
+  hash.update(base)
+  for (const path of changedPaths(directory, base)) {
+    hash.update("\0")
+    hash.update(path)
+    try {
+      const info = lstatSync(join(directory, path))
+      hash.update(`\0${info.mode}\0`)
+      if (info.isSymbolicLink()) hash.update(readlinkSync(join(directory, path)))
+      else if (info.isFile()) hash.update(readFileSync(join(directory, path)))
+      else hash.update("unsupported-file-kind")
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+        hash.update("deleted")
+      else throw error
+    }
+  }
+  return hash.digest("hex")
 }
 
 export function scopeViolations(paths: string[], scope: string[]): string[] {
@@ -339,19 +365,54 @@ export type CheckReceipt = {
   timedOut: boolean
   stdout: string
   stderr: string
+  processCleanup?: {
+    state: "settled" | "terminated" | "uncertain"
+    capability: "process-group" | "windows-process-tree" | "direct-child"
+    rootPID?: number
+    detail?: string
+  }
+  /** Independently executed steps from a recognized `&&` quality chain. */
+  phases?: CheckPhaseReceipt[]
+  /** False when cleanup uncertainty prevented execution of every declared phase. */
+  phasesComplete?: boolean
+  preparation?: {
+    inputFingerprint: string
+    resultingFingerprint: string
+    paths: string[]
+    scope: string[]
+  }
   /** Legacy diagnostic only; never establishes or invalidates a check. */
   unchanged?: boolean
   isolation?: unknown
+}
+
+export type CheckPhaseReceipt = {
+  command: string
+  exitCode: number | null
+  timedOut: boolean
+  stdout: string
+  stderr: string
+  environmentIdentity: string
+  processCleanup?: CheckReceipt["processCleanup"]
 }
 
 export type CheckRunOptions = {
   /** When set, do not inherit the host environment. */
   environment?: Record<string, string>
   environmentIdentity?: string
+  /** Bind preparation and comparison commands to a complete input snapshot. */
+  inputIdentity?: string
   /** Exact untracked paths positively owned by this retained procedure binding. */
   ownedUntrackedPaths?: string[]
   isolation?: unknown
   signal?: AbortSignal
+  /** Injectable native process-tree adapter, also used to exercise Windows semantics off-host. */
+  processTreeAdapter?: WindowsProcessTreeAdapter
+}
+
+export type WindowsProcessTreeAdapter = {
+  hasDescendants(pid: number): Promise<boolean>
+  terminate(pid: number): Promise<void>
 }
 
 const identityEnvironmentKeys = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "CI"] as const
@@ -386,6 +447,127 @@ async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768) {
   }
   return Buffer.concat(chunks).toString("utf8") + (bytes > limit ? "\n[output truncated]" : "")
 }
+
+function processGroupExists(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error) {
+      if (error.code === "ESRCH") return false
+      if (error.code === "EPERM") return true
+    }
+    throw error
+  }
+}
+
+async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (processGroupExists(pid)) {
+    if (Date.now() >= deadline) return false
+    await Bun.sleep(20)
+  }
+  return true
+}
+
+async function terminateAndObserveProcessGroup(pid: number): Promise<void> {
+  try {
+    try {
+      process.kill(-pid, "SIGKILL")
+    } catch (error) {
+      if (!(
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ESRCH"
+      ))
+        throw error
+    }
+    if (!(await waitForProcessGroupExit(pid, 5_000)))
+      throw new Error("Verification subprocess tree did not terminate after SIGKILL")
+  } catch (error) {
+    throw new Error(
+      `Verification subprocess-tree termination is uncertain: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    )
+  }
+}
+
+async function terminateWindowsProcessTree(pid: number): Promise<void> {
+  const taskkill = Bun.spawn(["taskkill", "/PID", String(pid), "/T", "/F"], {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    bounded(taskkill.stdout),
+    bounded(taskkill.stderr),
+    taskkill.exited,
+  ])
+  if (exitCode !== 0)
+    throw new Error(
+      `taskkill could not confirm process-tree termination (exit ${exitCode}): ${(stderr || stdout).trim().slice(0, 1000)}`,
+    )
+}
+
+async function hasWindowsProcessTreeDescendants(pid: number): Promise<boolean> {
+  const script = [
+    "$rootProcessID = [uint32]" + pid,
+    "$processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)",
+    "$known = New-Object 'System.Collections.Generic.HashSet[uint32]'",
+    "[void]$known.Add($rootProcessID)",
+    "do {",
+    "  $priorCount = $known.Count",
+    "  foreach ($process in $processes) {",
+    "    if ($known.Contains([uint32]$process.ParentProcessId)) { [void]$known.Add([uint32]$process.ProcessId) }",
+    "  }",
+    "} while ($known.Count -gt $priorCount)",
+    "if ($known.Count -gt 1) { 'remaining' } else { 'empty' }",
+  ].join("\n")
+  const child = Bun.spawn(
+    ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    { stdout: "pipe", stderr: "pipe", stdin: "ignore" },
+  )
+  const [stdout, stderr, exitCode] = await Promise.all([
+    bounded(child.stdout),
+    bounded(child.stderr),
+    child.exited,
+  ])
+  if (exitCode !== 0)
+    throw new Error(
+      `Win32 process-tree observation failed (exit ${exitCode}): ${(stderr || stdout).trim().slice(0, 1000)}`,
+    )
+  const observation = stdout.trim().split(/\r?\n/).at(-1)
+  if (observation === "remaining") return true
+  if (observation === "empty") return false
+  throw new Error(`Win32 process-tree observation returned an invalid result: ${stdout.trim()}`)
+}
+
+const nativeWindowsProcessTreeAdapter: WindowsProcessTreeAdapter = {
+  hasDescendants: hasWindowsProcessTreeDescendants,
+  terminate: terminateWindowsProcessTree,
+}
+
+async function terminateAndObserveWindowsProcessTree(
+  pid: number,
+  adapter: WindowsProcessTreeAdapter,
+): Promise<void> {
+  try {
+    await adapter.terminate(pid)
+    const deadline = Date.now() + 5_000
+    while (await adapter.hasDescendants(pid)) {
+      if (Date.now() >= deadline)
+        throw new Error("Verification subprocess descendants remain after taskkill /T")
+      await Bun.sleep(50)
+    }
+  } catch (error) {
+    throw new Error(
+      `Verification subprocess-tree termination is uncertain: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    )
+  }
+}
+
 export async function runCheck(
   directory: string,
   artifact: string,
@@ -394,7 +576,7 @@ export async function runCheck(
   options: CheckRunOptions = {},
 ): Promise<CheckReceipt> {
   if (options.signal?.aborted) throw new Error("Verification was cancelled before check launch")
-  const inputIdentity = artifact
+  const inputIdentity = options.inputIdentity ?? artifact
   // Record runtime metadata without persisting environment credentials.
   const environmentIdentity = options.environmentIdentity ?? verificationEnvironmentIdentity()
   const startedAt = Date.now()
@@ -407,27 +589,107 @@ export async function runCheck(
     detached: true,
     env: checkEnvironment(options.environment ?? process.env),
   })
+  const windowsTreeAdapter =
+    options.processTreeAdapter ??
+    (process.platform === "win32" ? nativeWindowsProcessTreeAdapter : undefined)
+  let termination: Promise<void> | undefined
+  let terminationRequested = false
   const terminate = (timeout: boolean) => {
+    terminationRequested = true
     if (timeout) timedOut = true
+    if (windowsTreeAdapter) {
+      termination ??= windowsTreeAdapter.terminate(child.pid).catch((error: unknown) => {
+        child.kill("SIGKILL")
+        throw error
+      })
+      void termination.catch(() => undefined)
+      return
+    }
     try {
       process.kill(-child.pid, "SIGKILL")
-    } catch {
-      child.kill("SIGKILL")
+    } catch (error) {
+      if (!(
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ESRCH"
+      ))
+        child.kill("SIGKILL")
     }
   }
   const onAbort = () => terminate(false)
+  const deadline = performance.now() + check.timeoutMs
+  let timer: ReturnType<typeof setTimeout>
   const onTimeout = () => {
+    const remaining = deadline - performance.now()
+    if (remaining > 0) {
+      timer = setTimeout(onTimeout, Math.min(remaining, 2147483647))
+      return
+    }
     timedOut = true
     terminate(true)
   }
   options.signal?.addEventListener("abort", onAbort, { once: true })
-  const timer = setTimeout(onTimeout, Math.min(check.timeoutMs, 2147483647))
+  timer = setTimeout(onTimeout, Math.min(check.timeoutMs, 2147483647))
   try {
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [stdout, initialStderr, initialExitCode] = await Promise.all([
       bounded(child.stdout),
       bounded(child.stderr),
       child.exited,
     ])
+    clearTimeout(timer)
+    const stderr = initialStderr
+    const exitCode = initialExitCode
+    let processCleanup: CheckReceipt["processCleanup"]
+    if (windowsTreeAdapter) {
+      try {
+        if (termination) await termination.catch(() => undefined)
+        if (await windowsTreeAdapter.hasDescendants(child.pid)) {
+          await terminateAndObserveWindowsProcessTree(child.pid, windowsTreeAdapter)
+          processCleanup = {
+            state: "terminated",
+            capability: "windows-process-tree",
+            rootPID: child.pid,
+          }
+        } else
+          processCleanup = {
+            state: terminationRequested ? "terminated" : "settled",
+            capability: "windows-process-tree",
+            rootPID: child.pid,
+          }
+      } catch (error) {
+        processCleanup = {
+          state: "uncertain",
+          capability: "windows-process-tree",
+          rootPID: child.pid,
+          detail: error instanceof Error ? error.message : String(error),
+        }
+      }
+    } else {
+      try {
+        if (await waitForProcessGroupExit(child.pid, 100))
+          processCleanup = {
+            state: terminationRequested ? "terminated" : "settled",
+            capability: "process-group",
+            rootPID: child.pid,
+          }
+        else {
+          await terminateAndObserveProcessGroup(child.pid)
+          processCleanup = {
+            state: "terminated",
+            capability: "process-group",
+            rootPID: child.pid,
+          }
+        }
+      } catch (error) {
+        processCleanup = {
+          state: "uncertain",
+          capability: "process-group",
+          rootPID: child.pid,
+          detail: error instanceof Error ? error.message : String(error),
+        }
+      }
+    }
     const receipt = {
       id: check.id,
       command: check.command,
@@ -441,6 +703,7 @@ export async function runCheck(
       timedOut,
       stdout,
       stderr,
+      processCleanup,
       ...(options.isolation === undefined ? {} : { isolation: options.isolation }),
     }
     mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })
@@ -450,9 +713,93 @@ export async function runCheck(
   } catch (error) {
     terminate(false)
     await child.exited.catch(() => -1)
+    try {
+      if (windowsTreeAdapter) {
+        if (termination) await termination
+        if (await windowsTreeAdapter.hasDescendants(child.pid))
+          await terminateAndObserveWindowsProcessTree(child.pid, windowsTreeAdapter)
+      } else await terminateAndObserveProcessGroup(child.pid)
+    } catch (terminationError) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; ${terminationError instanceof Error ? terminationError.message : String(terminationError)}`,
+        { cause: terminationError },
+      )
+    }
     throw error
   } finally {
     clearTimeout(timer)
     options.signal?.removeEventListener("abort", onAbort)
   }
+}
+
+export function checkResourcesSettled(receipt: CheckReceipt): boolean {
+  const settled = (cleanup: CheckReceipt["processCleanup"]) =>
+    cleanup?.state !== "uncertain" &&
+    cleanup?.capability !== "direct-child" &&
+    !(cleanup?.capability === "windows-process-tree" && !Number.isSafeInteger(cleanup.rootPID))
+  return (
+    settled(receipt.processCleanup) &&
+    !receipt.phases?.some((phase) => !settled(phase.processCleanup))
+  )
+}
+
+export function writeCheckReceipt(receiptPath: string, receipt: CheckReceipt): void {
+  mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })
+  writeFileSync(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })
+  renameSync(`${receiptPath}.tmp`, receiptPath)
+}
+
+export async function runDeclaredCheck(
+  directory: string,
+  artifact: string,
+  check: TaskProposal["verification"][number],
+  receiptPath: string,
+  options: CheckRunOptions = {},
+): Promise<CheckReceipt> {
+  const commands = recognizedVerificationPhases(check.command)
+  if (!commands) return runCheck(directory, artifact, check, receiptPath, options)
+  const phases: CheckPhaseReceipt[] = []
+  const startedAt = Date.now()
+  const deadline = performance.now() + check.timeoutMs
+  let latest: CheckReceipt | undefined
+  for (let index = 0; index < commands.length; index++) {
+    const command = commands[index]!
+    latest = await runCheck(
+      directory,
+      artifact,
+      { ...check, command, timeoutMs: Math.max(1, deadline - performance.now()) },
+      `${receiptPath}.phase-${index}.json`,
+      options,
+    )
+    phases.push({
+      command,
+      exitCode: latest.exitCode,
+      timedOut: latest.timedOut,
+      stdout: latest.stdout,
+      stderr: latest.stderr,
+      environmentIdentity: latest.environmentIdentity,
+      ...(latest.processCleanup ? { processCleanup: latest.processCleanup } : {}),
+    })
+    if (!checkSucceeded(latest) || !checkResourcesSettled(latest)) break
+  }
+  if (!latest) throw new Error("Recognized verification command has no executable phases")
+  const result: CheckReceipt = {
+    ...latest,
+    id: check.id,
+    command: check.command,
+    cwd: directory,
+    artifact,
+    inputIdentity: options.inputIdentity ?? artifact,
+    startedAt,
+    stdout: phases.map((phase) => phase.stdout).join(""),
+    stderr: phases.map((phase) => phase.stderr).join(""),
+    processCleanup:
+      phases.find((phase) => phase.processCleanup?.state === "uncertain")?.processCleanup ??
+      phases.find((phase) => phase.processCleanup?.state === "terminated")?.processCleanup ??
+      latest.processCleanup,
+    phases,
+    phasesComplete: phases.length === commands.length,
+  }
+  writeCheckReceipt(receiptPath, result)
+  return result
 }

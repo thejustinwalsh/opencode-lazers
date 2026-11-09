@@ -1,6 +1,11 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { DateTime, Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
+import { spawnSync } from "node:child_process"
+import type { ToolEditor } from "@opencode/plugin/effect/tool"
+import { Agent } from "@opencode/schema/agent"
+import { SessionMessage } from "@opencode/schema/session-message"
+import { Tool } from "@opencode/schema/tool"
 import { nativeHost, type NativeInboxClient } from "./native.ts"
 import {
   existsSync,
@@ -16,7 +21,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { combineArtifacts, git } from "./artifacts.ts"
+import { checkResourcesSettled, combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type {
   ArchitectSourceResult,
@@ -44,10 +49,15 @@ import {
 import { inspectPlan } from "./inspection.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
+import { verificationActivitiesForDatabase } from "./verification-activities.ts"
+import { registerRunnerTools } from "./tools.ts"
+import { settleVerification } from "../../test/runner/verification-driver.ts"
 
-const cleanup: (() => void)[] = []
-afterEach(() => {
-  for (const fn of cleanup.splice(0)) fn()
+type RegisteredRunnerTool = Parameters<ToolEditor["add"]>[0]
+
+const cleanup: Array<() => void | Promise<void>> = []
+afterEach(async () => {
+  for (const fn of cleanup.splice(0)) await fn()
 })
 function fixture(
   options: {
@@ -73,6 +83,8 @@ function fixture(
     architectIdleWindowMs?: number
     architectPromptHook?: boolean
     now?: () => number
+    checkCommand?: string | ((name: string, path: string, root: string) => string)
+    combinedCheckCommand?: string
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -108,7 +120,11 @@ function fixture(
     proposal.verification = [
       {
         id: "content",
-        command: options.fail && failing ? "exit 7" : `test "$(cat ${path})" = "${name}"`,
+        command:
+          (typeof options.checkCommand === "function"
+            ? options.checkCommand(name, path, root)
+            : options.checkCommand) ??
+          (options.fail && failing ? "exit 7" : `test "$(cat ${path})" = "${name}"`),
         timeoutMs: 1000,
       },
     ]
@@ -291,6 +307,20 @@ function fixture(
         .plans()
         .flatMap((plan) => store.attempts(plan.id))
         .find((attempt) => attempt.session_id === input.sessionID)!
+      if (session.background?.state === "observed")
+        Object.assign(session.background, {
+          projectDirectory: root,
+          projectID: "project",
+          attemptID: assigned.id,
+          sessionID: assigned.session_id,
+          workspace: assigned.workspace,
+          assignedMessageID: assigned.message_id,
+          executionStartSequence: 1,
+          eventSequence: 2,
+          terminalSequence: 3,
+          terminalEventID: `event-${input.id}`,
+          terminalMessageID: `idle-${input.id}`,
+        })
       const info = metadata.get(assigned.task_id)!
       const path = info.path
       if (path === "b.txt" && !options.independent && !options.taskFiles)
@@ -409,6 +439,10 @@ function fixture(
     architectIdleWindowMs: options.architectIdleWindowMs,
     architectPromptHook: options.architectPromptHook,
     now: options.now,
+    requestTick: () =>
+      verificationActivitiesForDatabase(repository.path).length
+        ? Promise.resolve()
+        : runtime.tick(),
   })
   const inputFor = (
     selected: typeof tasks,
@@ -443,7 +477,9 @@ function fixture(
       verification: [
         {
           id: "combined",
-          command: `${options.requireVerifierPreparation ? `test -f '${join(stateDirectory, "verifier-ready")}' && ` : ""}test "$(cat ${files.map((file) => file.path).join(" ")})" = "${files.map((file) => file.name).join("")}"`,
+          command:
+            options.combinedCheckCommand ??
+            `${options.requireVerifierPreparation ? `test -f '${join(stateDirectory, "verifier-ready")}' && ` : ""}test "$(cat ${files.map((file) => file.path).join(" ")})" = "${files.map((file) => file.name).join("")}"`,
           timeoutMs: 1000,
         },
       ],
@@ -470,8 +506,8 @@ function fixture(
   }
   const input = inputFor(tasks, { allowScopeOverlap: options.allowScopeOverlap })
   const receipt = options.startOnly ? undefined : store.submit(input, "owner")
-  cleanup.push(() => {
-    runtime.stop()
+  cleanup.push(async () => {
+    await runtime.stop()
     repository.close()
     rmSync(root, { recursive: true, force: true })
     if (options.shared) rmSync(stateDirectory, { recursive: true, force: true })
@@ -511,7 +547,49 @@ function fixture(
   }
 }
 async function drive(runtime: TaskRuntime, count = 8) {
-  for (let n = 0; n < count; n++) await runtime.tick()
+  for (let n = 0; n < count; n++) {
+    await settleVerification(runtime)
+  }
+}
+
+async function registeredPlanCommand(runtime: TaskRuntime) {
+  const tools = new Map<string, RegisteredRunnerTool>()
+  const editor = {
+    add: (tool: RegisteredRunnerTool) => tools.set(tool.name, tool),
+  } as unknown as ToolEditor
+  const context = {
+    permission: { assert: () => Effect.void },
+    tool: {
+      transform: (transform: (editor: ToolEditor) => void) =>
+        Effect.sync(() => {
+          transform(editor)
+          return { dispose: Effect.void }
+        }),
+    },
+  } as unknown as Plugin.Context
+  await Effect.runPromise(Effect.scoped(registerRunnerTools(context, runtime)))
+  const tool = tools.get("lz-plan-command")!
+  return {
+    execute: async (input: unknown) =>
+      Effect.runPromise(
+        tool.execute(input, {
+          sessionID: "owner" as never,
+          agent: Agent.ID.make("architect"),
+          messageID: SessionMessage.ID.make("msg_test"),
+          id: Tool.CallID.make("call_test"),
+          progress: () => Effect.void,
+        } as Parameters<RegisteredRunnerTool["execute"]>[1]),
+      ),
+  }
+}
+
+async function waitForPath(path: string, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return
+    await Bun.sleep(10)
+  }
+  throw new Error(`Timed out waiting for subprocess barrier: ${path}`)
 }
 
 async function retainedSourceFixture() {
@@ -2308,7 +2386,8 @@ test("inspector Start admits one real runtime plan and returns record-backed tas
     f.runtime.startTask(input),
     f.runtime.startTask(input),
   ])
-  expect(first).toMatchObject({ status: "started", state: "running" })
+  expect(first).toMatchObject({ status: "started" })
+  expect(["running", "verifying"]).toContain(first.state)
   expect(concurrent.planID).toBe(first.planID)
   const second = await f.runtime.startTask(input)
   expect(second).toMatchObject({ status: "existing", planID: first.planID })
@@ -3388,7 +3467,7 @@ test("an uncertain current outcome follows an adopted owner across reopen withou
     index < 20 && !outbox(f.store).some((row) => row.state === "uncertain");
     index++
   )
-    await f.runtime.tick()
+    await settleVerification(f.runtime)
 
   const uncertain = outbox(f.store).find((row) => row.state === "uncertain")!
   expect(JSON.parse(uncertain.payload).status).toBe("blocked")
@@ -3607,7 +3686,7 @@ async function holdFailedAttempt(
   expect(f.store.plan(planID)?.state).toBe("blocked")
   return { planID, attempt: f.store.attempts(planID)[0]!, worker }
 }
-async function acceptedRetainedRepairFixture() {
+async function acceptedAttemptFixture(options: { syntheticTerminalInput?: boolean } = {}) {
   const f = fixture({
     commit: true,
     taskFiles: [{ name: "a", path: "a.txt", scope: ["a.txt", "repair-notes.txt"] }],
@@ -3615,16 +3694,67 @@ async function acceptedRetainedRepairFixture() {
   const planID = f.receipt.planID
   const task = f.tasks[0]!
   await runPlan(f)
+  await f.runtime.tick()
+  const original = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(original.session_id)!
+  if (options.syntheticTerminalInput) {
+    const claim = f.runtime.progress.claimReminder(
+      original.session_id,
+      "Provide a concise handoff after the owned background shell completes.",
+      SessionMessage.ID.create(),
+    )
+    if (!claim) throw new Error("Could not capture the owned synthetic worker input")
+    expect(f.runtime.progress.finishReminder(claim, "admitted")).toBe(true)
+    worker.messages.push({
+      id: claim.messageID,
+      type: "synthetic",
+      text: "Provide a concise handoff after the owned background shell completes.",
+      metadata: claim.ownership,
+    })
+    worker.turn = { inputID: claim.messageID, state: "completed" }
+    worker.outcome = "succeeded"
+    worker.background = {
+      state: "observed",
+      source: "experimental.idle",
+      observedAt: Date.now(),
+      inputID: claim.messageID,
+      executionStartSequence: 4,
+      eventSequence: 5,
+      terminalSequence: 6,
+      terminalEventID: "event-owned-shell-terminal",
+      terminalMessageID: "idle-owned-shell-terminal",
+      projectDirectory: f.root,
+      projectID: "project",
+      attemptID: original.id,
+      sessionID: original.session_id,
+      workspace: original.workspace,
+      assignedMessageID: original.message_id,
+      count: 0,
+      kinds: { shell: 0, subagent: 0, image: 0 },
+    }
+  }
   await drive(f.runtime, 10)
   expect(f.store.plan(planID)?.state).toBe("accepted")
-  const original = f.store.attempts(planID)[0]!
   const artifact = f.store.nodes(planID)[0]!.artifact!
-  const acceptedWorker = f.sessions.get(original.session_id)!
-  acceptedWorker.busy = false
-  acceptedWorker.pendingInput = false
-  acceptedWorker.pendingPermissions = 0
-  acceptedWorker.pendingForms = 0
-  acceptedWorker.observationUnstable = false
+  Object.assign(worker, {
+    busy: false,
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    observationUnstable: false,
+  })
+  return { f, planID, task, original, artifact, worker }
+}
+
+async function acceptedRetainedRepairFixture() {
+  const {
+    f,
+    planID,
+    task,
+    original,
+    artifact,
+    worker: acceptedWorker,
+  } = await acceptedAttemptFixture()
   await f.runtime.command(
     {
       requestID: "retained-repair-for-continuation",
@@ -3662,6 +3792,150 @@ async function acceptedRetainedRepairFixture() {
     worker: f.sessions.get(attempt.session_id)!,
   }
 }
+
+test("retained repair carries an owned captured synthetic terminal input through same-worker dispatch", async () => {
+  const { f, planID, task, original, artifact, worker } = await acceptedAttemptFixture({
+    syntheticTerminalInput: true,
+  })
+  const nativeInputID = worker.turn!.inputID!
+  expect(nativeInputID).not.toBe(original.message_id)
+  expect(
+    f.runtime.progress.matchesAssignedInput(
+      original.id,
+      original.session_id,
+      original.message_id,
+      nativeInputID,
+    ),
+  ).toBe(true)
+  const originalSessionCount = f.events.filter((event) => event.startsWith("create:")).length
+  const result = (await f.runtime.command(
+    {
+      requestID: "retained-repair-captured-terminal-input",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "retained-repair",
+      taskID: task.id,
+      attemptID: original.id,
+      artifact,
+      reason: "Continue from the captured successful native input.",
+    },
+    "owner",
+  )) as { status: string; attemptID: string }
+  expect(result).toMatchObject({ status: "retained-repair-requested", attemptID: original.id })
+  const admitted = f.store.attempts(planID)[0]!
+  const repair = f.store.latestRetainedRepair<{
+    previousMessageID: string
+    nativeInputID: string
+    nativeAssignmentID: string
+  }>(planID, task.id)!
+  expect(repair).toMatchObject({
+    previousMessageID: original.message_id,
+    nativeInputID,
+    nativeAssignmentID: original.message_id,
+  })
+  expect(admitted).toMatchObject({
+    id: original.id,
+    session_id: original.session_id,
+    workspace: original.workspace,
+    policy: original.policy,
+    state: "preparing",
+  })
+  expect(admitted.message_id).not.toBe(original.message_id)
+
+  await f.runtime.tick()
+
+  const dispatched = f.store.attempts(planID)[0]!
+  expect(dispatched).toMatchObject({
+    id: original.id,
+    session_id: original.session_id,
+    workspace: original.workspace,
+    policy: original.policy,
+    state: "running",
+  })
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(originalSessionCount)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+  expect(worker.messages.some((message) => message.id === nativeInputID)).toBe(true)
+})
+
+test.each(["uncaptured-synthetic", "foreign-user", "stale-idle", "active-background"] as const)(
+  "retained repair rejects %s input evidence before reserving the attempt",
+  async (invalidInput) => {
+    const { f, planID, task, original, artifact, worker } = await acceptedAttemptFixture()
+    const background = worker.background
+    if (!background || background.state !== "observed")
+      throw new Error("Fixture lacks its captured native idle observation")
+    if (invalidInput === "uncaptured-synthetic" || invalidInput === "foreign-user") {
+      const foreignInputID = SessionMessage.ID.create()
+      worker.messages.push({
+        id: foreignInputID,
+        type: invalidInput === "foreign-user" ? "user" : "synthetic",
+        text: "Unowned terminal input",
+      })
+      worker.turn = { inputID: foreignInputID, state: "completed" }
+      background.inputID = foreignInputID
+    } else if (invalidInput === "stale-idle") {
+      worker.turn = { inputID: original.message_id, state: "completed" }
+      background.inputID = SessionMessage.ID.create()
+    } else {
+      worker.turn = { inputID: original.message_id, state: "completed" }
+      background.count = 1
+      background.kinds.shell = 1
+    }
+
+    await expect(
+      f.runtime.command(
+        {
+          requestID: `reject-${invalidInput}-retained-repair`,
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "retained-repair",
+          taskID: task.id,
+          attemptID: original.id,
+          artifact,
+          reason: "Reject terminal input without exact captured idle ownership.",
+        },
+        "owner",
+      ),
+    ).rejects.toThrow()
+    expect(f.store.attempts(planID)).toHaveLength(1)
+    expect(f.store.attempts(planID)[0]?.message_id).toBe(original.message_id)
+    expect(f.store.latestRetainedRepair(planID, task.id)).toBeUndefined()
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  },
+)
+
+test("retained repair revalidates the captured terminal input before prompting the original worker", async () => {
+  const { f, planID, task, original, artifact, worker } = await acceptedAttemptFixture({
+    syntheticTerminalInput: true,
+  })
+  const before = f.events.filter((event) => event.startsWith("prompt:")).length
+  await f.runtime.command(
+    {
+      requestID: "reserve-captured-terminal-for-dispatch",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "retained-repair",
+      taskID: task.id,
+      attemptID: original.id,
+      artifact,
+      reason: "Repair only while the exact captured terminal input remains current.",
+    },
+    "owner",
+  )
+  const foreignInputID = SessionMessage.ID.create()
+  worker.messages.push({ id: foreignInputID, type: "synthetic", text: "Unowned input" })
+  worker.turn = { inputID: foreignInputID, state: "completed" }
+  if (worker.background?.state === "observed") worker.background.inputID = foreignInputID
+
+  await f.runtime.tick()
+
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]?.state).toBe("preparing")
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(before)
+})
+
 async function reproduceLegacyRetainedRepairFenceFailure() {
   const state = await acceptedRetainedRepairFixture()
   const { f, planID, task, attempt, repair, worker } = state
@@ -3835,8 +4109,8 @@ function reopenRuntime(f: ReturnType<typeof fixture>) {
   const store = new RunnerStore(repository)
   store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const runtime = new TaskRuntime(store, f.host, "project")
-  cleanup.unshift(() => {
-    void runtime.stop()
+  cleanup.unshift(async () => {
+    await runtime.stop()
     repository.close()
   })
   return { store, runtime }
@@ -4035,7 +4309,7 @@ test("real Git worktrees execute a dependency graph, verify combined content and
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await drive(f.runtime, 16)
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   expect(f.store.nodes(f.receipt.planID).map((n) => n.state)).toEqual(["accepted", "accepted"])
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
@@ -4065,6 +4339,299 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   })
   await drive(f.runtime)
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
+})
+
+test("authorized formatting is committed before the exact candidate is verified", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "src/result.ts" }],
+    checkCommand: "bun fmt --check src/result.ts",
+    combinedCheckCommand: "test -f src/result.ts",
+  })
+  await runPlan(f)
+  await drive(f.runtime, 18)
+  const plan = f.store.plan(f.receipt.planID)!
+  const attempt = f.store.attempts(plan.id)[0]!
+  expect(plan.state).toBe("accepted")
+  expect(f.store.attempts(plan.id)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  const committed = spawnSync("git", ["show", `${attempt.artifact}:src/result.ts`], {
+    cwd: f.root,
+    encoding: "utf8",
+  }).stdout
+  expect(committed).toBe(readFileSync(join(attempt.workspace, "src/result.ts"), "utf8"))
+  expect(committed).not.toBe("a")
+  expect(attempt.artifact).toBeTruthy()
+  const preparation = f.store.effects(plan.id).find((effect) => effect.kind === "mechanical-fix")!
+  expect(preparation.state).toBe("completed")
+  const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: CheckReceipt }).check
+  expect(preparedReceipt.preparation?.inputFingerprint).not.toBe(
+    preparedReceipt.preparation?.resultingFingerprint,
+  )
+  const verified = attemptCheck(f, f.tasks[0]!.id, attempt.id)
+  expect(verified.artifact).toBe(attempt.artifact!)
+  expect(verified.inputIdentity).toBe(attempt.artifact!)
+  expect(verified.exitCode).toBe(0)
+})
+
+test("out-of-scope candidate changes are not mechanically modified", async () => {
+  const f = fixture({
+    outside: true,
+    taskFiles: [{ name: "a", path: "src/result.ts", scope: ["src/**"] }],
+    checkCommand: "bun fmt --check src/result.ts",
+  })
+  await runPlan(f)
+  await drive(f.runtime, 8)
+  const plan = f.store.plan(f.receipt.planID)!
+  const attempt = f.store.attempts(plan.id)[0]!
+  expect(plan.state).toBe("blocked")
+  expect(readFileSync(join(attempt.workspace, "src/result.ts"), "utf8")).toBe("a")
+  expect(f.store.effects(plan.id).some((effect) => effect.kind === "mechanical-fix")).toBe(false)
+})
+
+test("a real verification barrier does not block same-project dispatch, cancellation, or delivery", async () => {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+  const f = fixture({
+    delayed: true,
+    independent: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: (name, _path, root) =>
+      name === "a"
+        ? `printf x >> ${quote(join(root, ".lazers-check-started"))}; while [ ! -f ${quote(join(root, ".lazers-check-release"))} ]; do sleep 0.02; done; test "$(cat a.txt)" = "a"`
+        : `test "$(cat ${name}.txt)" = "${name}"`,
+  })
+  const control = await registeredPlanCommand(f.runtime)
+  const run = async (planID: string, requestID: string) => {
+    const plan = f.store.plan(planID)!
+    await control.execute({ requestID, planID, expectedVersion: plan.version, action: "run" })
+  }
+  const taskB = f.createTask("b", "b.txt")
+  const planB = f.store.submit(f.inputFor([taskB], { requestID: "barrier-plan-b" }), "owner")
+  const taskC = f.createTask("c", "c.txt")
+  const planC = f.store.submit(f.inputFor([taskC], { requestID: "barrier-plan-c" }), "owner")
+  const taskD = f.createTask("d", "d.txt")
+  const planD = f.store.submit(f.inputFor([taskD], { requestID: "barrier-plan-d" }), "owner")
+
+  await run(f.receipt.planID, "barrier-run-a")
+  await f.runtime.tick()
+  const attemptA = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attemptA.session_id)
+  await f.runtime.tick()
+  const started = join(f.root, ".lazers-check-started")
+  const release = join(f.root, ".lazers-check-release")
+  await waitForPath(started)
+  const effectA = f.store
+    .effects(f.receipt.planID)
+    .find((effect) => effect.kind === "verify:content")!
+  const pending = verificationActivitiesForDatabase(f.repository.path).find(
+    (activity) => activity.metadata.effectID === effectA.id,
+  )!
+  expect(pending.state).toBe("running")
+  expect(existsSync(release)).toBe(false)
+
+  await run(planC.planID, "barrier-run-c")
+  await f.runtime.tick()
+  await run(planB.planID, "barrier-run-b")
+  await control.execute({
+    requestID: "barrier-cancel-c",
+    planID: planC.planID,
+    expectedVersion: f.store.plan(planC.planID)!.version,
+    action: "cancel",
+  })
+  await control.execute({
+    requestID: "barrier-cancel-d",
+    planID: planD.planID,
+    expectedVersion: f.store.plan(planD.planID)!.version,
+    action: "cancel",
+  })
+  const competing = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(async () => competing.stop())
+  await Promise.all([f.runtime.tick(), f.runtime.tick(), f.runtime.tick(), competing.tick()])
+
+  expect(pending.state).toBe("running")
+  expect(readFileSync(started, "utf8")).toBe("x")
+  expect(
+    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "verify:content"),
+  ).toHaveLength(1)
+  expect(f.store.attempts(planB.planID)).toHaveLength(1)
+  expect(f.store.attempts(planC.planID)[0]?.state).toBe("cancelled")
+  expect(f.store.plan(planC.planID)?.state).toBe("cancelled")
+  expect(f.store.plan(planD.planID)?.state).toBe("cancelled")
+  expect(f.notifications.some((notice) => notice.text.includes('"status":"cancelled"'))).toBe(true)
+
+  writeFileSync(release, "release\n")
+  await pending.settled
+  await drive(f.runtime, 5)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+})
+
+test("runtime stop aborts checks admitted by its draining tick before storage disposal", async () => {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: (_name, _path, root) =>
+      `printf started > ${quote(join(root, "check-started"))}; printf "%s" "$$" > ${quote(join(root, "check-pid"))}; while [ ! -f ${quote(join(root, "check-release"))} ]; do sleep 0.02; done; exit 0`,
+    combinedCheckCommand: "true",
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id)
+
+  let observed!: () => void
+  const observationEntered = new Promise<void>((resolve) => (observed = resolve))
+  let release!: () => void
+  const observationRelease = new Promise<void>((resolve) => (release = resolve))
+  let blocked = false
+  const originalSession = f.host.session.bind(f.host)
+  f.host.session = async (id, options) => {
+    if (id === attempt.session_id && options?.messages && !blocked) {
+      blocked = true
+      observed()
+      await observationRelease
+    }
+    return originalSession(id, options)
+  }
+  let admitted!: () => void
+  const verificationAdmitted = new Promise<void>((resolve) => (admitted = resolve))
+  let drain!: () => void
+  const drainRelease = new Promise<void>((resolve) => (drain = resolve))
+  const runtimeInternals = f.runtime as unknown as {
+    verify: (...args: unknown[]) => Promise<void>
+  }
+  const originalVerify = runtimeInternals.verify.bind(f.runtime)
+  runtimeInternals.verify = async (...args) => {
+    await originalVerify(...args)
+    admitted()
+    await drainRelease
+  }
+
+  const advancing = f.runtime.tick()
+  await observationEntered
+  const stopping = f.runtime.stop()
+  // Let stop take its first activity snapshot while the tick is held before
+  // it admits the check; releasing the observation then exercises the late
+  // activity sweep after the drain reaches idle.
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  release()
+  await verificationAdmitted
+  await waitForPath(join(f.root, "check-started"), 3_000)
+
+  const effect = f.store.effects(f.receipt.planID).find((item) => item.kind === "verify:content")!
+  const activity = verificationActivitiesForDatabase(f.repository.path).find(
+    (item) => item.metadata.effectID === effect.id,
+  )!
+  expect(activity.owner).toBe(f.runtime.owner)
+  expect(activity.state).toBe("running")
+  drain()
+  await Promise.all([advancing, stopping])
+  runtimeInternals.verify = originalVerify
+  expect(activity.state).toBe("completed")
+  expect(
+    verificationActivitiesForDatabase(f.repository.path).some((item) => item.state === "running"),
+  ).toBe(false)
+  const checkedAttempt = f.store.attempts(f.receipt.planID)[0]!
+  const receiptPath = (JSON.parse(effect.payload) as { receiptPath: string }).receiptPath
+  expect(existsSync(receiptPath)).toBe(true)
+  const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as CheckReceipt
+  expect(receipt).toMatchObject({
+    id: "content",
+    artifact: checkedAttempt.artifact,
+    inputIdentity: checkedAttempt.artifact,
+    exitCode: expect.any(Number),
+    timedOut: false,
+    processCleanup: { state: "terminated", capability: "process-group" },
+  })
+  expect(checkResourcesSettled(receipt)).toBe(true)
+  expect(effect.state).toBe("intended")
+
+  const reopened = reopenRuntime(f)
+  await drive(reopened.runtime, 3)
+  const recovered = reopened.store.effects(f.receipt.planID).find((item) => item.id === effect.id)!
+  expect(recovered.state).toBe("completed")
+  expect((JSON.parse(recovered.receipt!) as { check: CheckReceipt }).check.exitCode).not.toBe(0)
+  expect(readFileSync(join(f.root, "check-started"), "utf8")).toBe("started")
+})
+
+test("an exit-zero check with uncertain cleanup retains its receipt and is not replayed after reopen", async () => {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: (_name, _path, root) =>
+      `printf x >> ${quote(join(root, "check-count"))}; printf "%s" "$$" > ${quote(join(root, "check-pid"))}; sleep 30 >/dev/null 2>&1 & while [ ! -f ${quote(join(root, "check-release"))} ]; do sleep 0.02; done; exit 0`,
+    combinedCheckCommand: "true",
+  })
+  const originalKill = process.kill.bind(process)
+  const pidPath = join(f.root, "check-pid")
+  const releasePath = join(f.root, "check-release")
+  let processGroupID: number | undefined
+  const mockedKill = spyOn(process, "kill").mockImplementation(((pid, signal) => {
+    if (typeof pid === "number" && processGroupID !== undefined && pid === -processGroupID) {
+      if (signal === 0) return true
+      if (signal === "SIGKILL") throw new Error("simulated process-group cleanup failure")
+    }
+    return originalKill(pid, signal)
+  }) as typeof process.kill)
+  try {
+    await runPlan(f)
+    await f.runtime.tick()
+    const attempt = f.store.attempts(f.receipt.planID)[0]!
+    f.completeWorker(attempt.session_id)
+    await f.runtime.tick()
+    await waitForPath(pidPath)
+    processGroupID = Number(readFileSync(pidPath, "utf8"))
+    writeFileSync(releasePath, "go\n")
+    const effect = f.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.kind === "verify:content")!
+    const activity = verificationActivitiesForDatabase(f.repository.path).find(
+      (candidate) => candidate.metadata.effectID === effect.id,
+    )!
+    await activity.settled
+    await drive(f.runtime, 4)
+
+    const uncertain = f.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.id === effect.id)!
+    const envelope = JSON.parse(uncertain.receipt!) as {
+      result: { check: CheckReceipt }
+    }
+    expect(uncertain.state).toBe("uncertain")
+    expect(envelope.result.check).toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+      processCleanup: {
+        state: "uncertain",
+        capability: "process-group",
+        rootPID: processGroupID,
+      },
+    })
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+    expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
+
+    await f.runtime.stop()
+    const reopened = reopenRuntime(f)
+    await reopened.runtime.tick()
+    const afterReopen = reopened.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.id === effect.id)!
+    expect(afterReopen.state).toBe("uncertain")
+    expect((JSON.parse(afterReopen.receipt!) as typeof envelope).result.check.exitCode).toBe(0)
+    expect(
+      reopened.store
+        .effects(f.receipt.planID)
+        .filter((candidate) => candidate.kind === "verify:content"),
+    ).toHaveLength(1)
+    expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
+  } finally {
+    mockedKill.mockRestore()
+    if (processGroupID !== undefined) {
+      try {
+        originalKill(-processGroupID, "SIGKILL")
+      } catch {
+        // The subprocess tree may have exited while the retained receipt was inspected.
+      }
+    }
+  }
 })
 
 test("independent isolated Git branches overlap and combined verification includes every artifact", async () => {
@@ -4101,7 +4668,7 @@ test("independent isolated Git branches overlap and combined verification includ
   }
 
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual(["accepted", "running"])
   const currentActivity = f.store.detail(f.receipt.planID).activity as {
     id: number
@@ -4147,7 +4714,7 @@ test("dependencies wait for accepted inputs and wildcard ancestor scopes seriali
   ])
   const predecessor = dependent.store.attempts(dependent.receipt.planID)[0]!
   dependent.completeWorker(predecessor.session_id)
-  await dependent.runtime.tick()
+  await settleVerification(dependent.runtime)
   expect(dependent.store.attempts(dependent.receipt.planID)).toHaveLength(2)
   const successor = dependent.store.attempts(dependent.receipt.planID)[1]!
   expect(successor.base_commit).toBe(
@@ -4174,7 +4741,7 @@ test("dependencies wait for accepted inputs and wildcard ancestor scopes seriali
   expect(scopes.store.attempts(scopes.receipt.planID)).toHaveLength(1)
   const first = scopes.store.attempts(scopes.receipt.planID)[0]!
   scopes.completeWorker(first.session_id)
-  await scopes.runtime.tick()
+  await settleVerification(scopes.runtime)
   await scopes.runtime.tick()
   const second = scopes.store.attempts(scopes.receipt.planID)[1]!
   expect(second.base_commit).toBe(scopes.base)
@@ -4227,7 +4794,7 @@ test("independent plans overlap while a second reconciler cannot duplicate dispa
     secondReconciler.stop()
 
     f.completeWorker(attemptsA[0]!.session_id)
-    await f.runtime.tick()
+    await settleVerification(f.runtime)
     const attemptsBAfterA = f.store.attempts(planB.planID)
     expect(attemptsBAfterA).toHaveLength(1)
     expect(f.sessions.get(attemptsBAfterA[0]!.session_id)?.busy).toBe(true)
@@ -4263,7 +4830,7 @@ test("single-task acceptance coalesces its task handoff while another plan worke
   const a = f.store.attempts(f.receipt.planID)[0]!
   const other = f.store.attempts(planB.planID)[0]!
   f.completeWorker(a.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.sessions.get(other.session_id)?.busy).toBe(true)
   expect(f.store.plan(planB.planID)?.state).toBe("running")
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
@@ -4317,7 +4884,7 @@ test("a late older retry cannot replace a newer queued plan outcome", async () =
   await f.runtime.tick()
   const attempt = f.store.attempts(f.receipt.planID)[0]!
   f.completeWorker(attempt.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
 
   const plan = f.store.plan(f.receipt.planID)!
   const current = f.store
@@ -4383,7 +4950,7 @@ test("an actionable partial-task outcome wakes review while its sibling worker r
   expect(attempts).toHaveLength(2)
   f.sessions.get("owner")!.busy = true
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
   expect(f.sessions.get(attempts[1]!.session_id)?.busy).toBe(true)
   const partial = f.inbox
@@ -4415,11 +4982,11 @@ test("a newer partial result carries all prior reviewable artifacts while a thir
     if (lost) throw new Error("Lost first partial admission response")
   }
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.outboxForDelivery()[0]!.state).toBe("uncertain")
   lost = false
   f.completeWorker(attempts[1]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   const rows = f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]
   expect(rows[0]!.state).toBe("superseded")
   expect(rows[1]!.state).toBe("admitted")
@@ -4476,7 +5043,7 @@ test("failed cancellation keeps the newer outcome pending and retries after the 
   const attempts = f.store.attempts(f.receipt.planID)
   f.sessions.get("owner")!.busy = true
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   const prior = f.inbox
     .get("owner")!
     .find((entry) => entry.metadata?.lazersPlanID === f.receipt.planID)!
@@ -4488,7 +5055,7 @@ test("failed cancellation keeps the newer outcome pending and retries after the 
   }
 
   f.completeWorker(attempts[1]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   let rows = f.store.detail(f.receipt.planID).delivery as {
     payload: string
     state: string
@@ -4524,14 +5091,14 @@ test("an unavailable native inbox cannot be reported as successful supersession"
   const attempts = f.store.attempts(f.receipt.planID)
   f.sessions.get("owner")!.busy = true
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   const listInbox = f.host.outcomeInbox
   f.host.outcomeInbox = async () => {
     throw new Error("native host unavailable")
   }
 
   f.completeWorker(attempts[1]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   let rows = f.store.detail(f.receipt.planID).delivery as {
     payload: string
     state: string
@@ -4563,7 +5130,7 @@ test("a cancellation that races with transcript consumption is recorded as consu
   const attempts = f.store.attempts(f.receipt.planID)
   f.sessions.get("owner")!.busy = true
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   const cancel = f.host.cancelOutcome
   f.host.cancelOutcome = async (input) => {
     const entries = f.inbox.get(input.sessionID) ?? []
@@ -4578,7 +5145,7 @@ test("a cancellation that races with transcript consumption is recorded as consu
     throw new Error("cancel lost a race with consumption")
   }
   f.completeWorker(attempts[1]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   const rows = f.store.detail(f.receipt.planID).delivery as {
     payload: string
     state: string
@@ -4603,7 +5170,7 @@ test("a successful native cancel response is rechecked before recording superses
   const attempts = f.store.attempts(f.receipt.planID)
   f.sessions.get("owner")!.busy = true
   f.completeWorker(attempts[0]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   f.host.cancelOutcome = async (input) => {
     const entries = f.inbox.get(input.sessionID) ?? []
     const index = entries.findIndex((entry) => entry.id === input.inboxID)
@@ -4617,7 +5184,7 @@ test("a successful native cancel response is rechecked before recording superses
   }
 
   f.completeWorker(attempts[1]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   const rows = f.store.detail(f.receipt.planID).delivery as {
     payload: string
     state: string
@@ -4722,7 +5289,7 @@ test("shared resume waits for another plan's worker and cancellation retains fin
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("preparing")
   f.completeWorker(other.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   await f.runtime.tick()
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts + 1)
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
@@ -4784,7 +5351,7 @@ test("reconciliation retains legacy advanced-checkout receipts and verifies the 
   }
   await runPlan(f)
   await f.runtime.tick()
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
   await f.runtime.command(
     {
@@ -4985,7 +5552,7 @@ test("combined worktree completion cannot overwrite a concurrent cancellation", 
     )
     return actual
   }
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
   expect(f.store.plan(f.receipt.planID)?.artifact).toBeNull()
   expect(
@@ -5003,7 +5570,7 @@ test("one failed branch blocks combined acceptance without losing sibling verifi
   if (!first || !second) throw new Error("Expected two isolated workers")
   f.completeWorker(first.session_id)
   f.completeWorker(second.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
 
   expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
   expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual(["failed", "accepted"])
@@ -5273,7 +5840,7 @@ test("repairing one parallel branch retains its failed check and usage while its
   const initial = f.store.attempts(f.receipt.planID)
   f.completeWorker(initial[0]!.session_id)
   f.completeWorker(initial[1]!.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual(["running", "accepted"])
   expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
   expect(attemptCheck(f, initial[0]!.task_id, initial[0]!.id).exitCode).not.toBe(0)
@@ -5332,7 +5899,7 @@ test("repair handoffs do not copy legacy skill bodies into a new attempt", async
   await f.runtime.tick()
   const first = f.store.attempts(f.receipt.planID)[0]!
   seedLegacySkillBody(f, first)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("running")
   const attempts = f.store.attempts(f.receipt.planID)
   expect(attempts).toHaveLength(2)
@@ -5974,7 +6541,7 @@ test("retry requeues a cancelled unstarted successor in the admitted graph and w
   expect(f.sessions.get(blockerAttempt.session_id)?.busy).toBe(true)
 
   f.completeWorker(original.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.nodes(planID).find((node) => node.task_id === predecessorID)?.state).toBe(
     "accepted",
   )
@@ -5984,11 +6551,9 @@ test("retry requeues a cancelled unstarted successor in the admitted graph and w
   ).toHaveLength(0)
 
   f.completeWorker(blockerAttempt.session_id)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(blockerPlan.planID)?.state).toBe("accepted")
-  expect(
-    f.store.attempts(planID).filter((attempt) => attempt.task_id === successorID),
-  ).toHaveLength(0)
+  // Completion may already have dispatched the now-unblocked successor.
 
   await f.runtime.tick()
   const successorAttempts = f.store
@@ -7808,7 +8373,7 @@ test("heartbeat avoids context and rechecks a stopped worker after detailed acco
   expect(calls.some((call) => call.id === attempt.session_id && call.messages)).toBe(true)
   expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
 
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)[0]!.tool_count).toBe(9)
 })
@@ -8006,7 +8571,7 @@ test("terminal verification waits for active foreground, exact input completion,
     count: 0,
     kinds: { shell: 0, subagent: 0, image: 0 },
   }
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   expect(blockedDetailReads).toBeGreaterThan(0)
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
@@ -8097,7 +8662,7 @@ test("worker-location permissions and forms block terminal work and surface acti
 
   worker.pendingPermissions = 0
   worker.pendingForms = 0
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(planID)?.state).toBe("accepted")
   expect(f.store.attempts(planID)).toHaveLength(1)
 })

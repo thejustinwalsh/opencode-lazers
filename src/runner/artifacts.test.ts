@@ -1,16 +1,68 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   artifactExists,
+  checkResourcesSettled,
   commitIsAncestor,
   commitArtifact,
   git,
+  runCheck,
+  runDeclaredCheck,
   verificationEnvironmentIdentity,
 } from "./artifacts.ts"
+import { checkSucceeded } from "./checks.ts"
+
+test("declared quality phases preserve all output and share the command timeout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-phases-"))
+  try {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        scripts: {
+          first: "printf first; sleep 0.08",
+          second: "printf second; sleep 0.08",
+        },
+      }),
+    )
+    const command = "bun run first && bun run second"
+    const passed = await runDeclaredCheck(
+      root,
+      "candidate",
+      { id: "output", command, timeoutMs: 2000 },
+      join(root, "output.json"),
+    )
+    expect(passed.stdout).toBe("firstsecond")
+    expect(passed.exitCode).toBe(0)
+    expect(passed.phasesComplete).toBe(true)
+    const timedOut = await runDeclaredCheck(
+      root,
+      "candidate",
+      { id: "deadline", command, timeoutMs: 130 },
+      join(root, "deadline.json"),
+    )
+    expect(timedOut.timedOut).toBe(true)
+    expect(checkSucceeded(timedOut)).toBe(false)
+    expect(timedOut.stdout).toContain("first")
+    expect(JSON.parse(readFileSync(join(root, "deadline.json"), "utf8"))).toMatchObject({
+      exitCode: timedOut.exitCode,
+      timedOut: true,
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test("verification identity records stable runtime metadata without hashing unrelated credentials", () => {
   const identity = verificationEnvironmentIdentity()
@@ -34,6 +86,146 @@ test("verification identity records stable runtime metadata without hashing unre
   }
 })
 
+test("exit-zero verification keeps its result when owned subprocess cleanup is uncertain", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-cleanup-"))
+  let groupID: number | undefined
+  const originalKill = process.kill.bind(process)
+  const mockedKill = spyOn(process, "kill").mockImplementation(((pid, signal) => {
+    if (typeof pid === "number" && groupID !== undefined && pid === -groupID) {
+      if (signal === 0 || signal === "SIGKILL") return true
+    }
+    return originalKill(pid, signal)
+  }) as typeof process.kill)
+  try {
+    const receiptPromise = runCheck(
+      root,
+      "candidate",
+      {
+        id: "leaked-child",
+        command:
+          'printf "%s" "$$" > leader.pid; sleep 30 >/dev/null 2>&1 & printf "%s" "$!" > child.pid; exit 0',
+        timeoutMs: 2000,
+      },
+      join(root, "receipt.json"),
+    )
+    const marker = join(root, "leader.pid")
+    const deadline = Date.now() + 5000
+    while (!existsSync(marker) && Date.now() < deadline) await Bun.sleep(10)
+    expect(existsSync(marker)).toBe(true)
+    groupID = Number(readFileSync(marker, "utf8"))
+    const receipt = await receiptPromise
+    expect(receipt.exitCode).toBe(0)
+    expect(receipt.timedOut).toBe(false)
+    expect(receipt.processCleanup).toMatchObject({
+      state: "uncertain",
+      capability: "process-group",
+    })
+    expect(checkSucceeded(receipt)).toBe(true)
+    expect(checkResourcesSettled(receipt)).toBe(false)
+  } finally {
+    mockedKill.mockRestore()
+    if (groupID !== undefined) {
+      try {
+        originalKill(-groupID, "SIGKILL")
+      } catch {
+        // The process group may have exited while the receipt was being written.
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15_000)
+
+test("failed and timed-out checks retain their actual outcomes independently of cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-outcomes-"))
+  try {
+    const failed = await runCheck(
+      root,
+      "candidate",
+      { id: "failed", command: "exit 7", timeoutMs: 2000 },
+      join(root, "failed.json"),
+    )
+    expect(failed.exitCode).toBe(7)
+    expect(failed.timedOut).toBe(false)
+    expect(checkSucceeded(failed)).toBe(false)
+    expect(checkResourcesSettled(failed)).toBe(true)
+
+    const timedOut = await runCheck(
+      root,
+      "candidate",
+      { id: "timed-out", command: "sleep 30", timeoutMs: 50 },
+      join(root, "timed-out.json"),
+    )
+    expect(timedOut.timedOut).toBe(true)
+    expect(checkSucceeded(timedOut)).toBe(false)
+    expect(checkResourcesSettled(timedOut)).toBe(true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15_000)
+
+test("the Windows process-tree adapter distinguishes child exit from remaining descendants", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-process-tree-adapter-"))
+  const originalKill = process.kill.bind(process)
+  let processGroupID: number | undefined
+  let observations = 0
+  const adapter = {
+    hasDescendants: async (pid: number) => {
+      processGroupID = pid
+      observations++
+      return observations > 1
+    },
+    terminate: async () => {
+      throw new Error("simulated native tree termination could not be confirmed")
+    },
+  }
+  try {
+    const empty = await runCheck(
+      root,
+      "candidate",
+      { id: "empty-tree", command: "exit 0", timeoutMs: 2000 },
+      join(root, "empty.json"),
+      { processTreeAdapter: adapter },
+    )
+    expect(empty.exitCode).toBe(0)
+    expect(empty.processCleanup).toMatchObject({
+      state: "settled",
+      capability: "windows-process-tree",
+    })
+    expect(Number.isSafeInteger(empty.processCleanup?.rootPID)).toBe(true)
+    expect(checkResourcesSettled(empty)).toBe(true)
+
+    const remaining = await runCheck(
+      root,
+      "candidate",
+      {
+        id: "remaining-descendant",
+        command: "sleep 30 >/dev/null 2>&1 & exit 0",
+        timeoutMs: 2000,
+      },
+      join(root, "remaining.json"),
+      { processTreeAdapter: adapter },
+    )
+    expect(remaining.exitCode).toBe(0)
+    expect(remaining.timedOut).toBe(false)
+    expect(remaining.processCleanup).toMatchObject({
+      state: "uncertain",
+      capability: "windows-process-tree",
+    })
+    expect(Number.isSafeInteger(remaining.processCleanup?.rootPID)).toBe(true)
+    expect(checkSucceeded(remaining)).toBe(true)
+    expect(checkResourcesSettled(remaining)).toBe(false)
+  } finally {
+    if (processGroupID !== undefined) {
+      try {
+        originalKill(-processGroupID, "SIGKILL")
+      } catch {
+        // The process tree may have exited while the receipt was written.
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15_000)
+
 test("identical check modules retain the same environment identity across reload", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-check-reload-"))
   try {
@@ -49,6 +241,10 @@ test("identical check modules retain the same environment identity across reload
       .replace(
         '"./checks.ts"',
         JSON.stringify(fileURLToPath(new URL("./checks.ts", import.meta.url))),
+      )
+      .replace(
+        '"./quality-failure.ts"',
+        JSON.stringify(fileURLToPath(new URL("./quality-failure.ts", import.meta.url))),
       )
     const paths = [join(directory, "first.ts"), join(directory, "second.ts")]
     for (const path of paths) writeFileSync(path, source)

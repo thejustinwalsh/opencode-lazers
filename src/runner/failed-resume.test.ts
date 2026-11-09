@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { settleVerification } from "../../test/runner/verification-driver.ts"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -9,9 +10,9 @@ import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 
-const cleanup: (() => void)[] = []
-afterEach(() => {
-  for (const close of cleanup.splice(0)) close()
+const cleanup: (() => void | Promise<void>)[] = []
+afterEach(async () => {
+  for (const close of cleanup.splice(0)) await close()
 })
 
 function fixture() {
@@ -186,9 +187,11 @@ function fixture() {
       }
     },
   }
-  const runtime = new TaskRuntime(store, host, "project")
-  cleanup.push(() => {
-    runtime.stop()
+  const runtime = new TaskRuntime(store, host, "project", undefined, {
+    requestTick: async () => {},
+  })
+  cleanup.push(async () => {
+    await runtime.stop()
     repository.close()
     rmSync(root, { recursive: true, force: true })
     rmSync(stateDirectory, { recursive: true, force: true })
@@ -213,7 +216,7 @@ async function leaveFailedAttempt(f: ReturnType<typeof fixture>) {
   )
   await f.runtime.tick()
   expect(f.prompted).toHaveLength(1)
-  await f.runtime.tick()
+  await settleVerification(f.runtime)
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.attempts(f.planID)[0]?.state).toBe("failed")
@@ -265,9 +268,8 @@ test("explicit resume continues a stopped failed attempt with its history and re
     state: "preparing",
   })
 
-  await f.runtime.tick()
-  await f.runtime.tick()
-  await f.runtime.tick()
+  for (let tick = 0; tick < 20 && f.store.plan(f.planID)?.state !== "accepted"; tick++)
+    await settleVerification(f.runtime)
 
   expect(f.store.plan(f.planID)?.state).toBe("accepted")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
@@ -370,7 +372,8 @@ test("RETRY after failure still starts a distinct retained attempt", async () =>
   const retry = await f.runtime.command(retryCommand, "owner")
   expect(await f.runtime.command(retryCommand, "owner")).toEqual(retry)
   expect(retry).toMatchObject({ status: "retrying" })
-  await f.runtime.tick()
+  for (let tick = 0; tick < 20 && f.store.attempts(f.planID).length < 2; tick++)
+    await settleVerification(f.runtime)
 
   const attempts = f.store.attempts(f.planID)
   expect(attempts).toHaveLength(2)

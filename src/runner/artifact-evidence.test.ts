@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { settleVerification } from "../../test/runner/verification-driver.ts"
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -234,7 +235,7 @@ function fixture(
 
 async function run(runtime: TaskRuntime, planID: string, count = 10) {
   await runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
-  for (let index = 0; index < count; index++) await runtime.tick()
+  for (let index = 0; index < count; index++) await settleVerification(runtime)
 }
 
 test("directory artifact evidence accepts only with matching checks and human evidence", async () => {
@@ -274,7 +275,7 @@ test("directory artifact evidence accepts only with matching checks and human ev
     },
     "owner",
   )
-  for (let index = 0; index < 10; index++) await f.runtime.tick()
+  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
 
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   await f.runtime.command(
@@ -286,7 +287,7 @@ test("directory artifact evidence accepts only with matching checks and human ev
     },
     "owner",
   )
-  for (let index = 0; index < 10; index++) await f.runtime.tick()
+  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
 
   expect(f.store.plan(f.planID)?.state).toBe("accepted")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")

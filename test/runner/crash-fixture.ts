@@ -4,6 +4,7 @@ import { TaskRepository } from "../../src/storage.ts"
 import { RunnerStore } from "../../src/runner/store.ts"
 import { git } from "../../src/runner/artifacts.ts"
 import { TaskRuntime } from "../../src/runner/runtime.ts"
+import { settleVerification } from "./verification-driver.ts"
 import type { HostSession, RunnerHost } from "../../src/runner/host.ts"
 
 const root = process.argv[2]!,
@@ -159,7 +160,7 @@ if (store.plan(config.planID)!.state === "draft")
     "owner",
   )
 for (let n = 0; n < 12; n++) {
-  await runtime.tick()
+  await settleVerification(runtime)
   if (config.scopeUpdate) {
     const attempt = store.attempts(config.planID)[0]!
     if (

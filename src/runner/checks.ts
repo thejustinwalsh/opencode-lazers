@@ -25,11 +25,16 @@ export function checkEnvironment(environment: Record<string, string | undefined>
 }
 
 /** Command outcomes establish checks. Workspace and environment metadata are diagnostics. */
-export function checkSucceeded(receipt: Pick<CheckReceipt, "exitCode" | "timedOut">) {
-  return receipt.exitCode === 0 && !receipt.timedOut
+export function checkSucceeded(
+  receipt: Pick<CheckReceipt, "exitCode" | "timedOut"> &
+    Partial<Pick<CheckReceipt, "phasesComplete">>,
+) {
+  return receipt.exitCode === 0 && !receipt.timedOut && receipt.phasesComplete !== false
 }
 
 export function checkFailureReason(receipt: CheckReceipt) {
+  if (receipt.phasesComplete === false && receipt.exitCode === 0 && !receipt.timedOut)
+    return `Verification ${receipt.id} did not complete every declared phase`
   if (receipt.timedOut) return `Verification ${receipt.id} timed out`
   if (receipt.exitCode === 126 || receipt.exitCode === 127)
     return `Verification ${receipt.id} could not start: ${receipt.stderr.trim().split("\n")[0] || `exit ${receipt.exitCode}`}`
