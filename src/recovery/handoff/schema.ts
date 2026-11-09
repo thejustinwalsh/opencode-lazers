@@ -146,6 +146,192 @@ export const HandoffAttachment = z.strictObject({
 })
 export type HandoffAttachment = z.infer<typeof HandoffAttachment>
 
+export const RecoverySource = z.strictObject({
+  projectDirectory: reference,
+  projectID: identifier,
+  planID: z.uuid(),
+  taskID: z.uuid(),
+  specRevision: z.int().positive(),
+  attemptID: z.uuid(),
+  sessionID: identifier,
+  workspace: reference,
+  workerAgent: identifier.nullable(),
+  ownerSessionID: identifier,
+})
+export type RecoverySource = z.infer<typeof RecoverySource>
+
+export const RecoveryEvidenceBoundary = z
+  .strictObject({
+    fromSequence: z.int().nonnegative(),
+    throughSequence: z.int().nonnegative(),
+  })
+  .refine((boundary) => boundary.fromSequence <= boundary.throughSequence, {
+    path: ["throughSequence"],
+    message: "The evidence boundary cannot end before it begins.",
+  })
+export type RecoveryEvidenceBoundary = z.infer<typeof RecoveryEvidenceBoundary>
+
+export const RecoveryEvidence = z
+  .array(HandoffEvidence)
+  .max(40)
+  .superRefine((evidence, context) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(evidence)).byteLength
+    if (bytes > 32_000)
+      context.addIssue({
+        code: "custom",
+        message: "Recovery evidence must remain within 32,000 UTF-8 bytes.",
+      })
+  })
+
+export const RecoveryConcernInput = z.strictObject({
+  requestID: identifier,
+  concernID: z.uuid(),
+  sourceAttemptID: z.uuid(),
+  expectedVersion: z.int().nonnegative(),
+  ruleID: identifier,
+  reason: text,
+  evidenceBoundary: RecoveryEvidenceBoundary,
+  evidence: RecoveryEvidence,
+})
+export type RecoveryConcernInput = z.infer<typeof RecoveryConcernInput>
+
+export const RecoveryConcernRecord = z.strictObject({
+  requestID: identifier,
+  concernID: z.uuid(),
+  version: z.int().positive(),
+  expectedVersion: z.int().nonnegative(),
+  source: RecoverySource,
+  ruleID: identifier,
+  reason: text,
+  evidenceBoundary: RecoveryEvidenceBoundary,
+  evidence: RecoveryEvidence,
+  lastDispositionID: z.uuid().nullable(),
+  recordedBy: HandoffActor,
+  createdAt: z.iso.datetime(),
+})
+export type RecoveryConcernRecord = z.infer<typeof RecoveryConcernRecord>
+
+export const RecoveryFollowUp = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("at"), dueAt: z.iso.datetime() }),
+  z.strictObject({ kind: z.literal("condition"), condition: text }),
+])
+export type RecoveryFollowUp = z.infer<typeof RecoveryFollowUp>
+
+export const RecoveryDispositionInput = z
+  .strictObject({
+    requestID: identifier,
+    dispositionID: z.uuid(),
+    concernID: z.uuid(),
+    expectedVersion: z.int().positive(),
+    decision: z.enum(["acknowledge", "follow-up"]),
+    reason: text,
+    evidenceBoundary: RecoveryEvidenceBoundary,
+    followUp: RecoveryFollowUp.optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.decision === "follow-up" && !input.followUp)
+      context.addIssue({
+        code: "custom",
+        path: ["followUp"],
+        message: "A deferred follow-up requires a concrete time or condition.",
+      })
+    if (input.decision === "acknowledge" && input.followUp)
+      context.addIssue({
+        code: "custom",
+        path: ["followUp"],
+        message: "An acknowledgement cannot also schedule a follow-up.",
+      })
+  })
+export type RecoveryDispositionInput = z.infer<typeof RecoveryDispositionInput>
+
+export const RecoveryDispositionRecord = z.strictObject({
+  ...RecoveryDispositionInput.shape,
+  version: z.int().positive(),
+  source: RecoverySource,
+  recordedBy: HandoffActor,
+  createdAt: z.iso.datetime(),
+})
+export type RecoveryDispositionRecord = z.infer<typeof RecoveryDispositionRecord>
+
+export const RecoveryConcernPage = z.strictObject({
+  source: RecoverySource,
+  concerns: z.array(
+    z.strictObject({
+      concern: RecoveryConcernRecord,
+      dispositions: z.array(RecoveryDispositionRecord).max(100),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+})
+export type RecoveryConcernPage = z.infer<typeof RecoveryConcernPage>
+
+export const RecoveryCheckpointInput = z.strictObject({
+  requestID: identifier,
+  attemptID: z.uuid(),
+  concernID: z.uuid(),
+  expectedVersion: z.int().positive(),
+  evidenceBoundary: RecoveryEvidenceBoundary,
+  guidance: text.optional(),
+})
+export type RecoveryCheckpointInput = z.infer<typeof RecoveryCheckpointInput>
+
+export const RecoveryCheckpointRecord = z.strictObject({
+  ...RecoveryCheckpointInput.shape,
+  messageID: identifier,
+  source: RecoverySource,
+  requestedBy: HandoffActor,
+  createdAt: z.iso.datetime(),
+})
+export type RecoveryCheckpointRecord = z.infer<typeof RecoveryCheckpointRecord>
+
+export const RecoveryCheckpointDelivery = z.strictObject({
+  requestID: identifier,
+  status: z.enum(["prepared", "admitted", "unknown"]),
+  messageID: identifier,
+  detail: text.optional(),
+  observedAt: z.iso.datetime(),
+})
+export type RecoveryCheckpointDelivery = z.infer<typeof RecoveryCheckpointDelivery>
+
+export const RecoveryCheckpointConsumptionRecord = z.strictObject({
+  requestID: identifier,
+  messageID: identifier,
+  observedCallID: identifier,
+  observedBy: HandoffActor,
+  createdAt: z.iso.datetime(),
+})
+export type RecoveryCheckpointConsumptionRecord = z.infer<
+  typeof RecoveryCheckpointConsumptionRecord
+>
+
+export const RecoveryCheckpointResponseInput = z.strictObject({
+  requestID: identifier,
+  responseID: identifier,
+  completed: text,
+  attempted: z.array(text).max(20),
+  currentBlockers: z.array(text).max(20),
+  nextApproach: text,
+  evidence: RecoveryEvidence,
+})
+export type RecoveryCheckpointResponseInput = z.infer<typeof RecoveryCheckpointResponseInput>
+
+export const RecoveryCheckpointResponseRecord = z.strictObject({
+  ...RecoveryCheckpointResponseInput.shape,
+  source: RecoverySource,
+  observedCallID: identifier,
+  reportedBy: HandoffActor,
+  createdAt: z.iso.datetime(),
+})
+export type RecoveryCheckpointResponseRecord = z.infer<typeof RecoveryCheckpointResponseRecord>
+
+export const RecoveryCheckpointState = z.strictObject({
+  command: RecoveryCheckpointRecord,
+  delivery: RecoveryCheckpointDelivery,
+  consumption: RecoveryCheckpointConsumptionRecord.nullable(),
+  response: RecoveryCheckpointResponseRecord.nullable(),
+})
+export type RecoveryCheckpointState = z.infer<typeof RecoveryCheckpointState>
+
 export const HandoffSource = z.strictObject({
   attachment: HandoffAttachment,
   task: TaskSpecSchema,
@@ -328,6 +514,7 @@ export const HandoffDispositionInput = z
     dispositionID: z.uuid(),
     requestID: identifier,
     reportID: z.uuid(),
+    expectedVersion: z.int().nonnegative().optional(),
     decision: z.enum(["correct", "redirect", "clarify", "continue", "hold", "reject"]),
     correction: HandoffKnowledge,
     reason: text,
@@ -366,6 +553,7 @@ export type HandoffDispositionInput = z.infer<typeof HandoffDispositionInput>
 
 export const HandoffDispositionRecord = z.strictObject({
   ...HandoffDispositionInput.shape,
+  version: z.int().positive().default(1),
   source: HandoffSource,
   recordedBy: HandoffActor,
   createdAt: z.iso.datetime(),
@@ -392,6 +580,17 @@ export type HandoffEventRecord = z.infer<typeof HandoffEventRecord>
 export const HandoffHistoryCursor = z.strictObject({
   requestID: identifier,
   before: z.int().positive(),
+})
+
+export const RecoveryHistoryCursor = z.strictObject({
+  attemptID: z.uuid(),
+  concernID: z.uuid(),
+  beforeVersion: z.int().positive(),
+})
+
+export const RecoveryConcernCursor = z.strictObject({
+  attemptID: z.uuid(),
+  afterConcernID: z.uuid(),
 })
 
 export type HandoffHistoryPage = {
