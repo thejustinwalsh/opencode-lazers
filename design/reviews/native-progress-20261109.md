@@ -43,3 +43,21 @@ Assessment: scope has expanded and local corrections have not produced a finishe
 candidate. This is a delivery/recovery concern, not proof that the worker is idle.
 Architect's continuation decision and subsequent outcome need evaluation; elapsed
 time alone neither establishes success nor authorizes replacing the writer.
+
+## User-requested parallel recovery reassessment
+
+The driver relayed the user's question about LZ-192's serialization through the
+Desktop composer. Architect acknowledged that the combined dependency was too
+broad and submitted **LZ-195**, native recovery controls and durable handoffs.
+Plan `1867ab0c-f696-4f3c-ad44-301569b97c8e` was admitted through native tools.
+
+Attempt `422b1e78-34b1-442c-baa6-407c1fb64f6c` started at **1794194446891**,
+using OpenAI `gpt-6-luna/max`. Session `ses_ed62616086f6493389cde8b36f6dfd84`
+was confirmed natively running with completed source-discovery tool calls by
+**1794194486051**. Its own native worktree is separate from LZ-181's original
+checkout. LZ-181 remains active with its dirty work preserved; nothing was reset.
+
+This is actual parallel implementation dispatch following a user-raised planning
+correction, not autonomous detection of the scheduling problem or completed
+recovery. Shared runtime notification delivery and Tasks integration remain open;
+the complete recovery requirement has not been reduced to the controls task.
