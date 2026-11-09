@@ -105,3 +105,20 @@ whether this still repeats expensive work on unchanged ticks; the current scale
 fixture seeds all removal effects as uncertain and does not cover that mixed
 state. This is a source-supported draft finding awaiting Architect disposition,
 not a measured production regression or a new acceptance ceremony.
+
+### Mixed-state disposition
+
+Architect independently confirmed the residual in the current draft: the
+completed-removal filter makes a settled workspace look like a missing removal,
+while its held sibling keeps the plan eligible for cleanup discovery. Treat this
+as the same pending-resource selection issue, not a new feature or task.
+
+Continue the same worker with a focused correction: completed removals must not
+reselect cleanup or be replayed; genuinely pending siblings must still react to
+changed facts, bounded fallback and restart with fresh final safety checks. Keep
+the passing 38-plan/50-checkout evidence, and extend coverage to mixed completed/
+held plans with actual inventory/session/Git counts across unchanged ticks.
+The existing concern now carries this evidence and a native same-worker follow-up
+checkpoint. Admission is recorded; consumption, response and the mixed-state fix
+are not yet established. Reassess the concrete mixed-state results or a blocker
+before integration. No takeover or additional acceptance ceremony is warranted.
