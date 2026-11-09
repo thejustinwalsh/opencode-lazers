@@ -24,3 +24,22 @@ task-state repair, model call or ownership change was performed by the driver.
 
 The active roadmap remains open. Architect owns recovery decisions; the driver
 continues to observe outcomes and answer native questions as the human developer.
+
+## Five-hour worker assessment
+
+At **1794193092845**, LZ-181's original attempt has run **5.11 hours** since
+1794174681139. Its recorded attempt count is **1,208 tool calls**, with no artifact.
+The worker checkout has 2,966 tracked added lines and 352 removed lines across
+eight tracked files, plus two new modules. These are working changes, not delivery.
+
+Trajectory tool rows include 470 successful reads, 225 searches and 236 patches;
+28 patches failed. Completed shell intervals occupy **33.4 minutes** in union.
+Thus the elapsed time is not principally one long check: substantial repeated
+model/tool investigation and editing surrounds the checks. The full adoption
+suite remains red despite focused passing regressions. The additional retained
+repair input-lineage defect was attached in advice 7 at 2026-11-09T02:29:02.441Z.
+
+Assessment: scope has expanded and local corrections have not produced a finished
+candidate. This is a delivery/recovery concern, not proof that the worker is idle.
+Architect's continuation decision and subsequent outcome need evaluation; elapsed
+time alone neither establishes success nor authorizes replacing the writer.
