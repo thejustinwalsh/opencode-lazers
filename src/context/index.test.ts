@@ -527,15 +527,16 @@ test("worker packets use the reusable snapshot, cited ranges, and bounded source
     { reference: "oversized.md", revision: null },
   ]
   proposal.limits.maxTokens = 4000
-  const packet = await f.index.packet(architect, proposal, [], "fixture-base")
-  const delivered = JSON.parse(packet.text)
-  expect(delivered.entries.find((entry: { path: string }) => entry.path === "guide.md").text).toBe(
+  const delivered = await f.index.taskContext(architect, proposal)
+  expect(delivered.entries.find((entry: { path: string }) => entry.path === "guide.md")!.text).toBe(
     "[Lines 2-3]\nRelevant contract.\nRelevant procedure.",
   )
-  expect(packet.text).not.toContain("outside-range")
-  expect(packet.text).not.toContain("unrelated guide prose")
+  expect(JSON.stringify(delivered)).not.toContain("outside-range")
+  expect(JSON.stringify(delivered)).not.toContain("unrelated guide prose")
   expect(delivered.deferred).toContain("oversized.md")
-  expect(packet.metadata.tokens).toBeLessThanOrEqual(24000)
-  expect(delivered.entries.some((entry: { path: string }) => entry.path === "AGENTS.md")).toBe(true)
-  expect(packet.metadata.freshness).toBe("as-of-refresh")
+  expect(delivered.tokens).toBeLessThanOrEqual(24000)
+  expect(delivered.entries.some((entry: { path: string }) => entry.path === "AGENTS.md")).toBe(
+    false,
+  )
+  expect(delivered.freshness).toBe("as-of-refresh")
 })

@@ -158,13 +158,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
       ),
     ).rejects.toThrow("source workspace is quarantined")
   }
-  for (const tool of [
-    "execute",
-    "read",
-    "lz-get-task-instructions",
-    "lz-verify-handoff",
-    "lz-submit-handoff",
-  ]) {
+  for (const tool of ["execute", "read", "lz-get-task", "lz-verify-handoff", "lz-submit-handoff"]) {
     await Effect.runPromise(
       executeHook!({
         sessionID: "ses_worker",

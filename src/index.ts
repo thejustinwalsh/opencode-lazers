@@ -94,7 +94,7 @@ export default Plugin.define({
       )
       yield* registerContextTools(ctx, projectIndex)
       yield* registerNativeInteraction(ctx).pipe(Effect.orDie)
-      yield* registerTaskTools(ctx, repository)
+      yield* registerTaskTools(ctx, repository, projectIndex)
       yield* registerModelTools(ctx, repository)
       yield* registerModelsServer(ctx, repository).pipe(Effect.orDie)
       yield* registerArchitect(ctx)

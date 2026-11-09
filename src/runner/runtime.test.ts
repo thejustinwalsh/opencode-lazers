@@ -275,7 +275,7 @@ function fixture(
     },
     prompt: async (input) => {
       events.push(`prompt:${input.id}`)
-      expect(input.text).toContain("lz-get-task-instructions")
+      expect(input.text).toContain("lz-get-task")
       expect(input.text).not.toContain('"specification"')
       expect(input.text).not.toContain("SECRET_SKILL_BODY_CANARY")
       expect("skills" in input).toBe(false)
@@ -1264,9 +1264,7 @@ test("healthy sealed review guard permits a later handoff without rescanning rev
   expect(reads).toBe(0)
   expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(true)
   expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "write")).toContain("quarantined")
-  expect(
-    sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-get-task-instructions"),
-  ).toBeUndefined()
+  expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-get-task")).toBeUndefined()
 })
 
 test("concurrent explicit pending supersessions use the plan version once", async () => {
@@ -4063,7 +4061,7 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   expect(JSON.parse(workers[0]!.policy).packet).toEqual({
     recipe: "task-tool/1",
     taskID: workers[0]!.task_id,
-    tool: "lz-get-task-instructions",
+    tool: "lz-get-task",
   })
   await drive(f.runtime)
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)

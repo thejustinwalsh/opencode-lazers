@@ -193,7 +193,6 @@ const quarantineReads = new Set([
   "glob",
   "skill",
   "lz-get-task",
-  "lz-get-task-instructions",
   "lz-query-tasks",
   "lz-inspect-trajectory",
   "lz-query-audits",

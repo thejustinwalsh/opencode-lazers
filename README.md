@@ -145,9 +145,11 @@ Serial tasks default to native child sessions in the shared checkout; parallel w
 
 A `ContextPacket` supplies concise repository rules, the specification and its optional skill suggestions, relevant interfaces and findings, and their source references. Reuse useful findings. Workers can progressively load a useful native skill when needed and permitted; skill bodies are not eagerly attached to task context.
 
+Workers fetch the readable task, current advice and focused cached Repomix source together with `lz-get-task`. The same tool offers `format: "structured"` for raw task/execution data. Architect publishes the reusable snapshot; worker reads do not refresh it. Missing cached context does not prevent receiving the task or reading live source normally.
+
 Persistent memory retrieval is bounded and relevant. Durable decisions retain provenance. Stable prompt prefixes may improve provider caching, but reported cache usage must demonstrate the benefit; separate sessions do not imply shared caches.
 
-The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, bound the packet, and deliver it at dispatch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal tools and can request more evidence. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a research ceremony.
+The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, and deliver focused source with the task fetch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal source tools. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a research ceremony.
 
 The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lz-project-refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
 

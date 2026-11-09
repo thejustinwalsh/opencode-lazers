@@ -808,7 +808,10 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
     const structured = await Effect.runPromise(
       registeredTools
         .get("lz-get-task")!
-        .execute({ taskID: task.id }, toolContext("lazers-implementor", "current-worker")),
+        .execute(
+          { taskID: task.id, format: "structured" },
+          toolContext("lazers-implementor", "current-worker"),
+        ),
     )
     expect(structured.output).toMatchObject({
       status: "found",
@@ -819,7 +822,7 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
     })
     const readable = await Effect.runPromise(
       registeredTools
-        .get("lz-get-task-instructions")!
+        .get("lz-get-task")!
         .execute({ taskID: task.id }, toolContext("lazers-implementor", "current-worker")),
     )
     expect(typeof readable.output).toBe("string")
@@ -828,15 +831,15 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
     expect(readable.output).not.toContain("Find the existing transactional write boundary.")
     const replacementReadable = await Effect.runPromise(
       registeredTools
-        .get("lz-get-task-instructions")!
+        .get("lz-get-task")!
         .execute({ taskID: task.id }, toolContext("lazers-implementor", "replacement-worker")),
     )
     expect(replacementReadable.output).toBe(readable.output)
     expect(permissionActions).toEqual([
       ...Array(10).fill("lz-attach-task-advice"),
       "lz-get-task",
-      "lz-get-task-instructions",
-      "lz-get-task-instructions",
+      "lz-get-task",
+      "lz-get-task",
     ])
   } finally {
     repository.close()
