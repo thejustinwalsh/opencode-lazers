@@ -3,7 +3,14 @@
 Candidate: LZ-195 `59dd346`. The worker reports quality checks and32 recovery
 tests/446 assertions passing. This is source review, not live qualification.
 
-## Required corrections
+Updated candidate **`1e68969`** addresses both findings below. Source inspection
+confirms structured-data verification, reviewed finalization through submit,
+removal of the third public finalizer, economic/remaining-work guidance and
+superseded-task instruction handling. The original worker resumed and produced
+this correction; its reported quality,32 recovery and4 instruction tests pass.
+Architect integration and the connected live walkthrough are still unproven.
+
+## Original findings
 
 1. The user's latest recovery judgment is not reflected in candidate Architect
    guidance or its runbook: weigh measured usage/market cost, failed approaches,

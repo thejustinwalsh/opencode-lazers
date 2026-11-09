@@ -55,6 +55,19 @@ interrupted/idle execution truthfully. Human questions remain for material inten
 or authorization. Do not solve it with a new quota, stricter verification gate,
 or a claim that question display proves coordination.
 
+Follow-through: native observation at **1794200495858** confirms the same
+takeover session is running again, with shell activity at **1794200460879**.
+Architect handled scope/continuation after the driver request; the original
+attempt/session/workspace were preserved. This recovers this interruption but
+does not prove future routine questions reach Architect without driver help.
+
+LZ-195 returned corrected candidate `1e68969`. Source inspection confirms
+`lz-verify-handoff` accepts/persists structured data before review,
+`lz-submit-handoff` finalizes the reviewed version, and the third public finalizer
+is removed. Economic/remaining-work guidance and superseded-task instruction
+handling are present. The worker reports quality and recovery/instruction tests
+passing; integration and live qualification still require native observation.
+
 ## Observed facts
 
 Original task `75c838e3-d292-46aa-968f-8cc5417a1ee7`, attempt
