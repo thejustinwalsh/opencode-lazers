@@ -830,8 +830,7 @@ export class TaskRuntime {
   private conflictingActiveAttempt(taskID: string): AttemptRow | undefined {
     const scope = this.store.effectiveWriteScope(taskID)
     return this.store
-      .plans()
-      .flatMap((candidate) => this.store.attempts(candidate.id))
+      .activeProjectAttempts()
       .find(
         (attempt) =>
           ["preparing", "running", "verifying"].includes(attempt.state) &&
@@ -1160,8 +1159,7 @@ export class TaskRuntime {
     const occupiesDestination = (workspace: string | null | undefined) =>
       Boolean(workspace && samePhysicalWorkspace(workspace, taskWorkspace))
     const competingAttempt = this.store
-      .plans()
-      .flatMap((candidatePlan) => this.store.attempts(candidatePlan.id))
+      .activeProjectAttempts()
       .find(
         (candidate) =>
           candidate.id !== attemptID &&
@@ -2070,31 +2068,7 @@ export class TaskRuntime {
         `A dispatched transitive dependent prevents retained repair: ${dependentTask}`,
       )
 
-    const plans = this.store.plans()
-    const dependentPlans = new Set<string>([plan.id])
-    changed = true
-    while (changed) {
-      changed = false
-      for (const candidate of plans) {
-        if (dependentPlans.has(candidate.id)) continue
-        let afterPlans: string[]
-        try {
-          afterPlans = PlanInput.parse(JSON.parse(candidate.body)).afterPlans ?? []
-        } catch {
-          throw new Error("Cannot establish cross-plan dependent state for retained repair")
-        }
-        if (afterPlans.some((dependency) => dependentPlans.has(dependency))) {
-          dependentPlans.add(candidate.id)
-          changed = true
-        }
-      }
-    }
-    const dependentPlan = plans.find(
-      (candidate) =>
-        dependentPlans.has(candidate.id) &&
-        candidate.id !== plan.id &&
-        this.store.attempts(candidate.id).length > 0,
-    )
+    const dependentPlan = this.store.startedDependentPlan(plan.id)
     if (dependentPlan)
       throw new Error(
         `A dispatched cross-plan dependent prevents retained repair: ${dependentPlan.id}`,
@@ -3897,20 +3871,19 @@ export class TaskRuntime {
         if (removals.length && writers.length)
           throw new Error("Scope removal requires stopped task writers")
         if (writers.length) {
-          for (const otherPlan of this.store.plans())
-            for (const other of this.store.attempts(otherPlan.id))
-              if (
-                other.task_id !== node.task_id &&
-                active.includes(other.state) &&
-                !writers.every((writer) =>
-                  sourceReservationExcluded(this.store, other, {
-                    mode: writer.workspace === this.directory ? "shared" : "isolated",
-                    workspace: writer.workspace,
-                  }),
-                ) &&
-                scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
-              )
-                throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
+          for (const other of this.store.activeProjectAttempts())
+            if (
+              other.task_id !== node.task_id &&
+              active.includes(other.state) &&
+              !writers.every((writer) =>
+                sourceReservationExcluded(this.store, other, {
+                  mode: writer.workspace === this.directory ? "shared" : "isolated",
+                  workspace: writer.workspace,
+                }),
+              ) &&
+              scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
+            )
+              throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
         }
         this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
           additions,
@@ -7142,12 +7115,15 @@ export class TaskRuntime {
           // The renewal has durably recorded its failed recovery phase. Do not let
           // a retained-history read failure starve cancellation of transferred work.
           const cancellationWasRequested = this.store
-            .plans()
-            .some(
-              (plan) =>
+            .architectRenewalPlans(renewal.id)
+            .some((entry) => {
+              const plan = this.store.plan(entry.plan_id)
+              return (
+                plan &&
                 ["cancelling", "cancelled"].includes(plan.state) &&
-                this.store.architectRenewalForPlan(plan.id)?.id === renewal.id,
-            )
+                this.store.architectRenewalForPlan(plan.id)?.id === renewal.id
+              )
+            })
           const recordedFailure = this.store.architectRenewal(renewal.id)
           if (
             !cancellationWasRequested ||
@@ -7171,10 +7147,8 @@ export class TaskRuntime {
             this.retainedVerificationRuns.delete(operation.id)
         }
       }
-      for (let plan of this.store
-        .plans()
-        .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))
-        .sort((a, b) => Number(b.state === "cancelling") - Number(a.state === "cancelling"))) {
+      for (let plan of this.store.runnablePlans(terminal)) {
+        if (plan.state === "draft" && !this.taskStartID(plan)) continue
         if (plan.state === "draft") {
           const taskID = this.taskStartID(plan)!
           await this.command(
@@ -8147,48 +8121,46 @@ export class TaskRuntime {
         )
     )
       return false
-    for (const plan of this.store.plans()) {
-      for (const other of this.store.attempts(plan.id)) {
-        if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
-          continue
-        // Physical ownership is stronger than logical scope disjointness.
-        if (
-          sourceQuarantine(this.store, other.id) &&
-          samePhysicalWorkspace(attempt.workspace, other.workspace)
+    for (const other of this.store.activeProjectAttempts()) {
+      if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
+        continue
+      // Physical ownership is stronger than logical scope disjointness.
+      if (
+        sourceQuarantine(this.store, other.id) &&
+        samePhysicalWorkspace(attempt.workspace, other.workspace)
+      )
+        return false
+      if (
+        sourceReservationExcluded(this.store, other, {
+          mode: attempt.workspace === this.directory ? "shared" : "isolated",
+          workspace: attempt.workspace,
+        })
+      )
+        continue
+      const promptIntended = this.store
+        .effects(other.plan_id)
+        .some(
+          (effect) =>
+            effect.attempt_id === other.id &&
+            effect.kind === "prompt" &&
+            JSON.parse(effect.payload).messageID === other.message_id &&
+            effect.state !== "failed",
         )
-          return false
-        if (
-          sourceReservationExcluded(this.store, other, {
-            mode: attempt.workspace === this.directory ? "shared" : "isolated",
-            workspace: attempt.workspace,
-          })
-        )
-          continue
-        const promptIntended = this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === other.id &&
-              effect.kind === "prompt" &&
-              JSON.parse(effect.payload).messageID === other.message_id &&
-              effect.state !== "failed",
-          )
-        // Stable priority prevents two unsent, conflicting reservations waiting
-        // on each other. A prompt that may already be admitted always wins.
-        if (
-          other.state === "preparing" &&
-          !promptIntended &&
-          (other.started_at > attempt.started_at ||
-            (other.started_at === attempt.started_at && other.id > attempt.id))
-        )
-          continue
-        if (
-          attempt.workspace === this.directory ||
-          other.workspace === this.directory ||
-          scopePatternsConflict(scope, this.store.effectiveWriteScope(other.task_id))
-        )
-          return false
-      }
+      // Stable priority prevents two unsent, conflicting reservations waiting
+      // on each other. A prompt that may already be admitted always wins.
+      if (
+        other.state === "preparing" &&
+        !promptIntended &&
+        (other.started_at > attempt.started_at ||
+          (other.started_at === attempt.started_at && other.id > attempt.id))
+      )
+        continue
+      if (
+        attempt.workspace === this.directory ||
+        other.workspace === this.directory ||
+        scopePatternsConflict(scope, this.store.effectiveWriteScope(other.task_id))
+      )
+        return false
     }
     return true
   }
@@ -13219,12 +13191,8 @@ export class TaskRuntime {
     if (!cleanupCurrent()) return "superseded"
     if (
       this.store
-        .plans()
-        .some(
-          (other) =>
-            other.id !== plan.id &&
-            this.store.attempts(other.id).some((attempt) => resolve(attempt.workspace) === target),
-        )
+        .activeProjectAttempts()
+        .some((attempt) => attempt.plan_id !== plan.id && resolve(attempt.workspace) === target)
     )
       return "reserved-by-other-attempt"
     try {

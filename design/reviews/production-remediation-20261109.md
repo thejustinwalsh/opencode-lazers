@@ -217,3 +217,30 @@ only the known commentary baseline failure. A 175-task module fixture returned
 identical relevant conflicts: full audit 1,354.82 ms; scoped check 4.85 ms;
 0 persisted scan rows. These are fixture measurements, not live lock-duration
 or installed-service observations. No native activation or disk reclamation yet.
+
+## Wave 2: F-S4-2
+
+Confirmed runtime safety decisions used the capped display `plans()` window.
+All runtime consumers now avoid that window: live attempt conflicts, scope changes,
+preparation and location retirement use the indexed active-project attempt query;
+the drain pages execution candidates after its existing terminal-state filter;
+cancellation checks use their renewal's mapped plans; transitive dependent
+execution is a project-scoped recursive existence query. Cancellation-first,
+priority and insertion ordering are preserved. This does not redefine lifecycle
+states or establish the requested broader XState authority alignment.
+
+Boundary tests use 1,005 terminal plans and more than 1,000 runnable plans. They
+verify current work dispatches, pagination has no duplicates/omissions, a live
+writer remains visible even on a cleanup-blocked plan, location retirement cannot
+pass that owner, and a transitive dispatched dependent outside the display window
+still prevents prerequisite repair. The fake native prompt host now obtains its
+assigned attempt from live reservations, rather than repeating the production
+window defect.
+
+Read-only `EXPLAIN QUERY PLAN` against the production DB confirms
+`SEARCH a USING INDEX runner_attempts_active_project (project_directory=?)`,
+followed by a plan primary-key lookup and ordering sort. No production mutation
+or cleanup was performed. Quality checks passed; 374 store/runtime/retained-repair
+tests passed with 5,999 assertions. A further 79 retained-reverification tests
+passed with 925 assertions. No new behavior failures appeared. No native activation
+or claim of installed scheduler recovery yet.

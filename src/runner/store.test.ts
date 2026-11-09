@@ -1538,6 +1538,77 @@ test("active project reservations preserve priority and attempt order and refres
   expect(new RunnerStore(reopened).activeProjectAttempts()).toEqual(refreshed)
 })
 
+test("F-S4-2 live reservations and runnable pages survive more than 1000 retained plans", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,?,json_set(body,'$.priority',?),model,reason,artifact
+      FROM runner_plans WHERE id=?`)
+    for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, "integrated", 100, receipt.planID)
+    for (let i = 0; i < 1005; i++) clone.run(`runnable-${i}`, "running", i % 3, receipt.planID)
+    clone.run("cancel-first", "cancelling", -100, receipt.planID)
+    // Plan lifecycle is not resource ownership: this terminal plan still has a live writer.
+    db.query("UPDATE runner_plans SET state='cleanup-blocked' WHERE id=?").run(receipt.planID)
+    db.query(
+      `INSERT INTO runner_attempts
+      (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+      VALUES('hidden-live',?,?,1,'session','message',?,'base','{}','running',1)`,
+    ).run(receipt.planID, taskID, f.projectDirectory)
+  })
+  expect(f.store.plans().some((plan) => plan.id === receipt.planID)).toBe(false)
+  expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toEqual(["hidden-live"])
+  const rows = [...f.store.runnablePlans(new Set(["integrated", "cleanup-blocked"]))]
+  expect(rows).toHaveLength(1006)
+  expect(new Set(rows.map((row) => row.id)).size).toBe(1006)
+  expect(rows[0]!.id).toBe("cancel-first")
+  expect(rows.slice(1, 336).every((row) => JSON.parse(row.body).priority === 2)).toBe(true)
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='accepted' WHERE id='hidden-live'").run(),
+  )
+  expect(f.store.activeProjectAttempts()).toEqual([])
+})
+
+test("F-S4-2 transitive dependent ownership is found outside the display window", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  const task = f.repository.insert({
+    ...f.repository.get(f.input.nodes[0]!.taskID)!,
+    id: crypto.randomUUID(),
+  })
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,'integrated',json_set(body,'$.priority',100),model,reason,artifact
+      FROM runner_plans WHERE id=?`)
+    for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, receipt.planID)
+    clone.run("middle", receipt.planID)
+    clone.run("dependent", receipt.planID)
+    db.query(
+      "UPDATE runner_plans SET body=json_set(body,'$.priority',-1,'$.afterPlans',json(?)) WHERE id=?",
+    ).run(JSON.stringify([receipt.planID]), "middle")
+    db.query(
+      "UPDATE runner_plans SET body=json_set(body,'$.priority',-1,'$.afterPlans',json(?)) WHERE id=?",
+    ).run(JSON.stringify(["middle"]), "dependent")
+    db.query(
+      `INSERT INTO runner_nodes
+      SELECT 'dependent',?,spec_revision,ordinal,state,version,reason,artifact,snapshot,machine_version
+      FROM runner_nodes WHERE plan_id=?`,
+    ).run(task.id, receipt.planID)
+    db.query(
+      `INSERT INTO runner_attempts
+      (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+      VALUES('old-attempt','dependent',?,1,'session','message',?,'base','{}','accepted',1)`,
+    ).run(task.id, f.projectDirectory)
+  })
+  expect(f.store.plans().some((plan) => plan.id === "dependent")).toBe(false)
+  expect(f.store.startedDependentPlan(receipt.planID)?.id).toBe("dependent")
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET project_directory='/foreign' WHERE id='dependent'").run(),
+  )
+  expect(f.store.startedDependentPlan(receipt.planID)).toBeNull()
+})
+
 test("delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown", () => {
   const f = fixture("bounded-outbox")
   const plan = f.store.submit(f.input, "owner")

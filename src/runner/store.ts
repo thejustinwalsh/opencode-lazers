@@ -1061,6 +1061,51 @@ export class RunnerStore {
         .all(this.repository.projectDirectory),
     )
   }
+  /** Page execution candidates after filtering history; never use the display window for scheduling. */
+  *runnablePlans(terminalStates: ReadonlySet<string>): Generator<PlanRow> {
+    type Candidate = PlanRow & { queue_rank: number; priority: number; sequence: number }
+    const states = [...terminalStates]
+    let cursor: Candidate | undefined
+    for (;;) {
+      const page: Candidate[] = this.atomic((db) =>
+        db
+          .query<Candidate, (string | number)[]>(
+            `SELECT *,CASE WHEN state='cancelling' THEN 1 ELSE 0 END AS queue_rank,
+           COALESCE(json_extract(body,'$.priority'),0) AS priority,rowid AS sequence
+           FROM runner_plans WHERE project_directory=?
+           ${states.length ? `AND state NOT IN (${states.map(() => "?").join(",")})` : ""}
+           ${cursor ? "AND (CASE WHEN state='cancelling' THEN 1 ELSE 0 END,COALESCE(json_extract(body,'$.priority'),0),-rowid) < (?,?,?)" : ""}
+           ORDER BY queue_rank DESC,priority DESC,rowid LIMIT 1000`,
+          )
+          .all(
+            this.repository.projectDirectory,
+            ...states,
+            ...(cursor ? [cursor.queue_rank, cursor.priority, -cursor.sequence] : []),
+          ),
+      )
+      yield* page
+      if (page.length < 1000) return
+      cursor = page.at(-1)!
+    }
+  }
+  /** A transitive dependent with execution history prevents rewriting its prerequisite. */
+  startedDependentPlan(planID: string): PlanRow | null {
+    return this.atomic((db) =>
+      db
+        .query<PlanRow, [string, string, string, string]>(
+          `WITH RECURSIVE dependents(id) AS (
+         SELECT id FROM runner_plans WHERE id=? AND project_directory=?
+         UNION
+         SELECT p.id FROM runner_plans p,json_each(p.body,'$.afterPlans') edge
+         JOIN dependents d ON d.id=edge.value WHERE p.project_directory=?
+       )
+       SELECT p.* FROM runner_plans p JOIN dependents d ON d.id=p.id
+       WHERE p.id<>? AND EXISTS (SELECT 1 FROM runner_attempts a WHERE a.plan_id=p.id)
+       LIMIT 1`,
+        )
+        .get(planID, this.repository.projectDirectory, this.repository.projectDirectory, planID),
+    )
+  }
   continuation(planID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
     return this.atomic((db) =>
@@ -3387,19 +3432,14 @@ export class RunnerStore {
         .all(planID),
     )
   }
-  /** Current reservations in the same project/priority window used by plans(). */
+  /** Every live project reservation, independent of retained plan history or plan state. */
   activeProjectAttempts(): AttemptRow[] {
     return this.atomic((db) =>
       db
         .query<AttemptRow, [string]>(
-          `WITH plans AS MATERIALIZED (
-           SELECT id,rowid AS sequence,COALESCE(json_extract(body,'$.priority'),0) AS priority
-           FROM runner_plans WHERE project_directory=?
-           ORDER BY priority DESC,rowid LIMIT 1000
-         )
-         SELECT a.* FROM runner_attempts a CROSS JOIN plans p ON a.plan_id=p.id
-         WHERE a.state IN ('preparing','running','verifying')
-         ORDER BY p.priority DESC,p.sequence,a.started_at,a.number`,
+          `SELECT a.* FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
+           WHERE a.project_directory=? AND a.state IN ('preparing','running','verifying')
+           ORDER BY COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid,a.started_at,a.number`,
         )
         .all(this.repository.projectDirectory),
     )

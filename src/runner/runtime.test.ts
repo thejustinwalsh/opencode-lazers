@@ -304,8 +304,7 @@ function fixture(
       }
       if (session.background?.state === "observed") session.background.inputID = input.id
       const assigned = store
-        .plans()
-        .flatMap((plan) => store.attempts(plan.id))
+        .activeProjectAttempts()
         .find((attempt) => attempt.session_id === input.sessionID)!
       if (session.background?.state === "observed")
         Object.assign(session.background, {
@@ -3572,6 +3571,56 @@ test("F-S4-1 admission and dispatch do not invoke the full project audit", async
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
   expect(f.store.attempts(f.receipt.planID).length).toBeGreaterThan(0)
+})
+
+test("F-S4-2 scheduler dispatches runnable work behind 1000 high-priority terminal plans", async () => {
+  const f = fixture({ delayed: true })
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,'integrated',json_set(body,'$.priority',100),model,reason,artifact
+      FROM runner_plans WHERE id=?`)
+    for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, f.receipt.planID)
+  })
+  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(false)
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+})
+
+test("F-S4-2 retirement preserves a live owner's location outside the display window", async () => {
+  const f = fixture({ delayed: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,'integrated',json_set(body,'$.priority',100),model,reason,artifact
+      FROM runner_plans WHERE id=?`)
+    for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, f.receipt.planID)
+    db.query("UPDATE runner_plans SET state='cleanup-blocked' WHERE id=?").run(f.receipt.planID)
+  })
+  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(false)
+  let retired = false
+  f.host.retireWorktreeLocation = async () => {
+    retired = true
+    return "evicted"
+  }
+  const runtime = f.runtime as unknown as {
+    retireCleanedWorktreeLocation(
+      plan: { id: string },
+      workspace: string,
+      current: () => boolean,
+    ): Promise<string>
+  }
+  expect(
+    await runtime.retireCleanedWorktreeLocation(
+      { id: "another-cleanup" },
+      attempt.workspace,
+      () => true,
+    ),
+  ).toBe("reserved-by-other-attempt")
+  expect(retired).toBe(false)
 })
 function setReviewInputObservation(
   f: ReturnType<typeof fixture>,
