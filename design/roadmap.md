@@ -102,7 +102,7 @@ Optimize repeated prerequisite and session/attempt reads where measurement shows
 cost. Preserve correct dispatch, verification and finalization under changes,
 cancellation and reopen. Qualify changes at a coordinated native boundary with a
 comparable workload; temporary diagnostic captures need not become product APIs.
-Root owns coordinated activation. Provider interruption, source landing and old
+Architect owns coordinated activation. Provider interruption, source landing and old
 status prose do not establish acceptance or justify discarding retained work.
 
 ### Proactive worker recovery
