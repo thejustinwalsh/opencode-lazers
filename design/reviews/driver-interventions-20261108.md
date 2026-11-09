@@ -308,6 +308,9 @@ and empty composer. The local model indicator resumed Loading. Backend workers
 were not stopped. This establishes UI/input recovery, not the root cause or GPU
 qualification. Earlier failed submissions were not resent until their absence
 was confirmed in both transcript and inbox.
+The sample is retained as renderer-reload-stall-20261109.txt.gz beside this log.
+It reports a3.4GB physical footprint and9.6GB peak; symbolication does not identify
+the JavaScript source responsible, so no particular plugin component is blamed.
 
 The separate user-requested Sol audit found durable tool history limited to
 assigned workers and missing distinct Code Mode inner calls. Its pre-change
