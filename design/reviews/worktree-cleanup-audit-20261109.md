@@ -76,6 +76,21 @@ fresh inventory. Plan `f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23` returned to
 effect remains uncertain with that error. This reproduces the hold; it does not
 establish removal or reclaimed space.
 
+Architect then used a native background shell for a scoped cleanup batch of
+settled retained-verification, graph-check and adoption-check resources. Shell
+`sh_1c06e2c3a001XPq0I191crqGej` exited 0 at Unix1794229924198. Eleven native
+non-forced removals completed. The driver independently checked every target:
+all were absent from disk, native worktree inventory and loaded-location inventory.
+The batch's before/after folder measurements fell by 5,896,480 KiB, about 5.6 GiB.
+This is measured folder allocation change, not an exact device-wide free-space
+claim. Other work continued during the batch.
+
+The exact decisions, paths, receipts, reasons for retention and measurements are
+in [Architect's intervention report](worktree-cleanup-intervention-20261109.json).
+This is user-requested partial reclamation, not proof that automatic cleanup has
+been repaired. LZ-185 still needs dispatch, implementation and subsequent native
+cleanup observation; the 50 worker-checkout idle holds remain unresolved.
+
 No SQL repair, forced Git removal, new daemon, source hashing gate or fabricated
 idle receipt was used. The Desktop request is a user-directed driver intervention.
 Required follow-through is implementation, meaningful checks, actual native
