@@ -13,7 +13,8 @@ In the draft native checkout `3156909f-f2b7-429d-b50c-a9c879079a18`,
 
 That observation lists native worktrees, synchronously runs Git inventory,
 top-level, HEAD, status, unresolved-index and main HEAD commands, and reads
-associated native sessions with messages. The scheduler interval is 10 seconds.
+associated native sessions with messages. The standalone runtime fallback is
+10 seconds; production `src/index.ts` registers `runtime.tick()` at 2 seconds.
 The audit found 38 cleanup-blocked plans with 50 clean merged checkouts. Thus
 unchanged holds can still cause repeated expensive observations; suppressing
 removal retries alone does not suppress this work. This is a source-supported
@@ -79,3 +80,9 @@ Driver feedback was submitted through Desktop as
 it in `msg_1c10ab636001FZmybJReWweUCH`, read this report and started reviewing
 the tick path, preserving the SAME worker. This proves receipt and investigation,
 not a performance fix, integration or automatic cleanup.
+
+Subsequent source review corrected the cadence above: the production registration
+uses 2 seconds. Architect confirmed the repeated observations and recorded native
+follow-up disposition `3ae45e71-b783-469c-b437-c5ab966eb763`, preserving the current
+worker. Its response `msg_1c10d846d0010HcX0otqRwHTcU` reports steering for cheap
+unchanged ticks and cleanup after facts change. Those results remain unproven.
