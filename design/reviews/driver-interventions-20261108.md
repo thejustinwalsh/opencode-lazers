@@ -257,3 +257,27 @@ same-worker reconciliation of existing4abb300, including its atomic recheck.
 This is integration drift, not justification for weakening tests, changing the
 acceptance policy or adding a task/gate. No worker source or production DB was
 changed by Driver. Delivery and post-correction results remain to observe.
+
+## Native steering admission blocked the completed LZ-193 handoff
+
+LZ-193 delivered5acc7fb with24context tests/191assertions and a reported actual
+GitHub fetch/reuse probe. Runtime then held it on unknown native background,
+not test/hash failure. Its genuine idle callback recorded zero background at
+Unix1794187189488, followed by idle-lineage-unavailable for current steering
+inputmsg_1bde053ff001Esip43JUMxyo4g and native success sequence1559. The input
+was already durably captured under attemptc49fbc65-db5c-44ca-bd42-e142dca7fb09.
+
+Exact source identified a narrower defect than a generic stream-gap hypothesis:
+ProgressRecorder.matchesAssignedInput recognized only the original prompt and
+admitted progress reminders, rejecting captured user/Architect steering. Driver
+reproduced that producer failure in a native-hook regression before fixing the
+shared matcher. It now recognizes trusted captured native user/synthetic input
+rows bound to the same session/attempt/project; worker commentary and instruction
+context do not qualify. Current-input, attempt, location and terminal observations
+are unchanged. One older negative test called an actual same-session user input
+wrong; it now exercises instruction-only context, while new positive steering
+and foreign-session/attempt tests cover the intended distinction.
+
+Quality and102recorder/native/idle tests/787assertions pass. Source activation
+and recovery of the actual held193 attempt remain to observe. No durable idle
+report was fabricated or production DB edited by Driver.

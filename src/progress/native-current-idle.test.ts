@@ -263,13 +263,18 @@ test("a current positive-background snapshot stays observable as live work", asy
   }
 })
 
-test.each(["missing callback", "wrong input", "missing start sequence"] as const)(
+test.each(["missing callback", "instruction-only context", "missing start sequence"] as const)(
   "replacement remains fail-closed with %s",
   async (caseName) => {
     const { fixture, recorder, binding, store } = activeFixture()
-    const messages = currentMessages(
-      caseName === "wrong input" ? "msg_other_input" : binding.assignedMessageID,
-    )
+    const messages: unknown[] = currentMessages(binding.assignedMessageID)
+    if (caseName === "instruction-only context")
+      messages[0] = {
+        id: "msg_loaded_instructions",
+        type: "synthetic",
+        text: "Repository instructions",
+        metadata: { instruction: { paths: ["AGENTS.md"] } },
+      }
     try {
       await startOldObserver(
         fixture,
@@ -407,3 +412,41 @@ test.each([
     }
   },
 )
+
+test("captured Architect steering retains the same attempt through native idle and success", async () => {
+  const { fixture, recorder, binding, store } = activeFixture()
+  const steerID = "msg_architect_steering"
+  const messages = [
+    { id: binding.assignedMessageID, type: "user", text: "Assigned task" },
+    ...currentMessages(steerID),
+  ]
+  try {
+    recorder.reconcileMessages(binding.sessionID, messages)
+    await startOldObserver(fixture, recorder, store, binding, messages, 20, 25)
+    const replacement = makeContext(fixture, { messages })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(replacement.context, recorder, "project", undefined, async () => {
+            throw new Error("native log replay is unavailable")
+          })
+          yield* replacement.idle()!({
+            sessionID: Session.ID.make(binding.sessionID),
+            background: [],
+          } as never)
+          expect(store.read(binding)?.report).toMatchObject({ inputID: steerID, count: 0 })
+          appendSuccessfulIdle(messages, 26)
+          yield* Effect.promise(() => replacement.emit(event("session.execution.succeeded", 26)))
+          yield* Effect.promise(() => waitFor(() => store.read(binding)?.terminal?.sequence === 26))
+        }),
+      ),
+    )
+    expect(observationStore(fixture, binding)).toMatchObject({
+      state: "observed",
+      inputID: steerID,
+      count: 0,
+    })
+  } finally {
+    fixture.close()
+  }
+})

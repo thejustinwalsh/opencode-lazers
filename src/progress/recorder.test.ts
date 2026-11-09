@@ -57,6 +57,19 @@ test("retained worker inputs preserve steering identity and time without recordi
       at: null,
     })
     expect(JSON.stringify(inputs)).not.toContain("Private instruction context")
+    const assigned = fixture.attempts[0]!.message_id
+    expect(
+      recorder.matchesAssignedInput(firstAttemptID, workerSession, assigned, "worker-steer"),
+    ).toBe(true)
+    expect(
+      recorder.matchesAssignedInput(firstAttemptID, workerSession, assigned, "loaded-instructions"),
+    ).toBe(false)
+    expect(
+      recorder.matchesAssignedInput(secondAttemptID, workerSession, assigned, "worker-steer"),
+    ).toBe(false)
+    expect(
+      recorder.matchesAssignedInput(firstAttemptID, "foreign-session", assigned, "worker-steer"),
+    ).toBe(false)
   } finally {
     fixture.close()
   }

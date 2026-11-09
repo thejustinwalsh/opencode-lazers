@@ -1039,6 +1039,23 @@ export class ProgressRecorder {
       )
         return false
       if (inputID === assignedMessageID) return true
+      // Native user/Architect steering belongs to the same assigned attempt.
+      // These rows are captured from OpenCode messages, never from worker reports.
+      const capturedInput = db
+        .query<{ seq: number }, [string, string, string, string, string]>(
+          `SELECT seq FROM runner_progress WHERE project_directory=? AND attempt_id=?
+           AND session_id=? AND message_id=? AND dedupe_key=?
+           AND source='recovery' AND kind='visible-text'
+           AND json_extract(payload,'$.messageType') IN ('user','synthetic') LIMIT 1`,
+        )
+        .get(
+          this.store.repository.projectDirectory,
+          attemptID,
+          sessionID,
+          inputID,
+          `input:${sessionID}:${inputID}`,
+        )
+      if (capturedInput) return true
       const claim = this.reminderClaimIn(db, attemptID, sessionID, inputID)
       return Boolean(
         claim &&
