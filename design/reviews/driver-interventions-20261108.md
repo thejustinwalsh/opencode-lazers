@@ -189,4 +189,7 @@ requested same-worker steering: useful returned source and saved artifact,
 explicit omissions, and resource handling grounded in actual transport/memory
 constraints. No new task, stopped worker, or System One change. At the next native
 observation Architect was researching that exact draft and the same worker was
-still writing. Correction delivery and changed behavior remain unproven.
+still writing. The same worker subsequently received native user input
+msg_1bdca3f6d001hiq44jRVDw0V5n at Unix1794185534829 with the concrete correction
+and resumed its model turn. This proves input consumption; changed behavior
+remains unproven.
