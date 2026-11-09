@@ -465,12 +465,28 @@ export const HandoffReviewOutcomeInput = z.strictObject({
 })
 export type HandoffReviewOutcomeInput = z.infer<typeof HandoffReviewOutcomeInput>
 
+export const HandoffReviewFinalizationAuthorizationInput = z.strictObject({
+  requestID: identifier,
+  draftVersion: z.int().positive(),
+  reviewID: z.uuid(),
+  round: z.int().positive(),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  result: JsonObjectSchema,
+})
+export type HandoffReviewFinalizationAuthorizationInput = z.infer<
+  typeof HandoffReviewFinalizationAuthorizationInput
+>
+
 export const HandoffFinalizeInput = z.strictObject({
   finalizationID: z.uuid(),
   requestID: identifier,
   draftVersion: z.int().positive(),
   reviewID: z.uuid(),
   round: z.int().positive(),
+  fingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 })
 export type HandoffFinalizeInput = z.infer<typeof HandoffFinalizeInput>
 
@@ -485,6 +501,7 @@ export const HandoffReportRecord = z.strictObject({
   reviewStatus: z.enum(["reviewed", "disabled", "unavailable"]),
   limitation: text.nullable(),
   concerns: z.array(text).max(100),
+  reviewResult: JsonObjectSchema.optional(),
   source: HandoffSource,
   draft: HandoffDraftRecord,
   review: HandoffReviewRoundRecord,
@@ -568,6 +585,7 @@ export const HandoffEventRecord = z.strictObject({
     "draft-saved",
     "review-reserved",
     "review-completed",
+    "review-finalization-authorized",
     "report-finalized",
     "architect-disposition",
   ]),

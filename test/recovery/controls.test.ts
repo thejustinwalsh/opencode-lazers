@@ -59,6 +59,7 @@ type CheckpointResponse = { record: { observedCallID: string; reportedBy: { sess
 type HandoffRequest = { record: { requestID: string; requestGeneration: number } }
 type HandoffReview = {
   status: string
+  fingerprint: string
   limitation: string | null
   errors?: string[]
   draftID: string
@@ -66,7 +67,15 @@ type HandoffReview = {
   reviewID: string
   round: number
 }
-type HandoffFinalization = { report: { reportID: string; reviewStatus: string } }
+type HandoffFinalization = {
+  report: {
+    reportID: string
+    reviewStatus: string
+    finalizedBy: { sessionID: string }
+    review: { reviewer: { sessionID: string }; round: number }
+    reviewResult?: { fingerprint: string; status: string }
+  }
+}
 type HandoffRead = {
   reports: Array<{ reportID: string }>
   dispositions: Array<{ version: number; correction: { value: string } }>
@@ -107,7 +116,12 @@ function draft() {
 }
 
 async function setup(
-  options: { deny?: boolean; syntheticError?: boolean; replaceDuringSessionRead?: boolean } = {},
+  options: {
+    deny?: boolean
+    syntheticError?: boolean
+    replaceDuringSessionRead?: boolean
+    reviewResult?: "completed" | "feedback"
+  } = {},
 ) {
   const fixture = makeFixture()
   fixture.store.atomic((db) => {
@@ -187,12 +201,28 @@ async function setup(
     rpc: () => ({
       review: (input: unknown) => {
         reviewInputs.push(input)
+        if (options.reviewResult) {
+          const questions =
+            typeof input === "object" && input !== null && "questions" in input
+              ? input.questions
+              : undefined
+          const questionIDs =
+            typeof questions === "object" && questions !== null ? Object.keys(questions) : []
+          const probability = options.reviewResult === "completed" ? 0.95 : 0.1
+          return Effect.succeed({
+            model: "d1-omni-2b",
+            answers: Object.fromEntries(
+              questionIDs.map((id) => [id, { type: "noul", noul: probability }]),
+            ),
+            usage: { input_tokens: 42, output_tokens: 0 },
+          })
+        }
         return Effect.fail(new Error("local review is unavailable"))
       },
     }),
   } as unknown as Pick<Plugin.Context, "tool" | "permission" | "location" | "session" | "rpc">
-  const register = () =>
-    Effect.runPromise(Effect.scoped(registerRecoveryTools(fakeContext, fixture.repository)))
+  const register = (repository: TaskRepository = fixture.repository) =>
+    Effect.runPromise(Effect.scoped(registerRecoveryTools(fakeContext, repository)))
   await register()
   cleanup.push(() => fixture.close())
   return {
@@ -673,6 +703,208 @@ test("registered verification lets the current Architect review only an existing
   expect(f.reviewInputs).toHaveLength(2)
 })
 
+test("registered Architect replays a terminal worker result and finalizes its exact review", async () => {
+  const f = await setup({ reviewResult: "completed" })
+  const request = await f.invoke<HandoffRequest>(
+    "lz-request-handoff",
+    {
+      requestID: "architect-terminal-replay",
+      sourceAttemptID: secondAttemptID,
+      request: {
+        purpose: "Finalize the exact terminal result already produced for the worker draft.",
+        references: [{ kind: "trajectory", reference: "attempt:current" }],
+      },
+    },
+    architect("terminal-request"),
+  )
+  const evidence = [{ kind: "trajectory" as const, reference: "attempt:terminal-result" }]
+  const workerResult = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftID: crypto.randomUUID(),
+      draft: draft(),
+      evidence,
+    },
+    worker("terminal-worker-review"),
+  )
+  expect(workerResult.status).toBe("completed")
+
+  const finalization = {
+    finalizationID: crypto.randomUUID(),
+    requestID: request.record.requestID,
+    draftVersion: workerResult.draftVersion,
+    reviewID: workerResult.reviewID,
+    round: workerResult.round,
+    fingerprint: workerResult.fingerprint,
+  }
+  await expect(
+    f.invoke("lz-submit-handoff", finalization, architect("terminal-submit-before-review")),
+  ).rejects.toThrow("Review result is missing, stale, or belongs to another draft/caller")
+
+  const architectResult = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftVersion: workerResult.draftVersion,
+      reviewID: workerResult.reviewID,
+      evidence,
+    },
+    architect("terminal-architect-replay"),
+  )
+  expect(architectResult).toMatchObject({
+    status: "completed",
+    round: workerResult.round,
+    fingerprint: workerResult.fingerprint,
+  })
+  expect(f.reviewInputs).toHaveLength(1)
+
+  await expect(
+    f.invoke(
+      "lz-submit-handoff",
+      { ...finalization, finalizationID: crypto.randomUUID(), fingerprint: "f".repeat(64) },
+      architect("terminal-submit-stale-result"),
+    ),
+  ).rejects.toThrow("Review result is missing, stale, or belongs to another draft/caller")
+  await expect(
+    f.invoke(
+      "lz-submit-handoff",
+      finalization,
+      toolContext("ses-foreign", "architect", "terminal-submit-foreign"),
+    ),
+  ).rejects.toThrow("Handoff caller is not the current owner of the source plan")
+
+  const finalized = await f.invoke<HandoffFinalization>(
+    "lz-submit-handoff",
+    { ...finalization, finalizationID: crypto.randomUUID() },
+    architect("terminal-submit"),
+  )
+  expect(finalized.report).toMatchObject({
+    reviewStatus: "reviewed",
+    finalizedBy: { sessionID: "ses-owner" },
+    review: { reviewer: { sessionID: "ses-accepted" }, round: workerResult.round },
+    reviewResult: { fingerprint: workerResult.fingerprint, status: "completed" },
+  })
+  const store = new HandoffStore(f.fixture.repository)
+  expect(
+    store.getReviewRound(request.record.requestID, workerResult.reviewID, 1)?.reviewer,
+  ).toEqual({ sessionID: "ses-accepted", agent: "lazers-implementor", role: "worker" })
+  expect(store.getReviewRound(request.record.requestID, workerResult.reviewID, 2)).toBeUndefined()
+  expect(
+    store
+      .readHistory({ requestID: request.record.requestID })!
+      .events.filter((event) => event.kind === "review-finalization-authorized"),
+  ).toHaveLength(1)
+})
+
+test("registered Architect finalizes the terminal result after three consumed review rounds", async () => {
+  const f = await setup({ reviewResult: "feedback" })
+  const request = await f.invoke<HandoffRequest>(
+    "lz-request-handoff",
+    {
+      requestID: "architect-exhausted-review",
+      sourceAttemptID: secondAttemptID,
+      request: {
+        purpose: "Preserve the unresolved handoff after the bounded review chain is exhausted.",
+        references: [{ kind: "trajectory", reference: "attempt:current" }],
+      },
+    },
+    architect("exhausted-request"),
+  )
+  let lastReview: HandoffReview | undefined
+  for (let round = 1; round <= 3; round++) {
+    lastReview = await f.invoke<HandoffReview>(
+      "lz-verify-handoff",
+      round === 1
+        ? {
+            requestID: request.record.requestID,
+            draftID: crypto.randomUUID(),
+            draft: draft(),
+            evidence: [{ kind: "trajectory", reference: `attempt:round-${round}` }],
+          }
+        : {
+            requestID: request.record.requestID,
+            draftVersion: 1,
+            reviewID: lastReview!.reviewID,
+            evidence: [{ kind: "trajectory", reference: `attempt:round-${round}` }],
+          },
+      worker(`exhausted-worker-round-${round}`),
+    )
+    expect(lastReview.round).toBe(round)
+  }
+  if (!lastReview) throw new Error("The review chain did not run")
+  expect(lastReview.status).toBe("completed_with_concerns")
+  const roundThree = lastReview
+  const store = new HandoffStore(f.fixture.repository)
+  const persistedRound = store.getReviewRound(request.record.requestID, roundThree.reviewID, 3)
+  if (!persistedRound?.outcome) throw new Error("The third review result was not persisted")
+  const persistedResult = persistedRound.outcome.result
+  if (
+    typeof persistedResult !== "object" ||
+    persistedResult === null ||
+    Array.isArray(persistedResult)
+  )
+    throw new Error("The third review result is not a structured result")
+  const historicalOutcome = {
+    ...persistedRound.outcome,
+    status: "feedback" as const,
+    result: { ...persistedResult, status: "feedback" },
+  }
+  f.fixture.repository.atomic((db) => {
+    db.query(
+      `UPDATE recovery_handoff_rounds SET payload=?,outcome_json=?
+       WHERE project_directory=? AND review_id=? AND round=?`,
+    ).run(
+      JSON.stringify({ ...persistedRound, outcome: historicalOutcome }),
+      JSON.stringify(historicalOutcome),
+      f.fixture.repository.projectDirectory,
+      roundThree.reviewID,
+      3,
+    )
+  })
+
+  const exhaustedResult = await f.invoke<HandoffReview>(
+    "lz-verify-handoff",
+    {
+      requestID: request.record.requestID,
+      draftVersion: roundThree.draftVersion,
+      reviewID: roundThree.reviewID,
+      evidence: [{ kind: "trajectory", reference: "attempt:after-budget" }],
+    },
+    architect("exhausted-new-evidence"),
+  )
+  expect(exhaustedResult).toMatchObject({
+    status: "completed_with_concerns",
+    round: 3,
+  })
+  expect(exhaustedResult.errors?.[0]).toContain("three reserved review rounds are exhausted")
+  expect(exhaustedResult.limitation).toBe("The review round budget is exhausted.")
+  expect(f.reviewInputs).toHaveLength(3)
+
+  const finalized = await f.invoke<HandoffFinalization>(
+    "lz-submit-handoff",
+    {
+      finalizationID: crypto.randomUUID(),
+      requestID: request.record.requestID,
+      draftVersion: roundThree.draftVersion,
+      reviewID: roundThree.reviewID,
+      round: exhaustedResult.round,
+      fingerprint: exhaustedResult.fingerprint,
+    },
+    architect("exhausted-submit"),
+  )
+  expect(finalized.report.reviewResult).toMatchObject({
+    status: "completed_with_concerns",
+    round: 3,
+    limitation: "The review round budget is exhausted.",
+  })
+  expect(store.getReviewRound(request.record.requestID, roundThree.reviewID, 4)).toBeUndefined()
+  expect(store.getReviewRound(request.record.requestID, roundThree.reviewID, 3)).toMatchObject({
+    reviewer: { sessionID: "ses-accepted", agent: "lazers-implementor", role: "worker" },
+    outcome: { status: "feedback" },
+  })
+})
+
 test("registered Architect verification recovers an expired worker review reservation", async () => {
   const f = await setup()
   const request = await f.invoke<HandoffRequest>(
@@ -782,6 +1014,53 @@ test("registered Architect verification recovers an expired worker review reserv
     completedBy: { sessionID: "ses-owner", agent: "architect", role: "architect" },
     recovered: true,
   })
+
+  const finalization = {
+    finalizationID: crypto.randomUUID(),
+    requestID: request.record.requestID,
+    draftVersion: recovered.draftVersion,
+    reviewID: recovered.reviewID,
+    round: recovered.round,
+    fingerprint: recovered.fingerprint,
+  }
+  await expect(
+    f.invoke(
+      "lz-submit-handoff",
+      { ...finalization, draftVersion: recovered.draftVersion + 1 },
+      architect("expired-submit-stale-draft"),
+    ),
+  ).rejects.toThrow("Draft version is not attached to this request")
+
+  const restartedRepository = new TaskRepository(f.fixture.repository.path, f.fixture.directory)
+  try {
+    await f.register(restartedRepository)
+    await expect(
+      f.invoke(
+        "lz-submit-handoff",
+        finalization,
+        toolContext("ses-foreign", "architect", "expired-submit-foreign"),
+      ),
+    ).rejects.toThrow("Handoff caller is not the current owner of the source plan")
+    const finalized = await f.invoke<HandoffFinalization>(
+      "lz-submit-handoff",
+      finalization,
+      architect("expired-submit-after-restart"),
+    )
+    expect(finalized.report).toMatchObject({
+      reviewStatus: "unavailable",
+      finalizedBy: { sessionID: "ses-owner" },
+      review: { reviewer: sourceWorker, round: 1 },
+      reviewResult: { fingerprint: recovered.fingerprint, status: "unavailable" },
+    })
+    const persistedHistory = new HandoffStore(restartedRepository).readHistory({
+      requestID: request.record.requestID,
+    })!
+    expect(
+      persistedHistory.events.filter((event) => event.kind === "review-finalization-authorized"),
+    ).toHaveLength(1)
+  } finally {
+    restartedRepository.close()
+  }
 })
 
 test("ambiguous checkpoint admission is persisted and never resent on replay", async () => {

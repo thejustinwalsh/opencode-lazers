@@ -94,7 +94,10 @@ progress criteria.
 An Architect reviewing or recovering an existing reservation calls
 `lz-verify-handoff` with its `requestID`, `draftVersion`, evidence, and exact
 `reviewID`. This reads and reviews the persisted worker-authored draft; the
-Architect cannot create or replace draft data.
+Architect cannot create or replace draft data. Finalize the exact returned
+result with `lz-submit-handoff`, including its `fingerprint` when available.
+Durable authorization records identify the current Architect's review without
+rewriting the original round reviewer or outcome.
 
 Reports and corrections preserve the original source task/attempt. They do not
 prove completion, stopped writes/background work, or authorize another writer.

@@ -349,7 +349,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     editor.add({
       name: "lz-verify-handoff",
       description:
-        "The assigned worker submits structured handoff data; an Architect may instead review or recover an existing worker-authored draft by requestID and draftVersion. Existing data is read as stored and cannot be replaced by the Architect. Use the returned draftVersion, reviewID and round with lz-submit-handoff to finalize this exact reviewed version. Disabled/unavailable review is an explicit limitation, never a pass; neither tool changes task acceptance or authorizes another writer.",
+        "The assigned worker submits structured handoff data; an Architect may instead review or recover an existing worker-authored draft by requestID and draftVersion. Existing data is read as stored and cannot be replaced by the Architect. Use the returned draftVersion, reviewID, round and fingerprint with lz-submit-handoff to finalize this exact reviewed result. Disabled/unavailable review is an explicit limitation, never a pass; neither tool changes task acceptance or authorizes another writer.",
       input: HandoffVerifyInput,
       output: z.unknown(),
       options: { codemode: true, permission: "lz-verify-handoff" },
@@ -414,6 +414,26 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
                     }
                   }
                   const reviewed = await reviewer.review(reviewInput, caller, signal)
+                  if (
+                    caller.role === "architect" &&
+                    "fingerprint" in reviewed &&
+                    "round" in reviewed &&
+                    typeof reviewed.round === "number" &&
+                    ["completed", "completed_with_concerns", "disabled", "unavailable"].includes(
+                      reviewed.status,
+                    )
+                  )
+                    store.authorizeReviewFinalization(
+                      {
+                        requestID: input.requestID,
+                        draftVersion,
+                        reviewID: reviewed.reviewID,
+                        round: reviewed.round,
+                        fingerprint: reviewed.fingerprint,
+                        result: reviewed,
+                      },
+                      caller,
+                    )
                   return output({
                     ...reviewed,
                     draftID,
@@ -429,7 +449,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     editor.add({
       name: "lz-submit-handoff",
       description:
-        "Finalize the exact handoff draft version and review round returned by lz-verify-handoff. This persists the reviewed report and notification intent; it is not task completion, proof that writes/background work stopped, or authority for another writer.",
+        "Finalize the exact handoff draft version and review result returned by lz-verify-handoff, including its fingerprint when supplied. This persists the reviewed report and notification intent; it is not task completion, proof that writes/background work stopped, or authority for another writer.",
       input: HandoffFinalizeInput,
       output: z.unknown(),
       options: { codemode: true, permission: "lz-submit-handoff" },

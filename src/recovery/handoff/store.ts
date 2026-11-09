@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { canonical } from "../../identity.ts"
+import { REVIEW_ROUNDS } from "../../review/progression.ts"
 import type { TaskRepository } from "../../storage.ts"
 import { TaskSpecSchema } from "../../task.ts"
 import { RunnerStore } from "../../runner/store.ts"
@@ -23,6 +24,7 @@ import {
   HandoffRequestInput,
   HandoffRequestRecord,
   HandoffReviewCheck,
+  HandoffReviewFinalizationAuthorizationInput,
   HandoffReviewOutcomeInput,
   HandoffReviewReservationInput,
   HandoffReviewRoundRecord,
@@ -73,6 +75,10 @@ type Receipt<T> =
   | { status: "conflict"; message: string }
 
 export const HANDOFF_REVIEW_RESERVATION_LEASE_MS = 120_000
+
+const REVIEW_ROUNDS_EXHAUSTED_ERROR =
+  "The three reserved review rounds are exhausted; no semantic pass was established."
+const REVIEW_ROUNDS_EXHAUSTED_LIMITATION = "The review round budget is exhausted."
 
 type SourceRow = {
   task_body: string
@@ -853,6 +859,84 @@ export class HandoffStore {
     })
   }
 
+  /** Persist the current Architect's authority over the exact result they reviewed. */
+  authorizeReviewFinalization(input: unknown, callerInput: unknown): boolean {
+    const parsed = HandoffReviewFinalizationAuthorizationInput.parse(input)
+    const caller = HandoffActor.parse(callerInput)
+    if (caller.role !== "architect")
+      throw new Error("Only the authorized Architect may authorize handoff finalization")
+
+    return this.repository.atomic((db) => {
+      const request = this.requireRequest(db, parsed.requestID)
+      this.assertReviewAuthority(db, request, caller)
+      const row = db
+        .query<RoundRow, [string, string, string, number]>(
+          `SELECT payload,outcome_json FROM recovery_handoff_rounds
+           WHERE project_directory=? AND request_id=? AND review_id=? AND round=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID, parsed.reviewID, parsed.round)
+      if (!row || row.outcome_json === null) return false
+
+      const review = HandoffReviewRoundRecord.parse(JSON.parse(row.payload))
+      const result = parsed.result
+      if (
+        review.requestID !== parsed.requestID ||
+        review.draftVersion !== parsed.draftVersion ||
+        review.reviewID !== parsed.reviewID ||
+        review.round !== parsed.round ||
+        result.requestID !== parsed.requestID ||
+        result.reviewID !== parsed.reviewID ||
+        result.round !== parsed.round ||
+        result.fingerprint !== parsed.fingerprint ||
+        !["completed", "completed_with_concerns", "disabled", "unavailable"].includes(
+          String(result.status),
+        )
+      )
+        return false
+
+      const storedResultMatches = canonical(review.outcome?.result) === canonical(result)
+      if (storedResultMatches) {
+        if (!review.outcome) return false
+        this.finalizationStatus(review.outcome)
+      } else if (!this.isExhaustedReviewResult(db, review, result)) {
+        return false
+      }
+
+      const authorization = {
+        requestID: parsed.requestID,
+        draftVersion: parsed.draftVersion,
+        reviewID: parsed.reviewID,
+        round: parsed.round,
+        fingerprint: parsed.fingerprint,
+        resultKind: storedResultMatches ? "stored" : "exhausted",
+        result,
+        authorizedBy: caller,
+      }
+      const prior = db
+        .query<{ data: string }, [string, string, string, string]>(
+          `SELECT data FROM recovery_handoff_events
+           WHERE project_directory=? AND request_id=? AND kind=? AND record_id=?`,
+        )
+        .all(
+          this.repository.projectDirectory,
+          parsed.requestID,
+          "review-finalization-authorized",
+          this.roundKey(parsed.reviewID, parsed.round),
+        )
+        .some((event) => canonical(JSON.parse(event.data)) === canonical(authorization))
+      if (!prior)
+        this.appendEvent(
+          db,
+          parsed.requestID,
+          "review-finalization-authorized",
+          this.roundKey(parsed.reviewID, parsed.round),
+          authorization,
+          this.timestamp(),
+        )
+      return true
+    })
+  }
+
   /** Finalize a draft and its pending notification intent in one SQLite transaction. */
   finalize(
     input: unknown,
@@ -883,12 +967,15 @@ export class HandoffStore {
         const notification = HandoffNotificationIntent.parse(
           JSON.parse(existingFinalization.notification_payload),
         )
+        const reportedResult =
+          report.reviewResult ?? JsonObjectSchema.safeParse(report.review.outcome?.result).data
         const same =
           report.requestID === parsed.requestID &&
           report.draftVersion === parsed.draftVersion &&
           report.reviewID === parsed.reviewID &&
           report.round === parsed.round &&
-          canonical(report.finalizedBy) === canonical(caller)
+          canonical(report.finalizedBy) === canonical(caller) &&
+          (parsed.fingerprint === undefined || reportedResult?.fingerprint === parsed.fingerprint)
         return same
           ? { status: "replayed" as const, report, notification }
           : {
@@ -920,16 +1007,43 @@ export class HandoffStore {
         .get(this.repository.projectDirectory, parsed.reviewID, parsed.round)
       if (!roundRow) throw new Error("Review round was not reserved")
       const review = HandoffReviewRoundRecord.parse(JSON.parse(roundRow.payload))
+      const reviewMatches =
+        review.requestID === parsed.requestID &&
+        review.draftVersion === parsed.draftVersion &&
+        review.reviewID === parsed.reviewID &&
+        review.round === parsed.round &&
+        roundRow.outcome_json !== null &&
+        !!review.outcome
+      const authorization = reviewMatches
+        ? this.findReviewFinalizationAuthorization(
+            db,
+            {
+              requestID: parsed.requestID,
+              draftVersion: parsed.draftVersion,
+              reviewID: parsed.reviewID,
+              round: parsed.round,
+              ...(parsed.fingerprint ? { fingerprint: parsed.fingerprint } : {}),
+            },
+            caller,
+          )
+        : undefined
+      const storedResult = JsonObjectSchema.safeParse(review.outcome?.result)
+      const storedFingerprint = storedResult.success ? storedResult.data.fingerprint : undefined
       if (
-        review.requestID !== parsed.requestID ||
-        review.draftVersion !== parsed.draftVersion ||
-        canonical(review.reviewer) !== canonical(caller) ||
-        roundRow.outcome_json === null ||
-        !review.outcome
+        !reviewMatches ||
+        (canonical(review.reviewer) !== canonical(caller) && !authorization) ||
+        (!authorization &&
+          parsed.fingerprint !== undefined &&
+          storedFingerprint !== parsed.fingerprint)
       )
         throw new Error("Review result is missing, stale, or belongs to another draft/caller")
 
-      const { reviewStatus, limitation } = this.finalizationStatus(review.outcome)
+      const finalizationStatus = authorization
+        ? this.finalizationStatusFromResult(authorization.result)
+        : this.finalizationStatus(review.outcome!)
+      const concerns = authorization
+        ? this.reviewResultConcerns(authorization.result)
+        : review.outcome!.concerns
       const reportVersion = db
         .query<{ version: number }, [string, string]>(
           `SELECT COALESCE(MAX(report_version),0)+1 AS version
@@ -945,9 +1059,9 @@ export class HandoffStore {
         draftVersion: parsed.draftVersion,
         reviewID: parsed.reviewID,
         round: parsed.round,
-        reviewStatus,
-        limitation,
-        concerns: review.outcome.concerns,
+        ...finalizationStatus,
+        concerns,
+        ...(authorization ? { reviewResult: authorization.result } : {}),
         source: request.source,
         draft,
         review,
@@ -2381,6 +2495,142 @@ export class HandoffStore {
 
   private roundKey(reviewID: string, round: number): string {
     return `${reviewID}:${round}`
+  }
+
+  private findReviewFinalizationAuthorization(
+    db: Database,
+    input: {
+      requestID: string
+      draftVersion: number
+      reviewID: string
+      round: number
+      fingerprint?: string
+    },
+    caller: HandoffActorType,
+  ): { fingerprint: string; result: Record<string, unknown> } | undefined {
+    const events = db
+      .query<{ data: string }, [string, string, string, string]>(
+        `SELECT data FROM recovery_handoff_events
+         WHERE project_directory=? AND request_id=? AND kind=? AND record_id=?`,
+      )
+      .all(
+        this.repository.projectDirectory,
+        input.requestID,
+        "review-finalization-authorized",
+        this.roundKey(input.reviewID, input.round),
+      )
+    const matches = events.flatMap((event) => {
+      const data = JsonObjectSchema.safeParse(JSON.parse(event.data))
+      if (!data.success) return []
+      const value = data.data
+      if (
+        value.requestID !== input.requestID ||
+        value.draftVersion !== input.draftVersion ||
+        value.reviewID !== input.reviewID ||
+        value.round !== input.round ||
+        typeof value.fingerprint !== "string" ||
+        (input.fingerprint !== undefined && value.fingerprint !== input.fingerprint) ||
+        canonical(value.authorizedBy) !== canonical(caller) ||
+        (value.resultKind !== "stored" && value.resultKind !== "exhausted")
+      )
+        return []
+      const result = JsonObjectSchema.safeParse(value.result)
+      if (
+        !result.success ||
+        result.data.requestID !== input.requestID ||
+        result.data.reviewID !== input.reviewID ||
+        result.data.round !== input.round ||
+        result.data.fingerprint !== value.fingerprint
+      )
+        return []
+      return [{ fingerprint: value.fingerprint, result: result.data }]
+    })
+    if (!matches.length) return undefined
+    const first = matches[0]!
+    return matches.every((match) => canonical(match) === canonical(first)) ? first : undefined
+  }
+
+  private isExhaustedReviewResult(
+    db: Database,
+    review: HandoffReviewRoundRecordType,
+    result: Record<string, unknown>,
+  ): boolean {
+    if (review.round !== REVIEW_ROUNDS) return false
+    const rounds = db
+      .query<ReviewRoundPayloadRow, [string, string, string]>(
+        `SELECT payload FROM recovery_handoff_rounds
+         WHERE project_directory=? AND request_id=? AND review_id=? ORDER BY round`,
+      )
+      .all(this.repository.projectDirectory, review.requestID, review.reviewID)
+    if (rounds.length !== REVIEW_ROUNDS) return false
+
+    const findings = review.checks.map((check) => ({
+      ...JsonObjectSchema.parse(check.definition),
+      id: check.id,
+      probability: null,
+      score: null,
+      disposition: "limit",
+    }))
+    const expected = {
+      status: "completed_with_concerns",
+      requestID: review.requestID,
+      reviewID: review.reviewID,
+      version: review.checkVersion,
+      round: REVIEW_ROUNDS,
+      maxRounds: REVIEW_ROUNDS,
+      fingerprint: result.fingerprint,
+      answers: {},
+      findings,
+      focus: null,
+      errors: [REVIEW_ROUNDS_EXHAUSTED_ERROR],
+      limitation: REVIEW_ROUNDS_EXHAUSTED_LIMITATION,
+      elapsedMs: null,
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        costUSD: null,
+      },
+      next: {
+        action: "continue",
+        instruction:
+          "Send the draft and its unresolved concerns to the current Architect. This review does not finalize a report or establish task success.",
+      },
+    }
+    return canonical(result) === canonical(expected)
+  }
+
+  private finalizationStatusFromResult(result: Record<string, unknown>): {
+    reviewStatus: HandoffReportRecordType["reviewStatus"]
+    limitation: string | null
+  } {
+    const status = result.status
+    const limitation = typeof result.limitation === "string" ? result.limitation : null
+    if (status === "completed" || status === "completed_with_concerns")
+      return { reviewStatus: "reviewed", limitation }
+    if (status === "disabled" || status === "unavailable") {
+      if (!limitation) throw new Error("A limited review result must retain its limitation")
+      return { reviewStatus: status, limitation }
+    }
+    throw new Error("A handoff cannot be finalized from a pending review result")
+  }
+
+  private reviewResultConcerns(result: Record<string, unknown>): string[] {
+    if (!Array.isArray(result.findings)) return []
+    return result.findings.flatMap((finding) => {
+      if (typeof finding !== "object" || finding === null || Array.isArray(finding)) return []
+      const record = finding as Record<string, unknown>
+      if (
+        record.disposition === "resolved" ||
+        record.disposition === "not_applicable" ||
+        typeof record.id !== "string" ||
+        typeof record.guidance !== "string"
+      )
+        return []
+      return [`${record.id}: ${record.guidance}`]
+    })
   }
 
   private finalizationStatus(outcome: HandoffReviewOutcomeType): {

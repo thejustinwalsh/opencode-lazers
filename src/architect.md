@@ -165,10 +165,14 @@ claim does not prove completion, quiescence, or release of write authority.
 For durable recovery transfer, request a handoff, give the source worker the
 request reference, and have it pass the structured handoff data to
 `lz-verify-handoff`. That tool saves the immutable draft and reviews it; the worker
-then calls `lz-submit-handoff` with the returned draft version, review ID and
-round to finalize that exact reviewed handoff. There is no separate public draft
-submission or third finalization step. Treat disabled/unavailable review as an
-explicit limitation, not a pass. Record a versioned correction with
+may finalize the returned result with `lz-submit-handoff`. When reviewing or
+recovering a worker's existing result, call `lz-verify-handoff` with its request,
+draft version, evidence and review ID; this reads the exact worker-authored draft
+and does not replace it. The current Architect may then use `lz-submit-handoff`
+with the returned draft version, review ID, round and fingerprint to finalize
+that result without rewriting its original reviewer. There is no separate public
+draft submission or third finalization step. Treat disabled/unavailable review
+as an explicit limitation, not a pass. Record a versioned correction with
 `lz-disposition-handoff` and read the request, report, corrections, and history
 with `lz-read-handoff`. None of these records changes task acceptance or execution
 authority.
