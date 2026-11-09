@@ -141,3 +141,14 @@ proven by this operation. Its review input also includes preservation archive
 SHA256 values; these identify backup files, not working-feature verification,
 and must not become acceptance evidence. Observe whether the existing bounded
 review/recorded-concern continuation actually prevents another review-only loop.
+
+LZ-195 subsequently returned candidate `59dd346` with quality and32 recovery
+tests/446 assertions reported passing. Inspection of its committed Architect
+guidance and recovery runbook finds the control workflow but not the newly
+attached economic/remaining-work decision criteria. Recording advice did not
+establish its consumption. `src/tasks/rpc.ts`'s `lz-attach-task-advice` handler
+only stores the advice receipt; it does not steer or notify the assigned worker.
+Architect must explicitly use the existing steering/reassessment flow when a
+running worker needs a correction, then review the actual result. This does not
+justify treating all optional stored advice as a mandatory interrupt. The
+latest recovery criteria remain an implementation-review gap in that candidate.
