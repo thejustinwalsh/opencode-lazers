@@ -4,6 +4,31 @@ Updated 2026-11-08. Goal remains active: native Architect/LAZERS must deliver th
 whole roadmap, then propose improvements from observation. Runtime/API/DB state
 is authoritative; this file is a locator. Earlier detail remains in Git history.
 
+## Latest native observations (Unix1794185198017)
+
+Main commits29ee18b/ba6b5f4 consolidate worker startup into `lz-get-task` and
+record actual native use: LZ-193 received full readable task/guidance and focused
+cached Repomix source in one Code Mode call. Old `lz-get-task-instructions` is
+removed; direct reads remain available. No comparative savings measured yet.
+
+Two original OpenAI Luna Max workers are concurrently active: LZ-181 session
+ses_12ba163aca2a4703a19aa82430adb1ab continues asynchronous verification/test
+repair; LZ-193 session ses_dd92813879ab4e0da0f5d1c8b5a197d4 implements remote
+compressed repository snapshots in plane8bf7885-fd38-4170-8ce6-cbb1d68cb2c4.
+LZ-193 task1f8714b6-38d5-42da-8347-39ffc513c813, attempt
+c49fbc65-db5c-44ca-bd42-e142dca7fb09. Neither is accepted/integrated yet.
+
+Project Radar currently fails visibly with `[object Object]`: legacy radar and
+snapshot throw “Observation scope is too large; narrow it”. The existing
+liveRadar endpoint succeeds on the same real project in133ms, returns13managed
+sessions and reports bounded coverage. LZ-184 accepted candidate89edd14b0cadad49b8b3cb84d733ce56ff82f549
+is not integrated: planebea76ad-f3bd-4f6b-9d3f-1e356e032b9c is blocked on
+connected-radar-agent-monitor:human. Architect received the actual UI/log finding
+through Desktop and is continuing that existing acceptance/integration path.
+Do not duplicate the task, raise the legacy caps, or claim the accepted node is
+the delivered panel. Screenshot and detailed interventions are in
+design/reviews/driver-interventions-20261108.md (commit51be2c2).
+
 ## Priority: autonomous delivery and visible recovery
 
 User correction: Architect owns routine verification, product probes, review,
