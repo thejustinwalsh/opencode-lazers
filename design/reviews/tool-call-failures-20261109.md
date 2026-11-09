@@ -299,3 +299,22 @@ The legacy tail is intentionally bounded and worker-only; it cannot establish a
 whole-product historical rate. Analyze native calls and local callback
 invocations separately rather than summing parent and child counts as though
 they were the same measurement.
+
+## Subsequent native observation
+
+After the repair was committed, Driver inspected the production DB read-only.
+The ledger already contained actual hook/native records for `architect`,
+`general`, and assigned `lazers-implementor` sessions. Architect calls had null
+attempt links; worker calls retained their actual attempt IDs. For example,
+`lz-query-tasks` had a separate local-invocation row linked to outer execute
+`call_45d5c017966e4994b5110ad7542f5e5a`, with Unix observations
+1794188753185–1794188753198. `lz-verify-task` similarly linked to
+`call_ebe83023688e48d5a4a9066edb2b7cec`. General shell and worker read/patch
+records carried hook/native provenance. These are real successful invocations,
+not isolated test fixtures. No role-attributed failed row was present in this
+bounded observation, so native failure capture remains unobserved live.
+
+This demonstrates that the source is effective in at least those loaded
+locations; it does not prove a coordinated reload of every historical worktree,
+nor coverage of the unsupported inner-call boundaries described above. Null-agent
+retained recovery rows remain null rather than being assigned an invented role.
