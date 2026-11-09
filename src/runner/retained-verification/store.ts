@@ -1059,7 +1059,7 @@ function operationProjection(
               { assertion_id: string },
               [string, number, string, string | null, string, ...string[]]
             >(
-              `SELECT assertion_id FROM runner_retained_verification_evidence
+              `SELECT DISTINCT assertion_id FROM runner_retained_verification_evidence
                WHERE operation_id=? AND generation=? AND phase=? AND task_id IS ? AND artifact=?
                  AND assertion_id IN (${uniqueIDs.map(() => "?").join(",")})`,
             )

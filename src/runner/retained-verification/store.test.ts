@@ -189,6 +189,63 @@ test("inspection limits operation reads and returns no more than the requested o
   expect(page.history.hasMore).toBe(true)
 })
 
+test("duplicate-heavy human evidence lookup keeps only distinct required assertions", () => {
+  const db = fixture(false)
+  const waiting = operation(selectedPlan, taskA, 1, "waiting-human")
+  createRetainedVerification(db, projectDirectory, waiting)
+
+  const insertEvidence = db.query(
+    `INSERT INTO runner_retained_verification_evidence(
+      id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
+    ) VALUES(?,?,?,'task',?,'approval',?,?,?)`,
+  )
+  for (let index = 0; index < 5_000; index++)
+    insertEvidence.run(
+      crypto.randomUUID(),
+      waiting.id,
+      waiting.generation,
+      taskA,
+      waiting.artifact,
+      `duplicate evidence ${index}`,
+      index,
+    )
+  expect(
+    db
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) AS count FROM runner_retained_verification_evidence WHERE operation_id=?",
+      )
+      .get(waiting.id)?.count,
+  ).toBe(5_000)
+
+  const requirements = new Map([
+    [
+      taskA,
+      {
+        planRevision: 1,
+        planVersion: 1,
+        taskRevision: 1,
+        taskAssertionIDs: ["approval", "follow-up"],
+        combinedAssertionIDs: [],
+      },
+    ],
+  ])
+  const result = retainedVerificationsForInspection(
+    db,
+    projectDirectory,
+    selectedPlan,
+    [taskA],
+    10,
+    undefined,
+    requirements,
+  )
+
+  expect(result.latest[0]?.humanEvidence).toEqual({
+    status: "known",
+    phase: "task",
+    missingAssertionIDs: ["follow-up"],
+  })
+})
+
 test("cursor read fences reject intervening database writes without modifying state", () => {
   const db = fixture()
   createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
