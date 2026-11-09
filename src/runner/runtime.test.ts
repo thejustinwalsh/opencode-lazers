@@ -4552,87 +4552,95 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   expect(readFileSync(join(f.root, "check-started"), "utf8")).toBe("started")
 })
 
-test("an exit-zero check with uncertain cleanup retains its receipt and is not replayed after reopen", async () => {
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
-  const f = fixture({
-    taskFiles: [{ name: "a", path: "a.txt" }],
-    checkCommand: (_name, _path, root) =>
-      `printf x >> ${quote(join(root, "check-count"))}; printf "%s" "$$" > ${quote(join(root, "check-pid"))}; sleep 30 >/dev/null 2>&1 & while [ ! -f ${quote(join(root, "check-release"))} ]; do sleep 0.02; done; exit 0`,
-    combinedCheckCommand: "true",
-  })
-  const originalKill = process.kill.bind(process)
-  const pidPath = join(f.root, "check-pid")
-  const releasePath = join(f.root, "check-release")
-  let processGroupID: number | undefined
-  const mockedKill = spyOn(process, "kill").mockImplementation(((pid, signal) => {
-    if (typeof pid === "number" && processGroupID !== undefined && pid === -processGroupID) {
-      if (signal === 0) return true
-      if (signal === "SIGKILL") throw new Error("simulated process-group cleanup failure")
-    }
-    return originalKill(pid, signal)
-  }) as typeof process.kill)
-  try {
-    await runPlan(f)
-    await f.runtime.tick()
-    const attempt = f.store.attempts(f.receipt.planID)[0]!
-    f.completeWorker(attempt.session_id)
-    await f.runtime.tick()
-    await waitForPath(pidPath)
-    processGroupID = Number(readFileSync(pidPath, "utf8"))
-    writeFileSync(releasePath, "go\n")
-    const effect = f.store
-      .effects(f.receipt.planID)
-      .find((candidate) => candidate.kind === "verify:content")!
-    const activity = verificationActivitiesForDatabase(f.repository.path).find(
-      (candidate) => candidate.metadata.effectID === effect.id,
-    )!
-    await activity.settled
-    await drive(f.runtime, 4)
-
-    const uncertain = f.store
-      .effects(f.receipt.planID)
-      .find((candidate) => candidate.id === effect.id)!
-    const envelope = JSON.parse(uncertain.receipt!) as {
-      result: { check: CheckReceipt }
-    }
-    expect(uncertain.state).toBe("uncertain")
-    expect(envelope.result.check).toMatchObject({
-      exitCode: 0,
-      timedOut: false,
-      processCleanup: {
-        state: "uncertain",
-        capability: "process-group",
-        rootPID: processGroupID,
-      },
+test.each([false, true])(
+  "an exit-zero check with uncertain cleanup survives stop-before-reconcile=%s and reopen",
+  async (stopBeforeReconcile) => {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+    const f = fixture({
+      taskFiles: [{ name: "a", path: "a.txt" }],
+      checkCommand: (_name, _path, root) =>
+        `printf x >> ${quote(join(root, "check-count"))}; printf "%s" "$$" > ${quote(join(root, "check-pid"))}; sleep 30 >/dev/null 2>&1 & while [ ! -f ${quote(join(root, "check-release"))} ]; do sleep 0.02; done; exit 0`,
+      combinedCheckCommand: "true",
     })
-    expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
-    expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
-
-    await f.runtime.stop()
-    const reopened = reopenRuntime(f)
-    await reopened.runtime.tick()
-    const afterReopen = reopened.store
-      .effects(f.receipt.planID)
-      .find((candidate) => candidate.id === effect.id)!
-    expect(afterReopen.state).toBe("uncertain")
-    expect((JSON.parse(afterReopen.receipt!) as typeof envelope).result.check.exitCode).toBe(0)
-    expect(
-      reopened.store
+    const originalKill = process.kill.bind(process)
+    const pidPath = join(f.root, "check-pid")
+    const releasePath = join(f.root, "check-release")
+    let processGroupID: number | undefined
+    const mockedKill = spyOn(process, "kill").mockImplementation(((pid, signal) => {
+      if (typeof pid === "number" && processGroupID !== undefined && pid === -processGroupID) {
+        if (signal === 0) return true
+        if (signal === "SIGKILL") throw new Error("simulated process-group cleanup failure")
+      }
+      return originalKill(pid, signal)
+    }) as typeof process.kill)
+    try {
+      await runPlan(f)
+      await f.runtime.tick()
+      const attempt = f.store.attempts(f.receipt.planID)[0]!
+      f.completeWorker(attempt.session_id)
+      await f.runtime.tick()
+      await waitForPath(pidPath)
+      processGroupID = Number(readFileSync(pidPath, "utf8"))
+      writeFileSync(releasePath, "go\n")
+      const effect = f.store
         .effects(f.receipt.planID)
-        .filter((candidate) => candidate.kind === "verify:content"),
-    ).toHaveLength(1)
-    expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
-  } finally {
-    mockedKill.mockRestore()
-    if (processGroupID !== undefined) {
-      try {
-        originalKill(-processGroupID, "SIGKILL")
-      } catch {
-        // The subprocess tree may have exited while the retained receipt was inspected.
+        .find((candidate) => candidate.kind === "verify:content")!
+      const activity = verificationActivitiesForDatabase(f.repository.path).find(
+        (candidate) => candidate.metadata.effectID === effect.id,
+      )!
+      await activity.settled
+      if (stopBeforeReconcile) {
+        expect(activity.state).toBe("completed")
+        await expect(f.runtime.stop()).rejects.toThrow("subprocess cleanup remains uncertain")
+        const reopened = reopenRuntime(f)
+        await drive(reopened.runtime, 4)
+      } else await drive(f.runtime, 4)
+
+      const uncertain = f.store
+        .effects(f.receipt.planID)
+        .find((candidate) => candidate.id === effect.id)!
+      const envelope = JSON.parse(uncertain.receipt!) as {
+        result: { check: CheckReceipt }
+      }
+      expect(uncertain.state).toBe("uncertain")
+      expect(envelope.result.check).toMatchObject({
+        exitCode: 0,
+        timedOut: false,
+        processCleanup: {
+          state: "uncertain",
+          capability: "process-group",
+          rootPID: processGroupID,
+        },
+      })
+      expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+      expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
+
+      await f.runtime.stop()
+      const reopened = reopenRuntime(f)
+      await reopened.runtime.tick()
+      const afterReopen = reopened.store
+        .effects(f.receipt.planID)
+        .find((candidate) => candidate.id === effect.id)!
+      expect(afterReopen.state).toBe("uncertain")
+      expect((JSON.parse(afterReopen.receipt!) as typeof envelope).result.check.exitCode).toBe(0)
+      expect(
+        reopened.store
+          .effects(f.receipt.planID)
+          .filter((candidate) => candidate.kind === "verify:content"),
+      ).toHaveLength(1)
+      expect(readFileSync(join(f.root, "check-count"), "utf8")).toBe("x")
+    } finally {
+      mockedKill.mockRestore()
+      if (processGroupID !== undefined) {
+        try {
+          originalKill(-processGroupID, "SIGKILL")
+        } catch {
+          // The subprocess tree may have exited while the retained receipt was inspected.
+        }
       }
     }
-  }
-})
+  },
+)
 
 test("independent isolated Git branches overlap and combined verification includes every artifact", async () => {
   const f = fixture({ independent: true, delayed: true })

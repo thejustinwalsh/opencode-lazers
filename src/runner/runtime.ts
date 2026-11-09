@@ -189,6 +189,17 @@ function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefine
     return undefined
   }
 }
+
+/** Activity completion means a receipt exists, not that its process tree is idle. */
+function checkSettlementProblem(activity: VerificationActivity): string | undefined {
+  if (activity.state === "failed") return errorText(activity.error)
+  if (activity.state !== "completed") return "Verification is still running"
+  const receipt = activity.result as CheckReceipt | undefined
+  if (!receipt) return "Verification has no final receipt"
+  if (!checkResourcesSettled(receipt))
+    return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain: ${receipt.processCleanup?.detail ?? "process-tree settlement was not confirmed"}`
+  return undefined
+}
 function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
   if (
     fact.kind !== "gap" ||
@@ -434,11 +445,28 @@ export class TaskRuntime {
         activity.metadata.operationID === operationID,
     )
     for (const activity of activities) await this.settleCancelledRetainedActivity(activity)
-    const uncertain = activities.find((activity) => activity.state === "failed")
-    if (uncertain)
-      throw new Error(
-        `Retained verification cancellation remains uncertain: ${errorText(uncertain.error)}`,
-      )
+    const uncertain = activities.find((activity) => checkSettlementProblem(activity))
+    const problem = uncertain
+      ? checkSettlementProblem(uncertain)
+      : this.retainedCheckSettlementProblem(operationID)
+    if (problem) throw new Error(`Retained verification cancellation remains uncertain: ${problem}`)
+  }
+
+  private retainedCheckSettlementProblem(operationID: string): string | undefined {
+    return this.store.atomic((db) => {
+      for (const check of retainedVerificationChecks(db, operationID)) {
+        if (check.state !== "completed" || !check.receipt)
+          return "Retained check has no conclusive final receipt"
+        try {
+          const receipt = JSON.parse(check.receipt) as CheckReceipt
+          if (!checkResourcesSettled(receipt))
+            return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain`
+        } catch {
+          return "Retained check settlement receipt is unreadable"
+        }
+      }
+      return undefined
+    })
   }
 
   private async reconcileCancelledCheckActivities(
@@ -591,26 +619,7 @@ export class TaskRuntime {
       valid = false
     }
     if (valid && receipt) {
-      this.store.atomic((db) =>
-        completeRetainedVerificationCheck(db, operationID, phase, checkID, receipt),
-      )
-      this.store.record(
-        operation.planID,
-        operation.taskID,
-        "RETAINED_VERIFICATION_CHECK_COMPLETED",
-        {
-          operationID,
-          generation,
-          phase,
-          checkID,
-          artifact: row.artifact,
-          workspace: row.workspace,
-          environmentIdentity: row.environmentIdentity,
-          exitCode: receipt.exitCode,
-          timedOut: receipt.timedOut,
-          cancelled: operation.state === "cancelled",
-        },
-      )
+      this.completeRetainedCheck(operation, phase, checkID, receipt)
       if (checkResourcesSettled(receipt))
         await this.cleanupRetainedCheckResources(
           operation,
@@ -4290,6 +4299,25 @@ export class TaskRuntime {
       if (command.action === "cancel") {
         if (terminal.has(plan.state)) throw new Error("Plan has ended")
         this.store.cancelAdoptions(plan.id, "Cancellation requested")
+        for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
+          saveRetainedVerification(db, {
+            ...operation,
+            state: "cancelled",
+            holdReason: "Plan cancellation requested",
+            updatedAt: this.now(),
+          })
+          db.query(
+            `UPDATE runner_retained_verification_resources SET state='uncertain',updated_at=?
+             WHERE operation_id=? AND state IN ('creating','active')`,
+          ).run(this.now(), operation.id)
+          this.retainedVerificationAborts.get(operation.id)?.abort()
+          this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
+            operationID: operation.id,
+            generation: operation.generation,
+            reason: "Plan cancellation requested",
+            oldExecutionAndResourceHoldsPreserved: true,
+          })
+        }
         // Stop admission now. In-flight work remains running until interruption is proven.
         db.query(
           "UPDATE runner_plans SET state='cancelling',reason='Cancellation requested',version=version+1 WHERE id=?",
@@ -7124,6 +7152,7 @@ export class TaskRuntime {
           retainedVerificationsForPlan(db, this.directory, plan.id),
         )
         if (
+          plan.state !== "cancelling" &&
           retained.some(
             (operation) =>
               !["cancelled", "task-accepted"].includes(operation.state) &&
@@ -7160,10 +7189,10 @@ export class TaskRuntime {
     // sweep. Drain that tick, then abort its exact owned activities before the
     // caller is allowed to close the store.
     await abortOwnedActivities()
-    const uncertain = [...activities.values()].find((activity) => activity.state === "failed")
+    const uncertain = [...activities.values()].find((activity) => checkSettlementProblem(activity))
     if (uncertain)
       throw new Error(
-        `Verification activity ${uncertain.key} did not settle conclusively: ${errorText(uncertain.error)}`,
+        `Verification activity ${uncertain.key} did not settle conclusively: ${checkSettlementProblem(uncertain)}`,
       )
   }
 
@@ -7173,6 +7202,26 @@ export class TaskRuntime {
     if (plan.state === "cancelling") {
       const activities = await this.cancelCheckActivities(plan.id)
       await this.reconcileCancelledCheckActivities(plan, activities, fence)
+      const retainedProblem = this.store.atomic((db) =>
+        retainedVerificationsForPlan(db, this.directory, plan!.id).some(
+          (operation) =>
+            operation.state === "cancelled" &&
+            Boolean(this.retainedCheckSettlementProblem(operation.id)),
+        ),
+      )
+      const unsettled = activities.find((activity) => checkSettlementProblem(activity))
+      if (unsettled || retainedProblem) {
+        const reason = `Verification cancellation settlement is uncertain: ${unsettled ? checkSettlementProblem(unsettled) : "retained check resources remain unconfirmed"}`
+        this.store.fenced(this.owner, fence, (db) => {
+          if (this.store.plan(plan!.id)?.reason === reason) return
+          db.query("UPDATE runner_plans SET reason=? WHERE id=? AND state='cancelling'").run(
+            reason,
+            plan!.id,
+          )
+          this.store.record(plan!.id, null, "VERIFICATION_CANCELLATION_UNCERTAIN", { reason })
+        })
+        return
+      }
       await this.cancelWorkers(plan, fence)
       const pending = this.store
         .effects(plan.id)
@@ -10077,6 +10126,40 @@ export class TaskRuntime {
     return receipt
   }
 
+  private completeRetainedCheck(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+    checkID: string,
+    receipt: CheckReceipt,
+  ): boolean {
+    return this.store.atomic((db) => {
+      if (!completeRetainedVerificationCheck(db, operation.id, phase, checkID, receipt))
+        return false
+      // Persist the result and event together. Receipt recovery, normal ticks,
+      // stop and cancellation may all observe the same final subprocess result.
+      this.store.record(
+        operation.planID,
+        operation.taskID,
+        "RETAINED_VERIFICATION_CHECK_COMPLETED",
+        {
+          operationID: operation.id,
+          generation: operation.generation,
+          phase,
+          checkID,
+          artifact: receipt.artifact,
+          workspace: receipt.cwd,
+          environmentIdentity: receipt.environmentIdentity,
+          exitCode: receipt.exitCode,
+          timedOut: receipt.timedOut,
+          passed: checkSucceeded(receipt),
+          processCleanup: receipt.processCleanup,
+          cancelled: operation.state === "cancelled",
+        },
+      )
+      return true
+    })
+  }
+
   private async runRetainedVerificationChecks(
     initial: RetainedVerification,
     phase: "task" | "combined",
@@ -10235,7 +10318,7 @@ export class TaskRuntime {
                 ].includes(current.state)
               )
                 return false
-              return completeRetainedVerificationCheck(db, initial.id, phase, check.id, recovered)
+              return this.completeRetainedCheck(current, phase, check.id, recovered)
             })
             if (!saved) return undefined
             results.push(recovered)

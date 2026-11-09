@@ -21,7 +21,10 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import { verificationActivitiesForDatabase } from "./verification-activities.ts"
+import {
+  verificationActivitiesForDatabase,
+  forgetVerificationActivity,
+} from "./verification-activities.ts"
 import { fingerprint } from "../identity.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
@@ -2977,150 +2980,359 @@ test("failed retained-checkout cleanup does not revoke a product pass", async ()
   expect(cleanupFixture.store.nodes(cleanupFixture.planID)[0]?.state).toBe("accepted")
 })
 
-test("cancellation and database reopen cannot accept a late retained-check result", async () => {
-  const delayedCheck = "bun run verify"
-  // The worker's first run fails deterministically; isolated retained verification
-  // then waits behind an explicit filesystem barrier until cancellation.
-  const delayed = await failedFixture({
-    taskCheckCommand: delayedCheck,
-    verificationScript: [
-      'import { appendFileSync, existsSync, mkdirSync, watch } from "node:fs"',
-      'import { join } from "node:path"',
-      "if (!process.env.LAZERS_VERIFICATION_SQLITE) process.exit(1)",
-      "const home = process.env.HOME!",
-      "mkdirSync(home, { recursive: true })",
-      'appendFileSync(join(home, "started"), "started\\n")',
-      'const release = join(home, "release")',
-      "await new Promise<void>((resolve) => {",
-      "  if (existsSync(release)) return resolve()",
-      "  const watcher = watch(home, (_event, filename) => {",
-      '    if (filename === "release" && existsSync(release)) { watcher.close(); resolve() }',
-      "  })",
-      "  if (existsSync(release)) { watcher.close(); resolve() }",
-      "})",
-      "",
-    ].join("\n"),
-  })
-  const plan = delayed.store.plan(delayed.planID)!
-  const attempt = delayed.store.attempts(delayed.planID).at(-1)!
-  if (!attempt.artifact) throw new Error("Fixture attempt did not retain an artifact")
-  const command = {
-    requestID: "verify-retained-cancel-late-result",
-    planID: delayed.planID,
-    expectedVersion: plan.version,
-    action: "verify-retained" as const,
-    projectID: "project",
-    planRevision: plan.revision,
-    taskID: delayed.task.id,
-    taskRevision: delayed.task.revision,
-    attemptID: attempt.id,
-    artifact: attempt.artifact,
-    reason: "Cancel while the retained check is still executing",
-  }
-  const verifying = delayed.runtime.command(command, "owner")
-  void verifying.catch(() => undefined)
-  await waitForFixtureObservation(delayed, "retained operation admission", () =>
-    Boolean(
-      delayed.store.atomic((db) =>
-        db.query<{ id: string }, []>("SELECT id FROM runner_retained_verifications LIMIT 1").get(),
-      ),
-    ),
-  )
-  const operation = delayed.store.atomic((db) =>
-    db.query<{ id: string }, []>("SELECT id FROM runner_retained_verifications LIMIT 1").get(),
-  )!
-  let contextPath: string | undefined
-  await waitForFixtureObservation(delayed, "retained subprocess start witness", () => {
-    const check = delayed.store.atomic((db) =>
-      db
-        .query<{ context_path: string }, [string]>(
-          "SELECT context_path FROM runner_retained_verification_checks WHERE operation_id=? AND state='intended'",
-        )
-        .get(operation.id),
-    )
-    if (check) {
-      contextPath = check.context_path
-      return existsSync(join(contextPath, "home", "started"))
+test.each(["cancel-retained-verification", "cancel"] as const)(
+  "%s retains a completed passing receipt with unknown process settlement",
+  async (action) => {
+    const f = await failedFixture({
+      requestTick: async () => {},
+      verificationScript: [
+        "if (!process.env.LAZERS_VERIFICATION_SQLITE) process.exit(1)",
+        'Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref()',
+      ].join("\n"),
+    })
+    const control = await registeredPlanCommand(f.runtime)
+    const result = (await control.execute(retainedVerifyCommand(f, "uncertain-settlement"))) as {
+      operationID: string
     }
-    return false
-  })
-  expect(existsSync(join(contextPath!, "home", "started"))).toBe(true)
-  await delayed.runtime.command(
-    {
-      requestID: "cancel-retained-during-check",
+    const originalKill = process.kill.bind(process)
+    let group: number | undefined
+    const kill = spyOn(process, "kill").mockImplementation(((pid, signal) => {
+      if (typeof pid === "number" && pid < 0) {
+        group = pid
+        if (signal === 0) return true
+        if (signal === "SIGKILL") throw new Error("fixture cannot observe tree termination")
+      }
+      return originalKill(pid, signal)
+    }) as typeof process.kill)
+    try {
+      let activity
+      for (let tick = 0; tick < 20 && !activity; tick++) {
+        await f.runtime.tick()
+        activity = verificationActivitiesForDatabase(f.store.repository.path).find(
+          (entry) => entry.metadata.operationID === result.operationID,
+        )
+      }
+      expect(activity).toBeDefined()
+      await activity!.settled
+      expect(activity!.state).toBe("completed")
+      expect(activity!.result).toMatchObject({
+        exitCode: 0,
+        timedOut: false,
+        processCleanup: { state: "uncertain" },
+      })
+      const command = {
+        requestID: "cancel-unknown-settlement",
+        planID: f.planID,
+        expectedVersion: f.store.plan(f.planID)!.version,
+        action,
+        ...(action === "cancel-retained-verification"
+          ? { retainedVerificationID: result.operationID }
+          : {}),
+      }
+      const cancellation = control.execute(command)
+      if (action === "cancel-retained-verification") {
+        await expect(cancellation).rejects.toThrow("subprocess cleanup remains uncertain")
+        await expect(cancellation).rejects.toThrow("Command exited 0")
+        await expect(control.execute(command)).rejects.toThrow(
+          "subprocess cleanup remains uncertain",
+        )
+      } else {
+        await cancellation
+        await f.runtime.tick()
+        expect(f.store.plan(f.planID)?.state).toBe("cancelling")
+        await f.runtime.tick()
+        expect(f.store.plan(f.planID)?.state).toBe("cancelling")
+        expect(f.store.plan(f.planID)?.reason).toContain("settlement is uncertain")
+      }
+      const check = f.store.atomic((db) =>
+        db
+          .query<{ state: string; receipt: string; cleanup_state: string }, [string]>(
+            "SELECT state,receipt,cleanup_state FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+          )
+          .get(result.operationID),
+      )!
+      expect(check).toMatchObject({ state: "completed", cleanup_state: "pending" })
+      expect(JSON.parse(check.receipt)).toMatchObject({ exitCode: 0, timedOut: false })
+      const events = f.store
+        .activity(f.planID, f.task.id)
+        .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED")
+      expect(events).toHaveLength(1)
+      expect(JSON.parse(events[0]!.payload)).toMatchObject({ passed: true, cancelled: true })
+      const resources = f.store.atomic((db) =>
+        db
+          .query<{ state: string; canonical_path: string }, [string]>(
+            "SELECT state,canonical_path FROM runner_retained_verification_resources WHERE operation_id=?",
+          )
+          .all(result.operationID),
+      )
+      expect(resources.length).toBeGreaterThan(0)
+      expect(resources.every((resource) => resource.state === "uncertain")).toBe(true)
+      expect(resources.some((resource) => existsSync(resource.canonical_path))).toBe(true)
+      expect(f.prompts).toHaveLength(1)
+    } finally {
+      kill.mockRestore()
+      if (group !== undefined) {
+        try {
+          originalKill(group, "SIGKILL")
+        } catch {
+          // The test descendant may already have exited during assertions.
+        }
+      }
+    }
+  },
+  30_000,
+)
+
+test.each([false, true])(
+  "retained completion events survive receipt-cut reopen=%s exactly once",
+  async (receiptCut) => {
+    for (const failRetainedCheck of [false, true]) {
+      const f = await failedFixture({ failRetainedCheck, requestTick: async () => {} })
+      const control = await registeredPlanCommand(f.runtime)
+      const result = (await control.execute(retainedVerifyCommand(f, "completion-event"))) as {
+        operationID: string
+      }
+      let runtime = f.runtime
+      let store = f.store
+      let reopened: TaskRepository | undefined
+      try {
+        if (receiptCut) {
+          let captured = false
+          for (let tick = 0; tick < 20 && !captured; tick++) {
+            await f.runtime.tick()
+            const activity = verificationActivitiesForDatabase(f.store.repository.path).find(
+              (entry) => entry.metadata.operationID === result.operationID,
+            )
+            if (activity) {
+              await activity.settled
+              expect(activity.state).toBe("completed")
+              // Model process death after the atomic disk receipt but before its
+              // DB application. A fresh process has no in-memory activity registry.
+              forgetVerificationActivity(activity.key, activity.identity)
+              captured = true
+            }
+          }
+          expect(captured).toBe(true)
+          expect(
+            f.store
+              .activity(f.planID, f.task.id)
+              .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED"),
+          ).toHaveLength(0)
+          await f.runtime.stop()
+          f.store.repository.close()
+          reopened = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+          store = new RunnerStore(reopened)
+          store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+          runtime = new TaskRuntime(store, f.host, "project", undefined, {
+            requestTick: async () => {},
+          })
+        }
+        for (let tick = 0; tick < 30; tick++) {
+          await runtime.tick()
+          const operation = store.atomic((db) =>
+            db
+              .query<{ state: string }, [string]>(
+                "SELECT state FROM runner_retained_verifications WHERE id=?",
+              )
+              .get(result.operationID),
+          )!
+          if (["accepted", "held"].includes(operation.state)) break
+          await Promise.all(
+            verificationActivitiesForDatabase(store.repository.path).map((entry) => entry.settled),
+          )
+        }
+        const events = () =>
+          store
+            .activity(f.planID, f.task.id)
+            .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED")
+            .map((entry) => JSON.parse(entry.payload))
+        expect(events()).toHaveLength(failRetainedCheck ? 1 : 2)
+        for (const event of events())
+          expect(event).toMatchObject({
+            operationID: result.operationID,
+            generation: 1,
+            cancelled: false,
+            exitCode: failRetainedCheck ? 1 : 0,
+            timedOut: false,
+            passed: !failRetainedCheck,
+            artifact: expect.any(String),
+            workspace: expect.any(String),
+          })
+        const before = events()
+        await runtime.tick()
+        await runtime.tick()
+        expect(events()).toEqual(before)
+        expect(f.prompts).toHaveLength(1)
+      } finally {
+        if (reopened) {
+          await runtime.stop()
+          reopened.close()
+        }
+      }
+    }
+  },
+  60_000,
+)
+
+test.each(["cancel-retained-verification", "cancel"] as const)(
+  "%s and database reopen cannot accept a late retained-check result",
+  async (action) => {
+    const delayedCheck = "bun run verify"
+    // The worker's first run fails deterministically; isolated retained verification
+    // then waits behind an explicit filesystem barrier until cancellation.
+    const delayed = await failedFixture({
+      taskCheckCommand: delayedCheck,
+      verificationScript: [
+        'import { appendFileSync, existsSync, mkdirSync, watch } from "node:fs"',
+        'import { join } from "node:path"',
+        "if (!process.env.LAZERS_VERIFICATION_SQLITE) process.exit(1)",
+        "const home = process.env.HOME!",
+        "mkdirSync(home, { recursive: true })",
+        'appendFileSync(join(home, "started"), "started\\n")',
+        'const release = join(home, "release")',
+        "await new Promise<void>((resolve) => {",
+        "  if (existsSync(release)) return resolve()",
+        "  const watcher = watch(home, (_event, filename) => {",
+        '    if (filename === "release" && existsSync(release)) { watcher.close(); resolve() }',
+        "  })",
+        "  if (existsSync(release)) { watcher.close(); resolve() }",
+        "})",
+        "",
+      ].join("\n"),
+    })
+    const plan = delayed.store.plan(delayed.planID)!
+    const attempt = delayed.store.attempts(delayed.planID).at(-1)!
+    if (!attempt.artifact) throw new Error("Fixture attempt did not retain an artifact")
+    const command = {
+      requestID: "verify-retained-cancel-late-result",
       planID: delayed.planID,
       expectedVersion: plan.version,
-      action: "cancel-retained-verification",
-      retainedVerificationID: operation.id,
-      reason: "Stop the isolated check and retain its actual result without acceptance",
-    },
-    "owner",
-  )
-  await waitForRetainedOperationState(
-    delayed,
-    operation.id,
-    ["cancelled"],
-    "retained check cancellation",
-  )
-  await verifying
-  const cancelled = delayed.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(operation.id),
-  )!
-  expect(JSON.parse(cancelled.payload).state).toBe("cancelled")
-  const cancelledCheck = delayed.store.atomic((db) =>
-    db
-      .query<{ state: string; cleanup_state: string; receipt: string | null }, [string]>(
-        "SELECT state,cleanup_state,receipt FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
-      )
-      .get(operation.id),
-  )!
-  expect(cancelledCheck).toMatchObject({ state: "completed", cleanup_state: "complete" })
-  if (!cancelledCheck.receipt) throw new Error("Cancelled check did not retain its actual result")
-  const cancelledReceipt = JSON.parse(cancelledCheck.receipt) as CheckReceipt
-  expect(cancelledReceipt.exitCode === 0 && !cancelledReceipt.timedOut).toBe(false)
-  expect(delayed.store.plan(delayed.planID)?.state).toBe("blocked")
-  expect(delayed.store.attempts(delayed.planID)).toHaveLength(1)
-  expect(delayed.prompts).toHaveLength(1)
-
-  await delayed.runtime.stop()
-  delayed.store.repository.close()
-  const reopenedRepository = new TaskRepository(join(delayed.state, "tasks.sqlite"), delayed.root)
-  const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, delayed.host, "project")
-  await waitForFixtureCondition(
-    delayed,
-    "cancelled retained operation after reopen",
-    () => {
-      const row = reopenedStore.atomic((db) =>
+      action: "verify-retained" as const,
+      projectID: "project",
+      planRevision: plan.revision,
+      taskID: delayed.task.id,
+      taskRevision: delayed.task.revision,
+      attemptID: attempt.id,
+      artifact: attempt.artifact,
+      reason: "Cancel while the retained check is still executing",
+    }
+    const verifying = delayed.runtime.command(command, "owner")
+    void verifying.catch(() => undefined)
+    await waitForFixtureObservation(delayed, "retained operation admission", () =>
+      Boolean(
+        delayed.store.atomic((db) =>
+          db
+            .query<{ id: string }, []>("SELECT id FROM runner_retained_verifications LIMIT 1")
+            .get(),
+        ),
+      ),
+    )
+    const operation = delayed.store.atomic((db) =>
+      db.query<{ id: string }, []>("SELECT id FROM runner_retained_verifications LIMIT 1").get(),
+    )!
+    let contextPath: string | undefined
+    await waitForFixtureObservation(delayed, "retained subprocess start witness", () => {
+      const check = delayed.store.atomic((db) =>
         db
-          .query<{ payload: string }, [string]>(
-            "SELECT payload FROM runner_retained_verifications WHERE id=?",
+          .query<{ context_path: string }, [string]>(
+            "SELECT context_path FROM runner_retained_verification_checks WHERE operation_id=? AND state='intended'",
           )
           .get(operation.id),
       )
-      return Boolean(row && JSON.parse(row.payload).state === "cancelled")
-    },
-    60_000,
-    () => reopenedRuntime.tick(),
-  )
-  expect(
-    reopenedStore.atomic((db) =>
+      if (check) {
+        contextPath = check.context_path
+        return existsSync(join(contextPath, "home", "started"))
+      }
+      return false
+    })
+    expect(existsSync(join(contextPath!, "home", "started"))).toBe(true)
+    const control = await registeredPlanCommand(delayed.runtime)
+    await control.execute({
+      requestID: "cancel-retained-during-check",
+      planID: delayed.planID,
+      expectedVersion: plan.version,
+      action,
+      ...(action === "cancel-retained-verification"
+        ? { retainedVerificationID: operation.id }
+        : {}),
+      reason: "Stop the isolated check and retain its actual result without acceptance",
+    })
+    await waitForRetainedOperationState(
+      delayed,
+      operation.id,
+      ["cancelled"],
+      "retained check cancellation",
+    )
+    await verifying
+    const cancelled = delayed.store.atomic((db) =>
       db
         .query<{ payload: string }, [string]>(
           "SELECT payload FROM runner_retained_verifications WHERE id=?",
         )
         .get(operation.id),
-    ),
-  ).toMatchObject({ payload: expect.stringContaining('"state":"cancelled"') })
-  expect(reopenedStore.attempts(delayed.planID)).toHaveLength(1)
-  expect(delayed.prompts).toHaveLength(1)
-  await reopenedRuntime.stop()
-  reopenedRepository.close()
-}, 30_000)
+    )!
+    expect(JSON.parse(cancelled.payload).state).toBe("cancelled")
+    const cancelledCheck = delayed.store.atomic((db) =>
+      db
+        .query<{ state: string; cleanup_state: string; receipt: string | null }, [string]>(
+          "SELECT state,cleanup_state,receipt FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+        )
+        .get(operation.id),
+    )!
+    expect(cancelledCheck).toMatchObject({ state: "completed", cleanup_state: "complete" })
+    if (!cancelledCheck.receipt) throw new Error("Cancelled check did not retain its actual result")
+    const cancelledReceipt = JSON.parse(cancelledCheck.receipt) as CheckReceipt
+    expect(cancelledReceipt.exitCode === 0 && !cancelledReceipt.timedOut).toBe(false)
+    expect(delayed.store.plan(delayed.planID)?.state).toBe(
+      action === "cancel" ? "cancelled" : "blocked",
+    )
+    const completionEvents = () =>
+      delayed.store
+        .activity(delayed.planID, delayed.task.id)
+        .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED")
+    expect(completionEvents()).toHaveLength(1)
+    await delayed.runtime.tick()
+    expect(completionEvents()).toHaveLength(1)
+    expect(delayed.store.attempts(delayed.planID)).toHaveLength(1)
+    expect(delayed.prompts).toHaveLength(1)
+
+    await delayed.runtime.stop()
+    delayed.store.repository.close()
+    const reopenedRepository = new TaskRepository(join(delayed.state, "tasks.sqlite"), delayed.root)
+    const reopenedStore = new RunnerStore(reopenedRepository)
+    const reopenedRuntime = new TaskRuntime(reopenedStore, delayed.host, "project")
+    await waitForFixtureCondition(
+      delayed,
+      "cancelled retained operation after reopen",
+      () => {
+        const row = reopenedStore.atomic((db) =>
+          db
+            .query<{ payload: string }, [string]>(
+              "SELECT payload FROM runner_retained_verifications WHERE id=?",
+            )
+            .get(operation.id),
+        )
+        return Boolean(row && JSON.parse(row.payload).state === "cancelled")
+      },
+      60_000,
+      () => reopenedRuntime.tick(),
+    )
+    expect(
+      reopenedStore.atomic((db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_retained_verifications WHERE id=?",
+          )
+          .get(operation.id),
+      ),
+    ).toMatchObject({ payload: expect.stringContaining('"state":"cancelled"') })
+    expect(reopenedStore.attempts(delayed.planID)).toHaveLength(1)
+    expect(delayed.prompts).toHaveLength(1)
+    await reopenedRuntime.stop()
+    reopenedRepository.close()
+  },
+  30_000,
+)
 
 test("a slow candidate dependency setup leaves unrelated plan RPCs responsive", async () => {
   const setupStarted = deferred()
