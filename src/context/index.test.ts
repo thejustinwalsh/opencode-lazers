@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import {
   mkdtempSync,
   mkdirSync,
@@ -226,7 +226,7 @@ test("readers and later permission revocations are checked against cached files 
   expect(f.permissionChecks.some((check) => check.agent === worker.agent)).toBe(true)
 })
 
-test("focused reads authorize only distinct path/search matches in snapshot order", async () => {
+test("focused reads authorize distinct path candidates before content search in snapshot order", async () => {
   const f = fixture()
   for (let number = 0; number < 125; number++)
     writeFileSync(join(f.root, `unrelated-${number}.txt`), `unrelated ${number}`)
@@ -253,11 +253,8 @@ test("focused reads authorize only distinct path/search matches in snapshot orde
     search: "NEEDLE",
     level: "structure",
   })
-  expect(f.permissionChecks).toEqual(
-    candidatePaths
-      .filter((path) => path !== "candidate-c.txt")
-      .map((path) => ({ path, agent: worker.agent })),
-  )
+  // S11-4: permission precedes searching content, including non-matching candidates.
+  expect(f.permissionChecks).toEqual(candidatePaths.map((path) => ({ path, agent: worker.agent })))
   expect(evidence.sources.map((source) => source.path)).toEqual(["candidate-a.txt"])
   expect(JSON.stringify(evidence)).not.toContain("candidate-b.txt")
   expect(JSON.stringify(evidence)).not.toContain("needle match B")
@@ -267,7 +264,7 @@ test("focused reads authorize only distinct path/search matches in snapshot orde
     paths: ["candidate-*"],
     search: "not present",
   })
-  expect(f.permissionChecks).toEqual([])
+  expect(f.permissionChecks).toEqual(candidatePaths.map((path) => ({ path, agent: worker.agent })))
   expect(noMatch.sources).toEqual([])
 })
 
@@ -575,4 +572,40 @@ test("S11-1 unavailable Git ignore policy rejects refresh and preserves the prio
     "Cannot establish repository ignore policy",
   )
   expect((await f.index.manifest(architect)).snapshotID).toBe(previous.id)
+})
+
+test("S11-4 source search keeps case-insensitive queries literal", async () => {
+  const f = fixture()
+  writeFileSync(join(f.root, "literal.txt"), "Use Cache[Read].* as a literal identifier")
+  await f.index.refresh(architect)
+  const found = await f.index.evidence(worker, { paths: ["literal.txt"], search: "cache[read].*" })
+  expect(found.sources.map((source) => source.path)).toEqual(["literal.txt"])
+  expect(
+    (await f.index.evidence(worker, { paths: ["literal.txt"], search: "cache.*identifier" }))
+      .sources,
+  ).toEqual([])
+})
+
+test("S11-4 content matching never visits a denied source", async () => {
+  const f = fixture()
+  writeFileSync(join(f.root, "candidate-a.txt"), "needle public")
+  writeFileSync(join(f.root, "candidate-b.txt"), "needle denied")
+  await f.index.refresh(architect)
+  f.denied.set(worker.agent, new Set(["candidate-b.txt"]))
+  const original = RegExp.prototype.test
+  const scanned: string[] = []
+  const matching = spyOn(RegExp.prototype, "test").mockImplementation(function (
+    this: RegExp,
+    text: string,
+  ) {
+    if (this.source === "needle" && this.flags === "iu") scanned.push(text)
+    return original.call(this, text)
+  })
+  try {
+    const result = await f.index.evidence(worker, { paths: ["candidate-*.txt"], search: "needle" })
+    expect(result.sources.map((source) => source.path)).toEqual(["candidate-a.txt"])
+    expect(scanned).toEqual(["needle public"])
+  } finally {
+    matching.mockRestore()
+  }
 })

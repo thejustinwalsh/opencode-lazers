@@ -380,8 +380,10 @@ test("focused native reads check only cached matches against the worker and publ
   expect(evidence.output.sources.map((source: { path: string }) => source.path)).toEqual([
     "README.md",
   ])
+  // S11-4: all selected path candidates are authorized before searching their content.
   expect(f.permissionReads).toEqual([
     { path: "README.md", workspace: f.source, agent: "lazers-implementor" },
+    { path: "src.ts", workspace: f.source, agent: "lazers-implementor" },
   ])
 
   f.permissionReads.length = 0
@@ -392,7 +394,10 @@ test("focused native reads check only cached matches against the worker and publ
     ),
   )
   expect(noMatch.output.sources).toEqual([])
-  expect(f.permissionReads).toEqual([])
+  expect(f.permissionReads).toEqual([
+    { path: "README.md", workspace: f.source, agent: "lazers-implementor" },
+    { path: "src.ts", workspace: f.source, agent: "lazers-implementor" },
+  ])
 })
 
 test("a worker reads its parent's pinned snapshot, not a later workspace publication", async () => {

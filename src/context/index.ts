@@ -611,13 +611,11 @@ export class ProjectIndex {
     return this.loadSnapshot()
   }
 
-  private selectedFiles(snapshot: Snapshot, paths: string[], search?: string) {
-    const query = search?.toLowerCase()
+  private selectedFiles(snapshot: Snapshot, paths: string[]) {
     return snapshot.files.filter(
       (file) =>
         validSourcePath(file.path) &&
-        (!paths.length || paths.some((path) => matchesPath(path, file.path))) &&
-        (!query || file.content.toLowerCase().includes(query)),
+        (!paths.length || paths.some((path) => matchesPath(path, file.path))),
     )
   }
 
@@ -642,8 +640,12 @@ export class ProjectIndex {
   private async selectPermitted(principal: Principal, paths: string[], search?: string) {
     principal.signal?.throwIfAborted()
     const snapshot = await this.snapshotFor(principal)
-    const selected = this.selectedFiles(snapshot, paths, search)
-    const matches = await this.permittedFiles(snapshot, principal, selected)
+    const selected = this.selectedFiles(snapshot, paths)
+    const permitted = await this.permittedFiles(snapshot, principal, selected)
+    const query = search
+      ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu")
+      : undefined
+    const matches = query ? permitted.filter((file) => query.test(file.content)) : permitted
     return { snapshot, matches }
   }
 

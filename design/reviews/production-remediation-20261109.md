@@ -622,3 +622,18 @@ remains published. Existing permission/symlink/ignore/publication tests still pa
 `bun run verify` passed; context/index and real-worktree reuse tests: **22 pass**,
 162 assertions. Log: `s11-batch-behavior.log`. These are real-module controlled
 measurements, not native Desktop latency or production CPU measurements.
+
+## Wave 5: S11-4
+
+Path selection still narrows/deduplicates candidates first. Native permission now
+precedes content search for every selected path; only permitted content reaches a
+compiled, escaped, case-insensitive literal matcher. Removed full-source lowercase
+copies. Snapshot ownership, as-of-refresh semantics and response counts remain.
+
+Updated the two tests that previously expected content filtering before permission
+with finding comments; they still assert exact native principal/workspace/path
+bindings, deduplication and scoped results. Added literal metacharacter/case tests
+and a matcher observation proving that a denied file's content is never visited.
+`bun run verify` passed; context and real-worktree reuse: **24 pass**, 166
+assertions. Log: `s11-search-behavior.log` in the baseline directory. This closes
+the selection/permission/allocation defect; no live Desktop memory claim is made.
