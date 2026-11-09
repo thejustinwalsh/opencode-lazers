@@ -23,8 +23,10 @@ worker `ses_325a8b20d34449fe9ac4100bcb0a35a2`, attempt
 `42f98841-b29b-43d1-9fb9-a1374bcfb31f`. Its actual route is OpenAI Sol6.1
 **default**, not High. Commit `159f4c9` passed quality and 679 runner tests;
 runtime task-level verification also passed and node is accepted. The declared
-plan-level behavior check is running. Review, integration, activation and cleanup
-are not yet proved. Preserve all original drafts and retained work.
+plan-level behavior check also passed (exit0, no timeout). Runtime plan became
+accepted and Architect automatically resumed at Unix1794203003814 to review the
+exact candidate. Review completion, integration, activation and cleanup remain
+unproven. Preserve all original drafts and retained work.
 
 LZ-200, plan `a543e146-60f0-49a8-bdd7-c3df7265cda7`, is queued after LZ-199 and
 preserved LZ-182. It implements the user's configurable project limit of three

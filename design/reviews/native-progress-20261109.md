@@ -163,3 +163,16 @@ panel fails to distinguish active verification from worker execution. Preserve
 this observation for the existing task-status/recovery UI work rather than
 creating a second status system. Architect was idle during this check; automatic
 review after verification completes remains to be observed.
+
+That continuation subsequently occurred without driver input. Task behavior
+verification ran from Unix1794202343691 to1794202672344; plan behavior
+verification ran from1794202672885 to1794203003483. Both receipts report exit0
+and no timeout on candidate `159f4c97a17ab965c17e4559752b6833b88edfc9`.
+The two executions of the same declared command consumed 659.251 seconds
+combined. This is measured verification overhead, not implementation time;
+whether either execution can be reused needs separate analysis.
+
+Runtime plan became accepted and Architect automatically resumed at
+Unix1794203003814, announcing review and then actually inspecting source and
+test output. Completion delivery/consumption worked in this instance. Review
+completion, live qualification, integration and cleanup remain unproven.
