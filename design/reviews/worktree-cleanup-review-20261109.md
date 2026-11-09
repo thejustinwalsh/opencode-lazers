@@ -45,6 +45,33 @@ This report is driver review assistance. It is not autonomous detection or repai
 by the product. See `worktree-cleanup-audit-20261109.md` and its linked inventory
 for the original leak and native cleanup intervention.
 
+## Architect disposition
+
+Architect inspected the same worker's draft and confirmed the call chain:
+`tick()` → `worktreeCleanupFactsChanged()` → `worktreeCleanupObservation()`.
+Full native inventory, synchronous Git probes and message-bearing session reads
+occur before the fingerprint comparison. Identical removal retry suppression
+therefore does not address unchanged observation cost.
+
+Resolve this inside LZ-185, preserving the same worker and current useful work.
+Use cheap eligibility/invalidation and shared observations within the existing
+scheduler/native lifecycle; retain bounded fallback for external changes or
+missing events. Cached facts must never authorize removal without fresh safety
+checks. No new daemon, worker takeover or integration dependency is warranted.
+
+Before integration, review deterministic counts of actual expensive Git/native
+session operations over repeated unchanged ticks at representative inventory
+scale, plus automatic reconsideration after relevant fact changes and restart.
+Keep dirty/unmerged/active/unknown resources safe and demonstrate eventual cleanup
+when holds resolve. Earlier broad test passes do not cover later draft edits.
+
+The same-worker checkpoint was admitted through native recovery controls;
+consumption and response were not yet observed at that admission. Reassess the
+implemented selection approach and focused operation-count/convergence results,
+the delivered candidate, or a concrete blocker. This records a review requirement,
+not a completed fix or measured candidate performance result. Driver assistance
+remains explicitly attributed; cleanup stays first in the existing roadmap.
+
 ## Native disposition
 
 Driver feedback was submitted through Desktop as
