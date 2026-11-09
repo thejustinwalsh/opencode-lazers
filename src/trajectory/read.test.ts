@@ -1580,7 +1580,7 @@ test("trajectory reads leave seeded task, attempt, progress, effect, transition,
     })
     fixture.repository.atomic((db) =>
       db
-        .query("INSERT INTO runner_audits VALUES(?,?,?,?,?)")
+        .query("INSERT INTO runner_conflict_scans VALUES(?,?,?,?,?)")
         .run("seeded-audit", fixture.directory, fixture.repository.version(), '{"findings":[]}', 1),
     )
     const before = fixture.repository.atomic((db) => ({
@@ -1605,9 +1605,10 @@ test("trajectory reads leave seeded task, attempt, progress, effect, transition,
       progressCount: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
         .get()!.count,
-      auditRows: JSON.stringify(db.query("SELECT * FROM runner_audits ORDER BY id").all()),
-      audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-        .count,
+      auditRows: JSON.stringify(db.query("SELECT * FROM runner_conflict_scans ORDER BY id").all()),
+      audits: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+        .get()!.count,
     }))
     const oldAudit = fixture.store.audit.bind(fixture.store)
     fixture.store.audit = () => {
@@ -1637,9 +1638,10 @@ test("trajectory reads leave seeded task, attempt, progress, effect, transition,
       progressCount: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
         .get()!.count,
-      auditRows: JSON.stringify(db.query("SELECT * FROM runner_audits ORDER BY id").all()),
-      audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-        .count,
+      auditRows: JSON.stringify(db.query("SELECT * FROM runner_conflict_scans ORDER BY id").all()),
+      audits: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+        .get()!.count,
     }))
     expect(after).toEqual(before)
   } finally {

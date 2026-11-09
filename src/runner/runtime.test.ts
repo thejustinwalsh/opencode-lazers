@@ -3562,6 +3562,17 @@ async function runPlan(
     "owner",
   )
 }
+
+test("F-S4-1 admission and dispatch do not invoke the full project audit", async () => {
+  const f = fixture({ delayed: true })
+  f.store.audit = () => {
+    throw new Error("Full audit on dispatch hot path")
+  }
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  expect(f.store.attempts(f.receipt.planID).length).toBeGreaterThan(0)
+})
 function setReviewInputObservation(
   f: ReturnType<typeof fixture>,
   attempt: AttemptRow,

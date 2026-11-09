@@ -618,6 +618,21 @@ function ensureArchitectSourceJournalRevisions(db: Database) {
 export class RunnerStore {
   constructor(readonly repository: TaskRepository) {
     repository.atomic((db) => {
+      // F-S4-1: preserve historical conflict scans under their actual domain name.
+      if (
+        db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_audits'").get()
+      ) {
+        if (
+          db
+            .query(
+              "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_conflict_scans'",
+            )
+            .get()
+        )
+          db.exec(`INSERT OR IGNORE INTO runner_conflict_scans SELECT * FROM runner_audits;
+                   DROP TABLE runner_audits`)
+        else db.exec("ALTER TABLE runner_audits RENAME TO runner_conflict_scans")
+      }
       db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
@@ -782,7 +797,7 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_architect_source_results_pending
         ON runner_architect_source_results(session_id,referenced_revision,updated_at);
-      CREATE TABLE IF NOT EXISTS runner_audits (
+      CREATE TABLE IF NOT EXISTS runner_conflict_scans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS runner_progress (
@@ -3308,15 +3323,58 @@ export class RunnerStore {
             )
         }
       const watermark = this.repository.version()
-      const id = fingerprint({ watermark, findings })
-      db.query("INSERT OR IGNORE INTO runner_audits VALUES(?,?,?,?,?)").run(
-        id,
-        this.repository.projectDirectory,
-        watermark,
-        JSON.stringify(findings),
-        Date.now(),
-      )
       return { watermark, findings }
+    })
+  }
+  /** Admission needs duplicate-content conflicts for its selected tasks, not a project audit. */
+  exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
+    return this.atomic((db) => {
+      const selected = new Set(taskIDs)
+      if (!selected.size) return { watermark: this.repository.version(), findings: [] }
+      const tasks = db
+        .query<{ id: string }, [string]>(
+          `SELECT id FROM tasks WHERE project_directory=?
+           AND NOT EXISTS (SELECT 1 FROM task_dispositions d
+             WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
+           ORDER BY rowid`,
+        )
+        .all(this.repository.projectDirectory)
+        .map(({ id }) => ({ id, content: fingerprint(this.repository.get(id)!.proposal) }))
+      const relations = db
+        .query<{ task_id: string; other_task_id: string }, [string]>(
+          "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",
+        )
+        .all(this.repository.projectDirectory)
+      const related = new Set(
+        relations.flatMap((r) => [
+          JSON.stringify([r.task_id, r.other_task_id]),
+          JSON.stringify([r.other_task_id, r.task_id]),
+        ]),
+      )
+      const findings: Finding[] = []
+      for (let i = 0; i < tasks.length; i++) {
+        const a = tasks[i]!
+        if (!selected.has(a.id)) continue
+        for (let j = 0; j < tasks.length; j++) {
+          const b = tasks[j]!
+          if (
+            i === j ||
+            (j < i && selected.has(b.id)) ||
+            a.content !== b.content ||
+            related.has(JSON.stringify([a.id, b.id]))
+          )
+            continue
+          const pair = i < j ? [a.id, b.id] : [b.id, a.id]
+          findings.push({
+            id: fingerprint({ code: "exact-content", taskIDs: pair }).slice(0, 24),
+            code: "exact-content",
+            taskIDs: pair,
+            evidence: "Validated proposal fingerprints match",
+            actions: ["distinct", "duplicate", "supplements"],
+          })
+        }
+      }
+      return { watermark: this.repository.version(), findings }
     })
   }
   attempts(planID: string) {

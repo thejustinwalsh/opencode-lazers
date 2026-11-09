@@ -552,8 +552,9 @@ test("history and status reads leave durable audits and repository watermarks un
     tracker.initialize()
     const before = fixture.repository.atomic((db) => ({
       watermark: fixture.repository.version(),
-      audit: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-        .count,
+      audit: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+        .get()!.count,
       progress: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
         .get()!.count,
@@ -565,8 +566,9 @@ test("history and status reads leave durable audits and repository watermarks un
     await reads.trajectoryStatus({ scope, taskID }, tracker)
     const after = fixture.repository.atomic((db) => ({
       watermark: fixture.repository.version(),
-      audit: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-        .count,
+      audit: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+        .get()!.count,
       progress: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
         .get()!.count,
@@ -646,7 +648,7 @@ test("target trajectory reads survive unrelated project transition volume and ke
       tasks: db.query("SELECT id,body FROM tasks ORDER BY id").all(),
       taskChanges: db.query("SELECT id FROM task_changes ORDER BY id").all(),
       dispositions: db.query("SELECT id FROM task_dispositions ORDER BY id").all(),
-      audits: db.query("SELECT id FROM runner_audits ORDER BY id").all(),
+      audits: db.query("SELECT id FROM runner_conflict_scans ORDER BY id").all(),
       progress: db.query("SELECT seq FROM runner_progress ORDER BY seq").all(),
       attempts: db.query("SELECT id FROM runner_attempts ORDER BY id").all(),
       effects: db.query("SELECT id FROM runner_effects ORDER BY id").all(),
@@ -699,7 +701,7 @@ test("target trajectory reads survive unrelated project transition volume and ke
       tasks: db.query("SELECT id,body FROM tasks ORDER BY id").all(),
       taskChanges: db.query("SELECT id FROM task_changes ORDER BY id").all(),
       dispositions: db.query("SELECT id FROM task_dispositions ORDER BY id").all(),
-      audits: db.query("SELECT id FROM runner_audits ORDER BY id").all(),
+      audits: db.query("SELECT id FROM runner_conflict_scans ORDER BY id").all(),
       progress: db.query("SELECT seq FROM runner_progress ORDER BY seq").all(),
       attempts: db.query("SELECT id FROM runner_attempts ORDER BY id").all(),
       effects: db.query("SELECT id FROM runner_effects ORDER BY id").all(),
@@ -1275,8 +1277,9 @@ test("Radar separates configured, selected, and observed routes and links dedupl
       progress: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
         .get()!.count,
-      audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-        .count,
+      audits: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+        .get()!.count,
       transitions: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_transitions")
         .get()!.count,
@@ -1306,8 +1309,9 @@ test("Radar separates configured, selected, and observed routes and links dedupl
       progress: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
         .get()!.count,
-      audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-        .count,
+      audits: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+        .get()!.count,
       transitions: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_transitions")
         .get()!.count,

@@ -158,8 +158,9 @@ test("retained callback survives setup connection disposal without changing dura
   const fixture = await setup()
   const before = fixture.repository.atomic((db) => ({
     watermark: fixture.repository.version(),
-    audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
-      .count,
+    audits: db
+      .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
+      .get()!.count,
     attempts: db
       .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
       .get()!.count,
@@ -181,7 +182,7 @@ test("retained callback survives setup connection disposal without changing dura
       const after = reopened.atomic((db) => ({
         watermark: reopened.version(),
         audits: db
-          .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits")
+          .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_conflict_scans")
           .get()!.count,
         attempts: db
           .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")

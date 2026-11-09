@@ -5051,11 +5051,8 @@ export class TaskRuntime {
       } catch (error) {
         return this.hold(plan, `Unavailable committed source baseline: ${errorText(error)}`)
       }
-      const audit = this.store.audit()
-      const ids = new Set(proposal.nodes.map((n) => n.taskID))
-      const conflicts = audit.findings.filter(
-        (f) => f.code === "exact-content" && f.taskIDs.some((id) => ids.has(id)),
-      )
+      const audit = this.store.exactContentConflicts(proposal.nodes.map((n) => n.taskID))
+      const conflicts = audit.findings
       if (conflicts.length)
         return this.hold(
           plan,
@@ -7975,8 +7972,8 @@ export class TaskRuntime {
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
     const first = attempts[0]
-    const audit = this.store.audit()
-    if (audit.findings.some((f) => f.code === "exact-content" && f.taskIDs.includes(task.id))) {
+    const audit = this.store.exactContentConflicts([task.id])
+    if (audit.findings.length) {
       this.hold(plan, "Overlap audit changed before dispatch")
       return
     }

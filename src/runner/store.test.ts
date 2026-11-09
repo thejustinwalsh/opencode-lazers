@@ -408,6 +408,121 @@ function fixture(requestID = "plan-title-store") {
   return { databasePath, projectDirectory, repository, store, input }
 }
 
+test("F-S4-1 conflict scan migration preserves history without restarting persistence", () => {
+  const f = fixture()
+  f.store.atomic((db) => {
+    db.exec("ALTER TABLE runner_conflict_scans RENAME TO runner_audits")
+    db.query("INSERT INTO runner_audits VALUES(?,?,?,?,?)").run(
+      "old-scan",
+      f.projectDirectory,
+      1,
+      "[]",
+      100,
+    )
+  })
+  const store = new RunnerStore(f.repository)
+  store.audit()
+  store.audit()
+  expect(store.atomic((db) => db.query("SELECT id,body FROM runner_conflict_scans").all())).toEqual(
+    [{ id: "old-scan", body: "[]" }],
+  )
+  expect(
+    store.atomic((db) => db.query("SELECT 1 FROM sqlite_master WHERE name='runner_audits'").get()),
+  ).toBeNull()
+  new RunnerStore(f.repository)
+  expect(
+    store.atomic((db) => db.query("SELECT COUNT(*) AS n FROM runner_conflict_scans").get()),
+  ).toEqual({ n: 1 })
+  // A still-loaded older plugin can recreate its table during an upgrade overlap.
+  store.atomic((db) => {
+    db.exec("CREATE TABLE runner_audits AS SELECT * FROM runner_conflict_scans WHERE 0")
+    db.query("INSERT INTO runner_audits VALUES(?,?,?,?,?)").run(
+      "overlap-scan",
+      f.projectDirectory,
+      2,
+      "[]",
+      200,
+    )
+  })
+  new RunnerStore(f.repository)
+  expect(
+    store.atomic((db) => db.query("SELECT id FROM runner_conflict_scans ORDER BY id").all()),
+  ).toEqual([{ id: "old-scan" }, { id: "overlap-scan" }])
+})
+
+test("F-S4-1 selected duplicate checks match the audit without execution/scope scans or writes", () => {
+  const f = fixture()
+  const original = f.repository.get(f.input.nodes[0]!.taskID)!
+  const copy = (objective = original.proposal.objective) =>
+    f.repository.insert({
+      ...original,
+      id: crypto.randomUUID(),
+      proposal: { ...original.proposal, objective },
+    })
+  const duplicate = copy()
+  const related = copy()
+  const retired = copy()
+  copy("Unrelated duplicate proposal")
+  copy("Unrelated duplicate proposal")
+  for (let index = 0; index < 30; index++) copy(`Independent task ${index}`)
+  f.repository.recordDisposition(
+    {
+      taskID: retired.id,
+      requestID: "retire-duplicate",
+      disposition: "duplicate",
+      reason: "Already covered",
+      evidence: [{ kind: "human", reference: "fixture" }],
+      relatedTaskIDs: [original.id],
+    },
+    { sessionID: "owner", agent: "architect" },
+  )
+  f.store.atomic((db) =>
+    db
+      .query("INSERT INTO runner_relations VALUES(?,?,?,?,?,?,?)")
+      .run(
+        f.projectDirectory,
+        related.id,
+        original.id,
+        "distinct",
+        "Intentional distinct work",
+        "owner",
+        100,
+      ),
+  )
+  const expected = f.store
+    .audit()
+    .findings.filter(
+      (finding) => finding.code === "exact-content" && finding.taskIDs.includes(original.id),
+    )
+  expect(expected).toHaveLength(1)
+  const get = f.repository.get.bind(f.repository)
+  let reads = 0
+  f.repository.get = (id) => {
+    reads++
+    return get(id)
+  }
+  f.store.effectiveWriteScope = () => {
+    throw new Error("Scope scan on duplicate hot path")
+  }
+  f.store.execution = () => {
+    throw new Error("Execution scan on duplicate hot path")
+  }
+  const version = f.repository.version()
+  expect(f.store.exactContentConflicts([original.id])).toEqual({
+    watermark: version,
+    findings: expected,
+  })
+  expect(reads).toBe(35)
+  expect(
+    f.store.exactContentConflicts([duplicate.id, original.id, original.id]).findings,
+  ).toHaveLength(2)
+  expect(f.store.exactContentConflicts([crypto.randomUUID()]).findings).toEqual([])
+  expect(f.repository.version()).toBe(version)
+  expect(
+    f.store.atomic((db) => db.query("SELECT COUNT(*) AS n FROM runner_conflict_scans").get()),
+  ).toEqual({ n: 0 })
+})
+
 test("retained repair generations remain task-bound and the latest plan operation is observable", () => {
   const f = fixture("repair-generation-store")
   const plan = f.store.submit(f.input, "owner")

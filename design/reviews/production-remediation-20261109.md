@@ -193,3 +193,27 @@ The four baseline failures remain. Three additional failures were investigated:
 This is not a claim that the entire suite is green, nor that the full suite was
 rerun after the fixture correction. Wave 1's new failure was corrected and checked
 in isolation; the baseline four remain open under their owning findings.
+
+## Wave 2: F-S4-1
+
+Confirmed both hot callers discarded every full-audit finding except exact-content
+conflicts involving their selected task IDs. Admission and dispatch now call
+`exactContentConflicts(taskIDs)`: proposal identity is computed once per active
+project task, pairs are considered only for selected tasks, explicit relations
+and retired tasks retain their prior exclusion semantics. No execution or scope
+lookup runs on this path. Explicit project inspection retains the full audit.
+Neither path persists scan output.
+
+The schema migration renames `runner_audits` to `runner_conflict_scans`, preserving
+historical rows. It also consolidates a legacy table recreated during an older
+plugin overlap. Read-only trajectory/observability fixture checks use the renamed
+table and still assert unchanged rows. This does not claim 332 MB has already
+been reclaimed: retained historical scan data remains for the reclamation wave.
+
+Checks: `bun run verify` and `git diff --check` passed; 32 store/inspection tests
+passed (420 assertions), and native-runtime admission/dispatch regression passed
+(1 test, 7 assertions). The wider five-file read/inspection run gave 80 pass and
+only the known commentary baseline failure. A 175-task module fixture returned
+identical relevant conflicts: full audit 1,354.82 ms; scoped check 4.85 ms;
+0 persisted scan rows. These are fixture measurements, not live lock-duration
+or installed-service observations. No native activation or disk reclamation yet.
