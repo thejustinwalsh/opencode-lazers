@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { canonical } from "../../identity.ts"
+import { REVIEW_ROUNDS } from "../../review/progression.ts"
 import type { TaskRepository } from "../../storage.ts"
 import { TaskSpecSchema } from "../../task.ts"
 import { RunnerStore } from "../../runner/store.ts"
@@ -15,16 +17,31 @@ import {
   HandoffEventRecord,
   HandoffFinalizeInput,
   HandoffHistoryCursor,
+  RecoveryConcernCursor,
+  RecoveryConcernPage,
   HandoffNotificationIntent,
   HandoffRequestBody,
   HandoffRequestInput,
   HandoffRequestRecord,
   HandoffReviewCheck,
+  HandoffReviewFinalizationAuthorizationInput,
   HandoffReviewOutcomeInput,
   HandoffReviewReservationInput,
   HandoffReviewRoundRecord,
   HandoffReportRecord,
   HandoffSource,
+  RecoveryCheckpointDelivery,
+  RecoveryCheckpointState,
+  RecoveryCheckpointConsumptionRecord,
+  RecoveryCheckpointInput,
+  RecoveryCheckpointRecord,
+  RecoveryCheckpointResponseInput,
+  RecoveryCheckpointResponseRecord,
+  RecoveryConcernInput,
+  RecoveryConcernRecord,
+  RecoveryDispositionInput,
+  RecoveryDispositionRecord,
+  RecoverySource,
   JsonObjectSchema,
   JsonValueSchema,
 } from "./schema.ts"
@@ -41,6 +58,15 @@ import type {
   HandoffReviewRoundRecord as HandoffReviewRoundRecordType,
   HandoffReportRecord as HandoffReportRecordType,
   HandoffSource as HandoffSourceType,
+  RecoveryCheckpointState as RecoveryCheckpointStateType,
+  RecoveryCheckpointResponseInput as RecoveryCheckpointResponseInputType,
+  RecoveryConcernPage as RecoveryConcernPageType,
+  RecoveryCheckpointRecord as RecoveryCheckpointRecordType,
+  RecoveryCheckpointResponseRecord as RecoveryCheckpointResponseRecordType,
+  RecoveryConcernRecord as RecoveryConcernRecordType,
+  RecoveryDispositionRecord as RecoveryDispositionRecordType,
+  RecoveryDispositionInput as RecoveryDispositionInputType,
+  RecoverySource as RecoverySourceType,
 } from "./schema.ts"
 
 type Receipt<T> =
@@ -49,6 +75,10 @@ type Receipt<T> =
   | { status: "conflict"; message: string }
 
 export const HANDOFF_REVIEW_RESERVATION_LEASE_MS = 120_000
+
+const REVIEW_ROUNDS_EXHAUSTED_ERROR =
+  "The three reserved review rounds are exhausted; no semantic pass was established."
+const REVIEW_ROUNDS_EXHAUSTED_LIMITATION = "The review round budget is exhausted."
 
 type SourceRow = {
   task_body: string
@@ -82,6 +112,7 @@ type SourceRow = {
 type PayloadRow = { payload: string }
 type RoundRow = { payload: string; outcome_json: string | null }
 type ReviewRoundPayloadRow = { payload: string }
+type RecoveryPayloadRow = { payload: string }
 type EventRow = {
   sequence: number
   request_id: string
@@ -222,6 +253,92 @@ export class HandoffStore {
         );
         CREATE INDEX IF NOT EXISTS recovery_handoff_events_request
           ON recovery_handoff_events(project_directory, request_id, sequence DESC);
+        CREATE TABLE IF NOT EXISTS recovery_concern_versions (
+          project_directory TEXT NOT NULL,
+          concern_id TEXT NOT NULL,
+          version INTEGER NOT NULL CHECK(version > 0),
+          request_id TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+          source_session_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(project_directory, concern_id, version),
+          UNIQUE(project_directory, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS recovery_concerns_attempt
+          ON recovery_concern_versions(project_directory, attempt_id, concern_id, version DESC);
+        CREATE TABLE IF NOT EXISTS recovery_concern_dispositions (
+          project_directory TEXT NOT NULL,
+          disposition_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          concern_id TEXT NOT NULL,
+          version INTEGER NOT NULL CHECK(version > 0),
+          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(project_directory, disposition_id),
+          UNIQUE(project_directory, request_id),
+          UNIQUE(project_directory, concern_id, version),
+          FOREIGN KEY(project_directory, concern_id, version)
+            REFERENCES recovery_concern_versions(project_directory, concern_id, version)
+        );
+        CREATE TABLE IF NOT EXISTS recovery_checkpoint_commands (
+          project_directory TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+          attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+          source_session_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(project_directory, request_id),
+          UNIQUE(project_directory, source_session_id, message_id)
+        );
+        CREATE TABLE IF NOT EXISTS recovery_checkpoint_delivery (
+          project_directory TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('prepared','admitted','unknown')),
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(project_directory, request_id),
+          FOREIGN KEY(project_directory, request_id)
+            REFERENCES recovery_checkpoint_commands(project_directory, request_id)
+        );
+        CREATE TABLE IF NOT EXISTS recovery_checkpoint_responses (
+          project_directory TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          response_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(project_directory, request_id),
+          UNIQUE(project_directory, response_id),
+          FOREIGN KEY(project_directory, request_id)
+            REFERENCES recovery_checkpoint_commands(project_directory, request_id)
+        );
+        CREATE TABLE IF NOT EXISTS recovery_checkpoint_consumptions (
+          project_directory TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(project_directory, request_id),
+          FOREIGN KEY(project_directory, request_id)
+            REFERENCES recovery_checkpoint_commands(project_directory, request_id)
+        );
+        CREATE TABLE IF NOT EXISTS recovery_control_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_directory TEXT NOT NULL,
+          attempt_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          record_id TEXT NOT NULL,
+          data TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(project_directory, kind, record_id)
+        );
+        CREATE INDEX IF NOT EXISTS recovery_control_events_attempt
+          ON recovery_control_events(project_directory, attempt_id, sequence DESC);
       `)
     })
   }
@@ -742,6 +859,84 @@ export class HandoffStore {
     })
   }
 
+  /** Persist the current Architect's authority over the exact result they reviewed. */
+  authorizeReviewFinalization(input: unknown, callerInput: unknown): boolean {
+    const parsed = HandoffReviewFinalizationAuthorizationInput.parse(input)
+    const caller = HandoffActor.parse(callerInput)
+    if (caller.role !== "architect")
+      throw new Error("Only the authorized Architect may authorize handoff finalization")
+
+    return this.repository.atomic((db) => {
+      const request = this.requireRequest(db, parsed.requestID)
+      this.assertReviewAuthority(db, request, caller)
+      const row = db
+        .query<RoundRow, [string, string, string, number]>(
+          `SELECT payload,outcome_json FROM recovery_handoff_rounds
+           WHERE project_directory=? AND request_id=? AND review_id=? AND round=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID, parsed.reviewID, parsed.round)
+      if (!row || row.outcome_json === null) return false
+
+      const review = HandoffReviewRoundRecord.parse(JSON.parse(row.payload))
+      const result = parsed.result
+      if (
+        review.requestID !== parsed.requestID ||
+        review.draftVersion !== parsed.draftVersion ||
+        review.reviewID !== parsed.reviewID ||
+        review.round !== parsed.round ||
+        result.requestID !== parsed.requestID ||
+        result.reviewID !== parsed.reviewID ||
+        result.round !== parsed.round ||
+        result.fingerprint !== parsed.fingerprint ||
+        !["completed", "completed_with_concerns", "disabled", "unavailable"].includes(
+          String(result.status),
+        )
+      )
+        return false
+
+      const storedResultMatches = canonical(review.outcome?.result) === canonical(result)
+      if (storedResultMatches) {
+        if (!review.outcome) return false
+        this.finalizationStatus(review.outcome)
+      } else if (!this.isExhaustedReviewResult(db, review, result)) {
+        return false
+      }
+
+      const authorization = {
+        requestID: parsed.requestID,
+        draftVersion: parsed.draftVersion,
+        reviewID: parsed.reviewID,
+        round: parsed.round,
+        fingerprint: parsed.fingerprint,
+        resultKind: storedResultMatches ? "stored" : "exhausted",
+        result,
+        authorizedBy: caller,
+      }
+      const prior = db
+        .query<{ data: string }, [string, string, string, string]>(
+          `SELECT data FROM recovery_handoff_events
+           WHERE project_directory=? AND request_id=? AND kind=? AND record_id=?`,
+        )
+        .all(
+          this.repository.projectDirectory,
+          parsed.requestID,
+          "review-finalization-authorized",
+          this.roundKey(parsed.reviewID, parsed.round),
+        )
+        .some((event) => canonical(JSON.parse(event.data)) === canonical(authorization))
+      if (!prior)
+        this.appendEvent(
+          db,
+          parsed.requestID,
+          "review-finalization-authorized",
+          this.roundKey(parsed.reviewID, parsed.round),
+          authorization,
+          this.timestamp(),
+        )
+      return true
+    })
+  }
+
   /** Finalize a draft and its pending notification intent in one SQLite transaction. */
   finalize(
     input: unknown,
@@ -772,12 +967,15 @@ export class HandoffStore {
         const notification = HandoffNotificationIntent.parse(
           JSON.parse(existingFinalization.notification_payload),
         )
+        const reportedResult =
+          report.reviewResult ?? JsonObjectSchema.safeParse(report.review.outcome?.result).data
         const same =
           report.requestID === parsed.requestID &&
           report.draftVersion === parsed.draftVersion &&
           report.reviewID === parsed.reviewID &&
           report.round === parsed.round &&
-          canonical(report.finalizedBy) === canonical(caller)
+          canonical(report.finalizedBy) === canonical(caller) &&
+          (parsed.fingerprint === undefined || reportedResult?.fingerprint === parsed.fingerprint)
         return same
           ? { status: "replayed" as const, report, notification }
           : {
@@ -809,16 +1007,46 @@ export class HandoffStore {
         .get(this.repository.projectDirectory, parsed.reviewID, parsed.round)
       if (!roundRow) throw new Error("Review round was not reserved")
       const review = HandoffReviewRoundRecord.parse(JSON.parse(roundRow.payload))
+      const reviewMatches =
+        review.requestID === parsed.requestID &&
+        review.draftVersion === parsed.draftVersion &&
+        review.reviewID === parsed.reviewID &&
+        review.round === parsed.round &&
+        roundRow.outcome_json !== null &&
+        !!review.outcome
+      const authorization = reviewMatches
+        ? this.findReviewFinalizationAuthorization(
+            db,
+            {
+              requestID: parsed.requestID,
+              draftVersion: parsed.draftVersion,
+              reviewID: parsed.reviewID,
+              round: parsed.round,
+              ...(parsed.fingerprint ? { fingerprint: parsed.fingerprint } : {}),
+            },
+            caller,
+          )
+        : undefined
+      const storedResult = JsonObjectSchema.safeParse(review.outcome?.result)
+      const storedFingerprint = storedResult.success ? storedResult.data.fingerprint : undefined
       if (
-        review.requestID !== parsed.requestID ||
-        review.draftVersion !== parsed.draftVersion ||
-        canonical(review.reviewer) !== canonical(caller) ||
-        roundRow.outcome_json === null ||
-        !review.outcome
+        !reviewMatches ||
+        (canonical(review.reviewer) !== canonical(caller) && !authorization) ||
+        (!authorization &&
+          parsed.fingerprint !== undefined &&
+          storedFingerprint !== parsed.fingerprint)
       )
         throw new Error("Review result is missing, stale, or belongs to another draft/caller")
 
-      const { reviewStatus, limitation } = this.finalizationStatus(review.outcome)
+      const finalizationStatus =
+        authorization &&
+        review.outcome!.status !== "unavailable" &&
+        review.outcome!.status !== "disabled"
+          ? this.finalizationStatusFromResult(authorization.result)
+          : this.finalizationStatus(review.outcome!)
+      const concerns = authorization
+        ? this.reviewResultConcerns(authorization.result)
+        : review.outcome!.concerns
       const reportVersion = db
         .query<{ version: number }, [string, string]>(
           `SELECT COALESCE(MAX(report_version),0)+1 AS version
@@ -834,9 +1062,9 @@ export class HandoffStore {
         draftVersion: parsed.draftVersion,
         reviewID: parsed.reviewID,
         round: parsed.round,
-        reviewStatus,
-        limitation,
-        concerns: review.outcome.concerns,
+        ...finalizationStatus,
+        concerns,
+        ...(authorization ? { reviewResult: authorization.result } : {}),
         source: request.source,
         draft,
         review,
@@ -911,6 +1139,14 @@ export class HandoffStore {
         .get(this.repository.projectDirectory, parsed.requestID, parsed.reportID)
       if (!reportRow) throw new Error("Report is not attached to this handoff request")
 
+      const currentVersion = db
+        .query<{ version: number }, [string, string, string]>(
+          `SELECT COALESCE(MAX(COALESCE(json_extract(payload,'$.version'),1)),0) AS version
+           FROM recovery_handoff_dispositions
+           WHERE project_directory=? AND request_id=? AND report_id=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID, parsed.reportID)!.version
+
       const existing = db
         .query<PayloadRow, [string, string]>(
           `SELECT payload FROM recovery_handoff_dispositions
@@ -919,9 +1155,11 @@ export class HandoffStore {
         .get(this.repository.projectDirectory, parsed.dispositionID)
       if (existing) {
         const record = HandoffDispositionRecord.parse(JSON.parse(existing.payload))
+        const expected = parsed.expectedVersion ?? record.expectedVersion ?? currentVersion
         const same =
           record.requestID === parsed.requestID &&
-          canonical(this.dispositionInput(record)) === canonical(parsed) &&
+          canonical(this.dispositionInput(record)) ===
+            canonical({ ...parsed, expectedVersion: expected }) &&
           canonical(record.recordedBy) === canonical(caller)
         return same
           ? { status: "replayed" as const, record }
@@ -930,6 +1168,10 @@ export class HandoffStore {
               message: "dispositionID already identifies different content",
             }
       }
+      if (parsed.expectedVersion !== undefined && parsed.expectedVersion !== currentVersion)
+        throw new Error(
+          `Handoff disposition version conflict: expected ${parsed.expectedVersion}, current ${currentVersion}`,
+        )
       if (parsed.relatedTaskIDs.length) {
         const placeholders = parsed.relatedTaskIDs.map(() => "?").join(",")
         const found = db
@@ -942,6 +1184,8 @@ export class HandoffStore {
       }
       const record = HandoffDispositionRecord.parse({
         ...parsed,
+        expectedVersion: parsed.expectedVersion ?? currentVersion,
+        version: currentVersion + 1,
         source: request.source,
         recordedBy: caller,
         createdAt: this.timestamp(),
@@ -971,6 +1215,699 @@ export class HandoffStore {
         record.createdAt,
       )
       return { status: "recorded" as const, record }
+    })
+  }
+
+  /** Append a bounded Architect concern against the exact task and attempt. */
+  recordConcern(input: unknown, callerInput: unknown): Receipt<RecoveryConcernRecordType> {
+    const parsed = RecoveryConcernInput.parse(input)
+    const caller = HandoffActor.parse(callerInput)
+    if (caller.role !== "architect")
+      throw new Error("Only the source plan's Architect may attach a recovery concern")
+    return this.repository.atomic((db) => {
+      const existing = db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_concern_versions
+           WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID)
+      const row = this.resolveSourceRow(db, { attemptID: parsed.sourceAttemptID })
+      if (!row) throw new Error("No project-owned source attempt matches this concern")
+      const handoffSource = this.sourceFromRow(row, 1)
+      this.assertArchitectOwnsPlan(db, handoffSource, caller)
+      const source = this.recoverySourceFromRow(row)
+      if (existing) {
+        const record = RecoveryConcernRecord.parse(JSON.parse(existing.payload))
+        const same =
+          record.concernID === parsed.concernID &&
+          record.expectedVersion === parsed.expectedVersion &&
+          record.ruleID === parsed.ruleID &&
+          record.reason === parsed.reason &&
+          canonical(record.evidenceBoundary) === canonical(parsed.evidenceBoundary) &&
+          canonical(record.evidence) === canonical(parsed.evidence) &&
+          canonical(record.source) === canonical(source) &&
+          canonical(record.recordedBy) === canonical(caller)
+        return same
+          ? { status: "replayed" as const, record }
+          : {
+              status: "conflict" as const,
+              message: "requestID already identifies different concern content",
+            }
+      }
+
+      const latestRow = this.latestConcernRow(db, parsed.concernID)
+      const latest = latestRow
+        ? RecoveryConcernRecord.parse(JSON.parse(latestRow.payload))
+        : undefined
+      const currentVersion = latest?.version ?? 0
+      if (parsed.expectedVersion !== currentVersion)
+        throw new Error(
+          `Recovery concern version conflict: expected ${parsed.expectedVersion}, current ${currentVersion}`,
+        )
+      if (latest && canonical(latest.source) !== canonical(source))
+        throw new Error("A recovery concern cannot move to another source task or attempt")
+      if (
+        latest &&
+        parsed.evidenceBoundary.throughSequence < latest.evidenceBoundary.throughSequence
+      )
+        throw new Error("A recovery concern update cannot move its evidence boundary backwards")
+
+      const record = RecoveryConcernRecord.parse({
+        requestID: parsed.requestID,
+        concernID: parsed.concernID,
+        version: currentVersion + 1,
+        expectedVersion: parsed.expectedVersion,
+        source,
+        ruleID: parsed.ruleID,
+        reason: parsed.reason,
+        evidenceBoundary: parsed.evidenceBoundary,
+        evidence: parsed.evidence,
+        lastDispositionID: null,
+        recordedBy: caller,
+        createdAt: this.timestamp(),
+      })
+      db.query(
+        `INSERT INTO recovery_concern_versions
+         (project_directory,concern_id,version,request_id,task_id,plan_id,attempt_id,source_session_id,payload,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        record.concernID,
+        record.version,
+        record.requestID,
+        record.source.taskID,
+        record.source.planID,
+        record.source.attemptID,
+        record.source.sessionID,
+        JSON.stringify(record),
+        record.createdAt,
+      )
+      this.appendControlEvent(
+        db,
+        record.source.attemptID,
+        "concern-recorded",
+        record.requestID,
+        record,
+        record.createdAt,
+      )
+      return { status: "recorded" as const, record }
+    })
+  }
+
+  /** Read current concerns and their durable Architect decisions without steering a worker. */
+  readConcerns(
+    input: { attemptID: string; limit?: number; cursor?: string },
+    callerInput: unknown,
+  ): RecoveryConcernPageType | undefined {
+    const attemptID = HandoffRequestInput.shape.sourceAttemptID.parse(input.attemptID)
+    const limit = input.limit ?? 20
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50)
+      throw new Error("Use a recovery concern page limit from 1 to 50")
+    let afterConcernID: string | undefined
+    if (input.cursor !== undefined) {
+      try {
+        const cursor = RecoveryConcernCursor.parse(
+          JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")),
+        )
+        if (cursor.attemptID !== attemptID) throw new Error("cursor attempt mismatch")
+        afterConcernID = cursor.afterConcernID
+      } catch {
+        throw new Error("Invalid recovery concern cursor")
+      }
+    }
+    const caller = HandoffActor.parse(callerInput)
+    return this.repository.atomic((db) => {
+      const row = this.resolveSourceRow(db, { attemptID })
+      if (!row) return undefined
+      const source = this.sourceFromRow(row, 1)
+      this.assertRecoveryReader(db, source, caller)
+      const rows = db
+        .query<RecoveryPayloadRow, (string | number)[]>(
+          `SELECT v.payload FROM recovery_concern_versions v
+           JOIN (
+             SELECT concern_id,MAX(version) AS version FROM recovery_concern_versions
+             WHERE project_directory=? AND attempt_id=? GROUP BY concern_id
+           ) latest ON latest.concern_id=v.concern_id AND latest.version=v.version
+           WHERE v.project_directory=? AND v.attempt_id=?${afterConcernID ? " AND v.concern_id>?" : ""}
+           ORDER BY v.concern_id LIMIT ?`,
+        )
+        .all(
+          this.repository.projectDirectory,
+          attemptID,
+          this.repository.projectDirectory,
+          attemptID,
+          ...(afterConcernID ? [afterConcernID] : []),
+          limit + 1,
+        )
+      const visible = rows
+        .slice(0, limit)
+        .map((item) => RecoveryConcernRecord.parse(JSON.parse(item.payload)))
+      const concerns = visible.map((concern) => ({
+        concern,
+        dispositions: db
+          .query<RecoveryPayloadRow, [string, string]>(
+            `SELECT payload FROM recovery_concern_dispositions
+             WHERE project_directory=? AND concern_id=? ORDER BY version DESC LIMIT 100`,
+          )
+          .all(this.repository.projectDirectory, concern.concernID)
+          .map((item) => RecoveryDispositionRecord.parse(JSON.parse(item.payload))),
+      }))
+      const nextCursor =
+        rows.length > limit && visible.length
+          ? Buffer.from(
+              JSON.stringify({ attemptID, afterConcernID: visible.at(-1)!.concernID }),
+            ).toString("base64url")
+          : null
+      return RecoveryConcernPage.parse({
+        source: this.recoverySourceFromRow(row),
+        concerns,
+        nextCursor,
+      })
+    })
+  }
+
+  /** Record an append-only Architect decision against precisely reviewed concern evidence. */
+  recordRecoveryDisposition(
+    input: unknown,
+    callerInput: unknown,
+  ): Receipt<RecoveryDispositionRecordType> {
+    const parsed = RecoveryDispositionInput.parse(input)
+    const caller = HandoffActor.parse(callerInput)
+    if (caller.role !== "architect")
+      throw new Error("Only the source plan's Architect may disposition a recovery concern")
+    return this.repository.atomic((db) => {
+      const existing = db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_concern_dispositions WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID)
+      const row = this.resolveSourceRowForConcern(db, parsed.concernID)
+      if (!row) throw new Error("Recovery concern does not exist in this project")
+      const source = this.sourceFromRow(row, 1)
+      this.assertArchitectOwnsPlan(db, source, caller)
+      if (existing) {
+        const record = RecoveryDispositionRecord.parse(JSON.parse(existing.payload))
+        const same =
+          canonical(this.recoveryDispositionInput(record)) === canonical(parsed) &&
+          canonical(record.recordedBy) === canonical(caller)
+        return same
+          ? { status: "replayed" as const, record }
+          : {
+              status: "conflict" as const,
+              message: "requestID already identifies a different disposition",
+            }
+      }
+      const concernRow = db
+        .query<RecoveryPayloadRow, [string, string, number]>(
+          `SELECT payload FROM recovery_concern_versions
+           WHERE project_directory=? AND concern_id=? AND version=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.concernID, parsed.expectedVersion)
+      if (!concernRow) {
+        const latest = this.latestConcernRow(db, parsed.concernID)
+        const current = latest ? RecoveryConcernRecord.parse(JSON.parse(latest.payload)).version : 0
+        throw new Error(
+          `Recovery concern version conflict: expected ${parsed.expectedVersion}, current ${current}`,
+        )
+      }
+      const concern = RecoveryConcernRecord.parse(JSON.parse(concernRow.payload))
+      const latest = this.latestConcernRow(db, parsed.concernID)
+      const latestConcern = latest
+        ? RecoveryConcernRecord.parse(JSON.parse(latest.payload))
+        : undefined
+      if (latestConcern?.version !== parsed.expectedVersion)
+        throw new Error(
+          `Recovery concern version conflict: expected ${parsed.expectedVersion}, current ${latestConcern?.version ?? 0}`,
+        )
+      if (
+        parsed.evidenceBoundary.fromSequence < concern.evidenceBoundary.fromSequence ||
+        parsed.evidenceBoundary.throughSequence > concern.evidenceBoundary.throughSequence
+      )
+        throw new Error("Disposition evidence must be contained in the recorded concern boundary")
+      const record = RecoveryDispositionRecord.parse({
+        ...parsed,
+        version: parsed.expectedVersion,
+        source: concern.source,
+        recordedBy: caller,
+        createdAt: this.timestamp(),
+      })
+      db.query(
+        `INSERT INTO recovery_concern_dispositions
+         (project_directory,disposition_id,request_id,concern_id,version,attempt_id,payload,created_at)
+         VALUES(?,?,?,?,?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        record.dispositionID,
+        record.requestID,
+        record.concernID,
+        record.version,
+        record.source.attemptID,
+        JSON.stringify(record),
+        record.createdAt,
+      )
+      this.appendControlEvent(
+        db,
+        record.source.attemptID,
+        "concern-disposition",
+        record.requestID,
+        record,
+        record.createdAt,
+      )
+      return { status: "recorded" as const, record }
+    })
+  }
+
+  /** Prepare one durable, idempotent checkpoint before attempting native steering. */
+  prepareCheckpoint(input: unknown, callerInput: unknown): Receipt<RecoveryCheckpointRecordType> {
+    const parsed = RecoveryCheckpointInput.parse(input)
+    const caller = HandoffActor.parse(callerInput)
+    if (caller.role !== "architect")
+      throw new Error("Only the current Architect may request a checkpoint")
+    return this.repository.atomic((db) => {
+      const existing = db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_checkpoint_commands WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID)
+      const concernRow = db
+        .query<RecoveryPayloadRow, [string, string, number]>(
+          `SELECT payload FROM recovery_concern_versions WHERE project_directory=? AND concern_id=? AND version=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.concernID, parsed.expectedVersion)
+      if (!concernRow) throw new Error("Checkpoint concern version is not attached to this project")
+      const concern = RecoveryConcernRecord.parse(JSON.parse(concernRow.payload))
+      if (concern.source.attemptID !== parsed.attemptID)
+        throw new Error("Checkpoint concern does not belong to the requested source attempt")
+      const row = this.resolveSourceRow(db, { attemptID: parsed.attemptID })
+      if (!row) throw new Error("Checkpoint source attempt is no longer project-owned")
+      const handoffSource = this.sourceFromRow(row, 1)
+      this.assertArchitectOwnsPlan(db, handoffSource, caller)
+      this.assertLatestRunningAttempt(db, row)
+      const source = this.recoverySourceFromRow(row)
+      if (existing) {
+        const record = RecoveryCheckpointRecord.parse(JSON.parse(existing.payload))
+        const same =
+          record.concernID === parsed.concernID &&
+          record.attemptID === parsed.attemptID &&
+          record.expectedVersion === parsed.expectedVersion &&
+          canonical(record.evidenceBoundary) === canonical(parsed.evidenceBoundary) &&
+          record.guidance === parsed.guidance &&
+          canonical(record.source) === canonical(source) &&
+          canonical(record.requestedBy) === canonical(caller)
+        return same
+          ? { status: "replayed" as const, record }
+          : {
+              status: "conflict" as const,
+              message: "requestID already identifies a different checkpoint",
+            }
+      }
+      if (source.workerAgent === null)
+        throw new Error("Checkpoint source has no recorded admitted worker agent")
+      if (
+        parsed.evidenceBoundary.fromSequence < concern.evidenceBoundary.fromSequence ||
+        parsed.evidenceBoundary.throughSequence > concern.evidenceBoundary.throughSequence
+      )
+        throw new Error("Checkpoint evidence boundary must be within the selected concern version")
+      const record = RecoveryCheckpointRecord.parse({
+        ...parsed,
+        messageID: SessionMessage.ID.create(),
+        source,
+        requestedBy: caller,
+        createdAt: this.timestamp(),
+      })
+      const createdAt = record.createdAt
+      const prepared = RecoveryCheckpointDelivery.parse({
+        requestID: record.requestID,
+        status: "prepared",
+        messageID: record.messageID,
+        observedAt: createdAt,
+      })
+      db.query(
+        `INSERT INTO recovery_checkpoint_commands
+         (project_directory,request_id,task_id,plan_id,attempt_id,source_session_id,message_id,payload,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        record.requestID,
+        record.source.taskID,
+        record.source.planID,
+        record.source.attemptID,
+        record.source.sessionID,
+        record.messageID,
+        JSON.stringify(record),
+        createdAt,
+      )
+      db.query(
+        `INSERT INTO recovery_checkpoint_delivery
+         (project_directory,request_id,state,payload,created_at) VALUES(?,?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        record.requestID,
+        "prepared",
+        JSON.stringify(prepared),
+        createdAt,
+      )
+      this.appendControlEvent(
+        db,
+        record.attemptID,
+        "checkpoint-prepared",
+        record.requestID,
+        record,
+        createdAt,
+      )
+      return { status: "recorded" as const, record }
+    })
+  }
+
+  /** Claim the only native admission attempt. A crash after this point is deliberately not retried. */
+  claimCheckpointDelivery(
+    requestID: string,
+    callerInput: unknown,
+  ): RecoveryCheckpointRecordType | undefined {
+    const caller = HandoffActor.parse(callerInput)
+    return this.repository.atomic((db) => {
+      const record = this.requireCheckpoint(db, requestID)
+      const sourceRow = this.resolveSourceRow(db, { attemptID: record.source.attemptID })
+      if (!sourceRow) throw new Error("Checkpoint source attempt no longer exists")
+      const handoffSource = this.sourceFromRow(sourceRow, 1)
+      this.assertArchitectOwnsPlan(db, handoffSource, caller)
+      this.assertLatestRunningAttempt(db, sourceRow)
+      const deliveryRow = db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_checkpoint_delivery WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, requestID)
+      if (!deliveryRow) throw new Error("Checkpoint delivery record is missing")
+      const delivery = RecoveryCheckpointDelivery.parse(JSON.parse(deliveryRow.payload))
+      if (delivery.status !== "prepared") return undefined
+      const unknown = RecoveryCheckpointDelivery.parse({
+        ...delivery,
+        status: "unknown",
+        observedAt: this.timestamp(),
+        detail:
+          "Native admission is in progress; this request will not be resent after an uncertain outcome.",
+      })
+      db.query(
+        `UPDATE recovery_checkpoint_delivery SET state='unknown',payload=?,created_at=?
+         WHERE project_directory=? AND request_id=? AND state='prepared'`,
+      ).run(
+        JSON.stringify(unknown),
+        unknown.observedAt,
+        this.repository.projectDirectory,
+        requestID,
+      )
+      this.appendControlEvent(
+        db,
+        record.source.attemptID,
+        "checkpoint-admission-unknown",
+        requestID,
+        unknown,
+        unknown.observedAt,
+      )
+      return record
+    })
+  }
+
+  /** Recheck source ownership after native session lookup and immediately before steering. */
+  assertCheckpointTarget(requestID: string, callerInput: unknown): void {
+    const caller = HandoffActor.parse(callerInput)
+    this.repository.atomic((db) => {
+      const command = this.requireCheckpoint(db, requestID)
+      const row = this.resolveSourceRow(db, { attemptID: command.source.attemptID })
+      if (!row) throw new Error("Checkpoint source attempt no longer exists")
+      const current = this.recoverySourceFromRow(row)
+      if (canonical(current) !== canonical(command.source))
+        throw new Error("Checkpoint source identity changed before native steering")
+      this.assertArchitectOwnsPlan(db, this.sourceFromRow(row, 1), caller)
+      this.assertLatestRunningAttempt(db, row)
+    })
+  }
+
+  finishCheckpointDelivery(
+    requestID: string,
+    messageID: string,
+    admitted: boolean,
+    detail?: string,
+  ): RecoveryCheckpointStateType {
+    const parsedMessageID = SessionMessage.ID.make(messageID)
+    return this.repository.atomic((db) => {
+      const record = this.requireCheckpoint(db, requestID)
+      if (record.messageID !== parsedMessageID)
+        throw new Error("Checkpoint message identity does not match")
+      const row = db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_checkpoint_delivery WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, requestID)
+      if (!row) throw new Error("Checkpoint delivery record is missing")
+      const current = RecoveryCheckpointDelivery.parse(JSON.parse(row.payload))
+      let next = current
+      if (current.status === "unknown") {
+        const observedAt = this.timestamp()
+        next = admitted
+          ? RecoveryCheckpointDelivery.parse({
+              requestID,
+              status: "admitted",
+              messageID: record.messageID,
+              observedAt,
+              ...(detail ? { detail: detail.slice(0, 500) } : {}),
+            })
+          : RecoveryCheckpointDelivery.parse({
+              ...current,
+              status: "unknown",
+              observedAt,
+              ...(detail ? { detail: detail.slice(0, 500) } : {}),
+            })
+      }
+      if (canonical(next) !== canonical(current)) {
+        db.query(
+          `UPDATE recovery_checkpoint_delivery SET state=?,payload=?,created_at=?
+           WHERE project_directory=? AND request_id=?`,
+        ).run(
+          next.status,
+          JSON.stringify(next),
+          next.observedAt,
+          this.repository.projectDirectory,
+          requestID,
+        )
+        this.appendControlEvent(
+          db,
+          record.source.attemptID,
+          next.status === "admitted" ? "checkpoint-admitted" : "checkpoint-admission-unknown",
+          `${requestID}:${next.observedAt}`,
+          next,
+          next.observedAt,
+        )
+      }
+      return this.checkpointState(db, record)
+    })
+  }
+
+  checkpointForWorker(
+    requestID: string,
+    callerInput: unknown,
+  ): RecoveryCheckpointStateType | undefined {
+    const caller = HandoffActor.parse(callerInput)
+    return this.repository.atomic((db) => {
+      const row = this.checkpointRow(db, requestID)
+      if (!row) return undefined
+      const record = RecoveryCheckpointRecord.parse(JSON.parse(row.payload))
+      const sourceRow = this.resolveSourceRow(db, { attemptID: record.source.attemptID })
+      if (!sourceRow) throw new Error("Checkpoint source attempt is no longer project-owned")
+      this.assertWorkerOwnsSource(this.sourceFromRow(sourceRow, 1), caller)
+      this.assertLatestRunningAttempt(db, sourceRow)
+      return this.checkpointState(db, record)
+    })
+  }
+
+  recordCheckpointResponse(
+    input: unknown,
+    callerInput: unknown,
+    observedCallID: string,
+  ): Receipt<RecoveryCheckpointResponseRecordType> {
+    const parsed = RecoveryCheckpointResponseInput.parse(input)
+    const caller = HandoffActor.parse(callerInput)
+    if (caller.role !== "worker")
+      throw new Error("Only the assigned worker may respond to a checkpoint")
+    return this.repository.atomic((db) => {
+      const command = this.requireCheckpoint(db, parsed.requestID)
+      if (parsed.responseID !== observedCallID)
+        throw new Error("Checkpoint response identity must match the observed native tool call")
+      const sourceRow = this.resolveSourceRow(db, { attemptID: command.source.attemptID })
+      if (!sourceRow) throw new Error("Checkpoint source attempt is no longer project-owned")
+      const handoffSource = this.sourceFromRow(sourceRow, 1)
+      this.assertWorkerOwnsSource(handoffSource, caller)
+      this.assertLatestRunningAttempt(db, sourceRow)
+      const existing = db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_checkpoint_responses WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, parsed.requestID)
+      if (existing) {
+        const record = RecoveryCheckpointResponseRecord.parse(JSON.parse(existing.payload))
+        const same =
+          canonical(this.checkpointResponseInput(record)) === canonical(parsed) &&
+          record.observedCallID === observedCallID &&
+          canonical(record.reportedBy) === canonical(caller)
+        return same
+          ? { status: "replayed" as const, record }
+          : { status: "conflict" as const, message: "Checkpoint already has a different response" }
+      }
+      if (!observedCallID.trim())
+        throw new Error("Checkpoint response must be associated with its native tool call")
+      const createdAt = this.timestamp()
+      const consumption = RecoveryCheckpointConsumptionRecord.parse({
+        requestID: parsed.requestID,
+        messageID: command.messageID,
+        observedCallID,
+        observedBy: caller,
+        createdAt,
+      })
+      const response = RecoveryCheckpointResponseRecord.parse({
+        ...parsed,
+        source: command.source,
+        observedCallID,
+        reportedBy: caller,
+        createdAt,
+      })
+      db.query(
+        `INSERT INTO recovery_checkpoint_consumptions
+         (project_directory,request_id,payload,created_at) VALUES(?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        parsed.requestID,
+        JSON.stringify(consumption),
+        createdAt,
+      )
+      db.query(
+        `INSERT INTO recovery_checkpoint_responses
+         (project_directory,request_id,response_id,payload,created_at) VALUES(?,?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        parsed.requestID,
+        parsed.responseID,
+        JSON.stringify(response),
+        createdAt,
+      )
+      this.appendControlEvent(
+        db,
+        command.source.attemptID,
+        "checkpoint-consumed",
+        `${parsed.requestID}:consumed`,
+        consumption,
+        createdAt,
+      )
+      this.appendControlEvent(
+        db,
+        command.source.attemptID,
+        "checkpoint-responded",
+        `${parsed.requestID}:responded`,
+        response,
+        createdAt,
+      )
+      return { status: "recorded" as const, record: response }
+    })
+  }
+
+  checkpointStateForArchitect(
+    requestID: string,
+    callerInput: unknown,
+  ): RecoveryCheckpointStateType | undefined {
+    const caller = HandoffActor.parse(callerInput)
+    return this.repository.atomic((db) => {
+      const row = this.checkpointRow(db, requestID)
+      if (!row) return undefined
+      const command = RecoveryCheckpointRecord.parse(JSON.parse(row.payload))
+      const sourceRow = this.resolveSourceRow(db, { attemptID: command.source.attemptID })
+      if (!sourceRow) throw new Error("Checkpoint source attempt is no longer project-owned")
+      this.assertArchitectOwnsPlan(db, this.sourceFromRow(sourceRow, 1), caller)
+      return this.checkpointState(db, command)
+    })
+  }
+
+  /** Permission-checked focused read for durable requests, drafts, reports and corrections. */
+  readHandoff(
+    input: { requestID: string; limit?: number; cursor?: string },
+    callerInput: unknown,
+  ):
+    | {
+        request: HandoffRequestRecordType
+        drafts: HandoffDraftRecordType[]
+        reports: HandoffReportRecordType[]
+        dispositions: HandoffDispositionRecordType[]
+        events: HandoffEventRecordType[]
+        nextCursor: string | null
+      }
+    | undefined {
+    const requestID = HandoffRequestInput.shape.requestID.parse(input.requestID)
+    const caller = HandoffActor.parse(callerInput)
+    const limit = input.limit ?? 20
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new Error("Use a handoff history limit from 1 to 100")
+    let before: number | undefined
+    if (input.cursor !== undefined) {
+      try {
+        const cursor = HandoffHistoryCursor.parse(
+          JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")),
+        )
+        if (cursor.requestID !== requestID) throw new Error("cursor request mismatch")
+        before = cursor.before
+      } catch {
+        throw new Error("Invalid handoff history cursor")
+      }
+    }
+    return this.repository.atomic((db) => {
+      const request = this.requireRequest(db, requestID)
+      this.assertHandoffReader(db, request, caller)
+      const rows = db
+        .query<EventRow, (string | number)[]>(
+          `SELECT sequence,request_id,kind,record_id,data,created_at
+           FROM recovery_handoff_events
+           WHERE project_directory=? AND request_id=?${before === undefined ? "" : " AND sequence < ?"}
+           ORDER BY sequence DESC LIMIT ?`,
+        )
+        .all(
+          this.repository.projectDirectory,
+          requestID,
+          ...(before === undefined ? [] : [before]),
+          limit + 1,
+        )
+      const visible = rows.slice(0, limit)
+      const drafts = db
+        .query<RecoveryPayloadRow, [string, string, number]>(
+          `SELECT payload FROM recovery_handoff_drafts
+           WHERE project_directory=? AND request_id=? ORDER BY draft_version DESC LIMIT ?`,
+        )
+        .all(this.repository.projectDirectory, requestID, limit)
+        .map((item) => HandoffDraftRecord.parse(JSON.parse(item.payload)))
+      const reports = db
+        .query<RecoveryPayloadRow, [string, string, number]>(
+          `SELECT payload FROM recovery_handoff_reports
+           WHERE project_directory=? AND request_id=? ORDER BY report_version DESC LIMIT ?`,
+        )
+        .all(this.repository.projectDirectory, requestID, limit)
+        .map((item) => HandoffReportRecord.parse(JSON.parse(item.payload)))
+      const dispositions = db
+        .query<RecoveryPayloadRow, [string, string, number]>(
+          `SELECT payload FROM recovery_handoff_dispositions
+           WHERE project_directory=? AND request_id=? ORDER BY rowid DESC LIMIT ?`,
+        )
+        .all(this.repository.projectDirectory, requestID, limit)
+        .map((item) => HandoffDispositionRecord.parse(JSON.parse(item.payload)))
+      const nextCursor =
+        rows.length > limit && visible.length
+          ? Buffer.from(JSON.stringify({ requestID, before: visible.at(-1)!.sequence })).toString(
+              "base64url",
+            )
+          : null
+      return {
+        request,
+        drafts,
+        reports,
+        dispositions,
+        events: visible.map((event) => this.eventRecord(event)),
+        nextCursor,
+      }
     })
   }
 
@@ -1101,6 +2038,182 @@ export class HandoffStore {
 
   private timestamp(): string {
     return new Date(this.now()).toISOString()
+  }
+
+  private recoverySourceFromRow(row: SourceRow): RecoverySourceType {
+    const source = this.sourceFromRow(row, 1)
+    return RecoverySource.parse({
+      projectDirectory: this.repository.projectDirectory,
+      projectID: source.task.provenance.projectID,
+      planID: source.attachment.planID,
+      taskID: source.attachment.taskID,
+      specRevision: source.attachment.specRevision,
+      attemptID: source.attachment.attemptID,
+      sessionID: source.attachment.sourceSessionID,
+      workspace: source.attempt.workspace,
+      workerAgent: source.attempt.policyAgent,
+      ownerSessionID: source.plan.ownerSessionID,
+    })
+  }
+
+  private latestConcernRow(db: Database, concernID: string): RecoveryPayloadRow | undefined {
+    return (
+      db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_concern_versions
+           WHERE project_directory=? AND concern_id=? ORDER BY version DESC LIMIT 1`,
+        )
+        .get(this.repository.projectDirectory, concernID) ?? undefined
+    )
+  }
+
+  private resolveSourceRowForConcern(db: Database, concernID: string): SourceRow | undefined {
+    const latest = this.latestConcernRow(db, concernID)
+    if (!latest) return undefined
+    const concern = RecoveryConcernRecord.parse(JSON.parse(latest.payload))
+    const row = this.resolveSourceRow(db, { attemptID: concern.source.attemptID })
+    if (!row || canonical(this.recoverySourceFromRow(row)) !== canonical(concern.source))
+      throw new Error("Recovery concern source is stale or no longer project-owned")
+    return row
+  }
+
+  private assertRecoveryReader(
+    db: Database,
+    source: HandoffSourceType,
+    caller: HandoffActorType,
+  ): void {
+    if (caller.role === "architect") this.assertArchitectOwnsPlan(db, source, caller)
+    else this.assertWorkerOwnsSource(source, caller)
+  }
+
+  private assertHandoffReader(
+    db: Database,
+    request: HandoffRequestRecordType,
+    caller: HandoffActorType,
+  ): void {
+    // Read access is attached to the durable source, not its latest request generation.
+    // A later request must not make an already reviewed handoff disappear.
+    this.assertHandoffSource(db, request)
+    if (caller.role === "architect") this.assertArchitectOwnsPlan(db, request.source, caller)
+    else this.assertWorkerOwnsSource(request.source, caller)
+  }
+
+  private assertLatestRunningAttempt(db: Database, row: SourceRow): void {
+    if (row.attempt_state !== "running")
+      throw new Error("Checkpoint controls require the source worker's admitted running attempt")
+    const current = db
+      .query<{ number: number | null }, [string, string]>(
+        `SELECT MAX(number) AS number FROM runner_attempts WHERE plan_id=? AND task_id=?`,
+      )
+      .get(row.plan_id, row.node_task_id)?.number
+    if (current !== row.attempt_number)
+      throw new Error("Checkpoint source attempt was replaced; no request was delivered")
+  }
+
+  private appendControlEvent(
+    db: Database,
+    attemptID: string,
+    kind: string,
+    recordID: string,
+    data: unknown,
+    createdAt: string,
+  ): void {
+    const value = JsonValueSchema.parse(data)
+    db.query(
+      `INSERT INTO recovery_control_events
+       (project_directory,attempt_id,kind,record_id,data,created_at) VALUES(?,?,?,?,?,?)`,
+    ).run(
+      this.repository.projectDirectory,
+      attemptID,
+      kind,
+      recordID,
+      JSON.stringify(value),
+      createdAt,
+    )
+  }
+
+  private checkpointRow(db: Database, requestID: string): RecoveryPayloadRow | undefined {
+    return (
+      db
+        .query<RecoveryPayloadRow, [string, string]>(
+          `SELECT payload FROM recovery_checkpoint_commands WHERE project_directory=? AND request_id=?`,
+        )
+        .get(this.repository.projectDirectory, requestID) ?? undefined
+    )
+  }
+
+  private requireCheckpoint(db: Database, requestID: string): RecoveryCheckpointRecordType {
+    const row = this.checkpointRow(db, requestID)
+    if (!row) throw new Error("Recovery checkpoint request not found in this project")
+    return RecoveryCheckpointRecord.parse(JSON.parse(row.payload))
+  }
+
+  private checkpointState(
+    db: Database,
+    command: RecoveryCheckpointRecordType,
+  ): RecoveryCheckpointStateType {
+    const deliveryRow = db
+      .query<RecoveryPayloadRow, [string, string]>(
+        `SELECT payload FROM recovery_checkpoint_delivery WHERE project_directory=? AND request_id=?`,
+      )
+      .get(this.repository.projectDirectory, command.requestID)
+    const delivery = deliveryRow
+      ? RecoveryCheckpointDelivery.parse(JSON.parse(deliveryRow.payload))
+      : RecoveryCheckpointDelivery.parse({
+          requestID: command.requestID,
+          status: "prepared",
+          messageID: command.messageID,
+          observedAt: command.createdAt,
+        })
+    const consumptionRow = db
+      .query<RecoveryPayloadRow, [string, string]>(
+        `SELECT payload FROM recovery_checkpoint_consumptions WHERE project_directory=? AND request_id=?`,
+      )
+      .get(this.repository.projectDirectory, command.requestID)
+    const responseRow = db
+      .query<RecoveryPayloadRow, [string, string]>(
+        `SELECT payload FROM recovery_checkpoint_responses WHERE project_directory=? AND request_id=?`,
+      )
+      .get(this.repository.projectDirectory, command.requestID)
+    return RecoveryCheckpointState.parse({
+      command,
+      delivery,
+      consumption: consumptionRow
+        ? RecoveryCheckpointConsumptionRecord.parse(JSON.parse(consumptionRow.payload))
+        : null,
+      response: responseRow
+        ? RecoveryCheckpointResponseRecord.parse(JSON.parse(responseRow.payload))
+        : null,
+    })
+  }
+
+  private recoveryDispositionInput(
+    record: RecoveryDispositionRecordType,
+  ): RecoveryDispositionInputType {
+    return RecoveryDispositionInput.parse({
+      requestID: record.requestID,
+      dispositionID: record.dispositionID,
+      concernID: record.concernID,
+      expectedVersion: record.expectedVersion,
+      decision: record.decision,
+      reason: record.reason,
+      evidenceBoundary: record.evidenceBoundary,
+      ...(record.followUp ? { followUp: record.followUp } : {}),
+    })
+  }
+
+  private checkpointResponseInput(
+    record: RecoveryCheckpointResponseRecordType,
+  ): RecoveryCheckpointResponseInputType {
+    return RecoveryCheckpointResponseInput.parse({
+      requestID: record.requestID,
+      responseID: record.responseID,
+      completed: record.completed,
+      attempted: record.attempted,
+      currentBlockers: record.currentBlockers,
+      nextApproach: record.nextApproach,
+      evidence: record.evidence,
+    })
   }
 
   private requestRow(db: Database, requestID: string): PayloadRow | undefined {
@@ -1260,6 +2373,18 @@ export class HandoffStore {
   }
 
   private assertCurrentRequest(db: Database, request: HandoffRequestRecordType): void {
+    this.assertHandoffSource(db, request)
+    const generation = db
+      .query<{ generation: number }, [string, string]>(
+        `SELECT COALESCE(MAX(request_generation),0) AS generation
+         FROM recovery_handoff_requests WHERE project_directory=? AND attempt_id=?`,
+      )
+      .get(this.repository.projectDirectory, request.source.attachment.attemptID)!.generation
+    if (generation !== request.source.attachment.requestGeneration)
+      throw new Error("Handoff request generation is stale")
+  }
+
+  private assertHandoffSource(db: Database, request: HandoffRequestRecordType): void {
     const source = request.source
     const currentSource = db
       .query<{ id: string; task_body: string }, (string | number)[]>(
@@ -1284,14 +2409,6 @@ export class HandoffStore {
     const currentTask = TaskSpecSchema.parse(JSON.parse(currentSource.task_body))
     if (canonical(currentTask) !== canonical(source.task))
       throw new Error("Handoff source task contract is stale")
-    const generation = db
-      .query<{ generation: number }, [string, string]>(
-        `SELECT COALESCE(MAX(request_generation),0) AS generation
-         FROM recovery_handoff_requests WHERE project_directory=? AND attempt_id=?`,
-      )
-      .get(this.repository.projectDirectory, source.attachment.attemptID)!.generation
-    if (generation !== source.attachment.requestGeneration)
-      throw new Error("Handoff request generation is stale")
   }
 
   private assertArchitectOwnsPlan(
@@ -1383,6 +2500,142 @@ export class HandoffStore {
     return `${reviewID}:${round}`
   }
 
+  private findReviewFinalizationAuthorization(
+    db: Database,
+    input: {
+      requestID: string
+      draftVersion: number
+      reviewID: string
+      round: number
+      fingerprint?: string
+    },
+    caller: HandoffActorType,
+  ): { fingerprint: string; result: Record<string, unknown> } | undefined {
+    const events = db
+      .query<{ data: string }, [string, string, string, string]>(
+        `SELECT data FROM recovery_handoff_events
+         WHERE project_directory=? AND request_id=? AND kind=? AND record_id=?`,
+      )
+      .all(
+        this.repository.projectDirectory,
+        input.requestID,
+        "review-finalization-authorized",
+        this.roundKey(input.reviewID, input.round),
+      )
+    const matches = events.flatMap((event) => {
+      const data = JsonObjectSchema.safeParse(JSON.parse(event.data))
+      if (!data.success) return []
+      const value = data.data
+      if (
+        value.requestID !== input.requestID ||
+        value.draftVersion !== input.draftVersion ||
+        value.reviewID !== input.reviewID ||
+        value.round !== input.round ||
+        typeof value.fingerprint !== "string" ||
+        (input.fingerprint !== undefined && value.fingerprint !== input.fingerprint) ||
+        canonical(value.authorizedBy) !== canonical(caller) ||
+        (value.resultKind !== "stored" && value.resultKind !== "exhausted")
+      )
+        return []
+      const result = JsonObjectSchema.safeParse(value.result)
+      if (
+        !result.success ||
+        result.data.requestID !== input.requestID ||
+        result.data.reviewID !== input.reviewID ||
+        result.data.round !== input.round ||
+        result.data.fingerprint !== value.fingerprint
+      )
+        return []
+      return [{ fingerprint: value.fingerprint, result: result.data }]
+    })
+    if (!matches.length) return undefined
+    const first = matches[0]!
+    return matches.every((match) => canonical(match) === canonical(first)) ? first : undefined
+  }
+
+  private isExhaustedReviewResult(
+    db: Database,
+    review: HandoffReviewRoundRecordType,
+    result: Record<string, unknown>,
+  ): boolean {
+    if (review.round !== REVIEW_ROUNDS) return false
+    const rounds = db
+      .query<ReviewRoundPayloadRow, [string, string, string]>(
+        `SELECT payload FROM recovery_handoff_rounds
+         WHERE project_directory=? AND request_id=? AND review_id=? ORDER BY round`,
+      )
+      .all(this.repository.projectDirectory, review.requestID, review.reviewID)
+    if (rounds.length !== REVIEW_ROUNDS) return false
+
+    const findings = review.checks.map((check) => ({
+      ...JsonObjectSchema.parse(check.definition),
+      id: check.id,
+      probability: null,
+      score: null,
+      disposition: "limit",
+    }))
+    const expected = {
+      status: "completed_with_concerns",
+      requestID: review.requestID,
+      reviewID: review.reviewID,
+      version: review.checkVersion,
+      round: REVIEW_ROUNDS,
+      maxRounds: REVIEW_ROUNDS,
+      fingerprint: result.fingerprint,
+      answers: {},
+      findings,
+      focus: null,
+      errors: [REVIEW_ROUNDS_EXHAUSTED_ERROR],
+      limitation: REVIEW_ROUNDS_EXHAUSTED_LIMITATION,
+      elapsedMs: null,
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+        costUSD: null,
+      },
+      next: {
+        action: "continue",
+        instruction:
+          "Send the draft and its unresolved concerns to the current Architect. This review does not finalize a report or establish task success.",
+      },
+    }
+    return canonical(result) === canonical(expected)
+  }
+
+  private finalizationStatusFromResult(result: Record<string, unknown>): {
+    reviewStatus: HandoffReportRecordType["reviewStatus"]
+    limitation: string | null
+  } {
+    const status = result.status
+    const limitation = typeof result.limitation === "string" ? result.limitation : null
+    if (status === "completed" || status === "completed_with_concerns")
+      return { reviewStatus: "reviewed", limitation }
+    if (status === "disabled" || status === "unavailable") {
+      if (!limitation) throw new Error("A limited review result must retain its limitation")
+      return { reviewStatus: status, limitation }
+    }
+    throw new Error("A handoff cannot be finalized from a pending review result")
+  }
+
+  private reviewResultConcerns(result: Record<string, unknown>): string[] {
+    if (!Array.isArray(result.findings)) return []
+    return result.findings.flatMap((finding) => {
+      if (typeof finding !== "object" || finding === null || Array.isArray(finding)) return []
+      const record = finding as Record<string, unknown>
+      if (
+        record.disposition === "resolved" ||
+        record.disposition === "not_applicable" ||
+        typeof record.id !== "string" ||
+        typeof record.guidance !== "string"
+      )
+        return []
+      return [`${record.id}: ${record.guidance}`]
+    })
+  }
+
   private finalizationStatus(outcome: HandoffReviewOutcomeType): {
     reviewStatus: HandoffReportRecordType["reviewStatus"]
     limitation: string | null
@@ -1399,6 +2652,7 @@ export class HandoffStore {
       dispositionID: record.dispositionID,
       requestID: record.requestID,
       reportID: record.reportID,
+      ...(record.expectedVersion !== undefined ? { expectedVersion: record.expectedVersion } : {}),
       decision: record.decision,
       correction: record.correction,
       reason: record.reason,

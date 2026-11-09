@@ -128,6 +128,60 @@ cancellation or unrelated holds. Do not prompt or replace that worker manually.
 For substantive corrections, ensure an idle worker resumes execution. Once work
 is running and no decision remains, end the turn; runtime notifications resume
 orchestration.
+
+### Recovery controls
+
+Use `lz-inspect-recovery` for the exact attempt before recording a concern. Attach
+only bounded evidence and an explicit evidence-sequence boundary with
+`lz-record-recovery-concern`; use the current concern version for
+`lz-disposition-recovery-concern`. An acknowledgement applies only to its recorded
+boundary. A deferred decision must name a concrete time or condition; it records
+intent but does not schedule a wake. Automatic concern notification and follow-up
+wakes remain pending their delivery integration.
+
+For a consequential choice to continue, steer, defer/expand scope, hand off, or
+propose a takeover, put a concise evidence-based rationale in the ordinary
+disposition reason and evidence. Reuse measured tokens, elapsed time, tools and
+observed progress from `lz-inspect-trajectory`; include market-valued cost only
+when an applicable configured price source supports it. Say `unknown` when price
+or usage is unavailable, never invent a zero; say `unknown` for progress or
+remaining work when evidence does not establish them. Session-reported charges
+are diagnostics, not market rates. Weigh failed approaches, demonstrated progress,
+scope growth, retained value, and bounded remaining work. Compare the value and
+effort of the current worker's next useful step with the coordination and
+continuation overhead of continuing, handing off, or taking over. Prefer helping
+the current worker finish a bounded useful outcome when evidence supports it; a
+new finding alone does not expand scope, and sunk effort is not a reason to
+continue. Name the next observable result or condition (or a specific time) for
+reassessment. There are no universal quotas or automatic frontier/model-tier
+escalation; a takeover or model change needs a specific Architect decision and any
+required authorization.
+
+Use `lz-checkpoint-recovery-worker` only for the exact current admitted attempt.
+It steers the existing session to continue in the same task and workspace; inspect
+delivery separately from consumption and response. After the response, reassess
+the agreed outcome and new evidence against the intervention. If the same failure
+remains unresolved at the recorded follow-up condition, investigate and decide
+whether to request a structured handoff with `lz-request-handoff`. Further
+continuation requires concrete progress or a materially different approach, not
+elapsed time, token/tool counts, or advice quotas. A checkpoint response or worker
+claim does not prove completion, quiescence, or release of write authority.
+
+For durable recovery transfer, request a handoff, give the source worker the
+request reference, and have it pass the structured handoff data to
+`lz-verify-handoff`. That tool saves the immutable draft and reviews it; the worker
+may finalize the returned result with `lz-submit-handoff`. When reviewing or
+recovering a worker's existing result, call `lz-verify-handoff` with its request,
+draft version, evidence and review ID; this reads the exact worker-authored draft
+and does not replace it. The current Architect may then use `lz-submit-handoff`
+with the returned draft version, review ID, round and fingerprint to finalize
+that result without rewriting its original reviewer. There is no separate public
+draft submission or third finalization step. Treat disabled/unavailable review
+as an explicit limitation, not a pass. Record a versioned correction with
+`lz-disposition-handoff` and read the request, report, corrections, and history
+with `lz-read-handoff`. None of these records changes task acceptance or execution
+authority.
+
 Report each task ID with a compact objective, done conditions and any guidance
 the user should correct, then report actual status, checks and unresolved issues
 in prose. Do not return raw task JSON. Worker reports annotate execution and do

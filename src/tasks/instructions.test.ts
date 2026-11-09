@@ -105,6 +105,64 @@ test("task instructions retain readable missing-task and unavailable-revision ou
   )
 })
 
+test("superseded task instructions retrieve the sole replacement without presenting retired obligations", () => {
+  const replacementID = "d9ceb8a7-6b31-4b04-b6bc-fb4129c73538"
+  const superseded = GetOutput.parse({
+    ...detail,
+    disposition: {
+      id: 25,
+      taskID: detail.status === "found" ? detail.task.id : "",
+      requestID: "lz181-superseded-by-lz199",
+      disposition: "superseded",
+      reason:
+        "LZ-199 is the sole current contract; contradictory historical requirements are retired.",
+      evidence: [{ kind: "human", reference: "review:current-contract" }],
+      relatedTaskIDs: [replacementID],
+      sessionID: "architect",
+      agent: "architect",
+      createdAt: "2026-11-09T04:36:51.927Z",
+    },
+  })
+
+  const historicalInstructions = taskInstructions(superseded)
+  expect(historicalInstructions).toContain("superseded, not an active implementation contract")
+  expect(historicalInstructions).toContain(replacementID)
+  expect(historicalInstructions).toContain("Retrieve it with `lz-get-task`")
+  expect(historicalInstructions).toContain('`format: "structured"`')
+  expect(historicalInstructions).toContain("review:current-contract")
+  expect(historicalInstructions).not.toContain("Keep submitted tasks after the plugin restarts")
+  expect(historicalInstructions).not.toContain("## Done when")
+  expect(historicalInstructions).not.toContain("## Constraints")
+  expect(historicalInstructions).not.toContain("## Verification")
+
+  const currentObjective =
+    "Complete the preserved repair under one current contract without retired baseline gates."
+  const current = GetOutput.parse({
+    ...detail,
+    task: {
+      ...(detail.status === "found" ? detail.task : {}),
+      id: replacementID,
+      proposal: {
+        ...(detail.status === "found" ? detail.task.proposal : {}),
+        objective: currentObjective,
+        acceptance: [
+          {
+            id: "current-contract",
+            assertion: "The current repair behavior and checks pass without retired gates.",
+            evidence: [{ kind: "artifact", reference: "src/runner/runtime.ts" }],
+          },
+        ],
+        constraints: ["Use only the LZ-199 current contract."],
+      },
+    },
+    reference: "LZ-199",
+  })
+  const currentInstructions = taskInstructions(current)
+  expect(currentInstructions).toContain(currentObjective)
+  expect(currentInstructions).toContain("Use only the LZ-199 current contract.")
+  expect(currentInstructions).toContain("current-contract: The current repair behavior")
+})
+
 test("task instructions render only concise effective advice with its provenance and inert references", () => {
   const earlier = TaskAdviceRecord.parse({
     projectDirectory: "/repo",
