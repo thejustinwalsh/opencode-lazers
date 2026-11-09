@@ -99,6 +99,13 @@ export function beginSourceGuard(location: {
     },
     dispose() {
       state.registrations.delete(registrationID)
+      if (state.current === registrationID) {
+        const remaining = [...state.registrations]
+        state.current =
+          remaining.findLast(([, value]) => value.installed)?.[0] ??
+          remaining.at(-1)?.[0] ??
+          registrationID
+      }
       if (!state.registrations.size && guards.get(identity) === state) guards.delete(identity)
     },
   }

@@ -61,7 +61,7 @@ test("the exact native location reports its installed guard only for its live ho
   }
 })
 
-test("a replacement cannot fall back to old or known unguarded generation registrations", () => {
+test("a replacement fences unguarded generations and restores the installed survivor on disposal", () => {
   const f = makeFixture()
   const path = f.repository.projectDirectory
   const old = beginSourceGuard({ directory: path, projectDirectory: f.repository.projectDirectory })
@@ -86,8 +86,9 @@ test("a replacement cannot fall back to old or known unguarded generation regist
     } finally {
       replacement.dispose()
     }
-    // A disposed replacement never resurrects an old still-live scope.
-    expect(sourceGuardInstalled(f.store, path)).toBe(false)
+    // S1-1: disposing a replacement restores the surviving installed hook scope.
+    expect(sourceGuardInstalled(f.store, path)).toBe(true)
+    expect(sourceGuardMatches(f.store, path, current.registrationID)).toBe(true)
   } finally {
     old.dispose()
     current.dispose()
@@ -95,7 +96,7 @@ test("a replacement cannot fall back to old or known unguarded generation regist
   }
 })
 
-test("full plugin early setup failure invalidates a borrowed predecessor before worker registration", async () => {
+test("full plugin early setup failure restores the surviving predecessor guard", async () => {
   for (const failure of ["project-index", "options", "repository"] as const) {
     const f = makeFixture()
     const workspace = join(f.directory, "retained-source")
@@ -161,8 +162,9 @@ test("full plugin early setup failure invalidates a borrowed predecessor before 
               expect(Cause.pretty(failed.cause)).toContain("context")
             }
             expect(hookLive).toBe(true)
-            expect(sourceGuardInstalled(f.store, workspace)).toBe(false)
-            expect(sourceReservationExcluded(f.store, retained, { mode: "isolated" })).toBe(false)
+            // S1-1: failed plugin setup must not disable the surviving native guard.
+            expect(sourceGuardInstalled(f.store, workspace)).toBe(true)
+            expect(sourceReservationExcluded(f.store, retained, { mode: "isolated" })).toBe(true)
           }),
         ),
       )
