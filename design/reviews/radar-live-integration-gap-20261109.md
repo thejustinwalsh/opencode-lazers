@@ -99,3 +99,56 @@ acceptance. No explicit extra service reload was needed for that observation.
 The connected Desktop interaction/layout/screenshot gate remains open. No consent
 action or input to the user-owned paused instance was taken, no failed evidence
 was erased, and no cleanup or complete-Radar claim is implied by source landing.
+
+## Actual delivered monitor and Terra review
+
+Root's post-landing interaction report and actual screenshot are committed in
+`98e3cbf`: [report](driver-interventions-20261108.md), section “Delivered Radar
+native interaction after source landing”, and
+[capture](radar-live-worker-20261108.png).
+
+The main Desktop default view is now the live monitor without an extra webview
+reload: Root opened command search and escaped, executing no reload command.
+Project showed connected updates and both original Luna Max workers busy with
+matching task/attempt associations. Selecting LZ-193 updated lower session detail
+and exposed 15 recent tool calls with durations. Requested patch targets included
+`src/context/repository-snapshots.test.ts` and `tools.ts`; selecting the former
+updated the lower Selected call detail. No synthetic fixture, extra model
+invocation, worker replacement or interruption was added for these observations.
+This resolves the observed legacy-reader blank default view in the delivered UI.
+
+The existing Terra High reviewer independently inspected the capture against
+`DESIGN.md` and `radar-agent-monitor-v2.png`:
+
+- Visible: connected live header, session area above a horizontal split and a
+  selected-session inspector below; native-consistent typography/dark surfaces.
+- Visible: managed busy implementor, task UUID, matching configured/observed
+  `openai · gpt-6-luna · max`, “15 returned” tool calls and separate succeeded patch
+  cards with readable requested paths. “Patch requested” does not imply a file was
+  changed.
+- Presentation findings: tall call cards, raw IDs and diagnostic labels reduce
+  scanability; task UUID is less recognizable than a task label. Card values such
+  as `2s`, `35s` and `0s` lack an explicit duration label. Lower detail extends
+  beyond the viewport.
+- Report-only in this evidence set: no-extra-reload activation, both workers'
+  matching associations, the selection sequence and the selected-call path update.
+  The one screenshot does not independently show every reported interaction.
+
+Additional actual Desktop interactions reported by Root establish:
+
+- With LZ-193 selected, focusing the divider and pressing Up/Down changed its split
+  value while retaining focus.
+- Expanding selected-session history and choosing Load older history increased
+  returned entries from **30 to 40**. This proves that pagination interaction, not
+  complete history coverage.
+- Switching to Session showed exactly **one returned current Architect**;
+  restoring Project brought the worker activity back. This scope round trip did
+  not involve a server disconnect or worker interruption.
+
+Keep the presentation findings in LZ-184 or later polish according to materiality;
+do not create a duplicate task from this capture. Narrow/short geometry,
+independent scroll retention, reconnect/reset/flow, multi-call selection stability
+over a full run, file-target-to-source navigation, cancellation and a full-history
+walkthrough remain unobserved. Updating lower Selected call detail is not proof of
+source navigation. No blanket connected-Radar acceptance follows from the source
+checks, reported interactions or this single frame.

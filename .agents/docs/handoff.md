@@ -23,9 +23,13 @@ reviewed LZ-184 source landing at bd2896d. Exact accepted89edd14 was composed wi
 the preserved Radar review checkout and current main; quality,206tests/1747
 assertions and GUI build passed. Runtime recorded task source integration only,
 at plan version43. A fresh actual live read exposes attributed file targets and
-both original181/193 workers remain busy. Main GUI was rebuilt; rendered monitor
-behavior has not yet been observed after that build. The plan's
-connected-radar-agent-monitor gate remains open. Do not duplicate the task,
+both original181/193 workers remain busy. Actual main Desktop now shows the live
+monitor without extra webview reload. Root exercised worker/call-target detail,
+keyboard divider focus/split, history pagination30→40 and Session/Project roundtrip;
+Terra reviewed the actual capture. Narrow/short geometry, scroll retention,
+reconnect/reset, full-run selection stability and source navigation remain open,
+as do cancellation/full-history coverage. The plan's connected-radar-agent-monitor
+gate remains open. Do not duplicate the task,
 inflate caps or promote node/source acceptance to complete Radar qualification.
 See design/reviews/radar-live-integration-gap-20261109.md; original screenshot
 and interventions remain in design/reviews/driver-interventions-20261108.md.
