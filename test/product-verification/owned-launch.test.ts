@@ -19,6 +19,7 @@ import {
   processInventoryFromProbe,
   processObservationFromProbe,
   readManifest,
+  reopenOwnedDesktop,
   resolveNativeInteraction,
   runtimePaths,
   sameCandidateIdentity,
@@ -931,4 +932,74 @@ describe("owned Desktop boundaries", () => {
     expect(removeCount).toBe(1)
     expect(writes).toContain("cleanup-blocked")
   })
+})
+
+test("reopening preserves the service and owner and does not duplicate a live Desktop", async () => {
+  const m = manifest()
+  const originalService = structuredClone(m.service)
+  let current: ProcessIdentity | undefined
+  let launches = 0
+  let releases = 0
+  const f = dependencies()
+  const deps = {
+    verify: async () => ({ manifest: m }),
+    observe: () =>
+      current
+        ? { kind: "live" as const, identity: current }
+        : { kind: "authoritatively-absent" as const },
+    reserve: async () => async () => {
+      releases++
+    },
+    launch: {
+      ...f.deps,
+      launchDesktop: async () => {
+        launches++
+        current = { ...desktopProcess, pid: 25002 }
+        return current
+      },
+    },
+  }
+  await reopenOwnedDesktop(root, deps)
+  expect(m.desktop?.pid).toBe(25002)
+  expect(f.written.at(-1)?.desktop?.pid).toBe(25002)
+  expect(m.service).toEqual(originalService)
+  expect(m.ownerID).toBe("owner-id")
+  await reopenOwnedDesktop(root, deps)
+  expect(launches).toBe(1)
+  expect(releases).toBe(2)
+  expect(f.calls).not.toContain("service")
+  expect(f.calls).not.toContain("cleanup")
+})
+
+test("reopen retains a launched Desktop identity when candidate readiness fails", async () => {
+  const m = manifest()
+  const f = dependencies()
+  await expect(
+    reopenOwnedDesktop(root, {
+      verify: async () => ({ manifest: m }),
+      observe: () => ({ kind: "authoritatively-absent" }),
+      reserve: async () => async () => {},
+      launch: {
+        ...f.deps,
+        waitForCandidate: async () => {
+          throw new Error("not ready yet")
+        },
+      },
+    }),
+  ).rejects.toThrow("not ready yet")
+  expect(f.written.at(-1)?.desktop).toEqual(desktopProcess)
+  expect(f.calls).not.toContain("cleanup")
+})
+
+test("unobservable Desktop identity does not start a duplicate", async () => {
+  const f = dependencies()
+  await expect(
+    reopenOwnedDesktop(root, {
+      verify: async () => ({ manifest: manifest() }),
+      observe: () => ({ kind: "observation-unavailable", reason: "probe-error" }),
+      reserve: async () => async () => {},
+      launch: f.deps,
+    }),
+  ).rejects.toThrow("could not be observed")
+  expect(f.calls).not.toContain("desktop")
 })

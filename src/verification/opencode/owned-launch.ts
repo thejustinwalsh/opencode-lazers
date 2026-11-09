@@ -1352,6 +1352,63 @@ export async function verifyOwnedSidecar(
   return { manifest, registration, health }
 }
 
+export type ReopenDependencies = {
+  verify: (root: string) => Promise<{ manifest: OwnedLaunchManifest }>
+  observe: typeof observeProcess
+  launch: Pick<LaunchDependencies, "launchDesktop" | "waitForCandidate" | "writeManifest">
+  reserve: (manifest: OwnedLaunchManifest) => Promise<() => Promise<void>>
+}
+
+/** Reuse the owned service, provider accounts and fixtures after its window closes. */
+export async function reopenOwnedDesktop(
+  root: string,
+  dependencies: ReopenDependencies = {
+    verify: verifyOwnedSidecar,
+    observe: observeProcess,
+    launch: launchDependencies(),
+    reserve: async (manifest) => {
+      const base = dirname(manifest.root)
+      const reservation = await acquireReservation(base, false, manifest.ownerID).catch(() =>
+        acquireRecoveryReservation(base, manifest),
+      )
+      return () => releaseReservation(reservation)
+    },
+  },
+): Promise<OwnedLaunchManifest> {
+  const initial = await dependencies.verify(root)
+  const release = await dependencies.reserve(initial.manifest)
+  try {
+    const { manifest } = await dependencies.verify(root)
+    if (
+      manifest.nativeInteraction?.state === "pending" ||
+      manifest.nativeInteraction?.state === "ambiguous"
+    )
+      throw new Error("Resolve the pending native interaction before reopening Desktop")
+    const desktop =
+      manifest.desktop &&
+      classifyOwnedProcessObservation(manifest.desktop, dependencies.observe(manifest.desktop.pid))
+    if (desktop?.kind === "observation-unavailable")
+      throw new Error("The owned Desktop process identity could not be observed")
+    if (desktop?.kind !== "matching-live") {
+      manifest.desktop = await dependencies.launch.launchDesktop({
+        root: manifest.root,
+        desktopBundle: manifest.target.desktopBundle,
+        candidatePath: manifest.candidate.workspace,
+      })
+      // Retain the new identity even if readiness takes longer or fails.
+      await dependencies.launch.writeManifest(manifest)
+    }
+    await dependencies.launch.waitForCandidate({
+      root: manifest.root,
+      desktop: manifest.desktop!,
+      candidate: manifest.candidate,
+    })
+    return manifest
+  } finally {
+    await release()
+  }
+}
+
 export async function verifyOwnedLaunch(
   root: string,
   options: { allowPendingInteraction?: boolean } = {},

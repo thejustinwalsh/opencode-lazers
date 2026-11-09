@@ -4,6 +4,7 @@ import {
   cleanManifest,
   launchDependencies,
   readManifest,
+  reopenOwnedDesktop,
   startOwnedDesktop,
 } from "./owned-launch.ts"
 import {
@@ -17,6 +18,14 @@ type Arguments = Map<string, string>
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const [operation, ...rest] = argv
   const args = parseArguments(rest)
+  if (operation === "reopen") {
+    assertAllowed(args, ["--root"])
+    const manifest = await reopenOwnedDesktop(resolve(required(args, "--root")))
+    console.log(
+      JSON.stringify({ status: manifest.status, root: manifest.root, desktop: manifest.desktop }),
+    )
+    return
+  }
   if (operation === "launch") {
     assertAllowed(args, ["--desktop", "--cli", "--candidate", "--target"])
     const desktopBundle = required(args, "--desktop")
@@ -126,7 +135,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return
   }
   throw new Error(
-    "Usage: bun src/verification/opencode/cli.ts <launch|inspect|cleanup|native-status|native|native-resolve> [options]",
+    "Usage: bun src/verification/opencode/cli.ts <launch|reopen|inspect|cleanup|native-status|native|native-resolve> [options]",
   )
 }
 
