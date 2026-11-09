@@ -54,14 +54,27 @@ export function registerWorker(
               providerID: "opencode-go",
               id: "muse-spark-1.3-contributor",
             })
-          // Add denials only. Normal host/user/project coding permissions remain authoritative.
-          agent.permissions = [
+          // Preserve native defaults and configured rules before our delegation denials.
+          const permissions: typeof agent.permissions = [
+            ...Agent.Info.default(Agent.ID.make(id)).permissions,
+            ...agent.permissions,
             { action: "subagent", resource: "*", effect: "deny" },
             { action: "lz-research", resource: "*", effect: "deny" },
             { action: "lz-submit-plan", resource: "*", effect: "deny" },
             { action: "lz-plan-command", resource: "*", effect: "deny" },
             { action: "lz-submit-task", resource: "*", effect: "deny" },
           ]
+          agent.permissions = permissions.filter(
+            (rule, index) =>
+              !permissions
+                .slice(index + 1)
+                .some(
+                  (later) =>
+                    later.action === rule.action &&
+                    later.resource === rule.resource &&
+                    later.effect === rule.effect,
+                ),
+          )
           // Preserve the model/effort selected in native OpenCode configuration.
           delete agent.steps
         }),

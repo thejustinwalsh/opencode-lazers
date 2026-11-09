@@ -11,7 +11,8 @@ import { sourceGuardInstalled } from "./source-quarantine.ts"
 
 test("worker personas retain read-only catalog access but cannot delegate", async () => {
   const model = { providerID: "custom-provider", id: "selected", variant: "deep" }
-  const agent = { model, permissions: [] as unknown[] }
+  const customRule = { action: "edit", resource: "protected/**", effect: "ask" }
+  const agent = { model, permissions: [customRule] as unknown[] }
   const auditor = { permissions: [] as unknown[], model: undefined as unknown }
   let contextHook: ((context: never) => Effect.Effect<void>) | undefined
   let executeHook: ((call: never) => Effect.Effect<void>) | undefined
@@ -82,6 +83,12 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   })
   expect(auditor).toHaveProperty("system", expect.stringContaining("lz-fallow-report"))
   expect(agent.model).toEqual(model)
+  expect(agent.permissions).toContainEqual({ action: "*", resource: "*", effect: "allow" })
+  expect(agent.permissions).toContainEqual({ action: "read", resource: "*.env", effect: "ask" })
+  expect(agent.permissions).toContainEqual(customRule)
+  const permissionsBeforeReplay = structuredClone(agent.permissions)
+  await Effect.runPromise(Effect.scoped(registerWorker(ctx, store)))
+  expect(agent.permissions).toEqual(permissionsBeforeReplay)
   expect(agent).toHaveProperty("system", workerInstructions.trim())
   expect(agent.permissions).not.toContainEqual({
     action: "lz-worker-catalog",
