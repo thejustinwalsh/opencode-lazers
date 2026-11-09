@@ -195,3 +195,25 @@ and resumed its model turn. Subsequent source inspection confirmed removal of th
 size-omission rejection. The worker now streams produced source into the retained
 artifact and records skipped-file reasons. Executable and native behavior remain
 unproven until its tests and real upstream call finish.
+
+## Delivered Radar native interaction after source landing
+
+Architect composed/reviewed the retained Radar source and landed it asbd2896d;
+its composed checks passed206tests/1747assertions, quality and GUI build. The
+reviewer's earlier primary-wiring concern was explicitly retracted after exact
+tree inspection; it must not be treated as a product defect. Delivery was the gap.
+
+Driver found the live monitor already visible in main Desktop after landing.
+Command search was opened and escaped; no extra reload command was executed.
+Project view showed connected updates and both original Luna Max workers with
+correct task/attempt associations. Selecting LZ-193 exposed15recent tool calls
+with durations; current patch calls had requested-file targets. Selecting
+src/context/repository-snapshots.test.ts updated the lower Selected call detail.
+[Actual selected-worker capture](radar-live-worker-20261108.png). Observations
+were relayed to Architect through Desktop for its existing acceptance flow.
+
+This resolves the observed legacy-reader blank default view; it is not full
+layout/reconnect/history qualification. Raw IDs, noisy coverage labels and
+unavailable historical rows remain visible polish issues. No narrow/short-size,
+divider keyboard or scroll-stability claim is made. Both original workers kept
+running; no additional inference or fixture was launched for this observation.
