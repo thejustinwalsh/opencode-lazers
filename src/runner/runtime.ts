@@ -3301,6 +3301,20 @@ export class TaskRuntime {
     let terminalRepairContinuation:
       { operationID: string; owner: string; ownerEpoch: number } | undefined
     let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
+    const interruptedChecksFor = (plan: PlanRow, attempt: AttemptRow) =>
+      this.store.effects(plan.id).filter((effect) => {
+        const receipt = actualCheckResultFromEffect(effect)
+        return (
+          effect.state === "uncertain" &&
+          effect.attempt_id === attempt.id &&
+          effect.kind.startsWith("verify:") &&
+          receipt?.aborted === true &&
+          receipt.cwd === attempt.workspace &&
+          receipt.artifact === attempt.artifact &&
+          receipt.inputIdentity === attempt.artifact &&
+          checkResourcesSettled(receipt)
+        )
+      })
     if (command.action === "resume" && command.taskID) {
       const attempt = this.store
         .attempts(old.id)
@@ -3314,7 +3328,12 @@ export class TaskRuntime {
           )
         : undefined
       const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
-      if (attempt?.state === "running" || attempt?.state === "verifying" || terminalNativeFailure) {
+      const interruptedVerification =
+        attempt?.state === "verifying" && interruptedChecksFor(old, attempt).length > 0
+      if (
+        !interruptedVerification &&
+        (attempt?.state === "running" || attempt?.state === "verifying" || terminalNativeFailure)
+      ) {
         if (!command.attemptID || command.attemptID !== attempt.id)
           throw new Error("Terminal worker continuation requires the exact latest attemptID")
         const worker = await this.host.session(attempt.session_id, { messages: true })
@@ -4575,6 +4594,56 @@ export class TaskRuntime {
             taskID: attempt.task_id,
             attemptID: attempt.id,
             messageID: resumedMessageID,
+          }
+        }
+        if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
+          const interrupted = interruptedChecksFor(plan, attempt)
+          if (interrupted.length) {
+            if (
+              plan.state !== "blocked" ||
+              !this.validArchitect(ownerSession) ||
+              command.attemptID !== attempt.id ||
+              command.workspaceMode !== undefined ||
+              command.baseCommit !== undefined
+            )
+              throw new Error(
+                "Interrupted verification resume requires its exact preserved attempt",
+              )
+            const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
+            if (
+              this.store
+                .effects(plan.id)
+                .some(
+                  (effect) =>
+                    ["intended", "uncertain"].includes(effect.state) &&
+                    !interruptedIDs.has(effect.id),
+                )
+            )
+              throw new Error("Reconcile other uncertain effects first")
+            for (const effect of interrupted)
+              db.query(
+                "UPDATE runner_effects SET state='failed' WHERE id=? AND state='uncertain'",
+              ).run(effect.id)
+            const verificationEpoch =
+              (this.store.latestTransition<{ verificationEpoch: number }>(
+                plan.id,
+                attempt.task_id,
+                "VERIFICATION_RESUMED",
+              )?.verificationEpoch ?? 0) + 1
+            this.store.record(plan.id, attempt.task_id, "VERIFICATION_RESUMED", {
+              attemptID: attempt.id,
+              interruptedEffectIDs: [...interruptedIDs],
+              verificationEpoch,
+              reason: command.reason,
+            })
+            db.query(
+              "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+            ).run(plan.id)
+            return {
+              status: "verification-resumed",
+              version: this.store.plan(plan.id)!.version,
+              attemptID: attempt.id,
+            }
           }
         }
         const continuingTerminalWorker = Boolean(
@@ -6972,7 +7041,17 @@ export class TaskRuntime {
       const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
       if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
         this.holdAdoption(plan, payload.adoptionID, reason, "pending", fence)
-      else this.hold(plan, reason)
+      else
+        this.hold(
+          plan,
+          reason,
+          effect.kind.startsWith("verify:") &&
+            isRecord(result) &&
+            isRecord(result.check) &&
+            result.check.aborted === true
+            ? ["resume", "reconcile", "audit", "cancel"]
+            : undefined,
+        )
     }
   }
 
@@ -9427,6 +9506,12 @@ export class TaskRuntime {
     } catch {
       // Artifact acceptance and its runner receipt remain independent of commentary.
     }
+    const verificationEpoch =
+      this.store.latestTransition<{ verificationEpoch: number }>(
+        plan.id,
+        attempt.task_id,
+        "VERIFICATION_RESUMED",
+      )?.verificationEpoch ?? 0
     const receipts: CheckReceipt[] = []
     for (const check of proposal.verification) {
       if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
@@ -9440,6 +9525,7 @@ export class TaskRuntime {
             identity?: unknown
             workspace?: unknown
             repairID?: unknown
+            verificationEpoch?: number
             check?: unknown
           }
           return (
@@ -9447,6 +9533,7 @@ export class TaskRuntime {
             payload.identity === artifact.identity &&
             payload.workspace === attempt.workspace &&
             (payload.repairID ?? undefined) === repairID &&
+            (payload.verificationEpoch ?? 0) === verificationEpoch &&
             fingerprint(payload.check) === fingerprint(check)
           )
         })
@@ -9478,7 +9565,7 @@ export class TaskRuntime {
         this.dataDirectory,
         "receipts",
         attempt.id,
-        `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${known ? `-${known.id}` : ""}.json`,
+        `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : ""}.json`,
       )
       const effect = this.effect(
         plan.id,
@@ -9492,6 +9579,7 @@ export class TaskRuntime {
           identity: artifact.identity,
           receiptPath,
           ...(known ? { previousCheckID: known.id } : {}),
+          ...(verificationEpoch ? { verificationEpoch } : {}),
           ...(repairID ? { repairID } : {}),
         },
         fence,
@@ -13664,6 +13752,16 @@ export class TaskRuntime {
               workingTreeIdentity(payload.workspace, payload.baseCommit) &&
             !scopeViolations(preparation.paths, scope).length
           ) {
+            if (check.aborted) {
+              this.uncertain(effect, "Verification was interrupted before completion", fence, {
+                check,
+              })
+              forgetVerificationActivity(
+                verificationActivityKey(this.store.repository.path, effect.id),
+                fingerprint(activityIdentity),
+              )
+              return
+            }
             if (!checkResourcesSettled(check)) {
               this.uncertain(
                 effect,
@@ -13704,6 +13802,16 @@ export class TaskRuntime {
             check.command === payload.check.command &&
             check.inputIdentity === payload.identity
           ) {
+            if (check.aborted) {
+              this.uncertain(effect, "Verification was interrupted before completion", fence, {
+                check,
+              })
+              forgetVerificationActivity(
+                verificationActivityKey(this.store.repository.path, effect.id),
+                fingerprint(activityIdentity),
+              )
+              return
+            }
             if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id) {
               try {
                 this.progress.recordVerification(effect.attempt_id, effect.id, check)

@@ -540,3 +540,34 @@ its duplicate subscription/delivery findings remain open.
 event negative regression. Log: `s8-scope-behavior.log` in the baseline directory.
 The controlled event-traffic test again recorded zero read failures; this is not a
 Desktop performance measurement.
+
+## Wave 4: F-S5-1
+
+Check and phase receipts now retain an optional `aborted` flag. Signal cancellation
+without a deadline timeout sets it; success classification excludes it while
+process-settlement classification stays independent. Both ordinary/combined-check
+and mechanical-preparation effect reconcilers retain interrupted receipts as
+uncertain, rather than completing them as failed product checks. The ordinary
+path detects interruption before publishing a verification result/progress fact.
+Historical receipts without the flag keep their existing interpretation.
+
+The review-named shutdown test exposed an additional acceptance-path gap: existing
+Resume interpreted a verifying attempt as a worker continuation and refused the
+uncertain check. The existing Resume action now recognizes an exactly bound,
+settled interrupted ordinary check, preserves the verifying attempt/candidate,
+retires the interrupted operation while retaining its receipt, and authorizes a
+new verification epoch/receipt path. It does not prompt another worker or replay
+the original effect. Other unresolved effects and uncertain process settlement
+still require reconciliation. This uses the existing command/effect flow; no new
+service, state vocabulary or worker-repair flow is introduced.
+
+Amended the defect-asserting shutdown test with F-S5-1: reopen produces uncertain,
+plan blocked, one verifying attempt; explicit Resume then reaches accepted with
+the same attempt, two distinct check effects and the original aborted disk receipt
+intact. `bun run verify` passed. Focused runtime verification/shutdown/process
+suite: **21 pass**, 464 assertions. Complete artifact/check suites: **20 pass**,
+115 assertions. Logs: `s5-shutdown-{focused,behavior}.log` and `s5-checks-all.log`
+in the baseline directory. Retained/adoption cancellation lifecycles are not
+merged into this correction; their broader recovery remains separately scoped.
+The earlier native LZ-185 exit-137 incident is still not attributed to this cause
+without an observed abort receipt; no historical failure is rewritten.

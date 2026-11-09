@@ -363,6 +363,7 @@ export type CheckReceipt = {
   endedAt: number
   exitCode: number | null
   timedOut: boolean
+  aborted?: boolean
   stdout: string
   stderr: string
   processCleanup?: {
@@ -390,6 +391,7 @@ export type CheckPhaseReceipt = {
   command: string
   exitCode: number | null
   timedOut: boolean
+  aborted?: boolean
   stdout: string
   stderr: string
   environmentIdentity: string
@@ -701,6 +703,7 @@ export async function runCheck(
       endedAt: Date.now(),
       exitCode,
       timedOut,
+      aborted: options.signal?.aborted === true && !timedOut,
       stdout,
       stderr,
       processCleanup,
@@ -775,6 +778,7 @@ export async function runDeclaredCheck(
       command,
       exitCode: latest.exitCode,
       timedOut: latest.timedOut,
+      aborted: latest.aborted,
       stdout: latest.stdout,
       stderr: latest.stderr,
       environmentIdentity: latest.environmentIdentity,

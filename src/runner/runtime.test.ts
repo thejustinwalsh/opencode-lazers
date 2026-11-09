@@ -4607,6 +4607,7 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
     inputIdentity: checkedAttempt.artifact,
     exitCode: expect.any(Number),
     timedOut: false,
+    aborted: true,
     processCleanup: { state: "terminated", capability: "process-group" },
   })
   expect(checkResourcesSettled(receipt)).toBe(true)
@@ -4615,8 +4616,33 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   const reopened = reopenRuntime(f)
   await drive(reopened.runtime, 3)
   const recovered = reopened.store.effects(f.receipt.planID).find((item) => item.id === effect.id)!
-  expect(recovered.state).toBe("completed")
-  expect((JSON.parse(recovered.receipt!) as { check: CheckReceipt }).check.exitCode).not.toBe(0)
+  // F-S5-1: shutdown is an interruption, never a failed product check or worker repair.
+  expect(recovered.state).toBe("uncertain")
+  expect(reopened.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(reopened.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(reopened.store.attempts(f.receipt.planID)[0]?.state).toBe("verifying")
+  writeFileSync(join(f.root, "check-release"), "release\n")
+  await reopened.runtime.command(
+    {
+      requestID: "resume-interrupted-verification",
+      planID: f.receipt.planID,
+      expectedVersion: reopened.store.plan(f.receipt.planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Run the interrupted check against the preserved candidate",
+    },
+    "owner",
+  )
+  await drive(reopened.runtime, 8)
+  expect(reopened.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(reopened.store.attempts(f.receipt.planID)).toHaveLength(1)
+  const checks = reopened.store
+    .effects(f.receipt.planID)
+    .filter((item) => item.kind === "verify:content")
+  expect(checks).toHaveLength(2)
+  expect(checks.find((item) => item.id === effect.id)?.state).toBe("failed")
+  expect(readFileSync(receiptPath, "utf8")).toContain('"aborted":true')
   expect(readFileSync(join(f.root, "check-started"), "utf8")).toBe("started")
 })
 

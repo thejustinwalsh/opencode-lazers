@@ -36,6 +36,7 @@ test("successful commands remain successful with legacy dirty-tree and environme
   expect(checkSucceeded(receipt)).toBe(true)
   expect(checkSucceeded({ ...receipt, exitCode: 1 })).toBe(false)
   expect(checkSucceeded({ ...receipt, timedOut: true })).toBe(false)
+  expect(checkSucceeded({ ...receipt, aborted: true })).toBe(false)
 })
 
 test("auto-fixing a tracked file produces a real successful receipt without a cleanliness gate", async () => {

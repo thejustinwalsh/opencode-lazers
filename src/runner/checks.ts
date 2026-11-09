@@ -27,12 +27,18 @@ export function checkEnvironment(environment: Record<string, string | undefined>
 /** Command outcomes establish checks. Workspace and environment metadata are diagnostics. */
 export function checkSucceeded(
   receipt: Pick<CheckReceipt, "exitCode" | "timedOut"> &
-    Partial<Pick<CheckReceipt, "phasesComplete">>,
+    Partial<Pick<CheckReceipt, "phasesComplete" | "aborted">>,
 ) {
-  return receipt.exitCode === 0 && !receipt.timedOut && receipt.phasesComplete !== false
+  return (
+    receipt.exitCode === 0 &&
+    !receipt.timedOut &&
+    !receipt.aborted &&
+    receipt.phasesComplete !== false
+  )
 }
 
 export function checkFailureReason(receipt: CheckReceipt) {
+  if (receipt.aborted) return `Verification ${receipt.id} was interrupted before completion`
   if (receipt.phasesComplete === false && receipt.exitCode === 0 && !receipt.timedOut)
     return `Verification ${receipt.id} did not complete every declared phase`
   if (receipt.timedOut) return `Verification ${receipt.id} timed out`
