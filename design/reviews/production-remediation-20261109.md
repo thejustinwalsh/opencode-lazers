@@ -583,3 +583,42 @@ committed and regression checked. Reconciliation #2 follows Justin's current
 market-price decision; no further decision blocked this wave. No production
 history was rewritten and no native acceptance or CPU reduction is inferred from
 the suite result. Native activation/observations remain outstanding.
+
+## Wave 5: S11-1
+
+Replaced per-entry synchronous `git check-ignore` with one asynchronous NUL-delimited
+stdin query per eligible directory. Exit codes other than 0/1 still fail refresh;
+all enumeration/time/file/byte limits, permissions, ignore rules and `readSource`
+TOCTOU checks remain. The collection loop yields between file groups.
+
+Initial batching exposed a second measured service-thread stall: importing the
+Repomix entrypoint just for its default ignore list. Moved that load into the
+existing processor worker, started before collection; the worker supplies its
+pinned defaults and is then reused for packing. Worker count is unchanged. Error,
+timeout and collection-failure paths terminate it. No deep package import, copied
+ignore policy, new process service or new subscriber is introduced.
+
+Measured against the same 1,249-file controlled repository:
+
+| Run                  | Refresh ms | 20 ms ticks / expected | Delivery |
+| -------------------- | ---------: | ---------------------: | -------: |
+| Before               |    5924.65 |               11 / 296 |    3.72% |
+| After cold process 1 |     330.47 |                15 / 16 |   93.75% |
+| After cold process 2 |     342.34 |                16 / 17 |   94.12% |
+| After cold process 3 |     337.54 |                15 / 16 |   93.75% |
+
+Published relative path lists are identical across before/all after runs; longest
+after tick interval was 22.08 ms. Records and rerunnable fixture driver:
+`s11-perf*.{json,ts}` in the baseline directory. Both owned performance fixture
+repositories were removed after measurements; result files remain.
+
+The behavior test indexes 1,200 unignored files, requires each refresh under
+5 seconds and at least 90% timer delivery across three successive real refreshes.
+A single sub-half-second sample proved quantized enough that one tick could move
+it across the threshold; the longer active-work sample keeps the same acceptance
+threshold without an idle padding period. The unavailable-Git test removes only
+its fixture's Git metadata, requires failure, and confirms the prior snapshot
+remains published. Existing permission/symlink/ignore/publication tests still pass.
+`bun run verify` passed; context/index and real-worktree reuse tests: **22 pass**,
+162 assertions. Log: `s11-batch-behavior.log`. These are real-module controlled
+measurements, not native Desktop latency or production CPU measurements.

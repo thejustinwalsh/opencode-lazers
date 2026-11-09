@@ -540,3 +540,39 @@ test("worker packets use the reusable snapshot, cited ranges, and bounded source
   )
   expect(delivered.freshness).toBe("as-of-refresh")
 })
+
+test("S11-1 indexing 1,200 unignored files keeps the service timer responsive", async () => {
+  const f = fixture()
+  for (let directory = 0; directory < 12; directory++) {
+    const path = join(f.root, `bulk-${directory}`)
+    mkdirSync(path)
+    for (let file = 0; file < 100; file++)
+      writeFileSync(join(path, `file-${file}.txt`), `source ${directory} ${file}\n`)
+  }
+  let ticks = 0
+  const timer = setInterval(() => ticks++, 20)
+  const started = performance.now()
+  try {
+    // Measure successive real refreshes so one timer quantum is not 5–6% of the sample.
+    for (let run = 0; run < 3; run++) {
+      const refreshStarted = performance.now()
+      const snapshot = await f.index.refresh(architect)
+      expect(snapshot.files.filter((file) => file.path.startsWith("bulk-")).length).toBe(1200)
+      expect(performance.now() - refreshStarted).toBeLessThan(5000)
+    }
+    const elapsedMs = performance.now() - started
+    expect(ticks / Math.floor(elapsedMs / 20)).toBeGreaterThanOrEqual(0.9)
+  } finally {
+    clearInterval(timer)
+  }
+})
+
+test("S11-1 unavailable Git ignore policy rejects refresh and preserves the prior snapshot", async () => {
+  const f = fixture()
+  const previous = await f.index.refresh(architect)
+  rmSync(join(f.root, ".git"), { recursive: true })
+  await expect(f.index.refresh(architect)).rejects.toThrow(
+    "Cannot establish repository ignore policy",
+  )
+  expect((await f.index.manifest(architect)).snapshotID).toBe(previous.id)
+})

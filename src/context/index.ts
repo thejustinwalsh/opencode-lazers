@@ -18,7 +18,6 @@ import {
   writeFileSync,
 } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
-import { spawnSync } from "node:child_process"
 import { Worker } from "node:worker_threads"
 import ignore from "ignore"
 import type { Ignore } from "ignore"
@@ -290,118 +289,177 @@ export class ProjectIndex {
 
   private async collectWorkspace(principal: Principal): Promise<Snapshot> {
     const started = Date.now()
-    const { defaultIgnoreList } = await import("repomix")
-    const ignores = defaultIgnoreList.map((pattern) => new Bun.Glob(pattern))
-    const selected: { path: string; content: string; stamp: string; bytes: number }[] = []
-    let visited = 0,
-      total = 0
-    const walk = async (path: string, inherited: { base: string; rules: Ignore }[] = []) => {
-      principal.signal?.throwIfAborted()
-      const rules = [...inherited]
-      for (const control of [".ignore", ".repomixignore"]) {
-        const name = path ? `${path}/${control}` : control
-        if (existsSync(join(this.root, name))) {
-          if (!(await this.allow(name, principal, this.root)))
-            throw new Error("Cannot establish permitted project ignore policy")
-          rules.push({
-            base: path ? `${path}/` : "",
-            rules: ignore().add(readSource(this.root, name)),
-          })
+    const worker = new Worker(new URL("./processor.ts", import.meta.url))
+    let processorFailure: Error | undefined
+    worker.on("error", (error: Error) => {
+      processorFailure = error
+    })
+    try {
+      const defaultIgnoreList = await new Promise<string[]>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("Repomix indexing exceeded 30 seconds")),
+          Math.max(1, 30000 - (Date.now() - started)),
+        )
+        const onError = (error: Error) => {
+          clearTimeout(timer)
+          reject(error)
         }
-      }
-      const directory = opendirSync(join(this.root, path))
-      try {
-        while (true) {
+        worker.once("error", onError)
+        worker.once("message", (message: { patterns?: unknown }) => {
+          clearTimeout(timer)
+          worker.off("error", onError)
+          if (
+            !Array.isArray(message.patterns) ||
+            !message.patterns.every((pattern): pattern is string => typeof pattern === "string")
+          )
+            reject(new Error("Cannot establish Repomix ignore policy"))
+          else resolve(message.patterns)
+        })
+      })
+      const ignores = defaultIgnoreList.map((pattern) => new Bun.Glob(pattern))
+      const selected: { path: string; content: string; stamp: string; bytes: number }[] = []
+      let visited = 0,
+        total = 0
+      const walk = async (path: string, inherited: { base: string; rules: Ignore }[] = []) => {
+        principal.signal?.throwIfAborted()
+        const rules = [...inherited]
+        for (const control of [".ignore", ".repomixignore"]) {
+          const name = path ? `${path}/${control}` : control
+          if (existsSync(join(this.root, name))) {
+            if (!(await this.allow(name, principal, this.root)))
+              throw new Error("Cannot establish permitted project ignore policy")
+            rules.push({
+              base: path ? `${path}/` : "",
+              rules: ignore().add(readSource(this.root, name)),
+            })
+          }
+        }
+        const directory = opendirSync(join(this.root, path))
+        const entries: {
+          entry: NonNullable<ReturnType<typeof directory.readSync>>
+          name: string
+        }[] = []
+        try {
+          while (true) {
+            principal.signal?.throwIfAborted()
+            const entry = directory.readSync()
+            if (!entry) break
+            if (++visited > 20000 || Date.now() - started > 30000)
+              throw new Error("Project enumeration exceeded 20,000 entries/30 seconds")
+            const name = path ? `${path}/${entry.name}` : entry.name
+            if (
+              name.length > 1024 ||
+              secret(name) ||
+              entry.isSymbolicLink() ||
+              ignores.some(
+                (p) => p.match(name) || (entry.isDirectory() && p.match(`${name}/__entry__`)),
+              )
+            )
+              continue
+            if (
+              rules.some((rule) =>
+                rule.rules.ignores(name.slice(rule.base.length) + (entry.isDirectory() ? "/" : "")),
+              )
+            )
+              continue
+            entries.push({ entry, name })
+          }
+          if (!entries.length) return
           principal.signal?.throwIfAborted()
-          const entry = directory.readSync()
-          if (!entry) break
-          if (++visited > 20000 || Date.now() - started > 30000)
-            throw new Error("Project enumeration exceeded 20,000 entries/30 seconds")
-          const name = path ? `${path}/${entry.name}` : entry.name
-          if (
-            name.length > 1024 ||
-            secret(name) ||
-            entry.isSymbolicLink() ||
-            ignores.some(
-              (p) => p.match(name) || (entry.isDirectory() && p.match(`${name}/__entry__`)),
-            )
-          )
-            continue
-          if (
-            rules.some((rule) =>
-              rule.rules.ignores(name.slice(rule.base.length) + (entry.isDirectory() ? "/" : "")),
-            )
-          )
-            continue
-          const ignored = spawnSync("git", ["check-ignore", "--no-index", "--quiet", "--", name], {
+          const ignored = Bun.spawn(["git", "check-ignore", "--no-index", "-z", "--stdin", "--"], {
             cwd: this.root,
+            stdin: Buffer.from(entries.map(({ name }) => name).join("\0") + "\0"),
+            stdout: "pipe",
+            stderr: "ignore",
             timeout: 1000,
-            stdio: "ignore",
+            killSignal: "SIGKILL",
+            signal: principal.signal,
           })
-          if (ignored.status === 0) continue
-          if (ignored.status !== 1) throw new Error("Cannot establish repository ignore policy")
-          if (entry.isDirectory()) {
-            await walk(name, rules)
-            continue
+          const [status, output] = await Promise.all([
+            ignored.exited,
+            new Response(ignored.stdout).text(),
+          ])
+          principal.signal?.throwIfAborted()
+          if (status !== 0 && status !== 1)
+            throw new Error("Cannot establish repository ignore policy")
+          const ignoredPaths = new Set(output.split("\0").filter(Boolean))
+          let sinceYield = 0
+          for (const { entry, name } of entries) {
+            if (++sinceYield === 32) {
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              sinceYield = 0
+            }
+            principal.signal?.throwIfAborted()
+            if (ignoredPaths.has(name)) continue
+            if (Date.now() - started > 30000)
+              throw new Error("Project enumeration exceeded 20,000 entries/30 seconds")
+            if (entry.isDirectory()) {
+              await walk(name, rules)
+              continue
+            }
+            if (!entry.isFile() || !(await this.allow(name, principal, this.root))) continue
+            let content: string
+            try {
+              content = readSource(this.root, name)
+            } catch {
+              continue
+            }
+            const bytes = Buffer.byteLength(content)
+            total += bytes
+            if (selected.length >= 5000 || total > 32 * 1024 * 1024)
+              throw new Error("Project source exceeds 5,000 files/32 MiB; narrow indexing policy")
+            const stat = statSync(join(this.root, name))
+            selected.push({
+              path: name,
+              content,
+              stamp: JSON.stringify([stat.size, stat.mtimeMs, stat.ctimeMs]),
+              bytes,
+            })
           }
-          if (!entry.isFile() || !(await this.allow(name, principal, this.root))) continue
-          let content: string
-          try {
-            content = readSource(this.root, name)
-          } catch {
-            continue
-          }
-          const bytes = Buffer.byteLength(content)
-          total += bytes
-          if (selected.length >= 5000 || total > 32 * 1024 * 1024)
-            throw new Error("Project source exceeds 5,000 files/32 MiB; narrow indexing policy")
-          const stat = statSync(join(this.root, name))
-          selected.push({
-            path: name,
-            content,
-            stamp: JSON.stringify([stat.size, stat.mtimeMs, stat.ctimeMs]),
-            bytes,
-          })
+        } finally {
+          directory.closeSync()
         }
-      } finally {
-        directory.closeSync()
       }
+      await walk("")
+      if (processorFailure) throw processorFailure
+      selected.sort((a, b) => a.path.localeCompare(b.path))
+      const packed = await this.processWorkspace(
+        selected.map(({ path, content }) => ({
+          path,
+          content,
+          level: /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb|c|cpp|h|cs|swift|kt)$/.test(path)
+            ? ("compress" as const)
+            : ("directory-only" as const),
+        })),
+        started,
+        worker,
+      )
+      const denied = new Set(packed.denied)
+      const outline = new Map(packed.files.map((f) => [f.path, f.content]))
+      const snapshot: Snapshot = {
+        version: 2,
+        id: crypto.randomUUID(),
+        workspace: this.root,
+        createdAt: Date.now(),
+        repomix: "1.18.1",
+        encoding: "o200k_base",
+        tokens: packed.tokens,
+        files: selected
+          .filter((f) => !denied.has(f.path))
+          .map((f) => ({ ...f, outline: outline.get(f.path) ?? "" })),
+      }
+      return snapshot
+    } finally {
+      worker.terminate()
     }
-    await walk("")
-    selected.sort((a, b) => a.path.localeCompare(b.path))
-    const packed = await this.processWorkspace(
-      selected.map(({ path, content }) => ({
-        path,
-        content,
-        level: /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb|c|cpp|h|cs|swift|kt)$/.test(path)
-          ? ("compress" as const)
-          : ("directory-only" as const),
-      })),
-      started,
-    )
-    const denied = new Set(packed.denied)
-    const outline = new Map(packed.files.map((f) => [f.path, f.content]))
-    const snapshot: Snapshot = {
-      version: 2,
-      id: crypto.randomUUID(),
-      workspace: this.root,
-      createdAt: Date.now(),
-      repomix: "1.18.1",
-      encoding: "o200k_base",
-      tokens: packed.tokens,
-      files: selected
-        .filter((f) => !denied.has(f.path))
-        .map((f) => ({ ...f, outline: outline.get(f.path) ?? "" })),
-    }
-    return snapshot
   }
 
   private async processWorkspace(
     files: { path: string; content: string; level: "compress" | "directory-only" }[],
     started: number,
+    worker: Worker,
   ): Promise<Packed> {
     return await new Promise<Packed>((resolve, reject) => {
-      const worker = new Worker(new URL("./processor.ts", import.meta.url))
       const timer = setTimeout(
         () => {
           worker.terminate()

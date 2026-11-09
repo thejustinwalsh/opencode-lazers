@@ -1,10 +1,18 @@
-import { mergeConfigs, processFiles, runSecurityCheck, setLogLevel, TokenCounter } from "repomix"
+import {
+  defaultIgnoreList,
+  mergeConfigs,
+  processFiles,
+  runSecurityCheck,
+  setLogLevel,
+  TokenCounter,
+} from "repomix"
 import { parentPort } from "node:worker_threads"
 type Source = { path: string; content: string; level?: "compress" | "directory-only" }
 
 if (!parentPort) throw new Error("Project index processor requires a worker thread")
 const port = parentPort
 setLogLevel(-1)
+port.postMessage({ patterns: defaultIgnoreList })
 port.on("message", async (data: { root: string; files: Source[] }) => {
   const counter = new TokenCounter("o200k_base")
   try {
