@@ -111,3 +111,31 @@ canary Desktop PID55511 rather than main. No canary prompt was entered, fixtures
 were not removed, and no worker was stopped. Main-window targeting and delivery
 of the ownership clarification remain unresolved. This is driver-assisted UI
 recovery, not a product reliability fix or successful notification.
+
+## User-requested takeover and current recovery boundary
+
+The idle owned verification Desktop was subsequently quit through its native
+menu, preserving its service, fixtures and verification checkout. This restored
+Computer Use targeting of main Desktop PID53628. The owned window must be
+reopened through its supported lifecycle before further native verification.
+
+The explicit user-requested LZ-181 takeover and one-time economic reassessment
+criteria reached Architect in messages `msg_1be78efe1001NNWn8IEiCeawSp` and
+`msg_1be79a2ce001GUId503c1oC6Xw`. These also clarify that no Root repair is
+pending. Architect cancelled the original attempt through native controls;
+its original worker is now natively idle. Architect preserved the tracked patch
+and untracked files and is investigating the retained draft. This is an actual
+takeover in progress, not completed delivery or autonomous recovery.
+
+Root's committed diagnosis is
+[LZ-181 runaway trajectory](lz181-runaway-trajectory-20261109.md). It identifies
+contradictory current task/advice authority, coordinator-added scope and missing
+automatic reassessment. Its required correction weighs progress, failed
+approaches, remaining work and marginal market-equivalent cost without arbitrary
+limits. Desktop now explicitly reports macOS locked, so relay of that report
+remains pending; the takeover directive itself is already delivered.
+
+Independent LZ-195 continues implementing recovery controls. LZ-197's worker
+reported commit `2978a2a`, quality checks, 61 product-verification tests and GUI
+build passing, then became idle. Architect review, integration and native shortcut
+verification remain unproven; a worker report alone does not establish them.
