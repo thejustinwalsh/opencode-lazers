@@ -11436,6 +11436,8 @@ test("normal source scans do not materialize historical notice payloads across a
     metadata: { source: "normal-ensure-regression" },
   }
   f.inbox.set(renewal.previous_session_id, [input, changedInput])
+  // F-S3-1: fake the native enqueue notification alongside the inbox mutation.
+  f.runtime.observeArchitectSourceEvent(renewal.previous_session_id)
   await f.runtime.tick()
 
   expect(historicalRowsRead).toBe(0)
@@ -11804,6 +11806,7 @@ test("reconciliation keeps separate current-owner pointers and receipts for mult
   const currentOwner = secondRenewal.successor_session_id
 
   f.inbox.set(firstOwner, [{ id: "msg_second_source_input", type: "user", delivery: "queue" }])
+  f.runtime.observeArchitectSourceEvent(firstOwner)
   await f.runtime.tick()
   for (const sourceSessionID of [
     firstRenewal.previous_session_id,
@@ -12643,6 +12646,8 @@ test("a previously seen pending input that disappears without history stays unkn
   )
 
   f.inbox.set("owner", [])
+  // F-S3-1: the native cancellation invalidates a completed source scan.
+  f.runtime.observeArchitectSourceEvent("owner")
   await f.runtime.tick()
 
   expect(f.store.architectSourceInputs("owner")).toContainEqual(
@@ -13447,6 +13452,95 @@ test("renewal finishes all preparation pages before transferring a checkpoint", 
   expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(0)
 })
 
+test("F-S3-1 archived sources leave polling while their history and native-event recovery survive", async () => {
+  const now = 2_000_000_519_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "source-retirement.txt" }],
+  })
+  let reads = 0
+  const read = f.host.architectInputPage!.bind(f.host)
+  f.host.architectInputPage = (...args) => {
+    reads++
+    return read(...args)
+  }
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.architectSource("owner")).toMatchObject({
+    state: "retired",
+    scan_complete_at: now,
+  })
+  const scans = reads
+  const revision = f.store.architectSource("owner")!.revision
+  const inputTimes = () =>
+    f.repository.read((db) =>
+      db
+        .query(
+          "SELECT message_id,observed_at,updated_at FROM runner_architect_inputs WHERE session_id='owner' ORDER BY message_id",
+        )
+        .all(),
+    )
+  const before = inputTimes()
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(reads).toBe(scans)
+  expect(f.store.architectSources()).toEqual([])
+  expect(f.store.architectSourceJournalPage(f.receipt.planID, 100).records).not.toHaveLength(0)
+  f.runtime.observeArchitectSourceEvent("owner")
+  expect(f.store.architectSource("owner")!.state).toBe("active")
+  await f.runtime.tick()
+  expect(reads).toBe(scans + 1)
+  expect(f.store.architectSource("owner")).toMatchObject({ state: "retired", revision })
+  expect(inputTimes()).toEqual(before)
+  f.runtime.observeArchitectSourceEvent()
+  expect(f.store.architectSource("owner")!.state).toBe("active")
+  await f.runtime.tick()
+  expect(reads).toBe(scans + 2)
+  expect(new RunnerStore(f.repository).architectSources()).toEqual([])
+})
+
+test("F-S3-1 activity during a source read keeps it scheduled for a fresh pass", async () => {
+  const now = 2_000_000_519_500
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "source-race.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  f.runtime.observeArchitectSourceEvent("owner")
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const read = f.host.architectInputPage!.bind(f.host)
+  let held = true
+  f.host.architectInputPage = async (...args) => {
+    const page = await read(...args)
+    if (held) {
+      started.resolve()
+      await release.promise
+    }
+    return page
+  }
+  const tick = f.runtime.tick()
+  await started.promise
+  f.runtime.observeArchitectSourceEvent("owner")
+  held = false
+  release.resolve()
+  await tick
+  expect(f.store.architectSource("owner")).toMatchObject({
+    state: "active",
+    scan_complete_at: null,
+  })
+  await f.runtime.tick()
+  expect(f.store.architectSource("owner")!.state).toBe("retired")
+})
+
 test("late and mutable assistant tool results are signalled through the progressive source journal", async () => {
   const now = 2_000_000_520_000
   const f = fixture({
@@ -13486,6 +13580,8 @@ test("late and mutable assistant tool results are signalled through the progress
     finish: "stop",
     toolCounts: { running: 0, completed: 1, failed: 0, other: 0 },
   }
+  // F-S3-1: the native tool completion invalidates a retired source without polling it forever.
+  f.runtime.observeArchitectSourceEvent(renewal.previous_session_id)
   const predecessor = renewal.previous_session_id
   const successor = renewal.successor_session_id
   const firstPointer = f.store

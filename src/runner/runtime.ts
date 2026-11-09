@@ -372,6 +372,8 @@ export class TaskRuntime {
   private readonly requestTick: () => Promise<void>
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly modelMappingResolver: ModelMappingResolver
+  private readonly sourceEpochs = new Map<string, number>()
+  private sourceResyncPending = false
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -386,6 +388,7 @@ export class TaskRuntime {
     this.requestTick = options.requestTick ?? (() => this.tick())
     this.retainedDependencyInstaller = options.retainedDependencyInstaller
     this.modelMappingResolver = new ModelMappingResolver(new ModelMappingStore(store.repository))
+    for (const id of store.architectSourceSessionIDs()) this.sourceEpochs.set(id, 0)
   }
   get directory() {
     return this.store.repository.projectDirectory
@@ -5061,6 +5064,7 @@ export class TaskRuntime {
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
     )
       await this.requestTick()
+    if (command.action === "reassign" || continuedOwner) this.refreshArchitectSourceOwners()
     return result
   }
 
@@ -5178,7 +5182,8 @@ export class TaskRuntime {
         this.validArchitect(priorContinuation) &&
         this.matchesContinuation(priorContinuation, plan.id)
       ) {
-        if (adopt) this.store.updatePlanOwner(plan.id, plan.owner, priorContinuation.id)
+        if (adopt && this.store.updatePlanOwner(plan.id, plan.owner, priorContinuation.id))
+          this.refreshArchitectSourceOwners()
         return priorContinuation
       }
     }
@@ -5208,7 +5213,8 @@ export class TaskRuntime {
     if (next && continuation.session_id !== next.session_id && continuation.generation > 1) {
       const adopted = await this.host.session(continuation.session_id)
       if (this.validArchitect(adopted) && this.matchesContinuation(adopted, plan.id)) {
-        if (adopt) this.store.updatePlanOwner(plan.id, plan.owner, adopted.id)
+        if (adopt && this.store.updatePlanOwner(plan.id, plan.owner, adopted.id))
+          this.refreshArchitectSourceOwners()
         return adopted
       }
     }
@@ -5241,7 +5247,8 @@ export class TaskRuntime {
       parentID: continuation.parent_id,
       generation: continuation.generation,
     })
-    if (adopt) this.store.updatePlanOwner(plan.id, plan.owner, session.id)
+    if (adopt && this.store.updatePlanOwner(plan.id, plan.owner, session.id))
+      this.refreshArchitectSourceOwners()
     return session
   }
 
@@ -5262,11 +5269,29 @@ export class TaskRuntime {
 
   /** Called by the native prompt hook before OpenCode admits the input to its inbox. */
   async observeArchitectPrompt(sessionID: string, nativeMessageID: string) {
-    this.store.observeArchitectInput(sessionID, nativeMessageID, this.now(), {
+    const observed = this.store.observeArchitectInput(sessionID, nativeMessageID, this.now(), {
       type: "user",
       disposition: "prompt",
       userPrompt: true,
     })
+    if (observed.role === "predecessor") {
+      this.sourceEpochs.set(sessionID, (this.sourceEpochs.get(sessionID) ?? 0) + 1)
+      this.store.invalidateArchitectSource(sessionID, this.now())
+    }
+  }
+
+  observeArchitectSourceEvent(sessionID?: string) {
+    if (!sessionID) this.sourceResyncPending = true
+    if (!sessionID)
+      for (const id of this.store.architectSourceSessionIDs())
+        if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
+    const ids = sessionID ? [sessionID] : [...this.sourceEpochs.keys()]
+    for (const id of ids) {
+      if (!this.sourceEpochs.has(id)) continue
+      this.sourceEpochs.set(id, this.sourceEpochs.get(id)! + 1)
+      this.store.invalidateArchitectSource(id, this.now())
+    }
+    if (!sessionID) this.sourceResyncPending = false
   }
 
   async recordArchitectContinuity(sessionID: string, input: unknown) {
@@ -5356,9 +5381,19 @@ export class TaskRuntime {
       throw new Error("Native Architect input/history observation is unavailable")
     const source = this.store.architectSource(renewal.previous_session_id)
     if (!source) throw new Error("Durable Architect predecessor source is unavailable")
+    if (!this.sourceEpochs.has(source.session_id)) this.sourceEpochs.set(source.session_id, 0)
+    const epoch = this.sourceEpochs.get(source.session_id)
+    let known: import("./host.ts").ArchitectSourceObservation | undefined
+    try {
+      if (source.scan_complete_at !== null && source.observation_json !== null)
+        known = JSON.parse(source.observation_json)
+    } catch {
+      // A damaged cache hint requests a fresh scan; retained history remains usable.
+    }
     const page = await this.host.architectInputPage(
       renewal.previous_session_id,
       source.scan_cursor ?? undefined,
+      known,
     )
     const result = this.store.recordArchitectSourcePage({
       schedulerOwner: this.owner,
@@ -5370,6 +5405,9 @@ export class TaskRuntime {
       messages: page.messages,
       now: this.now(),
       projectID: this.projectID,
+      ...(page.observation ? { observation: page.observation } : {}),
+      unchanged: page.unchanged,
+      cacheCurrent: epoch === this.sourceEpochs.get(source.session_id),
     })
     if (!result) throw new Error("Architect predecessor source changed during reconciliation")
     await this.ensureArchitectSourceChangeNotices(renewal, result)
@@ -5397,6 +5435,15 @@ export class TaskRuntime {
         },
         fence,
       )
+    if (
+      result.nextCursor === null &&
+      epoch === this.sourceEpochs.get(source.session_id) &&
+      this.store.architectRenewal(renewal.id)?.state === "committed"
+    ) {
+      const archived = page.archived ?? (await this.host.session(source.session_id))?.archived
+      if (archived === true && epoch === this.sourceEpochs.get(source.session_id))
+        this.store.retireArchitectSource(source.session_id, this.owner, fence, this.now())
+    }
     return result
   }
 
@@ -5486,7 +5533,7 @@ export class TaskRuntime {
 
   private ensureCurrentArchitectSourceChangeNotices(sourceSessionID: string) {
     const source = this.store.architectSource(sourceSessionID)
-    if (!source || source.state !== "active") return
+    if (!source || source.state === "preparing") return
     for (const target of this.store.architectSourceNoticeTargets(sourceSessionID)) {
       const plan = this.store.plan(target.planID)
       if (!plan || plan.owner !== target.owner) continue
@@ -5502,6 +5549,12 @@ export class TaskRuntime {
         // A later source scan or explicit reconciliation will retry with fresh ownership facts.
       }
     }
+  }
+
+  /** Ownership changes rebind reference-only notices without rescanning retired history. */
+  private refreshArchitectSourceOwners() {
+    for (const source of this.store.architectSourceSessionIDs())
+      this.ensureCurrentArchitectSourceChangeNotices(source)
   }
 
   private async reconcileArchitectSourceNotices(
@@ -6098,6 +6151,7 @@ export class TaskRuntime {
         "deferred",
         null,
       )
+      if (changed) this.refreshArchitectSourceOwners()
       if (!changed) {
         const current = this.store.architectRenewal(renewal.id)
         if (current && ["archiving", "recovering-input", "rolling-back"].includes(current.state))
@@ -6619,7 +6673,7 @@ export class TaskRuntime {
             { predecessorSessionID: renewal.previous_session_id },
             fence,
           )
-        }
+        } else this.refreshArchitectSourceOwners()
       })
     } catch (error) {
       const current = this.store.architectRenewal(initial.id)
@@ -6673,7 +6727,8 @@ export class TaskRuntime {
     const restored = await this.host.session(renewal.previous_session_id)
     if (!restored || restored.archived)
       throw new Error("Architect renewal rollback did not restore the predecessor")
-    this.store.rollbackArchitectRenewal(this.owner, fence, renewal.id, state, error)
+    if (this.store.rollbackArchitectRenewal(this.owner, fence, renewal.id, state, error))
+      this.refreshArchitectSourceOwners()
   }
 
   private hold(
@@ -7091,6 +7146,7 @@ export class TaskRuntime {
     try {
       const fence = this.store.claim(this.owner)
       if (fence === null) return
+      if (this.sourceResyncPending) this.observeArchitectSourceEvent()
       let heartbeatFailed = false
       let heartbeatError: unknown
       heartbeat = sharedScheduler.register(

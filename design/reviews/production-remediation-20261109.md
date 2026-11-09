@@ -352,3 +352,49 @@ loss is a distinct incident. Preserved those events rather than hiding repeated
 incidents through payload-only deduplication. No historical transition rows were
 deleted. A post-activation native measurement of the former 110,826-row write loop
 remains required; this increment establishes the code and runtime-fixture result.
+
+## Wave 3: F-S3-1
+
+Completed, archived predecessor sources now transition out of polling while their
+rows, input/result history and explicit inspection remain available. Preparing,
+active and retired transitions use the exported `architectSourceMachine` (XState),
+including reactivation and retry preparation. Runner schema generation 2 adds
+Unix-ms `scan_complete_at` and the native observation hint.
+
+Re-derived the suggested native message-count check: the pinned per-session APIs
+expose no message count (`experimental.session.stats` is project/range aggregate).
+The adapter instead compares native `time.updated` and inbox identities/delivery
+states, using the existing event stream to invalidate hints. Unchanged hints skip
+history retrieval. Inputs/results skip unchanged UPSERTs while preserving sweep
+membership and renewal binding; unchanged observations do not rewrite their fact
+timestamps. Native activity reactivates retired sources. A first project listener
+and detected stream gaps schedule one recovery sweep, covering offline changes;
+changes during an awaited page keep its cache invalid without rejecting the facts
+already collected. Repeated invalidations use a read-only fast path.
+
+No second native subscription or timer was introduced: `registerProgress` forwards
+activity and loss through its existing stream. Known source membership keeps worker
+events off this cache's DB path. Only event types accepted by the pinned plugin
+surface are registered; the client's broader content-update union was not forced
+through an unsupported cast.
+
+The broad run found a real dependency on perpetual polling: ownership changes had
+relied on later source scans to refresh old-source pointers. Renewal, reassignment,
+adoption and rollback now refresh reference-only notices from retained DB history
+through the existing helper, without fetching old native transcripts. Retired
+sources remain valid for authenticated explicit history and reconciliation.
+Three fake inbox/result mutations now emit their corresponding source-change
+notification; their original isolation, no-replay and receipt assertions remain.
+
+Checks: `bun run verify` and `git diff --check` passed. Initial broader run: 483
+pass / 4 fail across 487 tests. After correcting ownership refresh and event-driven
+fixture inputs, 68 selected runtime tests passed (911 assertions), plus 154
+store/native/progress/storage tests (1,207 assertions). New cases prove zero history
+reads across four subsequent drains after retirement, durable history access,
+native activity and gap recovery, no retirement over an in-flight change, and
+native adapter cache misses after timestamp/inbox changes. Late mutable tool
+results still update and notify their current owner. No native model was run.
+
+These controlled observations do not close the production measurement: the former
+76-sweeps/min class still needs post-activation sampling against the actual host.
+No historical sources or useful worker work were deleted.

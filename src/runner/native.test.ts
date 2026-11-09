@@ -906,6 +906,7 @@ test("native worker selection survives role registration and reaches native crea
 })
 
 function nativeOutcomeFixture(options: {
+  updatedAt?: () => number
   pid?: number
   unavailable?: boolean
   archiveReadback?: boolean
@@ -955,7 +956,10 @@ function nativeOutcomeFixture(options: {
         projectID: "project",
         agent: activeSessions.has(input?.sessionID ?? "") ? "lazers-implementor" : "architect",
         location: { directory: activeSessions.get(input?.sessionID ?? "") ?? "/project" },
-        time: { ...(archived ? { archived: 1 } : {}) },
+        time: {
+          ...(archived ? { archived: 1 } : {}),
+          ...(options.updatedAt ? { updated: options.updatedAt() } : {}),
+        },
       }),
       active: async () => {
         if (options.activeInventoryUnavailable)
@@ -1367,6 +1371,28 @@ test("native Architect input reconciliation follows public message pagination an
   expect(first.nextCursor).toBe("page-2")
   expect(second.messages.map((entry) => entry.id)).toEqual(["msg_late"])
   expect(second.nextCursor).toBeNull()
+})
+
+test("F-S3-1 native source hints skip unchanged history but detect session and inbox changes", async () => {
+  let updatedAt = 1
+  const inbox: OutcomeInboxEntry[] = []
+  const f = nativeOutcomeFixture({ updatedAt: () => updatedAt, inbox })
+  const first = await f.host.architectInputPage!("ses_owner")
+  expect(first.observation).toEqual({ updatedAt: 1, inbox: "[]" })
+  expect(f.messageQueries).toHaveLength(1)
+  expect(await f.host.architectInputPage!("ses_owner", undefined, first.observation)).toMatchObject(
+    { unchanged: true },
+  )
+  expect(f.messageQueries).toHaveLength(1)
+  updatedAt = 2
+  const changed = await f.host.architectInputPage!("ses_owner", undefined, first.observation)
+  expect(changed.unchanged).toBeUndefined()
+  expect(f.messageQueries).toHaveLength(2)
+  inbox.push({ id: "msg_new", type: "synthetic", delivery: "queue" })
+  expect(
+    (await f.host.architectInputPage!("ses_owner", undefined, changed.observation)).inbox,
+  ).toHaveLength(1)
+  expect(f.messageQueries).toHaveLength(3)
 })
 
 test("native Architect history projects mutable assistant/tool status without private payloads", async () => {

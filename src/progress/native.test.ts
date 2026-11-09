@@ -274,6 +274,37 @@ function makeContext(
   }
 }
 
+test("F-S3-1 the existing native stream invalidates source caches on activity and loss", async () => {
+  const fixture = makeFixture()
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  const ctx = makeContext(fixture, { liveEvents: true })
+  const seen: (string | undefined)[] = []
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project", undefined, undefined, (id) => {
+            seen.push(id)
+          })
+          yield* Effect.promise(() =>
+            ctx.emitEvent({ type: "session.unarchived", data: { sessionID: "old-architect" } }),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => seen.includes("old-architect")),
+          )
+          yield* Effect.promise(() => ctx.failEvents())
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => seen.filter((id) => id === undefined).length === 2),
+          )
+          expect(seen.filter((id) => id === undefined)).toHaveLength(2)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
 test("registered execute.before records only an assigned bounded requested target", async () => {
   const fixture = makeFixture()
   try {

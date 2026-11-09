@@ -247,6 +247,7 @@ async function assertArchitectTarget(
   const target = await client.session.get({ sessionID })
   if (target.projectID !== ctx.location.project.id || target.agent !== "architect")
     throw new Error("Native outcome inbox target is not a same-project Architect session")
+  return target
 }
 
 function inboxEntry(
@@ -753,19 +754,44 @@ export function nativeHost(
       const entries = await runNative(client, () => client.session.inbox.list({ sessionID }))
       return entries.map(inboxEntry)
     },
-    async architectInputPage(sessionID, cursor): Promise<ArchitectInputPage> {
+    async architectInputPage(sessionID, cursor, known): Promise<ArchitectInputPage> {
       const client = await connectedClient()
-      await runNative(client, () => assertArchitectTarget(ctx, client, sessionID))
-      const [inbox, page] = await Promise.all([
-        runNative(client, () => client.session.inbox.list({ sessionID })),
-        runNative(client, () =>
-          client.message.list({
-            sessionID,
-            limit: 100,
-            ...(cursor ? { cursor } : { order: "asc" }),
-          }),
-        ),
-      ])
+      const target = await runNative(client, () => assertArchitectTarget(ctx, client, sessionID))
+      const inbox = await runNative(client, () => client.session.inbox.list({ sessionID }))
+      const observation = Number.isFinite(target.time.updated)
+        ? {
+            updatedAt: target.time.updated,
+            inbox: JSON.stringify(
+              inbox.map((entry) => ({
+                id: entry.id,
+                type: entry.type,
+                delivery: "delivery" in entry ? entry.delivery : null,
+              })),
+            ),
+          }
+        : undefined
+      if (
+        !cursor &&
+        known &&
+        observation &&
+        known.updatedAt === observation.updatedAt &&
+        known.inbox === observation.inbox
+      )
+        return {
+          inbox: [],
+          messages: [],
+          nextCursor: null,
+          observation,
+          unchanged: true,
+          archived: target.time.archived !== undefined,
+        }
+      const page = await runNative(client, () =>
+        client.message.list({
+          sessionID,
+          limit: 100,
+          ...(cursor ? { cursor } : { order: "asc" }),
+        }),
+      )
       return {
         inbox: inbox
           .filter((entry) => entry.type === "user" || entry.type === "synthetic")
@@ -787,6 +813,8 @@ export function nativeHost(
           }
         }),
         nextCursor: page.cursor.next ?? null,
+        ...(observation ? { observation } : {}),
+        archived: target.time.archived !== undefined,
       }
     },
     async architectSourceMessage(sessionID, messageID) {

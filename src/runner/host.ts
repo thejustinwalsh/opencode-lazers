@@ -16,6 +16,7 @@ export type ArchitectSourceResult = {
   toolCounts: { running: number; completed: number; failed: number; other: number }
 }
 
+export type ArchitectSourceObservation = { updatedAt: number; inbox: string }
 export type ArchitectInputPage = {
   inbox: Array<Pick<OutcomeInboxEntry, "id" | "type" | "delivery" | "metadata">>
   messages: Array<{
@@ -25,6 +26,9 @@ export type ArchitectInputPage = {
     result?: ArchitectSourceResult
   }>
   nextCursor: string | null
+  observation?: ArchitectSourceObservation
+  unchanged?: boolean
+  archived?: boolean
 }
 
 export type ArchitectSourceMessage = {
@@ -148,7 +152,11 @@ export interface RunnerHost {
   /** Public native inbox snapshot; the adapter verifies it belongs to this process. */
   outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
   /** One ordered page of original Architect inputs plus the current native inbox. */
-  architectInputPage?(sessionID: string, cursor?: string): Promise<ArchitectInputPage>
+  architectInputPage?(
+    sessionID: string,
+    cursor?: string,
+    known?: ArchitectSourceObservation,
+  ): Promise<ArchitectInputPage>
   /** Read one selected original message from an authenticated same-project Architect session. */
   architectSourceMessage?(sessionID: string, messageID: string): Promise<ArchitectSourceMessage>
   /** Revalidates ownership and queued state immediately before native cancellation. */

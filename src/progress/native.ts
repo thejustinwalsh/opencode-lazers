@@ -48,6 +48,7 @@ const NATIVE_EVENT_TYPES = [
   "session.created",
   "session.deleted",
   "session.moved",
+  "session.unarchived",
   "session.usage.updated",
   "session.execution.started",
   "session.execution.succeeded",
@@ -394,6 +395,7 @@ export function registerProgress(
   projectID: string,
   retainedInputID: (sessionID: string) => Promise<string | undefined> = async () => undefined,
   readSessionLog?: NativeSessionLogReader,
+  sourceChanged?: (sessionID?: string) => void,
 ) {
   return Effect.gen(function* () {
     const readInputID = (sessionID: Session.ID) =>
@@ -408,6 +410,15 @@ export function registerProgress(
     const idleStore = new NativeIdleStore(recorder.store.repository)
     const listenerID = crypto.randomUUID()
     let observing = true
+    let sourceStreamGap = false
+    const invalidateSources = () => {
+      try {
+        if (!sourceStreamGap) sourceChanged?.()
+        sourceStreamGap = true
+      } catch {
+        // Retry source invalidation at the next boundary; progress ingestion remains independent.
+      }
+    }
     const observedExecutionStarts = new Map<string, ObservedExecutionStart>()
     const startsRequiringNewerObservation = new Map<string, number | null>()
     const requireNewerStart = (sessionID: string, afterSequence: number | null) => {
@@ -491,6 +502,8 @@ export function registerProgress(
         !startsRequiringNewerObservation.has(binding.sessionID)
       return current() ? { current } : undefined
     })
+    // The first project listener repairs activity missed while the plugin was offline.
+    if (livePeers.size === 1) invalidateSources()
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         observing = false
@@ -985,6 +998,14 @@ export function registerProgress(
       const rawSessionID = object(object(event)?.data)?.sessionID
       const type = typeof rawType === "string" ? rawType : undefined
       const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
+      if (sessionID && observing) {
+        sourceStreamGap = false
+        try {
+          sourceChanged?.(sessionID)
+        } catch {
+          // A later source event or prompt retries without dropping worker facts.
+        }
+      }
       if (sessionID && (type === "session.deleted" || type === "session.moved"))
         toolScope.forget(sessionID)
       if (sessionID) reconstruction.changed(sessionID)
@@ -1106,6 +1127,7 @@ export function registerProgress(
         ).pipe(
           Effect.match({
             onFailure: (error) => {
+              invalidateSources()
               toolScope.clear()
               trace("unknown", "stream-failed", { error })
               invalidateListenerStarts()
@@ -1118,6 +1140,7 @@ export function registerProgress(
               }
             },
             onSuccess: () => {
+              invalidateSources()
               toolScope.clear()
               trace("unknown", "stream-ended")
               invalidateListenerStarts()

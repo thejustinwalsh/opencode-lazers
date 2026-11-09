@@ -1,6 +1,7 @@
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
+import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
 import { canonical, fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
@@ -9,7 +10,7 @@ import { scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
-import type { ArchitectSourceResult } from "./host.ts"
+import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
 import { parseOutcomeOwnership } from "./inbox.ts"
@@ -177,8 +178,10 @@ export type ArchitectSourceRow = {
   scan_cursor: string | null
   scan_sweep: number
   revision: number
-  state: string
+  state: ArchitectSourceState
   updated_at: number
+  scan_complete_at: number | null
+  observation_json: string | null
 }
 export type ArchitectObservedInput = {
   id: string
@@ -771,7 +774,8 @@ export class RunnerStore {
         session_id TEXT PRIMARY KEY, renewal_id TEXT NOT NULL REFERENCES runner_architect_renewals(id),
         anchor_plan_id TEXT NOT NULL REFERENCES runner_plans(id), scan_cursor TEXT,
         scan_sweep INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
-        state TEXT NOT NULL, updated_at INTEGER NOT NULL
+        state TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        scan_complete_at INTEGER, observation_json TEXT
       );
       CREATE TABLE IF NOT EXISTS runner_architect_continuity (
         project_directory TEXT NOT NULL, session_id TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -1002,6 +1006,16 @@ export class RunnerStore {
           .map((column) => column.name)
         if (!renewalColumns.includes("continuity_json"))
           db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN continuity_json TEXT")
+        const sourceColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_architect_sources)")
+            .all()
+            .map((row) => row.name),
+        )
+        if (!sourceColumns.has("scan_complete_at"))
+          db.exec("ALTER TABLE runner_architect_sources ADD COLUMN scan_complete_at INTEGER")
+        if (!sourceColumns.has("observation_json"))
+          db.exec("ALTER TABLE runner_architect_sources ADD COLUMN observation_json TEXT")
         const architectInputColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_architect_inputs)")
@@ -1331,8 +1345,56 @@ export class RunnerStore {
         .all(this.repository.projectDirectory),
     )
   }
+  architectSourceSessionIDs(): string[] {
+    return this.repository.read((db) =>
+      db
+        .query<{ session_id: string }, [string]>(
+          `SELECT s.session_id FROM runner_architect_sources s JOIN runner_plans p ON p.id=s.anchor_plan_id
+       WHERE p.project_directory=?`,
+        )
+        .all(this.repository.projectDirectory)
+        .map((row) => row.session_id),
+    )
+  }
+  invalidateArchitectSource(sessionID: string, now: number) {
+    const needsInvalidation = (source: ArchitectSourceRow | null) =>
+      source &&
+      source.state !== "preparing" &&
+      (source.state !== "active" ||
+        source.scan_complete_at !== null ||
+        source.observation_json !== null)
+    if (!needsInvalidation(this.architectSource(sessionID))) return
+    return this.atomic((db) => {
+      const source = this.architectSource(sessionID)
+      if (!source || !needsInvalidation(source)) return
+      const state = architectSourceTransition(source.state, "ACTIVATE")
+      db.query(
+        `UPDATE runner_architect_sources SET state=?,scan_complete_at=NULL,observation_json=NULL,updated_at=?
+        WHERE session_id=?`,
+      ).run(state, now, sessionID)
+    })
+  }
+  retireArchitectSource(sessionID: string, schedulerOwner: string, fence: number, now: number) {
+    return this.fenced(schedulerOwner, fence, (db) => {
+      const source = this.architectSource(sessionID)
+      if (
+        !source ||
+        source.state !== "active" ||
+        source.scan_cursor !== null ||
+        source.scan_complete_at === null ||
+        this.architectRenewal(source.renewal_id)?.state !== "committed"
+      )
+        return false
+      db.query("UPDATE runner_architect_sources SET state=?,updated_at=? WHERE session_id=?").run(
+        architectSourceTransition(source.state, "RETIRE"),
+        now,
+        sessionID,
+      )
+      return true
+    })
+  }
   architectSource(sessionID: string) {
-    return this.atomic((db) =>
+    return this.repository.read((db) =>
       db
         .query<ArchitectSourceRow, [string, string]>(
           `SELECT s.* FROM runner_architect_sources s
@@ -1378,7 +1440,7 @@ export class RunnerStore {
         .query<{ renewal_id: string }, [string, string]>(
           `SELECT s.renewal_id FROM runner_architect_sources s
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
-           WHERE s.session_id=? AND s.state='active' AND anchor.project_directory=?`,
+           WHERE s.session_id=? AND s.state IN ('active','retired') AND anchor.project_directory=?`,
         )
         .get(sessionID, this.repository.projectDirectory)
       if (!source) return []
@@ -1429,7 +1491,7 @@ export class RunnerStore {
         .query<Pick<ArchitectSourceRow, "renewal_id">, [string, string]>(
           `SELECT s.renewal_id FROM runner_architect_sources s
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
-           WHERE s.session_id=? AND s.state='active' AND anchor.project_directory=?`,
+           WHERE s.session_id=? AND s.state IN ('active','retired') AND anchor.project_directory=?`,
         )
         .get(sourceSessionID, this.repository.projectDirectory)
       if (!source) return []
@@ -1516,7 +1578,7 @@ export class RunnerStore {
            JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
            WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
-             AND s.state='active' AND anchor.project_directory=?`,
+             AND s.state IN ('active','retired') AND anchor.project_directory=?`,
         )
         .get(input.sourceSessionID, input.planID, this.repository.projectDirectory)
       if (!source) return null
@@ -1551,7 +1613,7 @@ export class RunnerStore {
            JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
            WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
-             AND s.state='active' AND anchor.project_directory=?`,
+             AND s.state IN ('active','retired') AND anchor.project_directory=?`,
         )
         .get(input.sourceSessionID, input.planID, this.repository.projectDirectory)
       if (!source) throw new Error("Architect source is not current durable journal for this plan")
@@ -1660,7 +1722,7 @@ export class RunnerStore {
            JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
            WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
-             AND s.state='active' AND anchor.project_directory=?`,
+             AND s.state IN ('active','retired') AND anchor.project_directory=?`,
         )
         .get(input.sourceSessionID, input.planID, this.repository.projectDirectory)
       if (!source) throw new Error("Architect source is not current durable journal for this plan")
@@ -1673,7 +1735,7 @@ export class RunnerStore {
            WHERE o.id=? AND p.project_directory=?
              AND json_extract(o.payload,'$.sourceSessionID')=?
              AND json_extract(o.payload,'$.status')='architect-source-reference'
-             AND s.state='active'`,
+             AND s.state IN ('active','retired')`,
         )
         .get(
           input.sourceSessionID,
@@ -1802,7 +1864,7 @@ export class RunnerStore {
            JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
            WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
-             AND s.state='active' AND anchor.project_directory=?`,
+             AND s.state IN ('active','retired') AND anchor.project_directory=?`,
         )
         .get(sourceSessionID, planID, this.repository.projectDirectory)
       if (!source) throw new Error("Source session is not an active journal for this plan")
@@ -1875,6 +1937,9 @@ export class RunnerStore {
     messages: ArchitectObservedMessage[]
     now: number
     projectID: string
+    observation?: ArchitectSourceObservation
+    unchanged?: boolean
+    cacheCurrent?: boolean
   }) {
     return this.fenced(input.schedulerOwner, input.fence, (db) => {
       const source = db
@@ -1898,6 +1963,22 @@ export class RunnerStore {
           !["archiving", "committed"].includes(renewal.state))
       )
         return null
+      if (input.unchanged) {
+        if (input.cacheCurrent === false)
+          db.query(
+            "UPDATE runner_architect_sources SET scan_complete_at=NULL,observation_json=NULL WHERE session_id=?",
+          ).run(input.sessionID)
+        return {
+          revision: source.revision,
+          hasJournal: architectSourceJournalExists(db, input.sessionID),
+          changedInputs: [],
+          changedResults: [],
+          sourceNotices: [],
+          nextCursor: null,
+          sweep: source.scan_sweep,
+          staleCheckpoint: false,
+        }
+      }
       const sweep = input.cursor === null ? source.scan_sweep + 1 : source.scan_sweep
       const inboxByID = new Map(input.inbox.map((entry) => [entry.id, entry]))
       const changes = new Map<string, { id: string; type: string; disposition: string }>()
@@ -1976,18 +2057,30 @@ export class RunnerStore {
               delivery: string | null
               disposition: string
               referenced_revision: number
+              metadata_json: string | null
+              last_seen_sweep: number
+              renewal_id: string | null
             },
             [string, string]
           >(
-            `SELECT native_type,delivery,disposition,referenced_revision FROM runner_architect_inputs
+            `SELECT native_type,delivery,disposition,referenced_revision,metadata_json,last_seen_sweep,renewal_id FROM runner_architect_inputs
              WHERE session_id=? AND message_id=?`,
           )
           .get(input.sessionID, observed.id)
+        const metadata = observed.metadata ? JSON.stringify(observed.metadata) : null
         const changed =
           !old ||
           old.native_type !== observed.type ||
           old.delivery !== delivery ||
-          old.disposition !== disposition
+          old.disposition !== disposition ||
+          old.metadata_json !== metadata
+        if (!changed) {
+          if (old.last_seen_sweep !== sweep || old.renewal_id !== source.renewal_id)
+            db.query(
+              "UPDATE runner_architect_inputs SET last_seen_sweep=?,renewal_id=? WHERE session_id=? AND message_id=?",
+            ).run(sweep, source.renewal_id, input.sessionID, observed.id)
+          return
+        }
         db.query(
           `INSERT INTO runner_architect_inputs(
             session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
@@ -2006,7 +2099,7 @@ export class RunnerStore {
           observed.type,
           delivery,
           disposition,
-          observed.metadata ? JSON.stringify(observed.metadata) : null,
+          metadata,
           sweep,
           changed ? 0 : (old?.referenced_revision ?? 0),
           input.now,
@@ -2036,16 +2129,23 @@ export class RunnerStore {
           .query<
             Pick<
               ArchitectSourceResultRow,
-              "result_fingerprint" | "result_revision" | "referenced_revision"
+              "result_fingerprint" | "result_revision" | "referenced_revision" | "renewal_id"
             >,
             [string, string]
           >(
-            `SELECT result_fingerprint,result_revision,referenced_revision
+            `SELECT result_fingerprint,result_revision,referenced_revision,renewal_id
              FROM runner_architect_source_results
              WHERE session_id=? AND message_id=?`,
           )
           .get(input.sessionID, message.id)
         const changed = old?.result_fingerprint !== resultFingerprint
+        if (!changed) {
+          if (old.renewal_id !== source.renewal_id)
+            db.query(
+              "UPDATE runner_architect_source_results SET renewal_id=? WHERE session_id=? AND message_id=?",
+            ).run(source.renewal_id, input.sessionID, message.id)
+          continue
+        }
         const resultRevision = old ? old.result_revision + Number(changed) : 1
         db.query(
           `INSERT INTO runner_architect_source_results(
@@ -2137,11 +2237,22 @@ export class RunnerStore {
       let revision = source.revision
       if (changes.size || changedResults.size) revision++
       db.query(
-        `UPDATE runner_architect_sources SET scan_cursor=?,scan_sweep=?,revision=?,updated_at=?
+        `UPDATE runner_architect_sources SET scan_cursor=?,scan_sweep=?,revision=?,updated_at=?,scan_complete_at=?,observation_json=?
          WHERE session_id=? AND renewal_id=?`,
-      ).run(input.nextCursor, sweep, revision, input.now, input.sessionID, source.renewal_id)
+      ).run(
+        input.nextCursor,
+        sweep,
+        revision,
+        input.now,
+        input.nextCursor === null && input.cacheCurrent !== false ? input.now : null,
+        input.nextCursor === null && input.cacheCurrent !== false && input.observation
+          ? JSON.stringify(input.observation)
+          : null,
+        input.sessionID,
+        source.renewal_id,
+      )
 
-      this.repository.changed()
+      if (changes.size || changedResults.size) this.repository.changed()
       return {
         revision,
         hasJournal: architectSourceJournalExists(db, input.sessionID),
@@ -2288,11 +2399,20 @@ export class RunnerStore {
         db.query(
           `INSERT INTO runner_architect_sources(
             session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
-          ) VALUES(?,?,?,NULL,0,0,'preparing',?) ON CONFLICT(session_id) DO UPDATE SET
+          ) VALUES(?,?,?,NULL,0,0,?,?) ON CONFLICT(session_id) DO UPDATE SET
             renewal_id=excluded.renewal_id,anchor_plan_id=excluded.anchor_plan_id,
-            scan_cursor=NULL,scan_sweep=0,state='preparing',
-            updated_at=excluded.updated_at`,
-        ).run(input.previousSessionID, latest.id, input.anchorPlanID, input.now)
+            scan_cursor=NULL,scan_sweep=0,state=excluded.state,
+            scan_complete_at=NULL,observation_json=NULL,updated_at=excluded.updated_at`,
+        ).run(
+          input.previousSessionID,
+          latest.id,
+          input.anchorPlanID,
+          architectSourceTransition(
+            this.architectSource(input.previousSessionID)?.state ?? "preparing",
+            "PREPARE",
+          ),
+          input.now,
+        )
         db.query(
           "UPDATE runner_architect_inputs SET renewal_id=COALESCE(renewal_id,?) WHERE session_id=?",
         ).run(latest.id, input.previousSessionID)
@@ -2345,8 +2465,14 @@ export class RunnerStore {
       db.query(
         `INSERT INTO runner_architect_sources(
           session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
-        ) VALUES(?,?,?,NULL,0,0,'preparing',?)`,
-      ).run(input.previousSessionID, id, input.anchorPlanID, input.now)
+        ) VALUES(?,?,?,NULL,0,0,?,?)`,
+      ).run(
+        input.previousSessionID,
+        id,
+        input.anchorPlanID,
+        architectSourceTransition("preparing", "PREPARE"),
+        input.now,
+      )
       db.query(
         "UPDATE runner_architect_inputs SET renewal_id=COALESCE(renewal_id,?) WHERE session_id=?",
       ).run(id, input.previousSessionID)
@@ -2754,8 +2880,16 @@ export class RunnerStore {
          WHERE id=? AND state='creating'`,
       ).run(input.outboxID, renewal.id)
       db.query(
-        "UPDATE runner_architect_sources SET state='active',updated_at=? WHERE session_id=? AND renewal_id=?",
-      ).run(Date.now(), renewal.previous_session_id, renewal.id)
+        "UPDATE runner_architect_sources SET state=?,updated_at=? WHERE session_id=? AND renewal_id=?",
+      ).run(
+        architectSourceTransition(
+          this.architectSource(renewal.previous_session_id)!.state,
+          "ACTIVATE",
+        ),
+        Date.now(),
+        renewal.previous_session_id,
+        renewal.id,
+      )
       db.query(
         "UPDATE runner_architect_inputs SET renewal_id=COALESCE(renewal_id,?) WHERE session_id=?",
       ).run(renewal.id, renewal.previous_session_id)
