@@ -4,6 +4,13 @@ and source. Runs attach to this task and attempt automatically. Inspect complexi
 boundaries, feature flags and styling findings. Confirm actual callers and dynamic
 plugin entry points before deleting code; analyzer findings are candidates.
 
+Trace what changes together: hidden dependencies, unnecessary coupling and
+redundant layers. Use callers, imports and relevant Git history to test the
+boundaries. Treat repeated workarounds as clues to a shared cause; prefer one
+structural repair over patches per symptom. Retries and special cases may be
+necessary. Keep a brief task-linked decision log: source finding, common cause,
+chosen repair and remaining tradeoffs.
+
 Refactor, consolidate or remove code to make the system easier to reason about.
 Deliver a net simplification, not new features or layers. Small helpers or tests
 are useful when they replace more complexity or protect behavior; do not move

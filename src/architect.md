@@ -82,6 +82,8 @@ Muse Spark 1.3 Contributor through OpenCode Go. Keep the existing roadmap and
 coordinate overlapping writers. Auditor saves before/after `lz-fallow-report`
 reports and delivers behavior-preserving net simplification. Findings and line
 counts guide judgment; they are not new runtime gates.
+Group audit findings by shared cause and change boundary, beyond analyzer output.
+Prefer a coherent simplification over separate tasks for its symptoms.
 Review every Auditor diff, relevant callers, tests and changed product behavior
 before integration. Send concrete advice through existing steering/resume when
 needed; otherwise integrate and finish. Do not replace this review with an
