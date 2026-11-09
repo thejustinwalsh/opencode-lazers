@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
+import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { associatedSessionIDs } from "./associations.ts"
 import type { ObservationChange } from "./contract.ts"
 
@@ -106,6 +107,23 @@ type NativeFact = {
   eventID: string | null
   aggregateID: string | null
   durableSequence: number | null
+  signal: Omit<NativeSignal, "sourceNativeRevision"> | null
+}
+
+export type NativeSignal = {
+  sessionID: string
+  eventID: string
+  eventType: string
+  sourceNativeRevision: number
+  messageID: string | null
+  callID: string | null
+  tool: string | null
+  agent: string | null
+  providerID: string | null
+  modelID: string | null
+  variant: string | null
+  status: string
+  observedAt: number
 }
 
 type TrackerState = {
@@ -126,10 +144,41 @@ type TrackerState = {
   pendingNative: NativeFact[]
   pendingNativeKeys: Set<string>
   pendingOverflow: boolean
+  liveSignals: Map<string, NativeSignal>
+  liveSignalBytes: number
+  liveSignalsTruncated: boolean
   registryKey?: string
 }
 
 const MAX_TRACKED_EVENTS = 4096
+export const LIVE_SIGNAL_LIMITS = {
+  flowEntries: 256,
+  retainedBytes: 256_000,
+  truncatedSessions: 500,
+} as const
+const NATIVE_SIGNAL_STATUS: Record<string, string> = {
+  "session.execution.started": "execution-started",
+  "session.execution.succeeded": "execution-succeeded",
+  "session.execution.failed": "execution-failed",
+  "session.execution.interrupted": "execution-interrupted",
+  "session.step.started": "request-started",
+  "session.step.streamed": "response-streamed",
+  "session.step.ended": "response-ended",
+  "session.step.failed": "response-failed",
+  "session.text.ended": "text-ended",
+  "session.tool.called": "called",
+  "session.tool.input.started": "input-started",
+  "session.tool.progress": "running",
+  "session.tool.success": "succeeded",
+  "session.tool.failed": "failed",
+}
+const NATIVE_TOOL_EVENT_TYPES = new Set([
+  "session.tool.called",
+  "session.tool.input.started",
+  "session.tool.progress",
+  "session.tool.success",
+  "session.tool.failed",
+])
 const projectStatesKey = Symbol.for("opencode-lazers.observation-project-states.v1")
 const projectStatesHost = globalThis as typeof globalThis & {
   [projectStatesKey]?: Map<string, TrackerState>
@@ -158,12 +207,70 @@ function newState(projectID: string): TrackerState {
     pendingNative: [],
     pendingNativeKeys: new Set(),
     pendingOverflow: false,
+    liveSignals: new Map(),
+    liveSignalBytes: 0,
+    liveSignalsTruncated: false,
   }
 }
 
 function rememberBounded<T>(set: Set<T>, value: T) {
   set.add(value)
   if (set.size > MAX_TRACKED_EVENTS) set.delete(set.values().next().value!)
+}
+
+function safeSignalText(value: unknown, maximum: number) {
+  if (typeof value !== "string" || !value || value.length > maximum) return null
+  for (const character of value) {
+    const code = character.codePointAt(0)!
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return null
+  }
+  const safe = safeText(value, privacyStats(), maximum)
+  return safe === value ? safe : null
+}
+
+function nativeSignal(
+  info: JsonObject | null,
+  data: JsonObject | null,
+  sessionID: string,
+  eventID: string | null,
+): Omit<NativeSignal, "sourceNativeRevision"> | null {
+  const eventType = typeof info?.type === "string" ? info.type : ""
+  const status = Object.hasOwn(NATIVE_SIGNAL_STATUS, eventType)
+    ? NATIVE_SIGNAL_STATUS[eventType]
+    : null
+  const safeEventID = safeSignalText(eventID, 200)
+  const observedAt = info?.created
+  if (
+    typeof status !== "string" ||
+    !safeEventID ||
+    typeof observedAt !== "number" ||
+    !Number.isFinite(observedAt)
+  )
+    return null
+
+  const model = eventType === "session.step.started" ? object(data?.model) : null
+  const messageID = safeSignalText(data?.assistantMessageID, 200)
+  const toolEvent = NATIVE_TOOL_EVENT_TYPES.has(eventType)
+  const callID = toolEvent ? safeSignalText(data?.id, 200) : null
+  const tool = eventType === "session.tool.input.started" ? safeSignalText(data?.name, 160) : null
+  const providerID = model ? safeSignalText(model.providerID, 200) : null
+  const modelID = model ? safeSignalText(model.id, 300) : null
+  const variant = model ? safeSignalText(model.variant, 200) : null
+  return {
+    sessionID,
+    eventID: safeEventID,
+    eventType,
+    messageID,
+    callID,
+    tool,
+    agent: eventType === "session.step.started" ? safeSignalText(data?.agent, 200) : null,
+    providerID,
+    modelID,
+    variant,
+    status:
+      eventType === "session.tool.called" && data?.executed === false ? "not-executed" : status,
+    observedAt,
+  }
 }
 
 function nativeFact(event: unknown): NativeFact | null {
@@ -176,12 +283,14 @@ function nativeFact(event: unknown): NativeFact | null {
     typeof durable?.aggregateID === "string" && durable.aggregateID.length <= 200
       ? durable.aggregateID
       : null
+  const eventID = typeof info?.id === "string" && info.id.length <= 200 ? info.id : null
   return {
     sessionID,
-    eventID: typeof info?.id === "string" && info.id.length <= 200 ? info.id : null,
+    eventID,
     aggregateID,
     durableSequence:
       typeof durable?.seq === "number" && Number.isSafeInteger(durable.seq) ? durable.seq : null,
+    signal: nativeSignal(info, data, sessionID, eventID),
   }
 }
 
@@ -190,6 +299,14 @@ function pendingKey(fact: NativeFact) {
   if (fact.aggregateID && fact.durableSequence !== null)
     return `seq:${fact.aggregateID}:${fact.durableSequence}`
   return null
+}
+
+function liveSignalKey(signal: NativeSignal) {
+  return JSON.stringify([signal.sessionID, signal.eventID])
+}
+
+function liveSignalBytes(signal: NativeSignal) {
+  return new TextEncoder().encode(JSON.stringify(signal)).byteLength
 }
 
 function pendingScopeSelection(state: TrackerState) {
@@ -237,8 +354,11 @@ function applyNative(state: TrackerState, fact: NativeFact) {
   state.gapActive = false
   if (fact.eventID)
     for (const member of state.members)
-      if (state.sessionIDs.has(fact.sessionID) || member.hasScopedSession(fact.sessionID))
+      if (state.sessionIDs.has(fact.sessionID) || member.hasScopedSession(fact.sessionID)) {
         member.recordLiveEvent(fact.eventID, fact.sessionID)
+        if (fact.signal)
+          member.recordLiveSignal({ ...fact.signal, sourceNativeRevision: state.nativeRevision })
+      }
   emit(state, "native", false)
 }
 
@@ -285,6 +405,11 @@ export class ObservationChangeTracker {
   private state: TrackerState
   private scopedSessionIDs = new Set<string>()
   private readonly liveEventIDs = new Map<string, string>()
+  private readonly liveSignals = new Map<string, { signal: NativeSignal; bytes: number }>()
+  private liveSignalBytes = 0
+  private readonly liveSignalTruncatedSessionIDs = new Set<string>()
+  private liveSignalTruncationUnknown = false
+  private preferredLiveSessionID: string | null = null
   private scopeSelectionReads = 0
 
   constructor(
@@ -369,8 +494,12 @@ export class ObservationChangeTracker {
     )
   }
 
-  trackScopedSessions(sessionIDs: Iterable<string>) {
+  trackScopedSessions(sessionIDs: Iterable<string>, preferredSessionID?: string) {
     this.scopedSessionIDs = new Set([...sessionIDs].slice(0, 500))
+    this.preferredLiveSessionID =
+      preferredSessionID && this.scopedSessionIDs.has(preferredSessionID)
+        ? preferredSessionID
+        : null
     drainPending(this.state)
   }
 
@@ -413,6 +542,46 @@ export class ObservationChangeTracker {
     return output
   }
 
+  peekLiveSignals(sessionIDs: ReadonlySet<string>) {
+    const signals = [...this.liveSignals.values()]
+      .map(({ signal }) => signal)
+      .filter((signal) => sessionIDs.has(signal.sessionID))
+      .toSorted((left, right) => {
+        const preferred =
+          Number(right.sessionID === this.preferredLiveSessionID) -
+          Number(left.sessionID === this.preferredLiveSessionID)
+        return preferred || left.sourceNativeRevision - right.sourceNativeRevision
+      })
+    return {
+      signals,
+      truncated: this.liveSignalTruncationUnknown || this.hasTruncatedSession(sessionIDs),
+    }
+  }
+
+  private hasTruncatedSession(sessionIDs: ReadonlySet<string>) {
+    for (const sessionID of sessionIDs)
+      if (this.liveSignalTruncatedSessionIDs.has(sessionID)) return true
+    return false
+  }
+
+  private markLiveSignalsTruncated(sessionID: string) {
+    this.liveSignalTruncatedSessionIDs.delete(sessionID)
+    this.liveSignalTruncatedSessionIDs.add(sessionID)
+    while (this.liveSignalTruncatedSessionIDs.size > LIVE_SIGNAL_LIMITS.truncatedSessions) {
+      let oldest: string | undefined
+      for (const id of this.liveSignalTruncatedSessionIDs) {
+        if (id !== this.preferredLiveSessionID) {
+          oldest = id
+          break
+        }
+      }
+      const eviction = oldest ?? this.liveSignalTruncatedSessionIDs.values().next().value
+      if (eviction === undefined) break
+      this.liveSignalTruncatedSessionIDs.delete(eviction)
+      this.liveSignalTruncationUnknown = true
+    }
+  }
+
   recordLiveEvent(eventID: string, sessionID: string) {
     this.liveEventIDs.delete(eventID)
     this.liveEventIDs.set(eventID, sessionID)
@@ -420,8 +589,40 @@ export class ObservationChangeTracker {
       this.liveEventIDs.delete(this.liveEventIDs.keys().next().value!)
   }
 
+  recordLiveSignal(signal: NativeSignal) {
+    const key = liveSignalKey(signal)
+    if (this.liveSignals.has(key)) return
+    const bytes = liveSignalBytes(signal)
+    if (bytes > LIVE_SIGNAL_LIMITS.retainedBytes) {
+      this.markLiveSignalsTruncated(signal.sessionID)
+      return
+    }
+    while (
+      this.liveSignals.size >= LIVE_SIGNAL_LIMITS.flowEntries ||
+      this.liveSignalBytes + bytes > LIVE_SIGNAL_LIMITS.retainedBytes
+    ) {
+      const oldest = [...this.liveSignals.entries()].find(
+        ([, retained]) => retained.signal.sessionID !== this.preferredLiveSessionID,
+      )
+      const eviction = oldest ?? this.liveSignals.entries().next().value
+      if (!eviction) {
+        this.markLiveSignalsTruncated(signal.sessionID)
+        return
+      }
+      this.liveSignals.delete(eviction[0])
+      this.liveSignalBytes -= eviction[1].bytes
+      this.markLiveSignalsTruncated(eviction[1].signal.sessionID)
+    }
+    this.liveSignals.set(key, { signal, bytes })
+    this.liveSignalBytes += bytes
+  }
+
   clearLiveEvents() {
     this.liveEventIDs.clear()
+    this.liveSignals.clear()
+    this.liveSignalBytes = 0
+    this.liveSignalTruncatedSessionIDs.clear()
+    this.liveSignalTruncationUnknown = false
   }
 
   observeStamp(stamp: SourceStamp) {
@@ -472,6 +673,10 @@ export class ObservationChangeTracker {
     this.scopeSelectionReads = 0
     this.scopedSessionIDs.clear()
     this.liveEventIDs.clear()
+    this.liveSignals.clear()
+    this.liveSignalBytes = 0
+    this.liveSignalTruncatedSessionIDs.clear()
+    this.liveSignalTruncationUnknown = false
     if (!state.members.size) {
       if (state.registryKey) projectStates.delete(state.registryKey)
       state.pendingNative = []

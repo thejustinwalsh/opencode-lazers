@@ -101,6 +101,33 @@ test("independent projects keep requested intervals on the same timer", async ()
   await second.dispose()
 })
 
+test("exact project status isolates registrations and distinguishes scheduled, draining, and disposed", async () => {
+  const clock = new Clock()
+  const scheduler = new SchedulerCoordinator(clock)
+  const pending = deferred()
+  const a = scheduler.register("project-a", {
+    intervalMs: 2000,
+    run: () => pending.promise,
+  })
+  const b = scheduler.register("project-b", { intervalMs: 2000, run: () => {} })
+
+  expect(scheduler.projectStatus("project-a")).toEqual({ status: "scheduled", participants: 1 })
+  expect(scheduler.projectStatus("project-b")).toEqual({ status: "scheduled", participants: 1 })
+  expect(scheduler.projectStatus("project-missing")).toEqual({ status: "absent", participants: 0 })
+  await clock.advance(0)
+  expect(scheduler.projectStatus("project-a")).toEqual({ status: "draining", participants: 1 })
+  expect(scheduler.projectStatus("project-b")).toEqual({ status: "scheduled", participants: 1 })
+
+  const disposal = a.dispose()
+  expect(scheduler.projectStatus("project-a")).toEqual({ status: "draining", participants: 0 })
+  pending.resolve()
+  await disposal
+  expect(scheduler.projectStatus("project-a")).toEqual({ status: "absent", participants: 0 })
+  expect(scheduler.projectStatus("project-b")).toEqual({ status: "scheduled", participants: 1 })
+  await b.dispose()
+  expect(scheduler.projectStatus("project-b")).toEqual({ status: "absent", participants: 0 })
+})
+
 test("slow reconciliation never overlaps, coalesces requests, and does not block other projects", async () => {
   const clock = new Clock()
   const scheduler = new SchedulerCoordinator(clock)

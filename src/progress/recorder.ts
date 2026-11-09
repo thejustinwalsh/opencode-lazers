@@ -9,6 +9,7 @@ import type { RunnerStore } from "../runner/store.ts"
 import { privacyStats, safeError, safeText } from "../trajectory/privacy.ts"
 import { publicProgressError, visibleProgressText } from "./privacy.ts"
 import { ProgressInput } from "./schema.ts"
+import { observeFileTargets } from "./file-target.ts"
 
 export type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -129,6 +130,8 @@ const object = (value: unknown): JsonObject | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
     : undefined
+
+const targetOnlyTool = (value: unknown) => value === "read" || value === "edit" || value === "patch"
 
 const text = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined)
 
@@ -1104,6 +1107,11 @@ export class ProgressRecorder {
       .query<
         {
           seq: number
+          project_id: string
+          plan_id: string
+          task_id: string
+          attempt_id: string
+          session_id: string
           at: number
           recorded_at: number | null
           source: string
@@ -1116,7 +1124,7 @@ export class ProgressRecorder {
         },
         [string, string]
       >(
-        "SELECT seq,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,payload FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
+        "SELECT seq,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,payload FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
       )
       .get(directory, fact.dedupeKey)
     // All callers hold the repository's immediate transaction. Check the durable
@@ -1153,6 +1161,31 @@ export class ProgressRecorder {
       }
       throw new Error("Progress fact disappeared during append")
     }
+    let existingPayload: JsonObject | undefined
+    if (existing.kind === "tool" && fact.kind === "tool") {
+      let prior: JsonObject
+      try {
+        const parsed: unknown = JSON.parse(existing.payload)
+        prior = object(parsed) ?? {}
+      } catch {
+        return existing.seq
+      }
+      existingPayload = prior
+      if (
+        existing.project_id !== assignment.projectID ||
+        existing.plan_id !== assignment.planID ||
+        existing.task_id !== assignment.taskID ||
+        existing.attempt_id !== assignment.attemptID ||
+        existing.session_id !== assignment.sessionID ||
+        existing.call_id !== (fact.callID ?? null) ||
+        existing.message_id !== (fact.messageID ?? null) ||
+        (text(prior.tool) &&
+          text(fact.payload.tool) &&
+          text(prior.tool) !== text(fact.payload.tool))
+      )
+        return existing.seq
+    }
+    if (targetOnlyTool(existingPayload?.tool)) delete factPayload.content
     let priorPayload: JsonObject = {}
     try {
       priorPayload = object(JSON.parse(existing.payload)) ?? {}
@@ -1298,7 +1331,7 @@ export class ProgressRecorder {
     if (call.status === "error") {
       const error = errorView(call.error, stats)
       if (error !== undefined) payload.error = error
-    } else if (call.result) {
+    } else if (call.result && !targetOnlyTool(call.tool)) {
       const content = visibleContent(call.result.content, stats)
       if (content !== undefined) payload.content = content
       // Tool.Result.output is arbitrary data, not a public-content contract.
@@ -1312,6 +1345,105 @@ export class ProgressRecorder {
       callID: call.callID,
       messageID: call.messageID,
       payload,
+    })
+  }
+
+  /** Store only supported, bounded requested paths for the exact active native call. */
+  recordToolTargets(call: {
+    tool: string
+    sessionID: string
+    agent: string
+    messageID: string
+    callID: string
+    input: unknown
+  }): number | undefined {
+    if (
+      call.agent !== "lazers-implementor" ||
+      !call.tool ||
+      call.tool.length > 160 ||
+      !call.sessionID ||
+      call.sessionID.length > 200 ||
+      !call.messageID ||
+      call.messageID.length > 200 ||
+      !call.callID ||
+      call.callID.length > 200
+    )
+      return undefined
+
+    const initial = this.assignmentForSession(call.sessionID)
+    if (!initial || !activeAttempt(initial.attemptState)) return undefined
+    const fileTargets = observeFileTargets(call.tool, call.input, initial.workspace)
+    if (!fileTargets) return undefined
+
+    return this.store.atomic((db) => {
+      const assignment = this.assignmentQuery(db, "session", call.sessionID)
+      if (
+        !assignment ||
+        !activeAttempt(assignment.attemptState) ||
+        assignment.projectID !== initial.projectID ||
+        assignment.planID !== initial.planID ||
+        assignment.taskID !== initial.taskID ||
+        assignment.attemptID !== initial.attemptID ||
+        assignment.sessionID !== initial.sessionID ||
+        assignment.assignedMessageID !== initial.assignedMessageID ||
+        assignment.workspace !== initial.workspace
+      )
+        return undefined
+
+      const dedupeKey = `tool:${call.sessionID}:${call.callID}`
+      const existing = db
+        .query<
+          {
+            seq: number
+            project_id: string
+            plan_id: string
+            task_id: string
+            attempt_id: string
+            session_id: string
+            call_id: string | null
+            message_id: string | null
+            kind: string
+            payload: string
+          },
+          [string, string]
+        >(
+          `SELECT seq,project_id,plan_id,task_id,attempt_id,session_id,call_id,message_id,kind,payload
+           FROM runner_progress WHERE project_directory=? AND dedupe_key=?`,
+        )
+        .get(this.store.repository.projectDirectory, dedupeKey)
+      if (existing) {
+        let prior: JsonObject
+        try {
+          prior = object(JSON.parse(existing.payload)) ?? {}
+        } catch {
+          return undefined
+        }
+        if (
+          existing.kind !== "tool" ||
+          existing.project_id !== assignment.projectID ||
+          existing.plan_id !== assignment.planID ||
+          existing.task_id !== assignment.taskID ||
+          existing.attempt_id !== assignment.attemptID ||
+          existing.session_id !== assignment.sessionID ||
+          existing.call_id !== call.callID ||
+          existing.message_id !== call.messageID ||
+          text(prior.tool) !== call.tool ||
+          prior.status === "succeeded" ||
+          prior.status === "failed"
+        )
+          return undefined
+      }
+
+      return this.appendIn(db, assignment, {
+        source: "tool-hook",
+        sourceType: "tool-hook.execute.before",
+        kind: "tool",
+        dedupeKey,
+        at: Date.now(),
+        callID: call.callID,
+        messageID: call.messageID,
+        payload: { tool: call.tool, fileTargets },
+      })
     })
   }
 
@@ -1391,10 +1523,8 @@ export class ProgressRecorder {
             : undefined,
       })
       if (toolTiming) payload.timing = toolTiming
-      if (type === "session.tool.success" || type === "session.tool.failed") {
-        const content = visibleContent(data.content, stats)
-        if (content !== undefined) payload.content = content
-      }
+      // Native terminal content cannot be safely associated with a file operation
+      // when the call input event is absent or delayed. Keep terminal evidence only.
       if (type === "session.tool.failed") {
         const error = errorView(data.error, stats)
         if (error !== undefined) payload.error = error
@@ -2046,7 +2176,7 @@ export class ProgressRecorder {
         },
       ],
     }
-    if (status === "completed" || status === "error") {
+    if ((status === "completed" || status === "error") && !targetOnlyTool(text(part.name))) {
       const content = visibleContent(state?.content, stats)
       if (content !== undefined) payload.content = content
     }
