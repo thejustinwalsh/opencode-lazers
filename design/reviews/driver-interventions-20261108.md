@@ -135,3 +135,21 @@ Architect was actively reading remote/context integration code, and original
 LZ-181 worker was patching retained-reverify.test.ts. This shows continued work;
 it does not establish why the earlier discovery probes failed or prove the
 remaining test failures resolved.
+
+## Native single-fetch use and parallel remote-source feature
+
+Architect submitted LZ-193, task1f8714b6-38d5-42da-8347-39ffc513c813,
+and started plane8bf7885-fd38-4170-8ce6-cbb1d68cb2c4 through native controls.
+The new worker ses_dd92813879ab4e0da0f5d1c8b5a197d4 started at
+Unix1794184771769 and uses OpenAI gpt-6-luna/max. It ran concurrently with the
+original LZ-181 worker; neither was replaced by the driver.
+
+Its first completed Code Mode call, msg_1bdbef93c001haDoyWUCxmtBOb,
+returned a7160-character readable task bundle: objective/acceptance, guidance,
+verification, references, optional skills, and cached source context for
+src/context/index.ts, processor.ts, tools.ts and src/index.ts. Source included
+focused original lines and compressed outlines. This proves live consumption
+of the consolidated startup path, not measured token savings or completion.
+Subsequent direct source reads proceeded normally. Both workers remained active
+at the next native session observation. Remote-source implementation, real
+upstream probe, acceptance and integration are still pending.
