@@ -1,11 +1,124 @@
 import type { Database } from "bun:sqlite"
+import { Buffer } from "node:buffer"
 import { fingerprint } from "../../identity.ts"
+import { z } from "zod"
 import { RetainedVerificationSchema } from "./schema.ts"
 import type {
   RetainedVerification,
   RetainedVerificationCheck,
   RetainedVerificationEvidence,
 } from "./schema.ts"
+
+const RetainedVerificationCursorPosition = z.strictObject({
+  taskID: z.uuid(),
+  generation: z.int().positive().max(Number.MAX_SAFE_INTEGER),
+})
+const RetainedVerificationCursor = z.strictObject({
+  version: z.literal(1),
+  planID: z.uuid(),
+  scope: z.string().regex(/^[a-f0-9]{64}$/),
+  taskIDs: z.array(z.uuid()).min(1).max(100),
+  watermark: z.array(z.int().min(0).max(Number.MAX_SAFE_INTEGER)).min(1).max(100),
+  after: RetainedVerificationCursorPosition,
+  totalChanges: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  dataVersion: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  checksum: z.string().regex(/^[a-f0-9]{64}$/),
+})
+
+export type RetainedHumanEvidenceRequirements = ReadonlyMap<
+  string,
+  {
+    planRevision: number
+    planVersion: number
+    taskRevision: number
+    taskAssertionIDs: string[] | null
+    combinedAssertionIDs: string[] | null
+  }
+>
+
+type RetainedCheckProjection = {
+  phase: "task" | "combined" | null
+  binding: "matched" | "mismatched" | "unknown"
+  checkID: string
+  state: "intended" | "completed" | "uncertain" | "unknown"
+  candidateArtifact: string | null
+  inputFingerprint: string | null
+  environmentFingerprint: string | null
+  reservedAt: number | null
+  receipt: "recorded" | "not-recorded" | "unusable"
+  evidenceReference: string
+  result: {
+    status: "passed" | "failed" | "unknown"
+    exitCode: number | null
+    timedOut: boolean | null
+    startedAt: number | null
+    endedAt: number | null
+    durationMs: number | null
+    output: "recorded" | "truncated" | "not-recorded"
+  }
+  cleanupState: "pending" | "complete" | "failed" | "unknown"
+}
+
+export type RetainedVerificationProjection = {
+  recordStatus: "recorded" | "unavailable"
+  operationID: string | null
+  planID: string
+  generation: number | null
+  taskID: string | null
+  taskRevision: number | null
+  planRevision: number | null
+  planVersion: number | null
+  attemptID: string | null
+  candidateArtifact: string | null
+  combinedArtifact: string | null
+  state: RetainedVerification["state"] | "unknown"
+  reason: string
+  inputFingerprint: string | null
+  combinedInputFingerprint: string | null
+  environmentFingerprint: string | null
+  timestamps: { createdAt: number | null; updatedAt: number | null }
+  checksAvailable: boolean
+  checks: RetainedCheckProjection[]
+  checksTruncated: boolean
+  humanEvidence: {
+    status: "not-applicable" | "known" | "unavailable" | "not-inspected"
+    phase: "task" | "combined" | null
+    missingAssertionIDs: string[]
+  }
+  cleanup: {
+    state: RetainedVerification["cleanupState"] | "unknown"
+    workspaceStates: {
+      task: "reserved" | "owned" | "uncertain" | "removed" | "unknown" | null
+      combined: "reserved" | "owned" | "uncertain" | "removed" | "unknown" | null
+    }
+    resourcesAvailable: boolean
+    resourcesByState: Record<"creating" | "active" | "uncertain" | "removed" | "unknown", number>
+    completedAt: number | null
+  }
+}
+
+export type RetainedVerificationInspection = {
+  mode: "retained-verifications"
+  status: "available" | "partial" | "unavailable"
+  planID: string
+  taskIDs: string[]
+  capturedGenerationWatermark: Array<{ taskID: string; generation: number }> | null
+  availability: {
+    operations: boolean
+    checks: boolean
+    resources: boolean
+    humanEvidence: boolean
+  }
+  latest: RetainedVerificationProjection[]
+  history: {
+    limit: number
+    returned: number
+    hasMore: boolean
+    nextCursor: string | null
+    concurrentChanges: "runner-database-writes-invalidate-cursor"
+    records: RetainedVerificationProjection[]
+  }
+}
 
 export function ensureRetainedVerificationTables(db: Database): void {
   db.exec(`
@@ -535,4 +648,666 @@ export function latestRetainedVerificationGeneration(
       )
       .get(projectDirectory, planID, taskID)?.generation ?? 0
   )
+}
+
+type InspectionOperationRow = {
+  id: string
+  task_id: string
+  generation: number
+  payload: string | null
+  payload_too_large: number
+}
+type InspectionCheckRow = {
+  phase: string
+  check_id: string
+  artifact: string
+  input_fingerprint: string
+  environment_identity: string
+  state: string
+  receipt: string | null
+  receipt_too_large: number
+  cleanup_state: string
+  created_at: number
+}
+type InspectionResourceRow = {
+  state: string
+  count: number
+  last_updated_at: number | null
+}
+
+const retainedStates = [
+  "pending",
+  "task-checks",
+  "combined-checks",
+  "waiting-human",
+  "waiting-human-combined",
+  "task-accepted",
+  "accepted",
+  "failed",
+  "held",
+  "cancelled",
+] as const
+const retainedCleanupStates = ["pending", "complete", "failed"] as const
+const retainedWorkspaceStates = ["reserved", "owned", "uncertain", "removed"] as const
+const resourceStates = ["creating", "active", "uncertain", "removed"] as const
+const retainedHash = /^[a-f0-9]{64}$/
+
+function tablePresent(db: Database, name: string): boolean {
+  return Boolean(
+    db
+      .query<{ present: number }, [string]>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+      )
+      .get(name),
+  )
+}
+
+function retainedReadFence(db: Database) {
+  return {
+    totalChanges: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
+      .changes,
+    dataVersion: db.query<{ data_version: number }, []>("PRAGMA data_version").get()!.data_version,
+  }
+}
+
+function retainedCursorScope(projectDirectory: string, planID: string, taskIDs: string[]) {
+  return fingerprint({ projectDirectory, planID, taskIDs })
+}
+
+function decodeRetainedCursor(cursor: string) {
+  if (cursor.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(cursor))
+    throw new Error("Invalid retained-verification cursor")
+  let parsed: unknown
+  try {
+    const decoded = Buffer.from(cursor, "base64url")
+    if (decoded.toString("base64url") !== cursor) throw new Error("non-canonical cursor")
+    parsed = JSON.parse(decoded.toString("utf8"))
+  } catch {
+    throw new Error("Invalid retained-verification cursor")
+  }
+  const result = RetainedVerificationCursor.safeParse(parsed)
+  if (!result.success) throw new Error("Invalid retained-verification cursor")
+  const { checksum, ...body } = result.data
+  if (fingerprint(body) !== checksum) throw new Error("Invalid retained-verification cursor")
+  if (
+    new Set(result.data.taskIDs).size !== result.data.taskIDs.length ||
+    result.data.taskIDs.some(
+      (taskID, index) => index > 0 && taskID <= result.data.taskIDs[index - 1]!,
+    ) ||
+    result.data.watermark.length !== result.data.taskIDs.length ||
+    !result.data.taskIDs.includes(result.data.after.taskID)
+  )
+    throw new Error("Invalid retained-verification cursor")
+  return result.data
+}
+
+function encodeRetainedCursor(input: {
+  planID: string
+  projectDirectory: string
+  taskIDs: string[]
+  watermark: number[]
+  after: { taskID: string; generation: number }
+  totalChanges: number
+  dataVersion: number
+}) {
+  const body = {
+    version: 1 as const,
+    planID: input.planID,
+    scope: retainedCursorScope(input.projectDirectory, input.planID, input.taskIDs),
+    taskIDs: input.taskIDs,
+    watermark: input.watermark,
+    after: input.after,
+    totalChanges: input.totalChanges,
+    dataVersion: input.dataVersion,
+  }
+  const cursor = Buffer.from(JSON.stringify({ ...body, checksum: fingerprint(body) })).toString(
+    "base64url",
+  )
+  if (cursor.length > 8192) throw new Error("Retained-verification selection is too large to page")
+  return cursor
+}
+
+function safeTimestamp(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function safeHash(value: unknown): string | null {
+  return typeof value === "string" && retainedHash.test(value) ? value : null
+}
+
+function jsonValue(value: string | null): unknown {
+  if (value === null) return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return undefined
+  }
+}
+
+function stateReason(state: RetainedVerificationProjection["state"]): string {
+  switch (state) {
+    case "pending":
+      return "Retained verification is reserved; runtime setup and progress are pending."
+    case "task-checks":
+      return "Task verification checks are in progress under runtime control."
+    case "combined-checks":
+      return "Combined verification checks are in progress under runtime control."
+    case "waiting-human":
+      return "Task acceptance is waiting for required human evidence."
+    case "waiting-human-combined":
+      return "Combined acceptance is waiting for required human evidence."
+    case "task-accepted":
+      return "Task checks and task acceptance passed; combined verification may remain."
+    case "accepted":
+      return "Retained verification was accepted; resource cleanup is reported separately."
+    case "failed":
+      return "Retained verification did not pass."
+    case "held":
+      return "Runtime retained a hold; the private hold reason is not included."
+    case "cancelled":
+      return "Retained verification was cancelled; resource cleanup is reported separately."
+    default:
+      return "Retained verification state is unavailable or unrecognized."
+  }
+}
+
+function knownState<T extends string>(value: string, values: readonly T[]): T | "unknown" {
+  return values.includes(value as T) ? (value as T) : "unknown"
+}
+
+function emptyResourceCounts(): RetainedVerificationProjection["cleanup"]["resourcesByState"] {
+  return { creating: 0, active: 0, uncertain: 0, removed: 0, unknown: 0 }
+}
+
+function operationPayload(row: InspectionOperationRow, planID: string, projectDirectory: string) {
+  if (!row.payload || row.payload_too_large) return undefined
+  const parsed = RetainedVerificationSchema.safeParse(jsonValue(row.payload))
+  if (!parsed.success) return undefined
+  const operation = parsed.data
+  return operation.id === row.id &&
+    operation.planID === planID &&
+    operation.projectDirectory === projectDirectory &&
+    operation.taskID === row.task_id &&
+    operation.generation === row.generation
+    ? operation
+    : undefined
+}
+
+function emptyProjection(
+  row: InspectionOperationRow,
+  planID: string,
+  checksAvailable: boolean,
+  resourcesAvailable: boolean,
+  isLatest: boolean,
+): RetainedVerificationProjection {
+  const safeID = z.uuid().safeParse(row.id)
+  const safeTask = z.uuid().safeParse(row.task_id)
+  return {
+    recordStatus: "unavailable",
+    operationID: safeID.success ? safeID.data : null,
+    planID,
+    generation: Number.isSafeInteger(row.generation) && row.generation > 0 ? row.generation : null,
+    taskID: safeTask.success ? safeTask.data : null,
+    taskRevision: null,
+    planRevision: null,
+    planVersion: null,
+    attemptID: null,
+    candidateArtifact: null,
+    combinedArtifact: null,
+    state: "unknown",
+    reason: stateReason("unknown"),
+    inputFingerprint: null,
+    combinedInputFingerprint: null,
+    environmentFingerprint: null,
+    timestamps: { createdAt: null, updatedAt: null },
+    checksAvailable,
+    checks: [],
+    checksTruncated: false,
+    humanEvidence: {
+      status: isLatest ? "unavailable" : "not-inspected",
+      phase: null,
+      missingAssertionIDs: [],
+    },
+    cleanup: {
+      state: "unknown",
+      workspaceStates: { task: "unknown", combined: "unknown" },
+      resourcesAvailable,
+      resourcesByState: emptyResourceCounts(),
+      completedAt: null,
+    },
+  }
+}
+
+function operationProjection(
+  db: Database,
+  row: InspectionOperationRow,
+  planID: string,
+  projectDirectory: string,
+  tables: { checks: boolean; resources: boolean; evidence: boolean },
+  isLatest: boolean,
+  requirements: RetainedHumanEvidenceRequirements,
+): RetainedVerificationProjection {
+  const operation = operationPayload(row, planID, projectDirectory)
+  if (!operation) return emptyProjection(row, planID, tables.checks, tables.resources, isLatest)
+
+  const checkRows = tables.checks
+    ? db
+        .query<InspectionCheckRow, [string]>(
+          `SELECT
+             CASE WHEN length(phase)<=16 THEN phase ELSE '' END AS phase,
+             CASE WHEN length(check_id)<=64 THEN check_id ELSE '' END AS check_id,
+             CASE WHEN length(artifact)<=64 THEN artifact ELSE '' END AS artifact,
+             CASE WHEN length(input_fingerprint)<=128 THEN input_fingerprint ELSE '' END AS input_fingerprint,
+             CASE WHEN length(environment_identity)<=4096 THEN environment_identity ELSE '' END AS environment_identity,
+             CASE WHEN length(state)<=32 THEN state ELSE '' END AS state,
+             CASE WHEN receipt IS NULL OR length(receipt)<=100000 THEN receipt ELSE NULL END AS receipt,
+             (receipt IS NOT NULL AND length(receipt)>100000) AS receipt_too_large,
+             CASE WHEN length(cleanup_state)<=32 THEN cleanup_state ELSE '' END AS cleanup_state,
+             created_at
+           FROM runner_retained_verification_checks
+           WHERE operation_id=?
+           ORDER BY created_at DESC,phase,check_id LIMIT 201`,
+        )
+        .all(operation.id)
+    : []
+  const checksTruncated = checkRows.length > 200
+  const resourceRows = tables.resources
+    ? db
+        .query<InspectionResourceRow, [string, string]>(
+          `SELECT CASE WHEN state IN ('creating','active','uncertain','removed') THEN state ELSE 'unknown' END AS state,
+             COUNT(*) AS count,MAX(updated_at) AS last_updated_at
+           FROM runner_retained_verification_resources
+           WHERE project_directory=? AND operation_id=?
+           GROUP BY CASE WHEN state IN ('creating','active','uncertain','removed') THEN state ELSE 'unknown' END`,
+        )
+        .all(projectDirectory, operation.id)
+    : []
+  const resourcesByState = emptyResourceCounts()
+  let removedUpdatedAt: number | null = null
+  for (const resource of resourceRows) {
+    const state = knownState(resource.state, resourceStates)
+    resourcesByState[state] += resource.count
+    if (state === "removed") removedUpdatedAt = safeTimestamp(resource.last_updated_at)
+  }
+  const resourceCount = Object.values(resourcesByState).reduce((sum, count) => sum + count, 0)
+  const operationCleanupState = knownState(operation.cleanupState, retainedCleanupStates)
+  const cleanupCompletedAt =
+    tables.resources &&
+    operationCleanupState === "complete" &&
+    resourceCount > 0 &&
+    resourcesByState.removed === resourceCount
+      ? removedUpdatedAt
+      : null
+
+  const checks = checkRows.slice(0, 200).map((check): RetainedCheckProjection => {
+    const phase = check.phase === "task" || check.phase === "combined" ? check.phase : null
+    const expectedArtifact =
+      phase === "task"
+        ? operation.artifact
+        : phase === "combined"
+          ? operation.combinedArtifact
+          : null
+    const binding =
+      phase === null
+        ? "unknown"
+        : expectedArtifact !== null && check.artifact === expectedArtifact
+          ? "matched"
+          : "mismatched"
+    const rowState = knownState(check.state, ["intended", "completed", "uncertain"] as const)
+    const receiptValue = check.receipt_too_large ? undefined : jsonValue(check.receipt)
+    const receipt =
+      receiptValue && typeof receiptValue === "object" && !Array.isArray(receiptValue)
+        ? (receiptValue as Record<string, unknown>)
+        : undefined
+    const receiptMatches =
+      binding === "matched" &&
+      receipt !== undefined &&
+      receipt.id === check.check_id &&
+      receipt.artifact === expectedArtifact &&
+      receipt.inputIdentity === expectedArtifact &&
+      receipt.environmentIdentity === check.environment_identity
+    const checkID = /^[a-z][a-z0-9-]{0,63}$/.test(check.check_id) ? check.check_id : "unknown"
+    const receiptStatus =
+      check.receipt === null && !check.receipt_too_large
+        ? "not-recorded"
+        : receiptMatches
+          ? "recorded"
+          : "unusable"
+    const receiptStartedAt = receiptMatches ? safeTimestamp(receipt.startedAt) : null
+    const receiptEndedAt = receiptMatches ? safeTimestamp(receipt.endedAt) : null
+    const validTiming =
+      receiptStartedAt !== null && receiptEndedAt !== null && receiptEndedAt >= receiptStartedAt
+    const exitCode =
+      receiptMatches &&
+      (receipt.exitCode === null ||
+        (typeof receipt.exitCode === "number" && Number.isSafeInteger(receipt.exitCode)))
+        ? (receipt.exitCode as number | null)
+        : null
+    const timedOut =
+      receiptMatches && typeof receipt.timedOut === "boolean" ? receipt.timedOut : null
+    const resultStatus =
+      rowState !== "completed" || !receiptMatches
+        ? "unknown"
+        : timedOut === true || (exitCode !== null && exitCode !== 0)
+          ? "failed"
+          : timedOut === false && exitCode === 0
+            ? "passed"
+            : "unknown"
+    const outputTruncated =
+      receiptMatches &&
+      [receipt.stdout, receipt.stderr].some(
+        (value) => typeof value === "string" && value.includes("[output truncated]"),
+      )
+    return {
+      phase,
+      binding,
+      checkID,
+      state: rowState,
+      candidateArtifact: binding === "matched" ? expectedArtifact : null,
+      inputFingerprint: safeHash(check.input_fingerprint),
+      environmentFingerprint:
+        typeof check.environment_identity === "string" && check.environment_identity.length <= 4096
+          ? fingerprint(check.environment_identity)
+          : null,
+      reservedAt: safeTimestamp(check.created_at),
+      receipt: receiptStatus,
+      evidenceReference: `retained-verification:${operation.id}:${operation.generation}:${phase ?? "unknown"}:${checkID}`,
+      result: {
+        status: resultStatus,
+        exitCode,
+        timedOut,
+        startedAt: validTiming ? receiptStartedAt : null,
+        endedAt: validTiming ? receiptEndedAt : null,
+        durationMs: validTiming ? receiptEndedAt! - receiptStartedAt! : null,
+        output: !receiptMatches ? "not-recorded" : outputTruncated ? "truncated" : "recorded",
+      },
+      cleanupState: knownState(check.cleanup_state, retainedCleanupStates),
+    }
+  })
+
+  const state = knownState(operation.state, retainedStates)
+  let humanEvidence: RetainedVerificationProjection["humanEvidence"] = {
+    status: "not-applicable",
+    phase: null,
+    missingAssertionIDs: [],
+  }
+  const humanPhase =
+    state === "waiting-human" ? "task" : state === "waiting-human-combined" ? "combined" : null
+  if (isLatest && humanPhase) {
+    const requirement = requirements.get(operation.taskID)
+    const assertionIDs =
+      requirement &&
+      requirement.planRevision === operation.planRevision &&
+      requirement.planVersion === operation.planVersion &&
+      requirement.taskRevision === operation.taskRevision
+        ? humanPhase === "task"
+          ? requirement.taskAssertionIDs
+          : requirement.combinedAssertionIDs
+        : null
+    const candidateArtifact =
+      humanPhase === "task" ? operation.artifact : operation.combinedArtifact
+    if (!tables.evidence || assertionIDs === null || candidateArtifact === null) {
+      humanEvidence = { status: "unavailable", phase: humanPhase, missingAssertionIDs: [] }
+    } else {
+      const uniqueIDs = [
+        ...new Set(assertionIDs.filter((id) => /^[a-z][a-z0-9-]{0,63}$/.test(id))),
+      ].sort()
+      const taskID = humanPhase === "task" ? operation.taskID : null
+      const existing = uniqueIDs.length
+        ? db
+            .query<
+              { assertion_id: string },
+              [string, number, string, string | null, string, ...string[]]
+            >(
+              `SELECT DISTINCT assertion_id FROM runner_retained_verification_evidence
+               WHERE operation_id=? AND generation=? AND phase=? AND task_id IS ? AND artifact=?
+                 AND assertion_id IN (${uniqueIDs.map(() => "?").join(",")})`,
+            )
+            .all(
+              operation.id,
+              operation.generation,
+              humanPhase,
+              taskID,
+              candidateArtifact,
+              ...uniqueIDs,
+            )
+            .map((row) => row.assertion_id)
+        : []
+      humanEvidence = {
+        status: "known",
+        phase: humanPhase,
+        missingAssertionIDs: uniqueIDs.filter((id) => !existing.includes(id)),
+      }
+    }
+  }
+
+  return {
+    recordStatus: "recorded",
+    operationID: operation.id,
+    planID: operation.planID,
+    generation: operation.generation,
+    taskID: operation.taskID,
+    taskRevision: operation.taskRevision,
+    planRevision: operation.planRevision,
+    planVersion: operation.planVersion,
+    attemptID: operation.attemptID,
+    candidateArtifact: operation.artifact,
+    combinedArtifact: operation.combinedArtifact,
+    state,
+    reason: stateReason(state),
+    inputFingerprint: safeHash(operation.inputFingerprint),
+    combinedInputFingerprint: safeHash(operation.combinedInputFingerprint),
+    environmentFingerprint:
+      typeof operation.environmentIdentity === "string" &&
+      operation.environmentIdentity.length <= 4096
+        ? fingerprint(operation.environmentIdentity)
+        : null,
+    timestamps: {
+      createdAt: safeTimestamp(operation.createdAt),
+      updatedAt: safeTimestamp(operation.updatedAt),
+    },
+    checksAvailable: tables.checks,
+    checks,
+    checksTruncated,
+    humanEvidence,
+    cleanup: {
+      state: operationCleanupState,
+      workspaceStates: {
+        task:
+          operation.taskWorkspaceState === null
+            ? null
+            : knownState(operation.taskWorkspaceState, retainedWorkspaceStates),
+        combined:
+          operation.combinedWorkspaceState === null
+            ? null
+            : knownState(operation.combinedWorkspaceState, retainedWorkspaceStates),
+      },
+      resourcesAvailable: tables.resources,
+      resourcesByState,
+      completedAt: cleanupCompletedAt,
+    },
+  }
+}
+
+/**
+ * Read the latest retained-verification generation per selected task and page
+ * older generations. This path never creates optional tables or reads receipt,
+ * command, workspace, resource-path, or environment contents into its output.
+ */
+export function retainedVerificationsForInspection(
+  db: Database,
+  projectDirectory: string,
+  planID: string,
+  requestedTaskIDs: string[] | undefined,
+  limit: number,
+  cursor?: string,
+  humanRequirements: RetainedHumanEvidenceRequirements = new Map(),
+): RetainedVerificationInspection {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20)
+    throw new Error("Use a retained-verification page limit from 1 to 20")
+  const plan = db
+    .query<{ id: string }, [string, string]>(
+      "SELECT id FROM runner_plans WHERE id=? AND project_directory=?",
+    )
+    .get(planID, projectDirectory)
+  if (!plan) throw new Error("Plan not found")
+  const planTaskIDs = db
+    .query<{ task_id: string }, [string]>(
+      "SELECT task_id FROM runner_nodes WHERE plan_id=? ORDER BY task_id",
+    )
+    .all(planID)
+    .map((row) => row.task_id)
+  const decodedCursor = cursor === undefined ? undefined : decodeRetainedCursor(cursor)
+  if (decodedCursor && decodedCursor.planID !== planID)
+    throw new Error("Retained-verification cursor does not match this plan")
+  const selected = requestedTaskIDs ?? decodedCursor?.taskIDs ?? planTaskIDs
+  if (
+    selected.length < 1 ||
+    selected.length > 100 ||
+    new Set(selected).size !== selected.length ||
+    selected.some((taskID) => !planTaskIDs.includes(taskID))
+  )
+    throw new Error("Retained-verification task selection must belong to this plan")
+  const taskIDs = [...selected].sort()
+  if (decodedCursor) {
+    if (
+      decodedCursor.scope !==
+        retainedCursorScope(projectDirectory, planID, decodedCursor.taskIDs) ||
+      (requestedTaskIDs !== undefined &&
+        (taskIDs.length !== decodedCursor.taskIDs.length ||
+          taskIDs.some((taskID, index) => taskID !== decodedCursor.taskIDs[index])))
+    )
+      throw new Error("Retained-verification cursor does not match this project and task selection")
+    const afterIndex = decodedCursor.taskIDs.indexOf(decodedCursor.after.taskID)
+    if (afterIndex < 0 || decodedCursor.after.generation >= decodedCursor.watermark[afterIndex]!)
+      throw new Error("Invalid retained-verification cursor position")
+  }
+
+  const operationsAvailable = tablePresent(db, "runner_retained_verifications")
+  const tables = {
+    checks: tablePresent(db, "runner_retained_verification_checks"),
+    resources: tablePresent(db, "runner_retained_verification_resources"),
+    evidence: tablePresent(db, "runner_retained_verification_evidence"),
+  }
+  const availability = {
+    operations: operationsAvailable,
+    checks: tables.checks,
+    resources: tables.resources,
+    humanEvidence: tables.evidence,
+  }
+  if (!operationsAvailable)
+    return {
+      mode: "retained-verifications",
+      status: "unavailable",
+      planID,
+      taskIDs,
+      capturedGenerationWatermark: null,
+      availability,
+      latest: [],
+      history: {
+        limit,
+        returned: 0,
+        hasMore: false,
+        nextCursor: null,
+        concurrentChanges: "runner-database-writes-invalidate-cursor",
+        records: [],
+      },
+    }
+
+  const fence = retainedReadFence(db)
+  if (
+    decodedCursor &&
+    (decodedCursor.totalChanges !== fence.totalChanges ||
+      decodedCursor.dataVersion !== fence.dataVersion)
+  )
+    throw new Error("Retained-verification history changed since this page; restart the view")
+
+  const watermark = decodedCursor
+    ? decodedCursor.watermark
+    : taskIDs.map((taskID) => {
+        const latest = db
+          .query<{ generation: number | null }, [string, string, string]>(
+            `SELECT MAX(generation) AS generation FROM runner_retained_verifications
+             WHERE project_directory=? AND plan_id=? AND task_id=?`,
+          )
+          .get(projectDirectory, planID, taskID)
+        return latest?.generation ?? 0
+      })
+  const latestRows = taskIDs.flatMap((taskID, index) => {
+    const generation = watermark[index]!
+    if (!generation) return []
+    const row = db
+      .query<InspectionOperationRow, [string, string, string, number]>(
+        `SELECT id,task_id,generation,
+           CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
+           (length(payload)>65536) AS payload_too_large
+         FROM runner_retained_verifications
+         WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=? LIMIT 1`,
+      )
+      .get(projectDirectory, planID, taskID, generation)
+    return row ? [row] : []
+  })
+
+  const after = decodedCursor?.after
+  const historyCandidates = taskIDs.flatMap((taskID, index) => {
+    const generationWatermark = watermark[index]!
+    if (!generationWatermark || (after && taskID < after.taskID)) return []
+    const upperBound =
+      after?.taskID === taskID
+        ? Math.min(generationWatermark, after.generation)
+        : generationWatermark
+    if (upperBound <= 1) return []
+    return db
+      .query<InspectionOperationRow, [string, string, string, number, number]>(
+        `SELECT id,task_id,generation,
+           CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
+           (length(payload)>65536) AS payload_too_large
+         FROM runner_retained_verifications
+         WHERE project_directory=? AND plan_id=? AND task_id=? AND generation<?
+         ORDER BY generation DESC LIMIT ?`,
+      )
+      .all(projectDirectory, planID, taskID, upperBound, limit + 1)
+  })
+  historyCandidates.sort(
+    (left, right) =>
+      (left.task_id < right.task_id ? -1 : left.task_id > right.task_id ? 1 : 0) ||
+      right.generation - left.generation,
+  )
+  const historyHasMore = historyCandidates.length > limit
+  const historyRows = historyCandidates.slice(0, limit)
+  const project = (row: InspectionOperationRow, isLatest: boolean) =>
+    operationProjection(db, row, planID, projectDirectory, tables, isLatest, humanRequirements)
+  const records = historyRows.map((row) => project(row, false))
+  const last = historyRows.at(-1)
+  const nextCursor =
+    historyHasMore && last
+      ? encodeRetainedCursor({
+          planID,
+          projectDirectory,
+          taskIDs,
+          watermark,
+          after: { taskID: last.task_id, generation: last.generation },
+          ...fence,
+        })
+      : null
+  return {
+    mode: "retained-verifications",
+    status: tables.checks && tables.resources && tables.evidence ? "available" : "partial",
+    planID,
+    taskIDs,
+    capturedGenerationWatermark: taskIDs.map((taskID, index) => ({
+      taskID,
+      generation: watermark[index]!,
+    })),
+    availability,
+    latest: latestRows.map((row) => project(row, true)),
+    history: {
+      limit,
+      returned: records.length,
+      hasMore: historyHasMore,
+      nextCursor,
+      concurrentChanges: "runner-database-writes-invalidate-cursor",
+      records,
+    },
+  }
 }
