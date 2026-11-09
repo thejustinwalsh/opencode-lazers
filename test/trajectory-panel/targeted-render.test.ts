@@ -185,9 +185,10 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       undefined,
       taskValuationProvider,
     )
-    expect(() => reads.snapshot({ kind: "project", sessionID: "ses-owner" }, tracker)).toThrow(
-      "Observation scope is too large; narrow it",
-    )
+    // S8-2: bounded broad history does not change the panel's targeted-only reads.
+    const snapshot = reads.snapshot({ kind: "project", sessionID: "ses-owner" }, tracker)
+    expect(snapshot.transitions).toHaveLength(10_000)
+    expect(snapshot.coverage?.transitionsTruncated).toBe(true)
     const reference = fixture.repository.referenceFor(taskID)!
     const target = {
       requestID: "targeted-render-request",

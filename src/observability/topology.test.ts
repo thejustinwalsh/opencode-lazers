@@ -37,7 +37,10 @@ test("topology preserves the full current graph above the snapshot history ceili
     expect(topology.unplannedTasks).toEqual(original.unplannedTasks)
     expect(topology).not.toHaveProperty("transitions")
     expect(topology.boundary).not.toHaveProperty("transitionSequence")
-    expect(() => reads.snapshot(scope, tracker)).toThrow("Observation scope is too large")
+    // S8-2: broad history returns a bounded window; topology remains history-free.
+    const snapshot = reads.snapshot(scope, tracker)
+    expect(snapshot.transitions).toHaveLength(10_000)
+    expect(snapshot.coverage?.transitionsTruncated).toBe(true)
   } finally {
     fixture.close()
   }

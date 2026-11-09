@@ -819,3 +819,24 @@ returned the same fact count and final serialized size in
 but **F-S10-3 remains open** for synchronous growth and repeated price-snapshot
 parsing. A 1.2-second warm main-thread read is not claimed acceptable. No production
 data was changed, and no native Desktop CPU improvement is claimed.
+
+## Wave 5 checkpoint suite comparison
+
+At `dba860a`, full suite started **1794255690814** and ended **1794255982357**
+(Unix milliseconds): **1,787 pass / 7 fail**, 1,794 tests, 181 files,
+19,787 assertions, 291.50 seconds. Logs and metadata:
+`wave-5-checkpoint.{log,json}` in the baseline directory.
+
+The four original failures remain. Three additional failures were stale S8-2
+expectations that oversized snapshots throw: `src/observability/topology.test.ts`,
+`test/observability/registered.test.ts`, and
+`test/trajectory-panel/targeted-render.test.ts`. Updated only that expectation to
+assert the 10,000-row window and truthful truncation; the history-free topology,
+targeted RPC paging/isolation and targeted-rendering assertions remain intact.
+Each amended assertion names S8-2. These three files now pass **6 tests / 78
+assertions**, and `bun run verify` passes. Logs:
+`s8-history-fixtures.log`, `s8-history-fixtures-verify.log`.
+
+This is a full seven-failure checkpoint plus a passing targeted correction, not
+a claim of a fresh full-suite four-failure result. Wave 5 remains open for heavy
+synchronous Git operations and the remaining decision-capture growth/latency.

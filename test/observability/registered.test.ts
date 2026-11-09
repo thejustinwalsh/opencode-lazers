@@ -304,9 +304,13 @@ test("registered targeted trajectory RPCs remain usable when broad history is ov
       ),
     )
     const scope = { kind: "project" as const, sessionID: "ses-owner" }
-    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow(
-      "Observation scope is too large; narrow it",
-    )
+    // S8-2: broad history is bounded; targeted RPCs still read their exact scope.
+    const snapshot = (await Effect.runPromise(handlers!.snapshot({ scope }))) as {
+      transitions: unknown[]
+      coverage: { transitionsTruncated: boolean }
+    }
+    expect(snapshot.transitions).toHaveLength(10_000)
+    expect(snapshot.coverage.transitionsTruncated).toBe(true)
 
     const maxSequence = fixture.store.atomic(
       (db) =>
