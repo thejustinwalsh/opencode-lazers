@@ -6,7 +6,9 @@ import {
   NativeInteraction,
   type NativeActionResult,
   type NativeBinding,
+  nativeKeyUsesModifiers,
   type NativeOperation,
+  type NativeInteractionCapabilities,
   type NativeWindowReference,
 } from "./native-interaction-contract.ts"
 
@@ -31,6 +33,7 @@ type HostRecord = {
   binding: NativeBinding
   adapterID: string
   windows: NativeWindowReference[]
+  capabilities: { modifiedKeys: boolean }
   lastSeen: number
 }
 
@@ -68,6 +71,7 @@ export class NativeInteractionBroker {
     binding: NativeBinding
     adapterID: string
     windows: ReadonlyArray<NativeWindowReference>
+    capabilities?: NativeInteractionCapabilities
   }): void {
     this.assertBinding(input.binding)
     const current = this.host
@@ -81,6 +85,7 @@ export class NativeInteractionBroker {
       binding: input.binding,
       adapterID: input.adapterID,
       windows: this.validateWindows(input.windows),
+      capabilities: { modifiedKeys: input.capabilities?.modifiedKeys === true },
       lastSeen: this.now(),
     }
   }
@@ -89,14 +94,18 @@ export class NativeInteractionBroker {
     this.assertBinding(binding)
     const host = this.host
     if (host === undefined || !same(host.binding, binding)) {
-      return { ready: false, blocked: this.ambiguous, windows: [] as NativeWindowReference[] }
+      return {
+        ready: false,
+        blocked: this.ambiguous,
+        windows: [] as NativeWindowReference[],
+      }
     }
     const fresh = this.now() - host.lastSeen <= HOST_FRESH_MS
     return {
       ready: fresh,
       blocked: this.ambiguous,
       windows: fresh ? host.windows : [],
-      ...(fresh ? { adapterID: host.adapterID } : {}),
+      ...(fresh ? { adapterID: host.adapterID, capabilities: host.capabilities } : {}),
     }
   }
 
@@ -122,6 +131,22 @@ export class NativeInteractionBroker {
     }
     if (this.requests.size >= MAX_REQUESTS) {
       throw new Error("Native interaction history is full; start a new owned trial")
+    }
+    if (
+      input.operation.kind === "key" &&
+      nativeKeyUsesModifiers(input.operation.key) &&
+      !host.capabilities.modifiedKeys
+    ) {
+      this.requests.set(input.requestID, {
+        bindingKey: stable(input.binding),
+        request: { requestID: input.requestID, operation: input.operation },
+        state: "completed",
+        result: {
+          delivery: "not-delivered",
+          message: "Owned native adapter does not support modified key shortcuts",
+        },
+      })
+      return { state: "completed" as const }
     }
     const currentWindow = host.windows.find(
       (window) => window.windowID === input.operation.window.windowID,
@@ -159,11 +184,27 @@ export class NativeInteractionBroker {
     binding: NativeBinding
     adapterID: string
     windows: ReadonlyArray<NativeWindowReference>
+    capabilities?: NativeInteractionCapabilities
   }): NativeRequest | null {
     this.attach(input)
     if (this.ambiguous || this.activeRequest === undefined) return null
     const record = this.requests.get(this.activeRequest)
     if (record === undefined || record.state !== "queued") return null
+    const host = this.host
+    if (
+      host === undefined ||
+      (record.request.operation.kind === "key" &&
+        nativeKeyUsesModifiers(record.request.operation.key) &&
+        !host.capabilities.modifiedKeys)
+    ) {
+      record.state = "completed"
+      record.result = {
+        delivery: "not-delivered",
+        message: "Owned native adapter does not support modified key shortcuts",
+      }
+      this.activeRequest = undefined
+      return null
+    }
     record.state = "delivered"
     return record.request
   }

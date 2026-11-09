@@ -6,6 +6,8 @@ import { join } from "node:path"
 import { nativeBindingFromManifest, verifyOwnedLaunch } from "./owned-launch.ts"
 import {
   NativeInteraction,
+  parseNativeKey,
+  type NativeKey,
   type NativeActionResult,
   type NativeBinding,
   type NativeElement,
@@ -62,7 +64,11 @@ const ADAPTER_STARTUP_TIMEOUT_MS = 30_000
 
 export type NativeInputEvent =
   | { type: "mouseDown" | "mouseUp"; x: number; y: number; button: "left"; clickCount: 1 }
-  | { type: "keyDown" | "keyUp"; keyCode: string }
+  | {
+      type: "keyDown" | "keyUp"
+      keyCode: string
+      modifiers?: Array<"shift" | "control" | "alt" | "meta">
+    }
 
 export type NativeWebContents = {
   readonly id: number
@@ -269,8 +275,19 @@ export function dispatchNativeInput(
     if (operation.kind === "type") webContents.insertText(operation.text)
     return
   }
-  webContents.sendInputEvent({ type: "keyDown", keyCode: operation.key })
-  webContents.sendInputEvent({ type: "keyUp", keyCode: operation.key })
+  const key = parseNativeKey(operation.key)
+  if (key === undefined) throw new Error("Native key is not supported")
+  const keyInput = nativeKeyboardInput(key)
+  webContents.sendInputEvent({ type: "keyDown", ...keyInput })
+  webContents.sendInputEvent({ type: "keyUp", ...keyInput })
+}
+
+function nativeKeyboardInput(key: NativeKey): {
+  keyCode: string
+  modifiers?: Array<"shift" | "control" | "alt" | "meta">
+} {
+  if (key === "Ctrl+T") return { keyCode: "T", modifiers: ["control"] }
+  return { keyCode: key }
 }
 
 function stableValue(value: unknown): string {
@@ -347,6 +364,7 @@ export class NativeInteractionMainAdapter {
         binding,
         adapterID: this.adapterID,
         windows: this.windowReferences(),
+        capabilities: { modifiedKeys: true },
       })
     } catch (error) {
       throw new Error("Native adapter RPC attachment failed", { cause: error })
@@ -438,7 +456,12 @@ export class NativeInteractionMainAdapter {
       let command: { requestID: string; operation: NativeOperation } | null
       try {
         command = await this.rpc().poll(
-          { binding, adapterID: this.adapterID, windows: this.windowReferences() },
+          {
+            binding,
+            adapterID: this.adapterID,
+            windows: this.windowReferences(),
+            capabilities: { modifiedKeys: true },
+          },
           { signal: AbortSignal.any([this.ctx.signal, AbortSignal.timeout(2_000)]) },
         )
       } catch {
@@ -472,6 +495,9 @@ export class NativeInteractionMainAdapter {
   }
 
   private async execute(operation: NativeOperation): Promise<NativeActionResult> {
+    if (operation.kind === "key" && parseNativeKey(operation.key) === undefined) {
+      return { delivery: "not-delivered", message: "Native key is not supported" }
+    }
     const window = this.resolveWindow(operation.window)
     if (window === undefined)
       return { delivery: "not-delivered", message: "Native window reference is stale" }

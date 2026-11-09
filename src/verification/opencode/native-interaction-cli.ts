@@ -9,7 +9,10 @@ import {
   verifyOwnedSidecar,
 } from "./owned-launch.ts"
 import {
+  NATIVE_KEYS,
   NativeInteraction,
+  nativeKeyUsesModifiers,
+  parseNativeKey,
   type NativeOperation,
   type NativeWindowReference,
 } from "./native-interaction-contract.ts"
@@ -17,8 +20,6 @@ import {
 const REQUEST_TIMEOUT_MS = 30_000
 const RPC_TIMEOUT_MS = 3_000
 const POLL_INTERVAL_MS = 200
-const allowedKeys = new Set(["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown"])
-type NativeKey = "Enter" | "Escape" | "Tab" | "Backspace" | "ArrowUp" | "ArrowDown"
 
 type NativeKind = "snapshot" | "capture" | "focus" | "click" | "type" | "key"
 
@@ -32,6 +33,18 @@ export type NativeCommandInput = {
   key?: string
   output?: string
   confirmSafePage?: boolean
+}
+
+export type NativeInteractionCliDependencies = {
+  verifyOwnedLaunch: typeof verifyOwnedLaunch
+  beginNativeInteraction: typeof beginNativeInteraction
+  makeClient: typeof makeClient
+}
+
+const nativeInteractionDependencies: NativeInteractionCliDependencies = {
+  verifyOwnedLaunch,
+  beginNativeInteraction,
+  makeClient,
 }
 
 function makeClient(registration: { url: string; password: string }) {
@@ -76,10 +89,11 @@ function operation(input: NativeCommandInput, window: NativeWindowReference): Na
     }
     return { kind: "type", window, snapshotID, elementRef: input.elementRef, text: input.text }
   }
-  if (input.key === undefined || !allowedKeys.has(input.key)) {
-    throw new Error("Native key must be one of Enter, Escape, Tab, Backspace, ArrowUp or ArrowDown")
+  const key = parseNativeKey(input.key)
+  if (key === undefined) {
+    throw new Error(`Native key must be one of ${NATIVE_KEYS.join(", ")}`)
   }
-  return { kind: "key", window, snapshotID, key: input.key as NativeKey }
+  return { kind: "key", window, snapshotID, key }
 }
 
 function printResult(value: unknown): void {
@@ -102,6 +116,7 @@ export async function nativeInteractionStatus(root: string): Promise<void> {
     blocked: status.blocked,
     windows: status.windows,
     adapterID: status.adapterID,
+    capabilities: status.capabilities,
     interaction: proof.manifest.nativeInteraction ?? { state: "idle" },
     candidate: {
       workspace: proof.manifest.candidate.workspace,
@@ -112,18 +127,23 @@ export async function nativeInteractionStatus(root: string): Promise<void> {
   })
 }
 
-export async function runNativeInteraction(input: NativeCommandInput): Promise<void> {
+export async function runNativeInteraction(
+  input: NativeCommandInput,
+  dependencies: NativeInteractionCliDependencies = nativeInteractionDependencies,
+): Promise<void> {
   if (input.kind === "capture" && (input.output === undefined || !input.confirmSafePage)) {
     throw new Error("Rendered screenshots require --output <name.png> and --confirm-safe-page yes")
   }
-  const preflight = await verifyOwnedLaunch(input.root)
+  const preflight = await dependencies.verifyOwnedLaunch(input.root)
   const requestID = crypto.randomUUID()
-  const lease = await beginNativeInteraction(input.root, requestID, input.kind)
+  const lease = await dependencies.beginNativeInteraction(input.root, requestID, input.kind)
   let mayHaveReachedSidecar = false
   let finishAttempted = false
   try {
-    const proof = await verifyOwnedLaunch(input.root, { allowPendingInteraction: true })
-    const client = makeClient(proof.registration)
+    const proof = await dependencies.verifyOwnedLaunch(input.root, {
+      allowPendingInteraction: true,
+    })
+    const client = dependencies.makeClient(proof.registration)
     const info = await client.server.info({ signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
     if (info.pid !== proof.health.pid || info.version !== proof.health.version) {
       throw new Error("Authenticated owned sidecar identity changed")
@@ -140,6 +160,13 @@ export async function runNativeInteraction(input: NativeCommandInput): Promise<v
     }
     const target = nativeWindow(status.windows, input.windowID)
     const command = operation(input, target)
+    if (
+      command.kind === "key" &&
+      nativeKeyUsesModifiers(command.key) &&
+      status.capabilities?.modifiedKeys !== true
+    ) {
+      throw new Error("Owned native adapter does not support modified key shortcuts")
+    }
     if (!["snapshot", "capture", "focus"].includes(input.kind) && !target.focused) {
       throw new Error("Focus the owned Desktop window before native input")
     }

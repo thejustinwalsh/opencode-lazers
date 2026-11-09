@@ -139,7 +139,12 @@ through the owned window's `webContents`. It rechecks the window generation,
 focused state, referenced snapshot and rendered-page digest before input, then
 returns a fresh observation. A timeout or uncertain delivery is not replayed;
 the request and owned cleanup remain blocked until the same request can be
-resolved conclusively.
+resolved conclusively. The supported modified key is the exact `Ctrl+T` token;
+the Main adapter sends native `T` key-down/key-up events with Electron's
+`control` modifier on both events. The live RPC advertises this as
+`capabilities.modifiedKeys`. The CLI requires that capability for modified input
+and refuses to infer it from an older response or adapter. Legacy adapters
+continue to support the existing bare-key operations.
 
 Use the verification CLI from the candidate checkout while the owned Desktop is
 running. It reads the owned service credential internally and does not print it
@@ -149,6 +154,41 @@ or copy it to another profile:
 bun src/verification/opencode/cli.ts native-status --root "$ROOT"
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind snapshot
 ```
+
+### Modified-key shortcut and live revalidation
+
+Use this procedure only in a separately authorized, no-secret qualification
+session. `native-status` and the adapter tests establish bridge readiness and
+event construction; they do not prove that a live Desktop instance opened a
+variant menu or changed a selected model.
+
+1. Run `native-status` and verify the exact owned root, candidate identity, and
+   focused visible window/generation. For `Ctrl+T`, also require
+   `capabilities.modifiedKeys: true`. A missing capability is an incompatible
+   or legacy adapter; do not try an alternate spelling.
+2. If the intended owned window is not focused, focus only that window, then
+   re-read its status and take a new snapshot. Inspect the fresh snapshot to
+   confirm the same safe fixture and window. Do not reuse a snapshot after a
+   navigation, focus/generation change, or rendered-page change.
+3. Send the canonical modified-key token to the same window using that fresh
+   snapshot:
+
+   ```sh
+   bun src/verification/opencode/cli.ts native --root "$ROOT" --kind key \
+     --window 12 --snapshot SNAPSHOT_ID --key Ctrl+T
+   ```
+
+4. Read the returned fresh snapshot (or take another one) and inspect the
+   visible UI to determine whether the variant menu actually opened. `delivered`
+   means native events were sent, not that the host handled the shortcut or a
+   variant was selected. Do not replay an ambiguous request; resolve its exact
+   request ID with `native-resolve`, and only continue after a conclusive result
+   and fresh revalidation.
+
+The six supported bare keys remain `Enter`, `Escape`, `Tab`, `Backspace`,
+`ArrowUp` and `ArrowDown`. Modifier spellings other than the exact documented
+`Ctrl+T` token are rejected before native input; they are not normalized or
+reduced to a bare key.
 
 A blank composer is a draft, not a persisted session. For session panels, create
 an empty session at the candidate workspace through native `session.create`;
@@ -178,8 +218,7 @@ bun src/verification/opencode/cli.ts native --root "$ROOT" --kind click \
 
 Use only for the disposable no-secret fixture. Text entry accepts ordinary text
 only into a rendered editable control; password/credential-like controls and
-credential-shaped text are refused. The only key operations are Enter, Escape,
-Tab, Backspace, ArrowUp and ArrowDown. An action requires a fresh snapshot and a
+credential-shaped text are refused. An action requires a fresh snapshot and a
 focused owned window; if its rendered content or generation changed, take a new
 snapshot and decide again rather than retrying the old action. Each returned
 snapshot is a new observation, not proof that a task was submitted or completed.

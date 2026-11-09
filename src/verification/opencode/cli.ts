@@ -12,10 +12,14 @@ import {
   resolveNativeInteractionResult,
   runNativeInteraction,
 } from "./native-interaction-cli.ts"
+import type { NativeInteractionCliDependencies } from "./native-interaction-cli.ts"
 
 type Arguments = Map<string, string>
 
-export async function main(argv = process.argv.slice(2)): Promise<void> {
+export async function main(
+  argv = process.argv.slice(2),
+  nativeDependencies?: NativeInteractionCliDependencies,
+): Promise<void> {
   const [operation, ...rest] = argv
   const args = parseArguments(rest)
   if (operation === "reopen") {
@@ -113,17 +117,20 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (confirm !== undefined && confirm !== "yes") {
       throw new Error("--confirm-safe-page accepts only the explicit value yes")
     }
-    await runNativeInteraction({
-      root: resolve(required(args, "--root")),
-      kind: kind as "snapshot" | "capture" | "focus" | "click" | "type" | "key",
-      ...(windowID === undefined ? {} : { windowID }),
-      ...(args.has("--snapshot") ? { snapshotID: required(args, "--snapshot") } : {}),
-      ...(args.has("--element") ? { elementRef: required(args, "--element") } : {}),
-      ...(args.has("--text") ? { text: required(args, "--text") } : {}),
-      ...(args.has("--key") ? { key: required(args, "--key") } : {}),
-      ...(args.has("--output") ? { output: required(args, "--output") } : {}),
-      ...(confirm === "yes" ? { confirmSafePage: true } : {}),
-    })
+    await runNativeInteraction(
+      {
+        root: resolve(required(args, "--root")),
+        kind: kind as "snapshot" | "capture" | "focus" | "click" | "type" | "key",
+        ...(windowID === undefined ? {} : { windowID }),
+        ...(args.has("--snapshot") ? { snapshotID: required(args, "--snapshot") } : {}),
+        ...(args.has("--element") ? { elementRef: required(args, "--element") } : {}),
+        ...(args.has("--text") ? { text: required(args, "--text") } : {}),
+        ...(args.has("--key") ? { key: required(args, "--key") } : {}),
+        ...(args.has("--output") ? { output: required(args, "--output") } : {}),
+        ...(confirm === "yes" ? { confirmSafePage: true } : {}),
+      },
+      nativeDependencies,
+    )
     return
   }
   if (operation === "native-resolve") {
