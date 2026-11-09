@@ -93,3 +93,29 @@ reported activated fixes and a concrete LZ-181 test finding: many of56 failures
 originated in a fixture expecting acceptance after five synchronous ticks despite
 new asynchronous verification. Architect received this for same-worker steering,
 not as a new task. Subsequent correction and full-suite success remain unproven.
+
+## Subsequent repairs
+
+`4cf173b` repairs a reproduced inference reconnect dead end after polling and
+detachment both fail. The existing backoff can reattach the retained owner after
+GPU disposal; no new timer or ownership bypass is added. The fault-injection
+fixture failed before the change and passed afterward. Fifteen lifecycle/broker/
+lease tests, automatic quality checks and GUI build passed. After native Reload
+Webview, Run locally returned `local GPU ready.` with19input/4output tokens;
+Ask for decision switched to d1 and returned boolean true. [Live capture](webgpu-live-recovery-20261108.png).
+These are real post-activation requests; actual transport-fault recovery is
+covered by fault injection, not claimed observed live. Crash cause is unresolved.
+
+The latest worker steering input `msg_1bda6b6330015jiedi67OdUkPh` has a durable
+progress row: native creation1794183186604, recorded1794183186667, messageType
+user. This confirms new capture without claiming historical compaction recovery.
+
+`29ee18b` consolidates worker startup into `lz-get-task`: readable task, effective
+advice, skill summaries and focused Repomix source. The old instructions tool is
+removed. The unused packet builder's mandatory-context rejection is removed;
+snapshot absence does not reject task retrieval. Tests cover a single registered
+worker call, cached content rather than live drift, file permissions, shared
+Architect publication across real worktrees, structured reads and dispatch.
+Native activation/use and comparative token savings remain to observe. Architect
+already has a published snapshot for the current project. Original LZ-181 worker
+continues, most recently running its broad retained-verification suite.
