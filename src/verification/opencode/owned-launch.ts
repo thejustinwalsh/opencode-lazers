@@ -692,6 +692,11 @@ type DesktopBundle = {
 
 type Candidate = CandidateIdentity
 
+/** Each launch retains its own output without overwriting an earlier process log. */
+export function openDesktopProcessLog(root: string) {
+  return open(join(root, `desktop-process-${crypto.randomUUID()}.log`), "ax", 0o600)
+}
+
 export class SystemLaunchDependencies implements LaunchDependencies {
   private reservation?: Reservation
 
@@ -959,7 +964,7 @@ export class SystemLaunchDependencies implements LaunchDependencies {
       throw new Error("Owned candidate workspace or entry path changed after setup")
     }
     const env = isolatedEnvironment(input.root)
-    const output = await open(join(input.root, "desktop-process.log"), "ax", 0o600)
+    const output = await openDesktopProcessLog(input.root)
     let child: ReturnType<typeof spawn>
     try {
       child = spawn(bundle.executable, [], {

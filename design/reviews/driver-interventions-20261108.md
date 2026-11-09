@@ -316,3 +316,20 @@ The separate user-requested Sol audit found durable tool history limited to
 assigned workers and missing distinct Code Mode inner calls. Its pre-change
 findings are in tool-call-failures-20261109.md. The proportional hook/guidance
 repair is being implemented separately; no native activation is claimed yet.
+
+## Owned reopen: existing process log prevented launch
+
+The same native verifier exercised9d367b0 and recorded an EEXIST failure before
+spawn: SystemLaunchDependencies.launchDesktop opened desktop-process.log with
+exclusive creation, although a previous launch retained that file. Root's earlier
+mock lifecycle tests did not exercise real log allocation. Service25100, account,
+fixtures, candidate and old output were preserved; no replacement instance was
+created. Receipt: lz182-review-recovered/.cache/review/
+native182184-main9d367-reopen-failure.json in the sibling worktrees directory.
+
+Driver corrected allocation to create a unique exclusive process log on each
+launch. A real-filesystem regression allocates two reopen logs alongside an old
+log and confirms all three contents survive independently. Quality passes;
+33owned-lifecycle tests/180assertions pass. Native reopen and product walkthrough
+remain to observe after Architect resumes the same verifier. No worker code or
+production DB was changed for this repair.

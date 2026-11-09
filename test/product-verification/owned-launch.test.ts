@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import {
@@ -15,6 +25,7 @@ import {
   isolatedEnvironment,
   normalizeVersion,
   observeProcess,
+  openDesktopProcessLog,
   parseServiceRegistration,
   processInventoryFromProbe,
   processObservationFromProbe,
@@ -35,6 +46,29 @@ import type {
   ProcessIdentity,
   ServiceRegistration,
 } from "../../src/verification/opencode/owned-launch.ts"
+
+test("Desktop reopen retains old output and allocates independent launch logs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lazers-desktop-logs-"))
+  try {
+    await writeFile(join(directory, "desktop-process.log"), "original output")
+    const first = await openDesktopProcessLog(directory)
+    const second = await openDesktopProcessLog(directory)
+    try {
+      await first.writeFile("first reopen")
+      await second.writeFile("second reopen")
+    } finally {
+      await first.close()
+      await second.close()
+    }
+    const logs = await readdir(directory)
+    expect(logs).toHaveLength(3)
+    expect(await readFile(join(directory, "desktop-process.log"), "utf8")).toBe("original output")
+    const contents = await Promise.all(logs.map((name) => readFile(join(directory, name), "utf8")))
+    expect(contents.toSorted()).toEqual(["first reopen", "original output", "second reopen"])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 const input = {
   desktopBundle: "/Applications/OpenCode.app",
