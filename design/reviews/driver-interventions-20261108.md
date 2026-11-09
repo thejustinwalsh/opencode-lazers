@@ -217,3 +217,11 @@ layout/reconnect/history qualification. Raw IDs, noisy coverage labels and
 unavailable historical rows remain visible polish issues. No narrow/short-size,
 divider keyboard or scroll-stability claim is made. Both original workers kept
 running; no additional inference or fixture was launched for this observation.
+
+The subsequent native Radar walkthrough exercised keyboard Up/Down on the
+focused divider (split value changed with focus retained), expanded LZ-193
+history and loaded older records (30to40returned), switched to Session scope
+(exactly1returned Current Architect) and restored Project activity. Driver
+reported these observations through Desktop. No server disconnect or worker
+interruption. Narrow/short dimensions, independent scroll retention and
+reconnect/reset remain unobserved; no full qualification claim follows.
