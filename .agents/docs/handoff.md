@@ -18,16 +18,17 @@ compressed repository snapshots in plane8bf7885-fd38-4170-8ce6-cbb1d68cb2c4.
 LZ-193 task1f8714b6-38d5-42da-8347-39ffc513c813, attempt
 c49fbc65-db5c-44ca-bd42-e142dca7fb09. Neither is accepted/integrated yet.
 
-Project Radar currently fails visibly with `[object Object]`: legacy radar and
-snapshot throw “Observation scope is too large; narrow it”. The existing
-liveRadar endpoint succeeds on the same real project in133ms, returns13managed
-sessions and reports bounded coverage. LZ-184 accepted candidate89edd14b0cadad49b8b3cb84d733ce56ff82f549
-is not integrated: planebea76ad-f3bd-4f6b-9d3f-1e356e032b9c is blocked on
-connected-radar-agent-monitor:human. Architect received the actual UI/log finding
-through Desktop and is continuing that existing acceptance/integration path.
-Do not duplicate the task, raise the legacy caps, or claim the accepted node is
-the delivered panel. Screenshot and detailed interventions are in
-design/reviews/driver-interventions-20261108.md (commit51be2c2).
+Project Radar's actual legacy `[object Object]`/scope-limit failure led to the
+reviewed LZ-184 source landing at bd2896d. Exact accepted89edd14 was composed with
+the preserved Radar review checkout and current main; quality,206tests/1747
+assertions and GUI build passed. Runtime recorded task source integration only,
+at plan version43. A fresh actual live read exposes attributed file targets and
+both original181/193 workers remain busy. Main GUI was rebuilt; rendered monitor
+behavior has not yet been observed after that build. The plan's
+connected-radar-agent-monitor gate remains open. Do not duplicate the task,
+inflate caps or promote node/source acceptance to complete Radar qualification.
+See design/reviews/radar-live-integration-gap-20261109.md; original screenshot
+and interventions remain in design/reviews/driver-interventions-20261108.md.
 
 ## Priority: autonomous delivery and visible recovery
 

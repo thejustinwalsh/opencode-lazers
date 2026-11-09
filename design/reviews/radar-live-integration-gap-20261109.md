@@ -58,3 +58,44 @@ behavior, or screenshot acceptance. Continue LZ-184's existing focused source
 review, composition, safe activation and connected qualification. Keep the
 user-owned paused OAuth instance untouched, preserve both active workers and all
 existing evidence, and leave Desktop crash diagnosis with Driver.
+
+## Reviewed source landing
+
+The later accepted delta received focused independent Luna Max review with no
+source blocker. One reviewer statement mistook the retained diagnostics transport
+for the primary view; exact-tree inspection corrected it: `89edd14` registers a
+wrapper whose default is `RadarLiveMonitorPanel`, with legacy reads only in
+explicit diagnostics. That mistaken statement is not a product finding.
+
+The preserved Radar review checkout was composed with the exact accepted artifact
+and current main at `7be32be69df94cd1bc4ea0f1f82b6c9315d897e9`. Merge resolution
+retained both the earlier UTF-8/output-boundary tests and the accepted output-cap
+tests, and retained newer roadmap text. Main's newer worker identity and public
+trajectory-input changes survived the automatic source merge.
+
+The first composed quality check stopped because this private checkout lacked
+main's newly added `@fallow-cli/fallow-node`; no behavior suite ran in that failed
+invocation. Installing the existing pinned dependency with
+`bun install --frozen-lockfile` resolved that setup issue. The subsequent checks
+passed:
+
+- `bun run verify`: automatic formatting/lint fixes, lint and typecheck.
+- Progress, live reads, observation integration, Radar and registered monitor:
+  **206 tests, 1,747 assertions, zero failures**.
+- `git diff --check` and `bun run build:gui`.
+
+Full logs remain under the Radar review checkout's
+`.cache/review/lz184-composed-{quality,behavior,build}.log`.
+
+Main landing is `bd2896d85e17a42a1698db82ad9a6b0fa668420d`. Immediately before
+merge, both active workers were observed between tool calls; neither was stopped,
+restarted or replaced. The runtime recorded **task source integration only** at
+plan version 43. The main GUI was rebuilt successfully. A subsequent actual live
+Project read returned six calls with attributed target paths, current runner data
+and connected native events; both original LZ-181/LZ-193 exact running assignments
+remained busy. This establishes effective producer activation, not rendered UI
+acceptance. No explicit extra service reload was needed for that observation.
+
+The connected Desktop interaction/layout/screenshot gate remains open. No consent
+action or input to the user-owned paused instance was taken, no failed evidence
+was erased, and no cleanup or complete-Radar claim is implied by source landing.
