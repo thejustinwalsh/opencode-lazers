@@ -28,8 +28,9 @@ Current identities, controls and observations are in the
 [connected review and completion record](reviews/lz172-023-connected-review-20261107.md)
 contains actual narrow/wide screenshots, theme/font/keyboard/scroll/Refresh/empty
 observations and the native integration result. Canonical GUI is loaded; no
-Models preview checkout remains. Root coordinates activation without stopping
-healthy workers. All six inference flags remain enabled and idle unload remains
+Models preview checkout remains. Architect coordinates routine activation without
+stopping healthy workers. The external driver follows the human-developer role
+in AGENTS.md. All six inference flags remain enabled and idle unload remains
 Never. Residual CPU/battery behavior and the separately recorded hot-update
 loading occurrence remain open.
 
@@ -39,8 +40,9 @@ actual resource isolation, current owners and truthful acceptance boundaries.
 Detailed held slice boundaries and user-resolved Radar choices are in
 [Tasks/Radar held increments](../.agents/docs/evidence/tasks-radar-held-slices-20261104.md).
 Independent nonoverlapping work may execute under ordinary runtime admission;
-blocked lanes are not a global development freeze. Source activation still needs
-Root coordination when watched generations or native observations can be affected.
+blocked lanes are not a global development freeze. Architect coordinates source
+activation when watched generations or native observations can be affected;
+ask the human only for material decisions or required authorization.
 
 ### Task-attached research and implementation advice
 
