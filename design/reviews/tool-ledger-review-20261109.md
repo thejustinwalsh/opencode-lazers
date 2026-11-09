@@ -53,3 +53,26 @@ caught before entering an owned callback remain explicitly unsupported.
 After the existing contributor's corrections, inspect effective loaded locations
 and a small set of fresh real rows. Do not blanket-reload all workers, manufacture
 idle or failed-call evidence, or repeat the full audit solely for activation.
+
+## Follow-up: corrections reviewed on 373e296
+
+`373e296` addresses all three findings: stream discontinuity clears and fences
+ownership lookups; callback terminal writes resolve through preserved local UUIDs;
+and ordinary startup adds the two missing nullable columns without inventing
+historical values. Review included the changed callers and focused regressions.
+
+Independent focused execution passed **7 tests, 37 assertions**, covering both
+active-callback terminal outcomes, invalidated ownership reads, failed/ended
+streams with missed moves, old-schema close/reopen and retained Desktop logs.
+The complete 122-test result remains the contributor's recorded broader check;
+this follow-up did not repeat every unchanged test.
+
+At Unix `1794190114987`, read-only live inspection found both missing columns
+present and fresh actual Architect, general and assigned-worker records. A real
+parallel `lz-get-task` call produced three separate local-invocation rows linked
+to the same outer execute, rather than collapsing them. The worker's actual
+`lz-report-progress` callback also retained its real outer execute link. Thus the
+corrected schema/writer is effective in observed locations; no extra reload was
+needed. This does not establish every historical location or a live failed-row
+observation. Existing native outcomes and unsupported inner-call boundaries
+remain unchanged.
