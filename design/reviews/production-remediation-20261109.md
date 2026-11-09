@@ -398,3 +398,34 @@ results still update and notify their current owner. No native model was run.
 These controlled observations do not close the production measurement: the former
 76-sweeps/min class still needs post-activation sampling against the actual host.
 No historical sources or useful worker work were deleted.
+
+## Wave 3: S7-5
+
+Re-located the replay and current-idle predicates in `registerProgress`. Added a
+closed rejection-reason field to native observations and named the first failing
+predicate for replay eligibility and both current-idle checks. No credentials or
+raw native payloads are added. Existing observation Unix timestamps remain intact.
+
+Before changing recovery policy, parameterized the review-named stream-gap test
+with and without a fully synced current log. Both old-policy cases passed (9
+assertions); the synced case specifically recorded `idle-replay-rejected` /
+`newer-start-fence`. Log:
+`/private/tmp/lazers-remediation-baseline-20261109/s7-rejected-predicate.log`.
+This proves the review's hypothesized mechanism in a controlled reproduction;
+it does not establish the cause of every historical native recurrence.
+
+An exact synced replay now bypasses the redundant newer-start fence and clears
+that local fence, permitting the same execution's subsequent terminal success to
+confirm its zero-background report. All durable revision/start/event/input,
+native identity, observer lifetime and terminal checks remain. No-log, stale,
+unsynced, changed-input and changed-execution paths retain their protections.
+The defect-asserting test is amended with a finding comment: current replay must
+recover through terminal confirmation; absent replay still requires a new start.
+
+`bun run verify` passed. Native progress, current-idle, recorder, idle-store and
+replacement-verification behavior files: **109 pass / 1 fail**, 832 assertions.
+The sole failure is the original baseline zero-background replacement-verification
+case (expected accepted, remains running); it is not resolved or relabeled by
+this correction. Full output: `s7-behavior.log` in the baseline directory.
+Native Desktop recurrence/acceptance and post-activation rate measurements remain
+unproven. No model turn was launched or worker resumed for this reproduction.

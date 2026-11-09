@@ -8,7 +8,7 @@ import { TaskSpecSchema } from "../task.ts"
 import type { RunnerStore } from "../runner/store.ts"
 import { privacyStats, safeError, safeText } from "../trajectory/privacy.ts"
 import { publicProgressError, visibleProgressText } from "./privacy.ts"
-import { ProgressInput } from "./schema.ts"
+import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
 import { observeFileTargets } from "./file-target.ts"
 
 export type ProgressSource =
@@ -1606,6 +1606,7 @@ export class ProgressRecorder {
     idleSequence?: number
     inputID?: string
     backgroundCount?: number
+    lineageRejection?: NativeLineageRejection
     current?: boolean
     error?: unknown
   }): number | undefined {

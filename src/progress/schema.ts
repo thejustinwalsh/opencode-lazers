@@ -6,3 +6,25 @@ export const ProgressInput = z.strictObject({
 })
 
 export type ProgressInput = z.infer<typeof ProgressInput>
+
+export type NativeLineageRejection =
+  | "observer-stopped"
+  | "binding-changed"
+  | "revision-changed"
+  | "start-changed"
+  | "event-changed"
+  | "pending-terminal"
+  | "terminal"
+  | "input-changed"
+  | "native-identity-changed"
+  | "newer-start-fence"
+  | "replay-not-current"
+  | "replay-unavailable"
+  | "assignment-missing"
+  | "attempt-not-running"
+  | "plan-not-running"
+  | "task-disposed"
+  | "invalid-start"
+  | "invalid-event"
+  | "input-not-assigned"
+  | "assignment-changed"

@@ -8,7 +8,7 @@ import { z } from "zod"
 import { NativeIdleStore } from "../runner/native-idle.ts"
 import type { NativeIdleBinding, NativeIdleTerminal } from "../runner/native-idle.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
-import { ProgressInput } from "./schema.ts"
+import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
 import { resolveNativeInputID } from "../runner/native-input.ts"
 import { toolObservationScope } from "./tool-observation.ts"
 import type { ProgressAssignment, ProgressRecorder } from "./recorder.ts"
@@ -98,6 +98,14 @@ type NativeSessionLogReader = (
   sessionID: string,
 ) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>
 type NativeReplayedStart = { sequence: number; lastObservedEventSequence: number }
+
+function rejectedLineage(
+  checks: Partial<Record<NativeLineageRejection, boolean>>,
+): NativeLineageRejection | undefined {
+  for (const reason of Object.keys(checks) as NativeLineageRejection[])
+    if (!checks[reason]) return reason
+  return undefined
+}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -703,33 +711,39 @@ export function registerProgress(
               const replaySession = await readNativeSession(sessionID)
               const replayInputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
               const replayedState = idleStore.read(binding)
-              const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
               const replayedSequence = replayedStart.sequence
-              if (
-                observing &&
-                sameIdleBinding(binding, bindingFor(sessionID)) &&
-                (replayedState?.revision ?? 0) === expectedRevision &&
-                replayedState?.executionStartSequence === replayedSequence &&
-                replayedState.lastEventSequence === replayedStart.lastObservedEventSequence &&
-                replayedState.pendingTerminal === null &&
-                replayedState.terminal === null &&
-                replayInputID === inputID &&
-                matchesBinding(replaySession, binding) &&
-                (requiredAfterSequence === undefined ||
-                  (requiredAfterSequence !== null && replayedSequence > requiredAfterSequence))
-              ) {
+              const lineageRejection = rejectedLineage({
+                "observer-stopped": observing,
+                "binding-changed": sameIdleBinding(binding, bindingFor(sessionID)),
+                "revision-changed": (replayedState?.revision ?? 0) === expectedRevision,
+                "start-changed": replayedState?.executionStartSequence === replayedSequence,
+                "event-changed":
+                  replayedState?.lastEventSequence === replayedStart.lastObservedEventSequence,
+                "pending-terminal": replayedState?.pendingTerminal === null,
+                terminal: replayedState?.terminal === null,
+                "input-changed": replayInputID === inputID,
+                "native-identity-changed": matchesBinding(replaySession, binding),
+              })
+              if (lineageRejection) trace(sessionID, "idle-replay-rejected", { lineageRejection })
+              if (!lineageRejection && replayedState) {
                 inputID = replayInputID
                 executionStartSequence = replayedSequence
                 eventSequence = replayedState.lastEventSequence
                 observedStart = { binding, sequence: replayedSequence, source: "native-log-replay" }
                 observedExecutionStarts.set(sessionID, observedStart)
+                // S7-5: the synced replay proves the exact current durable lineage.
+                startsRequiringNewerObservation.delete(sessionID)
                 trace(sessionID, "idle-lineage-replayed", {
                   inputID,
                   executionStartSequence: replayedSequence,
-                  eventSequence,
+                  eventSequence: eventSequence ?? undefined,
                 })
               }
+            } else {
+              trace(sessionID, "idle-replay-rejected", { lineageRejection: "replay-not-current" })
             }
+          } else {
+            trace(sessionID, "idle-replay-rejected", { lineageRejection: "replay-unavailable" })
           }
         }
         if (
@@ -756,31 +770,41 @@ export function registerProgress(
               !recorder.store.repository.taskDisposition(current.taskID),
             )
           }
-          const canUseCurrentIdle = Boolean(
-            assignment &&
-            assignment.attemptState === "running" &&
-            ["running", "blocked"].includes(plan?.state ?? "") &&
-            !recorder.store.repository.taskDisposition(assignment.taskID) &&
-            sameIdleBinding(assignedBinding, binding) &&
-            executionStartSequence !== null &&
-            executionStartSequence !== undefined &&
-            Number.isSafeInteger(executionStartSequence) &&
-            executionStartSequence >= 0 &&
-            eventSequence !== null &&
-            eventSequence !== undefined &&
-            Number.isSafeInteger(eventSequence) &&
-            eventSequence >= executionStartSequence &&
-            !startsRequiringNewerObservation.has(sessionID) &&
-            inputID !== undefined &&
-            recorder.matchesAssignedInput(
-              assignment.attemptID,
-              assignment.sessionID,
-              assignment.assignedMessageID,
-              inputID,
+          const eligibilityRejection = rejectedLineage({
+            "assignment-missing": assignment !== undefined,
+            "attempt-not-running": assignment?.attemptState === "running",
+            "plan-not-running": ["running", "blocked"].includes(plan?.state ?? ""),
+            "task-disposed": Boolean(
+              assignment && !recorder.store.repository.taskDisposition(assignment.taskID),
             ),
-          )
+            "binding-changed": sameIdleBinding(assignedBinding, binding),
+            "invalid-start":
+              executionStartSequence != null &&
+              Number.isSafeInteger(executionStartSequence) &&
+              executionStartSequence >= 0,
+            "invalid-event":
+              eventSequence != null &&
+              executionStartSequence != null &&
+              Number.isSafeInteger(eventSequence) &&
+              eventSequence >= executionStartSequence,
+            "newer-start-fence": !startsRequiringNewerObservation.has(sessionID),
+            "input-not-assigned": Boolean(
+              assignment &&
+              inputID !== undefined &&
+              recorder.matchesAssignedInput(
+                assignment.attemptID,
+                assignment.sessionID,
+                assignment.assignedMessageID,
+                inputID,
+              ),
+            ),
+          })
+          if (eligibilityRejection)
+            trace(sessionID, "idle-current-hook-rejected", {
+              lineageRejection: eligibilityRejection,
+            })
           if (
-            canUseCurrentIdle &&
+            !eligibilityRejection &&
             assignment &&
             executionStartSequence !== null &&
             executionStartSequence !== undefined &&
@@ -793,26 +817,28 @@ export function registerProgress(
             const currentInputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
             const currentAfter = await readNativeSession(sessionID)
             const currentState = idleStore.read(binding)
-            if (
-              observing &&
-              currentAssignment() &&
-              sameIdleBinding(binding, bindingFor(sessionID)) &&
-              currentState !== undefined &&
-              currentState.revision === expectedRevision &&
-              currentState.executionStartSequence === currentStartSequence &&
-              currentState.lastEventSequence === currentEventSequence &&
-              currentState.pendingTerminal === null &&
-              currentState.terminal === null &&
-              currentInputID === inputID &&
-              recorder.matchesAssignedInput(
+            const lineageRejection = rejectedLineage({
+              "observer-stopped": observing,
+              "assignment-changed": currentAssignment(),
+              "binding-changed": sameIdleBinding(binding, bindingFor(sessionID)),
+              "revision-changed": currentState?.revision === expectedRevision,
+              "start-changed": currentState?.executionStartSequence === currentStartSequence,
+              "event-changed": currentState?.lastEventSequence === currentEventSequence,
+              "pending-terminal": currentState?.pendingTerminal === null,
+              terminal: currentState?.terminal === null,
+              "input-changed": currentInputID === inputID,
+              "input-not-assigned": recorder.matchesAssignedInput(
                 assignment.attemptID,
                 assignment.sessionID,
                 assignment.assignedMessageID,
                 currentInputID,
-              ) &&
-              matchesBinding(currentBefore, binding) &&
-              matchesBinding(currentAfter, binding)
-            ) {
+              ),
+              "native-identity-changed":
+                matchesBinding(currentBefore, binding) && matchesBinding(currentAfter, binding),
+            })
+            if (lineageRejection)
+              trace(sessionID, "idle-current-hook-rejected", { lineageRejection })
+            if (!lineageRejection) {
               const currentIdleStart: ObservedExecutionStart = {
                 binding,
                 sequence: currentStartSequence,
