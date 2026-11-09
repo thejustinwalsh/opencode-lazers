@@ -51,6 +51,16 @@ function insert(repository: TaskRepository) {
   })
 }
 
+test("S2-4 advice distinguishes an absent schema from an installed empty history", () => {
+  const repository = fixture().open()
+  const task = insert(repository)
+  expect(taskAdviceSnapshot(repository, task.id)).toBeNull()
+  repository.atomic((db) => db.exec("DROP TABLE task_advice"))
+  expect(() => taskAdviceSnapshot(repository, task.id)).toThrow(
+    "Task advice schema is not installed",
+  )
+})
+
 function input(taskID: string, requestID: string, expectedRevision = 0) {
   return {
     taskID,
@@ -184,17 +194,10 @@ test("foreign-project reads and writes do not expose or create attachment receip
       agent: "architect",
     }),
   ).toThrow("Task not found in this project")
-  expect(
-    foreign.atomic((db) =>
-      Boolean(
-        db
-          .query<{ name: string }, []>(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='task_advice'",
-          )
-          .get(),
-      ),
-    ),
-  ).toBe(false)
+  // S2-4: startup owns the schema; rejected writes must not create receipts.
+  expect(foreign.read((db) => db.query("SELECT count(*) AS count FROM task_advice").get())).toEqual(
+    { count: 0 },
+  )
   const original = recordTaskAdvice(repository, input(task.id, "shared-request-id"), {
     sessionID: "architect-session",
     agent: "architect",

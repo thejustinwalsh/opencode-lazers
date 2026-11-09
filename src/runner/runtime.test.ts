@@ -1464,9 +1464,11 @@ test("legacy source quarantine migration preserves its original-input binding", 
   const { reviewInputID: _reviewInputID, ...legacyCommand } = f.command
   await f.runtime.command(legacyCommand, "owner")
   await f.runtime.stop()
-  f.store.atomic((db) =>
-    db.exec("ALTER TABLE runner_source_quarantines DROP COLUMN review_input_json"),
-  )
+  f.store.atomic((db) => {
+    // S2-4: this legacy layout has not installed the runner module generation.
+    db.query("DELETE FROM schema_modules WHERE module='runner'").run()
+    db.exec("ALTER TABLE runner_source_quarantines DROP COLUMN review_input_json")
+  })
   const repository = new TaskRepository(f.repository.path, f.root)
   try {
     const store = new RunnerStore(repository)

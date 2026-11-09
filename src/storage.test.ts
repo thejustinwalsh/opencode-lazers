@@ -103,6 +103,55 @@ test("a newer database version fails without resetting migration metadata", () =
   check.close()
 })
 
+test("S2-4 module installation upgrades atomically, skips current generations and refuses future ones", () => {
+  const repository = open(join(directory(), "modules.sqlite"))
+  let installs = 0
+  const install = () =>
+    repository.installSchema("example", 1, ["example_rows"], (db) => {
+      installs++
+      db.exec("CREATE TABLE example_rows(value TEXT); INSERT INTO example_rows VALUES('retained')")
+    })
+  install()
+  install()
+  expect(installs).toBe(1)
+  expect(() =>
+    repository.installSchema("example", 2, ["example_rows", "failed_upgrade"], (db) => {
+      db.exec("CREATE TABLE failed_upgrade(value TEXT)")
+      throw new Error("Interrupted upgrade")
+    }),
+  ).toThrow("Interrupted upgrade")
+  expect(
+    repository.read((db) =>
+      db.query("SELECT name FROM sqlite_master WHERE name='failed_upgrade'").get(),
+    ),
+  ).toBeNull()
+  expect(
+    repository.read((db) =>
+      db.query("SELECT generation FROM schema_modules WHERE module='example'").get(),
+    ),
+  ).toEqual({ generation: 1 })
+  repository.installSchema("example", 2, ["example_rows"], () => {})
+  expect(() => install()).toThrow("Unsupported LAZERS schema module example generation 2")
+  expect(repository.read((db) => db.query("SELECT * FROM example_rows").all())).toEqual([
+    { value: "retained" },
+  ])
+})
+
+test("S2-4 startup inventory reports three drift classes without mutating tables", () => {
+  const repository = open(join(directory(), "inventory.sqlite"))
+  repository.atomic((db) => {
+    db.exec("CREATE TABLE legacy_orphan(value TEXT); INSERT INTO legacy_orphan VALUES('keep')")
+    db.query("INSERT INTO schema_modules VALUES('runner',99,'[]',1)").run()
+  })
+  const drift = repository.schemaDrift()
+  expect(drift.undeclaredTables).toContain("legacy_orphan")
+  expect(drift.missingTables).toContain("runner_plans")
+  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 1 })
+  expect(repository.read((db) => db.query("SELECT * FROM legacy_orphan").all())).toEqual([
+    { value: "keep" },
+  ])
+})
+
 test("SQLite itself enforces key uniqueness and task association referential integrity", () => {
   const path = join(directory(), "tasks.sqlite")
   const repository = open(path)

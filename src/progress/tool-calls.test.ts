@@ -491,6 +491,8 @@ test("the observed initial ledger schema migrates across reopen without inventin
   let reopened: TaskRepository | undefined
   try {
     fixture.repository.atomic((db) => {
+      // S2-4: represent the pre-generation ledger alongside its historical layout.
+      db.query("DELETE FROM schema_modules WHERE module='runner'").run()
       db.exec(`DROP TABLE native_tool_calls;
         CREATE TABLE native_tool_calls (
           project_directory TEXT NOT NULL, project_id TEXT NOT NULL,

@@ -239,8 +239,7 @@ window defect.
 
 Read-only `EXPLAIN QUERY PLAN` against the production DB confirms
 `SEARCH a USING INDEX runner_attempts_active_project (project_directory=?)`,
-followed by a plan primary-key lookup and ordering sort. No production mutation
-or cleanup was performed. Quality checks passed; 374 store/runtime/retained-repair
+followed by a plan primary-key lookup and ordering sort. That query was read-only; no cleanup was performed. Quality checks passed; 374 store/runtime/retained-repair
 tests passed with 5,999 assertions. A further 79 retained-reverification tests
 passed with 925 assertions. No new behavior failures appeared. No native activation
 or claim of installed scheduler recovery yet.
@@ -268,3 +267,66 @@ awaits. This is a real-module traffic test with a controlled native-host fixture
 not a Desktop production-load observation. All 58 observability behavior tests
 passed (869 assertions), as did `bun run verify` and `git diff --check`.
 Installed-service activation and live Desktop acceptance remain unproven.
+
+## Wave 2: shared index and schema inventory asks (S2-4)
+
+Added `runner_progress(plan_id,seq)` and `runner_attempts(plan_id)` together with
+the declared module inventory. Re-derived the two session-index requests: current
+columns already have UNIQUE constraints. Read-only production query plans use
+`sqlite_autoindex_runner_attempts_2` and
+`sqlite_autoindex_runner_source_quarantines_2` for `session_id=?`. Adding duplicate
+indexes would increase write amplification; no duplicate was installed.
+
+The review's minimum inventory correction is implemented: core schema version 8
+adds `schema_modules(module,generation,tables_json,installed_at)`; transactional
+`installSchema` skips installed generations, rejects newer module generations and
+rolls back failed installation. Runner setup uses its generation; compatibility
+consolidation still handles an old plugin recreating `runner_audits`. Startup logs
+report undeclared/missing tables and generation drift without dropping anything.
+The declared ownership map covers current task-DB DDL modules, including the
+expanded handoff schema. Workspace witness tables belong to separate databases.
+Advice schema installation moved to repository startup; an absent advice schema
+is distinct from installed empty history. Concurrent submission and migration
+rollback tests remain intact. Automatic format/lint changes accompany this code.
+
+This does not claim all subsystems have adopted generation-gated installers:
+recovery and other modules still run their existing constructors. Their missing
+generation records are explicitly reported. In particular, the remaining
+RecoveryJournal constructor means S2-3's zero-write-transaction acceptance is not
+yet established. No new schema framework or retention deletion was introduced.
+
+Checks: quality checks passed; 64 migration/submission/advice/store tests passed
+(707 assertions). All four requested lookup shapes use indexes in fixture query
+plans, and a current runner generation skips its DDL. The full Wave 2 run, at
+HEAD `509e0c2` plus the recorded schema working tree, started Unix1794248840600
+and finished Unix1794249169159: 1,758 pass / 9 fail, 1,767 tests across 180 files,
+19,561 assertions, 328.49 s. Logs:
+`/private/tmp/lazers-remediation-baseline-20261109/wave-2.{log,json}`.
+Source status was unchanged through that run; process inspection was available.
+
+Four failures match the original baseline. The five additions were investigated:
+two advice fixtures assumed lazy table creation; progress-time, tool-ledger and
+source-quarantine fixtures downgraded their layout while retaining a current
+module generation; the delivered-outbox fixture similarly injected historical
+markers after recording the migration complete. (This full run failed the `tasks/read.test.ts` advice case; the sibling
+`tasks/advice.test.ts` case had been corrected earlier.)
+Corrected those fixture setups without deleting tests or weakening their data,
+identity, scope or timestamp assertions. All five failing cases now pass (25
+assertions); the broader affected read/progress/recovery files pass 49 tests / 758
+assertions. No full-suite rerun after those test-only corrections is claimed.
+
+Native observation: the held Architect and both LZ-185 sessions remain inactive,
+with the candidate and replacement changes preserved. A read-only production
+schema check saw version 7 and `runner_conflict_scans` present: an earlier name
+migration reached that DB, but schema version 8 had not. No explicit service
+reload or Desktop acceptance of the combined Wave 2 changes is claimed.
+
+## Wave 2 status
+
+Dispatch audit, historical-window safety and live-read liveness corrections are
+committed separately; the shared index/schema increment completes the ordered
+Wave 2 code work. Remaining confirmations are installed-service activation,
+native panel/scheduler observation, and the four baseline failures. Historical
+scan space is retained for Wave 6. Reconciliation #5 still awaits clarification;
+XState authority, record-time key redaction and post-merge worker termination
+remain required in their dependent increments.

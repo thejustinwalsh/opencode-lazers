@@ -180,6 +180,10 @@ export default Plugin.define({
       yield* registerRecoveryTools(ctx, repository)
       yield* registerToolCallWrappers(ctx, progress, ctx.location.project.id)
       yield* ctx.storage.set("loaded", true)
-      yield* Effect.logInfo("LAZERS loaded", { host: ctx.app.version, database: repository.path })
+      yield* Effect.logInfo("LAZERS loaded", {
+        host: ctx.app.version,
+        database: repository.path,
+        schema: repository.schemaDrift(),
+      })
     }),
 })

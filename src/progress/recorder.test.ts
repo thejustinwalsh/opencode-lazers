@@ -1594,6 +1594,8 @@ test("recorded-at migration preserves legacy progress identity and leaves legacy
       const row = db
         .query<{ seq: number }, [string]>("SELECT seq FROM runner_progress WHERE dedupe_key=?")
         .get("legacy-progress-row")!
+      // S2-4: the legacy layout also predates the runner generation record.
+      db.query("DELETE FROM schema_modules WHERE module='runner'").run()
       db.exec("ALTER TABLE runner_progress DROP COLUMN recorded_at")
       return row.seq
     })

@@ -712,7 +712,7 @@ test("genuine v1 data migrates transactionally and mappings survive repeated reo
     const db = new Database(path)
     try {
       expect(db.query("SELECT body FROM tasks WHERE id=?").get(task.id)).toEqual({ body })
-      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 8 })
     } finally {
       db.close()
     }

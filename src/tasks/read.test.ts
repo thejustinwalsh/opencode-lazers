@@ -178,17 +178,10 @@ test("task advice is explicit without legacy attachments and shared by planned a
     status: "found",
     advice: null,
   })
+  // S2-4: schema is startup-owned; reading an unadvised task creates no receipts.
   expect(
-    repository.atomic((db) =>
-      Boolean(
-        db
-          .query<{ name: string }, []>(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='task_advice'",
-          )
-          .get(),
-      ),
-    ),
-  ).toBe(false)
+    repository.read((db) => db.query("SELECT count(*) AS count FROM task_advice").get()),
+  ).toEqual({ count: 0 })
 
   const adviceInput = (taskID: string, requestID: string) => ({
     taskID,

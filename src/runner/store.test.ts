@@ -63,6 +63,8 @@ test("active-attempt project-key migration backfills legacy rows once, not on re
 
   f.repository.atomic((db) =>
     db.exec(`
+      -- S2-4: this historical fixture predates the runner module generation.
+      DELETE FROM schema_modules WHERE module='runner';
       DROP TRIGGER runner_attempts_project_directory_insert;
       DROP TRIGGER runner_attempts_project_directory_plan_update;
       DROP TRIGGER runner_plans_project_directory_update;
@@ -407,6 +409,56 @@ function fixture(requestID = "plan-title-store") {
   }
   return { databasePath, projectDirectory, repository, store, input }
 }
+
+test("S2-4 runner module upgrade installs the shared lookup indexes and skips current DDL", () => {
+  const f = fixture()
+  const indexes = [
+    ["runner_progress_plan_seq", "SELECT * FROM runner_progress WHERE plan_id=? ORDER BY seq"],
+    ["runner_attempts_plan", "SELECT * FROM runner_attempts WHERE plan_id=?"],
+  ] as const
+  f.store.atomic((db) => {
+    for (const [index] of indexes) db.exec(`DROP INDEX ${index}`)
+    db.query("DELETE FROM schema_modules WHERE module='runner'").run()
+  })
+  new RunnerStore(f.repository)
+  for (const [index, sql] of indexes) {
+    expect(
+      f.repository
+        .read((db) =>
+          db.query<{ detail: string }, [string]>(`EXPLAIN QUERY PLAN ${sql}`).all("unused"),
+        )
+        .some((row) => row.detail.includes(index)),
+    ).toBe(true)
+  }
+  // S2-4: the two session lookups already use UNIQUE autoindexes; do not duplicate them.
+  for (const table of ["runner_attempts", "runner_source_quarantines"]) {
+    const plan = f.repository.read((db) =>
+      db
+        .query<{ detail: string }, [string]>(
+          `EXPLAIN QUERY PLAN SELECT * FROM ${table} WHERE session_id=?`,
+        )
+        .all("unused"),
+    )
+    expect(
+      plan.some(
+        (row) => row.detail.includes("USING INDEX") && row.detail.includes("(session_id=?)"),
+      ),
+    ).toBe(true)
+  }
+  const current = captureDatabaseExec(() => new RunnerStore(f.repository))
+  expect(
+    current.statements.some((sql) => /CREATE TABLE IF NOT EXISTS runner_plans/.test(sql)),
+  ).toBe(false)
+  const stored = f.repository.read((db) =>
+    db
+      .query<{ tables_json: string; installed_at: number }, []>(
+        "SELECT tables_json,installed_at FROM schema_modules WHERE module='runner'",
+      )
+      .get(),
+  )!
+  expect(JSON.parse(stored.tables_json)).toContain("runner_progress")
+  expect(stored.installed_at).toBeGreaterThan(0)
+})
 
 test("F-S4-1 conflict scan migration preserves history without restarting persistence", () => {
   const f = fixture()
@@ -1391,6 +1443,8 @@ test("journal revision triggers are replaced on a second connection without rese
 
   f.store.atomic((db) => {
     db.exec(`
+      -- S2-4: exercise an upgrade from the historical trigger generation.
+      DELETE FROM schema_modules WHERE module='runner';
       DROP TRIGGER architect_journal_revision_runner_architect_sources_UPDATE;
       CREATE TRIGGER architect_journal_revision_runner_architect_sources_UPDATE
       AFTER UPDATE ON runner_architect_sources BEGIN
@@ -1710,6 +1764,8 @@ test("legacy delivered outbox schema migrates across an actual close and reopen 
       "msg_legacy_outbox",
       JSON.stringify({ planID: plan.planID, status: "accepted" }),
     )
+    // S2-4: the historical table also predates the runner module generation.
+    db.query("DELETE FROM schema_modules WHERE module='runner'").run()
     // Reconstruct the historical table before observation triggers existed.
     for (const event of ["INSERT", "UPDATE", "DELETE"])
       db.exec(`DROP TRIGGER observation_revision_runner_outbox_${event}`)

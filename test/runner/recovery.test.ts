@@ -128,6 +128,8 @@ async function run(root: string, fault: string) {
 
 test("legacy delivered outbox rows reopen as host-admitted with unknown consumption", () => {
   const f = fixture()
+  // S2-4: the legacy delivery marker predates the runner generation migration.
+  f.store.atomic((db) => db.query("DELETE FROM schema_modules WHERE module='runner'").run())
   const payload = { planID: f.plan.planID, planRevision: 1, version: 1, status: "accepted" }
   f.store.atomic((db) =>
     db

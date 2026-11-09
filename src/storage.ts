@@ -1,4 +1,6 @@
 import { Database, SQLiteError } from "bun:sqlite"
+import { schemaModules } from "./database-schema.ts"
+import { installTaskAdviceSchema } from "./tasks/advice.ts"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join } from "node:path"
@@ -68,6 +70,13 @@ export class TaskRepository {
   ) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.connection = this.open()
+    try {
+      installTaskAdviceSchema(this)
+    } catch (error) {
+      this.connection.close()
+      this.connection = undefined
+      throw error
+    }
   }
 
   private open(): Database {
@@ -77,7 +86,7 @@ export class TaskRepository {
       const version = () =>
         db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
       const initial = version()
-      if (initial > 7) throw new Error(`Unsupported LAZERS database version ${initial}`)
+      if (initial > 8) throw new Error(`Unsupported LAZERS database version ${initial}`)
       // SQLite can fail a concurrent first WAL transition immediately despite
       // busy_timeout. Retry only connection configuration, never a task write.
       const deadline = Date.now() + 5_000
@@ -95,10 +104,11 @@ export class TaskRepository {
           Bun.sleepSync(10)
         }
       }
-      db.transaction(() => {
-        const current = version()
-        if (current > 7) throw new Error(`Unsupported LAZERS database version ${current}`)
-        db.exec(`
+      if (initial < 8)
+        db.transaction(() => {
+          const current = version()
+          if (current > 8) throw new Error(`Unsupported LAZERS database version ${current}`)
+          db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
             project_directory TEXT NOT NULL,
@@ -108,8 +118,8 @@ export class TaskRepository {
           CREATE INDEX IF NOT EXISTS tasks_project_created
             ON tasks(project_directory, created_at);
         `)
-        if (current < 2) {
-          db.exec(`
+          if (current < 2) {
+            db.exec(`
             ALTER TABLE tasks ADD COLUMN created_version INTEGER NOT NULL DEFAULT 0;
             UPDATE tasks SET created_version = rowid;
             CREATE TABLE task_changes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_directory TEXT NOT NULL);
@@ -128,13 +138,13 @@ export class TaskRepository {
             );
             PRAGMA user_version = 2;
           `)
-        }
-        if (current < 3)
-          db.exec(
-            "ALTER TABLE task_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'insert'; PRAGMA user_version=3",
-          )
-        if (current < 4)
-          db.exec(`
+          }
+          if (current < 3)
+            db.exec(
+              "ALTER TABLE task_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'insert'; PRAGMA user_version=3",
+            )
+          if (current < 4)
+            db.exec(`
             CREATE TABLE IF NOT EXISTS task_dispositions (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_directory TEXT NOT NULL,
@@ -154,8 +164,8 @@ export class TaskRepository {
               ON task_dispositions(project_directory, task_id, id DESC);
             PRAGMA user_version=4;
           `)
-        if (current < 5) {
-          db.exec(`
+          if (current < 5) {
+            db.exec(`
             CREATE TABLE task_references (
               project_directory TEXT NOT NULL,
               task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
@@ -167,24 +177,24 @@ export class TaskRepository {
             );
             CREATE INDEX task_references_project ON task_references(project_directory, reference);
           `)
-          const rows = db
-            .query<{ id: string; project_directory: string }, []>(
-              "SELECT id, project_directory FROM tasks ORDER BY rowid",
+            const rows = db
+              .query<{ id: string; project_directory: string }, []>(
+                "SELECT id, project_directory FROM tasks ORDER BY rowid",
+              )
+              .all()
+            const nextByProject = new Map<string, number>()
+            const addReference = db.query(
+              "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
             )
-            .all()
-          const nextByProject = new Map<string, number>()
-          const addReference = db.query(
-            "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
-          )
-          for (const row of rows) {
-            const sequence = (nextByProject.get(row.project_directory) ?? 0) + 1
-            nextByProject.set(row.project_directory, sequence)
-            addReference.run(row.project_directory, row.id, `LZ-${sequence}`, sequence)
+            for (const row of rows) {
+              const sequence = (nextByProject.get(row.project_directory) ?? 0) + 1
+              nextByProject.set(row.project_directory, sequence)
+              addReference.run(row.project_directory, row.id, `LZ-${sequence}`, sequence)
+            }
+            db.exec("PRAGMA user_version=5")
           }
-          db.exec("PRAGMA user_version=5")
-        }
-        if (current < 6)
-          db.exec(`
+          if (current < 6)
+            db.exec(`
             CREATE TABLE task_classifications (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_directory TEXT NOT NULL,
@@ -208,8 +218,8 @@ export class TaskRepository {
             BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
             PRAGMA user_version=6;
           `)
-        if (current < 7)
-          db.exec(`
+          if (current < 7)
+            db.exec(`
             CREATE TABLE task_corrections (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_directory TEXT NOT NULL,
@@ -234,7 +244,20 @@ export class TaskRepository {
             BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
             PRAGMA user_version=7;
           `)
-      }).immediate()
+          if (current < 8)
+            db.exec(`
+          CREATE TABLE schema_modules (
+            module TEXT PRIMARY KEY,generation INTEGER NOT NULL,tables_json TEXT NOT NULL,installed_at INTEGER NOT NULL
+          );
+          PRAGMA user_version=8;
+        `)
+          db.query("INSERT OR IGNORE INTO schema_modules VALUES(?,?,?,?)").run(
+            "tasks",
+            8,
+            JSON.stringify(schemaModules.tasks.tables),
+            Date.now(),
+          )
+        }).immediate()
       databaseChanges.track(db, this.path)
       return db
     } catch (error) {
@@ -246,6 +269,73 @@ export class TaskRepository {
   /** Server-side domain services share transactions, never expose SQL to agents/RPC. */
   atomic<T>(run: (db: Database) => T): T {
     return this.db.transaction(() => run(this.db)).immediate()
+  }
+
+  /** Single-statement reads do not acquire a write reservation. */
+  read<T>(run: (db: Database) => T): T {
+    return run(this.db)
+  }
+
+  /** Module upgrades are transactional; current generations need no write transaction. */
+  installSchema(
+    module: string,
+    generation: number,
+    tables: readonly string[],
+    install: (db: Database) => void,
+  ): void {
+    const read = () =>
+      this.db
+        .query<{ generation: number }, [string]>(
+          "SELECT generation FROM schema_modules WHERE module=?",
+        )
+        .get(module)
+    const needsInstall = () => {
+      const stored = read()?.generation
+      if (stored !== undefined && stored > generation)
+        throw new Error(`Unsupported LAZERS schema module ${module} generation ${stored}`)
+      return stored === undefined || stored < generation
+    }
+    if (!needsInstall()) return
+    this.atomic((db) => {
+      if (!needsInstall()) return
+      install(db)
+      db.query(
+        `INSERT INTO schema_modules VALUES(?,?,?,?) ON CONFLICT(module)
+        DO UPDATE SET generation=excluded.generation,tables_json=excluded.tables_json,installed_at=excluded.installed_at`,
+      ).run(module, generation, JSON.stringify(tables), Date.now())
+    })
+  }
+
+  /** Advisory startup inventory: report drift without repairing or deleting data. */
+  schemaDrift() {
+    const actual = new Set(
+      this.db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        )
+        .all()
+        .map((row) => row.name),
+    )
+    const installed = new Map(
+      this.db
+        .query<{ module: string; generation: number }, []>(
+          "SELECT module,generation FROM schema_modules",
+        )
+        .all()
+        .map((row) => [row.module, row.generation]),
+    )
+    const declarations = Object.entries(schemaModules)
+    const declared = new Set<string>(declarations.flatMap(([, entry]) => [...entry.tables]))
+    return {
+      undeclaredTables: [...actual].filter((table) => !declared.has(table)),
+      missingTables: [...declared].filter((table) => !actual.has(table)),
+      generationDrift: declarations.flatMap(([module, entry]) => {
+        const generation = installed.get(module) ?? null
+        return generation === entry.generation
+          ? []
+          : [{ module, installed: generation, declared: entry.generation }]
+      }),
+    }
   }
 
   changed(): void {

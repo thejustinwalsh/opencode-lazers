@@ -1,5 +1,6 @@
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
+import { schemaModules } from "../database-schema.ts"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
@@ -615,25 +616,29 @@ function ensureArchitectSourceJournalRevisions(db: Database) {
   // Journal cursors now observe only the selected plan's retained-source mappings.
 }
 
+function migrateConflictScanHistory(db: Database) {
+  // F-S4-1: preserve historical conflict scans under their actual domain name.
+  if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_audits'").get()) {
+    if (
+      db
+        .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_conflict_scans'")
+        .get()
+    )
+      db.exec(`INSERT OR IGNORE INTO runner_conflict_scans SELECT * FROM runner_audits;
+                   DROP TABLE runner_audits`)
+    else db.exec("ALTER TABLE runner_audits RENAME TO runner_conflict_scans")
+  }
+}
+
 export class RunnerStore {
   constructor(readonly repository: TaskRepository) {
-    repository.atomic((db) => {
-      // F-S4-1: preserve historical conflict scans under their actual domain name.
-      if (
-        db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_audits'").get()
-      ) {
-        if (
-          db
-            .query(
-              "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_conflict_scans'",
-            )
-            .get()
-        )
-          db.exec(`INSERT OR IGNORE INTO runner_conflict_scans SELECT * FROM runner_audits;
-                   DROP TABLE runner_audits`)
-        else db.exec("ALTER TABLE runner_audits RENAME TO runner_conflict_scans")
-      }
-      db.exec(`
+    repository.installSchema(
+      "runner",
+      schemaModules.runner.generation,
+      schemaModules.runner.tables,
+      (db) => {
+        migrateConflictScanHistory(db)
+        db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
         revision INTEGER NOT NULL, version INTEGER NOT NULL, state TEXT NOT NULL,
@@ -686,6 +691,7 @@ export class RunnerStore {
         kind TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT, fence INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS runner_effects_plan ON runner_effects(plan_id);
+      CREATE INDEX IF NOT EXISTS runner_attempts_plan ON runner_attempts(plan_id);
       CREATE TABLE IF NOT EXISTS runner_source_quarantines (
         attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
         plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
@@ -810,6 +816,7 @@ export class RunnerStore {
         call_id TEXT, message_id TEXT, dedupe_key TEXT NOT NULL, payload TEXT NOT NULL,
         UNIQUE(project_directory,dedupe_key)
       );
+      CREATE INDEX IF NOT EXISTS runner_progress_plan_seq ON runner_progress(plan_id,seq);
       CREATE INDEX IF NOT EXISTS runner_progress_attempt_seq
         ON runner_progress(project_directory,attempt_id,seq);
       CREATE TABLE IF NOT EXISTS native_tool_calls (
@@ -835,53 +842,53 @@ export class RunnerStore {
         attempts INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL
       );
     `)
-      const toolCallColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(native_tool_calls)")
-          .all()
-          .map((column) => column.name),
-      )
-      // The initially observed ledger did not retain these identities. Keep
-      // historical values unknown; migration is not a new native observation.
-      if (!toolCallColumns.has("context_call_id"))
-        db.exec("ALTER TABLE native_tool_calls ADD COLUMN context_call_id TEXT")
-      if (!toolCallColumns.has("local_invocation_id"))
-        db.exec("ALTER TABLE native_tool_calls ADD COLUMN local_invocation_id TEXT")
-      db.exec(`CREATE INDEX IF NOT EXISTS native_tool_calls_local
+        const toolCallColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(native_tool_calls)")
+            .all()
+            .map((column) => column.name),
+        )
+        // The initially observed ledger did not retain these identities. Keep
+        // historical values unknown; migration is not a new native observation.
+        if (!toolCallColumns.has("context_call_id"))
+          db.exec("ALTER TABLE native_tool_calls ADD COLUMN context_call_id TEXT")
+        if (!toolCallColumns.has("local_invocation_id"))
+          db.exec("ALTER TABLE native_tool_calls ADD COLUMN local_invocation_id TEXT")
+        db.exec(`CREATE INDEX IF NOT EXISTS native_tool_calls_local
         ON native_tool_calls(project_directory,session_id,local_invocation_id)`)
-      const quarantineColumns = db
-        .query<{ name: string }, []>("PRAGMA table_info(runner_source_quarantines)")
-        .all()
-      if (!quarantineColumns.some((column) => column.name === "review_input_json"))
-        db.exec("ALTER TABLE runner_source_quarantines ADD COLUMN review_input_json TEXT")
-      const progressColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
+        const quarantineColumns = db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_source_quarantines)")
           .all()
-          .map((column) => column.name),
-      )
-      // Legacy recording times remain unknown; never backfill them from native
-      // event time or the time this additive migration happens to run.
-      if (!progressColumns.has("recorded_at"))
-        db.exec("ALTER TABLE runner_progress ADD COLUMN recorded_at INTEGER")
-      const attemptColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_attempts)")
-          .all()
-          .map((column) => column.name),
-      )
-      if (!attemptColumns.has("project_directory")) {
-        db.exec("ALTER TABLE runner_attempts ADD COLUMN project_directory TEXT")
-        // Only the legacy schema needs a full retained-attempt backfill. Keep
-        // this scan inside the one-time additive migration, not normal reopen.
-        db.exec(`
+        if (!quarantineColumns.some((column) => column.name === "review_input_json"))
+          db.exec("ALTER TABLE runner_source_quarantines ADD COLUMN review_input_json TEXT")
+        const progressColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
+            .all()
+            .map((column) => column.name),
+        )
+        // Legacy recording times remain unknown; never backfill them from native
+        // event time or the time this additive migration happens to run.
+        if (!progressColumns.has("recorded_at"))
+          db.exec("ALTER TABLE runner_progress ADD COLUMN recorded_at INTEGER")
+        const attemptColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_attempts)")
+            .all()
+            .map((column) => column.name),
+        )
+        if (!attemptColumns.has("project_directory")) {
+          db.exec("ALTER TABLE runner_attempts ADD COLUMN project_directory TEXT")
+          // Only the legacy schema needs a full retained-attempt backfill. Keep
+          // this scan inside the one-time additive migration, not normal reopen.
+          db.exec(`
           UPDATE runner_attempts
              SET project_directory=(SELECT project_directory FROM runner_plans WHERE id=runner_attempts.plan_id)
            WHERE project_directory IS NOT
                  (SELECT project_directory FROM runner_plans WHERE id=runner_attempts.plan_id)
         `)
-      }
-      db.exec(`
+        }
+        db.exec(`
         CREATE INDEX IF NOT EXISTS runner_attempts_active_project
           ON runner_attempts(project_directory,started_at DESC,id DESC)
           WHERE state IN ('preparing','running','verifying');
@@ -910,64 +917,64 @@ export class RunnerStore {
             UPDATE runner_attempts SET project_directory=NEW.project_directory WHERE plan_id=NEW.id;
           END;
       `)
-      const reminderColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
-          .all()
-          .map((column) => column.name),
-      )
-      if (!reminderColumns.has("message_id"))
-        db.exec("ALTER TABLE runner_progress_reminders ADD COLUMN message_id TEXT")
-      if (!reminderColumns.has("ownership_json"))
-        db.exec("ALTER TABLE runner_progress_reminders ADD COLUMN ownership_json TEXT")
-      if (!reminderColumns.has("updated_at"))
-        db.exec(
-          "ALTER TABLE runner_progress_reminders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+        const reminderColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
+            .all()
+            .map((column) => column.name),
         )
-      if (!reminderColumns.has("attempts"))
-        db.exec(
-          "ALTER TABLE runner_progress_reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1",
+        if (!reminderColumns.has("message_id"))
+          db.exec("ALTER TABLE runner_progress_reminders ADD COLUMN message_id TEXT")
+        if (!reminderColumns.has("ownership_json"))
+          db.exec("ALTER TABLE runner_progress_reminders ADD COLUMN ownership_json TEXT")
+        if (!reminderColumns.has("updated_at"))
+          db.exec(
+            "ALTER TABLE runner_progress_reminders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+          )
+        if (!reminderColumns.has("attempts"))
+          db.exec(
+            "ALTER TABLE runner_progress_reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1",
+          )
+        const adoptionColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_adoptions)")
+            .all()
+            .map((column) => column.name),
         )
-      const adoptionColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_adoptions)")
-          .all()
-          .map((column) => column.name),
-      )
-      if (!adoptionColumns.has("reviewed_baseline"))
-        db.exec(
-          "ALTER TABLE runner_adoptions ADD COLUMN reviewed_baseline TEXT NOT NULL DEFAULT ''",
+        if (!adoptionColumns.has("reviewed_baseline"))
+          db.exec(
+            "ALTER TABLE runner_adoptions ADD COLUMN reviewed_baseline TEXT NOT NULL DEFAULT ''",
+          )
+        const adoptionEvidenceColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_adoption_evidence)")
+            .all()
+            .map((column) => column.name),
         )
-      const adoptionEvidenceColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_adoption_evidence)")
-          .all()
-          .map((column) => column.name),
-      )
-      if (!adoptionEvidenceColumns.has("task_id"))
-        db.exec("ALTER TABLE runner_adoption_evidence ADD COLUMN task_id TEXT")
-      if (!adoptionEvidenceColumns.has("phase"))
+        if (!adoptionEvidenceColumns.has("task_id"))
+          db.exec("ALTER TABLE runner_adoption_evidence ADD COLUMN task_id TEXT")
+        if (!adoptionEvidenceColumns.has("phase"))
+          db.exec(
+            "ALTER TABLE runner_adoption_evidence ADD COLUMN phase TEXT NOT NULL DEFAULT 'legacy'",
+          )
         db.exec(
-          "ALTER TABLE runner_adoption_evidence ADD COLUMN phase TEXT NOT NULL DEFAULT 'legacy'",
-        )
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS runner_adoption_evidence_phase_lookup
+          `CREATE INDEX IF NOT EXISTS runner_adoption_evidence_phase_lookup
          ON runner_adoption_evidence(adoption_id,phase,task_id,assertion_id,artifact)`,
-      )
-      // One native Architect successor may own multiple plans. Older databases
-      // made the session ID unique, accidentally forcing one successor per plan.
-      const continuationIndexes = db
-        .query<{ name: string; unique: number }, []>("PRAGMA index_list(runner_continuations)")
-        .all()
-      const uniqueSessionIndex = continuationIndexes.find((index) => {
-        if (!index.unique) return false
-        const columns = db
-          .query<{ name: string }, []>(`PRAGMA index_info('${index.name.replaceAll("'", "''")}')`)
+        )
+        // One native Architect successor may own multiple plans. Older databases
+        // made the session ID unique, accidentally forcing one successor per plan.
+        const continuationIndexes = db
+          .query<{ name: string; unique: number }, []>("PRAGMA index_list(runner_continuations)")
           .all()
-        return columns.some((column) => column.name === "session_id")
-      })
-      if (uniqueSessionIndex) {
-        db.exec(`
+        const uniqueSessionIndex = continuationIndexes.find((index) => {
+          if (!index.unique) return false
+          const columns = db
+            .query<{ name: string }, []>(`PRAGMA index_info('${index.name.replaceAll("'", "''")}')`)
+            .all()
+          return columns.some((column) => column.name === "session_id")
+        })
+        if (uniqueSessionIndex) {
+          db.exec(`
           ALTER TABLE runner_continuations RENAME TO runner_continuations_legacy;
           CREATE TABLE runner_continuations (
             plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), session_id TEXT NOT NULL,
@@ -976,60 +983,68 @@ export class RunnerStore {
           INSERT INTO runner_continuations SELECT * FROM runner_continuations_legacy;
           DROP TABLE runner_continuations_legacy;
         `)
-      }
-      db.query(
-        `UPDATE runner_progress_reminders SET status='unknown'
+        }
+        db.query(
+          `UPDATE runner_progress_reminders SET status='unknown'
          WHERE message_id IS NULL OR ownership_json IS NULL`,
-      ).run()
-      const columns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_outbox)")
+        ).run()
+        const columns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_outbox)")
+            .all()
+            .map((column) => column.name),
+        )
+        if (!columns.has("metadata")) db.exec("ALTER TABLE runner_outbox ADD COLUMN metadata TEXT")
+        if (!columns.has("receipt")) db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt TEXT")
+        const renewalColumns = db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_architect_renewals)")
           .all()
-          .map((column) => column.name),
+          .map((column) => column.name)
+        if (!renewalColumns.includes("continuity_json"))
+          db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN continuity_json TEXT")
+        const architectInputColumns = new Set(
+          db
+            .query<{ name: string }, []>("PRAGMA table_info(runner_architect_inputs)")
+            .all()
+            .map((column) => column.name),
+        )
+        if (!architectInputColumns.has("native_type"))
+          db.exec("ALTER TABLE runner_architect_inputs ADD COLUMN native_type TEXT")
+        if (!architectInputColumns.has("delivery"))
+          db.exec("ALTER TABLE runner_architect_inputs ADD COLUMN delivery TEXT")
+        if (!architectInputColumns.has("disposition"))
+          db.exec(
+            "ALTER TABLE runner_architect_inputs ADD COLUMN disposition TEXT NOT NULL DEFAULT 'unknown'",
+          )
+        if (!architectInputColumns.has("metadata_json"))
+          db.exec("ALTER TABLE runner_architect_inputs ADD COLUMN metadata_json TEXT")
+        if (!architectInputColumns.has("last_seen_sweep"))
+          db.exec(
+            "ALTER TABLE runner_architect_inputs ADD COLUMN last_seen_sweep INTEGER NOT NULL DEFAULT 0",
+          )
+        if (!architectInputColumns.has("referenced_revision"))
+          db.exec(
+            "ALTER TABLE runner_architect_inputs ADD COLUMN referenced_revision INTEGER NOT NULL DEFAULT 0",
+          )
+        if (!architectInputColumns.has("updated_at"))
+          db.exec(
+            "ALTER TABLE runner_architect_inputs ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+          )
+        // Version-1 delivered meant native admission, never proven model consumption.
+        db.query(
+          "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
+        ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
+        ensureObservationRevision(db)
+        ensureArchitectSourceJournalRevisions(db)
+      },
+    )
+    // An older still-loaded plugin can recreate its table after the generation was installed.
+    if (
+      repository.read((db) =>
+        db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_audits'").get(),
       )
-      if (!columns.has("metadata")) db.exec("ALTER TABLE runner_outbox ADD COLUMN metadata TEXT")
-      if (!columns.has("receipt")) db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt TEXT")
-      const renewalColumns = db
-        .query<{ name: string }, []>("PRAGMA table_info(runner_architect_renewals)")
-        .all()
-        .map((column) => column.name)
-      if (!renewalColumns.includes("continuity_json"))
-        db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN continuity_json TEXT")
-      const architectInputColumns = new Set(
-        db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_architect_inputs)")
-          .all()
-          .map((column) => column.name),
-      )
-      if (!architectInputColumns.has("native_type"))
-        db.exec("ALTER TABLE runner_architect_inputs ADD COLUMN native_type TEXT")
-      if (!architectInputColumns.has("delivery"))
-        db.exec("ALTER TABLE runner_architect_inputs ADD COLUMN delivery TEXT")
-      if (!architectInputColumns.has("disposition"))
-        db.exec(
-          "ALTER TABLE runner_architect_inputs ADD COLUMN disposition TEXT NOT NULL DEFAULT 'unknown'",
-        )
-      if (!architectInputColumns.has("metadata_json"))
-        db.exec("ALTER TABLE runner_architect_inputs ADD COLUMN metadata_json TEXT")
-      if (!architectInputColumns.has("last_seen_sweep"))
-        db.exec(
-          "ALTER TABLE runner_architect_inputs ADD COLUMN last_seen_sweep INTEGER NOT NULL DEFAULT 0",
-        )
-      if (!architectInputColumns.has("referenced_revision"))
-        db.exec(
-          "ALTER TABLE runner_architect_inputs ADD COLUMN referenced_revision INTEGER NOT NULL DEFAULT 0",
-        )
-      if (!architectInputColumns.has("updated_at"))
-        db.exec(
-          "ALTER TABLE runner_architect_inputs ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
-        )
-      // Version-1 delivered meant native admission, never proven model consumption.
-      db.query(
-        "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
-      ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
-      ensureObservationRevision(db)
-      ensureArchitectSourceJournalRevisions(db)
-    })
+    )
+      repository.atomic(migrateConflictScanHistory)
     new RecoveryJournal(repository)
   }
   atomic<T>(run: (db: Database) => T): T {

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { z } from "zod"
+import { schemaModules } from "../database-schema.ts"
 import { canonical } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskSpecSchema } from "../task.ts"
@@ -100,13 +101,42 @@ function hasAdviceTable(db: Database): boolean {
   )
 }
 
+/** Task advice is installed at repository startup, never as a tool-write side effect. */
+export function installTaskAdviceSchema(repository: TaskRepository) {
+  repository.installSchema(
+    "task-advice",
+    schemaModules["task-advice"].generation,
+    schemaModules["task-advice"].tables,
+    (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS task_advice (
+          project_directory TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          request_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision > 0),
+          payload TEXT NOT NULL,
+          record_json TEXT NOT NULL,
+          PRIMARY KEY(project_directory, request_id),
+          UNIQUE(project_directory, task_id, revision)
+        );
+        CREATE INDEX IF NOT EXISTS task_advice_history
+          ON task_advice(project_directory, task_id, revision);
+        CREATE TRIGGER IF NOT EXISTS task_advice_no_update BEFORE UPDATE ON task_advice
+        BEGIN SELECT RAISE(ABORT, 'Task advice history is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS task_advice_no_delete BEFORE DELETE ON task_advice
+        BEGIN SELECT RAISE(ABORT, 'Task advice history is append-only'); END;
+      `)
+    },
+  )
+}
+
 /** Reads only the task-owned advice projection; legacy reads never create its table. */
 export function taskAdviceSnapshot(
   repository: TaskRepository,
   taskID: string,
 ): TaskAdviceSnapshot | null {
   return repository.atomic((db) => {
-    if (!hasAdviceTable(db)) return null
+    if (!hasAdviceTable(db)) throw new Error("Task advice schema is not installed")
     const taskRow = db
       .query<{ body: string }, [string, string]>(
         "SELECT body FROM tasks WHERE project_directory=? AND id=?",
@@ -214,25 +244,6 @@ export function recordTaskAdvice(
         currentRevision,
         message: "Task advice revision changed; read current advice before correcting",
       })
-    if (!tableExists)
-      db.exec(`
-        CREATE TABLE task_advice (
-          project_directory TEXT NOT NULL,
-          task_id TEXT NOT NULL REFERENCES tasks(id),
-          request_id TEXT NOT NULL,
-          revision INTEGER NOT NULL CHECK(revision > 0),
-          payload TEXT NOT NULL,
-          record_json TEXT NOT NULL,
-          PRIMARY KEY(project_directory, request_id),
-          UNIQUE(project_directory, task_id, revision)
-        );
-        CREATE INDEX task_advice_history
-          ON task_advice(project_directory, task_id, revision);
-        CREATE TRIGGER task_advice_no_update BEFORE UPDATE ON task_advice
-        BEGIN SELECT RAISE(ABORT, 'Task advice history is append-only'); END;
-        CREATE TRIGGER task_advice_no_delete BEFORE DELETE ON task_advice
-        BEGIN SELECT RAISE(ABORT, 'Task advice history is append-only'); END;
-      `)
 
     const advice = TaskAdviceRecord.parse({
       projectDirectory: repository.projectDirectory,
