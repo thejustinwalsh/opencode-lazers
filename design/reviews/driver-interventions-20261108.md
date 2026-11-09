@@ -37,3 +37,21 @@ External Codex usage has not been shown captured by OpenCode accounting.
 Historical assistance above is a retrospective summary. Exact elapsed effort,
 token cost and intervention timestamps are not inferred from it. Native worker
 tests, final commit and integration for LZ-181 remain unproven at this checkpoint.
+
+## Recording repair
+
+The progress recorder's retained-message reconciliation omitted user and
+synthetic input text. The two known steering message IDs had no matching progress
+rows. Reconciliation now saves public inputs with native message identity and
+creation time, using the existing recorder, redaction and idempotent storage.
+Instruction-file context and native continuation notes remain excluded through
+the existing native-input classifier. Missing creation time stays unknown in the
+projected timeline. Input records are not labeled worker output, and their type
+does not imply a particular author or a successful intervention.
+
+Validation: 116 progress/native/input/privacy/read tests passed, then 22 recorder
+tests and 15 registered-tool/panel tests passed after projection adjustments.
+Automatic quality checks pass. This repairs retained reconstruction; it does not
+claim immediate live-event capture, complete historical recovery, cost attribution
+or native activation. Production data was inspected read-only and not backfilled
+by the driver. Current Architect and original worker remained active afterward.

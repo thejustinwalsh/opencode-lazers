@@ -345,6 +345,8 @@ export type TrajectoryCheck = z.infer<typeof Check>
 export type TrajectoryEvent = z.infer<typeof Event>
 
 export function eventTitle(event: TrajectoryEvent) {
+  if (event.kind === "user") return "User request"
+  if (event.kind === "synthetic") return "Session input"
   if (event.kind === "tool") return `${event.tool ?? "Tool"} · ${event.status ?? "unknown"}`
   if (event.kind === "worker-tool")
     return `${event.tool ?? "Worker tool"} · ${event.status ?? "updated"}`

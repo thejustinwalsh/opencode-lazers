@@ -6,8 +6,61 @@ import { RunnerStore } from "../runner/store.ts"
 import { Tool } from "@opencode/schema/tool"
 import { makeFixture, firstAttemptID, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "./recorder.ts"
+import { projectProgressFact } from "./projection.ts"
 
 const workerSession = "ses-failed"
+
+test("retained worker inputs preserve steering identity and time without recording instruction context", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const messages = [
+      { id: "user-request", type: "user", time: { created: 1000 }, text: "Implement the feature." },
+      {
+        id: "worker-steer",
+        type: "synthetic",
+        time: { created: 2000 },
+        text: "Keep the same worker; correct the failing transition.",
+      },
+      { id: "untimed-steer", type: "synthetic", text: "Inspect the receipt." },
+      {
+        id: "loaded-instructions",
+        type: "synthetic",
+        text: "Private instruction context",
+        metadata: { instruction: { paths: ["AGENTS.md"] } },
+      },
+      {
+        id: "native-continuation",
+        type: "synthetic",
+        text: "The previous response was interrupted. Continue from where you left off without repeating completed content.",
+      },
+    ]
+    recorder.reconcileMessages(workerSession, messages)
+    recorder.reconcileMessages(workerSession, messages)
+    new ProgressRecorder(fixture.store, "project").reconcileMessages(workerSession, messages)
+    const inputs = fixture.store
+      .progressFacts([firstAttemptID])
+      .filter((row) => row.kind === "visible-text")
+    expect(inputs).toHaveLength(3)
+    const steer = inputs.find((row) => row.message_id === "worker-steer")!
+    expect(steer.at).toBe(2000)
+    expect(JSON.parse(steer.payload)).toMatchObject({
+      messageType: "synthetic",
+      createdAt: 2000,
+      text: messages[1]!.text,
+    })
+    expect(projectProgressFact(steer)).toMatchObject({ messageType: "synthetic", createdAt: 2000 })
+    const untimed = inputs.find((row) => row.message_id === "untimed-steer")!
+    expect(projectProgressFact(untimed)).toMatchObject({
+      kind: "synthetic",
+      createdAt: null,
+      at: null,
+    })
+    expect(JSON.stringify(inputs)).not.toContain("Private instruction context")
+  } finally {
+    fixture.close()
+  }
+})
 type RetainedToolState = "running" | "completed"
 type StoredToolPayload = {
   status?: unknown

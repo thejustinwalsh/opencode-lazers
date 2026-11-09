@@ -1,4 +1,5 @@
 import { isWorkerAgent } from "../runner/worker-agent.ts"
+import { isNativeInput } from "../runner/native-input.ts"
 import { DateTime } from "effect"
 import { createHash } from "node:crypto"
 import type { Database } from "bun:sqlite"
@@ -1682,6 +1683,25 @@ export class ProgressRecorder {
         const messageTime = object(message.time)
         const messageCreatedAt = dateMillis(messageTime?.created)
         const at = messageCreatedAt ?? Date.now()
+        if (
+          (message.type === "user" || message.type === "synthetic") &&
+          isNativeInput(raw) &&
+          typeof message.text === "string"
+        ) {
+          this.appendIn(db, assignment, {
+            source: "recovery",
+            sourceType: `retained-${message.type}-message.text`,
+            kind: "visible-text",
+            dedupeKey: `input:${sessionID}:${messageID}`,
+            at,
+            messageID,
+            payload: {
+              text: safeText(message.text, privacyStats()),
+              messageType: message.type,
+              createdAt: messageCreatedAt ?? null,
+            },
+          })
+        }
         if (message.type === "assistant") {
           const parts = Array.isArray(message.content) ? message.content : []
           for (const [index, rawPart] of parts.entries()) {
