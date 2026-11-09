@@ -173,3 +173,20 @@ already requires legacy-fails/live-succeeds and readable RPC errors. Driver
 reported the actual defect through Desktop and asked Architect to finish that
 existing product acceptance/integration path while preserving181/193. No cap was
 raised, acceptance recorded, or new duplicate task created by the driver.
+
+## Early LZ-193 rejection-gate steering
+
+While the original worker was actively writing LZ-193, driver inspection found
+its first repo-processor.ts draft rejected more than20 path patterns or5000
+files, and rejected the whole result when Repomix skipped any size-limit file.
+The product ask called for useful one-call compressed research; it did not supply
+those count limits. Treating an upstream omission as a complete tool failure
+would reintroduce the rejected narrow-and-retry interaction. The task's bounded
+response wording did not justify those implementation gates.
+
+Driver reported the concrete draft behavior to Architect through Desktop and
+requested same-worker steering: useful returned source and saved artifact,
+explicit omissions, and resource handling grounded in actual transport/memory
+constraints. No new task, stopped worker, or System One change. At the next native
+observation Architect was researching that exact draft and the same worker was
+still writing. Correction delivery and changed behavior remain unproven.
