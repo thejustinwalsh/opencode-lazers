@@ -571,3 +571,15 @@ in the baseline directory. Retained/adoption cancellation lifecycles are not
 merged into this correction; their broader recovery remains separately scoped.
 The earlier native LZ-185 exit-137 incident is still not attributed to this cause
 without an observed abort receipt; no historical failure is rewritten.
+
+### Wave 4 full-suite comparison
+
+At unchanged code commit `19bc668`, the full suite ran from Unix ms
+1794252961069 to 1794253261110: **1,781 pass / 4 fail**, 1,785 tests across
+180 files, 19,791 assertions, 299.97 seconds. The four failures are exactly the
+original baseline set; no new failures. Logs: `wave-4.{log,json}` in the baseline
+directory. All Wave 4 corrections and the exact-arithmetic prerequisite are
+committed and regression checked. Reconciliation #2 follows Justin's current
+market-price decision; no further decision blocked this wave. No production
+history was rewritten and no native acceptance or CPU reduction is inferred from
+the suite result. Native activation/observations remain outstanding.
