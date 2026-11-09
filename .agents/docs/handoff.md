@@ -4,6 +4,12 @@ Updated 2026-11-08. Goal remains active: native Architect/LAZERS must deliver th
 whole roadmap, then propose improvements from observation. Runtime/API/DB state
 is authoritative; this file is a locator. Earlier detail remains in Git history.
 
+## Standing driver role
+
+Follow AGENTS.md → Dogfood driver role. Codex is the human developer in this
+loop; Architect owns recovery and raises material unresolved decisions through
+native questions. Observe outcomes rather than supplying unsolicited steering.
+
 ## Latest native observations (Unix1794185198017)
 
 Main commits29ee18b/ba6b5f4 consolidate worker startup into `lz-get-task` and

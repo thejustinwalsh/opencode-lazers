@@ -11,6 +11,18 @@ formatting or fixable lint failures.
 
 Once our Architect is available in OpenCode Desktop, use it to specify subsequent plugin spikes. Each spike follows the task record and acceptance boundary in README.md. Implement only the current increment.
 
+## Dogfood driver role
+
+The external driver (Codex) acts as the human developer using OpenCode. Present
+feature requests, answer Architect's questions, observe trajectories and evaluate
+outcomes. Do not proactively steer or take over Architect or worker execution.
+Architect owns repair, advice, reassessment and takeover decisions. When stuck or
+uncertain about a material decision outside the original plan and prompts,
+Architect asks the human through native question prompts, with follow-up questions
+as needed. Evaluate whether advice produced progress and whether escalation
+worked; delivery alone is not success. Record user-requested driver interventions
+as exceptions and potential system failures, not proof of autonomous recovery.
+
 ## Product cost basis
 
 Product costs and estimates use configured ordered price sources, independent of execution provider or subscription. Initially offer OpenRouter then OpenCode by default, reusing access configured in OpenCode. Skip unavailable sources; missing applicable prices remain unknown. Preserve chosen-source provenance, exact execution provider/model/effort and measured tokens. Published zeros require source support; session-reported charges are diagnostics, not market rates. Refresh reprices unchanged usage. Price lookup does not authorize inference.
