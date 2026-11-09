@@ -1,3 +1,4 @@
+import { decimal, addDecimal, decimalNumber, type Decimal } from "./valuation.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
@@ -171,9 +172,18 @@ function pricedRangeForScenario(scenario: KnownUsageMarketScenario) {
 
 function sumRange(values: readonly { minimum: number; maximum: number }[]) {
   if (!values.length) return null
-  const minimum = values.reduce((sum, value) => sum + value.minimum, 0)
-  const maximum = values.reduce((sum, value) => sum + value.maximum, 0)
-  return Number.isFinite(minimum) && Number.isFinite(maximum) ? { minimum, maximum } : null
+  let low: Decimal = { coefficient: 0n, scale: 0 }
+  let high: Decimal = { coefficient: 0n, scale: 0 }
+  for (const value of values) {
+    const minimum = decimal(value.minimum)
+    const maximum = decimal(value.maximum)
+    if (!minimum || !maximum) return null
+    low = addDecimal(low, minimum)
+    high = addDecimal(high, maximum)
+  }
+  const minimum = decimalNumber(low)
+  const maximum = decimalNumber(high)
+  return minimum !== null && maximum !== null ? { minimum, maximum } : null
 }
 
 function observedUsageEstimate(input: {

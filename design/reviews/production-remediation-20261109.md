@@ -444,3 +444,25 @@ retains the remediation hold. Their work has not been resumed or discarded.
 F-S4-3, F-S3-1 and S7-5 code/behavior corrections are complete; native recurrence
 and rate measurements are still outstanding, so production symptom closure is
 not claimed. No Wave 3 item required another reconciliation decision.
+
+## Wave 4 prerequisite: F-S10-4
+
+Read S9 and S10 in full and re-located the arithmetic by symbol. A new production
+reader test supplies one unshared accepted session, one published catalog tier,
+and matching complete step/cumulative usage. Before correction it reproduced
+`41.324355` versus `41.324355000000004` for the same cohort. The captured failure
+is `s10-three-price-before.log` in the baseline directory.
+
+Exported the existing valuation decimal helpers and reused them for known-usage
+category products, per-call monetary sums, reference-estimate category/range
+products and sums, and task-valuation range sums. Rate strings remain decimal
+inputs; conversion to numbers occurs at public numeric boundaries. Missing-rate,
+partial-attribution, tier-selection, overflow/underflow and source provenance
+contracts remain. No pricers have been merged or market-price policy changed.
+
+The cross-consistency test now requires exact `toBe` equality between current
+market cost per accepted task, reference-estimate numerator, and the known-usage
+scenario's value. `bun run verify` passed; valuation, reference-estimate,
+known-usage market and decision-reader behavior files: **61 pass**, 594 assertions.
+Output: `s10-decimal-behavior.log` in the baseline directory. No live pricing
+refresh or inference was performed; this is arithmetic/projection validation.

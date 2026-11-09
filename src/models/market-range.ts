@@ -1,3 +1,4 @@
+import { decimal, addDecimal, multiplyDecimal, decimalNumber, type Decimal } from "./valuation.ts"
 import { z } from "zod"
 import {
   ENDPOINT_PRICING_PRODUCTS,
@@ -700,32 +701,34 @@ function applicableMissingRates(categories: UsageCategories, set: RateSet): Usag
 
 function amountForSet(categories: UsageCategories, set: RateSet): number | null {
   if (!isCompleteUsage(categories)) return null
-  const missing = applicableMissingRates(categories, set)
-  if (missing.length) return null
-  const values = CATEGORIES.map((category) => {
+  if (applicableMissingRates(categories, set).length) return null
+  let total: Decimal = { coefficient: 0n, scale: 0 }
+  for (const category of CATEGORIES) {
     const tokens = categories[category].tokens
     if (tokens === null) return null
-    if (tokens === 0) return 0
-    const rate = rateNumber(set[usageRateCategory(category)])
-    return rate === null ? null : tokens * rate
-  })
-  if (values.some((value) => value === null)) return null
-  const total = values.reduce<number>((sum, value) => sum + value!, 0)
-  return Number.isFinite(total) ? total : null
+    if (tokens === 0) continue
+    const raw = rateText(set[usageRateCategory(category)])
+    const rate = raw === null ? null : decimal(raw)
+    const amount = decimal(tokens)
+    if (!rate || !amount) return null
+    total = addDecimal(total, multiplyDecimal(amount, rate))
+  }
+  return decimalNumber(total)
 }
 
 function knownSubtotalForSet(categories: UsageCategories, set: RateSet): number | null {
-  const missing = applicableMissingRates(categories, set)
-  if (missing.length) return null
-  const values = CATEGORIES.map((category) => {
+  if (applicableMissingRates(categories, set).length) return null
+  let total: Decimal = { coefficient: 0n, scale: 0 }
+  for (const category of CATEGORIES) {
     const tokens = categories[category].tokens
-    if (tokens === null || tokens === 0) return 0
-    const rate = rateNumber(set[usageRateCategory(category)])
-    return rate === null ? null : tokens * rate
-  })
-  if (values.some((value) => value === null)) return null
-  const total = values.reduce<number>((sum, value) => sum + value!, 0)
-  return Number.isFinite(total) ? total : null
+    if (tokens === null || tokens === 0) continue
+    const raw = rateText(set[usageRateCategory(category)])
+    const rate = raw === null ? null : decimal(raw)
+    const amount = decimal(tokens)
+    if (!rate || !amount) return null
+    total = addDecimal(total, multiplyDecimal(amount, rate))
+  }
+  return decimalNumber(total)
 }
 
 function hasKnownPositiveUsage(categories: UsageCategories) {
@@ -1123,7 +1126,9 @@ function calculateScenario(input: {
       selectedTierIDs.push(selected.tierID)
     }
     if (valid) {
-      valueUSD = amounts.reduce((total, amount) => total + amount, 0)
+      let total: Decimal = { coefficient: 0n, scale: 0 }
+      for (const amount of amounts) total = addDecimal(total, decimal(amount)!)
+      valueUSD = decimalNumber(total)
       tierAttribution = {
         status: "resolved-per-call",
         basis: "complete-per-call-prompt-usage",

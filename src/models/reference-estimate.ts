@@ -1,3 +1,4 @@
+import { decimal, addDecimal, multiplyDecimal, decimalNumber, type Decimal } from "./valuation.ts"
 import { z } from "zod"
 import type { ModelPriceSourceSettings } from "./price-source-settings.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
@@ -399,8 +400,8 @@ function rangesFromSchedules(
     }),
   ) as Record<Category, CategoryCoverage>
 
-  let subtotalMinimum = 0
-  let subtotalMaximum = 0
+  let subtotalMinimum: Decimal = { coefficient: 0n, scale: 0 }
+  let subtotalMaximum: Decimal = { coefficient: 0n, scale: 0 }
   let hasPricedUsage = false
   let complete = !missingUsage && !missingRate
   // Aggregate token counts cannot identify each call's tier, so bound every category
@@ -416,39 +417,37 @@ function rangesFromSchedules(
       continue
     }
 
-    const rates = schedules.map((schedule) => rateNumber(categoryRate(category, schedule)))
-    const knownRates = rates.flatMap((rate) => (rate.value === null ? [] : [rate.value]))
+    const knownRates = schedules.flatMap((schedule) => {
+      const raw = categoryRate(category, schedule)
+      const rate = rateNumber(raw)
+      const exact = raw === null ? null : decimal(raw)
+      return rate.value !== null && exact ? [{ value: rate.value, exact }] : []
+    })
     hasPricedUsage ||= knownRates.length > 0
-    if (knownRates.length === schedules.length) {
-      const minimum = usage.tokens * Math.min(...knownRates)
-      const maximum = usage.tokens * Math.max(...knownRates)
-      if (
-        !Number.isFinite(minimum) ||
-        !Number.isFinite(maximum) ||
-        (minimum === 0 && Math.min(...knownRates) > 0) ||
-        (maximum === 0 && Math.max(...knownRates) > 0)
-      ) {
-        nonfinite = true
-        complete = false
-        continue
-      }
-      subtotalMinimum += minimum
-      subtotalMaximum += maximum
-      if (!Number.isFinite(subtotalMinimum) || !Number.isFinite(subtotalMaximum)) nonfinite = true
+    if (knownRates.length === 0) {
+      complete = false
       continue
     }
-
-    complete = false
-    if (knownRates.length > 0) {
-      const maximum = usage.tokens * Math.max(...knownRates)
-      if (!Number.isFinite(maximum) || (maximum === 0 && Math.max(...knownRates) > 0)) {
-        nonfinite = true
-        continue
-      }
-      subtotalMaximum += maximum
-      if (!Number.isFinite(subtotalMaximum)) nonfinite = true
+    const tokens = decimal(usage.tokens)!
+    const lowest = knownRates.reduce((left, right) => (left.value <= right.value ? left : right))
+    const highest = knownRates.reduce((left, right) => (left.value >= right.value ? left : right))
+    const minimum = multiplyDecimal(tokens, lowest.exact)
+    const maximum = multiplyDecimal(tokens, highest.exact)
+    if (decimalNumber(minimum) === null || decimalNumber(maximum) === null) {
+      nonfinite = true
+      complete = false
+      continue
     }
+    if (knownRates.length === schedules.length) {
+      subtotalMinimum = addDecimal(subtotalMinimum, minimum)
+    } else {
+      complete = false
+    }
+    subtotalMaximum = addDecimal(subtotalMaximum, maximum)
   }
+  const minimum = decimalNumber(subtotalMinimum)
+  const maximum = decimalNumber(subtotalMaximum)
+  if (minimum === null || maximum === null) nonfinite = true
 
   return {
     rateCoverage,
@@ -459,9 +458,8 @@ function rangesFromSchedules(
     knownSubtotal:
       nonfinite || !hasObservedUsage || !hasPricedUsage
         ? null
-        : { minimum: subtotalMinimum, maximum: subtotalMaximum },
-    completeRange:
-      complete && !nonfinite ? { minimum: subtotalMinimum, maximum: subtotalMaximum } : null,
+        : { minimum: minimum!, maximum: maximum! },
+    completeRange: complete && !nonfinite ? { minimum: minimum!, maximum: maximum! } : null,
   }
 }
 

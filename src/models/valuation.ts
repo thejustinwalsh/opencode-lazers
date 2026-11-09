@@ -8,7 +8,7 @@ import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuat
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import type { KnownUsagePerCall, MarketRangeRoute } from "./market-range.ts"
 
-type Decimal = { coefficient: bigint; scale: number }
+export type Decimal = { coefficient: bigint; scale: number }
 type ProgressFact = {
   id: string
   sequence: number | null
@@ -56,7 +56,7 @@ function finiteNonnegative(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-function decimal(value: number | string): Decimal | null {
+export function decimal(value: number | string): Decimal | null {
   if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) return null
   const text = String(value)
   const match = /^(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text)
@@ -77,7 +77,7 @@ function decimal(value: number | string): Decimal | null {
   return { coefficient, scale }
 }
 
-function addDecimal(left: Decimal, right: Decimal): Decimal {
+export function addDecimal(left: Decimal, right: Decimal): Decimal {
   const scale = Math.max(left.scale, right.scale)
   const leftCoefficient = left.coefficient * 10n ** BigInt(scale - left.scale)
   const rightCoefficient = right.coefficient * 10n ** BigInt(scale - right.scale)
@@ -90,7 +90,7 @@ function addDecimal(left: Decimal, right: Decimal): Decimal {
   return { coefficient, scale: normalizedScale }
 }
 
-function multiplyDecimal(left: Decimal, right: Decimal): Decimal {
+export function multiplyDecimal(left: Decimal, right: Decimal): Decimal {
   let coefficient = left.coefficient * right.coefficient
   let scale = left.scale + right.scale
   while (scale > 0 && coefficient !== 0n && coefficient % 10n === 0n) {
@@ -107,7 +107,7 @@ function decimalText(value: Decimal): string {
   return `${digits.slice(0, split)}.${digits.slice(split)}`
 }
 
-function decimalNumber(value: Decimal): number | null {
+export function decimalNumber(value: Decimal): number | null {
   const parsed = Number(decimalText(value))
   if (!Number.isFinite(parsed) || parsed < 0 || (value.coefficient > 0n && parsed === 0))
     return null

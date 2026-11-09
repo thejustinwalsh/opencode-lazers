@@ -541,6 +541,7 @@ async function observeDecisionProgressPages<T>(
 function cachedOpenRouterReader(
   fixture: ReturnType<typeof makeLedgerFixture>,
   options: {
+    includeSources?: boolean
     missingCacheWriteRate?: boolean
     tieredPromptTiers?: boolean
     onRoutes?: (routes: readonly CurrentPriceApplicability[]) => void
@@ -576,6 +577,15 @@ function cachedOpenRouterReader(
           settings,
           index,
           freshness: "current",
+          ...(options.includeSources
+            ? {
+                sources,
+                identityCatalogSource: sources.find(
+                  (source) => source.source === "openrouter-models",
+                ),
+                identityNativeSource: sources.find((source) => source.source === "native-catalog"),
+              }
+            : {}),
         }
       } finally {
         evidence.close()
@@ -2026,6 +2036,60 @@ test("pre-abort avoids capture and cancellation after awaited pricing rejects wi
     expect(closes).toBeGreaterThanOrEqual(2)
   } finally {
     reader.close()
+    fixture.close()
+  }
+})
+
+test("F-S10-4 identical complete single-session cohorts have one exact price across all three projections", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openai", modelID: "fixture-model", variant: "high" }
+  const db = new Database(fixture.path, { strict: true })
+  try {
+    db.query("DELETE FROM runner_progress WHERE attempt_id IN (?,?)").run(
+      fixture.attempts.failed.id,
+      fixture.attempts.accepted.id,
+    )
+    db.query("DELETE FROM runner_attempts WHERE id=?").run(fixture.attempts.failed.id)
+  } finally {
+    db.close()
+  }
+  rewriteAttemptFacts(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    route,
+    [8_765_433],
+  )
+  rewriteAttemptUsage(fixture.path, fixture.attempts.accepted.id, 8_765_433, 2_345_679, 112_233)
+  const source = cachedOpenRouterReader(fixture, { includeSources: true })
+  try {
+    const input = inputFor(fixture.projectDirectory)
+    const overview = await source.reader.overview(input)
+    const row = (await source.reader.rows({ ...input, limit: 100 })).rows.find(
+      (item) => item.configuration.route.modelID === route.modelID,
+    )
+    assert.ok(row)
+    expect(row.cohort.acceptedTaskCount).toBe(1)
+    expect(row.cohort.attemptCount).toBe(1)
+    const detail = await source.reader.inspect({
+      ...input,
+      snapshotID: overview.context.snapshotID,
+      configurationID: row.configuration.configurationID,
+      selectedTaskID: fixture.tasks.retry!.id,
+      contributorLimit: 100,
+    })
+    assert.equal(detail.status, "found")
+    if (detail.status !== "found") return
+    const scenario = detail.knownUsageMarket?.scenarios[0]
+    assert.ok(scenario && row.referenceEstimate)
+    expect(scenario.tierAttribution.status).toBe("not-required")
+    expect(row.referenceEstimate.status).toBe("exact")
+    expect(row.efficiency.currentMarketUSDPerAcceptedTask).toBeGreaterThan(0)
+    // F-S10-4: these are the same observed tokens and published tier, not approximate quotes.
+    expect(row.efficiency.currentMarketUSDPerAcceptedTask).toBe(row.referenceEstimate.numeratorUSD)
+    expect(row.efficiency.currentMarketUSDPerAcceptedTask).toBe(scenario.valueUSD)
+  } finally {
+    source.close()
     fixture.close()
   }
 })
