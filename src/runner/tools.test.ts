@@ -14,6 +14,7 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import type { ArchitectObservedMessage } from "./store.ts"
 import { RunnerStore } from "./store.ts"
+import { createRetainedVerification } from "./retained-verification/store.ts"
 import { registerRunnerTools } from "./tools.ts"
 import type { TaskRuntime } from "./runtime.ts"
 
@@ -579,6 +580,345 @@ test("registered journal traversal survives unrelated worker progress in the sam
         cursor: resultCursorPage.nextCursor,
       }),
     ).rejects.toThrow("Journal changed since this page; restart the journal view")
+  } finally {
+    repository.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("registered selected full inspection reads retained verification without runtime or native calls", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-retained-tool-"))
+  const projectDirectory = join(directory, "project")
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), projectDirectory)
+  try {
+    const task = repository.insert({
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      revision: 1,
+      status: "submitted",
+      createdAt: new Date().toISOString(),
+      provenance: {
+        projectID: "project",
+        projectDirectory,
+        workspaceDirectory: projectDirectory,
+        sessionID: "ses_test",
+        startingRevision: { kind: "unborn" },
+      },
+      proposal: validProposal(),
+    })
+    const store = new RunnerStore(repository)
+    const plan = store.submit(
+      {
+        requestID: "registered-retained-inspection",
+        title: "Read retained checks",
+        objective: "Show persisted verification facts without runtime control",
+        baseCommit: "b".repeat(40),
+        nodes: [{ taskID: task.id, revision: 1 as const }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: task.proposal.verification,
+        acceptance: task.proposal.acceptance,
+      },
+      "ses_test",
+    )
+    const foreignTask = repository.insert({ ...task, id: crypto.randomUUID() })
+    const foreignPlan = store.submit(
+      {
+        requestID: "foreign-retained-inspection",
+        title: "Foreign retained checks",
+        objective: "Keep another plan outside selected inspection",
+        baseCommit: "c".repeat(40),
+        nodes: [{ taskID: foreignTask.id, revision: 1 as const }],
+        dependencies: [],
+        integrationOrder: [foreignTask.id],
+        verification: foreignTask.proposal.verification,
+        acceptance: foreignTask.proposal.acceptance,
+      },
+      "ses_test",
+    )
+    const operation = {
+      schemaVersion: 1 as const,
+      id: crypto.randomUUID(),
+      generation: 3,
+      projectID: "project",
+      projectDirectory,
+      planID: plan.planID,
+      planRevision: 1,
+      planVersion: 1,
+      owner: "ses_test",
+      ownerEpoch: 0,
+      taskID: task.id,
+      taskRevision: 1,
+      attemptID: crypto.randomUUID(),
+      originalSessionID: "ses_private_canary",
+      originalMessageID: "msg_private_canary",
+      originalWorkspace: "/private/ORIGINAL_WORKSPACE_CANARY",
+      artifact: "a".repeat(40),
+      combinedArtifact: null,
+      combinedInputFingerprint: null,
+      taskWorkspace: null,
+      taskWorkspaceState: null,
+      combinedWorkspace: null,
+      combinedWorkspaceState: null,
+      inputFingerprint: fingerprint("input"),
+      environmentIdentity: JSON.stringify({ PATH: "/private/ENVIRONMENT_CONTENT_CANARY" }),
+      reason: "PRIVATE_REASON_CANARY",
+      state: "accepted" as const,
+      holdReason: "PRIVATE_HOLD_CANARY",
+      cleanupState: "failed" as const,
+      createdAt: 100,
+      updatedAt: 200,
+    }
+    for (const generation of [1, 2])
+      store.atomic((db) =>
+        createRetainedVerification(db, projectDirectory, {
+          ...operation,
+          id: crypto.randomUUID(),
+          generation,
+          state: "failed",
+          cleanupState: "complete",
+        }),
+      )
+    store.atomic((db) => createRetainedVerification(db, projectDirectory, operation))
+    const foreignOperation = {
+      ...operation,
+      id: crypto.randomUUID(),
+      planID: foreignPlan.planID,
+      taskID: foreignTask.id,
+      generation: 1,
+      state: "accepted" as const,
+    }
+    store.atomic((db) => createRetainedVerification(db, projectDirectory, foreignOperation))
+    store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_retained_verification_checks(
+          operation_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,
+          environment_identity,receipt_path,state,receipt,context_path,cleanup_state,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,'completed',?,?,?,?)`,
+      ).run(
+        operation.id,
+        "task",
+        "tests",
+        JSON.stringify({ id: "tests", command: "PRIVATE_COMMAND_CANARY" }),
+        "/private/CHECK_WORKSPACE_CANARY",
+        operation.artifact,
+        fingerprint("check-input"),
+        JSON.stringify({ PATH: "/private/CHECK_ENV_CANARY" }),
+        "/private/CHECK_RECEIPT_CANARY",
+        JSON.stringify({
+          id: "tests",
+          command: "PRIVATE_COMMAND_CANARY",
+          cwd: "/private/CHECK_WORKSPACE_CANARY",
+          artifact: operation.artifact,
+          inputIdentity: operation.artifact,
+          environmentIdentity: JSON.stringify({ PATH: "/private/CHECK_ENV_CANARY" }),
+          startedAt: 1_000,
+          endedAt: 1_100,
+          exitCode: 0,
+          timedOut: false,
+          stdout: "PRIVATE_STDOUT_CANARY",
+          stderr: "PRIVATE_STDERR_CANARY",
+        }),
+        "/private/CHECK_CONTEXT_CANARY",
+        "failed",
+        900,
+      )
+      db.query(
+        `INSERT INTO runner_retained_verification_resources(
+          project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,
+          device,inode,state,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,'uncertain',?,?)`,
+      ).run(
+        projectDirectory,
+        operation.id,
+        operation.generation,
+        "task",
+        "tests",
+        "PRIVATE_RESOURCE_CANARY",
+        "/private/RESOURCE_CANARY",
+        1,
+        2,
+        1_050,
+        1_060,
+      )
+    })
+
+    const tools = new Map<string, RegisteredTool>()
+    const editor: ToolEditor = {
+      add: (tool) => tools.set(tool.name, tool),
+      list: () => [],
+      get: () => undefined,
+      namespace: () => {},
+      update: () => {},
+      remove: () => {},
+    }
+    let permissionChecks = 0
+    let runtimeCalls = 0
+    let nativeCalls = 0
+    let inferenceCalls = 0
+    const ctx = {
+      location: { directory: projectDirectory },
+      permission: { assert: () => (permissionChecks++, Effect.void) },
+      model: { list: () => (inferenceCalls++, Effect.succeed({ data: [] })) },
+      tool: {
+        transform: (transform: (editor: ToolEditor) => void) =>
+          Effect.sync(() => {
+            transform(editor)
+            return { dispose: Effect.void }
+          }),
+      },
+    } as unknown as Plugin.Context
+    const runtime = {
+      store,
+      command: () => (runtimeCalls++, Promise.reject(new Error("unexpected control call"))),
+      inspectArchitectSourceMessages: () => (
+        nativeCalls++,
+        Promise.reject(new Error("unexpected native-context call"))
+      ),
+    } as unknown as TaskRuntime
+    await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
+    const inspect = tools.get("lz-inspect-plan")!
+    const before = store.atomic((db) => ({
+      changes: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
+        .changes,
+      operations: db
+        .query("SELECT id,generation,state,payload FROM runner_retained_verifications")
+        .all(),
+      checks: db
+        .query(
+          "SELECT operation_id,phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks",
+        )
+        .all(),
+      resources: db
+        .query(
+          "SELECT operation_id,phase,check_id,state,updated_at FROM runner_retained_verification_resources",
+        )
+        .all(),
+      evidence: db.query("SELECT * FROM runner_retained_verification_evidence").all(),
+      nodes: db.query("SELECT plan_id,task_id,state,version FROM runner_nodes").all(),
+      attempts: db.query("SELECT id,plan_id,task_id,state FROM runner_attempts").all(),
+      effects: db.query("SELECT id,plan_id,task_id,state FROM runner_effects").all(),
+    }))
+    const result = await Effect.runPromise(
+      inspect.execute({ planID: plan.planID, full: true }, callContext("architect")),
+    )
+    const output = JSON.parse(String(result.content)) as {
+      retainedVerifications: {
+        latest: Array<{
+          operationID: string
+          generation: number
+          taskID: string
+          attemptID: string
+          candidateArtifact: string
+          state: string
+          cleanup: { state: string; resourcesByState: { uncertain: number } }
+          checks: Array<{ result: { status: string }; cleanupState: string }>
+        }>
+        history: { records: Array<{ generation: number }>; nextCursor: string | null }
+      }
+    }
+    const firstPageResult = await Effect.runPromise(
+      inspect.execute(
+        { planID: plan.planID, view: "retained-verifications", limit: 1 },
+        callContext("architect"),
+      ),
+    )
+    const firstPage = JSON.parse(String(firstPageResult.content)) as {
+      latest: Array<{ generation: number; operationID: string }>
+      history: { records: Array<{ generation: number }>; nextCursor: string | null }
+    }
+    expect(firstPage.history.nextCursor).toBeString()
+    const secondPageResult = await Effect.runPromise(
+      inspect.execute(
+        {
+          planID: plan.planID,
+          view: "retained-verifications",
+          limit: 1,
+          cursor: firstPage.history.nextCursor,
+        },
+        callContext("architect"),
+      ),
+    )
+    const secondPage = JSON.parse(String(secondPageResult.content)) as {
+      history: { records: Array<{ generation: number }> }
+    }
+    await expect(
+      Effect.runPromise(
+        inspect.execute(
+          {
+            planID: foreignPlan.planID,
+            view: "retained-verifications",
+            limit: 1,
+            cursor: firstPage.history.nextCursor,
+          },
+          callContext("architect"),
+        ),
+      ),
+    ).rejects.toThrow("does not match this plan")
+    await expect(
+      Effect.runPromise(
+        inspect.execute(
+          {
+            planID: plan.planID,
+            view: "retained-verifications",
+            taskIDs: [foreignTask.id],
+            limit: 1,
+            cursor: firstPage.history.nextCursor,
+          },
+          callContext("architect"),
+        ),
+      ),
+    ).rejects.toThrow()
+    const after = store.atomic((db) => ({
+      changes: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
+        .changes,
+      operations: db
+        .query("SELECT id,generation,state,payload FROM runner_retained_verifications")
+        .all(),
+      checks: db
+        .query(
+          "SELECT operation_id,phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks",
+        )
+        .all(),
+      resources: db
+        .query(
+          "SELECT operation_id,phase,check_id,state,updated_at FROM runner_retained_verification_resources",
+        )
+        .all(),
+      evidence: db.query("SELECT * FROM runner_retained_verification_evidence").all(),
+      nodes: db.query("SELECT plan_id,task_id,state,version FROM runner_nodes").all(),
+      attempts: db.query("SELECT id,plan_id,task_id,state FROM runner_attempts").all(),
+      effects: db.query("SELECT id,plan_id,task_id,state FROM runner_effects").all(),
+    }))
+    const latest = output.retainedVerifications.latest[0]!
+    expect(latest.state).toBe("accepted")
+    expect(latest).toMatchObject({
+      generation: 3,
+      taskID: task.id,
+      attemptID: operation.attemptID,
+      candidateArtifact: operation.artifact,
+    })
+    expect(latest.cleanup).toMatchObject({ state: "failed", resourcesByState: { uncertain: 1 } })
+    expect(latest.checks).toHaveLength(1)
+    expect(latest.checks[0]).toMatchObject({
+      result: { status: "passed" },
+      cleanupState: "failed",
+    })
+    expect(firstPage.latest[0]).toMatchObject({ operationID: operation.id, generation: 3 })
+    expect(firstPage.history.records.map((record) => record.generation)).toEqual([2])
+    expect(secondPage.history.records.map((record) => record.generation)).toEqual([1])
+    expect(JSON.stringify(output)).not.toContain(foreignOperation.id)
+    expect(JSON.stringify(output)).not.toContain("PRIVATE_REASON_CANARY")
+    expect(JSON.stringify(output)).not.toContain("PRIVATE_COMMAND_CANARY")
+    expect(JSON.stringify(output)).not.toContain("PRIVATE_STDOUT_CANARY")
+    expect(JSON.stringify(output)).not.toContain("PRIVATE_STDERR_CANARY")
+    expect(JSON.stringify(output)).not.toContain("ENVIRONMENT_CONTENT_CANARY")
+    expect(JSON.stringify(output)).not.toContain("RESOURCE_CANARY")
+    expect(after).toEqual(before)
+    expect(permissionChecks).toBe(5)
+    expect(runtimeCalls).toBe(0)
+    expect(nativeCalls).toBe(0)
+    expect(inferenceCalls).toBe(0)
   } finally {
     repository.close()
     rmSync(directory, { recursive: true, force: true })
