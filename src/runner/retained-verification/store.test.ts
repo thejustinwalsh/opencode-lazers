@@ -107,7 +107,22 @@ test("inspection pages only selected plan generations with stable generation and
   add(selectedPlan, taskB, 1)
   add(selectedPlan, taskB, 2)
   add(foreignPlan, taskA, 1)
-  for (let generation = 2; generation <= 101; generation++) add(foreignPlan, taskA, generation)
+  const foreignInsert = db.query(
+    `INSERT INTO runner_retained_verifications
+     (id,project_directory,plan_id,task_id,generation,state,payload) VALUES(?,?,?,?,?,?,?)`,
+  )
+  for (let generation = 2; generation <= 2501; generation++) {
+    const foreign = operation(foreignPlan, taskA, generation, "failed")
+    foreignInsert.run(
+      foreign.id,
+      projectDirectory,
+      foreignPlan,
+      taskA,
+      generation,
+      foreign.state,
+      JSON.stringify(foreign),
+    )
+  }
 
   const initial = retainedVerificationsForInspection(
     db,
@@ -123,7 +138,9 @@ test("inspection pages only selected plan generations with stable generation and
   expect(initial.history.records).toHaveLength(1)
   expect(initial.history.records[0]).toMatchObject({ taskID: taskA, generation: 2 })
   expect(initial.history.nextCursor).toBeString()
-  expect(initial.history.concurrentChanges).toBe("runner-database-writes-invalidate-cursor")
+  expect(initial.history.concurrentChanges).toBe(
+    "selected-retained-history-changes-invalidate-cursor",
+  )
   expect(JSON.stringify(initial)).not.toContain("PRIVATE_REASON")
   expect(JSON.stringify(initial)).not.toContain(foreignPlan)
 
@@ -147,6 +164,30 @@ test("inspection pages only selected plan generations with stable generation and
       initial.history.nextCursor!,
     ),
   ).toThrow("task selection")
+  db.query("INSERT INTO runner_plans(id,project_directory) VALUES(?,?)").run(
+    selectedPlan,
+    "/other-project",
+  )
+  expect(() =>
+    retainedVerificationsForInspection(
+      db,
+      "/other-project",
+      selectedPlan,
+      undefined,
+      1,
+      initial.history.nextCursor!,
+    ),
+  ).toThrow("project and task selection")
+  expect(() =>
+    retainedVerificationsForInspection(
+      db,
+      projectDirectory,
+      selectedPlan,
+      undefined,
+      1,
+      `${initial.history.nextCursor!.slice(0, -1)}${initial.history.nextCursor!.endsWith("A") ? "B" : "A"}`,
+    ),
+  ).toThrow("Invalid retained-verification cursor")
 
   const pageTwo = retainedVerificationsForInspection(
     db,
@@ -170,7 +211,7 @@ test("inspection pages only selected plan generations with stable generation and
       1,
       pageTwo.history.nextCursor!,
     ),
-  ).toThrow("changed since this page")
+  ).toThrow("Selected retained-verification history changed since this capture")
 })
 
 test("inspection limits operation reads and returns no more than the requested older page", () => {
@@ -246,30 +287,120 @@ test("duplicate-heavy human evidence lookup keeps only distinct required asserti
   })
 })
 
-test("cursor read fences reject intervening database writes without modifying state", () => {
+test("selected history cursors ignore unrelated telemetry and other plan/task writes", () => {
   const db = fixture()
   createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
   createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 3, "failed"))
-  const first = retainedVerificationsForInspection(db, projectDirectory, selectedPlan, [taskA], 1)
-  const before = db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
-    .changes
+  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskB, 1, "failed"))
+  createRetainedVerification(db, projectDirectory, operation(foreignPlan, taskA, 1, "failed"))
+  const otherProject = operation(selectedPlan, taskA, 1, "failed", {
+    projectDirectory: "/other-project",
+  })
   db.query(
-    `UPDATE runner_retained_verifications SET state='held'
-     WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=1`,
-  ).run(projectDirectory, selectedPlan, taskA)
-  expect(() =>
-    retainedVerificationsForInspection(
-      db,
-      projectDirectory,
-      selectedPlan,
-      [taskA],
-      1,
-      first.history.nextCursor!,
-    ),
-  ).toThrow("changed since this page")
-  const after = db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
-    .changes
-  expect(after).toBe(before + 1)
+    `INSERT INTO runner_retained_verifications
+     (id,project_directory,plan_id,task_id,generation,state,payload) VALUES(?,?,?,?,?,?,?)`,
+  ).run(
+    otherProject.id,
+    otherProject.projectDirectory,
+    otherProject.planID,
+    otherProject.taskID,
+    otherProject.generation,
+    otherProject.state,
+    JSON.stringify(otherProject),
+  )
+  const first = retainedVerificationsForInspection(db, projectDirectory, selectedPlan, [taskA], 1)
+  db.exec(`
+    CREATE TABLE runner_progress(seq INTEGER PRIMARY KEY,project_directory TEXT,payload TEXT);
+    CREATE TABLE runner_leases(project_directory TEXT PRIMARY KEY,owner TEXT,fence INTEGER,expires_at INTEGER);
+  `)
+  db.query("INSERT INTO runner_progress(project_directory,payload) VALUES(?,?)").run(
+    projectDirectory,
+    "unrelated callback/progress observation",
+  )
+  db.query("INSERT INTO runner_leases VALUES(?,?,?,?)").run(
+    projectDirectory,
+    "unrelated-scheduler",
+    1,
+    Date.now() + 30_000,
+  )
+  db.query("UPDATE runner_retained_verifications SET state='held' WHERE plan_id=?").run(foreignPlan)
+  db.query("UPDATE runner_retained_verifications SET state='held' WHERE task_id=?").run(taskB)
+  db.query("UPDATE runner_plans SET project_directory=? WHERE id=?").run(
+    "/other-project",
+    foreignPlan,
+  )
+
+  const next = retainedVerificationsForInspection(
+    db,
+    projectDirectory,
+    selectedPlan,
+    [taskA],
+    1,
+    first.history.nextCursor!,
+  )
+  expect(next.history.records).toMatchObject([{ taskID: taskA, generation: 1 }])
+  expect(next.history.nextCursor).toBeNull()
+})
+
+test("selected operation, generation, check, resource, and evidence changes invalidate cursors", () => {
+  for (const change of ["operation", "generation", "check", "resource", "evidence"] as const) {
+    const db = fixture()
+    createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
+    createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 3, "failed"))
+    const operationID = db
+      .query<{ id: string }, [string, string, string, number]>(
+        `SELECT id FROM runner_retained_verifications
+         WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=?`,
+      )
+      .get(projectDirectory, selectedPlan, taskA, 1)!.id
+    if (change === "check")
+      db.query(
+        `INSERT INTO runner_retained_verification_checks(
+          operation_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,
+          environment_identity,receipt_path,state,receipt,context_path,cleanup_state,created_at
+        ) VALUES(?,'task','tests','{}','/private/workspace','artifact','fingerprint',
+          '{}','/private/receipt','completed','{}','/private/context','complete',1)`,
+      ).run(operationID)
+    if (change === "resource")
+      db.query(
+        `INSERT INTO runner_retained_verification_resources(
+          project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,
+          device,inode,state,created_at,updated_at
+        ) VALUES(?,?,1,'task','tests','private-resource','/private/path',1,2,'uncertain',1,2)`,
+      ).run(projectDirectory, operationID)
+    const first = retainedVerificationsForInspection(db, projectDirectory, selectedPlan, [taskA], 1)
+    if (change === "operation")
+      db.query("UPDATE runner_retained_verifications SET state='held' WHERE id=?").run(operationID)
+    if (change === "generation")
+      createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 4, "failed"))
+    if (change === "check")
+      db.query(
+        "UPDATE runner_retained_verification_checks SET cleanup_state='failed' WHERE operation_id=?",
+      ).run(operationID)
+    if (change === "resource")
+      db.query(
+        "UPDATE runner_retained_verification_resources SET state='removed',updated_at=3 WHERE operation_id=?",
+      ).run(operationID)
+    if (change === "evidence")
+      db.query(
+        `INSERT INTO runner_retained_verification_evidence(
+          id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
+        ) VALUES(?,?,1,'task',?,'approval','artifact','private body',3)`,
+      ).run(crypto.randomUUID(), operationID, taskA)
+
+    expect(() =>
+      retainedVerificationsForInspection(
+        db,
+        projectDirectory,
+        selectedPlan,
+        [taskA],
+        1,
+        first.history.nextCursor!,
+      ),
+    ).toThrow("Selected retained-verification history changed since this capture")
+    db.close()
+    databases.splice(databases.indexOf(db), 1)
+  }
 })
 
 test("absent optional retained tables stay absent and inspection does not write", () => {

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { Buffer } from "node:buffer"
+import { createHash } from "node:crypto"
 import { fingerprint } from "../../identity.ts"
 import { z } from "zod"
 import { RetainedVerificationSchema } from "./schema.ts"
@@ -14,14 +15,13 @@ const RetainedVerificationCursorPosition = z.strictObject({
   generation: z.int().positive().max(Number.MAX_SAFE_INTEGER),
 })
 const RetainedVerificationCursor = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   planID: z.uuid(),
   scope: z.string().regex(/^[a-f0-9]{64}$/),
   taskIDs: z.array(z.uuid()).min(1).max(100),
   watermark: z.array(z.int().min(0).max(Number.MAX_SAFE_INTEGER)).min(1).max(100),
   after: RetainedVerificationCursorPosition,
-  totalChanges: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
-  dataVersion: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  capture: z.string().regex(/^[a-f0-9]{64}$/),
   checksum: z.string().regex(/^[a-f0-9]{64}$/),
 })
 
@@ -115,7 +115,7 @@ export type RetainedVerificationInspection = {
     returned: number
     hasMore: boolean
     nextCursor: string | null
-    concurrentChanges: "runner-database-writes-invalidate-cursor"
+    concurrentChanges: "selected-retained-history-changes-invalidate-cursor"
     records: RetainedVerificationProjection[]
   }
 }
@@ -702,16 +702,176 @@ function tablePresent(db: Database, name: string): boolean {
   )
 }
 
-function retainedReadFence(db: Database) {
-  return {
-    totalChanges: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
-      .changes,
-    dataVersion: db.query<{ data_version: number }, []>("PRAGMA data_version").get()!.data_version,
-  }
-}
-
 function retainedCursorScope(projectDirectory: string, planID: string, taskIDs: string[]) {
   return fingerprint({ projectDirectory, planID, taskIDs })
+}
+
+const maxRetainedCaptureRows = 20_000
+
+function appendRetainedCaptureRows(
+  hash: ReturnType<typeof createHash>,
+  label: string,
+  rows: Iterable<unknown>,
+  count: { value: number },
+): void {
+  hash.update(`${label}\n`)
+  let rowsRead = 0
+  for (const row of rows) {
+    rowsRead++
+    count.value++
+    if (count.value > maxRetainedCaptureRows)
+      throw new Error(
+        "Selected retained-verification history is too large to capture; narrow the task selection and restart without the cursor",
+      )
+    hash.update(JSON.stringify(row) ?? "undefined").update("\n")
+  }
+  hash.update(`rows:${rowsRead}\n`)
+}
+
+function retainedRequirementsCapture(
+  taskIDs: string[],
+  requirements: RetainedHumanEvidenceRequirements,
+) {
+  return taskIDs.map((taskID) => {
+    const requirement = requirements.get(taskID)
+    const assertionIDs = (ids: string[] | null | undefined) =>
+      ids === null || ids === undefined
+        ? null
+        : [...new Set(ids.filter((id) => /^[a-z][a-z0-9-]{0,63}$/.test(id)))].sort()
+    return [
+      taskID,
+      requirement?.planRevision ?? null,
+      requirement?.planVersion ?? null,
+      requirement?.taskRevision ?? null,
+      assertionIDs(requirement?.taskAssertionIDs),
+      assertionIDs(requirement?.combinedAssertionIDs),
+    ]
+  })
+}
+
+/** Hash only selected retained facts; unrelated runner telemetry is not a page fence. */
+function retainedHistoryCapture(
+  db: Database,
+  projectDirectory: string,
+  planID: string,
+  taskIDs: string[],
+  watermark: number[],
+  tables: { checks: boolean; resources: boolean; evidence: boolean },
+  requirements: RetainedHumanEvidenceRequirements,
+): string {
+  const hash = createHash("sha256")
+  const count = { value: 0 }
+  const currentWatermark = taskIDs.map((taskID) => {
+    const current = db
+      .query<{ generation: number | null }, [string, string, string]>(
+        `SELECT MAX(generation) AS generation FROM runner_retained_verifications
+         WHERE project_directory=? AND plan_id=? AND task_id=?`,
+      )
+      .get(projectDirectory, planID, taskID)
+    return current?.generation ?? 0
+  })
+  hash
+    .update(
+      JSON.stringify({
+        planID,
+        taskIDs,
+        watermark,
+        currentWatermark,
+        tables,
+        requirements: retainedRequirementsCapture(taskIDs, requirements),
+      }),
+    )
+    .update("\n")
+
+  for (let index = 0; index < taskIDs.length; index++) {
+    const taskID = taskIDs[index]!
+    const generation = watermark[index]!
+    appendRetainedCaptureRows(
+      hash,
+      `operation:${taskID}`,
+      db
+        .query<Record<string, unknown>, [string, string, string, number]>(
+          `SELECT id,task_id,generation,state,
+             CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
+             (length(payload)>65536) AS payload_too_large
+           FROM runner_retained_verifications
+           WHERE project_directory=? AND plan_id=? AND task_id=? AND generation<=?
+           ORDER BY generation`,
+        )
+        .iterate(projectDirectory, planID, taskID, generation),
+      count,
+    )
+    if (tables.checks)
+      appendRetainedCaptureRows(
+        hash,
+        `checks:${taskID}`,
+        db
+          .query<Record<string, unknown>, [string, string, string, number]>(
+            `SELECT operations.generation,
+               CASE WHEN length(checks.phase)<=16 THEN checks.phase ELSE '' END AS phase,
+               CASE WHEN length(checks.check_id)<=64 THEN checks.check_id ELSE '' END AS check_id,
+               CASE WHEN length(checks.artifact)<=64 THEN checks.artifact ELSE '' END AS artifact,
+               CASE WHEN length(checks.input_fingerprint)<=128 THEN checks.input_fingerprint ELSE '' END AS input_fingerprint,
+               CASE WHEN length(checks.environment_identity)<=4096 THEN checks.environment_identity ELSE '' END AS environment_identity,
+               CASE WHEN length(checks.state)<=32 THEN checks.state ELSE '' END AS state,
+               CASE WHEN checks.receipt IS NULL OR length(checks.receipt)<=100000 THEN checks.receipt ELSE NULL END AS receipt,
+               (checks.receipt IS NOT NULL AND length(checks.receipt)>100000) AS receipt_too_large,
+               CASE WHEN length(checks.cleanup_state)<=32 THEN checks.cleanup_state ELSE '' END AS cleanup_state,
+               checks.created_at
+             FROM runner_retained_verification_checks AS checks
+             JOIN runner_retained_verifications AS operations ON operations.id=checks.operation_id
+             WHERE operations.project_directory=? AND operations.plan_id=?
+               AND operations.task_id=? AND operations.generation<=?
+             ORDER BY operations.generation,checks.created_at DESC,checks.phase,checks.check_id`,
+          )
+          .iterate(projectDirectory, planID, taskID, generation),
+        count,
+      )
+    if (tables.resources)
+      appendRetainedCaptureRows(
+        hash,
+        `resources:${taskID}`,
+        db
+          .query<Record<string, unknown>, [string, string, string, number]>(
+            `SELECT operations.generation,
+               CASE WHEN resources.state IN ('creating','active','uncertain','removed')
+                 THEN resources.state ELSE 'unknown' END AS state,
+               resources.updated_at
+             FROM runner_retained_verification_resources AS resources
+             JOIN runner_retained_verifications AS operations
+               ON operations.id=resources.operation_id
+              AND operations.project_directory=resources.project_directory
+             WHERE resources.project_directory=? AND operations.plan_id=?
+               AND operations.task_id=? AND operations.generation<=?
+             ORDER BY operations.generation,state,resources.updated_at`,
+          )
+          .iterate(projectDirectory, planID, taskID, generation),
+        count,
+      )
+    if (tables.evidence)
+      appendRetainedCaptureRows(
+        hash,
+        `evidence:${taskID}`,
+        db
+          .query<Record<string, unknown>, [string, string, string, number]>(
+            `SELECT DISTINCT operations.generation,
+               CASE WHEN length(evidence.phase)<=16 THEN evidence.phase ELSE '' END AS phase,
+               CASE WHEN evidence.task_id IS NULL OR length(evidence.task_id)<=64
+                 THEN evidence.task_id ELSE NULL END AS task_id,
+               CASE WHEN length(evidence.assertion_id)<=64 THEN evidence.assertion_id ELSE '' END AS assertion_id,
+               CASE WHEN length(evidence.artifact)<=64 THEN evidence.artifact ELSE '' END AS artifact
+             FROM runner_retained_verification_evidence AS evidence
+             JOIN runner_retained_verifications AS operations ON operations.id=evidence.operation_id
+             WHERE operations.project_directory=? AND operations.plan_id=?
+               AND operations.task_id=? AND operations.generation<=?
+             ORDER BY operations.generation,evidence.phase,evidence.task_id,
+               evidence.assertion_id,evidence.artifact`,
+          )
+          .iterate(projectDirectory, planID, taskID, generation),
+        count,
+      )
+  }
+  return hash.digest("hex")
 }
 
 function decodeRetainedCursor(cursor: string) {
@@ -747,18 +907,16 @@ function encodeRetainedCursor(input: {
   taskIDs: string[]
   watermark: number[]
   after: { taskID: string; generation: number }
-  totalChanges: number
-  dataVersion: number
+  capture: string
 }) {
   const body = {
-    version: 1 as const,
+    version: 2 as const,
     planID: input.planID,
     scope: retainedCursorScope(input.projectDirectory, input.planID, input.taskIDs),
     taskIDs: input.taskIDs,
     watermark: input.watermark,
     after: input.after,
-    totalChanges: input.totalChanges,
-    dataVersion: input.dataVersion,
+    capture: input.capture,
   }
   const cursor = Buffer.from(JSON.stringify({ ...body, checksum: fingerprint(body) })).toString(
     "base64url",
@@ -1209,18 +1367,10 @@ export function retainedVerificationsForInspection(
         returned: 0,
         hasMore: false,
         nextCursor: null,
-        concurrentChanges: "runner-database-writes-invalidate-cursor",
+        concurrentChanges: "selected-retained-history-changes-invalidate-cursor",
         records: [],
       },
     }
-
-  const fence = retainedReadFence(db)
-  if (
-    decodedCursor &&
-    (decodedCursor.totalChanges !== fence.totalChanges ||
-      decodedCursor.dataVersion !== fence.dataVersion)
-  )
-    throw new Error("Retained-verification history changed since this page; restart the view")
 
   const watermark = decodedCursor
     ? decodedCursor.watermark
@@ -1275,6 +1425,22 @@ export function retainedVerificationsForInspection(
   )
   const historyHasMore = historyCandidates.length > limit
   const historyRows = historyCandidates.slice(0, limit)
+  const capture =
+    decodedCursor || historyHasMore
+      ? retainedHistoryCapture(
+          db,
+          projectDirectory,
+          planID,
+          taskIDs,
+          watermark,
+          tables,
+          humanRequirements,
+        )
+      : null
+  if (decodedCursor && capture !== decodedCursor.capture)
+    throw new Error(
+      "Selected retained-verification history changed since this capture; restart without the cursor",
+    )
   const project = (row: InspectionOperationRow, isLatest: boolean) =>
     operationProjection(db, row, planID, projectDirectory, tables, isLatest, humanRequirements)
   const records = historyRows.map((row) => project(row, false))
@@ -1287,7 +1453,7 @@ export function retainedVerificationsForInspection(
           taskIDs,
           watermark,
           after: { taskID: last.task_id, generation: last.generation },
-          ...fence,
+          capture: capture!,
         })
       : null
   return {
@@ -1306,7 +1472,7 @@ export function retainedVerificationsForInspection(
       returned: records.length,
       hasMore: historyHasMore,
       nextCursor,
-      concurrentChanges: "runner-database-writes-invalidate-cursor",
+      concurrentChanges: "selected-retained-history-changes-invalidate-cursor",
       records,
     },
   }
