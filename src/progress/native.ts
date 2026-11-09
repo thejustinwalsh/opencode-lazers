@@ -1106,6 +1106,7 @@ export function registerProgress(
         ).pipe(
           Effect.match({
             onFailure: (error) => {
+              toolScope.clear()
               trace("unknown", "stream-failed", { error })
               invalidateListenerStarts()
               for (const assignment of recorder.assignments()) {
@@ -1117,6 +1118,7 @@ export function registerProgress(
               }
             },
             onSuccess: () => {
+              toolScope.clear()
               trace("unknown", "stream-ended")
               invalidateListenerStarts()
               for (const assignment of recorder.assignments()) {

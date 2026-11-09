@@ -820,6 +820,20 @@ export class RunnerStore {
         attempts INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL
       );
     `)
+      const toolCallColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(native_tool_calls)")
+          .all()
+          .map((column) => column.name),
+      )
+      // The initially observed ledger did not retain these identities. Keep
+      // historical values unknown; migration is not a new native observation.
+      if (!toolCallColumns.has("context_call_id"))
+        db.exec("ALTER TABLE native_tool_calls ADD COLUMN context_call_id TEXT")
+      if (!toolCallColumns.has("local_invocation_id"))
+        db.exec("ALTER TABLE native_tool_calls ADD COLUMN local_invocation_id TEXT")
+      db.exec(`CREATE INDEX IF NOT EXISTS native_tool_calls_local
+        ON native_tool_calls(project_directory,session_id,local_invocation_id)`)
       const quarantineColumns = db
         .query<{ name: string }, []>("PRAGMA table_info(runner_source_quarantines)")
         .all()

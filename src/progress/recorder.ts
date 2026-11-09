@@ -108,7 +108,7 @@ export type ToolCallRow = {
   invocation_id: string
   native_call_id: string | null
   parent_call_id: string | null
-  context_call_id: string
+  context_call_id: string | null
   local_invocation_id: string | null
   message_id: string | null
   agent: string | null
@@ -1335,14 +1335,30 @@ export class ProgressRecorder {
   ): void {
     if (!fact.callID) return
     const directory = this.store.repository.projectDirectory
-    const identityKind = invocation?.identityKind ?? "native-call"
-    const invocationID = invocation?.invocationID ?? fact.callID
+    let identityKind = invocation?.identityKind ?? "native-call"
+    let invocationID = invocation?.invocationID ?? fact.callID
     let previous = db
       .query<ToolCallRow, [string, string, string, string]>(
         `SELECT * FROM native_tool_calls WHERE project_directory=? AND session_id=?
          AND identity_kind=? AND invocation_id=?`,
       )
       .get(directory, sessionID, identityKind, invocationID)
+    if (!previous && invocation?.localInvocationID) {
+      const resolved = db
+        .query<ToolCallRow, [string, string, string]>(
+          `SELECT * FROM native_tool_calls WHERE project_directory=? AND session_id=?
+         AND local_invocation_id=? LIMIT 2`,
+        )
+        .all(directory, sessionID, invocation.localInvocationID)
+      if (resolved.length > 1) return
+      if (resolved.length === 1) {
+        // Native input may promote the key while the callback is still running.
+        // Its preserved UUID resolves terminal writes to that same durable row.
+        previous = resolved[0]!
+        identityKind = previous.identity_kind
+        invocationID = previous.invocation_id
+      }
+    }
     const incomingTool = text(fact.payload.tool)
     if (!previous && identityKind === "native-call" && incomingTool) {
       const unmatched = db

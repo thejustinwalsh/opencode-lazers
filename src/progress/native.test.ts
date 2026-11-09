@@ -133,6 +133,7 @@ function makeContext(
   let subscriptionCount = 0
   const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
   const streamFailure = Symbol("fixture-stream-failure")
+  const streamEnd = Symbol("fixture-stream-end")
   const syntheticInputs: unknown[] = []
   const sessionAssignments = new Map<
     string,
@@ -218,6 +219,7 @@ function makeContext(
           ? Stream.fail(new Error("fixture event stream unavailable"))
           : options.liveEvents
             ? Stream.fromQueue(eventQueue).pipe(
+                Stream.takeWhile((event) => event !== streamEnd),
                 Stream.mapEffect((event) =>
                   event === streamFailure
                     ? Effect.fail(new Error("fixture stream lost"))
@@ -268,6 +270,7 @@ function makeContext(
       return Effect.runPromise(Queue.offer(eventQueue, event))
     },
     failEvents: () => Effect.runPromise(Queue.offer(eventQueue, streamFailure)),
+    endEvents: () => Effect.runPromise(Queue.offer(eventQueue, streamEnd)),
   }
 }
 
@@ -314,6 +317,76 @@ test("registered execute.before records only an assigned bounded requested targe
     fixture.close()
   }
 })
+
+test.each(["failed", "ended"] as const)(
+  "tool ownership revalidates missed moves after the event stream %s",
+  async (boundary) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      let moved = false
+      const native = makeContext(fixture, {
+        liveEvents: true,
+        readSession: (sessionID) =>
+          Effect.succeed({
+            projectID: "project",
+            location: {
+              directory:
+                sessionID === "ses-leaves"
+                  ? moved
+                    ? "/elsewhere"
+                    : fixture.directory
+                  : sessionID === "ses-arrives"
+                    ? moved
+                      ? fixture.directory
+                      : "/elsewhere"
+                    : fixture.directory,
+            },
+          }),
+      })
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(native.context, recorder, "project")
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => native.subscriptions() === 1),
+            )
+            for (const sessionID of ["ses-leaves", "ses-arrives"]) {
+              yield* native.before()!({
+                tool: "shell",
+                ...callContext(sessionID, "before-disconnection"),
+                input: {},
+              } as never)
+            }
+            expect(recorder.toolCalls("ses-leaves")).toHaveLength(1)
+            expect(recorder.toolCalls("ses-arrives")).toHaveLength(0)
+            yield* Effect.promise(() =>
+              boundary === "failed" ? native.failEvents() : native.endEvents(),
+            )
+            // No session.moved event reaches this listener while ownership changes.
+            moved = true
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => native.subscriptions() > 1, 3000),
+            )
+            for (const sessionID of ["ses-leaves", "ses-arrives"]) {
+              yield* native.after()!({
+                tool: "shell",
+                ...callContext(sessionID, "after-reconnection"),
+                status: "error",
+                error: new Tool.Error({ message: "original native failure" }),
+              } as never)
+            }
+            expect(recorder.toolCalls("ses-leaves")).toHaveLength(1)
+            expect(recorder.toolCalls("ses-arrives")).toHaveLength(1)
+            expect(recorder.toolCalls("ses-arrives")[0]!.native_call_id).toBe("after-reconnection")
+          }),
+        ),
+      )
+    } finally {
+      fixture.close()
+    }
+  },
+)
 
 test("registered tool hooks retain unassigned agents and isolate lookup or storage failures", async () => {
   const fixture = makeFixture()

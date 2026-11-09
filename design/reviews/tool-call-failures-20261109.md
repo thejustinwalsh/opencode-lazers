@@ -300,6 +300,33 @@ whole-product historical rate. Analyze native calls and local callback
 invocations separately rather than summing parent and child counts as though
 they were the same measurement.
 
+## Independent-review corrections
+
+The [independent ledger review](tool-ledger-review-20261109.md) identified three
+specific gaps in the initial repair. The follow-up addresses them without
+expanding the supported native boundaries:
+
+- Failed and normally ended event streams clear ownership reads. Revision checks
+  also reject a stale in-flight read after invalidation, while concurrent fresh
+  callback lookups remain independent. Missed session moves therefore cannot
+  keep an old positive or negative ownership decision alive across reconnection.
+- A callback's terminal write resolves through its preserved local invocation
+  UUID when native input promoted the durable key while the callback was active.
+  It updates the promoted row instead of recreating a second local row.
+- Startup adds missing `context_call_id` and `local_invocation_id` columns to the
+  observed initial ledger schema. Existing rows, times and identities remain
+  unchanged; absent historical values stay NULL. A non-unique local-UUID index
+  supports resolution without imposing guessed uniqueness on historical data.
+
+Verification after these corrections: **122 tests pass, 0 fail, 1,243 assertions**
+across the same six suites above. Added cases exercise failed/ended stream
+reconnection with missed moves in both directions, an in-flight invalidated
+lookup, promotion before both successful and failed callback terminal writes,
+and an old-schema fixture through actual close/reopen, new recording and a
+second idempotent reopen. `bun run verify` and `git diff --check` pass. Tests use
+isolated databases; no production migration, service reload or model prompt was
+performed by this repair.
+
 ## Subsequent native observation
 
 After the repair was committed, Driver inspected the production DB read-only.

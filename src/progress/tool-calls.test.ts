@@ -8,6 +8,8 @@ import { Tool } from "@opencode/schema/tool"
 import { Cause, Effect, Exit } from "effect"
 import { firstAttemptID, makeFixture } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "./recorder.ts"
+import { TaskRepository } from "../storage.ts"
+import { RunnerStore } from "../runner/store.ts"
 import { registerToolCallWrappers, toolObservationScope } from "./tool-observation.ts"
 
 function call(agent = "architect", sessionID = `ses-${agent}`, callID = "native-call") {
@@ -422,6 +424,138 @@ test("unknown callback context stays unknown until a matching native tool observ
         .parent_call_id,
     ).toBeNull()
   } finally {
+    fixture.close()
+  }
+})
+
+test.each(["completed", "error"] as const)(
+  "an active local callback promoted before its %s terminal write retains one identity",
+  (status) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const observed = { ...call(), tool: "lz-example" }
+      const invocation = recorder.beginToolInvocation(observed)
+      expect(invocation.identityKind).toBe("local-invocation")
+      recorder.recordToolBefore(observed)
+      const promoted = recorder.toolCalls(observed.sessionID)
+      expect(promoted).toHaveLength(1)
+      expect(promoted[0]!.identity_kind).toBe("native-call")
+      // The running wrapper still holds its original local invocation object.
+      recorder.endToolInvocation(invocation, {
+        status,
+        error:
+          status === "error" ? new Tool.Error({ message: "original callback error" }) : undefined,
+      })
+      const final = recorder.toolCalls(observed.sessionID)
+      expect(final).toHaveLength(1)
+      expect(final[0]).toMatchObject({
+        identity_kind: "native-call",
+        native_call_id: observed.callID,
+        local_invocation_id: invocation.localInvocationID,
+        parent_call_id: null,
+      })
+      expect(JSON.parse(final[0]!.payload).status).toBe(status === "error" ? "failed" : "succeeded")
+      if (status === "error")
+        expect(JSON.parse(final[0]!.payload).error.message).toBe("original callback error")
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
+test("invalidating ownership also fences an in-flight stale read without evicting its replacement", async () => {
+  const pending = Promise.withResolvers<{ projectID: string; location: { directory: string } }>()
+  let reads = 0
+  const ctx = {
+    session: {
+      get: () =>
+        ++reads === 1
+          ? Effect.promise(() => pending.promise)
+          : Effect.succeed({ projectID: "project", location: { directory: "/moved" } }),
+    },
+  } as unknown as Plugin.Context
+  const scope = toolObservationScope(ctx, "project", "/ours")
+  const stale = scope.owns("ses-moving")
+  await Promise.resolve()
+  scope.clear()
+  expect(await scope.owns("ses-moving")).toBe(false)
+  pending.resolve({ projectID: "project", location: { directory: "/ours" } })
+  expect(await stale).toBe(false)
+  expect(await scope.owns("ses-moving")).toBe(false)
+  expect(reads).toBe(2)
+})
+
+test("the observed initial ledger schema migrates across reopen without inventing legacy identities", () => {
+  const fixture = makeFixture()
+  let reopened: TaskRepository | undefined
+  try {
+    fixture.repository.atomic((db) => {
+      db.exec(`DROP TABLE native_tool_calls;
+        CREATE TABLE native_tool_calls (
+          project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
+          session_id TEXT NOT NULL, identity_kind TEXT NOT NULL,
+          invocation_id TEXT NOT NULL, native_call_id TEXT, parent_call_id TEXT,
+          message_id TEXT, agent TEXT, tool TEXT, plan_id TEXT, task_id TEXT, attempt_id TEXT,
+          first_observed_at INTEGER NOT NULL, last_observed_at INTEGER NOT NULL,
+          sources_json TEXT NOT NULL, event_ids_json TEXT NOT NULL, payload TEXT NOT NULL,
+          PRIMARY KEY(project_directory,session_id,identity_kind,invocation_id)
+        )`)
+      for (const kind of ["native-call", "local-invocation"])
+        db.query(
+          `INSERT INTO native_tool_calls
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ).run(
+          fixture.directory,
+          "project",
+          "ses-legacy",
+          kind,
+          kind === "native-call" ? "native-legacy" : "local-legacy",
+          kind === "native-call" ? "native-legacy" : null,
+          kind === "native-call" ? null : "outer-legacy",
+          "msg_legacy",
+          "architect",
+          kind === "native-call" ? "execute" : "lz-example",
+          null,
+          null,
+          null,
+          1000,
+          1100,
+          '["tool-hook"]',
+          "[]",
+          '{"status":"succeeded"}',
+        )
+    })
+    fixture.repository.close()
+    reopened = new TaskRepository(fixture.repository.path, fixture.directory)
+    const migrated = new ProgressRecorder(new RunnerStore(reopened), "project")
+    const legacy = migrated.toolCalls("ses-legacy")
+    expect(legacy).toHaveLength(2)
+    for (const row of legacy) {
+      expect(row).toMatchObject({
+        context_call_id: null,
+        local_invocation_id: null,
+        first_observed_at: 1000,
+        last_observed_at: 1100,
+        payload: '{"status":"succeeded"}',
+      })
+    }
+    const observed = call("architect", "ses-new")
+    migrated.recordToolBefore(observed)
+    migrated.recordToolHook({
+      ...observed,
+      status: "error",
+      error: new Tool.Error({ message: "fresh failure" }),
+    })
+    expect(migrated.toolCalls(observed.sessionID)).toHaveLength(1)
+    expect(migrated.toolCalls(observed.sessionID)[0]!.context_call_id).toBe(observed.callID)
+    reopened.close()
+    reopened = new TaskRepository(fixture.repository.path, fixture.directory)
+    const again = new ProgressRecorder(new RunnerStore(reopened), "project")
+    expect(again.toolCalls("ses-legacy")).toEqual(legacy)
+    expect(again.toolCalls(observed.sessionID)).toHaveLength(1)
+  } finally {
+    reopened?.close()
     fixture.close()
   }
 })

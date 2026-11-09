@@ -12,19 +12,35 @@ export function toolObservationScope(
   directory: string,
 ) {
   const sessions = new Map<string, Promise<boolean>>()
+  const sessionRevisions = new Map<string, number>()
+  let revision = 0
   return {
-    forget: (sessionID: string) => sessions.delete(sessionID),
+    clear: () => {
+      revision++
+      sessions.clear()
+      sessionRevisions.clear()
+    },
+    forget: (sessionID: string) => {
+      sessionRevisions.set(sessionID, (sessionRevisions.get(sessionID) ?? 0) + 1)
+      sessions.delete(sessionID)
+    },
     owns: (sessionID: string, refresh = false): Promise<boolean> => {
       if (refresh) sessions.delete(sessionID)
       const cached = sessions.get(sessionID)
       if (cached) return cached
-      const read = Promise.resolve()
+      const readRevision = revision
+      const sessionRevision = sessionRevisions.get(sessionID) ?? 0
+      const read: Promise<boolean> = Promise.resolve()
         .then(() => Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) })))
         .then(
-          (session) => session.projectID === projectID && session.location.directory === directory,
+          (session) =>
+            revision === readRevision &&
+            (sessionRevisions.get(sessionID) ?? 0) === sessionRevision &&
+            session.projectID === projectID &&
+            session.location.directory === directory,
         )
         .catch(() => {
-          sessions.delete(sessionID)
+          if (sessions.get(sessionID) === read) sessions.delete(sessionID)
           return false
         })
       sessions.set(sessionID, read)
