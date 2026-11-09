@@ -241,3 +241,19 @@ Driver handed the existing service, paused probe agent and retained fixtures bac
 to Architect through main Desktop, explicitly yielding isolated-window ownership.
 Its Desktop had previously been quit; reopening and candidate refresh/qualification
 remain native probe work. No model test was invoked by Driver during sign-in.
+
+## LZ-181 remaining failures traced to missing canonical repair
+
+The retained suite reached60pass/2fail. Comparing exact source showed main's
+4abb300 retained-repair admission helper was absent from the original worker
+runtime: main invokes retainedRepairAttemptAccepted, while its worktree still
+requires attempt.state accepted. The newer failed-history tests were present.
+The worker's public progress report treated this as a separate guard to preserve;
+older coordination input had requested incorporating the existing fix but had
+not resulted in that source change.
+
+Driver reported the precise source discrepancy through Desktop and requested
+same-worker reconciliation of existing4abb300, including its atomic recheck.
+This is integration drift, not justification for weakening tests, changing the
+acceptance policy or adding a task/gate. No worker source or production DB was
+changed by Driver. Delivery and post-correction results remain to observe.
