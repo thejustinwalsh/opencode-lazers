@@ -90,3 +90,24 @@ Native `msg_1be6f37f1001IhcOEpbPTAJ8Dr` runs that exact test filter and reports
 **1 pass, 0 fail, 8 assertions**. This corrects the earlier missing-coverage
 finding; it does not establish that the latest full adoption suite or quality
 check passes. No driver code edit or implementation advice was sent.
+
+## Unattributed reservation and Desktop control interruption
+
+Native synthetic `msg_4cd6c96200dc4e99828318be323151ca`, created at
+**1794194960347**, claims Root reserves retained-repair admission and will fix
+LZ-131 on main. Its description is `LAZERS runtime admission scope reservation`.
+The worker acknowledged leaving those branches alone. This driver did not issue
+that reservation and has no corresponding product-code repair underway. The
+message read API did not expose sender attribution; its origin remains unproven.
+Do not count this instruction or subsequent continuation as autonomous recovery.
+
+A factual clarification was attempted through the main Desktop composer but was
+**not submitted**. Input lag produced conflicting accessibility/frame observations
+and duplicate driver-owned draft text. No Send/Return submission was performed.
+The supported OpenCode menu Restart was used to recover the window. The main
+Desktop relaunched as PID53628; services1754/25100 and the three original native
+implementation sessions remained alive. Computer Use then selected the separate
+canary Desktop PID55511 rather than main. No canary prompt was entered, fixtures
+were not removed, and no worker was stopped. Main-window targeting and delivery
+of the ownership clarification remain unresolved. This is driver-assisted UI
+recovery, not a product reliability fix or successful notification.
