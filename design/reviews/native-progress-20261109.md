@@ -27,8 +27,7 @@ continues to observe outcomes and answer native questions as the human developer
 
 ## Five-hour worker assessment
 
-At **1794193092845**, LZ-181's original attempt has run **5.11 hours** since
-1794174681139. Its recorded attempt count is **1,208 tool calls**, with no artifact.
+At **1794193092845**, LZ-181's original attempt has run **5.11 hours** since 1794174681139. Its recorded attempt count is **1,208 tool calls**, with no artifact.
 The worker checkout has 2,966 tracked added lines and 352 removed lines across
 eight tracked files, plus two new modules. These are working changes, not delivery.
 
