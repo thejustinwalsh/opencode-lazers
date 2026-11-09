@@ -121,6 +121,30 @@
       "nativeInventoryPresent": false,
       "cachedLocationPresent": false,
       "observedAt": 1794229837358
+    },
+    {
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/daaa4562-e093-4ed7-98a4-dce2dd5e35b3",
+      "state": "removed",
+      "reason": "LZ201 reviewed source integrated; runtime plan version21 completed native removal receipt and cache eviction",
+      "nativeInventoryPresent": false,
+      "cachedLocationPresent": false,
+      "observedAt": 1794235906056
+    },
+    {
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c87b1f86-4b4f-47c4-9388-8998ee9a1bf0",
+      "state": "removed",
+      "reason": "LZ164 real registered paging qualification recorded; runtime plan version20 completed native removal receipt and cache eviction",
+      "nativeInventoryPresent": false,
+      "cachedLocationPresent": false,
+      "observedAt": 1794235906057
+    },
+    {
+      "directory": "/Users/tjw/.local/share/opencode/worktree/b5da4c/lz201-architect-review-20261109",
+      "state": "removed",
+      "reason": "Architect-owned review finished; clean checkout, no non-merge commits absent from main and all reviewed source files equal main; native force:false removal confirmed",
+      "nativeInventoryPresent": false,
+      "cachedLocationPresent": false,
+      "observedAt": 1794235906057
     }
   ],
   "retained": [
@@ -138,19 +162,6 @@
       "reason": "Current native foreground worker; preserved"
     },
     {
-      "path": "/Users/tjw/.local/share/opencode/worktree/b5da4c/lz201-architect-review-20261109",
-      "nativeStrategy": "git",
-      "observedAt": 1794230015280,
-      "refs": [],
-      "planStatesAsOfInventory": [],
-      "head": "78b19ac449b92040a553a72477935c05ba1029f4",
-      "gitStatusReadable": true,
-      "dirty": false,
-      "headInMain": false,
-      "nativeForegroundActive": false,
-      "reason": "HEAD not included in main; preserve unmerged source/composition"
-    },
-    {
       "path": "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz182-architect-compose-20261109",
       "nativeStrategy": "git",
       "observedAt": 1794230015313,
@@ -162,32 +173,6 @@
       "headInMain": false,
       "nativeForegroundActive": false,
       "reason": "HEAD not included in main; preserve unmerged source/composition"
-    },
-    {
-      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/daaa4562-e093-4ed7-98a4-dce2dd5e35b3",
-      "nativeStrategy": "git",
-      "observedAt": 1794230015342,
-      "refs": ["LZ-201"],
-      "planStatesAsOfInventory": ["running"],
-      "head": "e2833b0b0e15170f76d42b019d4233bce6279739",
-      "gitStatusReadable": true,
-      "dirty": false,
-      "headInMain": false,
-      "nativeForegroundActive": false,
-      "reason": "HEAD not included in main; preserve unmerged source/composition"
-    },
-    {
-      "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c87b1f86-4b4f-47c4-9388-8998ee9a1bf0",
-      "nativeStrategy": "git",
-      "observedAt": 1794230015368,
-      "refs": ["LZ-164"],
-      "planStatesAsOfInventory": ["blocked"],
-      "head": "22b5abc8d804f5944cc896fe19c53e359fdf2a24",
-      "gitStatusReadable": true,
-      "dirty": false,
-      "headInMain": true,
-      "nativeForegroundActive": false,
-      "reason": "Clean merged checkout, but complete current resource/ownership settlement was not established in this pass; preserved"
     },
     {
       "path": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/422b1e78-34b1-442c-baa6-407c1fb64f6c",
@@ -1842,15 +1827,15 @@
     }
   ],
   "afterKiB": {
-    "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees": 78610332,
+    "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees": 77848016,
     "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees": 2457096,
-    "/Users/tjw/.local/share/opencode/worktree/b5da4c": 2245564
+    "/Users/tjw/.local/share/opencode/worktree/b5da4c": 1477784
   },
-  "endedAt": 1794229924158,
-  "finalNativeInventoryCount": 133,
-  "removedCount": 11,
-  "reclaimedKiB": 5896480,
-  "reclaimedGiB": 5.623321533203125,
+  "endedAt": 1794235994077,
+  "finalNativeInventoryCount": 130,
+  "removedCount": 14,
+  "reclaimedKiB": 7426576,
+  "reclaimedGiB": 7.0825347900390625,
   "integrationRetry": {
     "planID": "f33eddb3-c3f6-4f45-ac51-3a1f7ae47c23",
     "result": "Fresh native integrated cleanup retry still reported worker activity not conclusively idle; no repeated blind retries or bypass"
@@ -1860,5 +1845,6 @@
     "priority": 4000,
     "blanketLZ182IntegrationDependencyRemoved": true,
     "note": "Existing real overlapping writer reservations retained; Architect owns review/integration/cleanup. Manual removals are not automatic lifecycle qualification."
-  }
+  },
+  "measurementNote": "Net du change across the same three roots, while preserved active workers may allocate files; not a per-file deletion estimate."
 }
