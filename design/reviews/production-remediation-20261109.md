@@ -840,3 +840,33 @@ assertions**, and `bun run verify` passes. Logs:
 This is a full seven-failure checkpoint plus a passing targeted correction, not
 a claim of a fresh full-suite four-failure result. Wave 5 remains open for heavy
 synchronous Git operations and the remaining decision-capture growth/latency.
+
+## Wave 5: F-S5-11 / F-S3-4 asynchronous status observations
+
+Added the review's `gitAsync` transport using the existing command timeout,
+output bound, environment and non-interactive Git policy. All runtime
+`status --porcelain*` calls now await it: retained verification, adoption,
+reconciliation and cleanup. Untracked-path semantics remain unchanged; none of
+these consumers can safely ignore untracked work. The unchanged synchronous
+`artifactUnchanged` helper also now disables credential prompting.
+
+Adoption publication obtains status before its write transaction and rechecks
+the durable owner/version inside it. Branch/HEAD checks remain inside that
+transaction. Cleanup rechecks cancellation after the awaited observation before
+removing anything. Candidate reconciliation performs status checks sequentially,
+without spawning one process per native workspace concurrently. No new timer,
+daemon, scheduling authority or acceptance rule is introduced.
+
+A deliberately slow real Git alias verifies that the event loop's timer runs
+while the command is pending; native Git failure still rejects with its actionable
+message. This is a responsiveness behavior test, not a throughput benchmark.
+`bun run verify` passes. Final artifact, adoption, retained-verification and runtime
+tests: **454 pass / 0 fail**, 6,743 assertions across four files, 167.18 seconds.
+Logs: `s5-async-status-final.log`, `s5-async-status-verify.log` in the baseline
+directory. The earlier retained-only increment passed 429 tests before the other
+status call sites changed; the final run covers all current changes.
+
+**The finding remains open for `merge-tree` / `commit-tree` and their synchronous
+artifact callers.** Small `rev-parse` / ancestry reads remain synchronous, as
+recommended. The change does not claim native Desktop CPU results or completion
+of every Git event-loop blocker.

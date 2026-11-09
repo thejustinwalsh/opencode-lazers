@@ -18,6 +18,7 @@ import {
   combineArtifacts,
   commitArtifact,
   git,
+  gitAsync,
   reviewedScopeBase,
   runDeclaredCheck,
   runCheck,
@@ -1016,7 +1017,7 @@ export class TaskRuntime {
     if (branch !== command.targetBranch || command.descendantCommit !== head)
       throw new Error("Reviewed descendant must be the exact current HEAD of targetBranch")
     if (
-      git(this.directory, ["status", "--porcelain", "--untracked-files=all"]) ||
+      (await gitAsync(this.directory, ["status", "--porcelain", "--untracked-files=all"])) ||
       git(this.directory, ["ls-files", "-u", "-z"])
     )
       throw new Error("Dirty or unmerged candidate checkout cannot be adopted")
@@ -9866,14 +9867,14 @@ export class TaskRuntime {
       : (operation.combinedInputFingerprint ?? operation.inputFingerprint)
   }
 
-  private retainedWorkspaceUnchanged(
+  private async retainedWorkspaceUnchanged(
     workspace: string,
     artifact: string,
     ownedDependencyLink?: { path: string; target: string } | null,
-  ): boolean {
+  ): Promise<boolean> {
     try {
       const workspaceRoot = realpathSync(workspace)
-      let status = git(workspace, ["status", "--porcelain", "--untracked-files=all"])
+      let status = await gitAsync(workspace, ["status", "--porcelain", "--untracked-files=all"])
       if (ownedDependencyLink) {
         if (
           ownedDependencyLink.path !== join(workspaceRoot, "node_modules") ||
@@ -10098,7 +10099,7 @@ export class TaskRuntime {
         const actual = realpathSync(present)
         const topLevel = realpathSync(git(actual, ["rev-parse", "--show-toplevel"]))
         const head = git(actual, ["rev-parse", "HEAD"])
-        const status = git(actual, ["status", "--porcelain", "--untracked-files=all"])
+        const status = await gitAsync(actual, ["status", "--porcelain", "--untracked-files=all"])
         const conflicts = git(actual, ["ls-files", "-u", "-z"])
         const pendingCheck = this.store.atomic((db) =>
           retainedVerificationChecks(db, initial.id, phase).find(
@@ -10242,7 +10243,7 @@ export class TaskRuntime {
         samePhysicalWorkspace(canonical, this.directory) ||
         realpathSync(git(canonical, ["rev-parse", "--show-toplevel"])) !== canonical ||
         git(canonical, ["rev-parse", "HEAD"]) !== artifact ||
-        git(canonical, ["status", "--porcelain", "--untracked-files=all"]) ||
+        (await gitAsync(canonical, ["status", "--porcelain", "--untracked-files=all"])) ||
         git(canonical, ["ls-files", "-u", "-z"])
       )
         throw new Error(
@@ -11438,7 +11439,7 @@ export class TaskRuntime {
       await this.holdRetainedVerification(initial, errorText(error), fence)
       return undefined
     }
-    if (!this.retainedWorkspaceUnchanged(workspace, initial.artifact)) {
+    if (!(await this.retainedWorkspaceUnchanged(workspace, initial.artifact))) {
       await this.holdRetainedVerification(
         initial,
         "Retained task candidate changed after its task checks",
@@ -11980,11 +11981,11 @@ export class TaskRuntime {
       return
     }
     if (
-      !this.retainedWorkspaceUnchanged(combinedWorkspace, combinedArtifact) ||
-      !this.retainedWorkspaceUnchanged(
+      !(await this.retainedWorkspaceUnchanged(combinedWorkspace, combinedArtifact)) ||
+      !(await this.retainedWorkspaceUnchanged(
         this.retainedVerificationIsolatedWorkspace(operation, "task")!,
         operation.artifact,
-      )
+      ))
     ) {
       await this.holdRetainedVerification(
         operation,
@@ -12274,7 +12275,7 @@ export class TaskRuntime {
     if (branch !== adoption.target_branch || head !== adoption.landing_head)
       throw new Error("Reviewed landing branch or HEAD changed during adoption")
     if (
-      git(this.directory, ["status", "--porcelain", "--untracked-files=all"]) ||
+      (await gitAsync(this.directory, ["status", "--porcelain", "--untracked-files=all"])) ||
       git(this.directory, ["ls-files", "-u", "-z"])
     )
       throw new Error("Dirty or unmerged candidate checkout cannot publish adoption")
@@ -12344,7 +12345,7 @@ export class TaskRuntime {
         throw new Error(`Owned adoption worktree changed; preserve ${workspace}`)
       if (git(workspace, ["ls-files", "-u", "-z"]))
         throw new Error(`Owned adoption worktree has unmerged paths; preserve ${workspace}`)
-      if (git(workspace, ["status", "--porcelain", "--untracked-files=all"])) {
+      if (await gitAsync(workspace, ["status", "--porcelain", "--untracked-files=all"])) {
         const declaredChecks =
           phase === "task"
             ? this.store.repository.get(adoption.task_id)?.proposal.verification
@@ -12453,7 +12454,7 @@ export class TaskRuntime {
       if (
         actual === this.directory ||
         git(actual, ["rev-parse", "HEAD"]) !== base ||
-        git(actual, ["status", "--porcelain", "--untracked-files=all"]) ||
+        (await gitAsync(actual, ["status", "--porcelain", "--untracked-files=all"])) ||
         git(actual, ["ls-files", "-u", "-z"])
       )
         throw new Error("Adoption worktree is not a clean exact-candidate checkout")
@@ -12615,7 +12616,7 @@ export class TaskRuntime {
       const candidateClean =
         existsSync(workspace) &&
         git(workspace, ["rev-parse", "HEAD"]) === artifact &&
-        !git(workspace, ["status", "--porcelain", "--untracked-files=all"]) &&
+        !(await gitAsync(workspace, ["status", "--porcelain", "--untracked-files=all"])) &&
         !git(workspace, ["ls-files", "-u", "-z"])
       if (!candidateClean) {
         this.holdAdoption(
@@ -12831,6 +12832,11 @@ export class TaskRuntime {
       this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
       return
     }
+    const publicationStatus = await gitAsync(this.directory, [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+    ])
     this.store.fenced(this.owner, fence, (db) => {
       const current = this.store.adoption(adoption!.id)
       const currentPlan = this.store.plan(plan.id)
@@ -12850,6 +12856,8 @@ export class TaskRuntime {
         !current ||
         !currentPlan ||
         currentPlan.state !== "blocked" ||
+        currentPlan.version !== context.plan.version ||
+        currentPlan.owner !== context.plan.owner ||
         !["pending", "task-checks", "combined-checks", "waiting-human"].includes(current.state) ||
         !currentNode ||
         currentNode.state !== adoption!.node_state ||
@@ -12886,7 +12894,7 @@ export class TaskRuntime {
       if (
         git(this.directory, ["branch", "--show-current"]) !== adoption!.target_branch ||
         git(this.directory, ["rev-parse", "HEAD"]) !== adoption!.landing_head ||
-        git(this.directory, ["status", "--porcelain", "--untracked-files=all"])
+        publicationStatus
       )
         return
       const activeWorker = this.conflictingActiveAttempt(adoption!.task_id)
@@ -13468,8 +13476,12 @@ export class TaskRuntime {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          if (git(workspace, ["status", "--porcelain"]))
+          if (await gitAsync(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
+          if (!cleanupCurrent()) {
+            this.abandonCleanupEffect(effect, fence)
+            return
+          }
           const head = git(workspace, ["rev-parse", "HEAD"])
           try {
             git(this.directory, ["merge-base", "--is-ancestor", head, "HEAD"])
@@ -13673,7 +13685,7 @@ export class TaskRuntime {
         // A typed native failure is affirmative terminal evidence, not a lost
         // success response. It can never be promoted to a ready workspace.
         if (nativeFailure) return
-        const candidates = nativeWorktrees
+        const possibleCandidates = nativeWorktrees
           .filter((directory) =>
             effect.kind === "worktree-recovery"
               ? directory === payload.workspace
@@ -13683,11 +13695,15 @@ export class TaskRuntime {
             (directory) =>
               existsSync(directory) && git(directory, ["rev-parse", "HEAD"]) === payload.base,
           )
-          .filter(
-            (directory) =>
-              !effect.kind.startsWith("adoption-") ||
-              !git(directory, ["status", "--porcelain", "--untracked-files=all"]),
+        const candidates: string[] = []
+        for (const directory of possibleCandidates) {
+          if (
+            effect.kind.startsWith("adoption-") &&
+            (await gitAsync(directory, ["status", "--porcelain", "--untracked-files=all"]))
           )
+            continue
+          candidates.push(directory)
+        }
         if (candidates.length === 1) {
           const workspace = candidates[0]!
           if (effect.attempt_id)

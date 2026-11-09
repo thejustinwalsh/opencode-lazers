@@ -18,11 +18,33 @@ import {
   commitIsAncestor,
   commitArtifact,
   git,
+  gitAsync,
   runCheck,
   runDeclaredCheck,
   verificationEnvironmentIdentity,
 } from "./artifacts.ts"
 import { checkSucceeded } from "./checks.ts"
+
+test("F-S5-11 a slow Git observation leaves timers responsive and preserves command failures", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-async-git-"))
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    git(root, ["init", "--initial-branch=main"])
+    let ticked = false
+    const running = gitAsync(root, ["-c", "alias.lz-slow=!sleep 0.1; printf ready", "lz-slow"])
+    timer = setTimeout(() => {
+      ticked = true
+    }, 0)
+    expect(await running).toBe("ready")
+    expect(ticked).toBe(true)
+    await expect(gitAsync(root, ["rev-parse", "absent-reference"])).rejects.toThrow(
+      "git rev-parse failed:",
+    )
+  } finally {
+    clearTimeout(timer)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test("declared quality phases preserve all output and share the command timeout", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-check-phases-"))

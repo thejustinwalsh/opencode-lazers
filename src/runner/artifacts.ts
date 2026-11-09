@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process"
+import { execFile, spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import {
   constants,
@@ -14,10 +14,40 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { promisify } from "node:util"
 import { canonical } from "../identity.ts"
 import { checkEnvironment, checkSucceeded } from "./checks.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
 import type { TaskProposal } from "../task.ts"
+
+const execFileAsync = promisify(execFile)
+
+/** Repository-size observations must not block the scheduler and RPC event loop. */
+export async function gitAsync(
+  directory: string,
+  args: string[],
+  environment: Record<string, string> = {},
+): Promise<string> {
+  try {
+    const result = await execFileAsync("git", args, {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 30000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...environment },
+    })
+    return result.stdout.trimEnd()
+  } catch (error) {
+    const stderr =
+      error && typeof error === "object" && "stderr" in error && typeof error.stderr === "string"
+        ? error.stderr
+        : ""
+    throw new Error(
+      `git ${args[0]} failed: ${(stderr || (error instanceof Error ? error.message : "unknown")).slice(0, 2000)}`,
+      { cause: error },
+    )
+  }
+}
 
 export function git(
   directory: string,
@@ -182,6 +212,7 @@ export function artifactUnchanged(
   const result = spawnSync("git", ["diff", "--quiet", commit, "--"], {
     cwd: directory,
     timeout: 30000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   })
   const allowed = new Set(ownedUntrackedPaths)
   const untracked = git(directory, ["ls-files", "--others", "--exclude-standard", "-z"])
