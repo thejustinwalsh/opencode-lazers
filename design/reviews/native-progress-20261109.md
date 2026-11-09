@@ -204,3 +204,16 @@ review-to-repair cycle; it is not final delivery. No driver prompt caused it.
 
 Computer Use subsequently explicitly reported macOS locked. Root requested
 unlock once; Desktop/Radar checks are pending while native work continues.
+
+Second cancellation repair committed as `30b013d`, with quality and 698 runner
+tests/8,925 assertions passing. Native runtime captured that commit and completed
+task verification, then started its declared plan behavior check. Integration
+and live activation remain pending; native records are authoritative for later
+phase changes.
+
+Additional requirement audit: `src/index.ts` passes the single plugin option
+`architectIdleWindowMs` to runtime; `src/runner/runtime.ts` validates that scalar
+and defaults it to 30 minutes. This path does not select idle timing by execution
+provider/model. The user's requested provider/model-aware cache policy remains
+unproven. Reconcile it with existing renewal work LZ-28 and model settings during
+the roadmap audit. Do not infer a provider's real cache lifetime from this default.
