@@ -356,3 +356,35 @@ field before Return and then in the submitted user bubble. Architect resumed
 and received373e296 plus the successful owned reopen result. Prefer verified
 typing for now; the paste-specific failure is not proof the entire renderer is
 frozen. No additional restart was needed for this recovery.
+
+## Recovery oversight correction: evaluate advice instead of supplying code fixes
+
+User corrected Driver's role: assess trajectory outcomes, advice effectiveness
+and Architect escalation; do not keep feeding implementation fixes. Driver's
+earlier concrete diagnosis improved some results but also substituted for the
+recovery judgment the product should perform. No worker code was edited by
+Driver, but that does not make the advisory intervention cost-free or autonomous.
+
+Read-only task_advice history for LZ181 contains six revisions. Revision1 is
+initial context;2-3 correct policy/requirements;4 diagnoses retained async fixture
+assumptions;5 reconciles an existing reviewed fix;6 addresses the later adoption
+test episode. Revisions4-5 were followed by the reported62/62 retained suite, so
+six revisions cannot honestly be called six failed retries. Advice6 has further
+post-delivery failures/edits but no observed successful adoption resolution yet.
+
+The proactive recovery design already requires post-steering reassessment and
+handoff/escalation for continued struggle, with a reason and concrete follow-up
+for further continuation. Current Architect guidance delegates recovery generally
+but omits that explicit loop. Active DB has no recovery_handoff tables, and main
+does not register the handoff source's store/tools. The existing recovery journal
+is not proof that the specified active-struggle recovery feature is delivered.
+
+Driver asked the native Architect to own the current disposition and next
+observable reassessment condition. Proposed default is one focused advice round
+per failure episode followed by outcome review; further advice needs a genuinely
+new approach/progress, while persistent same failure requires an Architect
+investigation/handoff/takeover decision. This is judgment guidance, not a hard
+count/time/token quota or automatic worker termination. Preserve useful work and
+reconcile the original writer before overlapping writes. Actual disposition and
+post-advice outcome remain to observe; no recovery success is inferred from
+message delivery.
