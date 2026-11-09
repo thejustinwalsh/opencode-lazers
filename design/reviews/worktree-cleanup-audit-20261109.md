@@ -96,3 +96,22 @@ idle receipt was used. The Desktop request is a user-directed driver interventio
 Required follow-through is implementation, meaningful checks, actual native
 reconciliation/removal receipts and before/after disk observations, plus
 subsequent automatic cleanup under the corrected scheduler lifecycle.
+
+## Cleanup worker start and connection-failure recovery
+
+LZ-185 subsequently dispatched OpenAI Luna Max session
+`ses_6a0c6753d66f4a90b413e2d2773fa6c4` in its native checkout
+`3156909f-f2b7-429d-b50c-a9c879079a18`. It researched the lifecycle/native-idle
+paths before a provider transport failure. Both worker and Architect had
+`provider.transport` failures, “Timed out waiting for response data”, status200.
+Desktop later displayed `getaddrinfo ENOTFOUND auth.openai.com`. These observations
+are not usage-limit errors and do not prove a product code failure.
+
+Current DNS resolution was checked successfully for OpenAI and OpenCode. The
+driver resumed the existing Architect through Desktop with a short continuation
+request, without changing provider/model or logging in again. Architect used the
+normal runtime resume command (planversion8) and the SAME worker was confirmed
+active. No replacement attempt, SQL repair or direct worker prompt was used.
+The Desktop continuation is driver assistance; automatic recovery after such an
+outage remains unproven. Preserve this case for the existing recovery work rather
+than treating message admission alone as a successful autonomous recovery.
