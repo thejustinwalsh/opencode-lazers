@@ -330,3 +330,25 @@ native panel/scheduler observation, and the four baseline failures. Historical
 scan space is retained for Wave 6. Reconciliation #5 still awaits clarification;
 XState authority, record-time key redaction and post-merge worker termination
 remain required in their dependent increments.
+
+## Wave 3: F-S4-3
+
+The stale-checkpoint path now uses `recordOnce`, comparing the latest same-scope
+condition with the current JSON value inside its transaction. Unchanged facts
+produce no transition or repository mutation; distinct checkpoint/input conditions
+remain recorded. This compares structured data, not source-file hashes.
+
+A 100-repeat test across two store instances leaves transition count and watermark
+unchanged; changed conditions and task scope still append history. The real runtime
+continuity test now repeats five drains with the same uncovered input and observes
+one blocked-checkpoint transition, then records the new checkpoint and completes
+renewal normally. Quality checks and the focused tests passed; the broader store
+and renewal/checkpoint selections passed too.
+
+Audited the other named event producers: `hold` already compares state, reason and
+worker observation; `OUTCOME_SUPERSEDED` follows a guarded outbox state change;
+a healthy sealed source guard bypasses reactivation, while restoration after a real
+loss is a distinct incident. Preserved those events rather than hiding repeated
+incidents through payload-only deduplication. No historical transition rows were
+deleted. A post-activation native measurement of the former 110,826-row write loop
+remains required; this increment establishes the code and runtime-fixture result.

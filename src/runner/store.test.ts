@@ -410,6 +410,37 @@ function fixture(requestID = "plan-title-store") {
   return { databasePath, projectDirectory, repository, store, input }
 }
 
+test("F-S4-3 unchanged conditions do not append transitions or advance the repository watermark", () => {
+  const f = fixture()
+  const plan = f.store.submit(f.input, "owner")
+  const payload = { continuityRevision: 1, uncoveredInputID: "new-input" }
+  expect(f.store.recordOnce(plan.planID, null, "TEST_CONDITION", payload)).toBe(true)
+  const version = f.repository.version()
+  const other = new RunnerStore(f.repository)
+  for (let index = 0; index < 100; index++) {
+    expect(
+      other.recordOnce(plan.planID, null, "TEST_CONDITION", {
+        uncoveredInputID: "new-input",
+        continuityRevision: 1,
+      }),
+    ).toBe(false)
+  }
+  expect(f.repository.version()).toBe(version)
+  expect(
+    other.recordOnce(plan.planID, null, "TEST_CONDITION", { ...payload, continuityRevision: 2 }),
+  ).toBe(true)
+  expect(f.repository.version()).toBeGreaterThan(version)
+  expect(other.recordOnce(plan.planID, f.input.nodes[0]!.taskID, "TEST_CONDITION", payload)).toBe(
+    true,
+  )
+  expect(other.recordOnce(plan.planID, null, "TEST_CONDITION", payload)).toBe(true)
+  expect(
+    (f.store.detail(plan.planID).activity as { event: string }[]).filter(
+      (row) => row.event === "TEST_CONDITION",
+    ),
+  ).toHaveLength(4)
+})
+
 test("S2-4 runner module upgrade installs the shared lookup indexes and skips current DDL", () => {
   const f = fixture()
   const indexes = [

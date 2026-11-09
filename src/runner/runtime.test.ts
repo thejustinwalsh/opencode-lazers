@@ -13387,6 +13387,14 @@ test("a continuity checkpoint cannot outlive a later observed user input", async
     )?.uncoveredInputID,
   ).toBe("msg_new_user_decision")
 
+  // F-S4-3: an unchanged stale checkpoint records one condition, not one per drain.
+  for (let tick = 0; tick < 5; tick++) await f.runtime.tick()
+  expect(
+    (f.store.detail(f.receipt.planID).activity as { event: string }[]).filter(
+      (row) => row.event === "ARCHITECT_RENEWAL_BLOCKED_STALE_CHECKPOINT",
+    ),
+  ).toHaveLength(1)
+
   await f.runtime.recordArchitectContinuity(owner.id, {
     decisions: ["Use the newly observed user decision."],
     unresolvedQuestions: [],

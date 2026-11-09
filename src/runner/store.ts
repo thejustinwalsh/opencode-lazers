@@ -1,7 +1,7 @@
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
-import { fingerprint } from "../identity.ts"
+import { canonical, fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
 import { RecoveryJournal } from "../recovery/journal.ts"
@@ -2237,7 +2237,7 @@ export class RunnerStore {
         .all(input.previousSessionID)
         .find((row) => !coveredInputSet.has(row.message_id))
       if (uncoveredInput) {
-        this.record(input.anchorPlanID, null, "ARCHITECT_RENEWAL_BLOCKED_STALE_CHECKPOINT", {
+        this.recordOnce(input.anchorPlanID, null, "ARCHITECT_RENEWAL_BLOCKED_STALE_CHECKPOINT", {
           sessionID: input.previousSessionID,
           continuityRevision: continuity.revision,
           uncoveredInputID: uncoveredInput.message_id,
@@ -3201,6 +3201,15 @@ export class RunnerStore {
         "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,?,?,?)",
       ).run(planID, taskID, plan.version, event, JSON.stringify(payload), Date.now())
       this.repository.changed()
+    })
+  }
+  /** Record a changed condition without rewriting the same fact on every scheduler drain. */
+  recordOnce(planID: string, taskID: string | null, event: string, payload: unknown): boolean {
+    return this.atomic(() => {
+      const previous = this.latestTransition<unknown>(planID, taskID, event)
+      if (previous !== undefined && canonical(previous) === canonical(payload)) return false
+      this.record(planID, taskID, event, payload)
+      return true
     })
   }
   latestTransition<T>(planID: string, taskID: string | null, event: string): T | undefined {
