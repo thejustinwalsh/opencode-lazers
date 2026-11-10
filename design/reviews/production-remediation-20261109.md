@@ -945,3 +945,36 @@ F-S4-2 ownership queries and Justin's reconciliation #8. The candidate is **not
 accepted or discarded**; reconcile its useful changes with those current contracts,
 amend the defect-asserting cleanup tests, and preserve active/dirty/unmerged work
 before any native reclamation. No worktree or branch was removed in this pass.
+
+## S2-4 activation incident: stale native import (2026-11-10)
+
+Justin reported that Desktop had no loaded plugin. The existing 2.2.6 service
+(PID 83218) repeatedly failed plugin loading with `Export named
+'installTaskAdviceSchema' not found` in `src/tasks/advice.ts`. That export exists;
+a fresh Bun process imported both it and the complete plugin successfully.
+Supported `location.reload()` at zero active native sessions did not clear the
+failure; an actual Tasks RPC returned `rpc.unavailable`. Offline test results had
+not established live activation, and that missing check left the broken host
+unresolved until this report.
+
+Restarted the same installed OpenCode 2.2.6 executable through its supported
+`service restart` command. No custom service, model prompt, provider change or
+task resumption was introduced. The replacement service is PID 83271. Actual
+registered calls then confirmed:
+
+- OpenCode plugin inventory: `lazers`, server and GUI features present,
+  `state.status: active`.
+- Tasks: 175 project records; sample references LZ-201/LZ-200/LZ-199, 53 ms.
+- Source fence: current registration in the replacement process.
+- Live Radar: 120 ms; scheduler scheduled with 10 participants, 10 sessions,
+  9 managed sessions.
+- Models settings: successful registered read.
+- Local inference settings: enabled, with questions/decisions/review/dictation/
+  read-aloud all still enabled. This is not a GPU-residency observation.
+- Native active-session inventory remained empty after these checks.
+
+Computer Use explicitly reported macOS locked twice. Unlock was requested;
+physical Desktop panel rendering and the resident-model indicator remain
+unverified until it is available. Server recovery is observed; complete visual
+acceptance is not claimed. No source workaround for the stale host cache was
+needed, and no tasks, worker worktrees or credentials were discarded.
