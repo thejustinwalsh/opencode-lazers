@@ -300,7 +300,7 @@ test("state filters paginate exact effective task states in project and associat
   ).toThrow("does not match")
 })
 
-test("precise lifecycle filters paginate recorded node states independently of plan holds", () => {
+test("lifecycle filters retain raw states while held plans stay in the waiting filter", () => {
   const repository = fixture()
   const reads = new TaskReads(repository)
   const associationReads = new AssociationTaskReads(repository)
@@ -326,8 +326,9 @@ test("precise lifecycle filters paginate recorded node states independently of p
     return { ...task, node, plan }
   })
   const expected = {
-    queued: tasks.filter((task) => task.node === "queued" && task.plan !== "cancelled"),
-    running: tasks.filter((task) => task.node === "running"),
+    // S8: waiting plans do not masquerade as dispatchable or running work.
+    queued: tasks.filter((task) => task.node === "queued" && task.plan === "running"),
+    running: tasks.filter((task) => task.node === "running" && task.plan === "running"),
     blocked: tasks.filter(
       (task) =>
         task.plan !== "cancelled" &&
@@ -349,11 +350,11 @@ test("precise lifecycle filters paginate recorded node states independently of p
   }
 
   const queued = reads.query({ state: "queued", limit: 100 })
-  expect(queued.count).toBe(3)
+  expect(queued.count).toBe(1)
   expect(queued.tasks.every((task) => task.recordedState === "queued")).toBe(true)
-  expect(queued.tasks.filter((task) => task.status === "blocked")).toHaveLength(2)
+  expect(queued.tasks.filter((task) => task.status === "blocked")).toHaveLength(0)
   const running = reads.query({ state: "running", limit: 100 })
-  expect(running.count).toBe(3)
+  expect(running.count).toBe(1)
   expect(running.tasks.every((task) => task.recordedState === "running")).toBe(true)
   const blocked = reads.query({ state: "blocked", limit: 100 })
   expect(blocked.count).toBe(7)

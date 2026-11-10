@@ -81,6 +81,7 @@ function summarize(
   return {
     taskID: task.id,
     reference,
+    ...(task.proposal.sourcePlan ? { sourcePlan: task.proposal.sourcePlan } : {}),
     revision: task.revision,
     status: task.status,
     reason: null,

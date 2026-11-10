@@ -1193,3 +1193,37 @@ The sidebar's Recent section no longer listed the four old root Architect chats;
 the fifth retired Architect was a child session and was already confirmed
 archived through the native readback. No background service restart or worker
 interruption was needed for this final display correction.
+
+## S8 — visible dependency waits and originating plans (2026-11-10)
+
+The native Tasks panel was filtered to Blocked / waiting, hiding the active
+LZ-202 worker. Switched the view to Open. Project topology already carried
+cross-plan `afterPlans`, but list projection discarded them and rendered only
+same-plan relationship counts. The list now renders task references and clickable
+prerequisites, distinguishing unfinished prerequisites from integration and
+cleanup. A queued dependency displays its node state, rather than its containing
+plan's `running` label. Waiting rows expose their hold reason without opening the
+inspector. Unassigned tasks do not claim an unknown worker.
+
+Recorded plan titles now form native expandable groups; existing parallel-branch
+folds remain. Unnamed groups have no invented plan heading. Optional task
+`sourcePlan` records a repository document, defining heading and line hint in the
+existing durable task body. Summary/topology reads carry it to the list. The link
+uses OpenCode's Files selection and layout APIs, resolving the current heading
+before falling back to the recorded line. Standalone tasks omit it. Architect's
+guidance adds two lines to record real origins; old tasks are not assigned
+invented document locations.
+
+The registered component walkthrough exercises selecting a dependency, opening a
+plan at its heading and omitting provenance for a standalone task. Storage/read
+coverage checks retained provenance and backward compatibility. Native Desktop
+reload showed actual LZ-185/LZ-187/LZ-192 dependencies. At Unix ms 1794336123538–3541,
+all four owners of the checked unfinished plans were unarchived Architects; the
+native active map contained the LZ-202 worker and a successor Architect. LZ-185's
+accepted node still had an interrupted combined-verification plan hold; the UI
+change does not claim that hold was repaired.
+
+Validation: `bun run verify`, 159 tests / 2,622 assertions across tasks,
+observability and registered panels, and the GUI production build passed. An
+older association-read test still expected held plans in Running/Queued; it now
+checks the corrected waiting-filter contract while retaining raw node history.

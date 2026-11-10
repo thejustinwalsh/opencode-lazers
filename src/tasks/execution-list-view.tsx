@@ -8,25 +8,31 @@ export function ExecutionPlanGroupView(props: {
   stateFilter: TaskStateFilter
   children: JSX.Element
 }) {
-  const nonterminal = () => ["open", "queued", "running", "blocked"].includes(props.stateFilter)
+  const remaining = () => ["open", "queued", "running", "blocked"].includes(props.stateFilter)
   return (
     <section
       class="lazers-tasks-plan"
       aria-label={
-        nonterminal()
-          ? `${props.group.title}, ${props.group.nonterminalCount} nonterminal of ${props.group.totalCount} tasks in this plan`
-          : props.group.title
+        props.group.hasRecordedTitle
+          ? remaining()
+            ? `${props.group.title}, ${props.group.nonterminalCount} remaining of ${props.group.totalCount} tasks in this plan`
+            : props.group.title
+          : undefined
       }
     >
-      <div class="lazers-tasks-plan-heading">
-        <span>{props.group.title}</span>
-        <Show when={nonterminal()}>
-          <span>
-            {props.group.nonterminalCount}/{props.group.totalCount} nonterminal
-          </span>
-        </Show>
-      </div>
-      {props.children}
+      <Show when={props.group.hasRecordedTitle} fallback={props.children}>
+        <details open>
+          <summary class="lazers-tasks-plan-heading">
+            <span>{props.group.title}</span>
+            <Show when={remaining() && props.group.totalCount > 1}>
+              <span>
+                {props.group.nonterminalCount}/{props.group.totalCount} remaining
+              </span>
+            </Show>
+          </summary>
+          {props.children}
+        </details>
+      </Show>
     </section>
   )
 }

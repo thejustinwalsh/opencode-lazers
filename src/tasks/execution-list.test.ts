@@ -434,3 +434,51 @@ test("rows keep raw recorded node state when an older summary contains effective
   task.recordedState = "ready"
   expect(buildExecutionList({ tasks: [task] }).unplanned[0]).toMatchObject({ status: "ready" })
 })
+
+test("cross-plan waits retain off-page references and distinguish acceptance from integration", () => {
+  const a = id(1),
+    b = id(2)
+  const source = topology([{ taskID: a, ordinal: 0, state: "accepted" }], [])
+  source.plans[0]!.state = "accepted"
+  source.plans[0]!.nodes[0]!.reference = "LZ-185"
+  const dependent = topology([{ taskID: b, ordinal: 0, state: "queued" }], []).plans[0]!
+  dependent.id = id(901)
+  dependent.afterPlans = [planID]
+  source.plans.push(dependent)
+  const build = () =>
+    buildExecutionList({ topology: source, tasks: summaries([b]) }).plans[0]!.rows[0]!
+  expect(build()).toMatchObject({
+    waiting: true,
+    dependencyTasks: [
+      { taskID: a, reference: "LZ-185", state: "awaiting integration", waiting: true },
+    ],
+  })
+  source.plans[0]!.state = "cleanup-blocked"
+  expect(build()).toMatchObject({
+    waiting: false,
+    dependencyTasks: [{ taskID: a, state: "integrated", waiting: false }],
+  })
+  source.plans[0]!.state = "cancelled"
+  expect(build().dependencyTasks?.[0]).toMatchObject({ state: "cancelled", waiting: true })
+})
+
+test("same-plan rows expose sequential blockers without calling completed predecessors blockers", () => {
+  const a = id(1),
+    b = id(2)
+  const source = topology(
+    [
+      { taskID: a, ordinal: 0, state: "running" },
+      { taskID: b, ordinal: 1, state: "queued" },
+    ],
+    [[a, b]],
+  )
+  source.plans[0]!.nodes[0]!.reference = "LZ-1"
+  const build = () =>
+    buildExecutionList({ topology: source, tasks: summaries([b]) }).plans[0]!.rows[0]!
+  expect(build()).toMatchObject({
+    waiting: true,
+    dependencyTasks: [{ reference: "LZ-1", state: "running", waiting: true }],
+  })
+  source.plans[0]!.nodes[0]!.state = "accepted"
+  expect(build()).toMatchObject({ waiting: false, dependencyTasks: [{ waiting: false }] })
+})

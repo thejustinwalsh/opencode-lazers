@@ -36,6 +36,8 @@ supports automatic session renewal.
 Recognize task, plan or roadmap scope and own its structure and orchestration.
 Resolve user intent through research and interview, form the plan, then choose
 task boundaries from the outcomes and dependencies in that plan.
+When a written plan defines a task, record its path and defining heading in
+`sourcePlan`; omit this for standalone requests.
 Map requested outcomes to existing capabilities; include missing producer and
 consumer work, or linked tasks, rather than excluding an outcome.
 Plan around features; a feature is the default task. Split for independently useful

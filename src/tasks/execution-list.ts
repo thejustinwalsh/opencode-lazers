@@ -13,9 +13,17 @@ export type ExecutionListRow = {
   holdReason: string | null
   ordinal: number
   reference?: string
+  sourcePlan?: TaskSummary["sourcePlan"]
   contextOnly: boolean
   prerequisites: string[]
   successors: string[]
+  dependencyTasks?: Array<{
+    taskID: string
+    reference?: string
+    title: string
+    state: string
+    waiting: boolean
+  }>
   fork?: ExecutionFork
 }
 
@@ -200,7 +208,48 @@ function relationMap(topology: TopologyResponse) {
   }
   for (const [id, values] of prerequisites) prerequisites.set(id, [...new Set(values)])
   for (const [id, values] of successors) successors.set(id, [...new Set(values)])
-  return { prerequisites, successors }
+  const byID = new Map(topology.plans.map((plan) => [plan.id, plan]))
+  const dependencyTasks = new Map<string, NonNullable<ExecutionListRow["dependencyTasks"]>>()
+  for (const plan of topology.plans) {
+    for (const node of plan.nodes) {
+      const samePlan = (prerequisites.get(node.taskID) ?? []).flatMap((id) => {
+        const prior = plan.nodes.find((candidate) => candidate.taskID === id)
+        return prior
+          ? [
+              {
+                taskID: id,
+                reference: prior.reference,
+                title: prior.objective,
+                state: prior.state,
+                waiting: node.waitingOn.includes(id) || prior.state !== "accepted",
+              },
+            ]
+          : []
+      })
+      const crossPlan = plan.afterPlans.flatMap((id) => {
+        const prior = byID.get(id)
+        if (!prior) return []
+        const integrated = ["integrated", "cleaning", "cleanup-blocked"].includes(prior.state)
+        return prior.nodes.map((candidate) => ({
+          taskID: candidate.taskID,
+          reference: candidate.reference,
+          title: candidate.objective,
+          state: integrated
+            ? "integrated"
+            : candidate.state === "accepted" && ["accepted", "running"].includes(prior.state)
+              ? "awaiting integration"
+              : prior.state === "running"
+                ? candidate.state
+                : prior.state,
+          waiting: !integrated,
+        }))
+      })
+      dependencyTasks.set(node.taskID, [
+        ...new Map([...samePlan, ...crossPlan].map((value) => [value.taskID, value])).values(),
+      ])
+    }
+  }
+  return { prerequisites, successors, dependencyTasks }
 }
 
 function row(
@@ -210,10 +259,14 @@ function row(
   contextOnly: boolean,
   relations: ReturnType<typeof relationMap>,
 ): ExecutionListRow {
+  const dependencyTasks = relations.dependencyTasks.get(node.taskID) ?? []
   const waiting =
     plan.state !== "cancelled" &&
     !terminal.has(node.state) &&
-    (node.state === "blocked" || plan.state === "blocked")
+    (node.state === "blocked" ||
+      plan.state === "blocked" ||
+      (["queued", "ready"].includes(node.state) &&
+        dependencyTasks.some((dependency) => dependency.waiting)))
   return {
     taskID: node.taskID,
     title: summary?.objective ?? node.objective,
@@ -222,9 +275,13 @@ function row(
       ? (node.reason ?? plan.reason ?? summary?.reason ?? null)
       : (node.reason ?? summary?.reason ?? null),
     waiting,
-    holdReason: waiting ? (node.reason ?? plan.reason ?? summary?.reason ?? null) : null,
+    holdReason: waiting ? (plan.reason ?? node.reason ?? summary?.reason ?? null) : null,
     ordinal: node.ordinal,
-    ...(summary?.reference ? { reference: summary.reference } : {}),
+    ...((summary?.reference ?? node.reference)
+      ? { reference: summary?.reference ?? node.reference }
+      : {}),
+    dependencyTasks,
+    sourcePlan: summary?.sourcePlan ?? node.sourcePlan,
     contextOnly,
     prerequisites: relations.prerequisites.get(node.taskID) ?? [],
     successors: relations.successors.get(node.taskID) ?? [],
@@ -255,6 +312,7 @@ export function buildExecutionList(input: {
         holdReason: null,
         ordinal,
         ...(task.reference ? { reference: task.reference } : {}),
+        sourcePlan: task.sourcePlan,
         contextOnly: false,
         prerequisites: [],
         successors: [],
@@ -372,6 +430,7 @@ export function buildExecutionList(input: {
         holdReason: null,
         ordinal,
         ...(summary?.reference ? { reference: summary.reference } : {}),
+        sourcePlan: summary?.sourcePlan,
         contextOnly: !summary,
         prerequisites: relations.prerequisites.get(taskID) ?? [],
         successors: relations.successors.get(taskID) ?? [],

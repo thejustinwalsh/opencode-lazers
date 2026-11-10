@@ -27,6 +27,7 @@ export function mountTaskPanel(
   context: unknown,
   session: unknown,
   container: HTMLElement,
+  screen: unknown = {},
 ) {
   const [visible, setVisible] = createSignal(true)
   const frame = {
@@ -55,7 +56,7 @@ export function mountTaskPanel(
               return panel.render({
                 tab: { id: "tasks", title: "Tasks", closable: "hover", label: () => null },
                 session,
-                screen: {},
+                screen,
               } as never)
             },
           })

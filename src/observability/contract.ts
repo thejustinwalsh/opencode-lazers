@@ -1,3 +1,4 @@
+import { TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import { TaskState } from "../runner/schema.ts"
 import { z } from "zod"
@@ -35,6 +36,8 @@ const NodeSnapshot = z.strictObject({
 
 const ObservationNode = z.strictObject({
   taskID: z.uuid(),
+  reference: z.string().optional(),
+  sourcePlan: TaskSourcePlanSchema.optional(),
   revision: z.literal(1),
   objective: z.string(),
   ordinal: z.int().nonnegative(),

@@ -545,3 +545,24 @@ test("current activity candidates are limited to requested, authorized latest at
     reads.currentActivityTargets(Array.from({ length: 41 }, () => crypto.randomUUID())),
   ).toThrow("invalid")
 })
+
+test("source plan provenance survives storage and task reads without inventing it for standalone tasks", () => {
+  const { open } = fixture()
+  const repository = open()
+  const standalone = insert(repository)
+  const sourcePlan = { path: "design/roadmap.md", section: "Phase 2", line: 12 }
+  const planned = repository.insert({
+    ...standalone,
+    id: crypto.randomUUID(),
+    proposal: { ...standalone.proposal, sourcePlan },
+  })
+  const reads = new TaskReads(repository)
+  expect(reads.query({}).tasks.find((task) => task.taskID === planned.id)?.sourcePlan).toEqual(
+    sourcePlan,
+  )
+  const detail = reads.get({ taskID: planned.id })
+  expect(detail.status === "found" && detail.task.proposal.sourcePlan).toEqual(sourcePlan)
+  expect(
+    reads.query({}).tasks.find((task) => task.taskID === standalone.id)?.sourcePlan,
+  ).toBeUndefined()
+})

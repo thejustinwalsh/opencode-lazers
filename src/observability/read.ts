@@ -69,7 +69,7 @@ type TransitionRecord = {
   payload: string
   created_at: number
 }
-type TaskRecord = { id: string; body: string }
+type TaskRecord = { id: string; body: string; reference?: string }
 type DependencyRecord = { plan_id: string; prerequisite: string; successor: string }
 type AttemptIdentity = {
   id: string
@@ -273,10 +273,12 @@ function loadTopologySource(
   const tasks = taskIDs.length
     ? db
         .query<TaskRecord, (string | number)[]>(
-          `SELECT id,body FROM tasks WHERE project_directory=? AND id IN (${taskIDs.map(() => "?").join(",")}) ORDER BY rowid`,
+          `SELECT t.id,t.body,r.reference FROM tasks t
+           LEFT JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
+           WHERE t.project_directory=? AND t.id IN (${taskIDs.map(() => "?").join(",")}) ORDER BY t.rowid`,
         )
         .all(projectDirectory, ...taskIDs)
-        .map((row) => TaskSpecSchema.parse(JSON.parse(row.body)))
+        .map((row) => ({ ...TaskSpecSchema.parse(JSON.parse(row.body)), reference: row.reference }))
     : []
   const planIDs = [...associations.planIDs]
   const placeholders = planIDs.map(() => "?").join(",")
@@ -425,6 +427,8 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
         const machineSnapshot = safeSnapshot(node)
         return {
           taskID: node.task_id,
+          ...(task.reference ? { reference: task.reference } : {}),
+          ...(task.proposal.sourcePlan ? { sourcePlan: task.proposal.sourcePlan } : {}),
           revision: task.revision,
           objective: safeText(task.proposal.objective, stats, 8000),
           ordinal: node.ordinal,

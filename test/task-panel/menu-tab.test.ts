@@ -102,9 +102,21 @@ describe("tasks native affordances", () => {
       )
 
     const open = renderGroup("Open plan", 1, 2, "open")
-    expect(open).toContain('aria-label="Open plan, 1 nonterminal of 2 tasks in this plan"')
-    expect(open).toContain(">1/2 nonterminal</span>")
+    expect(open).toContain('aria-label="Open plan, 1 remaining of 2 tasks in this plan"')
+    expect(open).toContain(">1/2 remaining</span>")
     expect(open).toContain("Visible task")
+    expect(open).toContain("<details open>")
+
+    const unnamed = renderToString(() =>
+      createComponent(ExecutionPlanGroupView, {
+        group: { ...group("Placeholder plan", 1, 1), hasRecordedTitle: false },
+        stateFilter: "open",
+        children: "Standalone task",
+      }),
+    )
+    expect(unnamed).not.toContain("Placeholder plan")
+    expect(unnamed).not.toContain("<summary")
+    expect(unnamed).toContain("Standalone task")
 
     const completed = renderGroup("Completed plan", 0, 1, "completed")
     expect(completed).toContain('aria-label="Completed plan"')

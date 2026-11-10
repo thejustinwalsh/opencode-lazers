@@ -15,8 +15,23 @@ const writePath = z
     "Use repository-relative paths/globs without dot segments, backslashes, or negation",
   )
 
+export const TaskSourcePlanSchema = z.strictObject({
+  path: writePath.describe("Repository-relative plan document path."),
+  section: text
+    .optional()
+    .describe("Exact heading defining this task; resolved again when opened."),
+  line: z
+    .int()
+    .positive()
+    .optional()
+    .describe("One-based source line, used when no matching heading is found."),
+})
+
 export const TaskProposalSchema = z
   .strictObject({
+    sourcePlan: TaskSourcePlanSchema.optional().describe(
+      "Originating plan document and section, when this task comes from a written plan. Omit for standalone requests; never invent a plan.",
+    ),
     objective: text.describe("The observable change and its purpose, stated directly."),
     // Optional for compatible historical replay and reads. Fresh-key admission
     // requires this explicit, versioned value after checking the replay key.

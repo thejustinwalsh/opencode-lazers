@@ -173,6 +173,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       return {
         taskID,
         reference: referenceByTaskID.get(taskID)!,
+        ...(taskID === ids.held
+          ? { sourcePlan: { path: "design/roadmap.md", section: "Recovery", line: 1 } }
+          : {}),
         revision: 1,
         status: state,
         recordedState: state,
@@ -255,6 +258,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       "Worker-level hold: waiting for a reviewer to reconcile the external result before this task may continue.\nAdditional hold: retain the audit trail and confirm the exact input provenance before resuming."
     const node = (taskID: string, ordinal: number) => ({
       taskID,
+      reference: referenceByTaskID.get(taskID),
       revision: 1,
       objective:
         taskNames[
@@ -523,7 +527,16 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const container = browserDocument.createElement("main")
     container.style.width = "360px"
     browserDocument.body.append(container)
-    mounted = host.mountTaskPanel(panel!, context, session, container)
+    const sourceSelections: unknown[] = []
+    mounted = host.mountTaskPanel(panel!, context, session, container, {
+      file: {
+        sync: async () => {},
+        get: () => ({
+          content: { type: "text", content: "# Roadmap\n\n## Recovery\nFix the flow" },
+        }),
+        selection: { set: (...args: unknown[]) => sourceSelections.push(args) },
+      },
+    })
     const row = (taskID: string) =>
       container.querySelector<HTMLButtonElement>(`[data-task-id="${taskID}"]`)
     const activityDetails = () =>
@@ -563,7 +576,30 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       "Worker archived",
     )
     expect(heldRow.textContent).toContain("Waiting")
+    const dependencyRow = [
+      ...heldRow.closest(".lazers-tasks-entry")!.querySelectorAll(".lazers-tasks-row-dependencies"),
+    ].find((line) => line.textContent?.includes("Waiting on"))!
+    expect(dependencyRow.textContent).toContain("Waiting on")
+    expect(dependencyRow.querySelector("button")?.textContent).toContain(
+      referenceByTaskID.get(ids.queuedFive)!,
+    )
+    dependencyRow.querySelector<HTMLButtonElement>("button")!.click()
+    await until(() => row(ids.queuedFive)?.getAttribute("aria-pressed") === "true")
+    row(ids.held)!.click()
+    await until(() => row(ids.held)?.getAttribute("aria-pressed") === "true")
     expect(heldRow.textContent).not.toContain("Additional hold: retain the audit trail")
+    expect(container.querySelector(".lazers-tasks-row-hold")?.textContent).toContain(
+      "Reconciliation hold",
+    )
+    const sourceButton = [
+      ...heldRow.closest(".lazers-tasks-entry")!.querySelectorAll("button"),
+    ].find((button) => button.textContent?.includes("roadmap.md › Recovery"))!
+    sourceButton.click()
+    await until(() => sourceSelections.length === 1)
+    expect(sourceSelections[0]).toEqual(["design/roadmap.md", { start: 3, end: 3 }])
+    expect(opened.at(-1)?.[0]).toBe("file:design/roadmap.md")
+    opened.length = 0
+    expect(activeRow.closest(".lazers-tasks-entry")!.textContent).not.toContain("roadmap.md")
     expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
       "Worker outcome succeeded",
     )
@@ -582,7 +618,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       unknownRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
     ).toBe("unknown")
     expect(container.querySelector(".lazers-tasks-plan-heading")?.textContent).toContain(
-      "nonterminal",
+      "remaining",
     )
     expect(container.querySelector(".lazers-tasks-inspector-state")?.textContent).toBe("Waiting")
     const inspectorPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
@@ -766,8 +802,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     )
     await chooseFilter("Blocked / waiting")
     await until(() => queryCalls.at(-1)?.state === "blocked" && Boolean(row(ids.active)))
-    expect(container.textContent).toContain("Node or plan holds may overlap Queued or Running")
-    expect(container.textContent).toContain("does not assert worker inactivity")
+    expect(container.textContent).not.toContain("Node or plan holds may overlap")
 
     await chooseFilter("Completed")
     await until(() => queryCalls.at(-1)?.state === "completed" && Boolean(row(ids.completed)))

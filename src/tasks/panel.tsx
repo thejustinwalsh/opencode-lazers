@@ -20,7 +20,7 @@ import { TaskPanelState } from "./panel-state.ts"
 import { taskChanges } from "./events.ts"
 import type { PanelData } from "./panel-state.ts"
 import { clampSplit, splitFromPointer } from "./panel-layout.ts"
-import { taskTitle } from "./presentation.ts"
+import { taskTitle, sourcePlanLine } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import {
   StartFeedback,
@@ -538,6 +538,18 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
   const rowTabIndex = (taskID: string) => {
     return taskID === focusTaskID() ? 0 : -1
   }
+  const openSourcePlan = async (source: NonNullable<ExecutionListRow["sourcePlan"]>) => {
+    try {
+      const files = props.screen.file
+      await files.sync(source.path)
+      const content = files.get(source.path)?.content
+      const line = sourcePlanLine(source, content?.type === "text" ? content.content : "")
+      if (line) files.selection.set(source.path, { start: line, end: line })
+      ctx.layout.open(`file:${source.path}`, props.session)
+    } catch {
+      setCopyStatus("Could not open plan.")
+    }
+  }
   const renderTaskRow = (
     taskRow: Accessor<ExecutionListRow>,
     group?: Accessor<ExecutionPlanGroup>,
@@ -546,6 +558,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     const expanded = () => Boolean(group && taskRow().fork && forkExpanded(group(), taskRow()))
     const currentActivity = () => visible()?.currentActivity[taskRow().taskID]
     const waiting = () => taskRow().waiting || currentActivity()?.waiting === true
+    const showWorker = () =>
+      Boolean(currentActivity()?.attemptID || currentActivity()?.workerSessionID)
     const holdReasons = () =>
       distinctReasons([
         taskRow().waiting ? taskRow().holdReason : null,
@@ -570,7 +584,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       return [
         taskTitle(taskRow().title),
         `recorded lifecycle ${taskRow().status}`,
-        ...(showCurrent()
+        ...(showWorker()
           ? [
               `observed foreground activity ${activity?.foreground ?? "unknown"}`,
               ...(activity?.workerSessionID
@@ -587,8 +601,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
-    const relationshipCount = () =>
-      new Set([...taskRow().prerequisites, ...taskRow().successors]).size
+    const dependencies = () => taskRow().dependencyTasks ?? []
+    const pendingDependencies = () => dependencies().filter((dependency) => dependency.waiting)
     return (
       <div class="lazers-tasks-entry" data-context-only={taskRow().contextOnly}>
         <div class="lazers-tasks-entry-line" style={{ "padding-left": `${depth * 12}px` }}>
@@ -626,20 +640,26 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               aria-hidden="true"
             />
             <span class="lazers-tasks-row-copy">
-              <span class="lazers-tasks-row-title">{taskTitle(taskRow().title)}</span>
+              <span class="lazers-tasks-row-title">
+                <Show when={taskRow().reference}>
+                  <span class="lazers-tasks-row-reference">{taskRow().reference} </span>
+                </Show>
+                {taskTitle(taskRow().title)}
+              </span>
               <Show when={showCurrent()}>
                 <span class="lazers-tasks-row-meta">
-                  <span class="lazers-tasks-row-lifecycle">{taskRow().status}</span>
-                  <span class="lazers-tasks-row-activity">
-                    <span
-                      class="lazers-tasks-activity-indicator"
-                      data-state={currentActivity()?.foreground ?? "unknown"}
-                      aria-hidden="true"
-                    />
-                    Worker {workerActivityLabel(currentActivity())}
+                  <span class="lazers-tasks-row-lifecycle">
+                    {waiting() ? "Waiting" : taskRow().status}
                   </span>
-                  <Show when={waiting()}>
-                    <span class="lazers-tasks-row-waiting">Waiting</span>
+                  <Show when={showWorker()}>
+                    <span class="lazers-tasks-row-activity">
+                      <span
+                        class="lazers-tasks-activity-indicator"
+                        data-state={currentActivity()?.foreground ?? "unknown"}
+                        aria-hidden="true"
+                      />
+                      Worker {workerActivityLabel(currentActivity())}
+                    </span>
                   </Show>
                   <Show when={pendingLabel()}>
                     {(label) => <span class="lazers-tasks-row-attention">{label()}</span>}
@@ -647,17 +667,54 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 </span>
               </Show>
             </span>
-            <Show when={relationshipCount() > 0}>
-              <span
-                class="lazers-tasks-dependency-count"
-                aria-label={`${relationshipCount()} recorded dependencies`}
-                title={`${relationshipCount()} recorded dependencies`}
-              >
-                {relationshipCount()} links
-              </span>
-            </Show>
           </button>
         </div>
+        <Show when={taskRow().sourcePlan}>
+          {(source) => (
+            <div
+              class="lazers-tasks-row-dependencies"
+              style={{ "padding-left": `${depth * 12 + 30}px` }}
+            >
+              <button
+                type="button"
+                title={source().path}
+                onClick={() => void openSourcePlan(source())}
+              >
+                {source().path.split("/").pop()}
+                {source().section ? ` › ${source().section}` : ""}
+              </button>
+            </div>
+          )}
+        </Show>
+        <Show when={dependencies().length > 0}>
+          <div
+            class="lazers-tasks-row-dependencies"
+            style={{ "padding-left": `${depth * 12 + 30}px` }}
+          >
+            <span>{waiting() && pendingDependencies().length ? "Waiting on" : "After"}</span>
+            <For each={pendingDependencies().length ? pendingDependencies() : dependencies()}>
+              {(dependency) => (
+                <button
+                  type="button"
+                  title={`${dependency.title} · ${dependency.state}`}
+                  onClick={() => selectTask(dependency.taskID)}
+                >
+                  {dependency.reference ?? relationLabel(dependency.taskID)}
+                  <span class="lazers-tasks-dependency-state"> · {dependency.state}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+        <Show when={waiting() && !pendingDependencies().length && holdReasons().length > 0}>
+          <div
+            class="lazers-tasks-row-hold"
+            title={holdReasons().join("; ")}
+            style={{ "padding-left": `${depth * 12 + 30}px` }}
+          >
+            {holdReasons().join("; ")}
+          </div>
+        </Show>
         <Show when={taskRow().fork && group && expanded()}>
           <div class="lazers-tasks-branches">
             <Keyed each={taskRow().fork?.branches ?? []} by={(branch) => branch.id}>
@@ -867,12 +924,6 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             />
           </Ui.Tooltip>
         </div>
-        <Show when={stateFilter() === "blocked"}>
-          <div class="lazers-tasks-filter-note">
-            Node or plan holds may overlap Queued or Running; this filter does not assert worker
-            inactivity.
-          </div>
-        </Show>
         <Show when={searchOpen() || prefs().search}>
           <div
             class="lazers-tasks-search"
