@@ -49,19 +49,22 @@ const Job = Schema.Struct({
 export type InferenceJob = typeof Job.Type
 const nothing = portable(Schema.Struct({}))
 
+/** Shared location/renderer inference surface; the renderer mailbox adds ownership primitives. */
+const sharedInferenceMethods = {
+  settings: { input: nothing, output: FeatureSettings },
+  configure: { input: FeaturePatch, output: FeatureSettings },
+  review: { input: SystemOneRequest, output: SystemOneResult },
+  ask: { input: portable(Request), output: portable(GenerationResult) },
+  speak: { input: portable(SpeechRequest), output: portable(GenerationResult) },
+  decide: { input: portable(DecisionRequest), output: portable(DecisionResult) },
+  systemOne: { input: SystemOneRequest, output: SystemOneResult },
+  transcribe: { input: portable(TranscriptionRequest), output: portable(GenerationResult) },
+}
+
 export const LocalInference = Rpc.define({
   id: "lazers.webgpu",
   events: {},
-  methods: {
-    settings: { input: nothing, output: FeatureSettings },
-    configure: { input: FeaturePatch, output: FeatureSettings },
-    review: { input: SystemOneRequest, output: SystemOneResult },
-    ask: { input: portable(Request), output: portable(GenerationResult) },
-    speak: { input: portable(SpeechRequest), output: portable(GenerationResult) },
-    decide: { input: portable(DecisionRequest), output: portable(DecisionResult) },
-    systemOne: { input: SystemOneRequest, output: SystemOneResult },
-    transcribe: { input: portable(TranscriptionRequest), output: portable(GenerationResult) },
-  },
+  methods: { ...sharedInferenceMethods },
 })
 
 /** Renderer mailbox is deliberately separate from location-scoped public entry points. */
@@ -69,14 +72,7 @@ export const RendererInference = Rpc.define({
   id: "lazers.webgpu-worker",
   events: {},
   methods: {
-    settings: { input: nothing, output: FeatureSettings },
-    configure: { input: FeaturePatch, output: FeatureSettings },
-    review: { input: SystemOneRequest, output: SystemOneResult },
-    ask: { input: portable(Request), output: portable(GenerationResult) },
-    speak: { input: portable(SpeechRequest), output: portable(GenerationResult) },
-    decide: { input: portable(DecisionRequest), output: portable(DecisionResult) },
-    systemOne: { input: SystemOneRequest, output: SystemOneResult },
-    transcribe: { input: portable(TranscriptionRequest), output: portable(GenerationResult) },
+    ...sharedInferenceMethods,
     demand: { input: nothing, output: portable(Schema.Struct({ requested: Schema.Boolean })) },
     attach: { input: owner, output: nothing },
     detach: {
