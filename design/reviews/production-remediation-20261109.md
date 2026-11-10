@@ -978,3 +978,40 @@ physical Desktop panel rendering and the resident-model indicator remain
 unverified until it is available. Server recovery is observed; complete visual
 acceptance is not claimed. No source workaround for the stale host cache was
 needed, and no tasks, worker worktrees or credentials were discarded.
+
+### Desktop follow-through after unlock (2026-11-10)
+
+Computer Use reached the actual window after unlock. The renderer remained on
+OpenCode's loading logo despite the healthy registered service; Cmd-R did not
+change it. OpenCode → Restart restored the native window and its accessible web
+content. No worker was resumed and no model/provider settings were changed.
+
+Observed through native Desktop controls:
+
+- Tasks rendered project task groups, state filters and selected task details.
+  Historical records still report waiting/unknown activity; rendering does not
+  establish that those attempts are currently executing.
+- Radar rendered its managed session monitor. It still reports incomplete native
+  event coverage and unavailable observations for historical workers. This is
+  unresolved telemetry/reconciliation work, not a clean live-monitor acceptance.
+- Models rendered saved UI/Systems/Small-task routes as OpenAI Luna Max. Its
+  comparison initially stayed loading; one native Refresh produced the actual
+  chart, selected-model cost summary and collapsed details. Automatic initial
+  loading remains unproven; manual refresh was driver assistance.
+- The LFM3 indicator briefly changed from available to error and back during panel
+  navigation. Settings then reported chat/speech ready, resident model `chat`,
+  with d1 loaded on demand. Clicking the existing Run locally control returned
+  **local GPU ready.**, with **19 input / 4 output tokens**. This proves one real
+  local inference request through Desktop; sustained recovery is not established
+  by that successful request.
+- Trajectory mounted but LZ-172 history failed. Recapture repeated the same error;
+  the native log identifies `trajectoryHistory` rejecting with **Trajectory
+  history exceeds the bounded capture size**. The existing whole-capture limit
+  in `src/trajectory/history.ts` is distinct from the corrected S8-2 snapshot
+  table window. LZ-172 remains unreadable and requires a proportional history
+  paging/capture correction; repeated recapture does not fix it.
+
+Service/plugin activation and Desktop rendering are now observed. Remaining
+Radar coverage, automatic Models loading, history volume handling and inference
+status flapping are not closed by this recovery. The ordered remediation hold,
+all retained attempts and useful work remain intact.
