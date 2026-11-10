@@ -63,3 +63,9 @@ export class ScrollRestoration {
 export const canStart = (state: string) => ["submitted", "queued", "ready"].includes(state)
 export const connectionLabel = (stale: boolean, connected: boolean) =>
   !connected ? "Task updates disconnected" : stale ? "Task data is stale" : "Task updates connected"
+
+export function workerActivityLabel(activity?: { foreground: string; archived?: boolean }) {
+  return activity?.foreground === "inactive" && activity.archived
+    ? "archived"
+    : (activity?.foreground ?? "unknown")
+}

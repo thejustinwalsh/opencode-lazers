@@ -52,7 +52,7 @@ export function taskStatePredicate(state: TaskQueryState, taskAlias: "tasks" | "
       AND (${predicate})
   )`
   if (state === "queued" || state === "running")
-    return matchingExecution(`n.state='${state}' AND p.state!='cancelled'`)
+    return matchingExecution(`n.state='${state}' AND p.state NOT IN ('blocked','cancelled')`)
   if (state === "blocked")
     return matchingExecution(
       `p.state!='cancelled' AND (n.state='blocked' OR (p.state='blocked' AND n.state NOT IN ('accepted','incorporated','failed','exhausted','cancelled')))`,

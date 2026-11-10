@@ -29,7 +29,6 @@ function matchesCurrentWorker(
     target.attempt &&
     worker.id === target.attempt.sessionID &&
     worker.projectID === projectID &&
-    !worker.archived &&
     isWorkerAgent(worker.agent) &&
     worker.metadata?.lazersAttemptID === target.attempt.id &&
     isAbsolute(worker.directory) &&
@@ -183,6 +182,7 @@ export function registerTaskReads(
                   workerSessionID: target.attempt.sessionID,
                   attemptID: target.attempt.id,
                   foreground: worker.busy ? "active" : "inactive",
+                  archived: worker.archived,
                   unknownReason: null,
                   recordedState: target.recordedState,
                   waiting: target.waiting,

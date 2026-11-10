@@ -407,7 +407,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
     directory: "/worktree",
     agent: "lazers-implementor",
     metadata: { lazersAttemptID: sessionMetadataAttemptID || boundAttemptID },
-    archived: false,
+    archived: true,
     busy: workerBusy,
     pendingInput: true,
     pendingPermissions: 1,
@@ -461,7 +461,9 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
           taskID,
           workerSessionID: workerID,
           attemptID,
+          // S8: an exactly bound archived worker has known activity, not unknown.
           foreground: "inactive",
+          archived: true,
           recordedState: "running",
           waiting: true,
           holdReason: "reconcile hold",

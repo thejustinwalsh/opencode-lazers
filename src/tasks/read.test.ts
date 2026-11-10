@@ -389,6 +389,9 @@ test("queued, running and blocked filters use recorded node and plan states acro
   const repository = fixture().open()
   const reads = new TaskReads(repository)
   const cases = [
+    // S8: a blocked plan is not an executing or dispatchable task.
+    { name: "queued normally", node: "queued", plan: "running", state: "queued" },
+    { name: "running normally", node: "running", plan: "running", state: "running" },
     { name: "queued under hold", node: "queued", plan: "blocked", state: "queued" },
     { name: "running under hold", node: "running", plan: "blocked", state: "running" },
     { name: "node blocked", node: "blocked", plan: "running", state: "blocked" },
@@ -426,8 +429,8 @@ test("queued, running and blocked filters use recorded node and plan states acro
   }
 
   const expected = {
-    queued: [ids.get("queued under hold")!],
-    running: [ids.get("running under hold")!],
+    queued: [ids.get("queued normally")!],
+    running: [ids.get("running normally")!],
     blocked: [
       ids.get("queued under hold")!,
       ids.get("running under hold")!,
@@ -459,7 +462,7 @@ test("queued, running and blocked filters use recorded node and plan states acro
       1,
     )
     expect(reader.query({ state: "running", sessionID: "session-a" }).tasks[0]).toMatchObject({
-      taskID: ids.get("running under hold"),
+      taskID: ids.get("running normally"),
       status: "running",
       recordedState: "running",
     })

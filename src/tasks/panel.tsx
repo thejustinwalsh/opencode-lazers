@@ -22,7 +22,13 @@ import type { PanelData } from "./panel-state.ts"
 import { clampSplit, splitFromPointer } from "./panel-layout.ts"
 import { taskTitle } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
-import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
+import {
+  StartFeedback,
+  ScrollRestoration,
+  canStart,
+  connectionLabel,
+  workerActivityLabel,
+} from "./panel-view.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
 import { ExecutionPlanGroupView } from "./execution-list-view.tsx"
@@ -630,7 +636,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                       data-state={currentActivity()?.foreground ?? "unknown"}
                       aria-hidden="true"
                     />
-                    Worker {currentActivity()?.foreground ?? "unknown"}
+                    Worker {workerActivityLabel(currentActivity())}
                   </span>
                   <Show when={waiting()}>
                     <span class="lazers-tasks-row-waiting">Waiting</span>
@@ -1164,7 +1170,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                         data-state={selectedActivity()?.foreground ?? "unknown"}
                         aria-hidden="true"
                       />
-                      Worker {selectedActivity()?.foreground ?? "unknown"}
+                      Worker {workerActivityLabel(selectedActivity())}
                     </span>
                     <Show when={selectedActivity()?.unknownReason}>
                       {(reason) => (

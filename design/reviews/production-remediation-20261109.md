@@ -1109,3 +1109,56 @@ selector. Work execution has resumed; this does not establish that LZ-185 is
 finished, that downstream dependencies have integrated, or that the eight old
 idle-lineage holds are reconciled. Those remain visible recovery obligations.
 The global renewal poison and archived-view read regression are fixed and tested.
+
+## S8 task activity: archived workers are known, not unknown (2026-11-10)
+
+Native inventory at **1794332917581** confirmed three executing workers:
+LZ-185, LZ-193 and LZ-194. The Tasks activity RPC reported them active, while
+nine older waiting records were unknown. All nine native sessions were archived,
+with exact attempt/session/workspace identities and readable empty approval and
+shell inventories. `matchesCurrentWorker` rejected solely on archival. That is
+an execution lifecycle fact, not absent telemetry. Removed that read-only veto,
+returned the archive flag and rendered inactive archived workers as **Worker
+archived**. Actual active execution still wins that label; archival does not
+fabricate inactivity. Identity, native permission, project/workspace and stable
+observation checks remain intact. No scheduling/admission authority changed.
+
+The Running and Queued query filters also included blocked plans, hiding the
+real execution among old holds. They now exclude blocked plans; those remain
+available under Blocked/waiting and Open. Existing raw node lifecycle and hold
+history are preserved. Updated paging tests include independent genuinely queued
+and running controls, with blocked-plan negative cases. Both RPC and filter
+regressions failed before the fix. Afterward **44 tests / 446 assertions** passed
+across registered RPC, query paging, panel state, labels and the real rendered
+Tasks panel. `bun run verify` passed. Logs:
+`/private/tmp/lazers-worker-status-{before,after,verify}.log`.
+
+The post-change registered activity probe returned **zero unknown results for
+all 12 checked attempts**: archived workers were known inactive, LZ-193 was
+active, and LZ-185/LZ-194 were then inactive as execution progressed. These are
+point-in-time foreground observations, not completion claims. Artifact:
+`/private/tmp/lazers-task-activity-after.jsonl`. Desktop reload/visual acceptance
+was interrupted when Computer Use explicitly reported macOS locked; unlock was
+requested. No model work was interrupted to refresh the window.
+
+### Retired Architect session cleanup
+
+The complete native project inventory contained 524 unarchived sessions, of
+which six were Architects (the rest were implementers/helpers/auditor). Preserved
+current Architect `ses_4c6f19ce976846259c93b62d29188a71`. Rechecked native activity
+before each update and archived the other five via `session.update`, then
+confirmed their native archive timestamps. History and worktrees were retained.
+Confirmed receipts at **1794332862101–1794332862122**:
+
+- `ses_e6f007c15ffe1HH5nmeqvV4UEA` — durable XState task runner.
+- `ses_e6edbea90ffd9ylQrwEaEtxWVQ` — Repomix integration.
+- `ses_e6eb29584ffe8HLfTVz6CBw5qI` — task reconciliation and planning.
+- `ses_e6e0e6239ffdtzIePMeJ1sHA4l` — attempt trajectory and usage.
+- `ses_5c1563b654ed441990b217eb2006ef2f` — prior persona-dispatch Architect.
+
+Receipt: `/private/tmp/lazers-archive-retired-architects.jsonl`. Earlier renewal
+predecessors were already archived; the inventory does not support a claim that
+50 unarchived Architect chats were deleted. Unrelated helper sessions and worker
+history were not bulk-archived. Longstanding non-renewed/manual Architect chats
+had no automatic retirement path; this cleanup is user-authorized maintenance,
+not proof that such retirement is automatic.

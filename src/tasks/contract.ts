@@ -92,6 +92,7 @@ export const CurrentTaskActivity = z.strictObject({
   workerSessionID: z.string().min(1).optional(),
   attemptID: z.uuid().nullable(),
   foreground: z.enum(["active", "inactive", "unknown"]),
+  archived: z.boolean().optional(),
   unknownReason: z.enum(["no-current-attempt", "unavailable"]).nullable(),
   recordedState: TaskState.nullable(),
   waiting: z.boolean(),
