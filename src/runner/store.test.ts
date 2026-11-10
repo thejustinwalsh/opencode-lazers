@@ -1694,6 +1694,38 @@ test("F-S4-2 transitive dependent ownership is found outside the display window"
   expect(f.store.startedDependentPlan(receipt.planID)).toBeNull()
 })
 
+test("terminal cleanup discovery includes plans outside the display limit", () => {
+  const f = fixture("terminal-cleanup-discovery")
+  const cleanupBlocked = crypto.randomUUID()
+  const cancelled = crypto.randomUUID()
+  f.repository.atomic((db) => {
+    const insert = db.query(
+      "INSERT INTO runner_plans VALUES(?,?,?,1,1,'accepted',?,NULL,NULL,NULL)",
+    )
+    for (let index = 0; index < 1_001; index++)
+      insert.run(crypto.randomUUID(), f.projectDirectory, "owner", JSON.stringify({ priority: 1 }))
+    insert.run(
+      cleanupBlocked,
+      f.projectDirectory,
+      "owner",
+      JSON.stringify({ priority: 0, state: "cleanup-blocked" }),
+    )
+    db.query("UPDATE runner_plans SET state='cleanup-blocked' WHERE id=?").run(cleanupBlocked)
+    insert.run(
+      cancelled,
+      f.projectDirectory,
+      "owner",
+      JSON.stringify({ priority: 0, state: "cancelled" }),
+    )
+    db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(cancelled)
+  })
+
+  expect(f.store.plans()).toHaveLength(1_000)
+  expect(f.store.plans().map((plan) => plan.id)).not.toContain(cleanupBlocked)
+  expect(f.store.plans().map((plan) => plan.id)).not.toContain(cancelled)
+  expect(f.store.terminalCleanupPlanIDs()).toEqual([cleanupBlocked, cancelled])
+})
+
 test("delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown", () => {
   const f = fixture("bounded-outbox")
   const plan = f.store.submit(f.input, "owner")

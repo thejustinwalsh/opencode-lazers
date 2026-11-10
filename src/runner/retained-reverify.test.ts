@@ -3209,7 +3209,17 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
         expect(store.nodes(f.planID)[0]?.state).not.toBe("accepted")
         expect(f.prompts).toHaveLength(1)
         expect(f.worktreeCreations).toEqual(worktreesBefore)
-        expect(spawn).not.toHaveBeenCalled()
+        if (action === "cancel" && kind === "valid") {
+          // Terminal cleanup now uses main's async read-only dirty-tree probe.
+          // Allow that exact probe, but still forbid replaying any check process.
+          expect(spawn).toHaveBeenCalledTimes(1)
+          expect(spawn).toHaveBeenCalledWith(
+            expect.objectContaining({
+              cmd: ["git", "status", "--porcelain"],
+              cwd: f.attempt.workspace,
+            }),
+          )
+        } else expect(spawn).not.toHaveBeenCalled()
         expect(verificationActivitiesForDatabase(repository.path)).toHaveLength(0)
       } finally {
         spawn.mockRestore()

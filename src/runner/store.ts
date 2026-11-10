@@ -1237,6 +1237,16 @@ export class RunnerStore {
         .get(planID, this.repository.projectDirectory, this.repository.projectDirectory, planID),
     )
   }
+  terminalCleanupPlanIDs(): string[] {
+    return this.atomic((db) =>
+      db
+        .query<{ id: string }, [string]>(
+          "SELECT id FROM runner_plans WHERE project_directory=? AND state IN ('cleanup-blocked','cancelled') ORDER BY rowid",
+        )
+        .all(this.repository.projectDirectory)
+        .map(({ id }) => id),
+    )
+  }
   continuation(planID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
     return this.atomic((db) =>
