@@ -1,4 +1,5 @@
 import { registerAuditTools } from "./audit/tools.ts"
+import { registerBudget } from "./budget/server.ts"
 import { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { registerArchitect } from "./architect.ts"
@@ -37,6 +38,7 @@ export default Plugin.define({
   id: "lazers",
   effect: (ctx) =>
     Effect.gen(function* () {
+      yield* registerBudget(ctx).pipe(Effect.orDie)
       const sourceGuard = yield* Effect.acquireRelease(
         Effect.sync(() =>
           beginSourceGuard({
