@@ -12,11 +12,13 @@ performance claim, acceptance gate, or roadmap rewrite.
   baseline linked). Report bytes live outside the worktree in the LAZERS audit
   store; retrieve with `lz-get-audit`. No `design/audits/*.json` copies were
   made per current guidance.
-- Raw-report inspection was done directly against the stored Fallow JSON
-  (`reports.deadCode` / `reports.duplication` / `reports.health`) because the
-  durable `lz-get-audit` finding view surfaces only a 50-finding dead-code
-  subset with no in-scope paths. Scoped numbers below come from that raw
-  report, filtered by `src/webgpu/`, `src/review/`, `test/speech/` prefixes.
+- Filtered inspection used `lz-get-audit({runID: baseline, path: "src/webgpu/",
+limit: 50})`: `totalFindings: 223` for that prefix, paged via `nextOffset`.
+  The first page (offset 0) confirms the in-scope groups dispositioned below,
+  including `deadCode/unused_exports/137` and `/138` and
+  `duplication/clone_groups/5`, `/26`, `/48`, `/63`. Raw Fallow totals are
+  cited only for before/after scope; grouped dispositions below are the durable
+  audit evidence.
 
 ## What changed (net simplification, behavior preserved)
 
@@ -24,8 +26,14 @@ performance claim, acceptance gate, or roadmap rewrite.
    `editor.add` blocks (`lz-local-system-one`, `lz-local-ask`,
    `lz-local-decide`) shared the permission-assert plus `Effect.flatMap` /
    `mapError` / `JSON.stringify` pipeline; all three now call one helper with
-   their own feature, action name, input schema, and RPC invocation. Tool
-   names, descriptions, inputs, permissions, and error text are unchanged.
+   their own feature, action name, input schema, and RPC invocation. The helper
+   context is `Pick<Tool.Context, "sessionID" | "agent">`, so native branded
+   session/agent identity flows directly into `permission.assert` with no
+   `unknown` widening or `as never` casts. Tool names, descriptions, inputs,
+   permissions, and error text are unchanged. `src/webgpu/tools.test.ts` adds
+   registered-tool coverage for all three action/session/agent forwarding
+   values, denied permission with no RPC, post-registration feature disable
+   with no RPC, and RPC error conversion.
 2. `src/webgpu/speech.ts`: added `assistantReplyText` helper. `latestResponse`
    and `completedTurnResponse` (via `latestCompletedResponse`) shared the
    final-answer/commentary plus tool-boundary filtering block; both now call
@@ -85,21 +93,29 @@ and configured ON/Never preferences are untouched. No semantic-search download.
 
 ## Finding dispositions
 
-- No durable `lz-get-audit` finding IDs exist for the in-scope paths (the
-  persisted 50-finding view covers only `design/reviews`, `src/recovery`,
-  `src/audit`, `src/budget`, `src/models`, and fixtures), so no
-  `lz-record-audit-finding` dispositions were appended. Raw-report scoped
-  candidates are dispositioned here: resolved families above are fixed by this
-  diff; all other scoped dead-code signals are retained as false positives
-  with callers listed above. No analyzer finding was suppressed and no code
-  was moved elsewhere to manufacture improvement.
+- Durable grouped dispositions linked to the follow-up run (append-only, via
+  `lz-record-audit-finding`):
+  - `.../deadCode/unused_exports/137` → `fixed` (request `lz-187-repair-137`).
+  - `.../deadCode/unused_exports/138` → `fixed` (request `lz-187-repair-138`).
+  - `.../duplication/clone_groups/5` → `fixed` (request `lz-187-repair-g5`).
+  - `.../duplication/clone_groups/26` → `fixed` (request `lz-187-repair-g26`).
+  - `.../duplication/clone_groups/48` → `fixed` (request `lz-187-repair-g48`).
+  - `.../duplication/clone_groups/63` → `fixed` (request `lz-187-repair-g63`,
+    same `guardedCall` consolidation as group 26).
+- Remaining scoped `unused_export` / `unused_type` / `unused_class_member`
+  signals outside those groups were not dispositioned here and remain retained
+  as false positives with callers listed above; health findings above
+  thresholds were intentionally left intact. No analyzer finding was
+  suppressed and no code was moved elsewhere to manufacture improvement.
 
 ## Checks
 
-- `bun run verify` (fmt, lint --fix, fmt, check): pass, no type errors.
+- `bun run verify` (fmt, lint --fix, fmt, check): pass, no type errors, no
+  lint problems.
 - `bun test src/webgpu src/review test/speech src/recovery/handoff/review.test.ts`:
-  148 pass, 0 fail, 1012 expect() calls across 29 files.
+  149 pass, 0 fail, 1026 expect() calls across 29 files.
 - Dynamic/native entry points confirmed live and retained: `Rpc.define`
   `LocalInference` / `RendererInference` exports, `ModelFiles` IPC surface,
   lazy ONNX/tokenizer/model assets, and `TaskReviewer` registration in
-  `server.ts`.
+  `server.ts`. `Rpc.define` returns definitions without mutation; the shared
+  method table preserves that behavior.

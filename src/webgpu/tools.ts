@@ -47,14 +47,14 @@ export function registerInferenceTools(
   const guardedCall = (
     feature: LocalFeature,
     action: string,
-    context: { sessionID: unknown; agent: unknown },
+    context: Pick<Tool.Context, "sessionID" | "agent">,
     invoke: () => Effect.Effect<unknown, unknown>,
   ) =>
     guard(feature, () =>
       ctx.permission
         .assert({
-          sessionID: context.sessionID as never,
-          agent: context.agent as never,
+          sessionID: context.sessionID,
+          agent: context.agent,
           action,
           resources: ["*"],
         })

@@ -81,3 +81,117 @@ test("agent tools enforce permissions before RPC and apply bounded defaults", as
   ).rejects.toThrow("Permission denied")
   expect(calls).toHaveLength(2)
 })
+
+test("registered tools forward native identity and preserve failure semantics", async () => {
+  const tools = new Map<string, Parameters<ToolEditor["add"]>[0]>()
+  const asserts: Array<{ sessionID: unknown; agent: unknown; action: string }> = []
+  const rpcCalls: Array<{ method: string; input: unknown }> = []
+  let denyPermission = false
+  const failure: { ask?: unknown } = {}
+  const features: Record<string, boolean> = { questions: true, decisions: true }
+  const rpc = (() => ({
+    ask: (input: unknown) => {
+      rpcCalls.push({ method: "ask", input })
+      return failure.ask !== undefined
+        ? Effect.fail(failure.ask)
+        : Effect.succeed({
+            ok: true,
+            text: "answer",
+            error: "",
+            promptTokens: 1,
+            completionTokens: 1,
+          })
+    },
+    decide: (input: unknown) => {
+      rpcCalls.push({ method: "decide", input })
+      return Effect.succeed({ ok: true, kind: "boolean", value: false })
+    },
+    systemOne: (input: unknown) => {
+      rpcCalls.push({ method: "systemOne", input })
+      return Effect.succeed({
+        model: "d1-omni-2b",
+        answers: {},
+        usage: { input_tokens: 1, output_tokens: 0 },
+      })
+    },
+  })) as unknown as Plugin.Context["rpc"]
+  await Effect.runPromise(
+    Effect.scoped(
+      registerInferenceTools(
+        {
+          rpc,
+          permission: {
+            assert: (input: { sessionID: unknown; agent?: unknown; action: string }) => {
+              asserts.push({ sessionID: input.sessionID, agent: input.agent, action: input.action })
+              return denyPermission
+                ? Effect.fail(new Tool.Error({ message: "denied by policy" }))
+                : Effect.void
+            },
+          },
+          tool: {
+            transform: (callback) =>
+              Effect.sync(() => {
+                callback({
+                  add: (tool) => tools.set(tool.name, tool),
+                  list: () => [],
+                  get: () => undefined,
+                  namespace: () => {},
+                  update: () => {},
+                  remove: () => {},
+                })
+                return { dispose: Effect.void }
+              }),
+          },
+        },
+        (feature) => features[feature] !== false,
+      ),
+    ),
+  )
+  const context = {
+    sessionID: Session.ID.create(),
+    agent: Agent.ID.make("architect"),
+    messageID: SessionMessage.ID.create(),
+    id: Tool.CallID.make("call"),
+    progress: () => Effect.void,
+  }
+  const systemOneInput = {
+    model: "d1-omni-2b" as const,
+    state: "shared state",
+    questions: { q: { type: "noul" as const, instructions: "Is it usable?" } },
+  }
+  await Effect.runPromise(tools.get("lz-local-system-one")!.execute(systemOneInput, context))
+  await Effect.runPromise(tools.get("lz-local-ask")!.execute({ prompt: "hello" }, context))
+  await Effect.runPromise(
+    tools
+      .get("lz-local-decide")!
+      .execute({ question: "q", context: "evidence", decision: { kind: "boolean" } }, context),
+  )
+  expect(asserts.map((entry) => entry.action)).toEqual([
+    "lz-local-system-one",
+    "lz-local-ask",
+    "lz-local-decide",
+  ])
+  for (const entry of asserts) {
+    expect(entry.sessionID).toBe(context.sessionID)
+    expect(entry.agent).toBe(context.agent)
+  }
+  expect(rpcCalls.map((call) => call.method)).toEqual(["systemOne", "ask", "decide"])
+  const rpcBeforeDenied = rpcCalls.length
+  denyPermission = true
+  await expect(
+    Effect.runPromise(tools.get("lz-local-ask")!.execute({ prompt: "blocked" }, context)),
+  ).rejects.toThrow("denied by policy")
+  expect(rpcCalls).toHaveLength(rpcBeforeDenied)
+  denyPermission = false
+  features.questions = false
+  await expect(
+    Effect.runPromise(tools.get("lz-local-ask")!.execute({ prompt: "off" }, context)),
+  ).rejects.toThrow("turned off")
+  expect(rpcCalls).toHaveLength(rpcBeforeDenied)
+  features.questions = true
+  failure.ask = new Error("boom transport")
+  await expect(
+    Effect.runPromise(tools.get("lz-local-ask")!.execute({ prompt: "failing" }, context)),
+  ).rejects.toThrow("boom transport")
+  expect(rpcCalls).toHaveLength(rpcBeforeDenied + 1)
+})
