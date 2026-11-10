@@ -1227,3 +1227,25 @@ Validation: `bun run verify`, 159 tests / 2,622 assertions across tasks,
 observability and registered panels, and the GUI production build passed. An
 older association-read test still expected held plans in Running/Queued; it now
 checks the corrected waiting-filter contract while retaining raw node history.
+
+## F-S4-3 — wake a replacement Architect for unresolved inherited work (2026-11-10)
+
+A new restart reproduction failed: an Architect consumed a failure notice and
+retired before repair; runtime replaced the owner but left the replacement inbox
+empty. An unresolved plan is not resolved merely because its old notification was
+consumed. Ownership adoption now queues the existing current-state outcome in the
+same database transaction when no delivery is outstanding. Transfer-time native
+consumption, cancellation/consumption races and unresolved old input identity also
+reassess the replacement's wake. Pending notices continue through existing
+retargeting; workers, attempts and retained work stay unchanged.
+
+The reproduction now receives one resumable native notice and keeps the same
+attempt IDs, including across subsequent ticks. The host-consumed transfer case
+retains the consumed original and wakes the successor. All 335 runtime tests /
+5,475 assertions passed; after covering the additional delivery branches, 70
+owner/archive/continuation/cancellation tests / 955 assertions passed. Final
+`bun run verify` passed. No current native worker was stopped or Architect
+artificially archived to demonstrate this branch; the new consumed-notice repair
+is proven by the real runtime/reopened-store tests, not yet a deliberately induced
+Desktop retirement walkthrough. Existing native Architect succession was observed
+separately in the S8 entry above.

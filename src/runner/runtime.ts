@@ -5273,8 +5273,7 @@ export class TaskRuntime {
         this.validArchitect(priorContinuation) &&
         this.matchesContinuation(priorContinuation, plan.id)
       ) {
-        if (adopt && this.store.updatePlanOwner(plan.id, plan.owner, priorContinuation.id))
-          this.refreshArchitectSourceOwners()
+        if (adopt) this.adoptArchitectOwner(plan, priorContinuation.id)
         return priorContinuation
       }
     }
@@ -5304,8 +5303,7 @@ export class TaskRuntime {
     if (next && continuation.session_id !== next.session_id && continuation.generation > 1) {
       const adopted = await this.host.session(continuation.session_id)
       if (this.validArchitect(adopted) && this.matchesContinuation(adopted, plan.id)) {
-        if (adopt && this.store.updatePlanOwner(plan.id, plan.owner, adopted.id))
-          this.refreshArchitectSourceOwners()
+        if (adopt) this.adoptArchitectOwner(plan, adopted.id)
         return adopted
       }
     }
@@ -5338,9 +5336,32 @@ export class TaskRuntime {
       parentID: continuation.parent_id,
       generation: continuation.generation,
     })
-    if (adopt && this.store.updatePlanOwner(plan.id, plan.owner, session.id))
-      this.refreshArchitectSourceOwners()
+    if (adopt) this.adoptArchitectOwner(plan, session.id)
     return session
+  }
+
+  private adoptArchitectOwner(plan: PlanRow, sessionID: string) {
+    const changed = this.store.atomic(() => {
+      if (!this.store.updatePlanOwner(plan.id, plan.owner, sessionID)) return false
+      // Persist the replacement's wake with ownership so a restart cannot split them.
+      this.wakeRecoveredArchitect(plan.id)
+      return true
+    })
+    if (changed) this.refreshArchitectSourceOwners()
+  }
+
+  private wakeRecoveredArchitect(planID: string) {
+    const plan = this.store.plan(planID)!
+    if (!["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) return
+    const pending = this.store.atomic((db) =>
+      db
+        .query<{ id: string }, [string]>(
+          "SELECT id FROM runner_outbox WHERE plan_id=? AND state IN ('pending','sending','uncertain','admitted','delivered') LIMIT 1",
+        )
+        .get(planID),
+    )
+    // A consumed notice does not mean its unresolved plan was repaired.
+    if (!pending) this.outcome(planID, { status: plan.state, reason: plan.reason }, true)
   }
 
   private matchesContinuation(session: HostSession | null | undefined, planID: string) {
@@ -14403,6 +14424,7 @@ export class TaskRuntime {
           "OUTCOME_CONSUMED",
           fence,
         )
+        this.wakeRecoveredArchitect(plan.id)
         return
       }
       let safeToRetarget = message.state === "pending"
@@ -14429,6 +14451,7 @@ export class TaskRuntime {
               "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
               fence,
             )
+            this.wakeRecoveredArchitect(plan.id)
             return
           }
           safeToRetarget = afterCancellation === "missing"
@@ -14453,6 +14476,7 @@ export class TaskRuntime {
           "OUTCOME_OWNER_TRANSFER_UNCERTAIN",
           fence,
         )
+        this.wakeRecoveredArchitect(plan.id)
         return
       }
       const owner = await this.ensureArchitectOwner(plan, target)

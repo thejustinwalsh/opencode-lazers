@@ -3419,7 +3419,11 @@ test("host-admitted current outcomes follow an archived owner unless transcript 
       const row = (f.store.detail(f.receipt.planID).delivery as (typeof original)[])[0]!
       if (consumed) {
         expect(row.state).toBe("consumed")
-        expect(f.inbox.get(owner) ?? []).toHaveLength(0)
+        // F-S4-3: retiring after reading a failure still leaves repair to the successor.
+        expect(f.inbox.get(owner) ?? []).toHaveLength(1)
+        const wake = f.inbox.get(owner)![0]!
+        expect(wake.id).not.toBe(original.message_id)
+        expect(f.notifications.find((notice) => notice.id === wake.id)?.resume).toBe(true)
       } else {
         expect(row.state).toBe("admitted")
         expect(row.session_id).toBe(owner)
@@ -13953,4 +13957,39 @@ test("Auditor dispatch retains its role and selected model and waits for Archite
   expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
   expect(f.store.plan(f.receipt.planID)!.reason).toContain("correct:human")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
+test("archived owners leave unresolved plans with a durable wake even after their outcome was consumed", async () => {
+  const f = fixture({
+    fail: true,
+    shared: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await runPlan(f)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  // The old Architect read the failure but retired before resolving it.
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_outbox SET state='consumed' WHERE plan_id=?").run(f.receipt.planID),
+  )
+  f.inbox.set("owner", [])
+  f.sessions.get("owner")!.archived = true
+  const attempts = f.store.attempts(f.receipt.planID).map((attempt) => attempt.id)
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await drive(reopened, 3)
+    const owner = f.store.plan(f.receipt.planID)!.owner
+    expect(owner).not.toBe("owner")
+    const wakes = f.inbox.get(owner) ?? []
+    expect(wakes).toHaveLength(1)
+    expect(f.notifications.find((notice) => notice.id === wakes[0]!.id)?.resume).toBe(true)
+    expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.id)).toEqual(attempts)
+    await drive(reopened, 3)
+    expect(f.inbox.get(owner)).toHaveLength(1)
+  } finally {
+    await reopened.stop()
+  }
 })
