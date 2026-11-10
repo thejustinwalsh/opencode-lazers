@@ -564,3 +564,20 @@ test("running siblings precede queued siblings without treating held history as 
   source.plans[0]!.state = "blocked"
   expect(build()).toEqual([a, b])
 })
+
+test("dispatch pause applies to queued rows while active workers remain running", () => {
+  const a = id(1),
+    b = id(2)
+  const source = topology(
+    [
+      { taskID: a, ordinal: 0, state: "queued" },
+      { taskID: b, ordinal: 1, state: "running" },
+    ],
+    [],
+  )
+  source.plans[0]!.dispatchPause = { reason: "Coordinate release", untilPlans: [] }
+  const rows = buildExecutionList({ topology: source, tasks: summaries([a, b]) }).plans[0]!.rows
+  expect(rows.find((row) => row.taskID === a)?.dispatchPause?.reason).toBe("Coordinate release")
+  expect(rows.find((row) => row.taskID === b)?.dispatchPause).toBeUndefined()
+  expect(rows[0]!.taskID).toBe(b)
+})

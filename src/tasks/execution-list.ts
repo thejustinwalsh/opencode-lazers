@@ -14,6 +14,7 @@ export type ExecutionListRow = {
   ordinal: number
   reference?: string
   sourcePlan?: TaskSummary["sourcePlan"]
+  dispatchPause?: TaskSummary["dispatchPause"]
   contextOnly: boolean
   prerequisites: string[]
   successors: string[]
@@ -226,7 +227,9 @@ function relationMap(topology: TopologyResponse) {
             ]
           : []
       })
-      const crossPlan = plan.afterPlans.flatMap((id) => {
+      const crossPlan = [
+        ...new Set([...plan.afterPlans, ...(plan.dispatchPause?.untilPlans ?? [])]),
+      ].flatMap((id) => {
         const prior = byID.get(id)
         if (!prior) return []
         const integrated = ["integrated", "cleaning", "cleanup-blocked"].includes(prior.state)
@@ -265,7 +268,8 @@ function row(
     !terminal.has(node.state) &&
     (node.state === "blocked" ||
       plan.state === "blocked" ||
-      (["queued", "ready"].includes(node.state) &&
+      (!plan.dispatchPause &&
+        ["queued", "ready"].includes(node.state) &&
         dependencyTasks.some((dependency) => dependency.waiting)))
   return {
     taskID: node.taskID,
@@ -281,6 +285,9 @@ function row(
       ? { reference: summary?.reference ?? node.reference }
       : {}),
     dependencyTasks,
+    ...(["queued", "ready"].includes(node.state) && plan.dispatchPause
+      ? { dispatchPause: plan.dispatchPause }
+      : {}),
     sourcePlan: summary?.sourcePlan ?? node.sourcePlan,
     contextOnly,
     prerequisites: relations.prerequisites.get(node.taskID) ?? [],
@@ -313,6 +320,7 @@ export function buildExecutionList(input: {
         ordinal,
         ...(task.reference ? { reference: task.reference } : {}),
         sourcePlan: task.sourcePlan,
+        dispatchPause: task.dispatchPause,
         contextOnly: false,
         prerequisites: [],
         successors: [],
@@ -450,6 +458,7 @@ export function buildExecutionList(input: {
         ordinal,
         ...(summary?.reference ? { reference: summary.reference } : {}),
         sourcePlan: summary?.sourcePlan,
+        dispatchPause: summary?.dispatchPause,
         contextOnly: !summary,
         prerequisites: relations.prerequisites.get(taskID) ?? [],
         successors: relations.successors.get(taskID) ?? [],

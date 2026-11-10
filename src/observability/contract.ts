@@ -1,6 +1,6 @@
 import { TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
-import { TaskState } from "../runner/schema.ts"
+import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { z } from "zod"
 
 export const ObservationScope = z.discriminatedUnion("kind", [
@@ -52,6 +52,7 @@ const ObservationNode = z.strictObject({
 })
 
 const ObservationPlan = z.strictObject({
+  dispatchPause: DispatchPause.optional(),
   priority: z.int().optional(),
   queuePosition: z.int().nonnegative().optional(),
   id: z.uuid(),

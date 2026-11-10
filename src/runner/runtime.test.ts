@@ -13993,3 +13993,306 @@ test("archived owners leave unresolved plans with a durable wake even after thei
     await reopened.stop()
   }
 })
+
+test("cancelled prerequisites block transitive dependents once, survive restart and clear after replanning", async () => {
+  const f = fixture({ delayed: true, shared: true })
+  const parentTask = f.createTask("parent")
+  const parent = f.store.submit(f.inputFor([parentTask], { requestID: "cancel-root" }), "owner")
+  await f.runtime.command(
+    {
+      requestID: "wait-root",
+      action: "schedule",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      afterPlans: [parent.planID],
+      reason: "Requires parent feature",
+    },
+    "owner",
+  )
+  const leafTask = f.createTask("leaf")
+  const leaf = f.store.submit(
+    { ...f.inputFor([leafTask], { requestID: "cancel-leaf" }), afterPlans: [f.receipt.planID] },
+    "owner",
+  )
+  await runPlan(f)
+  await runPlan(f, leaf.planID, "run-leaf")
+  await f.runtime.command(
+    {
+      requestID: "cancel-parent",
+      action: "cancel",
+      planID: parent.planID,
+      expectedVersion: f.store.plan(parent.planID)!.version,
+      reason: "Feature intentionally cancelled",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 3)
+  const reference = f.repository.referenceFor(parentTask.id)!
+  for (const id of [f.receipt.planID, leaf.planID]) {
+    expect(f.store.plan(id)).toMatchObject({
+      state: "blocked",
+      reason: `Prerequisite cancelled: ${reference}`,
+    })
+    expect(f.store.nodes(id).every((node) => node.state === "blocked")).toBe(true)
+    expect(f.store.attempts(id)).toHaveLength(0)
+  }
+  expect(f.notifications.some((notice) => notice.text.includes(reference) && notice.resume)).toBe(
+    true,
+  )
+  const records = () =>
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT count(*) AS n FROM runner_transitions WHERE plan_id=? AND event='DEPENDENCY_CANCELLATION'",
+          )
+          .get(f.receipt.planID)!.n,
+    )
+  const before = records()
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await drive(reopened, 3)
+    expect(records()).toBe(before)
+    await reopened.command(
+      {
+        requestID: "replace-root",
+        action: "schedule",
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        afterPlans: [],
+        reason: "Feature scope no longer needs cancelled producer",
+      },
+      "owner",
+    )
+    await drive(reopened, 3)
+    expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+    expect(f.store.plan(f.receipt.planID)!.reason).toBeNull()
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.store.plan(leaf.planID)!.state).toBe("running")
+    expect(f.store.attempts(leaf.planID)).toHaveLength(0)
+    expect(f.store.plan(parent.planID)!.state).toBe("cancelled")
+    expect(JSON.parse(f.store.plan(leaf.planID)!.body).afterPlans).toEqual([f.receipt.planID])
+  } finally {
+    await reopened.stop()
+  }
+})
+
+test("cancelled same-plan prerequisites block their descendants while independent work dispatches", async () => {
+  const original = fixture({
+    startOnly: true,
+    delayed: true,
+    independent: true,
+    taskFiles: [
+      { name: "a", path: "a.txt" },
+      { name: "b", path: "b.txt" },
+      { name: "c", path: "c.txt" },
+    ],
+  })
+  const f = {
+    ...original,
+    receipt: original.store.submit(
+      {
+        ...original.input,
+        dependencies: [{ prerequisite: original.tasks[0]!.id, successor: original.tasks[1]!.id }],
+      },
+      "owner",
+    ),
+  }
+  await runPlan(f)
+  f.store.move(f.receipt.planID, f.tasks[0]!.id, "CANCEL")
+  await f.runtime.tick()
+  expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual([
+    "cancelled",
+    "blocked",
+    "running",
+  ])
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.task_id)).toEqual([
+    f.tasks[2]!.id,
+  ])
+})
+
+test("dispatch pause lets active work finish and unpause admits the next task", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  await f.runtime.command(
+    {
+      requestID: "pause",
+      action: "pause",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      reason: "Wait for coordination",
+    },
+    "owner",
+  )
+  expect(f.store.dispatchPause(f.receipt.planID)).toEqual({
+    reason: "Wait for coordination",
+    untilPlans: [],
+  })
+  expect(f.sessions.get(first.session_id)!.busy).toBe(true)
+  f.completeWorker(first.session_id)
+  await drive(f.runtime, 4)
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+  await f.runtime.command(
+    {
+      requestID: "unpause",
+      action: "unpause",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+  expect(f.store.dispatchPause(f.receipt.planID)).toBeUndefined()
+})
+
+test("dispatch pause survives restart and automatically clears only after recorded integration", async () => {
+  const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const dependency = f.receipt.planID
+  const childTask = f.createTask("b")
+  const child = f.store.submit(f.inputFor([childTask], { requestID: "paused-child" }), "owner")
+  await f.runtime.command(
+    {
+      requestID: "pause-child",
+      action: "pause",
+      planID: child.planID,
+      expectedVersion: f.store.plan(child.planID)!.version,
+      reason: "Coordinate after prerequisite",
+      resumeAfterPlans: [dependency],
+    },
+    "owner",
+  )
+  await runPlan(f, child.planID, "run-paused-child")
+  const accepted = await acceptPlan(f, dependency)
+  expect(f.store.attempts(child.planID)).toHaveLength(0)
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await drive(reopened, 2)
+    expect(f.store.dispatchPause(child.planID)?.untilPlans).toEqual([dependency])
+    expect(f.store.attempts(child.planID)).toHaveLength(0)
+    includeArtifact(f, accepted.plan.artifact!)
+    await recordPlanIntegration({ ...f, runtime: reopened }, dependency)
+    await drive(reopened, 3)
+    expect(f.store.dispatchPause(child.planID)).toBeUndefined()
+    expect(f.store.attempts(child.planID)).toHaveLength(1)
+  } finally {
+    await reopened.stop()
+  }
+})
+
+test("pause conditions cannot silently wait on cancellation or create a coordination cycle", async () => {
+  const f = fixture({ delayed: true, shared: true })
+  const prerequisiteTask = f.createTask("prerequisite")
+  const prerequisite = f.store.submit(
+    f.inputFor([prerequisiteTask], { requestID: "paused-prerequisite" }),
+    "owner",
+  )
+  await f.runtime.command(
+    {
+      requestID: "pause-with-condition",
+      action: "pause",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      resumeAfterPlans: [prerequisite.planID],
+    },
+    "owner",
+  )
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "cycle",
+        action: "pause",
+        planID: prerequisite.planID,
+        expectedVersion: f.store.plan(prerequisite.planID)!.version,
+        resumeAfterPlans: [f.receipt.planID],
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("cycle")
+  await runPlan(f)
+  await f.runtime.command(
+    {
+      requestID: "cancel-condition",
+      action: "cancel",
+      planID: prerequisite.planID,
+      expectedVersion: f.store.plan(prerequisite.planID)!.version,
+    },
+    "owner",
+  )
+  await drive(f.runtime, 3)
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({
+    state: "blocked",
+    reason: `Prerequisite cancelled: ${f.repository.referenceFor(prerequisiteTask.id)}`,
+  })
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  await f.runtime.command(
+    {
+      requestID: "clear-pause",
+      action: "unpause",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
+test("cancellation propagation stops at an already integrated dependency", () => {
+  const f = fixture({ shared: true })
+  const rootTask = f.createTask("root")
+  const root = f.store.submit(f.inputFor([rootTask], { requestID: "old-root" }), "owner")
+  const middleTask = f.createTask("middle")
+  const middle = f.store.submit(
+    { ...f.inputFor([middleTask], { requestID: "integrated-middle" }), afterPlans: [root.planID] },
+    "owner",
+  )
+  f.store.revisePlan(
+    f.store.plan(f.receipt.planID)!,
+    PlanInput.parse({ ...f.input, afterPlans: [middle.planID] }),
+    "TEST_SCHEDULE",
+    {},
+  )
+  // Exercise historical lifecycle facts; this does not fabricate runtime acceptance.
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(root.planID)
+    db.query("UPDATE runner_plans SET state='integrated' WHERE id=?").run(middle.planID)
+  })
+  expect(f.store.cancelledDependencyPlans(f.receipt.planID)).toEqual([])
+})
+
+test("pause does not invalidate a verification that is already in flight", async () => {
+  const f = fixture({
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: 'sleep 0.1; test "$(cat a.txt)" = a',
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("verifying")
+  await f.runtime.command(
+    {
+      requestID: "pause-checking",
+      action: "pause",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      reason: "Hold next dispatch only",
+    },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})

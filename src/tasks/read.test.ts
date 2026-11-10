@@ -571,3 +571,50 @@ test("source plan provenance survives storage and task reads without inventing i
     reads.query({}).tasks.find((task) => task.taskID === standalone.id)?.sourcePlan,
   ).toBeUndefined()
 })
+
+test("paused dispatch is durable, filterable and distinct from active worker lifecycle", () => {
+  const fixtureState = fixture()
+  const repository = fixtureState.open()
+  const active = insert(repository, "Already running")
+  const waiting = insert(repository, "Wait for dispatch")
+  const reads = new TaskReads(repository)
+  const proposal = validProposal()
+  const plan = reads.runner.submit(
+    {
+      requestID: "pause-reads",
+      objective: "Pause dispatch only",
+      baseCommit: "a".repeat(40),
+      nodes: [active, waiting].map((task) => ({ taskID: task.id, revision: 1 })),
+      dependencies: [],
+      integrationOrder: [active.id, waiting.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "session-a",
+  )
+  repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID),
+  )
+  reads.runner.move(plan.planID, active.id, "READY")
+  reads.runner.move(plan.planID, active.id, "DISPATCH")
+  reads.runner.setDispatchPause(
+    plan.planID,
+    { reason: "Coordinate next wave", untilPlans: [] },
+    { caller: "session-a" },
+  )
+  expect(reads.query({ state: "paused" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
+  expect(reads.query({ state: "queued" }).count).toBe(0)
+  expect(reads.query({ state: "running" }).tasks.map((task) => task.taskID)).toEqual([active.id])
+  expect(reads.query({ state: "paused" }).tasks[0]).toMatchObject({
+    recordedState: "queued",
+    dispatchPause: { reason: "Coordinate next wave", untilPlans: [] },
+  })
+  const reopened = new TaskReads(fixtureState.open())
+  expect(reopened.runner.dispatchPause(plan.planID)).toEqual({
+    reason: "Coordinate next wave",
+    untilPlans: [],
+  })
+  reads.runner.setDispatchPause(plan.planID, null, { caller: "session-a" })
+  expect(reopened.query({ state: "paused" }).count).toBe(0)
+  expect(reopened.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
+})

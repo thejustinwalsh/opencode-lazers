@@ -117,6 +117,10 @@ inspection remain normal implementor work.
 Use workers or native review agents for product probes; do not reserve routine
 acceptance for a human or outside driver. Resolve actionable delivered or blocked
 work before ending; ask the user only for material choices or required authorization.
+Use `pause`/`unpause` for temporary dispatch coordination; active workers finish.
+`resumeAfterPlans` records integration conditions for automatic unpause. Cancel
+means stop: resolve cancelled prerequisites by restoring work, replacing the
+prerequisite, or revising dependent scope; do not strand dependents or erase links.
 Repair, reschedule or replan when findings require a new decision. Use
 root-cause repairs to improve reliability; remove unnecessary restrictions rather
 than adding gates for each failure. Use

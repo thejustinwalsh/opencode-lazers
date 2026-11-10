@@ -1,7 +1,7 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { TaskReferenceSchema, TaskSpecSchema, TaskSourcePlanSchema } from "../task.ts"
-import { TaskState } from "../runner/schema.ts"
+import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
 import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
@@ -29,6 +29,7 @@ export const GetInstructionsOutput = z.string()
 export const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
+  dispatchPause: DispatchPause.optional(),
   // Read implementations resolve the persisted project-local reference before returning pages.
   reference: TaskReferenceSchema,
   revision: z.literal(1),
@@ -55,6 +56,7 @@ export const QueryOutput = z.strictObject({
 })
 export type TaskPage = z.infer<typeof QueryOutput>
 export const Execution = z.strictObject({
+  dispatchPause: DispatchPause.optional(),
   planID: z.uuid(),
   taskID: z.uuid(),
   state: TaskState,

@@ -162,6 +162,12 @@ export const PlanInput = z
   })
 export type PlanInput = z.infer<typeof PlanInput>
 
+export const DispatchPause = z.strictObject({
+  reason: z.string(),
+  untilPlans: z.array(z.uuid()),
+})
+export type DispatchPause = z.infer<typeof DispatchPause>
+
 export const CommandInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),
@@ -171,6 +177,8 @@ export const CommandInput = z
       .enum([
         "run",
         "cancel",
+        "pause",
+        "unpause",
         "audit",
         "reconcile",
         "reconcile-source-notices",
@@ -189,7 +197,7 @@ export const CommandInput = z
         "cancel-retained-verification",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel, audit/reconcile, evidence, and reviewed integration. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted retained-repair fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted retained-repair fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -199,6 +207,12 @@ export const CommandInput = z
       .optional(),
     priority: z.int().optional(),
     afterPlans: z.array(z.uuid()).optional(),
+    resumeAfterPlans: z
+      .array(z.uuid())
+      .optional()
+      .describe(
+        "For pause: automatically unpause when these same-project plans are integrated. Omit for manual unpause. Active workers finish; only new dispatch pauses.",
+      ),
     workspaceMode: z.enum(["shared", "isolated"]).optional(),
     baseCommit: z
       .string()
@@ -403,4 +417,5 @@ export type Execution = {
   version: number
   reason: string | null
   waitingOn: string[]
+  dispatchPause?: DispatchPause
 }

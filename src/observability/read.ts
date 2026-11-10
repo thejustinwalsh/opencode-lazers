@@ -223,6 +223,17 @@ function loadTopologyAssociations(
       "SELECT id,revision,version,state,body,reason FROM runner_plans WHERE project_directory=? ORDER BY rowid",
     )
     .all(projectDirectory)
+  const pauses = new Map(
+    db
+      .query<{ plan_id: string; reason: string; until_plans: string }, [string]>(
+        "SELECT c.plan_id,c.reason,c.until_plans FROM runner_dispatch_controls c JOIN runner_plans p ON p.id=c.plan_id WHERE p.project_directory=? AND c.state='paused'",
+      )
+      .all(projectDirectory)
+      .map((row) => [
+        row.plan_id,
+        { reason: row.reason, untilPlans: JSON.parse(row.until_plans) as string[] },
+      ]),
+  )
   const plansByID = new Map(allPlans.map((plan) => [plan.id, plan]))
 
   // A session-linked plan also links the actual plans it waits on. Resolve only
@@ -232,7 +243,10 @@ function loadTopologyAssociations(
     const id = pending.pop()!
     const plan = plansByID.get(id)
     const input = plan && planInput(plan)
-    for (const dependency of input?.afterPlans ?? []) {
+    for (const dependency of new Set([
+      ...(input?.afterPlans ?? []),
+      ...(pauses.get(id)?.untilPlans ?? []),
+    ])) {
       if (plansByID.has(dependency) && !associations.planIDs.has(dependency)) {
         associations.planIDs.add(dependency)
         pending.push(dependency)
@@ -252,7 +266,7 @@ function loadTopologyAssociations(
       .all(...planIDs))
       associations.taskIDs.add(row.task_id)
   }
-  return { stamp, associations, allPlans }
+  return { stamp, associations, allPlans, pauses }
 }
 
 function loadTopologySource(
@@ -262,7 +276,7 @@ function loadTopologySource(
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
-  const { stamp, associations, allPlans } = loadTopologyAssociations(
+  const { stamp, associations, allPlans, pauses } = loadTopologyAssociations(
     db,
     projectDirectory,
     scope,
@@ -301,7 +315,7 @@ function loadTopologySource(
         .all(...planIDs)
     : []
   if (plans.length > 1000) throw new Error("Observation scope is too large; narrow it")
-  return { stamp, associations, tasks, plans, nodes, dependencies }
+  return { stamp, associations, tasks, plans, nodes, dependencies, pauses }
 }
 
 function loadProjectionSource(
@@ -414,6 +428,7 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
     const nodes = projection.nodes.filter((node) => node.plan_id === plan.id)
     return {
       id: plan.id,
+      ...(projection.pauses.get(plan.id) ? { dispatchPause: projection.pauses.get(plan.id) } : {}),
       priority: input?.priority ?? 0,
       queuePosition,
       revision: plan.revision,
