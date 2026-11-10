@@ -81,9 +81,7 @@ export function observe(
         lastByok: counters.byok,
       },
       usage: {
-        ...unavailable(
-          "Tracking from this observation. Earlier weekly usage unknown; next read shows tracked spend.",
-        ),
+        ...unavailable("Tracking started; earlier weekly usage unknown."),
         observedAt: now,
         coverageStart: now,
       },

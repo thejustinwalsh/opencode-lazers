@@ -1,5 +1,5 @@
 import { Plugin, SettingsPage, Slot, Store, Style, bindPlugin } from "@opencode/plugin/gui"
-import { createEffect, createSignal, onCleanup, Show } from "solid-js"
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { Budget, BudgetSettings, defaults, unavailable } from "./contract.ts"
 import type { Settings, Usage } from "./contract.ts"
 import { localWeek, ring } from "./usage.ts"
@@ -10,23 +10,43 @@ type SettingsStore = { readonly value: Settings | undefined; set(value: Settings
 const localTime = (ms: number | string) => new Date(ms).toLocaleString()
 
 export function presentation(settings: Settings, usage: Usage) {
-  if (usage.status !== "available") return { label: "—", percent: null, detail: usage.reason }
+  if (usage.status !== "available")
+    return {
+      label: "—",
+      percent: null,
+      lines: [
+        usage.reason,
+        ...(settings.provider === "openrouter" && usage.coverageStart !== null
+          ? [`Configured key · since ${localTime(usage.coverageStart)}`]
+          : []),
+      ],
+    }
   if (settings.provider === "go") {
     const selected = usage[settings.mode]
-    if (!selected) return { label: "—", percent: null, detail: "Go usage unavailable." }
+    if (!selected || !usage.monthly || !usage.rolling)
+      return { label: "—", percent: null, lines: ["Go usage unavailable."] }
     return {
       label: `${Math.round(selected.percent)}%`,
       percent: selected.percent,
-      detail: `Monthly ${usage.monthly?.percent}% · resets ${localTime(usage.monthly!.resetsAt)}. 5-hour ${usage.rolling?.percent}% · resets ${localTime(usage.rolling!.resetsAt)}.`,
+      lines: [
+        `Monthly ${usage.monthly.percent}% · resets ${localTime(usage.monthly.resetsAt)}`,
+        `5-hour ${usage.rolling.percent}% · resets ${localTime(usage.rolling.resetsAt)}`,
+      ],
     }
   }
   if (usage.creditUSD === null || usage.byokUSD === null || usage.coverageStart === null)
-    return { label: "—", percent: null, detail: "Configured-key spend unavailable." }
+    return { label: "—", percent: null, lines: ["Configured-key spend unavailable."] }
   const total = usage.creditUSD + usage.byokUSD
   return {
-    label: `$${Math.round(total)}*`,
+    label: `$${Math.round(total)}`,
     percent: (total / settings.weeklyUSD) * 100,
-    detail: `Credits $${Math.round(usage.creditUSD)} · BYOK $${Math.round(usage.byokUSD)}. Since ${localTime(usage.coverageStart)}. ${usage.reason}`,
+    lines: [
+      `Credits $${Math.round(usage.creditUSD)}`,
+      `BYOK $${Math.round(usage.byokUSD)}`,
+      `Configured key · since ${localTime(usage.coverageStart)}`,
+      "Earlier weekly usage unknown",
+      `Resets ${localTime(localWeek().end)} (${localWeek().timezone})`,
+    ],
   }
 }
 
@@ -97,21 +117,25 @@ export function setupBudget(ctx: Parameters<Plugin.Setup>[0], store: SettingsSto
         onCleanup(shared.subscribe(setUsage))
       })
       const view = () => presentation(settings(), usage())
-      const title = () => {
-        const week = localWeek()
-        const scope =
-          settings().provider === "go"
-            ? `OpenCode Go · ${settings().mode === "monthly" ? "monthly" : "5-hour"} allowance`
-            : `OpenRouter · configured key · $${settings().weeklyUSD}/week · ${localTime(week.start)} – ${localTime(week.end)} (${week.timezone})`
-        return `${scope}. ${view().label}. ${view().detail}${usage().observedAt ? ` Observed ${localTime(usage().observedAt!)}.` : ""} Open provider budget settings.`
-      }
+      const providerName = () => (settings().provider === "go" ? "OpenCode Go" : "OpenRouter")
+      const title = () =>
+        `${providerName()} · ${view().label}${settings().provider === "openrouter" ? ` / $${settings().weeklyUSD} weekly budget` : ""}`
+      const accessibleLabel = () =>
+        `${providerName()} ${view().label}, ${settings().provider === "go" ? `${settings().mode === "monthly" ? "monthly" : "5-hour"} allowance` : "configured-key tracked spend"}. Open provider budget settings.`
       return (
         <Show when={settings().enabled}>
-          <Ui.Tooltip value={title()}>
+          <Ui.Tooltip
+            value={
+              <div class="lazers-budget-tooltip">
+                <div>{title()}</div>
+                <For each={view().lines}>{(line) => <div>{line}</div>}</For>
+              </div>
+            }
+          >
             <button
               type="button"
               class="lazers-budget"
-              aria-label={title()}
+              aria-label={accessibleLabel()}
               data-tone={ring(view().percent).tone}
               onClick={() => ctx.layout.settings("budget")}
             >
@@ -234,6 +258,7 @@ export const budgetStyles = `
 .lazers-budget[data-tone=warning] .budget-value { stroke:var(--icon-warning-base); }
 .lazers-budget[data-tone=critical] .budget-value { stroke:var(--icon-critical-base); }
 .lazers-budget[data-tone=unknown] { color:var(--text-weak); }
+.lazers-budget-tooltip { display:grid; gap:4px; max-width:38ch; white-space:normal; overflow-wrap:anywhere; text-align:left; }
 .lazers-budget-settings { padding:24px; max-width:640px; color:var(--text-base); font:inherit; }
 .lazers-budget-settings h1 { font-size:20px; font-weight:500; }
 .lazers-budget-settings p { color:var(--text-weak); font-size:13px; line-height:1.5; overflow-wrap:anywhere; margin:12px 0; }

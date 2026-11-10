@@ -50,9 +50,15 @@ export function harness(root: HTMLElement, initial: Settings = defaults) {
       },
     },
     ui: {
-      Tooltip: (props: { value: string; children: import("solid-js").JSX.Element }) => (
-        <span class="fixture-tooltip" data-tooltip={props.value}>
+      Tooltip: (props: {
+        value: import("solid-js").JSX.Element
+        children: import("solid-js").JSX.Element
+      }) => (
+        <span class="fixture-tooltip">
           {props.children}
+          <span class="fixture-tooltip-content" role="tooltip">
+            {props.value}
+          </span>
         </span>
       ),
       Switch: (props: { label: string; checked: boolean; onChange(value: boolean): void }) => (

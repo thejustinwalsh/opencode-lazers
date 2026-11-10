@@ -64,8 +64,14 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
     expect(root.querySelectorAll(".lazers-budget").length).toBe(2)
     expect(root.querySelector(".lazers-budget")?.textContent).toBe("60%")
     expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("warning")
-    expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toContain(
-      "5-hour 112.3%",
+    const tooltipLines = () => [...root.querySelectorAll(".lazers-budget-tooltip")][0]!.children
+    expect([...tooltipLines()].map((line) => line.textContent)).toEqual([
+      "OpenCode Go · 60%",
+      expect.stringContaining("Monthly 60% · resets"),
+      expect.stringContaining("5-hour 112.3% · resets"),
+    ])
+    expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toBe(
+      "OpenCode Go 60%, monthly allowance. Open provider budget settings.",
     )
     api.setSettings({ mode: "rolling" })
     await tick()
@@ -91,9 +97,18 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
     })
     api.setSettings({ provider: "openrouter" })
     await tick()
-    expect(root.querySelector(".lazers-budget")?.textContent).toBe("$181*")
-    expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toContain(
-      "Credits $120 · BYOK $60",
+    expect(root.querySelector(".lazers-budget")?.textContent).toBe("$181")
+    expect(root.querySelector(".lazers-budget")?.textContent).not.toContain("*")
+    expect([...tooltipLines()].map((line) => line.textContent)).toEqual([
+      "OpenRouter · $181 / $300 weekly budget",
+      "Credits $120",
+      "BYOK $60",
+      expect.stringContaining("Configured key · since"),
+      "Earlier weekly usage unknown",
+      expect.stringContaining("Resets"),
+    ])
+    expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toBe(
+      "OpenRouter $181, configured-key tracked spend. Open provider budget settings.",
     )
     expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("warning")
     api.setSettings({ weeklyUSD: 200 })
@@ -108,9 +123,20 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
     api.setConnected(false)
     await tick()
     expect(root.querySelector(".lazers-budget")?.textContent).toBe("—")
+    api.setUsage({
+      ...unavailable("Tracking started; earlier weekly usage unknown."),
+      coverageStart: Date.now(),
+    })
     api.setConnected(true)
     api.replaceClient()
     await tick()
+    expect(root.querySelector(".lazers-budget")?.textContent).toBe("—")
+    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("unknown")
+    expect([...tooltipLines()].map((line) => line.textContent)).toEqual([
+      "OpenRouter · — / $200 weekly budget",
+      "Tracking started; earlier weekly usage unknown.",
+      expect.stringContaining("Configured key · since"),
+    ])
     api.setSettings({ enabled: false })
     await tick()
     const calls = api.requests
