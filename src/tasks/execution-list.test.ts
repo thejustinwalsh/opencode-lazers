@@ -482,3 +482,85 @@ test("same-plan rows expose sequential blockers without calling completed predec
   source.plans[0]!.nodes[0]!.state = "accepted"
   expect(build()).toMatchObject({ waiting: false, dependencyTasks: [{ waiting: false }] })
 })
+
+test("plan groups put genuine running work first, then scheduler priority and FIFO", () => {
+  const source = topology([], [])
+  source.plans = [
+    {
+      id: id(901),
+      taskID: id(1),
+      priority: 5,
+      queuePosition: 0,
+      state: "queued",
+      planState: "running",
+    },
+    {
+      id: id(902),
+      taskID: id(2),
+      priority: 100,
+      queuePosition: 1,
+      state: "queued",
+      planState: "running",
+    },
+    {
+      id: id(903),
+      taskID: id(3),
+      priority: -100,
+      queuePosition: 2,
+      state: "running",
+      planState: "running",
+    },
+    {
+      id: id(904),
+      taskID: id(4),
+      priority: 5,
+      queuePosition: 3,
+      state: "queued",
+      planState: "running",
+    },
+    {
+      id: id(905),
+      taskID: id(5),
+      priority: 200,
+      queuePosition: 4,
+      state: "running",
+      planState: "blocked",
+    },
+  ].map((value) => ({
+    ...topology([{ taskID: value.taskID, ordinal: 0, state: value.state }], []).plans[0]!,
+    id: value.id,
+    priority: value.priority,
+    queuePosition: value.queuePosition,
+    state: value.planState,
+  }))
+  const list = buildExecutionList({
+    topology: source,
+    tasks: summaries(source.plans.map((plan) => plan.nodes[0]!.taskID)),
+  })
+  expect(list.plans.map((plan) => plan.rows[0]!.taskID)).toEqual([
+    id(3),
+    id(5),
+    id(2),
+    id(1),
+    id(4),
+  ])
+})
+
+test("running siblings precede queued siblings without treating held history as activity", () => {
+  const a = id(1),
+    b = id(2)
+  const source = topology(
+    [
+      { taskID: a, ordinal: 0, state: "queued" },
+      { taskID: b, ordinal: 1, state: "running" },
+    ],
+    [],
+  )
+  const build = () =>
+    buildExecutionList({ topology: source, tasks: summaries([a, b]) }).plans[0]!.rows.map(
+      (row) => row.taskID,
+    )
+  expect(build()).toEqual([b, a])
+  source.plans[0]!.state = "blocked"
+  expect(build()).toEqual([a, b])
+})

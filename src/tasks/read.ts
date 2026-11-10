@@ -112,6 +112,7 @@ export class TaskReads {
           query.scopePath,
           effectiveTaskStateFilter(query.state, query.includeCompleted),
           query.includeRetired,
+          query.sort,
         ]),
       )
       .digest("hex")

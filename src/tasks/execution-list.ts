@@ -327,7 +327,20 @@ export function buildExecutionList(input: {
   const rendered = new Set<string>()
   const planGroups: ExecutionPlanGroup[] = []
 
-  for (const plan of topology.plans) {
+  const plans = topology.plans.toSorted((left, right) => {
+    const running = (plan: Plan) =>
+      !["blocked", "cancelled"].includes(plan.state) &&
+      plan.nodes.some(
+        (node) => ["running", "verifying"].includes(node.state) && visible.has(node.taskID),
+      )
+    return (
+      Number(running(right)) - Number(running(left)) ||
+      Number(right.state === "cancelling") - Number(left.state === "cancelling") ||
+      (right.priority ?? 0) - (left.priority ?? 0) ||
+      (left.queuePosition ?? 0) - (right.queuePosition ?? 0)
+    )
+  })
+  for (const plan of plans) {
     const { nodes } = adjacency(plan)
     const blocks = forkBlocks(plan)
     const contextual = new Set(
@@ -405,7 +418,13 @@ export function buildExecutionList(input: {
       hasRecordedTitle: plan.title !== null,
       nonterminalCount,
       totalCount: nodes.length,
-      rows: rootRows,
+      rows: rootRows.toSorted((left, right) => {
+        const running = (row: ExecutionListRow): boolean =>
+          !row.waiting &&
+          (["running", "verifying"].includes(row.status) ||
+            Boolean(row.fork?.branches.some((branch) => branch.rows.some(running))))
+        return Number(running(right)) - Number(running(left)) || left.ordinal - right.ordinal
+      }),
     })
   }
 

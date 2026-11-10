@@ -1,3 +1,4 @@
+import { scheduledTaskPageSQL } from "./tasks/schedule-order.ts"
 import { Database, SQLiteError } from "bun:sqlite"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
@@ -505,6 +506,7 @@ export class TaskRepository {
   }
 
   readPage(input: {
+    sort?: "recent" | "schedule"
     search: string
     scopePath?: string
     sessionID?: string
@@ -569,7 +571,9 @@ export class TaskRepository {
       const before = input.before === undefined ? "" : " AND tasks.rowid < ?"
       const rows = this.db
         .query<{ body: string; position: number; reference: string }, (string | number)[]>(
-          `SELECT tasks.body, tasks.rowid AS position, task_references.reference
+          input.sort === "schedule"
+            ? scheduledTaskPageSQL("tasks", where, input.before !== undefined)
+            : `SELECT tasks.body, tasks.rowid AS position, task_references.reference
            FROM tasks JOIN task_references ON task_references.project_directory=tasks.project_directory
              AND task_references.task_id=tasks.id
            WHERE ${where}${before} ORDER BY tasks.rowid DESC LIMIT ?`,

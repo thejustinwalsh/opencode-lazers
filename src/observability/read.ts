@@ -409,11 +409,13 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
     values.push(edge.prerequisite)
     waitingOn.set(edge.successor, values)
   }
-  const plans = projection.plans.map((plan) => {
+  const plans = projection.plans.map((plan, queuePosition) => {
     const input = planInput(plan)
     const nodes = projection.nodes.filter((node) => node.plan_id === plan.id)
     return {
       id: plan.id,
+      priority: input?.priority ?? 0,
+      queuePosition,
       revision: plan.revision,
       version: plan.version,
       state: safeText(plan.state, stats, 80),

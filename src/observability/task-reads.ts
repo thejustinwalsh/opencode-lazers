@@ -1,3 +1,4 @@
+import { scheduledTaskPageSQL } from "../tasks/schedule-order.ts"
 import { createHash } from "node:crypto"
 import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
@@ -52,6 +53,7 @@ function summarize(
   return {
     taskID: task.id,
     reference,
+    ...(task.proposal.sourcePlan ? { sourcePlan: task.proposal.sourcePlan } : {}),
     revision: task.revision,
     status: task.status,
     reason: null,
@@ -84,6 +86,7 @@ export class AssociationTaskReads extends TaskReads {
           query.scopePath,
           effectiveTaskStateFilter(query.state, query.includeCompleted),
           query.includeRetired,
+          query.sort,
         ]),
       )
       .digest("hex")
@@ -170,7 +173,9 @@ export class AssociationTaskReads extends TaskReads {
       const before = cursor ? " AND t.rowid<?" : ""
       const rows = db
         .query<{ body: string; position: number; reference: string }, (string | number)[]>(
-          `SELECT t.body,t.rowid AS position,r.reference FROM tasks t
+          query.sort === "schedule"
+            ? scheduledTaskPageSQL("t", where, Boolean(cursor))
+            : `SELECT t.body,t.rowid AS position,r.reference FROM tasks t
            JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
            WHERE ${where}${before}
            ORDER BY t.rowid DESC LIMIT ?`,

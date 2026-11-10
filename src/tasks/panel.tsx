@@ -240,6 +240,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         },
         {
           search: view.search,
+          sort: "schedule",
           state: stateFilter(),
           sessionID,
           limit: 30,

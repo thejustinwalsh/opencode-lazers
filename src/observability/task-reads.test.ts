@@ -362,3 +362,51 @@ test("lifecycle filters retain raw states while held plans stay in the waiting f
   expect(blocked.tasks.some((task) => task.recordedState === "incorporated")).toBe(false)
   expect(reads.query({ state: "completed", limit: 100 }).count).toBe(2)
 })
+
+test("scheduler ordering is global across pages and identical for project and associated-session reads", () => {
+  const repository = fixture()
+  const reads = new TaskReads(repository)
+  const associated = new AssociationTaskReads(repository)
+  const add = (name: string, priority: number, planState = "running", nodeState = "queued") => {
+    const task = addTask(repository, name, "session-a")
+    addExecution(reads, task.id, planState, nodeState)
+    repository.atomic((db) =>
+      db
+        .query(
+          "UPDATE runner_plans SET body=json_set(body,'$.priority',?) WHERE id=(SELECT plan_id FROM runner_nodes WHERE task_id=?)",
+        )
+        .run(priority, task.id),
+    )
+    return task.id
+  }
+  const running = add("Old running worker", -100, "running", "running")
+  const high = add("High priority", 100)
+  const firstTie = add("First equal priority", 5)
+  const secondTie = add("Second equal priority", 5)
+  const held = add("Held worker is not running", 200, "blocked", "running")
+  const tail = Array.from(
+    { length: 35 },
+    (_, index) => addTask(repository, `Unplanned ${index}`, "session-a").id,
+  )
+  for (const query of [
+    (input: unknown) => reads.query(input),
+    (input: object) => associated.query({ ...input, sessionID: "session-a" }),
+  ]) {
+    const ids: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = query({
+        sort: "schedule",
+        state: "open",
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      })
+      ids.push(...page.tasks.map((task) => task.taskID))
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    expect(ids).toEqual([running, held, high, firstTie, secondTie, ...tail])
+  }
+  const page = reads.query({ sort: "schedule", limit: 2 })
+  expect(() => reads.query({ sort: "recent", cursor: page.nextCursor! })).toThrow("does not match")
+  expect(reads.query({ sort: "recent", limit: 1 }).tasks[0]!.taskID).toBe(tail.at(-1)!)
+})

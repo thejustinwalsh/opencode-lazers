@@ -563,6 +563,11 @@ test("source plan provenance survives storage and task reads without inventing i
   const detail = reads.get({ taskID: planned.id })
   expect(detail.status === "found" && detail.task.proposal.sourcePlan).toEqual(sourcePlan)
   expect(
+    new AssociationTaskReads(repository)
+      .query({ sessionID: "session-a" })
+      .tasks.find((task) => task.taskID === planned.id)?.sourcePlan,
+  ).toEqual(sourcePlan)
+  expect(
     reads.query({}).tasks.find((task) => task.taskID === standalone.id)?.sourcePlan,
   ).toBeUndefined()
 })

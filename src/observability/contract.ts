@@ -52,6 +52,8 @@ const ObservationNode = z.strictObject({
 })
 
 const ObservationPlan = z.strictObject({
+  priority: z.int().optional(),
+  queuePosition: z.int().nonnegative().optional(),
   id: z.uuid(),
   revision: z.int().positive(),
   version: z.int().positive(),

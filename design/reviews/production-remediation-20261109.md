@@ -1249,3 +1249,28 @@ artificially archived to demonstrate this branch; the new consumed-notice repair
 is proven by the real runtime/reopened-store tests, not yet a deliberately induced
 Desktop retirement walkthrough. Existing native Architect succession was observed
 separately in the S8 entry above.
+
+## S8 — scheduler-ordered Tasks pages (2026-11-10)
+
+Task reads now offer schedule ordering; Desktop requests it explicitly. Running
+and verifying work on unheld plans comes first, followed by cancellation
+reconciliation, plan priority descending, plan submission order and task ordinal.
+Unplanned tasks follow the scheduled work. The same SQL projection serves project
+and associated-session reads. Ordering happens before pagination, so a recent-task
+window cannot hide an older running or high-priority task. Existing mutation-aware
+cursor handling remains; cursor identity includes the selected sort order. Recent
+ordering remains available to existing tool callers.
+
+Topology now carries recorded priority and queue position. Plan groups and sibling
+rows promote running work while retaining dependency/parallel structure; remaining
+groups use scheduler priority and FIFO. Held historical `running` nodes are not
+promoted as current execution. The associated-session summary also carries the new
+source-plan provenance.
+
+Validation: `bun run verify`, production GUI build, and 181 tests / 2,772 assertions
+across storage, tasks, observations and registered panels passed. Paging tests put
+an old active task ahead of 35 newer tasks, distinguish held history, preserve
+FIFO ties and test both read scopes. Registered live project query at Unix ms
+1794337025199 returned LZ-202 first, then LZ-154, LZ-99, LZ-146 and LZ-142 in 12 ms.
+After native Reload Webview, Desktop displayed that order with LZ-202 Worker Active
+and LZ-154's LZ-185 dependency visible. No scheduling mutation was made by the view.

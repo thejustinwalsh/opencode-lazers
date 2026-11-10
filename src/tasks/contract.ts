@@ -8,6 +8,7 @@ import { TaskAdviceSnapshot } from "./advice.ts"
 import { TaskStateFilter } from "./state-filter.ts"
 
 export const QueryInput = z.strictObject({
+  sort: z.enum(["recent", "schedule"]).default("recent"),
   search: z.string().max(200).default(""),
   scopePath: z.string().min(1).max(1_024).optional(),
   sessionID: z.string().min(1).max(200).optional(),
