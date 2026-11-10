@@ -62,3 +62,28 @@ Compose the budget import/registration additions rather than replacing
 absent from the candidate's baseline. GUI wiring is additive. Review the repaired
 candidate and coherent combination before recording runtime integration and
 requesting normal non-forced cleanup.
+
+## Follow-up — integrated 2026-11-10
+
+Repaired candidate `c4ed688e571da4995149197f16314c1a4ea7592d` removes the value
+asterisk, supplies concise structured JSX tooltip lines, separates shared backend
+operation lifetime from caller cancellation, and persists independent
+configured-key/timezone baselines. Registered regressions exercise first-caller
+cancellation, last-reader cancellation and alternating-timezone reads across
+registration restarts. Review found no remaining blocker in these paths.
+
+The current-main composition preserved tool-call wrapper wiring and passed
+`bun run verify`, **14 budget tests / 130 assertions**, and GUI build. Combined
+context/budget checks then passed **96 tests / 691 assertions**; the advanced
+Tasks rendering test passed **1 test / 121 assertions**. Main fast-forwarded to
+`5124b9e0b6d38942d7a3a0276fb667a340b86e50` at a quiet native execution boundary,
+and its GUI bundle was rebuilt successfully. Existing live-provider receipts were
+retained rather than repeated. Actual native tooltip geometry is still not
+established by the mock-host rendering test; no such visual claim is made.
+
+Runtime integration and completed native worktree removal/cache eviction were
+observed. Fresh native inventory, Git registration and filesystem checks confirmed
+the worker checkout absent, with no matching attempt-named branch. Native
+interrupt reported the worker already inactive; archive timestamp was read back.
+History and committed source remain. The merged Architect composition checkout
+was removed separately through the native API with `force:false`.

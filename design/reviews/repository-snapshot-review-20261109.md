@@ -38,3 +38,27 @@ the original worker and retry only through supported controls after correction.
 
 **Integration and cleanup are held.** Acceptance and previous passing checks do
 not override these two remaining behavior defects or prove cleanup safety.
+
+## Follow-up — integrated 2026-11-10
+
+Repaired candidate `6dfcadbcb5e3d6391d334c852a7011646673f175` removes the
+brace-pattern and processed POSIX-path restrictions above. Review covered the
+registered tool, processor, artifact publication/reread, permission and worker
+lifecycle paths. It was composed with the repaired budget widget and current
+main, then landed as `5124b9e0b6d38942d7a3a0276fb667a340b86e50`.
+
+The composition passed `bun run verify` and the context/native/instructions plus
+budget behavior checks: **96 tests / 691 assertions**. The separately advanced
+Tasks rendering regression passed **1 test / 121 assertions**. A registered native
+`lz-repo-snapshot` call for `octocat/Hello-World` with `{README,README.md}` selected
+`README`, returned `Hello World!`, and reread identical saved source without a
+fetch. Snapshot: `2a5e0350-bfc3-4deb-801c-44893f82278e`; unknown resolved revision
+remained unknown.
+
+Runtime integration was recorded. Both owned attempt worktrees received completed
+native removal/cache-eviction receipts; fresh native inventory, Git registration
+and filesystem checks confirmed their absence. No matching attempt-named branch
+remained. The latest worker was natively interrupted (already inactive) and
+archived with readback; its history and commits remain. No forced removal or
+historical receipt rewriting was used. The shared Architect composition checkout
+was also removed through the native non-forced API after its HEAD landed.
