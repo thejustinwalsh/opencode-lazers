@@ -143,6 +143,8 @@ test("full plugin early setup failure restores the surviving predecessor guard",
     const blockedPath = join(f.directory, failure === "project-index" ? "context" : "blocked-data")
     writeFileSync(blockedPath, "not a directory")
     const next = {
+      // S1-1: reach the intended setup fault after the budget registration added before the guard.
+      rpc: { register: () => Effect.void },
       options: {
         dataDirectory:
           failure === "options" ? 1 : failure === "repository" ? blockedPath : f.directory,

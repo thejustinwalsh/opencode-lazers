@@ -1274,3 +1274,13 @@ FIFO ties and test both read scopes. Registered live project query at Unix ms
 1794337025199 returned LZ-202 first, then LZ-154, LZ-99, LZ-146 and LZ-142 in 12 ms.
 After native Reload Webview, Desktop displayed that order with LZ-202 Worker Active
 and LZ-154's LZ-185 dependency visible. No scheduling mutation was made by the view.
+
+## S1-1 — preserve the full-plugin setup-failure regression after budget registration (2026-11-10)
+
+The broad runner check found the protected setup-failure test stopping at a missing
+`ctx.rpc.register` fixture method, before reaching any intended setup fault.
+An archived source checkout of unchanged HEAD `9263353` reproduced the same failure.
+The fixture now supplies the budget RPC registration hook. All original injected
+faults, EEXIST/context assertions, live-hook checks and predecessor source-guard
+restoration assertions remain. The three source-fence RPC tests pass with 31
+assertions. No production source-guard logic changed.
