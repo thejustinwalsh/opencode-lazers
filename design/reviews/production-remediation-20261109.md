@@ -1015,3 +1015,43 @@ Service/plugin activation and Desktop rendering are now observed. Remaining
 Radar coverage, automatic Models loading, history volume handling and inference
 status flapping are not closed by this recovery. The ordered remediation hold,
 all retained attempts and useful work remain intact.
+
+## F-S4-3 live recurrence: stale continuation starves the scheduler (2026-11-10)
+
+The native task query returned 22 unfinished tasks (12 queued, eight recorded
+running, one verifying, one blocked), while native active sessions were empty.
+Read-only DB inspection then identified renewal
+`cebeac03-de8e-482c-8583-b939943569d6` stuck in `creating` with **Architect
+continuation changed during renewal**. Recovery runs before the plan loop, so
+this exception prevents ordinary task advancement. The lease/timer remain alive;
+that does not establish useful scheduling. The earlier attribution to task-level
+idle holds was incomplete: this project-wide poison renewal must recover first.
+
+The current durable owner had previously received plans whose continuation rows
+still named older Architects. `transferArchitectRenewal` treated that historical
+row as a second ownership authority. Justin's reconciliation #4 already selects
+the durable owner as authoritative. The correction updates the existing
+continuation from its actual historical session inside the same fenced atomic
+ownership transfer, preserving its generation and prior mapping for rollback.
+It removes the redundant predecessor equality veto; project, current-owner,
+renewal-phase, continuity/input and native successor checks remain unchanged.
+No SQLite production mutation or replacement worker is used to repair this data.
+
+An isolated real-SQLite runtime regression reproduced the exact live exception
+before the fix. Afterward renewal commits, archives the old Architect, delivers
+its successor handoff and preserves the same busy worker attempt. Related
+multi-plan ownership, retired-predecessor and input/archive race tests pass.
+The full runner checks and native post-restart observations follow below.
+
+Validation: `bun run verify` passed; the full runtime plus shared scheduler suite
+passed **351 tests / 5,525 assertions / zero failures** in 106.04 seconds.
+Artifacts: `/private/tmp/lazers-scheduler-owner-{verify,tests}.log`.
+
+Before the requested restart, OpenCode's source watcher activated the edit.
+The previously stuck renewal became `committed` with `error: null`; its native
+successor `ses_4c6f19ce976846259c93b62d29188a71` was observed running. Native
+transitions recorded outcome admission, and the successor executed an inspection
+call. This proves scheduler-driven renewal and Architect activation, not task
+completion. It was automatic source-watcher activation, not an isolated-server
+launch or a manual database correction. Post-restart task progress still needs
+observation.

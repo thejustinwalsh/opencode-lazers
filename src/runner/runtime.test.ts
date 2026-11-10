@@ -12992,6 +12992,48 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
   expect(f.notifications.every((notice) => notice.sessionID === successor)).toBe(true)
 })
 
+test("renewal follows durable ownership when continuation history names an older Architect", async () => {
+  // Recovery liveness: a historical continuation cannot veto the durable current owner.
+  const now = 2_000_000_369_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "owner-history.txt" }],
+  })
+  const attempt = await prepareIdleArchitect(f, now, 1_000)
+  f.store.atomic((db) => {
+    db.query("INSERT INTO runner_continuations VALUES(?,?,?,?,?,?)").run(
+      f.receipt.planID,
+      "historical-architect",
+      "older-parent",
+      f.root,
+      JSON.stringify({ providerID: "openai", id: "test-model" }),
+      9,
+    )
+  })
+
+  await f.runtime.tick()
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(f.store.continuation(f.receipt.planID)).toMatchObject({
+    session_id: renewal.successor_session_id,
+    parent_id: "owner",
+    generation: 10,
+  })
+  expect(f.store.attempts(f.receipt.planID)[0]?.id).toBe(attempt.id)
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(f.notifications.some((notice) => notice.sessionID === renewal.successor_session_id)).toBe(
+    true,
+  )
+  await f.runtime.tick()
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("committed")
+})
+
 test("unavailable renewal successor fails before history sweeps and retries with fresh complete proofs", async () => {
   const now = 2_000_000_370_000
   const f = fixture({

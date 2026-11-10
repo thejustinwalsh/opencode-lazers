@@ -2772,8 +2772,8 @@ export class RunnerStore {
         const existing = db
           .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
           .get(mapping.plan_id)
-        if (existing && existing.session_id !== renewal.previous_session_id)
-          throw new Error("Architect continuation changed during renewal")
+        // The durable plan owner authorizes renewal; continuation rows retain
+        // launch history and may predate an explicit ownership transfer.
         if (existing) {
           db.query(
             `UPDATE runner_continuations SET session_id=?,parent_id=?,directory=?,model=?,generation=generation+1
@@ -2784,7 +2784,7 @@ export class RunnerStore {
             renewal.directory,
             renewal.model,
             mapping.plan_id,
-            renewal.previous_session_id,
+            existing.session_id,
           )
         } else {
           db.query("INSERT INTO runner_continuations VALUES(?,?,?,?,?,?)").run(
