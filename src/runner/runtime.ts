@@ -3567,6 +3567,8 @@ export class TaskRuntime {
     if (
       [
         "run",
+        "pause",
+        "unpause",
         "reassign",
         "reconcile",
         "reconcile-source-notices",
@@ -4539,6 +4541,25 @@ export class TaskRuntime {
         ).run(plan.id)
         return { status: "cleanup-requested", version: this.store.plan(plan.id)!.version }
       }
+      if (command.action === "pause" || command.action === "unpause") {
+        if (!this.validArchitect(ownerSession) || ownerSession.id !== plan.owner)
+          throw new Error("Pause controls require the current Architect")
+        if (terminal.has(plan.state) || ["cancelling", "cleaning"].includes(plan.state))
+          throw new Error("Plan has ended")
+        const untilPlans = command.resumeAfterPlans ?? []
+        if (command.action === "pause") this.store.validatePlanDependencies(untilPlans, plan.id)
+        this.store.setDispatchPause(
+          plan.id,
+          command.action === "pause"
+            ? { reason: command.reason ?? "Paused by Architect", untilPlans }
+            : null,
+          { caller, reason: command.reason },
+        )
+        return {
+          status: command.action === "pause" ? "paused" : "unpaused",
+          version: this.store.plan(plan.id)!.version,
+        }
+      }
       if (command.action === "schedule") {
         if (terminal.has(plan.state) || plan.state === "cancelling" || plan.state === "cleaning")
           throw new Error("Plan has ended")
@@ -4678,12 +4699,12 @@ export class TaskRuntime {
         }
         // Stop admission now. In-flight work remains running until interruption is proven.
         db.query(
-          "UPDATE runner_plans SET state='cancelling',reason='Cancellation requested',version=version+1 WHERE id=?",
-        ).run(plan.id)
+          "UPDATE runner_plans SET state='cancelling',reason=?,version=version+1 WHERE id=?",
+        ).run(command.reason ?? "Cancellation requested", plan.id)
         for (const node of this.store.nodes(plan.id))
           if (!terminal.has(node.state) && node.state !== "running" && node.state !== "verifying")
             this.store.move(plan.id, node.task_id, "CANCEL")
-        this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller })
+        this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
         return { status: "cancelling", version: this.store.plan(plan.id)!.version }
       }
       if (command.action === "human-evidence") {
@@ -5575,6 +5596,8 @@ export class TaskRuntime {
     if (
       command.action === "verify-retained" ||
       command.action === "cancel-retained-verification" ||
+      command.action === "pause" ||
+      command.action === "unpause" ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
     )
       await this.requestTick()
@@ -7842,6 +7865,93 @@ export class TaskRuntime {
       )
   }
 
+  private reconcileCancelledDependencies(planID: string, fence: number) {
+    return this.store.fenced(this.owner, fence, (db) => {
+      const plan = this.store.plan(planID)!
+      if (!["running", "blocked"].includes(plan.state)) return plan
+      type Saved = {
+        roots: string[]
+        nodes: Array<{ taskID: string; version: number; reason: string }>
+        planHold: { previousState: string; previousReason: string | null; reason: string } | null
+      }
+      const previous = this.store.latestTransition<Saved>(
+        planID,
+        null,
+        "DEPENDENCY_CANCELLATION",
+      ) ?? { roots: [], nodes: [], planHold: null }
+      const cancelledPlans = this.store.cancelledDependencyPlans(planID)
+      const cancelledNodes = this.store.cancelledDependencyNodes(planID)
+      const roots = [
+        ...new Set([
+          ...cancelledPlans.map((item) => item.reference),
+          ...cancelledNodes.map((item) => item.reference),
+        ]),
+      ].sort()
+      const reason = roots.length
+        ? `Prerequisite cancelled: ${roots.join(", ")}`
+        : "Cancelled prerequisite resolved"
+      const nodes: Saved["nodes"] = []
+      for (const node of this.store.nodes(planID)) {
+        const saved = previous.nodes.find((item) => item.taskID === node.task_id)
+        const owned =
+          node.state === "blocked" &&
+          node.version === saved?.version &&
+          node.reason === saved.reason
+        const affected =
+          cancelledPlans.length > 0 || cancelledNodes.some((item) => item.taskID === node.task_id)
+        if (affected && (["queued", "ready"].includes(node.state) || owned)) {
+          if (owned && node.reason === reason) nodes.push(saved!)
+          else {
+            if (owned) this.store.move(planID, node.task_id, "RECONCILE")
+            this.store.move(planID, node.task_id, "BLOCK", reason)
+            const blocked = this.store.nodes(planID).find((item) => item.task_id === node.task_id)!
+            nodes.push({ taskID: node.task_id, version: blocked.version, reason })
+          }
+        } else if (owned && !affected) this.store.move(planID, node.task_id, "RECONCILE")
+      }
+      let planHold = previous.planHold
+      const ownsHold = planHold && plan.state === "blocked" && plan.reason === planHold.reason
+      if (cancelledPlans.length && (plan.state === "running" || ownsHold)) {
+        planHold = {
+          previousState: planHold?.previousState ?? plan.state,
+          previousReason: planHold
+            ? planHold.previousReason === planHold.reason
+              ? null
+              : planHold.previousReason
+            : plan.reason,
+          reason,
+        }
+        if (plan.state !== "blocked" || plan.reason !== reason)
+          db.query(
+            "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=?",
+          ).run(reason, planID)
+      } else if (!cancelledPlans.length && ownsHold) {
+        db.query("UPDATE runner_plans SET state=?,reason=?,version=version+1 WHERE id=?").run(
+          planHold!.previousState,
+          planHold!.previousReason,
+          planID,
+        )
+        planHold = null
+      } else if (!ownsHold) planHold = null
+      const next: Saved = { roots, nodes, planHold }
+      if (JSON.stringify(previous) !== JSON.stringify(next)) {
+        this.store.record(planID, null, "DEPENDENCY_CANCELLATION", next)
+        this.outcome(
+          planID,
+          {
+            status: roots.length ? "blocked" : "dependency-resolved",
+            reason,
+            cancelledPrerequisites: roots,
+            blockedTaskIDs: nodes.map((node) => node.taskID),
+            allowedActions: ["schedule", "reconcile", "cancel"],
+          },
+          true,
+        )
+      }
+      return this.store.plan(planID)!
+    })
+  }
+
   private async step(initialPlan: PlanRow, fence: number) {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
@@ -7920,6 +8030,7 @@ export class TaskRuntime {
     }
     // An owner read can overlap an authorized resume, cancellation, or reassignment.
     if (this.store.plan(plan.id)?.version !== plan.version) return
+    plan = this.reconcileCancelledDependencies(plan.id, fence)
     const pending = this.store
       .effects(plan.id)
       .find((e) => ["intended", "uncertain"].includes(e.state))
@@ -8013,8 +8124,22 @@ export class TaskRuntime {
         scopes: this.store.effectiveWriteScope(adoption.task_id),
       })),
     )
+    let pause = this.store.dispatchPause(plan.id)
+    if (pause?.untilPlans.length && this.integratedPrerequisiteBaseline(pause.untilPlans)) {
+      this.store.fenced(this.owner, fence, () =>
+        this.store.setDispatchPause(plan!.id, null, { source: "resume-condition" }),
+      )
+      plan = this.store.plan(plan.id)!
+      this.outcome(
+        plan.id,
+        { status: "dispatch-resumed", reason: "Resume prerequisites integrated" },
+        true,
+      )
+      pause = undefined
+    }
     const ready = nodes.filter(
       (node) =>
+        !pause &&
         ["queued", "ready"].includes(node.state) &&
         this.store.execution(node.task_id)!.waitingOn.length === 0,
     )
@@ -8676,6 +8801,7 @@ export class TaskRuntime {
       if (
         !current ||
         current.state !== "running" ||
+        this.store.dispatchPause(plan.id) !== undefined ||
         current.owner !== plan.owner ||
         current.revision !== plan.revision ||
         current.body !== plan.body ||

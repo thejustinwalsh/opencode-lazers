@@ -1274,3 +1274,46 @@ FIFO ties and test both read scopes. Registered live project query at Unix ms
 1794337025199 returned LZ-202 first, then LZ-154, LZ-99, LZ-146 and LZ-142 in 12 ms.
 After native Reload Webview, Desktop displayed that order with LZ-202 Worker Active
 and LZ-154's LZ-185 dependency visible. No scheduling mutation was made by the view.
+
+## S1-1 — preserve the full-plugin setup-failure regression after budget registration (2026-11-10)
+
+The broad runner check found the protected setup-failure test stopping at a missing
+`ctx.rpc.register` fixture method, before reaching any intended setup fault.
+An archived source checkout of unchanged HEAD `9263353` reproduced the same failure.
+The fixture now supplies the budget RPC registration hook. All original injected
+faults, EEXIST/context assertions, live-hook checks and predecessor source-guard
+restoration assertions remain. The three source-fence RPC tests pass with 31
+assertions. No production source-guard logic changed.
+
+## F-S4 — cancelled dependencies and explicit dispatch pause (2026-11-10)
+
+Cancelled prerequisites now block unfinished dependent nodes with their LZ reference
+and notify Architect through the existing durable outbox. Original dependency links,
+attempts and useful work remain. Propagation stops at integrated work. Restoring or
+replanning a prerequisite clears only the cancellation hold recorded by this flow;
+it does not clear unrelated holds or silently resurrect cancelled tasks. Unchanged
+incidents produce no repeated transitions or notifications.
+
+`lz-plan-command` now supports `pause` and `unpause`. Pause stops new dispatch while
+active workers and verification finish. An explicit XState dispatch-control machine
+persists the reason and optional `resumeAfterPlans` conditions; automatic unpause
+requires those recorded plans to be integrated. Pause does not change the plan's
+source revision. Schema generation 4 adds the dispatch-control table. Task reads,
+inspection and the native Paused filter carry this metadata while preserving actual
+worker lifecycle states. Architect guidance distinguishes pause from cancellation.
+
+Validation: `bun run verify` and production GUI build passed. Runner tests: 732
+passed, 9,272 assertions. Panel/storage/observability tests: 172 passed, 2,708
+assertions. Coverage includes restart, same-plan branches, transitive dependencies,
+integrated boundaries, cycle rejection, active-worker completion and in-flight
+verification during a pause. The pre-existing source-fence fixture failure was
+reproduced on unchanged source and corrected separately in `26e0c79`.
+
+Native observation at Unix ms 1794346665920 showed LZ-189, LZ-192 and LZ-200 blocked
+with `Prerequisite cancelled: LZ-182`. Architect's transcript acknowledged that
+prerequisite. Desktop Reload Webview exposed the Paused filter; selecting it showed
+no paused project tasks, then Open was restored. No active live worker was paused
+for a synthetic demonstration. Actual pause/resume behavior is tested with native
+host fixtures, not yet observed on production work. LZ-182 remains cancelled with
+its retained work and recorded recovery order; this change does not claim recovery
+or integration of LZ-182 or LZ-202.

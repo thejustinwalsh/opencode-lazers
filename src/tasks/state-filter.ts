@@ -5,6 +5,7 @@ export const TaskStateFilter = z.enum([
   "queued",
   "running",
   "blocked",
+  "paused",
   "completed",
   "failed",
   "cancelled",
@@ -51,8 +52,15 @@ export function taskStatePredicate(state: TaskQueryState, taskAlias: "tasks" | "
     WHERE n.task_id=${taskAlias}.id AND p.project_directory=${taskAlias}.project_directory
       AND (${predicate})
   )`
+  const paused = `n.state IN ('queued','ready') AND EXISTS (
+    SELECT 1 FROM runner_dispatch_controls c WHERE c.plan_id=p.id AND c.state='paused'
+  )`
+  if (state === "paused")
+    return matchingExecution(`p.state NOT IN ('blocked','cancelled') AND (${paused})`)
   if (state === "queued" || state === "running")
-    return matchingExecution(`n.state='${state}' AND p.state NOT IN ('blocked','cancelled')`)
+    return matchingExecution(
+      `n.state='${state}' AND p.state NOT IN ('blocked','cancelled') AND NOT (${paused})`,
+    )
   if (state === "blocked")
     return matchingExecution(
       `p.state!='cancelled' AND (n.state='blocked' OR (p.state='blocked' AND n.state NOT IN ('accepted','incorporated','failed','exhausted','cancelled')))`,

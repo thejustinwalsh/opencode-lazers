@@ -50,6 +50,7 @@ const View = Schema.Struct({
       "queued",
       "running",
       "blocked",
+      "paused",
       "completed",
       "failed",
       "cancelled",
@@ -459,7 +460,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       : []
   }
   const selectedInspectorStatus = () =>
-    selectedIsWaiting() ? "Waiting" : (selectedRecordedState() ?? "Unknown")
+    selectedIsWaiting()
+      ? "Waiting"
+      : selectedExecution()?.dispatchPause
+        ? "Paused"
+        : (selectedRecordedState() ?? "Unknown")
   const selectedRelations = () => {
     const taskID = visible()?.selectedID
     const waitingOn = selectedExecution()?.waitingOn ?? []
@@ -568,6 +573,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       ])
     const showCurrent = () =>
       ["running", "verifying"].includes(taskRow().status) ||
+      Boolean(taskRow().dispatchPause) ||
       waiting() ||
       currentActivity()?.foreground === "active"
     const pendingLabel = () => {
@@ -650,7 +656,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               <Show when={showCurrent()}>
                 <span class="lazers-tasks-row-meta">
                   <span class="lazers-tasks-row-lifecycle">
-                    {waiting() ? "Waiting" : taskRow().status}
+                    {waiting() ? "Waiting" : taskRow().dispatchPause ? "Paused" : taskRow().status}
                   </span>
                   <Show when={showWorker()}>
                     <span class="lazers-tasks-row-activity">
@@ -670,6 +676,13 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             </span>
           </button>
         </div>
+        <Show when={taskRow().dispatchPause}>
+          {(pause) => (
+            <div class="lazers-tasks-row-hold" style={{ "padding-left": `${depth * 12 + 30}px` }}>
+              {pause().reason}
+            </div>
+          )}
+        </Show>
         <Show when={taskRow().sourcePlan}>
           {(source) => (
             <div
@@ -895,6 +908,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   "queued",
                   "running",
                   "blocked",
+                  "paused",
                   "completed",
                   "failed",
                   "cancelled",
@@ -1170,6 +1184,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                     )}
                   </For>
                 </div>
+              </Show>
+              <Show when={selectedExecution()?.dispatchPause}>
+                {(pause) => <p class="lazers-tasks-reason">{pause().reason}</p>}
               </Show>
               <h4>Done when</h4>
               <ul class="lazers-tasks-assertions">

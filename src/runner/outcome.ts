@@ -94,6 +94,11 @@ export function outcomeText(serialized: string) {
       action =
         "Review and merge the accepted combined artifact, then record integration through runtime commands and verify native non-forced cleanup. Continue existing work; acceptance alone is not integration."
       break
+    case "dispatch-resumed":
+    case "dependency-resolved":
+      action =
+        "The recorded wait has cleared. Continue the existing plan; running workers and retained work are unchanged."
+      break
     case "blocked":
       action =
         "Inspect this blocked plan and resolve the recorded cause using its allowed actions. Preserve work and reconcile uncertain effects before retrying."

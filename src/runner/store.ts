@@ -1,3 +1,4 @@
+import { dispatchControlTransition } from "./dispatch-control-machine.ts"
 import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
@@ -648,6 +649,10 @@ export class RunnerStore {
         revision INTEGER NOT NULL, version INTEGER NOT NULL, state TEXT NOT NULL,
         body TEXT NOT NULL, model TEXT, reason TEXT, artifact TEXT
       );
+      CREATE TABLE IF NOT EXISTS runner_dispatch_controls (
+        plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), state TEXT NOT NULL,
+        reason TEXT NOT NULL, until_plans TEXT NOT NULL, updated_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS runner_plans_project ON runner_plans(project_directory, state);
       CREATE TABLE IF NOT EXISTS runner_plan_revisions (
         plan_id TEXT NOT NULL REFERENCES runner_plans(id), revision INTEGER NOT NULL,
@@ -1098,6 +1103,84 @@ export class RunnerStore {
       db
         .query<NodeRow, [string]>("SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal")
         .all(planID),
+    )
+  }
+  dispatchPause(planID: string) {
+    return this.atomic((db) => {
+      const row = db
+        .query<{ reason: string; until_plans: string }, [string]>(
+          "SELECT reason,until_plans FROM runner_dispatch_controls WHERE plan_id=? AND state='paused'",
+        )
+        .get(planID)
+      return row
+        ? { reason: row.reason, untilPlans: JSON.parse(row.until_plans) as string[] }
+        : undefined
+    })
+  }
+  setDispatchPause(
+    planID: string,
+    pause: { reason: string; untilPlans: string[] } | null,
+    details: object,
+  ) {
+    return this.atomic((db) => {
+      const current = this.dispatchPause(planID)
+      if (!pause && !current) return
+      const state = dispatchControlTransition(
+        current ? "paused" : "enabled",
+        pause ? "PAUSE" : "UNPAUSE",
+      )
+      db.query(
+        `INSERT INTO runner_dispatch_controls VALUES(?,?,?,?,?)
+        ON CONFLICT(plan_id) DO UPDATE SET state=excluded.state,reason=excluded.reason,
+          until_plans=excluded.until_plans,updated_at=excluded.updated_at`,
+      ).run(planID, state, pause?.reason ?? "", JSON.stringify(pause?.untilPlans ?? []), Date.now())
+      db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(planID)
+      this.record(planID, null, pause ? "DISPATCH_PAUSED" : "DISPATCH_UNPAUSED", {
+        ...details,
+        pause,
+      })
+    })
+  }
+  cancelledDependencyPlans(planID: string) {
+    return this.atomic((db) =>
+      db
+        .query<
+          { planID: string; taskID: string; reference: string; state: string },
+          [string, string]
+        >(
+          `WITH RECURSIVE edges(owner,dependency) AS (
+        SELECT p.id,edge.value FROM runner_plans p,json_each(p.body,'$.afterPlans') edge
+          WHERE p.project_directory=?2 AND p.state NOT IN ('cleaning','cleanup-blocked','integrated')
+        UNION SELECT p.id,edge.value FROM runner_dispatch_controls c
+          JOIN runner_plans p ON p.id=c.plan_id,json_each(c.until_plans) edge
+          WHERE p.project_directory=?2 AND c.state='paused'
+      ), ancestors(id) AS (
+        SELECT dependency FROM edges WHERE owner=?1
+        UNION SELECT e.dependency FROM ancestors a JOIN edges e ON e.owner=a.id
+      ) SELECT p.id AS planID,n.task_id AS taskID,r.reference,p.state
+        FROM ancestors a JOIN runner_plans p ON p.id=a.id JOIN runner_nodes n ON n.plan_id=p.id
+        JOIN task_references r ON r.project_directory=p.project_directory AND r.task_id=n.task_id
+        WHERE p.project_directory=?2 AND p.state IN ('cancelling','cancelled') ORDER BY p.id,n.ordinal
+      `,
+        )
+        .all(planID, this.repository.projectDirectory),
+    )
+  }
+  cancelledDependencyNodes(planID: string) {
+    return this.atomic((db) =>
+      db
+        .query<{ taskID: string; rootID: string; reference: string }, [string, string, string]>(
+          `
+      WITH RECURSIVE affected(root,task) AS (
+        SELECT d.prerequisite,d.successor FROM runner_dependencies d JOIN runner_nodes n
+          ON n.plan_id=d.plan_id AND n.task_id=d.prerequisite WHERE d.plan_id=? AND n.state='cancelled'
+        UNION SELECT a.root,d.successor FROM affected a JOIN runner_dependencies d ON d.prerequisite=a.task WHERE d.plan_id=?
+      ) SELECT a.task AS taskID,a.root AS rootID,r.reference FROM affected a
+      JOIN task_references r ON r.task_id=a.root AND r.project_directory=(SELECT project_directory FROM runner_plans WHERE id=?)
+      ORDER BY a.task,a.root
+    `,
+        )
+        .all(planID, planID, planID),
     )
   }
   plans() {
@@ -3214,6 +3297,9 @@ export class RunnerStore {
         node.reason ??
         (node.plan_state === "blocked" ? node.plan_reason : null),
       waitingOn,
+      ...(["queued", "ready"].includes(node.state) && this.dispatchPause(node.plan_id)
+        ? { dispatchPause: this.dispatchPause(node.plan_id) }
+        : {}),
     }
   }
   command<T>(requestID: string, input: unknown, run: (db: Database) => T): T {
@@ -3326,7 +3412,10 @@ export class RunnerStore {
       const plan = this.plan(id)
       if (!plan) throw new Error("Missing or foreign plan dependency")
       const next = new Set(path).add(id)
-      for (const dependency of PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? [])
+      for (const dependency of new Set([
+        ...(PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? []),
+        ...(this.dispatchPause(id)?.untilPlans ?? []),
+      ]))
         visit(dependency, next)
     }
     for (const dependency of dependencies) visit(dependency, new Set())

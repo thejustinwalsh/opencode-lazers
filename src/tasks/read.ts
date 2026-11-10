@@ -150,6 +150,7 @@ export class TaskReads {
         const disposition = this.repository.taskDisposition(task.id)
         return {
           ...summarize(task, reference, query.search, query.scopePath, disposition, classification),
+          ...(execution?.dispatchPause ? { dispatchPause: execution.dispatchPause } : {}),
           status: execution?.state ?? task.status,
           ...(execution
             ? { recordedState: this.recordedNodeState(task.id, execution.planID) }
