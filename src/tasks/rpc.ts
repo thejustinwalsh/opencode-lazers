@@ -2,7 +2,7 @@ import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
-import { Effect } from "effect"
+import { DateTime, Effect } from "effect"
 import { Tool } from "@opencode/schema/tool"
 import { z } from "zod"
 import { resolve, isAbsolute } from "node:path"
@@ -200,12 +200,19 @@ export function registerTaskReads(
             const after = reads.currentActivityTargets(request.taskIDs, sessionScope)
             const currentScope = await readScope(false)
             signal.throwIfAborted()
+            // Native DateTime values are freshly decoded on each read.
+            const initialArchivedAt = initialScope.time.archived
+              ? DateTime.toEpochMillis(initialScope.time.archived)
+              : undefined
+            const currentArchivedAt = currentScope.time.archived
+              ? DateTime.toEpochMillis(currentScope.time.archived)
+              : undefined
             const scopeChanged =
               currentScope.id !== initialScope.id ||
               currentScope.projectID !== initialScope.projectID ||
               currentScope.location.directory !== initialScope.location.directory ||
               currentScope.agent !== initialScope.agent ||
-              currentScope.time.archived !== initialScope.time.archived
+              currentArchivedAt !== initialArchivedAt
             const currentByID = new Map(after.map((target) => [target.taskID, target]))
             const activities = initial.map((activity, index) => {
               const original = before[index]!

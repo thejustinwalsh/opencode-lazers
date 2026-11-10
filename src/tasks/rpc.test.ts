@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Location } from "@opencode/plugin/effect"
-import { Effect, Schema } from "effect"
+import { DateTime, Effect, Schema } from "effect"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -396,7 +396,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           // S8: archived session views retain native-authorized activity reads.
-          time: { created: Date.now(), updated: Date.now(), archived: 1 },
+          time: { created: Date.now(), updated: Date.now(), archived: DateTime.makeUnsafe(1) },
           location: { directory: actorDirectory },
         }),
     },

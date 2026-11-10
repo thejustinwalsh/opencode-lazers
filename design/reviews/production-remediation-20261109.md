@@ -1162,3 +1162,34 @@ predecessors were already archived; the inventory does not support a claim that
 history were not bulk-archived. Longstanding non-renewed/manual Architect chats
 had no automatic retirement path; this cleanup is user-authorized maintenance,
 not proof that such retirement is automatic.
+
+### Live Desktop follow-through: native archive timestamp identity (2026-11-10)
+
+After unlock, rebuilt `build:gui` successfully and used native Reload Webview.
+The five retired Architect roots disappeared from Recent. Tasks still reported
+unknown from the archived predecessor window, despite successful current-owner
+RPC probes. Repeating the exact archived-window actor in the probe reproduced
+all unknown results. The final scope race check compared native archive
+`DateTime.Utc` objects by reference; separately decoded values for the same
+instant are different objects. The earlier test used primitive `1`, masking the
+real host shape. Changed the fixture to a fresh native `DateTime` on each read:
+it failed before the correction. The read now compares archive epoch values,
+retaining genuine lifecycle-change detection. Current-owner and archived-window
+probes now agree; all nine archived workers return known inactive activity.
+
+`bun run verify` passed; registered RPC, panel-state and rendered-panel tests
+passed **30 tests / 273 assertions**. Logs:
+`/private/tmp/lazers-archive-time-{before,after,verify}.log`.
+The GUI bundle was rebuilt and its process-global evaluation check passed;
+artifact: `/private/tmp/lazers-task-status-gui-build.log`.
+
+Actual native Desktop acceptance then observed the Blocked/waiting view with
+**Worker Archived** for all nine archived workers and **Worker Inactive** for
+LZ-50; the previous all-unknown display was gone. Running showed no running task
+at that instant, consistent with native inventory showing only Architect active
+while workers had advanced out of foreground execution. The hold reasons remain
+visible; changing their activity label does not clear those runtime obligations.
+The sidebar's Recent section no longer listed the four old root Architect chats;
+the fifth retired Architect was a child session and was already confirmed
+archived through the native readback. No background service restart or worker
+interruption was needed for this final display correction.
