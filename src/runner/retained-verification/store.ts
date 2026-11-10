@@ -211,6 +211,19 @@ export function retainedVerificationsForPlan(
     .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
 }
 
+export function retainedVerificationsForProject(
+  db: Database,
+  projectDirectory: string,
+): RetainedVerification[] {
+  ensureRetainedVerificationTables(db)
+  return db
+    .query<{ payload: string }, [string]>(
+      "SELECT payload FROM runner_retained_verifications WHERE project_directory=? ORDER BY plan_id,task_id,generation",
+    )
+    .all(projectDirectory)
+    .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
+}
+
 const liveStates = [
   "pending",
   "task-checks",
