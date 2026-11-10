@@ -2,8 +2,6 @@ import { createHash } from "node:crypto"
 import type { TaskProposal } from "../task.ts"
 import type { SystemOneQuestion } from "./system-one.ts"
 
-export { REVIEW_ROUNDS, REVIEW_THRESHOLD } from "../review/progression.ts"
-
 export const REVIEW_VERSION = "task-hardening-v3"
 
 export interface ReviewCheck {

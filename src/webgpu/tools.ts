@@ -44,6 +44,27 @@ export function registerInferenceTools(
             }),
           ),
     )
+  const guardedCall = (
+    feature: LocalFeature,
+    action: string,
+    context: { sessionID: unknown; agent: unknown },
+    invoke: () => Effect.Effect<unknown, unknown>,
+  ) =>
+    guard(feature, () =>
+      ctx.permission
+        .assert({
+          sessionID: context.sessionID as never,
+          agent: context.agent as never,
+          action,
+          resources: ["*"],
+        })
+        .pipe(
+          Effect.flatMap(() =>
+            invoke().pipe(Effect.mapError((error) => new Tool.Error({ message: String(error) }))),
+          ),
+          Effect.map((result) => ({ content: JSON.stringify(result) })),
+        ),
+    )
   return ctx.tool.transform((editor) => {
     if (allowed("decisions"))
       editor.add({
@@ -53,23 +74,8 @@ export function registerInferenceTools(
         input: SystemOneRequest,
         options: { codemode: true, permission: "lz-local-system-one" },
         execute: (input, context) =>
-          guard("decisions", () =>
-            ctx.permission
-              .assert({
-                sessionID: context.sessionID,
-                agent: context.agent,
-                action: "lz-local-system-one",
-                resources: ["*"],
-              })
-              .pipe(
-                Effect.flatMap(() =>
-                  ctx
-                    .rpc(LocalInference)
-                    .systemOne(SystemOneRequest.parse(input))
-                    .pipe(Effect.mapError((error) => new Tool.Error({ message: String(error) }))),
-                ),
-                Effect.map((result) => ({ content: JSON.stringify(result) })),
-              ),
+          guardedCall("decisions", "lz-local-system-one", context, () =>
+            ctx.rpc(LocalInference).systemOne(SystemOneRequest.parse(input)),
           ),
       })
     if (allowed("questions"))
@@ -80,23 +86,8 @@ export function registerInferenceTools(
         input: ask,
         options: { codemode: true, permission: "lz-local-ask" },
         execute: (input, context) =>
-          guard("questions", () =>
-            ctx.permission
-              .assert({
-                sessionID: context.sessionID,
-                agent: context.agent,
-                action: "lz-local-ask",
-                resources: ["*"],
-              })
-              .pipe(
-                Effect.flatMap(() =>
-                  ctx
-                    .rpc(LocalInference)
-                    .ask(ask.parse(input))
-                    .pipe(Effect.mapError((error) => new Tool.Error({ message: String(error) }))),
-                ),
-                Effect.map((result) => ({ content: JSON.stringify(result) })),
-              ),
+          guardedCall("questions", "lz-local-ask", context, () =>
+            ctx.rpc(LocalInference).ask(ask.parse(input)),
           ),
       })
     if (allowed("decisions"))
@@ -107,23 +98,8 @@ export function registerInferenceTools(
         input: decide,
         options: { codemode: true, permission: "lz-local-decide" },
         execute: (input, context) =>
-          guard("decisions", () =>
-            ctx.permission
-              .assert({
-                sessionID: context.sessionID,
-                agent: context.agent,
-                action: "lz-local-decide",
-                resources: ["*"],
-              })
-              .pipe(
-                Effect.flatMap(() =>
-                  ctx
-                    .rpc(LocalInference)
-                    .decide(decide.parse(input))
-                    .pipe(Effect.mapError((error) => new Tool.Error({ message: String(error) }))),
-                ),
-                Effect.map((result) => ({ content: JSON.stringify(result) })),
-              ),
+          guardedCall("decisions", "lz-local-decide", context, () =>
+            ctx.rpc(LocalInference).decide(decide.parse(input)),
           ),
       })
   })

@@ -28,6 +28,27 @@ export function speechInstruction(voice: SpeechVoice = DEFAULT_VOICE) {
   return `Perform TTS in ${selected.language} using a ${selected.gender} voice.`
 }
 
+type AssistantMessage = Extract<SessionMessageInfo, { type: "assistant" }>
+
+/** Shared final-answer/commentary filtering for assistant turns. */
+function assistantReplyText(message: AssistantMessage): string {
+  const finalPhase = message.content.some(
+    (part) => part.type === "text" && part.native?.phase === "final_answer",
+  )
+  const lastTool = message.content.findLastIndex((part) => part.type === "tool")
+  return message.content
+    .flatMap((part, index) =>
+      part.type === "text" &&
+      (finalPhase
+        ? part.native?.phase === "final_answer"
+        : part.native?.phase !== "commentary" && index > lastTool)
+        ? [part.text]
+        : [],
+    )
+    .join("\n")
+    .trim()
+}
+
 /** Native message lists are chronological; idle closes an execution, including steered inputs. */
 export function latestResponse(messages: readonly SessionMessageInfo[]): string {
   const end = messages.findLastIndex((message) => message.type === "idle")
@@ -49,21 +70,7 @@ export function latestResponse(messages: readonly SessionMessageInfo[]): string 
     message.finish !== "stop"
   )
     return ""
-  const finalPhase = message.content.some(
-    (part) => part.type === "text" && part.native?.phase === "final_answer",
-  )
-  const lastTool = message.content.findLastIndex((part) => part.type === "tool")
-  return message.content
-    .flatMap((part, index) =>
-      part.type === "text" &&
-      (finalPhase
-        ? part.native?.phase === "final_answer"
-        : part.native?.phase !== "commentary" && index > lastTool)
-        ? [part.text]
-        : [],
-    )
-    .join("\n")
-    .trim()
+  return assistantReplyText(message)
 }
 
 /** The last successful final reply, even after a newer prompt or failed turn has started. */
@@ -90,21 +97,7 @@ function completedTurnResponse(messages: readonly SessionMessageInfo[]): string 
     message.finish !== "stop"
   )
     return ""
-  const finalPhase = message.content.some(
-    (part) => part.type === "text" && part.native?.phase === "final_answer",
-  )
-  const lastTool = message.content.findLastIndex((part) => part.type === "tool")
-  return message.content
-    .flatMap((part, index) =>
-      part.type === "text" &&
-      (finalPhase
-        ? part.native?.phase === "final_answer"
-        : part.native?.phase !== "commentary" && index > lastTool)
-        ? [part.text]
-        : [],
-    )
-    .join("\n")
-    .trim()
+  return assistantReplyText(message)
 }
 
 export const SPEECH_CHUNK_CHARS = 320
