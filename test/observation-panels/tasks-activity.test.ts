@@ -335,6 +335,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
           workerSessionID: workerSessionIDs[key],
           attemptID: attemptIDs[key],
           foreground,
+          // S8: archived, exactly bound workers remain known in the rendered panel.
+          archived: taskID === ids.held,
           unknownReason: foreground === "unknown" ? "unavailable" : null,
           recordedState: states[taskID],
           waiting: taskID !== ids.completed,
@@ -556,7 +558,10 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(
       heldRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
     ).toBe("inactive")
-    expect(heldRow.textContent).toContain("Worker inactive")
+    expect(heldRow.textContent).toContain("Worker archived")
+    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
+      "Worker archived",
+    )
     expect(heldRow.textContent).toContain("Waiting")
     expect(heldRow.textContent).not.toContain("Additional hold: retain the audit trail")
     expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
@@ -624,7 +629,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => activityDetails().open)
     let diagnosticText = activityDetails().textContent ?? ""
     expect(diagnosticText).toContain("Recorded running")
-    expect(diagnosticText).toContain("Worker inactive")
+    expect(diagnosticText).toContain("Worker archived")
     expect(diagnosticText).toContain("ses-worker-held")
     expect(diagnosticText).toContain("Worker outcome succeeded")
     expect(diagnosticText).toContain("Reconciliation hold: awaiting review")
