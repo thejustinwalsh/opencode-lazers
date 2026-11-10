@@ -135,6 +135,7 @@ import {
   startVerificationActivity,
   verificationActivity,
   verificationActivityKey,
+  verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
@@ -189,6 +190,92 @@ function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefine
   } catch {
     return undefined
   }
+}
+
+function interruptedCheckResourcesSettled(receipt: CheckReceipt): boolean {
+  return Boolean(
+    receipt.processCleanup &&
+    !receipt.phases?.some((phase) => !phase.processCleanup) &&
+    checkResourcesSettled(receipt),
+  )
+}
+
+type CombinedVerificationContinuationEffect = {
+  id: string
+  payloadFingerprint: string
+  receiptFingerprint: string
+}
+
+type CombinedVerificationContinuationBinding = {
+  schema: "lazers-combined-verification-continuation/v1"
+  requestID: string
+  projectDirectory: string
+  projectID: string
+  planID: string
+  owner: string
+  ownerEpoch: number
+  planRevision: number
+  expectedPlanVersion: number
+  resumedPlanVersion: number
+  planBodyFingerprint: string
+  acceptedArtifacts: Array<{ taskID: string; taskRevision: number; artifact: string }>
+  artifact: string
+  workspace: string
+  sourceGeneration: string | null
+  verificationEpoch: number
+  interruptedEffects: CombinedVerificationContinuationEffect[]
+}
+
+type CombinedVerificationContinuation = CombinedVerificationContinuationBinding & {
+  inputFingerprint: string
+}
+
+function parseCombinedVerificationContinuation(
+  value: unknown,
+): CombinedVerificationContinuation | undefined {
+  if (
+    !isRecord(value) ||
+    value.schema !== "lazers-combined-verification-continuation/v1" ||
+    typeof value.requestID !== "string" ||
+    typeof value.projectDirectory !== "string" ||
+    typeof value.projectID !== "string" ||
+    typeof value.planID !== "string" ||
+    typeof value.owner !== "string" ||
+    !Number.isSafeInteger(value.ownerEpoch) ||
+    !Number.isSafeInteger(value.planRevision) ||
+    !Number.isSafeInteger(value.expectedPlanVersion) ||
+    !Number.isSafeInteger(value.resumedPlanVersion) ||
+    typeof value.planBodyFingerprint !== "string" ||
+    !Array.isArray(value.acceptedArtifacts) ||
+    !value.acceptedArtifacts.every(
+      (item) =>
+        isRecord(item) &&
+        typeof item.taskID === "string" &&
+        Number.isSafeInteger(item.taskRevision) &&
+        typeof item.artifact === "string",
+    ) ||
+    typeof value.artifact !== "string" ||
+    typeof value.workspace !== "string" ||
+    (value.sourceGeneration !== null && typeof value.sourceGeneration !== "string") ||
+    !Number.isSafeInteger(value.verificationEpoch) ||
+    !Array.isArray(value.interruptedEffects) ||
+    !value.interruptedEffects.every(
+      (item) =>
+        isRecord(item) &&
+        typeof item.id === "string" &&
+        typeof item.payloadFingerprint === "string" &&
+        typeof item.receiptFingerprint === "string",
+    ) ||
+    typeof value.inputFingerprint !== "string"
+  )
+    return undefined
+  return value as unknown as CombinedVerificationContinuation
+}
+
+function combinedVerificationContinuationFingerprint(
+  binding: CombinedVerificationContinuationBinding,
+) {
+  return fingerprint(binding)
 }
 
 /** Activity completion means a receipt exists, not that its process tree is idle. */
@@ -3253,6 +3340,205 @@ export class TaskRuntime {
     }
   }
 
+  private acceptedCombinedArtifacts(
+    plan: PlanRow,
+    input: ReturnType<typeof PlanInput.parse>,
+  ): CombinedVerificationContinuation["acceptedArtifacts"] {
+    const nodes = this.store.nodes(plan.id)
+    const attempts = this.store.attempts(plan.id)
+    return input.integrationOrder.map((taskID) => {
+      const specification = input.nodes.find((node) => node.taskID === taskID)
+      const node = nodes.find((candidate) => candidate.task_id === taskID)
+      const task = this.store.repository.get(taskID)
+      const attempt = attempts.filter((candidate) => candidate.task_id === taskID).at(-1)
+      if (
+        !specification ||
+        !node ||
+        !["accepted", "incorporated"].includes(node.state) ||
+        !node.artifact ||
+        !isCommitID(node.artifact) ||
+        !task ||
+        task.revision !== specification.revision ||
+        task.provenance.projectID !== this.projectID ||
+        task.provenance.projectDirectory !== this.directory ||
+        this.store.repository.taskDisposition(taskID) !== undefined ||
+        !attempt ||
+        attempt.state !== "accepted" ||
+        attempt.artifact !== node.artifact ||
+        git(this.directory, ["rev-parse", `${node.artifact}^{commit}`]) !== node.artifact
+      )
+        throw new Error(
+          "Combined continuation requires every current plan task to retain its accepted artifact",
+        )
+      return { taskID, taskRevision: task.revision, artifact: node.artifact }
+    })
+  }
+
+  private interruptedCombinedVerificationEffects(
+    plan: PlanRow,
+    input: ReturnType<typeof PlanInput.parse>,
+    artifact: string,
+    sourceGeneration: string | undefined,
+  ) {
+    const checks = new Map(input.verification.map((check) => [check.id, check]))
+    return this.store.effects(plan.id).filter((effect) => {
+      if (
+        effect.state !== "uncertain" ||
+        effect.task_id !== null ||
+        effect.attempt_id !== null ||
+        !effect.kind.startsWith("graph-verify:")
+      )
+        return false
+      const check = checks.get(effect.kind.slice("graph-verify:".length))
+      const receipt = actualCheckResultFromEffect(effect)
+      if (!check || !receipt) return false
+      try {
+        const payload: unknown = JSON.parse(effect.payload)
+        return Boolean(
+          isRecord(payload) &&
+          payload.artifact === artifact &&
+          payload.identity === artifact &&
+          typeof payload.workspace === "string" &&
+          (payload.sourceGeneration ?? undefined) === sourceGeneration &&
+          fingerprint(payload.check) === fingerprint(check) &&
+          receipt.id === check.id &&
+          receipt.command === check.command &&
+          receipt.cwd === payload.workspace &&
+          receipt.artifact === artifact &&
+          receipt.inputIdentity === artifact &&
+          receipt.aborted === true &&
+          interruptedCheckResourcesSettled(receipt),
+        )
+      } catch {
+        return false
+      }
+    })
+  }
+
+  private async prepareCombinedVerificationResume(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+  ): Promise<CombinedVerificationContinuation> {
+    if (
+      !command.reason?.trim() ||
+      command.attemptID !== undefined ||
+      command.workspaceMode !== undefined ||
+      command.baseCommit !== undefined
+    )
+      throw new Error("Plan-level verification resume requires only a reason, not task controls")
+    if (
+      caller !== plan.owner ||
+      !this.validArchitect(ownerSession) ||
+      ownerSession.id !== plan.owner
+    )
+      throw new Error("Combined verification resume requires the current same-project Architect")
+    if (plan.state !== "blocked" || plan.artifact !== null)
+      throw new Error("Combined verification resume requires a blocked, unaccepted plan")
+
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
+    const artifact = await combineArtifacts(
+      this.directory,
+      input.baseCommit,
+      acceptedArtifacts.map((item) => item.artifact),
+    )
+    const sourceGeneration = this.retainedRepairGeneration(plan.id) ?? null
+    const effects = this.store.effects(plan.id)
+    const interrupted = this.interruptedCombinedVerificationEffects(
+      plan,
+      input,
+      artifact,
+      sourceGeneration ?? undefined,
+    ).toSorted((left, right) => left.id.localeCompare(right.id))
+    if (!interrupted.length)
+      throw new Error("No conclusively settled interrupted combined verification can be resumed")
+    const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
+    if (
+      effects.some(
+        (effect) =>
+          ["intended", "uncertain"].includes(effect.state) && !interruptedIDs.has(effect.id),
+      )
+    )
+      throw new Error("Reconcile unrelated unresolved effects before combined verification resume")
+    if (
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+      )
+    )
+      throw new Error("A live verification activity prevents combined verification resume")
+    if (
+      this.store.atomic((db) => activeRetainedVerifications(db, this.directory, plan.id).length > 0)
+    )
+      throw new Error("An unresolved retained verification prevents combined verification resume")
+
+    const workspaces = new Set(
+      interrupted.map((effect) => (JSON.parse(effect.payload) as { workspace: string }).workspace),
+    )
+    if (workspaces.size !== 1)
+      throw new Error("Interrupted combined checks do not share one candidate")
+    const workspace = [...workspaces][0]!
+    if (
+      !existsSync(workspace) ||
+      git(workspace, ["rev-parse", "HEAD"]) !== artifact ||
+      !artifactUnchanged(workspace, artifact)
+    )
+      throw new Error("Interrupted combined verification candidate changed; preserve it for review")
+
+    const ownerEpoch = this.store.planControlEpoch(plan.id)
+    const binding: CombinedVerificationContinuationBinding = {
+      schema: "lazers-combined-verification-continuation/v1",
+      requestID: command.requestID,
+      projectDirectory: this.directory,
+      projectID: this.projectID,
+      planID: plan.id,
+      owner: plan.owner,
+      ownerEpoch,
+      planRevision: plan.revision,
+      expectedPlanVersion: command.expectedVersion,
+      resumedPlanVersion: plan.version + 1,
+      planBodyFingerprint: fingerprint(plan.body),
+      acceptedArtifacts,
+      artifact,
+      workspace,
+      sourceGeneration,
+      verificationEpoch: plan.version + 1,
+      interruptedEffects: interrupted.map((effect) => ({
+        id: effect.id,
+        payloadFingerprint: fingerprint(effect.payload),
+        receiptFingerprint: fingerprint(effect.receipt),
+      })),
+    }
+    const inputFingerprint = combinedVerificationContinuationFingerprint(binding)
+
+    const currentOwner = await this.host.session(caller)
+    const currentPlan = this.store.plan(plan.id)
+    if (
+      !this.validArchitect(currentOwner) ||
+      currentOwner.id !== plan.owner ||
+      !currentPlan ||
+      currentPlan.version !== plan.version ||
+      currentPlan.revision !== plan.revision ||
+      currentPlan.body !== plan.body ||
+      currentPlan.owner !== plan.owner ||
+      this.store.planControlEpoch(plan.id) !== ownerEpoch ||
+      fingerprint(
+        this.acceptedCombinedArtifacts(currentPlan, PlanInput.parse(JSON.parse(currentPlan.body))),
+      ) !== fingerprint(acceptedArtifacts) ||
+      (this.retainedRepairGeneration(plan.id) ?? null) !== sourceGeneration
+    )
+      throw new Error("Combined verification owner, plan or candidate changed during admission")
+    if (
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+      )
+    )
+      throw new Error("A live verification activity prevents combined verification resume")
+
+    return { ...binding, inputFingerprint }
+  }
+
   async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
@@ -3309,6 +3595,7 @@ export class TaskRuntime {
     let terminalRepairContinuation:
       { operationID: string; owner: string; ownerEpoch: number } | undefined
     let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
+    let combinedVerificationResume: CombinedVerificationContinuation | undefined
     const interruptedChecksFor = (plan: PlanRow, attempt: AttemptRow) =>
       this.store.effects(plan.id).filter((effect) => {
         const receipt = actualCheckResultFromEffect(effect)
@@ -3399,6 +3686,13 @@ export class TaskRuntime {
           attempt,
         )
     }
+    if (command.action === "resume" && !command.taskID)
+      combinedVerificationResume = await this.prepareCombinedVerificationResume(
+        old,
+        command,
+        caller,
+        ownerSession,
+      )
     if (command.action === "run" && !this.validArchitect(ownerSession)) {
       ownerSession = await this.ensureArchitectOwner(old, ownerSession, false)
       continuedOwner = ownerSession.id
@@ -4538,6 +4832,135 @@ export class TaskRuntime {
       if (command.action === "resume" || command.action === "retry") {
         const retry = command.action === "retry"
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+        if (!command.taskID) {
+          if (retry || !combinedVerificationResume || !command.reason?.trim())
+            throw new Error("Resume requires an exact task attempt or a settled combined check")
+          if (
+            plan.state !== "blocked" ||
+            plan.artifact !== null ||
+            plan.owner !== caller ||
+            ownerSession.id !== plan.owner ||
+            !this.validArchitect(ownerSession) ||
+            plan.version !== combinedVerificationResume.expectedPlanVersion ||
+            plan.revision !== combinedVerificationResume.planRevision ||
+            this.store.planControlEpoch(plan.id) !== combinedVerificationResume.ownerEpoch
+          )
+            throw new Error("Combined verification owner or plan authorization changed")
+
+          const input = PlanInput.parse(JSON.parse(plan.body))
+          const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
+          const sourceGeneration = this.retainedRepairGeneration(plan.id) ?? null
+          const { inputFingerprint, ...bindingData } = combinedVerificationResume
+          const currentBinding: CombinedVerificationContinuationBinding = {
+            ...bindingData,
+            owner: plan.owner,
+            ownerEpoch: this.store.planControlEpoch(plan.id),
+            planRevision: plan.revision,
+            expectedPlanVersion: command.expectedVersion,
+            resumedPlanVersion: plan.version + 1,
+            planBodyFingerprint: fingerprint(plan.body),
+            acceptedArtifacts,
+            artifact: combinedVerificationResume.artifact,
+            workspace: combinedVerificationResume.workspace,
+            sourceGeneration,
+            verificationEpoch: plan.version + 1,
+            interruptedEffects: combinedVerificationResume.interruptedEffects,
+          }
+          if (
+            combinedVerificationContinuationFingerprint(currentBinding) !== inputFingerprint ||
+            combinedVerificationContinuationFingerprint(bindingData) !== inputFingerprint
+          )
+            throw new Error("Combined verification continuation inputs changed before reservation")
+
+          const effects = this.store.effects(plan.id)
+          const interrupted = this.interruptedCombinedVerificationEffects(
+            plan,
+            input,
+            currentBinding.artifact,
+            sourceGeneration ?? undefined,
+          ).toSorted((left, right) => left.id.localeCompare(right.id))
+          const expectedEffects = currentBinding.interruptedEffects
+          if (
+            fingerprint(
+              interrupted.map((effect) => ({
+                id: effect.id,
+                payloadFingerprint: fingerprint(effect.payload),
+                receiptFingerprint: fingerprint(effect.receipt),
+              })),
+            ) !== fingerprint(expectedEffects) ||
+            effects.some(
+              (effect) =>
+                ["intended", "uncertain"].includes(effect.state) &&
+                !expectedEffects.some((expected) => expected.id === effect.id),
+            )
+          )
+            throw new Error("Combined verification effects changed; reconcile them before resuming")
+          if (
+            verificationActivitiesForDatabase(this.store.repository.path).some(
+              (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+            )
+          )
+            throw new Error("A live verification activity prevents combined verification resume")
+          if (
+            activeRetainedVerifications(db, this.directory, plan.id).length > 0 ||
+            this.store.activeAdoptions(plan.id).length > 0
+          )
+            throw new Error(
+              "An unresolved verification or adoption prevents combined verification resume",
+            )
+          if (
+            !existsSync(currentBinding.workspace) ||
+            git(currentBinding.workspace, ["rev-parse", "HEAD"]) !== currentBinding.artifact ||
+            !artifactUnchanged(currentBinding.workspace, currentBinding.artifact)
+          )
+            throw new Error(
+              "Interrupted combined verification candidate changed before reservation",
+            )
+
+          for (const expected of expectedEffects) {
+            const current = interrupted.find((effect) => effect.id === expected.id)
+            if (!current)
+              throw new Error(
+                "Interrupted combined verification receipt changed before reservation",
+              )
+            const changed = db
+              .query(
+                `UPDATE runner_effects SET state='failed'
+                 WHERE id=? AND plan_id=? AND task_id IS NULL AND attempt_id IS NULL
+                   AND state='uncertain' AND payload=? AND receipt=?`,
+              )
+              .run(expected.id, plan.id, current.payload, current.receipt).changes
+            if (changed !== 1)
+              throw new Error(
+                "Interrupted combined verification receipt changed before reservation",
+              )
+          }
+          const changedPlan = db
+            .query(
+              `UPDATE runner_plans SET state='running',reason=NULL,version=version+1
+               WHERE id=? AND owner=? AND version=? AND state='blocked' AND artifact IS NULL`,
+            )
+            .run(plan.id, caller, command.expectedVersion).changes
+          if (changedPlan !== 1)
+            throw new Error("Combined verification plan changed before reservation")
+          const resumed = this.store.plan(plan.id)!
+          if (resumed.version !== currentBinding.verificationEpoch)
+            throw new Error("Combined verification epoch changed before reservation")
+          this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+            caller,
+            verificationEpoch: resumed.version,
+            continuation: "interrupted-combined-verification",
+            combinedVerificationContinuation: combinedVerificationResume,
+          })
+          return {
+            status: "combined-verification-resumed",
+            planID: plan.id,
+            artifact: currentBinding.artifact,
+            interruptedEffectIDs: expectedEffects.map((effect) => effect.id),
+            verificationEpoch: resumed.version,
+            version: resumed.version,
+          }
+        }
         if (!command.taskID || !command.reason) throw new Error("Resume requires taskID and reason")
         const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
         const attempt = this.store
@@ -13073,6 +13496,21 @@ export class TaskRuntime {
     const verificationPlanVersion = this.store.plan(plan.id)!.version
     const sourceGeneration = this.retainedRepairGeneration(plan.id)
     const input = PlanInput.parse(JSON.parse(plan.body))
+    const reconcileTransition = this.store.latestTransition<Record<string, unknown>>(
+      plan.id,
+      null,
+      "RECONCILE_REQUESTED",
+    )
+    const requestedContinuation = reconcileTransition?.combinedVerificationContinuation
+    const continuation = parseCombinedVerificationContinuation(requestedContinuation)
+    if (requestedContinuation !== undefined && !continuation) {
+      this.hold(plan, "Combined verification continuation binding is invalid")
+      return
+    }
+    const verificationEpoch =
+      typeof reconcileTransition?.verificationEpoch === "number"
+        ? reconcileTransition.verificationEpoch
+        : 0
     const nodes = this.store.nodes(plan.id)
     const branches = input.integrationOrder.flatMap((taskID) => {
       const node = nodes.find((candidate) => candidate.task_id === taskID)
@@ -13082,7 +13520,7 @@ export class TaskRuntime {
       this.hold(plan, "An accepted task artifact is missing from the integration order")
       return
     }
-    const acceptedInputsCurrent = () => {
+    const acceptedNodesCurrent = () => {
       const currentPlan = this.store.plan(plan.id)
       const currentNodes = this.store.nodes(plan.id)
       return Boolean(
@@ -13101,22 +13539,163 @@ export class TaskRuntime {
         }),
       )
     }
-    let artifact: string
+    let artifact = ""
+    const continuationInputsCurrent = (candidateArtifact: string) => {
+      if (!continuation) return true
+      const currentPlan = this.store.plan(plan.id)
+      if (
+        !currentPlan ||
+        currentPlan.state !== "running" ||
+        currentPlan.version !== continuation.resumedPlanVersion ||
+        currentPlan.owner !== continuation.owner ||
+        currentPlan.revision !== continuation.planRevision ||
+        fingerprint(currentPlan.body) !== continuation.planBodyFingerprint ||
+        this.store.planControlEpoch(plan.id) !== continuation.ownerEpoch ||
+        continuation.projectDirectory !== this.directory ||
+        continuation.projectID !== this.projectID ||
+        continuation.planID !== plan.id ||
+        continuation.verificationEpoch !== verificationEpoch ||
+        continuation.artifact !== candidateArtifact ||
+        continuation.sourceGeneration !== (this.retainedRepairGeneration(plan.id) ?? null)
+      )
+        return false
+      try {
+        const acceptedArtifacts = this.acceptedCombinedArtifacts(
+          currentPlan,
+          PlanInput.parse(JSON.parse(currentPlan.body)),
+        )
+        const interruptedEffects = continuation.interruptedEffects.every((expected) => {
+          const effect = this.store
+            .effects(plan.id)
+            .find((candidate) => candidate.id === expected.id)
+          return Boolean(
+            effect?.state === "failed" &&
+            fingerprint(effect.payload) === expected.payloadFingerprint &&
+            fingerprint(effect.receipt) === expected.receiptFingerprint,
+          )
+        })
+        const { inputFingerprint: _inputFingerprint, ...bindingData } = continuation
+        const currentBinding: CombinedVerificationContinuationBinding = {
+          ...bindingData,
+          owner: currentPlan.owner,
+          ownerEpoch: this.store.planControlEpoch(plan.id),
+          planRevision: currentPlan.revision,
+          resumedPlanVersion: currentPlan.version,
+          planBodyFingerprint: fingerprint(currentPlan.body),
+          acceptedArtifacts,
+          artifact: candidateArtifact,
+          sourceGeneration: this.retainedRepairGeneration(plan.id) ?? null,
+        }
+        return Boolean(
+          interruptedEffects &&
+          fingerprint(currentBinding) === continuation.inputFingerprint &&
+          existsSync(continuation.workspace) &&
+          git(continuation.workspace, ["rev-parse", "HEAD"]) === candidateArtifact &&
+          artifactUnchanged(continuation.workspace, candidateArtifact),
+        )
+      } catch {
+        return false
+      }
+    }
+    const continuationEffectsCurrent = (candidateArtifact: string) => {
+      if (!continuation) return true
+      const checks = new Map(input.verification.map((check) => [check.id, check]))
+      const unresolvedEffectIDs = new Set<string>()
+      for (const effect of this.store.effects(plan.id)) {
+        if (
+          !(["intended", "uncertain"] as const).includes(effect.state as "intended" | "uncertain")
+        )
+          continue
+        if (
+          effect.task_id !== null ||
+          effect.attempt_id !== null ||
+          !effect.kind.startsWith("graph-verify:")
+        )
+          return false
+        const check = checks.get(effect.kind.slice("graph-verify:".length))
+        if (!check) return false
+        try {
+          const payload: unknown = JSON.parse(effect.payload)
+          if (
+            !isRecord(payload) ||
+            payload.artifact !== candidateArtifact ||
+            payload.identity !== candidateArtifact ||
+            payload.workspace !== continuation.workspace ||
+            (payload.sourceGeneration ?? undefined) !==
+              (continuation.sourceGeneration ?? undefined) ||
+            payload.verificationEpoch !== continuation.verificationEpoch ||
+            payload.combinedContinuationFingerprint !== continuation.inputFingerprint ||
+            fingerprint(payload.check) !== fingerprint(check)
+          )
+            return false
+          unresolvedEffectIDs.add(effect.id)
+        } catch {
+          return false
+        }
+      }
+      if (
+        verificationActivitiesForDatabase(this.store.repository.path).some(
+          (activity) =>
+            activity.metadata.planID === plan.id &&
+            activity.state === "running" &&
+            (typeof activity.metadata.effectID !== "string" ||
+              !unresolvedEffectIDs.has(activity.metadata.effectID)),
+        ) ||
+        this.store.atomic(
+          (db) => activeRetainedVerifications(db, this.directory, plan.id).length > 0,
+        ) ||
+        this.store.activeAdoptions(plan.id).length > 0
+      )
+        return false
+      return true
+    }
+    const acceptedInputsCurrent = () =>
+      acceptedNodesCurrent() &&
+      (!continuation ||
+        (continuationInputsCurrent(artifact) && continuationEffectsCurrent(artifact)))
     try {
       artifact = await combineArtifacts(this.directory, input.baseCommit, branches)
     } catch (error) {
-      if (!acceptedInputsCurrent()) return
+      if (!acceptedNodesCurrent()) return
       this.hold(plan, `Combined artifact conflict: ${errorText(error)}`)
       return
     }
-    if (!acceptedInputsCurrent()) return
+    if (!acceptedNodesCurrent()) return
+    if (
+      continuation &&
+      (!continuationInputsCurrent(artifact) || !continuationEffectsCurrent(artifact))
+    ) {
+      if (this.store.plan(plan.id)?.state === "running")
+        this.hold(
+          plan,
+          "Combined verification continuation inputs or unresolved effects changed; preserve the candidate",
+        )
+      return
+    }
+    if (!acceptedInputsCurrent()) {
+      if (continuation && this.store.plan(plan.id)?.state === "running")
+        this.hold(
+          plan,
+          "Combined verification continuation inputs or unresolved effects changed; preserve the candidate",
+        )
+      return
+    }
     const attempts = this.store.attempts(plan.id)
     const shared =
       JSON.parse(plan.body).workspaceMode === undefined
         ? attempts.at(-1)?.workspace === this.directory
         : input.workspaceMode === "shared"
-    let workspace = this.directory
-    if (!shared || !artifactUnchanged(this.directory, artifact)) {
+    let workspace = continuation?.workspace ?? this.directory
+    if (continuation) {
+      if (
+        !existsSync(workspace) ||
+        git(workspace, ["rev-parse", "HEAD"]) !== artifact ||
+        !artifactUnchanged(workspace, artifact)
+      ) {
+        this.hold(plan, "Interrupted combined verification candidate changed; preserve it")
+        return
+      }
+    } else if (!shared || !artifactUnchanged(this.directory, artifact)) {
       const existing = this.store
         .effects(plan.id)
         .find(
@@ -13160,15 +13739,16 @@ export class TaskRuntime {
     // Explicit reconciliation may follow a conclusive verifier/environment
     // failure. Keep prior effects and give the requested check run its own ID;
     // never replay uncertain effects or silently retry on ordinary ticks.
-    const verificationEpoch =
-      this.store.latestTransition<{ verificationEpoch?: number }>(
-        plan.id,
-        null,
-        "RECONCILE_REQUESTED",
-      )?.verificationEpoch ?? 0
     const receipts: CheckReceipt[] = []
     for (const check of input.verification) {
-      if (!acceptedInputsCurrent()) return
+      if (!acceptedInputsCurrent()) {
+        if (continuation && this.store.plan(plan.id)?.state === "running")
+          this.hold(
+            plan,
+            "Combined verification continuation inputs or unresolved effects changed; preserve the candidate",
+          )
+        return
+      }
       const existing = this.store.effects(plan.id).find((e) => {
         if (e.kind !== `graph-verify:${check.id}`) return false
         try {
@@ -13177,6 +13757,7 @@ export class TaskRuntime {
             workspace?: unknown
             sourceGeneration?: unknown
             verificationEpoch?: number
+            combinedContinuationFingerprint?: unknown
             check?: unknown
           }
           return (
@@ -13184,6 +13765,9 @@ export class TaskRuntime {
             payload.workspace === workspace &&
             (payload.sourceGeneration ?? undefined) === sourceGeneration &&
             (payload.verificationEpoch ?? 0) === verificationEpoch &&
+            (continuation
+              ? payload.combinedContinuationFingerprint === continuation.inputFingerprint
+              : payload.combinedContinuationFingerprint === undefined) &&
             fingerprint(payload.check) === fingerprint(check)
           )
         } catch {
@@ -13225,6 +13809,9 @@ export class TaskRuntime {
           receiptPath,
           ...(sourceGeneration ? { sourceGeneration } : {}),
           ...(verificationEpoch ? { verificationEpoch } : {}),
+          ...(continuation
+            ? { combinedContinuationFingerprint: continuation.inputFingerprint }
+            : {}),
         },
         fence,
       )
@@ -13267,6 +13854,14 @@ export class TaskRuntime {
     )
     if (missing.length) {
       this.hold(plan, `Combined artifact evidence missing: ${missing.join(", ")}`)
+      return
+    }
+    if (!acceptedInputsCurrent()) {
+      if (continuation && this.store.plan(plan.id)?.state === "running")
+        this.hold(
+          plan,
+          "Combined verification continuation inputs or unresolved effects changed; preserve the candidate",
+        )
       return
     }
     this.store.fenced(this.owner, fence, (db) => {

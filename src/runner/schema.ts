@@ -189,7 +189,7 @@ export const CommandInput = z
         "cancel-retained-verification",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel, audit/reconcile, evidence, and reviewed integration. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted retained-repair fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel, audit/reconcile, evidence, and reviewed integration. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. Without taskID, resume only continues a blocked plan after its combined check was interrupted and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -333,6 +333,21 @@ export const CommandInput = z
       })
   })
   .superRefine((command, context) => {
+    if (command.action === "resume" && !command.taskID) {
+      if (!command.reason?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["reason"],
+          message: "Plan-level combined verification resume requires a reason",
+        })
+      for (const field of ["attemptID", "workspaceMode", "baseCommit"] as const)
+        if (command[field] !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: "Plan-level combined verification resume cannot change task controls",
+          })
+    }
     if (command.action === "settle-startup")
       for (const field of ["taskID", "attemptID", "reason"] as const)
         if (!command[field])

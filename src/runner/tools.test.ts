@@ -96,8 +96,8 @@ test("authorized callers read native catalog advice; only orchestration requires
   await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
   for (const tool of tools.values()) expect(tool.options?.codemode).toBe(true)
   expect(tools.get("lz-plan-command")?.description).toContain("retained-repair")
-  expect(tools.get("lz-plan-command")?.description).toContain("unprompted repair-fence failure")
-  expect(tools.get("lz-plan-command")?.description).toContain("User cancellation")
+  expect(tools.get("lz-plan-command")?.description).toContain("runtime-fenced retained repair")
+  expect(tools.get("lz-plan-command")?.description).toContain("user cancellation is excluded")
 
   const catalog = tools.get("lz-worker-catalog")!
   expect(catalog.options).toMatchObject({ codemode: true, permission: "lz-worker-catalog" })
@@ -138,6 +138,8 @@ test("authorized callers read native catalog advice; only orchestration requires
   expect(continuityCalls).toEqual([{ sessionID: "ses_test", input: checkpoint }])
   const planCommandDescription = tools.get("lz-plan-command")!.description
   expect(planCommandDescription).toContain("expectedVersion and stable requestID")
+  expect(planCommandDescription).toContain("without taskID")
+  expect(planCommandDescription).toContain("conclusively settled combined-check interruption")
   expect(planCommandDescription).toContain("verify-retained")
   expect(planCommandDescription).toContain("without an implementation turn")
   expect(planCommandDescription).toContain("startup settlement")
