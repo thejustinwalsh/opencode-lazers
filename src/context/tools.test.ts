@@ -182,14 +182,22 @@ test("native permission and Architect role both gate refresh; reads remain avail
   ])
 })
 
-test("permitted Architect and worker can discover, invoke, and reread the one-call repository snapshot tool", async () => {
+test("registered repository tool preserves brace filters and long POSIX source paths on reread", async () => {
   const source = "## Compressed external source\nexport const feature = true;\n"
+  const processedPath = `src/${"nested".repeat(180)}\\feature.ts`
+  const include = [
+    "src/**/*.{ts,tsx}",
+    ...Array.from({ length: 19 }, (_, index) => `docs/group-${index}/**`),
+    `docs/${"long-segment".repeat(50)}/**`,
+  ]
+  let seenInclude: string | undefined
   const remote: typeof runRemoteAction = async (_repository, options) => {
+    seenInclude = options.include
     writeFileSync(options.output!, source)
     return {
       packResult: {
         processedFiles: [
-          { path: "src/feature.ts", content: "export const feature = true;", level: "compress" },
+          { path: processedPath, content: "export const feature = true;", level: "compress" },
         ],
         skippedFiles: [],
         totalCharacters: source.length,
@@ -213,14 +221,14 @@ test("permitted Architect and worker can discover, invoke, and reread the one-ca
   })
 
   const first = await Effect.runPromise(
-    tool.execute(
-      { repository: "owner/project", include: ["src/**"], exclude: [] },
-      callContext("architect"),
-    ),
+    tool.execute({ repository: "owner/project", include, exclude: [] }, callContext("architect")),
   )
+  expect(processedPath.length).toBeGreaterThan(1024)
+  expect(seenInclude).toBe(include.join(","))
   expect(first.output.source).toContain("Compressed external source")
   expect(first.output.reused).toBe(false)
-  expect(first.output.selection.files).toEqual(["src/feature.ts"])
+  expect(first.output.selection.include).toEqual(include)
+  expect(first.output.selection.files).toEqual([processedPath])
   const reread = await Effect.runPromise(
     tool.execute({ snapshotID: first.output.snapshotID }, callContext("lazers-implementor")),
   )
@@ -229,6 +237,7 @@ test("permitted Architect and worker can discover, invoke, and reread the one-ca
     source: first.output.source,
     reused: true,
   })
+  expect(reread.output.selection.files).toEqual([processedPath])
   expect(f.assertions).toEqual(["lz-repo-snapshot", "lz-repo-snapshot"])
 })
 

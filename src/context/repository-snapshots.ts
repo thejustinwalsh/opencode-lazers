@@ -193,17 +193,7 @@ export function runRepositoryWorker(
   }).finally(() => workers?.delete(worker))
 }
 
-function validRepositoryPath(path: string) {
-  return (
-    path.length > 0 &&
-    path.length <= 1024 &&
-    !isAbsolute(path) &&
-    !path.includes("\\") &&
-    !path.split("/").some((part) => part === ".." || part === "." || part.length === 0)
-  )
-}
-
-function validOmittedRepositoryPath(path: string) {
+function validRepositoryMetadataPath(path: string) {
   return (
     path.length > 0 &&
     !posix.isAbsolute(path) &&
@@ -235,14 +225,14 @@ function validMetadata(value: unknown, snapshotID: string): value is RepositoryS
     metadata.selection.repositoryIgnoreFiles === true &&
     Array.isArray(metadata.selection.files) &&
     metadata.selection.files.every(
-      (path) => typeof path === "string" && validRepositoryPath(path),
+      (path) => typeof path === "string" && validRepositoryMetadataPath(path),
     ) &&
     Array.isArray(metadata.selection.skippedFiles) &&
     metadata.selection.skippedFiles.every(
       (file) =>
         file &&
         typeof file.path === "string" &&
-        validOmittedRepositoryPath(file.path) &&
+        validRepositoryMetadataPath(file.path) &&
         typeof file.reason === "string",
     ) &&
     Number.isSafeInteger(metadata.metrics?.files) &&

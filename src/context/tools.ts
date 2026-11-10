@@ -33,7 +33,7 @@ export function nativeContextPermission(
 const paths = z.array(z.string().min(1).max(1024)).max(20).default([])
 const IndexInput = z.strictObject({ paths })
 const RefreshInput = z.strictObject({})
-const repositoryPatterns = z.array(z.string().min(1).max(512)).default([])
+const repositoryPatterns = z.array(z.string().min(1)).default([])
 const RepositorySnapshotInput = z.union([
   z.strictObject({
     repository: z.string().min(1).max(2048),

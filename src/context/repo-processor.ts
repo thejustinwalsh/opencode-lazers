@@ -3,7 +3,7 @@ import type { CliOptions } from "repomix"
 import { createReadStream, createWriteStream, statSync, unlinkSync } from "node:fs"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
-import { isAbsolute, posix } from "node:path"
+import { posix } from "node:path"
 
 export type RepoProcessingInput = {
   snapshotID: string
@@ -60,12 +60,10 @@ function safeRepositoryIdentity(value: string) {
   }
 }
 
-function validRepositoryPath(path: string) {
+function validRepositoryMetadataPath(path: string) {
   return (
     path.length > 0 &&
-    path.length <= 1024 &&
-    !isAbsolute(path) &&
-    !path.includes("\\") &&
+    !posix.isAbsolute(path) &&
     !path.split("/").some((part) => part === ".." || part === ".") &&
     !path.split("/").some((part) => part.length === 0)
   )
@@ -84,14 +82,6 @@ function repositoryUrlRef(value: string) {
   return undefined
 }
 
-function validOmittedRepositoryPath(path: string) {
-  return (
-    path.length > 0 &&
-    !posix.isAbsolute(path) &&
-    !path.split("/").some((part) => part === ".." || part === "." || part.length === 0)
-  )
-}
-
 function assertPatterns(patterns: string[]) {
   for (const pattern of patterns) {
     const hasControlCharacter = [...pattern].some((character) => {
@@ -100,13 +90,9 @@ function assertPatterns(patterns: string[]) {
     })
     if (
       !pattern ||
-      pattern.length > 512 ||
-      pattern.includes(",") ||
-      pattern.includes("\\") ||
-      pattern.startsWith("!") ||
       pattern.split("/").some((part) => part === ".." || part === ".") ||
       hasControlCharacter ||
-      pattern.startsWith("/")
+      posix.isAbsolute(pattern)
     )
       throw new Error(`Invalid repository-relative path pattern: ${pattern}`)
   }
@@ -161,7 +147,7 @@ export async function processRepositorySnapshot(
     const result = await runRemote(input.repository, options)
     const packed = result.packResult
     const sourceFilePaths = packed.processedFiles.map((file) => file.path)
-    const unsafePaths = sourceFilePaths.filter((path) => !validRepositoryPath(path))
+    const unsafePaths = sourceFilePaths.filter((path) => !validRepositoryMetadataPath(path))
     if (unsafePaths.length)
       throw new Error("Repomix returned a path outside the selected repository")
     if (sourceFilePaths.length === 0)
@@ -171,13 +157,13 @@ export async function processRepositorySnapshot(
     if (!sourceStat.isFile() || sourceStat.size === 0)
       throw new Error("Repomix returned an empty repository snapshot")
     const skippedFiles: { path: string; reason: string }[] = packed.skippedFiles.map((file) => {
-      if (!validOmittedRepositoryPath(file.path))
+      if (!validRepositoryMetadataPath(file.path))
         throw new Error("Repomix returned a skipped path outside the selected repository")
       return { path: file.path, reason: file.reason }
     })
     for (const file of packed.suspiciousFilesResults ?? []) {
       if (file.type !== "file") continue
-      if (!validOmittedRepositoryPath(file.filePath))
+      if (!validRepositoryMetadataPath(file.filePath))
         throw new Error("Repomix returned a security-omitted path outside the selected repository")
       skippedFiles.push({ path: file.filePath, reason: "security-check" })
     }
