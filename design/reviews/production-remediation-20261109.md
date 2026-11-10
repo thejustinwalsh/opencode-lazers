@@ -1074,3 +1074,38 @@ delivery. Restart interrupted the automatically woken Architect; the driver
 submitted the user's authorized roadmap continuation in Desktop, explicitly
 lifting the prior remediation pause for recovery and preserving retained work.
 That is recorded driver assistance. No direct DB repair was performed.
+
+### Post-restart execution observation (2026-11-10)
+
+The successor initially kept processing historical source-change notices and
+restated the old hold. The retired predecessor forwarded the new user instruction
+through native OpenCode, but it was still pending as a queued synthetic input.
+At Unix ms **1794332539511**, native inbox inspection found that exact recovery
+input pending. The driver used OpenCode's existing `session.inbox.update` to
+change only its delivery from `queue` to `steer`; readback at **1794332539524**
+confirmed `steer`. No input text/history was deleted and no replacement prompt
+was created. This is explicit driver assistance, not proof that historical-notice
+triage or user-input forwarding priority is autonomously correct.
+
+Architect then resumed LZ-185 through LAZERS. Native transitions show:
+
+- **1794332618242**: plan `RESUME`, cancelled → running.
+- **1794332618243**: `ATTEMPT_RESUMED`, existing attempt
+  `b1616897-5aaf-4ab0-b4f9-d71f1d0ba615`.
+- **1794332619041–1794332619170**: intended/completed native prompt effect for
+  that same attempt.
+- **1794332648231**: native active inventory contained both current Architect
+  `ses_4c6f19ce976846259c93b62d29188a71` and retained worker
+  `ses_3ce9e48f2186411685ec6afa72b79389`.
+- **1794332648239**: registered task read reported LZ-185 running, with its
+  second attempt running. Original failed attempt and candidate `7f86e4e` were
+  still recorded; the resumed attempt retained its prior usage and tool history.
+- **1794332648245**: restarted process scheduler reported one timer, 33,032
+  process-wide job runs and **zero errors**. These totals include reconstruction
+  jobs; they are not task counts or throughput measurements.
+
+Desktop was navigated to the current Architect through its native subagent
+selector. Work execution has resumed; this does not establish that LZ-185 is
+finished, that downstream dependencies have integrated, or that the eight old
+idle-lineage holds are reconciled. Those remain visible recovery obligations.
+The global renewal poison and archived-view read regression are fixed and tested.
