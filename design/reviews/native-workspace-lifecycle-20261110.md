@@ -112,3 +112,33 @@ The native-evidence hold was recorded against the exact candidate through the
 plan control. Reconciliation also started a new combined check; while it runs,
 its intended effect is live work, not proof of an uncertain failed execution.
 Do not retry, cancel or replace that check merely to clear its intended state.
+
+## Integration and cleanup completion
+
+The final combined check exited zero and the plan accepted candidate `1222f8d`.
+Architect fast-forwarded main to reviewed composition
+`a75cbcf53aef3e2470fd0ed424feccba669f8987`, preserving the accepted candidate
+as an ancestor, then recorded integration against `main` through the runtime.
+The runtime reached integrated state with no pending effects.
+
+Both original LZ-185 attempt worktrees were removed through the non-forced native
+host lifecycle. Their durable removal receipts report `removed:true`,
+`native:true`, and `cacheRetirement:"evicted"`:
+
+- `3156909f-f2b7-429d-b50c-a9c879079a18`, removal effect
+  `acb0adb0bd055211057323dc1f4452bb4600c3a9b5ff1d0f581fea98a25aeeee`.
+- `b1616897-5aaf-4ab0-b4f9-d71f1d0ba615`, removal effect
+  `34bc2fb53ab06559511a14fc9653daebb554d426de8e3377e3fbc10f7df36aac`.
+
+Both exact worker sessions were inactive and subsequently archived with native
+`session.update({archived:true})`; fresh `session.get` readbacks confirmed their
+archive timestamps and unchanged attempt metadata. No session or execution
+history was deleted. The clean, now-merged Architect composition checkout was
+also removed natively with `force:false`.
+
+Fresh native inventory, Git worktree inventory and filesystem checks confirm
+absence of both attempt checkouts, the composition checkout and the disposable
+fixture. Both Root-owned review registrations remain present at their recorded
+HEADs. After lifecycle integration, the existing steering prerequisite LZ-154
+started through normal dispatch. LZ-182 remains retained pending that real
+prerequisite; no dependency was deleted to force it to run.
