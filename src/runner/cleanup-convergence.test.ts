@@ -583,6 +583,32 @@ test("unchanged cleanup holds skip expensive probes across 38 plans and 50 check
         cost: null,
         messages: [],
       }) satisfies HostSession
+    for (const record of records) {
+      const attempt = store.attempts(record.planID)[0]!
+      sessions.set(record.sessionID, {
+        id: record.sessionID,
+        projectID: "project",
+        directory: attempt.workspace,
+        agent: "lazers-implementor",
+        metadata: { lazersAttemptID: record.attemptID },
+        archived: false,
+        busy: false,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        turn: { inputID: attempt.message_id, state: "completed" },
+        background: {
+          state: "unknown",
+          source: "experimental.idle",
+          reason: "Current native background observation is unavailable",
+        },
+        outcome: "succeeded",
+        tokens: 0,
+        tools: 0,
+        cost: null,
+        messages: [],
+      })
+    }
     sessions.set("ses-cleanup-scale-owner", architectSession("ses-cleanup-scale-owner", root))
     const host = {
       worktrees: async () => {

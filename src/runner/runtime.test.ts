@@ -7365,7 +7365,7 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
 })
 
-test("cleanup retries require detailed worker inactivity and never rerun product checks", async () => {
+test("cleanup preserves current activity and unknown holds but accepts authoritative worker absence", async () => {
   const f = fixture({ commit: true })
   await runPlan(f)
   await drive(f.runtime)
@@ -7402,9 +7402,9 @@ test("cleanup retries require detailed worker inactivity and never rerun product
     expect(await f.host.worktrees()).toContain(worktree)
   }
 
-  f.sessions.delete(attempt.session_id)
-  await retryCleanup("cleanup-missing-session")
-  f.sessions.set(attempt.session_id, worker)
+  worker.busy = true
+  await retryCleanup("cleanup-busy-worker")
+  worker.busy = false
   worker.pendingInput = true
   await retryCleanup("cleanup-pending-input")
   worker.pendingInput = false
@@ -7428,15 +7428,18 @@ test("cleanup retries require detailed worker inactivity and never rerun product
   delete worker.pendingInput
   delete worker.pendingPermissions
   delete worker.pendingForms
+  // RunnerHost null means the native adapter proved this session is absent;
+  // it is not an unavailable observation or an invented zero-background report.
+  f.sessions.delete(attempt.session_id)
   await f.runtime.command(
     {
-      requestID: "cleanup-conclusive-idle",
+      requestID: "cleanup-after-worker-termination",
       planID: plan.id,
       expectedVersion: f.store.plan(plan.id)!.version,
       action: "integrated",
       artifact,
       targetBranch: "main",
-      reason: "Detailed native observation confirms cleanup is safe",
+      reason: "The merged worker has terminated and its native session is absent",
     },
     "owner",
   )
@@ -7455,6 +7458,62 @@ test("cleanup retries require detailed worker inactivity and never rerun product
   expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
     workerAdmissionsBefore,
   )
+})
+
+test("location retirement uses active project ownership outside the display plan listing", async () => {
+  const f = fixture()
+  const plan = f.store.plan(f.receipt.planID)!
+  const workspace = join(`${f.root}.worktrees`, "active-owner-checkout")
+  const attemptID = crypto.randomUUID()
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_attempts(
+           id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,
+           policy,state,started_at,token_count,tool_count,retry_count,cost
+         ) VALUES(?,?,?,?,?,?,?,?,NULL,?,'running',?,NULL,0,0,NULL)`,
+      )
+      .run(
+        attemptID,
+        plan.id,
+        f.tasks[0]!.id,
+        1,
+        "ses_cleanup_active_owner",
+        "msg_cleanup_active_owner",
+        workspace,
+        f.input.baseCommit,
+        JSON.stringify({}),
+        Date.now(),
+      ),
+  )
+  expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toContain(attemptID)
+
+  const displayedPlans = spyOn(f.store, "plans").mockReturnValue([])
+  const originalWorktrees = f.host.worktrees
+  let inventoryReads = 0
+  let retireCalls = 0
+  f.host.worktrees = async () => {
+    inventoryReads++
+    return originalWorktrees()
+  }
+  f.host.retireWorktreeLocation = async () => {
+    retireCalls++
+    return "not-loaded"
+  }
+  const internals = f.runtime as unknown as {
+    retireCleanedWorktreeLocation(
+      plan: NonNullable<ReturnType<typeof f.store.plan>>,
+      workspace: string,
+      cleanupCurrent: () => boolean,
+    ): Promise<string>
+  }
+
+  await expect(internals.retireCleanedWorktreeLocation(plan, workspace, () => true)).resolves.toBe(
+    "reserved-by-other-attempt",
+  )
+  expect(displayedPlans).not.toHaveBeenCalled()
+  expect(inventoryReads).toBe(0)
+  expect(retireCalls).toBe(0)
 })
 
 test("explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance", async () => {

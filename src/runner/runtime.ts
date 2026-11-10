@@ -13563,10 +13563,10 @@ export class TaskRuntime {
       throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
     for (const attempt of attempts) {
       const session = await this.host.session(attempt.session_id, { messages: true })
-      if (!session)
-        throw new Error(
-          "Owned worker session is unavailable; preserve the worktree for reconciliation",
-        )
+      // RunnerHost null is authoritative native not-found. Current session and
+      // background uncertainty still fail closed below; a missing historical
+      // worker cannot keep its already-merged checkout forever.
+      if (!session) continue
       const blockers: string[] = []
       if (session.id !== attempt.session_id) blockers.push("session identity changed")
       if (session.projectID !== this.projectID) blockers.push("project identity changed")
@@ -13628,15 +13628,7 @@ export class TaskRuntime {
     const target = resolve(workspace)
     if (target === resolve(this.directory)) return "shared-checkout"
     if (!cleanupCurrent()) return "superseded"
-    if (
-      this.store
-        .plans()
-        .some(
-          (other) =>
-            other.id !== plan.id &&
-            this.store.attempts(other.id).some((attempt) => resolve(attempt.workspace) === target),
-        )
-    )
+    if (this.store.activeProjectAttempts().some((attempt) => resolve(attempt.workspace) === target))
       return "reserved-by-other-attempt"
     try {
       const native = await this.host.worktrees()
