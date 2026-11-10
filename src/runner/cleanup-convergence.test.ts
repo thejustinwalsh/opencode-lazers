@@ -440,7 +440,7 @@ test("unchanged cleanup holds skip expensive probes across 38 plans and 50 check
     workspaces: string[]
     sourceIDs: string[]
   }> = []
-  const clock = Date.now()
+  let clock = Date.now()
 
   const gitCalls = () =>
     existsSync(tracePath)
@@ -670,7 +670,10 @@ test("unchanged cleanup holds skip expensive probes across 38 plans and 50 check
     )
 
     process.env.GIT_TRACE = tracePath
-    for (let tick = 0; tick < 8; tick++) await runtime.tick()
+    for (let tick = 0; tick < 6; tick++) {
+      if (tick > 0) clock += 10_000
+      await runtime.tick()
+    }
     expect(records).toHaveLength(38)
     expect(records.flatMap((record) => record.workspaces)).toHaveLength(50)
     expect(inventoryReads).toBe(0)
@@ -977,7 +980,13 @@ test("bounded native fallback detects an external dirty edit without deleting th
     expect(gitCalls()).toBe(0)
     expect(existsSync(workspace)).toBe(true)
 
-    clock += 10_001
+    clock += 59_999
+    await runtime.tick()
+    expect(inventoryReads).toBe(0)
+    expect(detailedSessionReads).toBe(0)
+    expect(gitCalls()).toBe(0)
+
+    clock += 1
     await runtime.tick()
     expect(inventoryReads).toBeGreaterThan(0)
     expect(detailedSessionReads).toBeGreaterThan(0)

@@ -239,7 +239,9 @@ function pathEntryExists(path: string): boolean {
   }
 }
 export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
-const WORKTREE_CLEANUP_FALLBACK_MS = 10_000
+// Recheck external/native facts periodically, but don't repeat full safety
+// observations on every ordinary scheduler tick when durable facts are stable.
+const WORKTREE_CLEANUP_FALLBACK_MS = 60_000
 
 export type TaskRuntimeOptions = {
   architectIdleWindowMs?: number
