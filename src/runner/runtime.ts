@@ -371,6 +371,10 @@ export class TaskRuntime {
   private readonly sourceNoticeReconciliationLocks = new Set<string>()
   private readonly retainedVerificationAborts = new Map<string, AbortController>()
   private readonly retainedVerificationRuns = new Map<string, Promise<void>>()
+  private readonly terminalRetainedVerificationCleanupChecks = new Map<
+    string,
+    { generation: number; updatedAt: number; checkedAt: number }
+  >()
   private readonly now: () => number
   private readonly architectIdleWindowMs: number
   private readonly architectPromptHook: boolean
@@ -7178,10 +7182,7 @@ export class TaskRuntime {
             this.retainedVerificationRuns.delete(operation.id)
         }
       }
-      const terminalCleanupPlanIDs = this.store
-        .plans()
-        .filter((plan) => ["cleanup-blocked", "cancelled"].includes(plan.state))
-        .map((plan) => plan.id)
+      const terminalCleanupPlanIDs = this.store.terminalCleanupPlanIDs()
       for (let plan of this.store
         .plans()
         .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))
@@ -11414,9 +11415,26 @@ export class TaskRuntime {
   }
 
   private async reconcileTerminalRetainedVerifications(fence: number): Promise<void> {
-    const operations = this.store
+    const terminalOperations = this.store
       .atomic((db) => retainedVerificationsForProject(db, this.directory))
       .filter((operation) => ["accepted", "failed", "cancelled"].includes(operation.state))
+    const terminalIDs = new Set(terminalOperations.map((operation) => operation.id))
+    for (const operationID of this.terminalRetainedVerificationCleanupChecks.keys())
+      if (!terminalIDs.has(operationID))
+        this.terminalRetainedVerificationCleanupChecks.delete(operationID)
+    const checkedAt = this.now()
+    const operations = terminalOperations.filter((operation) => {
+      if (!this.terminalRetainedVerificationCleanupRecordedComplete(operation)) return true
+      const previous = this.terminalRetainedVerificationCleanupChecks.get(operation.id)
+      if (
+        !previous ||
+        previous.generation !== operation.generation ||
+        previous.updatedAt !== operation.updatedAt
+      )
+        return true
+      const elapsed = checkedAt - previous.checkedAt
+      return elapsed < 0 || elapsed >= WORKTREE_CLEANUP_FALLBACK_MS
+    })
     if (!operations.length) return
 
     let native: string[]
@@ -11428,6 +11446,19 @@ export class TaskRuntime {
         .filter((line) => line.startsWith("worktree "))
         .map((line) => resolve(line.slice("worktree ".length)))
     } catch {
+      for (const operation of operations) {
+        const current = this.store.atomic((db) => retainedVerification(db, operation.id))
+        if (
+          current?.generation === operation.generation &&
+          current.updatedAt === operation.updatedAt &&
+          this.terminalRetainedVerificationCleanupRecordedComplete(current)
+        )
+          this.terminalRetainedVerificationCleanupChecks.set(operation.id, {
+            generation: current.generation,
+            updatedAt: current.updatedAt,
+            checkedAt,
+          })
+      }
       return
     }
 
@@ -11597,7 +11628,30 @@ export class TaskRuntime {
           )
         })
       }
+      const current = this.store.atomic((db) => retainedVerification(db, refreshed.id))
+      if (
+        cleanupComplete &&
+        current?.generation === refreshed.generation &&
+        ["accepted", "failed", "cancelled"].includes(current.state) &&
+        this.terminalRetainedVerificationCleanupRecordedComplete(current)
+      )
+        this.terminalRetainedVerificationCleanupChecks.set(current.id, {
+          generation: current.generation,
+          updatedAt: current.updatedAt,
+          checkedAt: this.now(),
+        })
+      else this.terminalRetainedVerificationCleanupChecks.delete(refreshed.id)
     }
+  }
+
+  private terminalRetainedVerificationCleanupRecordedComplete(operation: RetainedVerification) {
+    const workspaceSettled = (workspace: string | null, state: string | null) =>
+      workspace === null ? state === null : state === "removed"
+    return (
+      operation.cleanupState === "complete" &&
+      workspaceSettled(operation.taskWorkspace, operation.taskWorkspaceState) &&
+      workspaceSettled(operation.combinedWorkspace, operation.combinedWorkspaceState)
+    )
   }
 
   private async reconcileInterruptedRetainedCheckSetup(

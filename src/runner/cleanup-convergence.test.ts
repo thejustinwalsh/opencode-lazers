@@ -13,6 +13,8 @@ import { nativeHost } from "./native.ts"
 import { NativeIdleStore } from "./native-idle.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
+import type { RetainedVerification } from "./retained-verification/schema.ts"
+import { createRetainedVerification } from "./retained-verification/store.ts"
 import type { EffectRow, PlanRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
@@ -419,7 +421,166 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
   }
 })
 
-test("unchanged cleanup holds skip expensive probes across 38 plans and 50 checkouts", async () => {
+test("completed retained verification cleanup probes on fallback and after runtime restart", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-retained-cleanup-probe-project-")))
+  const dataDirectory = realpathSync(
+    mkdtempSync(join(tmpdir(), "lazers-retained-cleanup-probe-data-")),
+  )
+  const databasePath = join(dataDirectory, "tasks.sqlite")
+  const tracePath = join(dataDirectory, "git-trace.log")
+  const priorGitTrace = process.env.GIT_TRACE
+  const removedWorkspace = canonicalProjectWorktreePath(root, "already-removed")
+  let repository: TaskRepository | undefined
+  let runtime: TaskRuntime | undefined
+  let clock = Date.now()
+  let inventoryReads = 0
+
+  const gitCalls = () =>
+    existsSync(tracePath)
+      ? readFileSync(tracePath, "utf8").split(/\r?\n/).filter(Boolean).length
+      : 0
+  const reconcile = (candidate: TaskRuntime) =>
+    (
+      candidate as unknown as {
+        reconcileTerminalRetainedVerifications(fence: number): Promise<void>
+      }
+    ).reconcileTerminalRetainedVerifications(1)
+
+  try {
+    git(root, ["init", "--initial-branch=main"])
+    writeFileSync(join(root, "seed.txt"), "baseline\n")
+    git(root, ["add", "seed.txt"])
+    git(root, [
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      "baseline",
+    ])
+    const base = git(root, ["rev-parse", "HEAD"])
+    repository = new TaskRepository(databasePath, root)
+    const store = new RunnerStore(repository)
+    const proposal = validProposal()
+    const task = repository.insert({
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      revision: 1,
+      status: "submitted",
+      createdAt: new Date().toISOString(),
+      provenance: {
+        projectID: "project",
+        projectDirectory: root,
+        workspaceDirectory: root,
+        sessionID: "ses-retained-cleanup-probe-owner",
+        startingRevision: { kind: "git", commit: base },
+      },
+      proposal,
+    })
+    const planID = store.submit(
+      {
+        requestID: "retained-cleanup-probe-plan",
+        objective: "Avoid repeated inventory for already completed retained cleanup",
+        baseCommit: base,
+        workspaceMode: "isolated",
+        nodes: [{ taskID: task.id, revision: 1 }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: proposal.verification,
+        acceptance: proposal.acceptance,
+      },
+      "ses-retained-cleanup-probe-owner",
+    ).planID
+    const operation: RetainedVerification = {
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      generation: 1,
+      projectID: "project",
+      projectDirectory: root,
+      planID,
+      planRevision: 1,
+      planVersion: 1,
+      owner: "ses-retained-cleanup-probe-owner",
+      ownerEpoch: 0,
+      taskID: task.id,
+      taskRevision: 1,
+      attemptID: crypto.randomUUID(),
+      originalSessionID: "ses-retained-cleanup-probe-worker",
+      originalMessageID: "msg-retained-cleanup-probe-input",
+      originalWorkspace: root,
+      artifact: "a".repeat(40),
+      combinedArtifact: null,
+      combinedInputFingerprint: null,
+      taskWorkspace: removedWorkspace,
+      taskWorkspaceState: "removed",
+      combinedWorkspace: null,
+      combinedWorkspaceState: null,
+      inputFingerprint: "retained-cleanup-probe-input",
+      environmentIdentity: "{}",
+      reason: "Completed cleanup fixture",
+      state: "accepted",
+      holdReason: null,
+      cleanupState: "complete",
+      createdAt: clock,
+      updatedAt: clock,
+    }
+    repository.atomic((db) => createRetainedVerification(db, root, operation))
+    const host = {
+      worktrees: async () => {
+        inventoryReads++
+        return []
+      },
+    } as unknown as RunnerHost
+    runtime = new TaskRuntime(store, host, "project", undefined, {
+      now: () => clock,
+      requestTick: () => Promise.resolve(),
+    })
+    process.env.GIT_TRACE = tracePath
+
+    await reconcile(runtime)
+    expect(inventoryReads).toBe(1)
+    const firstGitCalls = gitCalls()
+    expect(firstGitCalls).toBeGreaterThan(0)
+
+    await reconcile(runtime)
+    expect(inventoryReads).toBe(1)
+    expect(gitCalls()).toBe(firstGitCalls)
+    clock += 59_999
+    await reconcile(runtime)
+    expect(inventoryReads).toBe(1)
+    expect(gitCalls()).toBe(firstGitCalls)
+
+    clock += 1
+    await reconcile(runtime)
+    expect(inventoryReads).toBe(2)
+    expect(gitCalls()).toBeGreaterThan(firstGitCalls)
+
+    await runtime.stop()
+    runtime = undefined
+    repository.close()
+    repository = new TaskRepository(databasePath, root)
+    const reopened = new RunnerStore(repository)
+    runtime = new TaskRuntime(reopened, host, "project", undefined, {
+      now: () => clock,
+      requestTick: () => Promise.resolve(),
+    })
+    const beforeRestartProbe = gitCalls()
+    await reconcile(runtime)
+    expect(inventoryReads).toBe(3)
+    expect(gitCalls()).toBeGreaterThan(beforeRestartProbe)
+  } finally {
+    await runtime?.stop()
+    repository?.close()
+    if (priorGitTrace === undefined) delete process.env.GIT_TRACE
+    else process.env.GIT_TRACE = priorGitTrace
+    rmSync(`${root}.worktrees`, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true })
+    rmSync(dataDirectory, { recursive: true, force: true })
+  }
+})
+
+test("cleanup discovery exceeds the display window while unchanged holds skip expensive probes", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-cleanup-scale-project-")))
   const worktreeParent = `${root}.worktrees`
   const dataDirectory = realpathSync(mkdtempSync(join(tmpdir(), "lazers-cleanup-scale-data-")))
@@ -565,6 +726,16 @@ test("unchanged cleanup holds skip expensive probes across 38 plans and 50 check
       })
       records.push({ taskID: task.id, planID, attemptID, sessionID, workspaces, sourceIDs })
     }
+
+    repository.atomic((db) => {
+      const insert = db.query(
+        "INSERT INTO runner_plans VALUES(?,?,?,1,1,'accepted',?,NULL,NULL,NULL)",
+      )
+      for (let index = 0; index < 1_001; index++)
+        insert.run(crypto.randomUUID(), root, "owner", JSON.stringify({ priority: 1 }))
+    })
+    expect(store.plans()).toHaveLength(1_000)
+    expect(store.plans().map((plan) => plan.id)).not.toContain(records[0]!.planID)
 
     const architectSession = (id: string, directory: string, metadata?: Record<string, unknown>) =>
       ({
