@@ -73,9 +73,23 @@ test("resume exposes only the exact task and attempt bindings for retained-repai
     false,
   )
   expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(true)
-  expect(CommandInput.shape.action.description).toContain(
-    "unprompted retained-repair fence failure",
-  )
+  expect(CommandInput.shape.action.description).toContain("unprompted repair-fence failure")
+})
+
+test("plan-level resume requires a reason and excludes task or candidate controls", () => {
+  const command = {
+    requestID: "resume-interrupted-combined-check",
+    planID: crypto.randomUUID(),
+    expectedVersion: 7,
+    action: "resume" as const,
+    reason: "Continue the exact accepted artifacts after the settled interruption.",
+  }
+  expect(CommandInput.parse(command)).toEqual(command)
+  expect(CommandInput.safeParse({ ...command, reason: undefined }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, attemptID: crypto.randomUUID() }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, workspaceMode: "shared" }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, baseCommit: "a".repeat(40) }).success).toBe(false)
+  expect(CommandInput.shape.action.description).toContain("Without taskID")
 })
 
 test("Architect continuity preserves exact authored decisions and bounds the handoff", () => {

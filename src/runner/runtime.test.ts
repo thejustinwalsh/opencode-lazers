@@ -49,7 +49,12 @@ import {
 import { inspectPlan } from "./inspection.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
-import { verificationActivitiesForDatabase } from "./verification-activities.ts"
+import {
+  forgetVerificationActivity,
+  startVerificationActivity,
+  verificationActivitiesForDatabase,
+  verificationActivityKey,
+} from "./verification-activities.ts"
 import { registerRunnerTools } from "./tools.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
 
@@ -4183,6 +4188,61 @@ function reopenRuntime(f: ReturnType<typeof fixture>) {
   })
   return { store, runtime }
 }
+async function prepareInterruptedCombinedCheck() {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    combinedCheckCommand:
+      "printf started > .lazers-combined-started; while [ ! -f .lazers-combined-release ]; do sleep 0.02; done; exit 0",
+  })
+  await runPlan(f)
+  let interruptedEffect: ReturnType<RunnerStore["effects"]>[number] | undefined
+  for (let index = 0; index < 30; index++) {
+    await f.runtime.tick()
+    const effect = f.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.kind === "graph-verify:combined")
+    const activity = effect
+      ? verificationActivitiesForDatabase(f.repository.path).find(
+          (candidate) => candidate.metadata.effectID === effect.id,
+        )
+      : undefined
+    if (effect && activity?.state === "running") {
+      interruptedEffect = effect
+      break
+    }
+    const taskChecks = verificationActivitiesForDatabase(f.repository.path).filter(
+      (candidate) =>
+        candidate.metadata.planID === f.receipt.planID &&
+        typeof candidate.metadata.taskID === "string" &&
+        candidate.state === "running",
+    )
+    await Promise.all(taskChecks.map((candidate) => candidate.settled))
+  }
+  if (!interruptedEffect) throw new Error("Combined verification did not start")
+  const payload = JSON.parse(interruptedEffect.payload) as {
+    workspace: string
+    receiptPath: string
+  }
+  await waitForPath(join(payload.workspace, ".lazers-combined-started"))
+  await f.runtime.stop()
+  rmSync(join(payload.workspace, ".lazers-combined-started"), { force: true })
+  rmSync(join(payload.workspace, ".lazers-combined-release"), { force: true })
+
+  const reopened = reopenRuntime(f)
+  await drive(reopened.runtime, 4)
+  const interrupted = reopened.store
+    .effects(f.receipt.planID)
+    .find((candidate) => candidate.id === interruptedEffect.id)!
+  if (interrupted.state !== "uncertain")
+    throw new Error("Combined interruption was not durably reconciled as uncertain")
+  return {
+    f,
+    reopened,
+    interrupted,
+    receiptPath: payload.receiptPath,
+    planID: f.receipt.planID,
+  }
+}
 async function acceptPlan(
   f: ReturnType<typeof fixture>,
   planID: ReturnType<typeof crypto.randomUUID>,
@@ -4644,6 +4704,260 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   expect(checks.find((item) => item.id === effect.id)?.state).toBe("failed")
   expect(readFileSync(receiptPath, "utf8")).toContain('"aborted":true')
   expect(readFileSync(join(f.root, "check-started"), "utf8")).toBe("started")
+})
+
+test("registered plan command resumes settled combined verification without replaying accepted workers", async () => {
+  const state = await prepareInterruptedCombinedCheck()
+  const { f, reopened, interrupted, receiptPath, planID } = state
+  const originalReceipt = interrupted.receipt!
+  const originalDiskReceipt = readFileSync(receiptPath, "utf8")
+  const taskArtifact = reopened.store.nodes(planID)[0]!.artifact
+  const command = {
+    requestID: "resume-combined-after-interruption",
+    planID,
+    expectedVersion: reopened.store.plan(planID)!.version,
+    action: "resume" as const,
+    reason: "Continue the accepted artifacts after the settled combined-check interruption.",
+  }
+  expect(reopened.store.plan(planID)?.state).toBe("blocked")
+  expect(reopened.store.nodes(planID).map((node) => node.state)).toEqual(["accepted"])
+
+  const registered = await registeredPlanCommand(reopened.runtime)
+  // The caller loses this reply when the owner process is replaced.
+  await registered.execute(command)
+  await reopened.runtime.stop()
+
+  const replayedRuntime = reopenRuntime(f)
+  const reply = await (await registeredPlanCommand(replayedRuntime.runtime)).execute(command)
+  const serializedReply =
+    typeof reply.content === "string"
+      ? reply.content
+      : reply.content?.find((item) => item.type === "text")?.text
+  if (!serializedReply) throw new Error("Registered plan command did not return its replay receipt")
+  const replay = JSON.parse(serializedReply)
+  expect(replay).toMatchObject({
+    status: "combined-verification-resumed",
+    planID,
+    artifact: expect.any(String),
+    verificationEpoch: command.expectedVersion + 1,
+  })
+  const oldAfterReplay = replayedRuntime.store
+    .effects(planID)
+    .find((effect) => effect.id === interrupted.id)!
+  expect(oldAfterReplay.state).toBe("failed")
+  expect(oldAfterReplay.receipt).toBe(originalReceipt)
+  expect(readFileSync(receiptPath, "utf8")).toBe(originalDiskReceipt)
+  expect(
+    replayedRuntime.store
+      .effects(planID)
+      .filter((effect) => effect.kind === "graph-verify:combined"),
+  ).toHaveLength(1)
+
+  await replayedRuntime.runtime.tick()
+  const combinedChecksBeforeCompletion = replayedRuntime.store
+    .effects(planID)
+    .filter((effect) => effect.kind === "graph-verify:combined")
+  const fresh = combinedChecksBeforeCompletion.find((effect) => effect.id !== interrupted.id)!
+  const freshPayload = JSON.parse(fresh.payload) as {
+    artifact: string
+    workspace: string
+    verificationEpoch: number
+    combinedContinuationFingerprint: string
+    receiptPath: string
+  }
+  await waitForPath(join(freshPayload.workspace, ".lazers-combined-started"))
+  const freshActivity = verificationActivitiesForDatabase(f.repository.path).find(
+    (activity) => activity.metadata.effectID === fresh.id,
+  )!
+  writeFileSync(join(freshPayload.workspace, ".lazers-combined-release"), "release\n")
+  await freshActivity.settled
+  rmSync(join(freshPayload.workspace, ".lazers-combined-started"), { force: true })
+  rmSync(join(freshPayload.workspace, ".lazers-combined-release"), { force: true })
+  await drive(replayedRuntime.runtime, 8)
+
+  const plan = replayedRuntime.store.plan(planID)!
+  const checks = replayedRuntime.store
+    .effects(planID)
+    .filter((effect) => effect.kind === "graph-verify:combined")
+  const freshCompleted = checks.find((effect) => effect.id === fresh.id)!
+  expect(plan.state).toBe("accepted")
+  expect(plan.artifact).toBe(freshPayload.artifact)
+  expect(freshCompleted.state).toBe("completed")
+  expect(freshPayload.artifact).toBe(
+    (JSON.parse(interrupted.payload) as { artifact: string }).artifact,
+  )
+  expect(freshPayload.verificationEpoch).toBeGreaterThan(0)
+  expect(freshPayload.workspace).toBe(
+    (JSON.parse(interrupted.payload) as { workspace: string }).workspace,
+  )
+  expect(freshPayload.combinedContinuationFingerprint).toBeTruthy()
+  const freshReceipt = (JSON.parse(freshCompleted.receipt!) as { check: CheckReceipt }).check
+  expect(freshReceipt).toMatchObject({ artifact: freshPayload.artifact, exitCode: 0 })
+  expect(freshReceipt.aborted).not.toBe(true)
+  expect(freshPayload.receiptPath).not.toBe(receiptPath)
+  expect(checks).toHaveLength(2)
+  expect(checks.find((effect) => effect.id === interrupted.id)?.receipt).toBe(originalReceipt)
+  expect(replayedRuntime.store.nodes(planID)[0]?.artifact).toBe(taskArtifact)
+  expect(replayedRuntime.store.attempts(planID)).toHaveLength(1)
+  expect(
+    replayedRuntime.store.effects(planID).filter((effect) => effect.kind === "verify:content"),
+  ).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(readFileSync(receiptPath, "utf8")).toBe(originalDiskReceipt)
+  expect(readFileSync(receiptPath, "utf8")).toContain('"aborted":true')
+})
+
+test("combined verification resume rejects wrong authority, changed candidates and unresolved activity", async () => {
+  const { f, reopened, interrupted, planID } = await prepareInterruptedCombinedCheck()
+  const plan = reopened.store.plan(planID)!
+  const baseCommand = {
+    planID,
+    expectedVersion: plan.version,
+    action: "resume" as const,
+    reason: "Continue the exact accepted artifacts after interruption.",
+  }
+  const command = (requestID: string) => ({ ...baseCommand, requestID })
+  const originalNodeArtifact = reopened.store.nodes(planID)[0]!.artifact!
+  const originalReceipt = interrupted.receipt!
+
+  await expect(reopened.runtime.command(command("wrong-owner"), "foreign")).rejects.toThrow(
+    "Only the plan owner",
+  )
+  await expect(
+    reopened.runtime.command(
+      { ...command("stale-plan"), expectedVersion: plan.version - 1 },
+      "owner",
+    ),
+  ).rejects.toThrow("Stale plan version")
+  f.sessions.get("owner")!.projectID = "foreign-project"
+  await expect(reopened.runtime.command(command("wrong-project"), "owner")).rejects.toThrow(
+    "current same-project Architect",
+  )
+  f.sessions.get("owner")!.projectID = "project"
+
+  reopened.store.atomic((db) =>
+    db
+      .query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?")
+      .run(f.base, planID, f.tasks[0]!.id),
+  )
+  await expect(reopened.runtime.command(command("changed-candidate"), "owner")).rejects.toThrow(
+    "retain its accepted artifact",
+  )
+  reopened.store.atomic((db) =>
+    db
+      .query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?")
+      .run(originalNodeArtifact, planID, f.tasks[0]!.id),
+  )
+
+  const interruptedPayload = JSON.parse(interrupted.payload) as { workspace: string }
+  const changedCandidate = join(interruptedPayload.workspace, ".lazers-candidate-change")
+  writeFileSync(changedCandidate, "candidate changed\n")
+  await expect(reopened.runtime.command(command("changed-workspace"), "owner")).rejects.toThrow(
+    "candidate changed",
+  )
+  rmSync(changedCandidate, { force: true })
+
+  const missingCleanup = JSON.parse(originalReceipt) as { result: { check: CheckReceipt } }
+  delete missingCleanup.result.check.processCleanup
+  reopened.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET receipt=? WHERE id=?")
+      .run(JSON.stringify(missingCleanup), interrupted.id),
+  )
+  await expect(
+    reopened.runtime.command(command("missing-cleanup-evidence"), "owner"),
+  ).rejects.toThrow("conclusively settled")
+  reopened.store.atomic((db) =>
+    db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(originalReceipt, interrupted.id),
+  )
+
+  const unsettled = JSON.parse(originalReceipt) as { result: { check: CheckReceipt } }
+  unsettled.result.check.processCleanup = {
+    state: "uncertain",
+    capability: "process-group",
+    detail: "simulated unsettled combined check",
+  }
+  reopened.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET receipt=? WHERE id=?")
+      .run(JSON.stringify(unsettled), interrupted.id),
+  )
+  await expect(reopened.runtime.command(command("unsettled-resources"), "owner")).rejects.toThrow(
+    "conclusively settled",
+  )
+  reopened.store.atomic((db) =>
+    db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(originalReceipt, interrupted.id),
+  )
+
+  const liveActivity = startVerificationActivity({
+    databasePath: f.repository.path,
+    key: verificationActivityKey(f.repository.path, "live-combined-probe"),
+    identity: "live-combined-probe",
+    owner: "test-runtime",
+    metadata: { kind: "effect", planID, projectDirectory: f.root },
+    run: (signal) =>
+      new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      ),
+  }).activity
+  await Promise.resolve()
+  await expect(reopened.runtime.command(command("live-activity"), "owner")).rejects.toThrow(
+    "live verification activity",
+  )
+  liveActivity.controller.abort()
+  await liveActivity.settled
+  forgetVerificationActivity(liveActivity.key, liveActivity.identity)
+
+  const unrelatedEffectID = crypto.randomUUID()
+  reopened.store.atomic((db) =>
+    db
+      .query("INSERT INTO runner_effects VALUES(?,?,NULL,NULL,?,'uncertain',?,NULL,1)")
+      .run(unrelatedEffectID, planID, "unrelated", JSON.stringify({ uncertainty: true })),
+  )
+  await expect(reopened.runtime.command(command("unrelated-effect"), "owner")).rejects.toThrow(
+    "unrelated unresolved effects",
+  )
+  reopened.store.atomic((db) =>
+    db.query("DELETE FROM runner_effects WHERE id=?").run(unrelatedEffectID),
+  )
+
+  expect(reopened.store.plan(planID)?.state).toBe("blocked")
+  expect(
+    reopened.store.effects(planID).filter((effect) => effect.kind === "graph-verify:combined"),
+  ).toHaveLength(1)
+  expect(
+    reopened.store.effects(planID).find((effect) => effect.id === interrupted.id)?.receipt,
+  ).toBe(originalReceipt)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+
+  const resumed = command("unrelated-effect-after-admission")
+  await reopened.runtime.command(resumed, "owner")
+  await reopened.runtime.tick()
+  const fresh = reopened.store
+    .effects(planID)
+    .find((effect) => effect.kind === "graph-verify:combined" && effect.id !== interrupted.id)!
+  const freshPayload = JSON.parse(fresh.payload) as { workspace: string }
+  const freshActivity = verificationActivitiesForDatabase(f.repository.path).find(
+    (activity) => activity.metadata.effectID === fresh.id,
+  )!
+  await waitForPath(join(freshPayload.workspace, ".lazers-combined-started"))
+  reopened.store.atomic((db) =>
+    db
+      .query("INSERT INTO runner_effects VALUES(?,?,NULL,NULL,?,'uncertain',?,NULL,1)")
+      .run(unrelatedEffectID, planID, "unrelated", JSON.stringify({ uncertainty: true })),
+  )
+  writeFileSync(join(freshPayload.workspace, ".lazers-combined-release"), "release\n")
+  await freshActivity.settled
+  rmSync(join(freshPayload.workspace, ".lazers-combined-started"), { force: true })
+  rmSync(join(freshPayload.workspace, ".lazers-combined-release"), { force: true })
+  await drive(reopened.runtime, 4)
+  expect(reopened.store.plan(planID)?.state).not.toBe("accepted")
+  expect(reopened.store.plan(planID)?.artifact).toBe(null)
+  expect(reopened.store.effects(planID).find((effect) => effect.id === fresh.id)?.state).toBe(
+    "completed",
+  )
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
 })
 
 test.each([false, true])(
