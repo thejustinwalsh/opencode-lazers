@@ -677,10 +677,11 @@ test("progress diagnostics are project-isolated and process scheduler totals are
     foreignProject = false
 
     archived = true
-    await expect(Effect.runPromise(handlers!.progressDiagnostics({ scope }))).rejects.toThrow(
-      "Observation scope is unavailable",
-    )
-    expect(processSamples).toBe(1)
+    // S8: archival retires execution, not permission to read project telemetry.
+    expect(await Effect.runPromise(handlers!.progressDiagnostics({ scope }))).toMatchObject({
+      processSchedulerTotals: { status: "available" },
+    })
+    expect(processSamples).toBe(2)
     archived = false
 
     agent = "lazers-implementor"
@@ -691,7 +692,7 @@ test("progress diagnostics are project-isolated and process scheduler totals are
       status: "unavailable",
       reason: "architect-only",
     })
-    expect(processSamples).toBe(1)
+    expect(processSamples).toBe(2)
 
     agent = "architect"
     const getStarted = Promise.withResolvers<void>()
@@ -716,7 +717,7 @@ test("progress diagnostics are project-isolated and process scheduler totals are
       await new Promise<void>((resolve) => setTimeout(resolve, 5))
     expect(permissionCalls).toBe(permissionCountAfterCancel)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    expect(processSamples).toBe(1)
+    expect(processSamples).toBe(2)
   } finally {
     sharedScheduler.snapshot = originalSnapshot
     fixture.close()

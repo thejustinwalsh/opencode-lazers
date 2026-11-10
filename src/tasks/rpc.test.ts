@@ -395,7 +395,8 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
           agent: "architect",
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: Date.now(), updated: Date.now() },
+          // S8: archived session views retain native-authorized activity reads.
+          time: { created: Date.now(), updated: Date.now(), archived: 1 },
           location: { directory: actorDirectory },
         }),
     },

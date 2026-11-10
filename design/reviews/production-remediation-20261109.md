@@ -1055,3 +1055,22 @@ call. This proves scheduler-driven renewal and Architect activation, not task
 completion. It was automatic source-watcher activation, not an isolated-server
 launch or a manual database correction. Post-restart task progress still needs
 observation.
+
+### S8 archived monitor read regression (2026-11-10)
+
+After supported service restart and Desktop Restart, the old Architect window
+remained open. Both `topology` and `currentActivity` rejected its archived actor,
+turning the whole task view into unknown activity even though the native session,
+project and read permission still existed. Archival is execution lifecycle, not
+read authorization. Removed only the archived-actor rejection in these read-only
+paths; native permission, exact actor/project identity, location and worker
+binding checks remain. Mutation/start authorization is unchanged. The updated
+real-SQLite registered tests failed on both paths before the correction, then
+passed **22 tests / 296 assertions** after it. `bun run verify` passed.
+
+The restarted service reported one shared scheduler timer and **zero errors**
+after 1,990 process-wide job runs. This is scheduler activity, not proof of task
+delivery. Restart interrupted the automatically woken Architect; the driver
+submitted the user's authorized roadmap continuation in Desktop, explicitly
+lifting the prior remediation pause for recovery and preserving retained work.
+That is recorded driver assistance. No direct DB repair was performed.

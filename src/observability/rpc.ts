@@ -73,7 +73,6 @@ async function authorize(
     !session ||
     session.id !== scope.sessionID ||
     session.projectID !== projectID ||
-    session.time.archived !== undefined ||
     !session.agent
   )
     throw new Error("Observation scope is unavailable")

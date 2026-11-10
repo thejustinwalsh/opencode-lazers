@@ -108,7 +108,6 @@ export function registerTaskReads(
                 !actor ||
                 actor.id !== request.sessionID ||
                 actor.projectID !== runtime.projectID ||
-                actor.time.archived !== undefined ||
                 !actor.agent
               )
                 throw new Error("Task activity scope is unavailable")
