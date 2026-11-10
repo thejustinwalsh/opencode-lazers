@@ -23,6 +23,11 @@ import ignore from "ignore"
 import type { Ignore } from "ignore"
 import type { TaskRepository } from "../storage.ts"
 import type { TaskProposal } from "../task.ts"
+import {
+  RepositorySnapshotStore,
+  type RepositorySnapshotWorker,
+  type RepositorySnapshotRequest,
+} from "./repository-snapshots.ts"
 
 type FileRecord = { path: string; stamp: string; content: string; outline: string; bytes: number }
 type Snapshot = {
@@ -133,6 +138,7 @@ export class ProjectIndex {
   private readonly cacheID: string
   private readonly projectID: string
   private readonly projectDirectory: string
+  private readonly repositorySnapshots: RepositorySnapshotStore
   private counter?: import("repomix").TokenCounter
   constructor(
     readonly root: string,
@@ -140,11 +146,17 @@ export class ProjectIndex {
     readonly repository: TaskRepository,
     readonly allow: Permission,
     private readonly host?: ContextHost,
+    repositoryWorker?: RepositorySnapshotWorker,
   ) {
     this.root = realpathSync(root)
     this.projectID = host?.projectID ?? repository.projectDirectory
     this.projectDirectory = repository.projectDirectory
     mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 })
+    this.repositorySnapshots = new RepositorySnapshotStore(
+      join(cacheDirectory, "repositories"),
+      repository,
+      repositoryWorker,
+    )
     repository.atomic((db) =>
       db.exec(
         `CREATE TABLE IF NOT EXISTS context_workspaces(workspace TEXT PRIMARY KEY,id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_cache(workspace TEXT NOT NULL,selection TEXT NOT NULL,stamp TEXT NOT NULL,file TEXT NOT NULL,PRIMARY KEY(workspace,selection)); CREATE TABLE IF NOT EXISTS context_publications(project_id TEXT NOT NULL,project_directory TEXT NOT NULL,owner_session TEXT NOT NULL,workspace TEXT NOT NULL,snapshot_id TEXT NOT NULL,PRIMARY KEY(project_id,project_directory,owner_session));`,
@@ -767,8 +779,17 @@ export class ProjectIndex {
       deferred,
     }
   }
+  async repositorySnapshot(principal: Principal, input: RepositorySnapshotRequest) {
+    principal.signal?.throwIfAborted()
+    return await this.repositorySnapshots.create(input, principal.signal)
+  }
+  repositorySnapshotRead(snapshotID: string, principal: Principal) {
+    principal.signal?.throwIfAborted()
+    return this.repositorySnapshots.read(snapshotID, principal.signal)
+  }
   close() {
     this.counter?.free()
     this.counter = undefined
+    this.repositorySnapshots.close()
   }
 }

@@ -12,6 +12,9 @@ import { ProjectIndex } from "./index.ts"
 import { nativeContextPermission, registerContextTools } from "./tools.ts"
 import { registerTaskTools } from "../tools.ts"
 import { validProposal } from "../../test/proposal.ts"
+import { runRemoteAction } from "repomix"
+import type { RepositorySnapshotWorker } from "./repository-snapshots.ts"
+import { processRepositorySnapshot } from "./repo-processor.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -33,7 +36,7 @@ afterEach(() => {
   for (const clean of cleanup.splice(0)) clean()
 })
 
-async function setup(deniedAction?: string) {
+async function setup(deniedAction?: string, repositoryWorker?: RepositorySnapshotWorker) {
   const root = mkdtempSync(join(tmpdir(), "lazers-context-tools-"))
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "README.md"), "cached project source")
@@ -44,6 +47,8 @@ async function setup(deniedAction?: string) {
     join(root, "cache"),
     repository,
     async (path) => !deniedPaths.has(path),
+    undefined,
+    repositoryWorker,
   )
   const tools = new Map<string, RegisteredTool>()
   const assertions: string[] = []
@@ -175,6 +180,83 @@ test("native permission and Architect role both gate refresh; reads remain avail
     "lz-project-index",
     "lz-project-read",
   ])
+})
+
+test("registered repository tool preserves brace filters and long POSIX source paths on reread", async () => {
+  const source = "## Compressed external source\nexport const feature = true;\n"
+  const processedPath = `src/${"nested".repeat(180)}\\feature.ts`
+  const include = [
+    "src/**/*.{ts,tsx}",
+    ...Array.from({ length: 19 }, (_, index) => `docs/group-${index}/**`),
+    `docs/${"long-segment".repeat(50)}/**`,
+  ]
+  let seenInclude: string | undefined
+  const remote: typeof runRemoteAction = async (_repository, options) => {
+    seenInclude = options.include
+    writeFileSync(options.output!, source)
+    return {
+      packResult: {
+        processedFiles: [
+          { path: processedPath, content: "export const feature = true;", level: "compress" },
+        ],
+        skippedFiles: [],
+        totalCharacters: source.length,
+        totalTokens: 20,
+      } as unknown as Awaited<ReturnType<typeof runRemoteAction>>["packResult"],
+      config: {} as Awaited<ReturnType<typeof runRemoteAction>>["config"],
+    }
+  }
+  const worker: RepositorySnapshotWorker = (input) => processRepositorySnapshot(input, remote)
+  const f = await setup(undefined, worker)
+  const tool = f.tools.get("lz-repo-snapshot")!
+  expect(
+    tool.description.startsWith(
+      "When researching external repositories or dependencies, get a compressed source snapshot in one call.",
+    ),
+  ).toBe(true)
+  expect(tool.options).toMatchObject({
+    codemode: true,
+    pinned: true,
+    permission: "lz-repo-snapshot",
+  })
+
+  const first = await Effect.runPromise(
+    tool.execute({ repository: "owner/project", include, exclude: [] }, callContext("architect")),
+  )
+  expect(processedPath.length).toBeGreaterThan(1024)
+  expect(seenInclude).toBe(include.join(","))
+  expect(first.output.source).toContain("Compressed external source")
+  expect(first.output.reused).toBe(false)
+  expect(first.output.selection.include).toEqual(include)
+  expect(first.output.selection.files).toEqual([processedPath])
+  const reread = await Effect.runPromise(
+    tool.execute({ snapshotID: first.output.snapshotID }, callContext("lazers-implementor")),
+  )
+  expect(reread.output).toMatchObject({
+    snapshotID: first.output.snapshotID,
+    source: first.output.source,
+    reused: true,
+  })
+  expect(reread.output.selection.files).toEqual([processedPath])
+  expect(f.assertions).toEqual(["lz-repo-snapshot", "lz-repo-snapshot"])
+})
+
+test("repository snapshot permission denial prevents any fetch or packing", async () => {
+  let fetches = 0
+  const f = await setup("lz-repo-snapshot", async () => {
+    fetches++
+  })
+  const tool = f.tools.get("lz-repo-snapshot")!
+  await expect(
+    Effect.runPromise(
+      tool.execute(
+        { repository: "owner/project", include: [], exclude: [] },
+        callContext("lazers-implementor"),
+      ),
+    ),
+  ).rejects.toThrow("Permission denied")
+  expect(fetches).toBe(0)
+  expect(f.assertions).toEqual(["lz-repo-snapshot"])
 })
 
 test("native permission denial prevents Architect refresh from creating a snapshot", async () => {
