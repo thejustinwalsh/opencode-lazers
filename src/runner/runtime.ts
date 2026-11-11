@@ -5823,14 +5823,10 @@ export class TaskRuntime {
       | undefined
     if (!continuation || priorContinuation) {
       const source = previous?.projectID === this.projectID ? previous : current
-      const parentID =
-        source?.projectID === this.projectID && source.directory === this.directory
-          ? source.id
-          : null
       const model = source?.projectID === this.projectID ? source.model : undefined
       next = {
         session_id: sessionID(),
-        parent_id: parentID,
+        parent_id: null,
         directory: this.directory,
         model: model ? JSON.stringify(model) : (continuation?.model ?? null),
       }
@@ -6837,7 +6833,7 @@ export class TaskRuntime {
       session.id === renewal.successor_session_id &&
       session.projectID === this.projectID &&
       session.directory === renewal.directory &&
-      session.parentID === renewal.previous_session_id &&
+      (session.parentID === undefined || session.parentID === renewal.previous_session_id) &&
       sameNativeModel(session.model, model) &&
       session.metadata?.lazersContinuation === true &&
       session.metadata.lazersSourceSessionID === renewal.previous_session_id &&
@@ -7046,7 +7042,6 @@ export class TaskRuntime {
             await this.host
               .createArchitect({
                 id: renewal.successor_session_id,
-                parentID: renewal.previous_session_id,
                 directory: renewal.directory,
                 model: JSON.parse(renewal.model),
                 title: `LAZERS · ${knownLabel ?? this.renewalLabel(renewal)}`.slice(0, 120),
