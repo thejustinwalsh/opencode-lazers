@@ -25,6 +25,14 @@ export const SourceReviewBinding = z.strictObject({
 })
 export type SourceReviewBinding = z.infer<typeof SourceReviewBinding>
 
+export const SourceQuarantineVerificationBindingSchema = z.strictObject({
+  requestID: z.string().min(1).max(200),
+  reviewInput: SourceReviewBinding.nullable(),
+})
+export type SourceQuarantineVerificationBinding = z.infer<
+  typeof SourceQuarantineVerificationBindingSchema
+>
+
 export function sourceReviewBinding(row: Pick<SourceQuarantine, "review_input_json">) {
   return row.review_input_json == null
     ? undefined
@@ -189,6 +197,61 @@ export function sourceReservationExcluded(
     return false
   return (
     !destination.workspace || !samePhysicalWorkspace(destination.workspace, quarantine.workspace)
+  )
+}
+
+/** Bind retained checks to the exact sealed source quarantine and installed guard. */
+export function sourceQuarantineVerificationBinding(
+  store: RunnerStore,
+  input: {
+    planID: string
+    owner: string
+    attempt: Pick<
+      AttemptRow,
+      "id" | "plan_id" | "state" | "artifact" | "session_id" | "message_id" | "workspace"
+    >
+    artifact: string
+  },
+): SourceQuarantineVerificationBinding | undefined {
+  const { attempt } = input
+  const quarantine = sourceQuarantine(store, attempt.id)
+  if (
+    !quarantine ||
+    attempt.plan_id !== input.planID ||
+    attempt.state !== "verifying" ||
+    attempt.artifact !== input.artifact ||
+    quarantine.plan_id !== input.planID ||
+    quarantine.requested_owner !== input.owner ||
+    quarantine.session_id !== attempt.session_id ||
+    quarantine.assigned_message_id !== attempt.message_id ||
+    quarantine.workspace !== attempt.workspace ||
+    quarantine.phase !== "sealed" ||
+    quarantine.hold_reason !== null ||
+    !sourceGuardInstalled(store, quarantine.workspace)
+  )
+    return undefined
+
+  try {
+    return SourceQuarantineVerificationBindingSchema.parse({
+      requestID: quarantine.request_id,
+      reviewInput: sourceReviewBinding(quarantine) ?? null,
+    })
+  } catch {
+    return undefined
+  }
+}
+
+export function sourceQuarantineVerificationBindingMatches(
+  store: RunnerStore,
+  input: Parameters<typeof sourceQuarantineVerificationBinding>[1] & {
+    expected: SourceQuarantineVerificationBinding
+  },
+): boolean {
+  const current = sourceQuarantineVerificationBinding(store, input)
+  return Boolean(
+    current &&
+    current.requestID === input.expected.requestID &&
+    JSON.stringify(current.reviewInput) === JSON.stringify(input.expected.reviewInput),
   )
 }
 
