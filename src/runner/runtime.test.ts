@@ -2324,6 +2324,49 @@ test("scope amendment requires this plan's unfinished task and explicit additive
   expect(f.store.plan(planID)!.version).toBe(1)
 })
 
+test("Architect run wakes the scheduler before periodic reconciliation", async () => {
+  const f = fixture({ delayed: true })
+  const dispatched = Promise.withResolvers<void>()
+  const registration = sharedScheduler.register(
+    schedulerProjectKey(f.repository.path, f.root, "project"),
+    {
+      intervalMs: 300_000,
+      run: async () => {
+        await f.runtime.tick()
+        dispatched.resolve()
+      },
+      onError: (error) => dispatched.reject(error),
+    },
+    300_000,
+  )
+  let wakes = 0
+  const runtime = new TaskRuntime(f.store, f.host, "project", undefined, {
+    wakeScheduler: () => {
+      wakes++
+      expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+      registration.request()
+    },
+  })
+  try {
+    const tool = await registeredPlanCommand(runtime)
+    const command = {
+      requestID: "architect-run",
+      planID: f.receipt.planID,
+      expectedVersion: f.receipt.version,
+      action: "run",
+    }
+    const receipt = await tool.execute(command)
+    expect(await tool.execute(command)).toEqual(receipt)
+    await dispatched.promise
+    expect(wakes).toBe(1)
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+  } finally {
+    await registration.dispose()
+    await runtime.stop()
+  }
+})
+
 test("shared scheduler routes manual Start through its elected runtime instead of a second lease owner", async () => {
   const f = fixture({ shared: true, startOnly: true, delayed: true })
   const leader = new TaskRuntime(f.store, f.host, "project")

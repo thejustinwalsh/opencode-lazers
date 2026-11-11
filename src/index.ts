@@ -115,6 +115,7 @@ export default Plugin.define({
         architectIdleWindowMs: architectIdleWindowMs(ctx.options.architectIdleWindowMs),
         architectPromptHook: true,
         requestTick: () => (scheduler ? scheduler.runNow() : runtime.tick()),
+        wakeScheduler: () => scheduler?.request(),
       })
       yield* ctx.session.hook("prompt", (prompt) =>
         Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
