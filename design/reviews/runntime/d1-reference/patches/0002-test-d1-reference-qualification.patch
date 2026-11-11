@@ -1,0 +1,966 @@
+From 735fbd94195a8c2a7c40a12aec6b86fa34ebd48c Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Wed, 11 Nov 2026 18:13:06 -0500
+Subject: [PATCH] test(zoo): qualify D1 with pinned GPU vectors
+
+---
+ .../playground/d1/reference-vectors.json      | 228 ++++++++
+ .../runntime/test/core/gpu/eval.gpu.test.ts   |   7 -
+ packages/runntime/test/gpu.ts                 |  23 +-
+ packages/runntime/test/zoo/d1/prompt.test.ts  |  82 +++
+ .../test/zoo/d1/qualification.gpu.test.ts     | 546 ++++++++++++++++++
+ 5 files changed, 876 insertions(+), 10 deletions(-)
+ create mode 100644 packages/runntime/playground/d1/reference-vectors.json
+ create mode 100644 packages/runntime/test/zoo/d1/prompt.test.ts
+ create mode 100644 packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+
+diff --git a/packages/runntime/playground/d1/reference-vectors.json b/packages/runntime/playground/d1/reference-vectors.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..a0e2c627129a86b6a9245c2a391fba9b0179a2d1
+--- /dev/null
++++ b/packages/runntime/playground/d1/reference-vectors.json
+@@ -0,0 +1,228 @@
++{
++  "schemaVersion": 1,
++  "model": "LiquidAI/d1-omni-600M",
++  "revision": "02b55d7076f15129e59ab3f94783f32c4b088674",
++  "reference": {
++    "library": "transformers",
++    "version": "5.22.2",
++    "torch": "2.15.0",
++    "device": "cpu",
++    "dtype": "float32",
++    "platform": "macOS-27.2-arm64-arm-64bit"
++  },
++  "tokenizer": {
++    "revision": "02b55d7076f15129e59ab3f94783f32c4b088674",
++    "bosId": 1,
++    "specialTokenIds": {
++      "<|startoftext|>": 1,
++      "<|reserved_7|>": 17,
++      "<|reserved_8|>": 18,
++      "<|reserved_9|>": 19,
++      "<|reserved_10|>": 20,
++      "<|reserved_11|>": 21,
++      "<|mask|>": 16
++    },
++    "inputs": [
++      {
++        "text": "I was charged twice this month. Please refund one of them.",
++        "ids": [550, 953, 15418, 11126, 1033, 5805, 523, 13831, 53467, 1235, 803, 1377, 523]
++      },
++      {
++        "text": "Is the customer asking for a refund?",
++        "ids": [4940, 779, 13608, 14065, 875, 768, 53467, 540]
++      },
++      {
++        "text": " false: no, the statement does not hold",
++        "ids": [4831, 535, 1295, 521, 779, 8294, 2177, 1014, 3965]
++      },
++      {
++        "text": " true: yes, the statement holds",
++        "ids": [3347, 535, 18672, 521, 779, 8294, 10995]
++      },
++      {
++        "text": "I am comparing phone prices and do not need any refunds or billing help.",
++        "ids": [
++          550, 1283, 19761, 9161, 11128, 810, 1112, 1014, 1595, 1523, 53467, 592, 933, 5363, 800,
++          1801, 523
++        ]
++      },
++      {
++        "text": "The production sign-in page returns HTTP 500 for every user.",
++        "ids": [1098, 3893, 1723, 4086, 4738, 12116, 29700, 730, 4291, 875, 1973, 5196, 523]
++      },
++      {
++        "text": "Which team should handle this?",
++        "ids": [28828, 3410, 1753, 9936, 1033, 540]
++      },
++      {
++        "text": " billing: Charges, refunds, invoices",
++        "ids": [5363, 800, 535, 61958, 774, 521, 53467, 592, 521, 60827, 1864]
++      },
++      {
++        "text": " technical: App or site faults",
++        "ids": [10017, 535, 5135, 933, 3475, 50022]
++      },
++      {
++        "text": " fraud: Suspected unauthorised use",
++        "ids": [24744, 535, 11631, 7937, 59006, 2851, 1517]
++      },
++      {
++        "text": "An outage has taken down the production sign-in service for every user. This blocks all active work, and there is no workaround.",
++        "ids": [
++          2797, 1230, 1047, 1178, 4281, 2208, 779, 3893, 1723, 4086, 3714, 875, 1973, 5196, 523,
++          1470, 12785, 1113, 5592, 1336, 521, 810, 1413, 856, 1295, 64240, 523
++        ]
++      },
++      {
++        "text": "How urgent is this incident?",
++        "ids": [4023, 31149, 856, 1033, 13509, 540]
++      },
++      {
++        "text": " level 0: Routine maintenance with no user impact",
++        "ids": [2119, 730, 525, 535, 27734, 976, 12003, 916, 1295, 5196, 3616]
++      },
++      {
++        "text": " level 1: Low impact and work can continue normally",
++        "ids": [2119, 730, 526, 535, 14322, 3616, 810, 1336, 1011, 5452, 12465]
++      },
++      {
++        "text": " level 2: Some users are slowed but have a workaround",
++        "ids": [2119, 730, 527, 535, 4260, 7039, 938, 49789, 1203, 1052, 768, 64240]
++      },
++      {
++        "text": " level 3: Many users are blocked but a workaround exists",
++        "ids": [2119, 730, 528, 535, 6405, 7039, 938, 26781, 1203, 768, 64240, 9647]
++      },
++      {
++        "text": " level 4: All users are blocked and there is no workaround",
++        "ids": [2119, 730, 529, 535, 2595, 7039, 938, 26781, 810, 1413, 856, 1295, 64240]
++      },
++      {
++        "text": "Task review: acceptance requires explicit overflow errors, serialized execution, cleanup after rejected WebGPU readback, and a fresh decision after device loss. The submission silently truncates input, shares the default executor, does not serialize calls, and leaves uploads alive after readback failure.",
++        "ids": [
++          14736, 4202, 535, 23781, 6835, 13508, 42072, 11752, 521, 16464, 1884, 18156, 521, 50265,
++          1720, 20691, 5220, 24958, 562, 2062, 3321, 521, 810, 768, 7448, 6177, 1720, 6625, 4133,
++          523, 941, 38120, 4598, 2652, 41327, 1338, 6136, 521, 19190, 779, 7335, 64256, 521, 2177,
++          1014, 64318, 10296, 521, 810, 6977, 832, 53934, 16344, 1720, 2062, 3321, 8315, 523
++        ]
++      },
++      {
++        "text": "Does this submission meet every stated acceptance criterion?",
++        "ids": [29589, 1033, 38120, 4159, 1973, 9519, 23781, 37352, 540]
++      }
++    ]
++  },
++  "probabilityTolerance": 0.001,
++  "cases": [
++    {
++      "id": "refund-positive",
++      "state": "I was charged twice this month. Please refund one of them.",
++      "question": {
++        "type": "noul",
++        "instructions": "Is the customer asking for a refund?"
++      },
++      "reference": {
++        "probabilities": [0.9978748559951782, 0.0021251440048217773],
++        "answer": "yes",
++        "inputTokens": 47,
++        "temperatureKey": "noul:2",
++        "temperature": 1.6663223505020142
++      }
++    },
++    {
++      "id": "refund-negative",
++      "state": "I am comparing phone prices and do not need any refunds or billing help.",
++      "question": {
++        "type": "noul",
++        "instructions": "Is the customer asking for a refund?"
++      },
++      "reference": {
++        "probabilities": [0.005074768792837858, 0.9949252312071621],
++        "answer": "no",
++        "inputTokens": 51,
++        "temperatureKey": "noul:2",
++        "temperature": 1.6663223505020142
++      }
++    },
++    {
++      "id": "choice-forward",
++      "state": "The production sign-in page returns HTTP 500 for every user.",
++      "question": {
++        "type": "choice",
++        "instructions": "Which team should handle this?",
++        "criteria": {
++          "billing": "Charges, refunds, invoices",
++          "technical": "App or site faults",
++          "fraud": "Suspected unauthorised use"
++        }
++      },
++      "reference": {
++        "probabilities": [0.006900118198245764, 0.9878022074699402, 0.005297638010233641],
++        "answer": "technical",
++        "inputTokens": 56,
++        "temperatureKey": "choice:3-5",
++        "temperature": 1.3998981714248657
++      }
++    },
++    {
++      "id": "choice-reversed",
++      "state": "The production sign-in page returns HTTP 500 for every user.",
++      "question": {
++        "type": "choice",
++        "instructions": "Which team should handle this?",
++        "criteria": {
++          "fraud": "Suspected unauthorised use",
++          "technical": "App or site faults",
++          "billing": "Charges, refunds, invoices"
++        }
++      },
++      "reference": {
++        "probabilities": [0.0072953407652676105, 0.985370397567749, 0.00733425235375762],
++        "answer": "technical",
++        "inputTokens": 56,
++        "temperatureKey": "choice:3-5",
++        "temperature": 1.3998981714248657
++      }
++    },
++    {
++      "id": "incident-rubric",
++      "state": "An outage has taken down the production sign-in service for every user. This blocks all active work, and there is no workaround.",
++      "question": {
++        "type": "score",
++        "instructions": "How urgent is this incident?",
++        "criteria": [
++          "Routine maintenance with no user impact",
++          "Low impact and work can continue normally",
++          "Some users are slowed but have a workaround",
++          "Many users are blocked but a workaround exists",
++          "All users are blocked and there is no workaround"
++        ]
++      },
++      "reference": {
++        "probabilities": [
++          0.17572106420993805, 0.06221180781722069, 0.09098970890045166, 0.1728348582983017,
++          0.4982426166534424
++        ],
++        "answer": "4",
++        "inputTokens": 111,
++        "temperatureKey": "score:3-5",
++        "temperature": 1.7301132678985596
++      }
++    },
++    {
++      "id": "task-review",
++      "state": "Task review: acceptance requires explicit overflow errors, serialized execution, cleanup after rejected WebGPU readback, and a fresh decision after device loss. The submission silently truncates input, shares the default executor, does not serialize calls, and leaves uploads alive after readback failure.",
++      "question": {
++        "type": "noul",
++        "instructions": "Does this submission meet every stated acceptance criterion?"
++      },
++      "reference": {
++        "probabilities": [0.09012345224618912, 0.9098765477538109],
++        "answer": "no",
++        "inputTokens": 93,
++        "temperatureKey": "noul:2",
++        "temperature": 1.6663223505020142
++      }
++    }
++  ]
++}
+diff --git a/packages/runntime/test/core/gpu/eval.gpu.test.ts b/packages/runntime/test/core/gpu/eval.gpu.test.ts
+index 376975d6fb5cb35aec26e131b98707c0f61960ee..7edc9d88a8465c6ce9106c8a929e186e84417c1a 100644
+--- a/packages/runntime/test/core/gpu/eval.gpu.test.ts
++++ b/packages/runntime/test/core/gpu/eval.gpu.test.ts
+@@ -72,9 +72,6 @@ interface GraphCase {
+   leftAfterCapture?: string[];
+ }
+ 
+-/** The 3-row gatherRows index list. */
+-const INDEX_LIST = '12 B, usage 140';
+-
+ /** Attention with every key visible, q [T, COLS] against k and v
+  *  [COLS, COLS]: one head over all COLS columns. */
+ const FULL_ATTENTION = {
+@@ -107,10 +104,6 @@ const GRAPHS: GraphCase[] = [
+   {
+     name: 'gatherRows',
+     build: ({ x }) => gatherRows(add(x, 1), [3, 0, 3]),
+-    // gatherRows uploads its index list on every dispatch and never destroys it.
+-    leftPerRun: [INDEX_LIST],
+-    leftOnDispose: [INDEX_LIST],
+-    leftAfterCapture: [INDEX_LIST],
+   },
+   {
+     name: 'flash attention',
+diff --git a/packages/runntime/test/gpu.ts b/packages/runntime/test/gpu.ts
+index 1e227c10c992986485dbde8b576ae91c1f7acf6c..d7e0cc10264a6edaa9a29d538e9d806e0f777089 100644
+--- a/packages/runntime/test/gpu.ts
++++ b/packages/runntime/test/gpu.ts
+@@ -12,23 +12,40 @@ import {
+ } from '../src/core/gpu/eval.ts';
+ import type { Value, ValueMeta } from '../src/core/graph/value.ts';
+ 
+-/** Every GPU buffer created on this page and not destroyed yet. Counting
+- *  starts when this module loads, so a leak check compares two snapshots,
+- *  never an absolute count. */
++/** GPU buffers whose device has not been destroyed or whose buffer has not
++ *  been destroyed yet. Counting starts at module load, so checks compare
++ *  snapshots rather than an absolute count. */
+ const live = new Set<GPUBuffer>();
++const buffersPerDevice = new WeakMap<GPUDevice, Set<GPUBuffer>>();
++const devicePerBuffer = new WeakMap<GPUBuffer, GPUDevice>();
+ // Node tests import this file for randomF32 and have no WebGPU to wrap.
+ if (typeof GPUDevice !== 'undefined') {
+   const createBuffer = GPUDevice.prototype.createBuffer;
++  const destroyDevice = GPUDevice.prototype.destroy;
+   const destroyBuffer = GPUBuffer.prototype.destroy;
+   GPUDevice.prototype.createBuffer = function (desc) {
+     const buf = createBuffer.call(this, desc);
+     live.add(buf);
++    let buffers = buffersPerDevice.get(this);
++    if (buffers === undefined) {
++      buffers = new Set();
++      buffersPerDevice.set(this, buffers);
++    }
++    buffers.add(buf);
++    devicePerBuffer.set(buf, this);
+     return buf;
+   };
+   GPUBuffer.prototype.destroy = function () {
+     live.delete(this);
++    const device = devicePerBuffer.get(this);
++    if (device !== undefined) buffersPerDevice.get(device)?.delete(this);
+     destroyBuffer.call(this);
+   };
++  GPUDevice.prototype.destroy = function () {
++    for (const buffer of buffersPerDevice.get(this) ?? []) live.delete(buffer);
++    buffersPerDevice.delete(this);
++    destroyDevice.call(this);
++  };
+ }
+ 
+ /** A snapshot of the buffers alive now. */
+diff --git a/packages/runntime/test/zoo/d1/prompt.test.ts b/packages/runntime/test/zoo/d1/prompt.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..91d5e0796a16c615ae7fc42771150301dac2ce63
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/prompt.test.ts
+@@ -0,0 +1,82 @@
++import { describe, expect, it } from 'vitest';
++import { encodeQuestion, type D1Tokenizer } from '../../../src/zoo/d1/prompt.ts';
++
++const tokenIds = new Map<string, number>();
++const tokenizer: D1Tokenizer = {
++  encode(text) {
++    return text
++      .trim()
++      .split(/\s+/)
++      .filter(Boolean)
++      .map((token) => tokenId(token));
++  },
++  tokenId,
++  bosId: 1,
++};
++
++function tokenId(token: string): number {
++  let id = tokenIds.get(token);
++  if (id === undefined) {
++    id = tokenIds.size + 2;
++    tokenIds.set(token, id);
++  }
++  return id;
++}
++
++describe('D1 prompt packing', () => {
++  it('keeps complete state, instruction, and option text when it fits', () => {
++    const result = encodeQuestion(
++      tokenizer,
++      'customer was charged twice',
++      {
++        type: 'choice',
++        instructions: 'select a team',
++        criteria: { billing: 'charges refunds invoices', technical: 'app site faults' },
++      },
++      40,
++    );
++
++    for (const word of [
++      'customer',
++      'charged',
++      'twice',
++      'select',
++      'team',
++      'billing:',
++      'invoices',
++      'technical:',
++      'faults',
++    ]) {
++      expect(result.ids).toContain(tokenId(word));
++    }
++    expect(result.markers).toHaveLength(2);
++    expect(result.ids[result.markers[0]!]).toBe(tokenId('<|mask|>'));
++    expect(result.ids[result.markers[1]!]).toBe(tokenId('<|mask|>'));
++  });
++
++  it('rejects an overlong state instead of truncating it', () => {
++    expect(() =>
++      encodeQuestion(
++        tokenizer,
++        'one two three four five six seven eight nine ten',
++        { type: 'noul', instructions: 'is it true?' },
++        16,
++      ),
++    ).toThrow('D1 prompt exceeds its 16-token context');
++  });
++
++  it('rejects overlong instructions and options instead of truncating them', () => {
++    expect(() =>
++      encodeQuestion(
++        tokenizer,
++        '',
++        {
++          type: 'choice',
++          instructions: 'choose the best matching option from this long instruction',
++          criteria: { first: 'a lengthy option description that cannot be cut' },
++        },
++        24,
++      ),
++    ).toThrow('D1 prompt exceeds its 24-token context');
++  });
++});
+diff --git a/packages/runntime/test/zoo/d1/qualification.gpu.test.ts b/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..bb41b5355fadc56cb089c81bad372238cc23f43b
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+@@ -0,0 +1,546 @@
++/** Opt-in pinned D1 reference qualification on a real WebGPU device. */
++
++import { expect, it } from 'vitest';
++import tgpu from 'typegpu';
++import {
++  fromSafetensors,
++  type LazyStateDict,
++  type LazyTensor,
++} from '../../../src/core/weights/safetensors.ts';
++import { initRunntime } from '../../../src/core/gpu/eval.ts';
++import { createD1Decider } from '../../../src/zoo/d1/decider.ts';
++import type { Answer, D1Tokenizer, Question } from '../../../src/zoo/d1/prompt.ts';
++import { buffersSince, liveBuffers, gpu } from '../../gpu.ts';
++import vectors from '../../../playground/d1/reference-vectors.json';
++
++declare global {
++  interface ImportMetaEnv {
++    readonly VITE_D1_QUALIFICATION_MODE?: string;
++  }
++  interface ImportMeta {
++    readonly env: ImportMetaEnv;
++  }
++}
++
++const MODEL = 'LiquidAI/d1-omni-600M';
++const REVISION = '02b55d7076f15129e59ab3f94783f32c4b088674';
++const MODEL_URL = `https://huggingface.co/${MODEL}/resolve/${REVISION}/model.safetensors`;
++const MODE = import.meta.env.VITE_D1_QUALIFICATION_MODE;
++const TOLERANCE = 0.001;
++
++interface ReferenceCase {
++  id: string;
++  state: string;
++  question: Question;
++  reference: {
++    probabilities: number[];
++    answer: string;
++    inputTokens: number;
++    temperatureKey: string;
++    temperature: number;
++  };
++}
++
++interface ReferenceCorpus {
++  model: string;
++  revision: string;
++  probabilityTolerance: number;
++  tokenizer: {
++    revision: string;
++    bosId: number;
++    specialTokenIds: Record<string, number>;
++    inputs: { text: string; ids: number[] }[];
++  };
++  cases: ReferenceCase[];
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++
++function isReferenceCase(value: unknown): value is ReferenceCase {
++  if (!isRecord(value)) return false;
++  const candidate = value;
++  const reference = candidate.reference;
++  if (!isRecord(reference)) return false;
++  return (
++    typeof candidate.id === 'string' &&
++    typeof candidate.state === 'string' &&
++    isRecord(candidate.question) &&
++    typeof candidate.question.type === 'string' &&
++    typeof candidate.question.instructions === 'string' &&
++    Array.isArray(reference.probabilities) &&
++    reference.probabilities.every((probability) => typeof probability === 'number') &&
++    typeof reference.answer === 'string' &&
++    typeof reference.inputTokens === 'number' &&
++    typeof reference.temperatureKey === 'string' &&
++    typeof reference.temperature === 'number'
++  );
++}
++
++function isTokenizerInput(value: unknown): value is { text: string; ids: number[] } {
++  return (
++    isRecord(value) &&
++    typeof value.text === 'string' &&
++    Array.isArray(value.ids) &&
++    value.ids.every((id) => typeof id === 'number')
++  );
++}
++
++function isReferenceCorpus(value: unknown): value is ReferenceCorpus {
++  if (!isRecord(value)) return false;
++  const candidate = value;
++  const tokenizer = candidate.tokenizer;
++  if (!isRecord(tokenizer) || !isRecord(tokenizer.specialTokenIds)) return false;
++  return (
++    candidate.model === MODEL &&
++    candidate.revision === REVISION &&
++    candidate.probabilityTolerance === TOLERANCE &&
++    tokenizer.revision === REVISION &&
++    typeof tokenizer.bosId === 'number' &&
++    Object.values(tokenizer.specialTokenIds).every((id) => typeof id === 'number') &&
++    Array.isArray(tokenizer.inputs) &&
++    tokenizer.inputs.every(isTokenizerInput) &&
++    Array.isArray(candidate.cases) &&
++    candidate.cases.every(isReferenceCase)
++  );
++}
++
++function requireReferenceCorpus(value: unknown): ReferenceCorpus {
++  if (!isReferenceCorpus(value)) throw new Error('pinned D1 reference corpus is malformed');
++  return value;
++}
++
++function makeTokenizer(corpus: ReferenceCorpus): D1Tokenizer {
++  const encodings = new Map(corpus.tokenizer.inputs.map(({ text, ids }) => [text, ids]));
++  return {
++    encode: (text) => {
++      const ids = encodings.get(text);
++      if (ids === undefined)
++        throw new Error(`missing pinned tokenizer input ${JSON.stringify(text)}`);
++      return [...ids];
++    },
++    tokenId: (token) => {
++      const id = corpus.tokenizer.specialTokenIds[token];
++      if (typeof id !== 'number') throw new Error(`missing D1 token ${token}`);
++      return id;
++    },
++    bosId: corpus.tokenizer.bosId,
++  };
++}
++
++function probabilities(answer: Answer, question: Question): number[] {
++  if (answer.type === 'noul') return [answer.noul, 1 - answer.noul];
++  if (answer.type === 'choice' && question.type === 'choice') {
++    return Object.keys(question.criteria).map((name) => answer.probabilities[name]!);
++  }
++  if (answer.type === 'score' && question.type === 'score') {
++    return question.criteria.map((_, index) => answer.probabilities[String(index)]!);
++  }
++  throw new Error(`D1 answer type did not match ${question.type}`);
++}
++
++function stableAnswer(answer: Answer, question: Question): string {
++  if (answer.type === 'noul') return answer.noul >= 0.5 ? 'yes' : 'no';
++  if (answer.type === 'choice') return answer.choice;
++  if (question.type !== 'score') throw new Error('score answer has a non-score question');
++  let best = 0;
++  for (let i = 1; i < question.criteria.length; i++) {
++    if (answer.probabilities[String(i)]! > answer.probabilities[String(best)]!) best = i;
++  }
++  return String(best);
++}
++
++function gpuBufferBytes(): number {
++  return [...liveBuffers()].reduce((sum, buffer) => sum + buffer.size, 0);
++}
++
++function cloneStateDict(sd: LazyStateDict, tensors: Map<string, LazyTensor>): LazyStateDict {
++  return {
++    metadata: sd.metadata,
++    tensors,
++    totalBytes: () => [...tensors.values()].reduce((sum, tensor) => sum + tensor.byteLength, 0),
++  };
++}
++
++function temperatures(corpus: ReferenceCorpus): Record<string, number> {
++  return Object.fromEntries(
++    corpus.cases.map((item) => [item.reference.temperatureKey, item.reference.temperature]),
++  );
++}
++
++async function hostMemory(): Promise<{ jsHeapBytes: number | null; agentBytes: number | null }> {
++  const memory = Reflect.get(performance, 'memory');
++  const jsHeapBytes =
++    typeof memory === 'object' &&
++    memory !== null &&
++    typeof Reflect.get(memory, 'usedJSHeapSize') === 'number'
++      ? Reflect.get(memory, 'usedJSHeapSize')
++      : null;
++  const measure = Reflect.get(performance, 'measureUserAgentSpecificMemory');
++  if (typeof measure !== 'function') return { jsHeapBytes, agentBytes: null };
++  try {
++    const sample: unknown = await measure.call(performance);
++    const bytes =
++      typeof sample === 'object' && sample !== null ? Reflect.get(sample, 'bytes') : undefined;
++    return { jsHeapBytes, agentBytes: typeof bytes === 'number' ? bytes : null };
++  } catch {
++    return { jsHeapBytes, agentBytes: null };
++  }
++}
++
++it.skipIf(MODE !== 'baseline')(
++  'records the original D1 branch against the pinned Liquid text corpus',
++  async (ctx) => {
++    const corpus = requireReferenceCorpus(vectors);
++    const started = performance.now();
++    const { root } = await gpu();
++    const before = liveBuffers();
++    let bytesReceived = 0;
++    let loadedWeightBytes = 0;
++    let progressDoneBytes = 0;
++    let progressTotalBytes = 0;
++    let peakGpuBufferBytes = gpuBufferBytes();
++    let peakJsHeapBytes: number | null;
++    let peakAgentBytes: number | null;
++    const sd = await fromSafetensors(MODEL_URL, {
++      onBytes: (bytes) => (bytesReceived += bytes),
++    });
++    const tokenizer = makeTokenizer(corpus);
++    const loadStarted = performance.now();
++    const decider = await createD1Decider(sd, tokenizer, {
++      temperatures: temperatures(corpus),
++      onProgress: (_name, done, total) => {
++        loadedWeightBytes = total;
++        progressDoneBytes = done;
++        progressTotalBytes = total;
++        peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++      },
++    });
++    const loadMs = performance.now() - loadStarted;
++    const afterLoadMemory = await hostMemory();
++    peakJsHeapBytes = afterLoadMemory.jsHeapBytes;
++    peakAgentBytes = afterLoadMemory.agentBytes;
++    peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++
++    const decisions: Record<string, unknown>[] = [];
++    for (const item of corpus.cases) {
++      const t = performance.now();
++      const result = await decider.systemOne(item.state, { answer: item.question });
++      const latencyMs = performance.now() - t;
++      const answer = result.answers.answer!;
++      const got = probabilities(answer, item.question);
++      const maxAbsError = Math.max(
++        ...got.map((p, index) => Math.abs(p - item.reference.probabilities[index]!)),
++      );
++      expect(result.inputTokens).toBe(item.reference.inputTokens);
++      expect(stableAnswer(answer, item.question)).toBe(item.reference.answer);
++      expect(maxAbsError).toBeLessThanOrEqual(TOLERANCE);
++      decisions.push({
++        id: item.id,
++        inputTokens: result.inputTokens,
++        answer: stableAnswer(answer, item.question),
++        probabilities: got,
++        maxAbsError,
++        latencyMs: +latencyMs.toFixed(2),
++      });
++      peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++      const memory = await hostMemory();
++      if (memory.jsHeapBytes !== null)
++        peakJsHeapBytes = Math.max(peakJsHeapBytes ?? 0, memory.jsHeapBytes);
++      if (memory.agentBytes !== null)
++        peakAgentBytes = Math.max(peakAgentBytes ?? 0, memory.agentBytes);
++    }
++
++    const disposeStarted = performance.now();
++    await decider.dispose();
++    await root.device.queue.onSubmittedWorkDone();
++    const releaseMs = performance.now() - disposeStarted;
++    const afterDispose = [...liveBuffers()].filter((buffer) => !before.has(buffer));
++    const report = {
++      mode: MODE,
++      branchBase: '68f3a12506bada2c9ac6cb3629426f3e06a56349',
++      model: MODEL,
++      revision: REVISION,
++      elapsedMs: +(performance.now() - started).toFixed(2),
++      loadMs: +loadMs.toFixed(2),
++      loadedWeightBytes,
++      bytesReceived,
++      progressDoneBytes,
++      progressTotalBytes,
++      decisions,
++      peakJsHeapBytes,
++      peakAgentBytes,
++      peakGpuBufferBytes,
++      gpuBufferBytesAfterDispose: afterDispose.reduce((sum, buffer) => sum + buffer.size, 0),
++      gpuBufferCountAfterDispose: afterDispose.length,
++      releaseMs: +releaseMs.toFixed(2),
++      measurements: {
++        hostPeak:
++          peakJsHeapBytes === null && peakAgentBytes === null
++            ? 'unknown: browser exposes no host peak'
++            : 'sampled browser memory; not a process-wide peak',
++        gpuPeak: 'sum of live GPUBuffer.size snapshots; driver-private allocations are unknown',
++        release: 'original decider release; shared executor allocations remain process-owned',
++      },
++    };
++    console.info('D1_QUALIFICATION', JSON.stringify(report));
++    await ctx.annotate('D1_QUALIFICATION', {
++      contentType: 'application/json',
++      body: JSON.stringify(report, null, 2),
++    });
++    expect(decisions).toHaveLength(corpus.cases.length);
++  },
++  900_000,
++);
++
++it.skipIf(MODE !== 'repaired')(
++  'qualifies D1 references, resource cleanup, serialization, abort, disposal, and device recovery',
++  async (ctx) => {
++    const corpus = requireReferenceCorpus(vectors);
++    const started = performance.now();
++    const { root } = await gpu();
++    let bytesReceived = 0;
++    const original = await fromSafetensors(MODEL_URL, {
++      onBytes: (bytes) => (bytesReceived += bytes),
++    });
++    const rawTensors = new Map(original.tensors);
++    const stateDict = () => cloneStateDict(original, new Map(rawTensors));
++    const tokenizer = makeTokenizer(corpus);
++    const temps = temperatures(corpus);
++
++    const beforeFailedLoad = liveBuffers();
++    const loadAbort = new AbortController();
++    await expect(
++      createD1Decider(stateDict(), tokenizer, {
++        signal: loadAbort.signal,
++        onProgress: () => loadAbort.abort('qualification abort after first upload'),
++      }),
++    ).rejects.toMatchObject({ code: 'LOAD_ABORTED' });
++    expect(buffersSince(beforeFailedLoad)).toEqual([]);
++
++    let loadedWeightBytes = 0;
++    let progressDoneBytes = 0;
++    let progressTotalBytes = 0;
++    let peakGpuBufferBytes = gpuBufferBytes();
++    let peakJsHeapBytes: number | null;
++    let peakAgentBytes: number | null;
++    const loadStarted = performance.now();
++    const decider = await createD1Decider(stateDict(), tokenizer, {
++      temperatures: temps,
++      onProgress: (_name, done, total) => {
++        loadedWeightBytes = total;
++        progressDoneBytes = done;
++        progressTotalBytes = total;
++        peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++      },
++    });
++    const loadMs = performance.now() - loadStarted;
++    const afterLoadMemory = await hostMemory();
++    peakJsHeapBytes = afterLoadMemory.jsHeapBytes;
++    peakAgentBytes = afterLoadMemory.agentBytes;
++    peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++
++    const decisions: Record<string, unknown>[] = [];
++    for (const item of corpus.cases) {
++      const t = performance.now();
++      const result = await decider.systemOne(item.state, { answer: item.question });
++      const latencyMs = performance.now() - t;
++      const answer = result.answers.answer!;
++      const got = probabilities(answer, item.question);
++      const maxAbsError = Math.max(
++        ...got.map((p, index) => Math.abs(p - item.reference.probabilities[index]!)),
++      );
++      expect(result.inputTokens).toBe(item.reference.inputTokens);
++      expect(stableAnswer(answer, item.question)).toBe(item.reference.answer);
++      expect(maxAbsError).toBeLessThanOrEqual(TOLERANCE);
++      decisions.push({
++        id: item.id,
++        inputTokens: result.inputTokens,
++        answer: stableAnswer(answer, item.question),
++        probabilities: got,
++        maxAbsError,
++        latencyMs: +latencyMs.toFixed(2),
++      });
++      peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++      const memory = await hostMemory();
++      if (memory.jsHeapBytes !== null)
++        peakJsHeapBytes = Math.max(peakJsHeapBytes ?? 0, memory.jsHeapBytes);
++      if (memory.agentBytes !== null)
++        peakAgentBytes = Math.max(peakAgentBytes ?? 0, memory.agentBytes);
++    }
++
++    const beforeReadbackFailure = liveBuffers();
++    const originalMapAsync = GPUBuffer.prototype.mapAsync;
++    let rejectReadback = true;
++    GPUBuffer.prototype.mapAsync = function (mode, offset, size) {
++      if (rejectReadback) {
++        rejectReadback = false;
++        return Promise.reject(new Error('qualification rejected readback'));
++      }
++      return originalMapAsync.call(this, mode, offset, size);
++    };
++    try {
++      await expect(
++        decider.systemOne(corpus.cases[0]!.state, { answer: corpus.cases[0]!.question }),
++      ).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    } finally {
++      GPUBuffer.prototype.mapAsync = originalMapAsync;
++    }
++    await root.device.queue.onSubmittedWorkDone();
++    expect(buffersSince(beforeReadbackFailure)).toEqual([]);
++
++    const aborted = new AbortController();
++    aborted.abort('qualification pre-abort');
++    const beforeAbort = liveBuffers();
++    await expect(
++      decider.systemOne(corpus.cases[0]!.state, { answer: corpus.cases[0]!.question }, undefined, {
++        signal: aborted.signal,
++      }),
++    ).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    expect(buffersSince(beforeAbort)).toEqual([]);
++
++    const concurrentStarted = performance.now();
++    const concurrentResults = await Promise.all(
++      corpus.cases
++        .slice(0, 2)
++        .map((item) => decider.systemOne(item.state, { answer: item.question })),
++    );
++    expect(
++      concurrentResults.map((result, index) =>
++        stableAnswer(result.answers.answer!, corpus.cases[index]!.question),
++      ),
++    ).toEqual(corpus.cases.slice(0, 2).map((item) => item.reference.answer));
++    const serializationMs = performance.now() - concurrentStarted;
++
++    const queuedAbort = new AbortController();
++    const first = decider.systemOne(corpus.cases[0]!.state, {
++      answer: corpus.cases[0]!.question,
++    });
++    const second = decider.systemOne(
++      corpus.cases[1]!.state,
++      { answer: corpus.cases[1]!.question },
++      undefined,
++      { signal: queuedAbort.signal },
++    );
++    queuedAbort.abort('qualification queued abort');
++    const serialResult = await first;
++    await expect(second).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    expect(stableAnswer(serialResult.answers.answer!, corpus.cases[0]!.question)).toBe(
++      corpus.cases[0]!.reference.answer,
++    );
++
++    const activeAbort = new AbortController();
++    const abortWork = decider.systemOne(
++      corpus.cases[0]!.state,
++      { answer: corpus.cases[0]!.question },
++      undefined,
++      { signal: activeAbort.signal },
++    );
++    await Promise.resolve();
++    activeAbort.abort('qualification active abort');
++    await expect(abortWork).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++
++    const lossCase = corpus.cases[0]!;
++    const lossStarted = performance.now();
++    const lostWork = decider.systemOne(lossCase.state, { answer: lossCase.question });
++    await Promise.resolve();
++    root.device.destroy();
++    const disposalStarted = performance.now();
++    const disposal = decider.dispose();
++    await expect(lostWork).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    await disposal;
++    const releaseMs = performance.now() - disposalStarted;
++    const deviceLossMs = performance.now() - lossStarted;
++    const afterDisposeBuffers = [...liveBuffers()].filter(
++      (buffer) => !beforeFailedLoad.has(buffer),
++    );
++
++    const recoveredRoot = await tgpu.init({
++      device: { optionalFeatures: ['subgroups', 'shader-f16'] },
++    });
++    initRunntime(recoveredRoot);
++    const recoveryLoadStarted = performance.now();
++    const recovered = await createD1Decider(stateDict(), tokenizer, { temperatures: temps });
++    const recoveryLoadMs = performance.now() - recoveryLoadStarted;
++    const recoveryCase = corpus.cases[0]!;
++    const recoveryStarted = performance.now();
++    const recoveryResult = await recovered.systemOne(recoveryCase.state, {
++      answer: recoveryCase.question,
++    });
++    const recoveryMs = performance.now() - recoveryStarted;
++    const recoveryAnswer = recoveryResult.answers.answer!;
++    const recoveryProbabilities = probabilities(recoveryAnswer, recoveryCase.question);
++    expect(recoveryResult.inputTokens).toBe(recoveryCase.reference.inputTokens);
++    expect(stableAnswer(recoveryAnswer, recoveryCase.question)).toBe(recoveryCase.reference.answer);
++    expect(
++      Math.max(
++        ...recoveryProbabilities.map((p, index) =>
++          Math.abs(p - recoveryCase.reference.probabilities[index]!),
++        ),
++      ),
++    ).toBeLessThanOrEqual(TOLERANCE);
++    const beforeRecoveryDispose = liveBuffers();
++    const recoveryDisposeStarted = performance.now();
++    await recovered.dispose();
++    await recoveredRoot.device.queue.onSubmittedWorkDone();
++    const recoveryReleaseMs = performance.now() - recoveryDisposeStarted;
++    const recoveryAfterDispose = [...liveBuffers()].filter(
++      (buffer) => !beforeRecoveryDispose.has(buffer),
++    );
++
++    const report = {
++      mode: MODE,
++      branchBase: '68f3a12506bada2c9ac6cb3629426f3e06a56349',
++      model: MODEL,
++      revision: REVISION,
++      elapsedMs: +(performance.now() - started).toFixed(2),
++      loadMs: +loadMs.toFixed(2),
++      loadedWeightBytes,
++      bytesReceived,
++      progressDoneBytes,
++      progressTotalBytes,
++      decisions,
++      serializationMs: +serializationMs.toFixed(2),
++      peakJsHeapBytes,
++      peakAgentBytes,
++      peakGpuBufferBytes,
++      gpuBufferBytesAfterDeviceLoss: afterDisposeBuffers.reduce(
++        (sum, buffer) => sum + buffer.size,
++        0,
++      ),
++      gpuBufferCountAfterDeviceLoss: afterDisposeBuffers.length,
++      releaseMs: +releaseMs.toFixed(2),
++      deviceLossMs: +deviceLossMs.toFixed(2),
++      recoveryLoadMs: +recoveryLoadMs.toFixed(2),
++      recoveryDecisionMs: +recoveryMs.toFixed(2),
++      recoveryInputTokens: recoveryResult.inputTokens,
++      recoveryAnswer: stableAnswer(recoveryAnswer, recoveryCase.question),
++      recoveryReleaseMs: +recoveryReleaseMs.toFixed(2),
++      recoveryGpuBytesAfterDispose: recoveryAfterDispose.reduce(
++        (sum, buffer) => sum + buffer.size,
++        0,
++      ),
++      recoveryGpuBufferCountAfterDispose: recoveryAfterDispose.length,
++      measurements: {
++        hostPeak:
++          peakJsHeapBytes === null && peakAgentBytes === null
++            ? 'unknown: browser exposes no host peak'
++            : 'sampled browser memory; not a process-wide peak',
++        gpuPeak: 'sum of live GPUBuffer.size snapshots; driver-private allocations are unknown',
++        gpuAfterDeviceLoss:
++          'device.destroy releases the old device allocations; this count is not decider-specific',
++        release:
++          'recovery decider disposed with zero new tracked buffers; persistent per-root readback staging predates disposal',
++      },
++    };
++    console.info('D1_QUALIFICATION', JSON.stringify(report));
++    await ctx.annotate('D1_QUALIFICATION', {
++      contentType: 'application/json',
++      body: JSON.stringify(report, null, 2),
++    });
++    expect(decisions).toHaveLength(corpus.cases.length);
++    expect(recoveryAfterDispose.length).toBeLessThanOrEqual(1);
++  },
++  900_000,
++);
+-- 
+2.54.0
+
