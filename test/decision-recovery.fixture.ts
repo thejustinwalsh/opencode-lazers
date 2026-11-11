@@ -316,7 +316,7 @@ assert.equal(genericRecovery, 0, "Generic errors must leave the adapter availabl
 await genericEngine.dispose()
 
 // Integration: one positively identified failed job is not replayed. Existing
-// recovery cleans the old session/device before loading a replacement.
+// recovery cleans the old session/device and loads the replacement on demand.
 const broker = new InferenceBroker()
 const lease = new ModelLease(async () => {})
 const hostController = new AbortController()
@@ -395,11 +395,18 @@ try {
   )
   await until(
     () =>
-      runtime.state() === "ready" &&
-      metrics.creates === runtimeSession + 2 &&
+      runtime.state() === "unloaded" &&
+      metrics.creates === runtimeSession + 1 &&
       metrics.releases === runtimeReleaseStart + 1,
-    "coalesced replacement after cleanup",
+    "released decision model after cleanup",
   )
+  assert.equal(metrics.activeDevices, 0)
+  assert.equal(metrics.activeSessions, 0)
+  await settleLost(devices[runtimeDeviceIndex]!)
+  assert.equal(runtime.state(), "unloaded")
+  runHandler = async () => validLogits()
+  const recoveredJob = await loadNextJob()
+  assert.equal(recoveredJob.ok, true)
   const replacementID = runtimeSession + 1
   const replacementDevice = devices[runtimeDeviceIndex + 1]!
   assert.equal(metrics.activeDevices, 1)
@@ -411,16 +418,9 @@ try {
   assert.ok(releaseAt < destroyAt, "ORT session release must precede device destruction")
   assert.ok(destroyAt < replacementAt, "A replacement must wait until the old device is destroyed")
 
-  // The stale device callback arrives after replacement. It must not request a
-  // second recovery or retire the replacement adapter.
-  await settleLost(devices[runtimeDeviceIndex]!)
-  assert.equal(runtime.state(), "ready")
+  await until(() => runtime.state() === "ready", "ready after the recovered decision")
   assert.equal(metrics.creates, runtimeSession + 2)
-  runHandler = async () => validLogits()
-  const recoveredJob = await loadNextJob()
-  assert.equal(recoveredJob.ok, true)
   assert.equal(metrics.runSessionIDs.at(-1), replacementID)
-  assert.equal(metrics.creates, runtimeSession + 2)
   assert.equal(replacementDevice.destroyed, false)
 
   // Cancellation and deadline fail the caller immediately, but do not release

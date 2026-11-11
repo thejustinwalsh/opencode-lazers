@@ -779,8 +779,11 @@ export function createInferenceRuntime(
     }
   }
 
+  let deferModelUntilDemand = false
+  let decisionExecuting = false
   const recover = (kind: ModelKind) => {
     if (recovery || disposed || unloading) return
+    const waitForDemand = kind === "decision" && decisionExecuting
     losses = losses.filter((time) => wallNow() - time < 60_000)
     losses.push(wallNow())
     recoveryController = new AbortController()
@@ -798,6 +801,15 @@ export function createInferenceRuntime(
         await models.release()
         setResident(models.current())
         if (disposed || unloading) return
+        if (waitForDemand) {
+          // A failed decision may have exhausted GPU memory. Release its device
+          // now and let the next queued job choose and load its model.
+          deferModelUntilDemand = true
+          setTarget(undefined)
+          setGPU("")
+          ready()
+          return
+        }
         if (losses.length > 2) {
           recoveryRetry = { kind, at: wallNow() + 60_000 }
           throw new Error(
@@ -843,6 +855,7 @@ export function createInferenceRuntime(
     try {
       if (!featureEnabled(features(), job.feature))
         throw Error("This local inference feature is turned off")
+      deferModelUntilDemand = false
       recoveryRetry = undefined
       await traceStage("loading")
       await ensureModel(job.mode === "systemone" ? "decision" : "chat", controller.signal)
@@ -858,9 +871,12 @@ export function createInferenceRuntime(
               : "Generating locally",
       )
       if (job.mode === "systemone") {
-        const output = await models
-          .get("decision")!
-          .engine.systemOne(JSON.parse(job.prompt), controller.signal, traceStage)
+        const input = JSON.parse(job.prompt)
+        const engine = models.get("decision")!.engine
+        decisionExecuting = true
+        const output = await engine.systemOne(input, controller.signal, traceStage).finally(() => {
+          decisionExecuting = false
+        })
         result = {
           ok: true,
           text: JSON.stringify(output),
@@ -1002,6 +1018,7 @@ export function createInferenceRuntime(
     if (disposed || unloading || models.current() || !usesGPU(features())) return
     if (initializing) return initializing
     if (wallNow() < nextLoadAttempt) return
+    deferModelUntilDemand = false
     nextLoadAttempt = wallNow() + Math.min(30_000, 1_000 * 2 ** Math.min(loadFailures++, 5))
     loadController = new AbortController()
     const controller = loadController
@@ -1202,7 +1219,7 @@ export function createInferenceRuntime(
         !recoveryRetry &&
         state() !== "error" &&
         !models.isTainted() &&
-        (!models.current() ||
+        ((!models.current() && !deferModelUntilDemand) ||
           (models.current() === "chat" && !needsChat(features())) ||
           (models.current() === "decision" && !featureEnabled(features(), "decisions")))
       ) {
