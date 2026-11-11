@@ -7805,7 +7805,7 @@ export class TaskRuntime {
     planID: string,
     fence: number,
     phase: "step" | "cleanup" | "delivery",
-    run: () => Promise<void>,
+    run: () => void | Promise<void>,
   ) {
     try {
       await run()
@@ -8115,8 +8115,12 @@ export class TaskRuntime {
         await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
           this.requestQueueReview(waits, fence),
         )
-      for (const operation of retainedOperations)
-        this.notifyHeldRetainedVerification(operation.id, fence)
+      for (const operation of retainedOperations) {
+        if (operation.state !== "held") continue
+        await this.reconcilePlan(operation.planID, fence, "delivery", () =>
+          this.notifyHeldRetainedVerification(operation.id, fence),
+        )
+      }
       await this.deliver(fence)
     } finally {
       await heartbeat?.dispose()

@@ -2836,12 +2836,22 @@ test("owner reassignment and a newer generation reject late probe and human evid
     },
     "owner",
   )
+  f.store.atomic((db) =>
+    db.exec(`CREATE TEMP TRIGGER fail_held_notice BEFORE INSERT ON runner_outbox
+      WHEN json_extract(NEW.payload,'$.status') = 'retained-verification-held'
+      BEGIN SELECT RAISE(ABORT,'held notice test failure'); END`),
+  )
   await waitForRetainedOperationState(
     f,
     first.operationID,
     ["held"],
     "retained generation owner reassignment",
   )
+  await f.runtime.tick()
+  expect(f.store.latestTransition(f.planID, null, "PLAN_DELIVERY_FAILED")).toMatchObject({
+    error: expect.stringContaining("held notice test failure"),
+  })
+  f.store.atomic((db) => db.exec("DROP TRIGGER fail_held_notice"))
   await f.runtime.tick()
   await f.runtime.tick()
   const holdNotices = notices.filter((notice) =>
