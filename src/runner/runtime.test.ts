@@ -90,6 +90,7 @@ function fixture(
     architectPromptHook?: boolean
     now?: () => number
     checkCommand?: string | ((name: string, path: string, root: string) => string)
+    beforeCheck?: string
     combinedCheckCommand?: string
   } = {},
 ) {
@@ -124,6 +125,9 @@ function fixture(
     proposal.objective = `Write ${path}`
     proposal.writeScope = scope
     proposal.verification = [
+      ...(options.beforeCheck
+        ? [{ id: "before", command: options.beforeCheck, timeoutMs: 1000 }]
+        : []),
       {
         id: "content",
         command:
@@ -4778,6 +4782,36 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   expect(checks.find((item) => item.id === effect.id)?.state).toBe("failed")
   expect(readFileSync(receiptPath, "utf8")).toContain('"aborted":true')
   expect(readFileSync(join(f.root, "check-started"), "utf8")).toBe("started")
+})
+
+test("reopening verification reruns only the interrupted check", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    beforeCheck: "true",
+    checkCommand: (_name, _path, root) =>
+      `touch '${root}/check-started'; while [ ! -f '${root}/check-release' ]; do sleep 0.02; done`,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id)
+  await f.runtime.tick()
+  const first = verificationActivitiesForDatabase(f.repository.path).find(
+    (activity) => activity.metadata.planID === f.receipt.planID,
+  )!
+  await first.settled
+  await f.runtime.tick()
+  await f.runtime.tick()
+  await waitForPath(join(f.root, "check-started"), 3_000)
+  await f.runtime.stop()
+
+  const reopened = reopenRuntime(f)
+  writeFileSync(join(f.root, "check-release"), "release\n")
+  await drive(reopened.runtime, 8)
+  const effects = reopened.store.effects(f.receipt.planID)
+  expect(effects.filter((effect) => effect.kind === "verify:before")).toHaveLength(1)
+  expect(effects.filter((effect) => effect.kind === "verify:content")).toHaveLength(2)
+  expect(reopened.store.plan(f.receipt.planID)?.state).toBe("accepted")
 })
 
 test("registered plan command resumes settled combined verification without replaying accepted workers", async () => {

@@ -10953,12 +10953,19 @@ export class TaskRuntime {
             verificationEpoch?: number
             check?: unknown
           }
+          // A resume replaces interrupted checks. Preserve completed checks
+          // for the same candidate, attempt, command, and repair generation.
+          const passed =
+            e.state === "completed" && e.receipt
+              ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
+              : undefined
           return (
             payload.artifact === artifact.commit &&
             payload.identity === artifact.identity &&
             payload.workspace === attempt.workspace &&
             (payload.repairID ?? undefined) === repairID &&
-            (payload.verificationEpoch ?? 0) === verificationEpoch &&
+            ((payload.verificationEpoch ?? 0) === verificationEpoch ||
+              (passed && checkSucceeded(passed))) &&
             fingerprint(payload.check) === fingerprint(check)
           )
         })
