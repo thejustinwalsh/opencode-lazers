@@ -139,3 +139,10 @@ blocked artifact to the same guarded source quarantine. The timeout remains a
 failed check; resource settlement and native source isolation are distinct from
 task acceptance. A real subprocess-timeout regression confirms the queued
 overlapping task starts and the original checkout remains intact.
+
+After Desktop Relaunch, native transitions recorded LZ-154's
+`SOURCE_QUARANTINE_SEALED` at 08:18:25 and LZ-203's `WORKER_STARTED` at
+08:18:31 America/Detroit. The native session inventory and Desktop Tasks
+confirmed LZ-203 running without a Start action. `advanceAttempt()` now leaves
+quarantined attempts to the retained verification workflow instead of trying
+mechanical edits on their protected source and replacing the original hold.

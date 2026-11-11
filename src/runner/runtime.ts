@@ -9856,6 +9856,9 @@ export class TaskRuntime {
   }
 
   private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
+    // Quarantined source is retained for isolated verification, not ordinary
+    // worker execution or mechanical edits in its original checkout.
+    if (sourceQuarantine(this.store, attempt.id)) return
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
       return

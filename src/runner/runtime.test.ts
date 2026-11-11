@@ -14944,5 +14944,7 @@ test("a settled verification timeout preserves its attempt and releases a confli
   expect(sourceQuarantine(f.store, old.id)?.phase).toBe("sealed")
   expect(f.store.attempts(queued.planID)[0]?.state).toBe("running")
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("verifying")
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.reason).toBe("Verification content timed out")
   expect(readFileSync(join(old.workspace, "shared.txt"), "utf8")).toBe("a")
 })
