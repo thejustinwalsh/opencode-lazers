@@ -70,3 +70,25 @@ failures, 9,417 assertions across 34 files (282.94 seconds). `bun run verify`
 passed with automatic formatting/lint fixes. Native activation and post-activation
 measurements follow separately; passing these tests does not close the remaining
 LZ-203 recovery scope.
+
+## Native activation and convergence result
+
+Correction committed as `4536421`. The documented native `client.location.reload()`
+replaced the plugin registration in existing service PID 15743 at Unix ms
+1794359497212, after checking active-session tool boundaries and pending questions
+and permissions. No service process or worker session was killed.
+
+Read-only samples at Unix ms 1794359522748 and 1794359603353 span 80,605 ms, longer
+than the existing 60,000 ms fallback interval. Post-activation cleanup probe
+receipts increased from 6 to 50. All 37 held plans retained identical state,
+version and reason. Cleanup notice rows remained 4,901 (delta zero), and neither
+`CLEANUP_BLOCKED` nor `CLEANUP_RETRY_SCHEDULED` was recorded after activation.
+The repeated failure-notification/lifecycle-churn defect is closed by this native
+observation plus the changed-failure/restart/success regression.
+
+The 37 native-observation cleanup holds are not declared resolved. Their remaining
+settlement/recovery behavior belongs to the existing LZ-203 scope. A Desktop
+handoff supplied commit `4536421`, test results and initial native observations,
+released the main-writer coordination boundary, and requested removal of the
+specific temporary Codex-writer pause. This observation does not claim LZ-203
+worker dispatch or general backlog completion.
