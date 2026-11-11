@@ -4764,6 +4764,10 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   expect(reopened.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(reopened.store.attempts(f.receipt.planID)[0]?.state).toBe("verifying")
   writeFileSync(join(f.root, "check-release"), "release\n")
+  await reopened.runtime.tick()
+  expect(
+    reopened.store.effects(f.receipt.planID).filter((item) => item.kind === "verify:content"),
+  ).toHaveLength(2)
   await drive(reopened.runtime, 8)
   expect(reopened.store.plan(f.receipt.planID)?.state).toBe("accepted")
   expect(reopened.store.attempts(f.receipt.planID)).toHaveLength(1)

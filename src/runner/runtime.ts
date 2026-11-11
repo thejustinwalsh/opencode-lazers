@@ -8343,6 +8343,7 @@ export class TaskRuntime {
           },
           plan.owner,
         )
+        this.tickRequested = true
         return
       }
       await this.reconcileEffect(pending, fence)
