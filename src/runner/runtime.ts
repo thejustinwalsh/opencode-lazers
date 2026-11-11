@@ -364,6 +364,7 @@ export type TaskRuntimeOptions = {
   now?: () => number
   architectPromptHook?: boolean
   requestTick?: () => Promise<void>
+  wakeScheduler?: () => void
   retainedDependencyInstaller?: RetainedDependencyInstaller
 }
 
@@ -550,6 +551,7 @@ export class TaskRuntime {
   private readonly architectIdleWindowMs: number
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
+  private readonly wakeScheduler: (() => void) | undefined
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly modelMappingResolver: ModelMappingResolver
   private readonly sourceEpochs = new Map<string, number>()
@@ -566,6 +568,7 @@ export class TaskRuntime {
     this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
     this.architectPromptHook = options.architectPromptHook ?? false
     this.requestTick = options.requestTick ?? (() => this.tick())
+    this.wakeScheduler = options.wakeScheduler
     this.retainedDependencyInstaller = options.retainedDependencyInstaller
     this.modelMappingResolver = new ModelMappingResolver(new ModelMappingStore(store.repository))
     for (const id of store.architectSourceSessionIDs()) this.sourceEpochs.set(id, 0)
@@ -5846,6 +5849,7 @@ export class TaskRuntime {
       })
       return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
     })
+    if (command.action === "run" && result.status === "running") this.wakeScheduler?.()
     if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
       await this.finalizeRetainedVerificationCancellation(command.retainedVerificationID)
     if (
