@@ -15,6 +15,7 @@ import type {
   ArchitectSourceResult,
   HostMessage,
   HostBackgroundObservation,
+  NativeCleanupSettlement,
   RunnerHost,
   WorktreeLocationRetirement,
 } from "./host.ts"
@@ -28,7 +29,7 @@ import { sourceGuardMatches, sourceReviewBinding } from "./source-quarantine.ts"
 import { reviewMetadata } from "./review-input.ts"
 import { ModelPolicy } from "./schema.ts"
 import { NativeIdleStore } from "./native-idle.ts"
-import type { NativeIdleTerminal } from "./native-idle.ts"
+import type { NativeIdleReport, NativeIdleState, NativeIdleTerminal } from "./native-idle.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 
@@ -134,11 +135,183 @@ type NativeWorkerObservation = {
   pendingInput: boolean
   inbox: string
   pendingPermissions: number
+  locationPendingPermissions: number
   permissionRequests: string
   pendingForms: number
+  locationPendingForms: number
   forms: string
   shells: string
   runningShells: number
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+const CLEANUP_INVALIDATING_EVENTS = new Set([
+  "session.execution.started",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.inbox.enqueued",
+  "session.inbox.delivered",
+  "session.inbox.cancelled",
+  "session.synthetic",
+  "session.shell.started",
+  "session.shell.ended",
+])
+
+async function currentSuccessfulTerminal(
+  readSessionLog: (sessionID: string) => AsyncIterable<unknown>,
+  sessionID: string,
+): Promise<NativeIdleTerminal | undefined> {
+  let synced = false
+  let watermark: number | undefined
+  let lastSequence: number | undefined
+  let startSequence: number | undefined
+  let terminal: NativeIdleTerminal | undefined
+  try {
+    for await (const raw of readSessionLog(sessionID)) {
+      const item = record(raw)
+      if (item?.type === "log.synced") {
+        if (synced || item.aggregateID !== sessionID) return undefined
+        synced = true
+        if (item.seq !== undefined) {
+          if (typeof item.seq !== "number" || !Number.isSafeInteger(item.seq) || item.seq < 0)
+            return undefined
+          watermark = item.seq
+        }
+        continue
+      }
+      if (synced || !item || typeof item.type !== "string") return undefined
+      const durable = record(item.durable)
+      if (
+        durable?.aggregateID !== sessionID ||
+        typeof durable.seq !== "number" ||
+        !Number.isSafeInteger(durable.seq) ||
+        durable.seq < 0 ||
+        (lastSequence !== undefined && durable.seq <= lastSequence)
+      )
+        return undefined
+      lastSequence = durable.seq
+      const eventSessionID = record(item.data)?.sessionID
+      if (CLEANUP_INVALIDATING_EVENTS.has(item.type)) {
+        if (eventSessionID !== sessionID) return undefined
+        if (item.type === "session.execution.started") {
+          startSequence = durable.seq
+          terminal = undefined
+        } else if (
+          item.type === "session.execution.failed" ||
+          item.type === "session.execution.interrupted"
+        ) {
+          startSequence = undefined
+          terminal = undefined
+        } else if (terminal) {
+          startSequence = undefined
+          terminal = undefined
+        }
+        continue
+      }
+      if (item.type === "session.execution.succeeded") {
+        if (
+          eventSessionID !== sessionID ||
+          startSequence === undefined ||
+          terminal !== undefined ||
+          durable.seq <= startSequence ||
+          typeof item.id !== "string"
+        ) {
+          startSequence = undefined
+          terminal = undefined
+          continue
+        }
+        let messageID: string
+        try {
+          messageID = SessionMessage.ID.fromEvent(item.id)
+        } catch {
+          startSequence = undefined
+          terminal = undefined
+          continue
+        }
+        terminal = {
+          sequence: durable.seq,
+          eventID: item.id,
+          messageID,
+          previousEventSequence: startSequence,
+        }
+      }
+    }
+  } catch {
+    return undefined
+  }
+  return synced &&
+    (lastSequence === undefined || (watermark !== undefined && watermark >= lastSequence))
+    ? terminal
+    : undefined
+}
+
+type NativeCleanupIdleEvidence = {
+  state: NativeIdleState
+  report: NativeIdleReport & {
+    count: 0
+    kinds: { shell: 0; subagent: 0; image: 0 }
+  }
+  terminal: NativeIdleTerminal
+}
+
+function currentCleanupIdleEvidence(
+  state: NativeIdleState | undefined,
+  input: {
+    projectID: string
+    attemptID: string
+    sessionID: string
+    workspace: string
+    assignedMessageID: string
+  },
+): NativeCleanupIdleEvidence {
+  const report = state?.report
+  const terminal = state?.terminal
+  if (!state || !report || !terminal || state.invalidation || state.pendingTerminal)
+    throw new Error(
+      "A current confirmed experimental.idle background report is unavailable; preserve the worktree and retry only after the native idle hook records exact zero-background evidence",
+    )
+  if (
+    report.count !== 0 ||
+    report.kinds.shell !== 0 ||
+    report.kinds.subagent !== 0 ||
+    report.kinds.image !== 0
+  )
+    throw new Error(
+      "The confirmed experimental.idle report observed shell, subagent, or image background work; preserve the worktree until a later exact zero-background report is confirmed",
+    )
+  if (
+    state.binding.projectID !== input.projectID ||
+    state.binding.attemptID !== input.attemptID ||
+    state.binding.sessionID !== input.sessionID ||
+    state.binding.workspace !== input.workspace ||
+    state.binding.assignedMessageID !== input.assignedMessageID ||
+    report.inputID !== input.assignedMessageID ||
+    state.executionStartSequence !== report.executionStartSequence ||
+    state.lastEventSequence !== terminal.sequence ||
+    terminal.sequence <= report.eventSequence ||
+    terminal.previousEventSequence !== report.eventSequence
+  )
+    throw new Error(
+      "The experimental.idle background report is stale or mismatched for this worker completion; preserve the worktree",
+    )
+  return {
+    state,
+    report: {
+      ...report,
+      count: 0,
+      kinds: { shell: 0, subagent: 0, image: 0 },
+    },
+    terminal,
+  }
+}
+
+function sameCleanupTerminal(a: NativeIdleTerminal, b: NativeIdleTerminal) {
+  return a.sequence === b.sequence && a.eventID === b.eventID && a.messageID === b.messageID
 }
 
 function isMissingNativeSession(
@@ -204,11 +377,13 @@ async function workerObservation(
       (requireLocationShells && (!shells || shells.location.directory !== directory)))
   )
     throw new Error("Native worker approval inventory did not match its assigned location")
-  const permissionIDs = (permissions?.data ?? [])
+  const permissionEntries = permissions?.data ?? []
+  const formEntries = forms?.data ?? []
+  const permissionIDs = permissionEntries
     .filter((entry) => entry.sessionID === sessionID)
     .map((entry) => entry.id)
     .sort()
-  const formIDs = (forms?.data ?? [])
+  const formIDs = formEntries
     .filter((entry) => entry.sessionID === sessionID)
     .map((entry) => entry.id)
     .sort()
@@ -231,11 +406,53 @@ async function workerObservation(
       .sort()
       .join("\n"),
     pendingPermissions: permissionIDs.length,
+    locationPendingPermissions: permissionEntries.length,
     permissionRequests: permissionIDs.join("\n"),
     pendingForms: formIDs.length,
+    locationPendingForms: formEntries.length,
     forms: formIDs.join("\n"),
     shells: shellEntries.sort().join("\n"),
     runningShells,
+  }
+}
+
+async function activeSessionLineage(
+  client: NativeInboxClient,
+  rootSessionID: string,
+  workspace: string,
+): Promise<{ activeRoot: boolean; activeDescendants: string[]; activeAtWorkspace: string[] }> {
+  const active = await client.session.active()
+  if (!active || typeof active !== "object" || Array.isArray(active))
+    throw new Error("Native active-session inventory is unavailable")
+  const descendants: string[] = []
+  const atWorkspace: string[] = []
+  const activeIDs = Object.entries(active).sort(([a], [b]) => a.localeCompare(b))
+  for (const [activeID, status] of activeIDs) {
+    if (!status || typeof status !== "object" || !["idle", "retry", "busy"].includes(status.type))
+      throw new Error("Native active-session inventory is contradictory")
+    if (activeID === rootSessionID) continue
+    const visited = new Set<string>()
+    let cursor = await client.session.get({ sessionID: Session.ID.make(activeID) })
+    if (resolve(cursor.location.directory) === resolve(workspace)) atWorkspace.push(activeID)
+    let descendant = false
+    for (let depth = 0; cursor.parentID && depth < 32; depth++) {
+      if (cursor.parentID === rootSessionID) {
+        descendant = true
+        break
+      }
+      if (visited.has(cursor.parentID))
+        throw new Error("Native active-session lineage contains a cycle")
+      visited.add(cursor.parentID)
+      cursor = await client.session.get({ sessionID: Session.ID.make(cursor.parentID) })
+    }
+    if (!descendant && cursor.parentID)
+      throw new Error("Native active-session lineage exceeds the safe inspection depth")
+    if (descendant) descendants.push(activeID)
+  }
+  return {
+    activeRoot: Object.prototype.hasOwnProperty.call(active, rootSessionID),
+    activeDescendants: descendants,
+    activeAtWorkspace: atWorkspace,
   }
 }
 
@@ -743,6 +960,170 @@ export function nativeHost(
                   : "",
           })),
         ],
+      }
+    },
+    async cleanupSettlement(input): Promise<NativeCleanupSettlement> {
+      if (!idleStore)
+        throw new Error("Native cleanup settlement storage is unavailable; preserve the worktree")
+      const binding = idleStore.assignmentForSession(input.sessionID)
+      if (
+        !binding ||
+        binding.projectDirectory !== repository.projectDirectory ||
+        binding.projectID !== input.projectID ||
+        binding.attemptID !== input.attemptID ||
+        binding.sessionID !== input.sessionID ||
+        binding.workspace !== input.workspace ||
+        binding.assignedMessageID !== input.assignedMessageID
+      )
+        throw new Error("Native cleanup settlement assignment changed; preserve the worktree")
+      const initialIdleState = idleStore.read(binding)
+      const initialIdleEvidence = currentCleanupIdleEvidence(initialIdleState, input)
+
+      const client = await connectedClient()
+      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      const capture = async () => {
+        const idleBefore = idleStore.read(binding)
+        const idleEvidenceBefore = currentCleanupIdleEvidence(idleBefore, input)
+        if (JSON.stringify(idleBefore) !== JSON.stringify(initialIdleState))
+          throw new Error(
+            "Native idle settlement changed before cleanup observation; preserve the worktree",
+          )
+        const before = await runNative(client, () =>
+          client.session.get({ sessionID: Session.ID.make(input.sessionID) }),
+        )
+        const activeBefore = await runNative(client, () =>
+          activeSessionLineage(client, input.sessionID, input.workspace),
+        )
+        const inventoryBefore = await observeWorker(client, input.sessionID, input.workspace)
+        const messages = await runNative(client, () =>
+          Effect.runPromise(ctx.session.context({ sessionID: Session.ID.make(input.sessionID) })),
+        )
+        const inputID = await resolveNativeInputID(messages, () => retainedInputID(input.sessionID))
+        const terminal = await currentSuccessfulTerminal(readSessionLog, input.sessionID)
+        const idleAfter = idleStore.read(binding)
+        const idleEvidenceAfter = currentCleanupIdleEvidence(idleAfter, input)
+        const inventoryAfter = await observeWorker(client, input.sessionID, input.workspace)
+        const activeAfter = await runNative(client, () =>
+          activeSessionLineage(client, input.sessionID, input.workspace),
+        )
+        const after = await runNative(client, () =>
+          client.session.get({ sessionID: Session.ID.make(input.sessionID) }),
+        )
+        const state = (session: typeof before) => ({
+          id: session.id,
+          parentID: session.parentID,
+          projectID: session.projectID,
+          agent: session.agent,
+          attemptID: session.metadata?.lazersAttemptID,
+          directory: session.location.directory,
+          archived: session.time.archived !== undefined,
+          busyAt: session.time.busy ?? 0,
+          idleAt: session.time.idle ?? 0,
+          outcome: session.outcome,
+        })
+        if (
+          JSON.stringify(state(before)) !== JSON.stringify(state(after)) ||
+          JSON.stringify(idleBefore) !== JSON.stringify(idleAfter) ||
+          JSON.stringify(inventoryBefore) !== JSON.stringify(inventoryAfter) ||
+          JSON.stringify(activeBefore) !== JSON.stringify(activeAfter)
+        )
+          throw new Error(
+            "Native worker settlement changed during observation; preserve the worktree",
+          )
+        if (
+          before.id !== input.sessionID ||
+          before.projectID !== input.projectID ||
+          before.location.directory !== input.workspace ||
+          before.metadata?.lazersAttemptID !== input.attemptID ||
+          !isWorkerAgent(before.agent) ||
+          before.outcome !== "succeeded" ||
+          !before.time.idle ||
+          (before.time.busy && before.time.busy >= before.time.idle)
+        )
+          throw new Error(
+            "Native worker has no exact successful idle settlement; preserve the worktree",
+          )
+        if (
+          activeBefore.activeRoot ||
+          activeBefore.activeDescendants.length > 0 ||
+          activeBefore.activeAtWorkspace.length > 0 ||
+          inventoryBefore.active ||
+          inventoryBefore.pendingInput ||
+          inventoryBefore.pendingPermissions !== 0 ||
+          inventoryBefore.pendingForms !== 0 ||
+          inventoryBefore.locationPendingPermissions !== 0 ||
+          inventoryBefore.locationPendingForms !== 0 ||
+          inventoryBefore.runningShells !== 0
+        )
+          throw new Error(
+            "Native worker or assigned worktree still has active/background work; let it settle and retry cleanup recovery",
+          )
+        if (
+          inputID !== input.assignedMessageID ||
+          !terminal ||
+          !sameCleanupTerminal(idleEvidenceBefore.terminal, terminal) ||
+          !sameCleanupTerminal(idleEvidenceAfter.terminal, terminal) ||
+          !sameCleanupTerminal(initialIdleEvidence.terminal, terminal) ||
+          !hasLatestSuccessfulIdleMarker(messages, inputID, terminal)
+        )
+          throw new Error(
+            "A synced current native success, matching confirmed zero-background report, and exact idle marker are unavailable; preserve the worktree and wait for genuine native idle evidence",
+          )
+        return {
+          inputID,
+          terminal: {
+            sequence: terminal.sequence,
+            eventID: terminal.eventID,
+            messageID: terminal.messageID,
+            previousEventSequence: idleEvidenceBefore.report.eventSequence,
+          },
+          idleReport: {
+            source: "experimental.idle" as const,
+            ...idleEvidenceBefore.report,
+          },
+          activeRoot: activeBefore.activeRoot,
+          activeDescendants: activeBefore.activeDescendants,
+          activeAtWorkspace: activeBefore.activeAtWorkspace,
+          inventory: inventoryBefore,
+        }
+      }
+
+      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      const first = await capture()
+      const second = await capture()
+      const projection = (result: typeof first) => ({
+        inputID: result.inputID,
+        terminal: result.terminal,
+        idleReport: result.idleReport,
+        activeRoot: result.activeRoot,
+        activeDescendants: result.activeDescendants,
+        activeAtWorkspace: result.activeAtWorkspace,
+        inventory: result.inventory,
+      })
+      if (JSON.stringify(projection(first)) !== JSON.stringify(projection(second)))
+        throw new Error(
+          "Native worker settlement was not stable across fresh reads; preserve the worktree",
+        )
+      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      return {
+        schemaVersion: 1,
+        projectID: input.projectID,
+        attemptID: input.attemptID,
+        sessionID: input.sessionID,
+        workspace: input.workspace,
+        assignedMessageID: input.assignedMessageID,
+        inputID: second.inputID,
+        idleReport: second.idleReport,
+        terminal: second.terminal,
+        observedAt: Date.now(),
+        inventory: {
+          activeSession: false,
+          activeDescendants: 0,
+          pendingInput: false,
+          pendingPermissions: 0,
+          pendingForms: 0,
+          runningShells: 0,
+        },
       }
     },
     async waitForSession(sessionID) {

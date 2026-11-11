@@ -85,6 +85,75 @@ test.each(["connected", "retired", "disconnected", "retired-after-idle"] as cons
   },
 )
 
+test("a reopened replacement idle hook joins a durable success event that arrived first", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const original = makeContext(fixture, { liveEvents: true, messages })
+    const replacement = makeContext(fixture, { liveEvents: true, messages })
+    const store = new NativeIdleStore(fixture.repository)
+    const terminalID = "evt_52"
+    const terminalMessageID = SessionMessage.ID.fromEvent(terminalID)
+    const currentLog = async () =>
+      sessionLog([
+        executionEvent("session.execution.started", sessionID, 51),
+        { ...executionEvent("session.execution.succeeded", sessionID, 52), id: terminalID },
+        logSynced(sessionID, 52),
+      ])()
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const originalFiber = yield* Effect.forkScoped(
+            Effect.scoped(
+              Effect.gen(function* () {
+                yield* registerProgress(original.context, recorder, "project")
+                yield* Effect.never
+              }),
+            ),
+          )
+          yield* Effect.promise(() => waitForNativeState(async () => original.subscriptions() > 0))
+          yield* Effect.promise(() =>
+            original.emitEvent(executionEvent("session.execution.started", sessionID, 51)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.executionStartSequence === 51),
+          )
+          yield* Effect.promise(() =>
+            original.emitEvent({
+              ...executionEvent("session.execution.succeeded", sessionID, 52),
+              id: terminalID,
+            }),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.pendingTerminal?.sequence === 52),
+          )
+          expect(store.background(binding)).toMatchObject({ state: "unknown" })
+
+          yield* Fiber.interrupt(originalFiber)
+          yield* registerProgress(replacement.context, recorder, "project", undefined, currentLog)
+          yield* replacement.idle()!({ sessionID, background: [] } as never)
+          expect(store.background(binding)).toMatchObject({
+            state: "observed",
+            count: 0,
+            executionStartSequence: 51,
+            eventSequence: 51,
+            terminalSequence: 52,
+            terminalEventID: terminalID,
+            terminalMessageID,
+            inputID: binding.assignedMessageID,
+          })
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
 function testObject(value: unknown): Record<string, unknown> | undefined {
@@ -1553,7 +1622,7 @@ test.each([
   },
 )
 
-test("native log lineage preserves a positive background idle observation", async () => {
+test("native idle evidence counts image and inactive-descendant background work", async () => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -1591,14 +1660,34 @@ test("native log lineage preserves a positive background idle observation", asyn
           )
           yield* replacement.idle()!({
             sessionID: Session.ID.make(sessionID),
-            background: [{ kind: "shell" }],
+            background: [
+              {
+                kind: "shell",
+                sessionID: Session.ID.make("ses-inactive-descendant"),
+                shellID: "sh_descendant",
+                command: "sleep 1",
+              },
+              {
+                kind: "subagent",
+                sessionID: Session.ID.make(sessionID),
+                childSessionID: Session.ID.make("ses-inactive-descendant"),
+                agent: "lazers-implementor",
+                description: "inactive descendant",
+              },
+              {
+                kind: "image",
+                sessionID: Session.ID.make(sessionID),
+                path: "generated.png",
+                model: "test-image-model",
+              },
+            ],
           } as never)
           expect(store.read(binding)?.report).toMatchObject({
             inputID: binding.assignedMessageID,
             executionStartSequence: 1,
             eventSequence: 1,
-            count: 1,
-            kinds: { shell: 1, subagent: 0, image: 0 },
+            count: 3,
+            kinds: { shell: 1, subagent: 1, image: 1 },
           })
           yield* Effect.promise(() =>
             replacement.emitEvent(executionEvent("session.execution.succeeded", sessionID, 2)),
@@ -1611,8 +1700,8 @@ test("native log lineage preserves a positive background idle observation", asyn
     )
     expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
       state: "observed",
-      count: 1,
-      kinds: { shell: 1, subagent: 0, image: 0 },
+      count: 3,
+      kinds: { shell: 1, subagent: 1, image: 1 },
       terminalSequence: 2,
     })
   } finally {
@@ -2139,6 +2228,7 @@ test("failed newer start persistence cannot confirm an earlier zero report with 
             sequence: 812,
             eventID: "evt_812",
             messageID: "msg_812",
+            previousEventSequence: 810,
           })
           expect(state?.terminal).toBeNull()
           expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({ state: "unknown" })

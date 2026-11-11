@@ -133,6 +133,39 @@ export type RetainedWorkerArchive = {
 }
 export type WorktreeLocationRetirement =
   "evicted" | "not-loaded" | "active-session" | "current-location" | "unavailable"
+export type NativeCleanupSettlement = {
+  schemaVersion: 1
+  projectID: string
+  attemptID: string
+  sessionID: string
+  workspace: string
+  assignedMessageID: string
+  inputID: string
+  idleReport: {
+    source: "experimental.idle"
+    observedAt: number
+    inputID: string
+    executionStartSequence: number
+    eventSequence: number
+    count: 0
+    kinds: { shell: 0; subagent: 0; image: 0 }
+  }
+  terminal: {
+    sequence: number
+    eventID: string
+    messageID: string
+    previousEventSequence: number
+  }
+  observedAt: number
+  inventory: {
+    activeSession: false
+    activeDescendants: 0
+    pendingInput: false
+    pendingPermissions: 0
+    pendingForms: 0
+    runningShells: 0
+  }
+}
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
   /** Current native implementor-agent selection; never inferred from Architect identity. */
@@ -192,6 +225,14 @@ export interface RunnerHost {
   ensureSourceGuard?(input: { directory: string; projectID: string }): Promise<void>
   /** Waits for foreground completion only; callers must still inspect active/inbox controls. */
   waitForSession?(sessionID: string): Promise<void>
+  /** Fresh synced native terminal and resource-inventory proof for explicit cleanup recovery. */
+  cleanupSettlement?(input: {
+    projectID: string
+    attemptID: string
+    sessionID: string
+    workspace: string
+    assignedMessageID: string
+  }): Promise<NativeCleanupSettlement>
   prompt(input: {
     sessionID: string
     id: string

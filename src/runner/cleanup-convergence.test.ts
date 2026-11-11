@@ -11,7 +11,7 @@ import { git } from "./artifacts.ts"
 import type { NativeInboxClient, NativeInboxDependencies } from "./native.ts"
 import { nativeHost } from "./native.ts"
 import { NativeIdleStore } from "./native-idle.ts"
-import type { HostSession, RunnerHost } from "./host.ts"
+import type { HostSession, NativeCleanupSettlement, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
 import { createRetainedVerification } from "./retained-verification/store.ts"
@@ -19,7 +19,7 @@ import type { EffectRow, PlanRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
 
-test("fresh durable native idle revalidation removes a clean merged owned worktree without replay", async () => {
+test("owner-authorized cleanup recovery revalidates settlement and preserves uncertainty after a lost removal reply", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-cleanup-convergence-project-")))
   const dataDirectory = realpathSync(
     mkdtempSync(join(tmpdir(), "lazers-cleanup-convergence-data-")),
@@ -115,6 +115,32 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
     const attemptID = crypto.randomUUID()
     const sessionID = "ses-cleanup-worker"
     const assignedMessageID = "msg-cleanup-input"
+    const recoveryEventID = "evt_cleanup_recovered_success"
+    const recoveryMessageID = SessionMessage.ID.fromEvent(recoveryEventID)
+    let recoverySettlement: NativeCleanupSettlement = {
+      schemaVersion: 1,
+      projectID: "project",
+      attemptID,
+      sessionID,
+      workspace,
+      assignedMessageID,
+      inputID: assignedMessageID,
+      terminal: {
+        sequence: 13,
+        eventID: recoveryEventID,
+        messageID: recoveryMessageID,
+        previousEventSequence: 12,
+      },
+      observedAt: Date.now(),
+      inventory: {
+        activeSession: true,
+        activeDescendants: 0,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        runningShells: 0,
+      },
+    } as unknown as NativeCleanupSettlement
     const worktreeEffectID = crypto.randomUUID()
     repository.atomic((db) => {
       db.query("UPDATE runner_plans SET state='accepted',artifact=? WHERE id=?").run(
@@ -183,7 +209,12 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
       idleStore.confirmSuccess(
         binding,
         assignedMessageID,
-        { sequence: 11, eventID: terminalEventID, messageID: terminalMessageID },
+        {
+          sequence: 11,
+          eventID: terminalEventID,
+          messageID: terminalMessageID,
+          previousEventSequence: 10,
+        },
         pending.status === "terminal-pending" ? pending.revision : -1,
       ),
     ).toBe(true)
@@ -270,6 +301,27 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
           },
         },
       },
+      experimental: {
+        session: {
+          log: async function* ({ sessionID: id }: { sessionID: string }) {
+            yield {
+              id: "evt_cleanup_start",
+              created: Date.now(),
+              type: "session.execution.started",
+              durable: { aggregateID: id, seq: 10, version: 1 },
+              data: { sessionID: id },
+            }
+            yield {
+              id: terminalEventID,
+              created: Date.now(),
+              type: "session.execution.succeeded",
+              durable: { aggregateID: id, seq: 11, version: 1 },
+              data: { sessionID: id },
+            }
+            yield { type: "log.synced", aggregateID: id, seq: 11 }
+          },
+        },
+      },
     } as unknown as NativeInboxClient
     const dependencies = {
       discover: async () => ({ url: "https://opencode.localhost", auth: undefined }),
@@ -311,9 +363,54 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
       },
     }
     runtime = new TaskRuntime(reopenedStore, host, "project")
+    const nativeSettlement = await native.cleanupSettlement!({
+      projectID: "project",
+      attemptID,
+      sessionID,
+      workspace,
+      assignedMessageID,
+    })
+    expect(nativeSettlement).toMatchObject({
+      projectID: "project",
+      attemptID,
+      sessionID,
+      workspace,
+      inputID: assignedMessageID,
+      idleReport: {
+        source: "experimental.idle",
+        inputID: assignedMessageID,
+        executionStartSequence: 10,
+        eventSequence: 10,
+        count: 0,
+        kinds: { shell: 0, subagent: 0, image: 0 },
+      },
+      terminal: {
+        sequence: 11,
+        eventID: terminalEventID,
+        messageID: terminalMessageID,
+        previousEventSequence: 10,
+      },
+      inventory: {
+        activeSession: false,
+        activeDescendants: 0,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        runningShells: 0,
+      },
+    })
     expect(idleStore.invalidate(binding, "fresh native completion has not yet been observed")).toBe(
       true,
     )
+    await expect(
+      native.cleanupSettlement!({
+        projectID: "project",
+        attemptID,
+        sessionID,
+        workspace,
+        assignedMessageID,
+      }),
+    ).rejects.toThrow("A current confirmed experimental.idle background report is unavailable")
     await runtime.command(
       {
         requestID: "integrate-cleanup-convergence-plan",
@@ -342,6 +439,7 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
     idleStore = new NativeIdleStore(repository)
     host = {
       ...nativeHost(context, repository, dependencies),
+      cleanupSettlement: async () => recoverySettlement,
       prompt: async () => {
         promptCalls++
         throw new Error("Unexpected cleanup prompt")
@@ -352,53 +450,69 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
       },
     }
     runtime = new TaskRuntime(reopenedStore, host, "project")
-
-    const restarted = idleStore.observeEvent(binding, "session.execution.started", 12)
-    expect(restarted.status).toBe("changed")
-    expect(
-      idleStore.recordIdle(
-        binding,
+    await expect(
+      runtime.command(
         {
-          observedAt: Date.now(),
-          inputID: assignedMessageID,
-          executionStartSequence: 12,
-          eventSequence: 12,
-          count: 0,
-          kinds: { shell: 0, subagent: 0, image: 0 },
+          requestID: "recover-cleanup-non-owner",
+          planID,
+          expectedVersion: reopenedStore.plan(planID)!.version,
+          action: "recover-cleanup",
+          taskID: task.id,
+          attemptID,
+          artifact,
+          targetBranch: "main",
+          reason: "This non-owner request must not authorize cleanup.",
         },
-        restarted.status === "changed" ? restarted.revision : -1,
+        "ses-intruder",
       ),
-    ).toBe(true)
-    const refreshedTerminalEventID = "evt_cleanup_refreshed_success"
-    const refreshedTerminalMessageID = SessionMessage.ID.fromEvent(refreshedTerminalEventID)
-    const refreshedTerminal = idleStore.observeEvent(
-      binding,
-      "session.execution.succeeded",
-      13,
-      refreshedTerminalEventID,
-      refreshedTerminalMessageID,
+    ).rejects.toThrow("Only the plan owner may change execution")
+    await runtime.command(
+      {
+        requestID: "recover-cleanup-convergence-plan",
+        planID,
+        expectedVersion: reopenedStore.plan(planID)!.version,
+        action: "recover-cleanup",
+        taskID: task.id,
+        attemptID,
+        artifact,
+        targetBranch: "main",
+        reason: "Owner reviewed the merged accepted attempt and requested cleanup recovery.",
+      },
+      "ses-owner",
     )
-    expect(refreshedTerminal.status).toBe("terminal-pending")
-    expect(
-      idleStore.confirmSuccess(
-        binding,
-        assignedMessageID,
-        {
-          sequence: 13,
-          eventID: refreshedTerminalEventID,
-          messageID: refreshedTerminalMessageID,
-        },
-        refreshedTerminal.status === "terminal-pending" ? refreshedTerminal.revision : -1,
-      ),
-    ).toBe(true)
-    messages.push({
-      id: refreshedTerminalMessageID,
-      type: "idle",
-      outcome: "succeeded",
-      time: { created: now },
-    })
+    expect(reopenedStore.plan(planID)?.state).toBe("cleanup-blocked")
+    expect(existsSync(workspace)).toBe(true)
+    expect(removeCalls).toHaveLength(0)
+
+    recoverySettlement = {
+      ...recoverySettlement,
+      idleReport: {
+        source: "experimental.idle",
+        observedAt: Date.now(),
+        inputID: assignedMessageID,
+        executionStartSequence: 12,
+        eventSequence: 12,
+        count: 0,
+        kinds: { shell: 0, subagent: 0, image: 0 },
+      },
+      inventory: { ...recoverySettlement.inventory, activeSession: false },
+      observedAt: Date.now(),
+    }
     loseNextRemovalReply = true
-    await runtime.tick()
+    await runtime.command(
+      {
+        requestID: "recover-cleanup-convergence-retry",
+        planID,
+        expectedVersion: reopenedStore.plan(planID)!.version,
+        action: "recover-cleanup",
+        taskID: task.id,
+        attemptID,
+        artifact,
+        targetBranch: "main",
+        reason: "The native worker is now quiescent; retry the previously authorized cleanup.",
+      },
+      "ses-owner",
+    )
     expect(reopenedStore.plan(planID)).toMatchObject({ state: "cleanup-blocked" })
     expect(existsSync(workspace)).toBe(false)
     expect(removeCalls).toHaveLength(1)
@@ -408,6 +522,20 @@ test("fresh durable native idle revalidation removes a clean merged owned worktr
     expect(existsSync(workspace)).toBe(false)
     expect(worktrees()).not.toContain(workspace)
     expect(removeCalls).toEqual([{ projectID: "project", directory: workspace, force: false }])
+    const removal = reopenedStore
+      .effects(planID)
+      .find((effect) => effect.kind === "worktree-remove")!
+    const receipt = JSON.parse(removal.receipt!) as {
+      error?: string
+      history?: Array<{ schema?: string; error?: string }>
+    }
+    expect(receipt.error).toContain("idle")
+    expect(
+      receipt.history?.some((item) => item.schema === "lazers-native-cleanup-settlement/v1"),
+    ).toBe(true)
+    expect(
+      receipt.history?.some((item) => item.schema === "lazers-worktree-cleanup-observation/v1"),
+    ).toBe(true)
     expect(nativeLocations.has(workspace)).toBe(false)
     expect(promptCalls).toBe(0)
     expect(workerCreationCalls).toBe(0)

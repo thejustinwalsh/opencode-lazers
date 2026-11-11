@@ -64,6 +64,34 @@ dirty, unmerged, active, or uncertain resources for explicit reconciliation.
 Runner cleanup also retires only the exact cleaned native location through the
 supported host lifecycle.
 
+## Recover a held runner cleanup
+
+Use the registered `recover-cleanup` action as the current plan owner, bound to the
+exact `planID`, accepted `taskID`, `attemptID`, integrated `artifact`, and
+`targetBranch`. Preserve the existing assignment and workspace; recovery is not a
+new worker run or a replay of implementation or verification.
+
+Removal requires a stable native settlement tied to that exact assignment: a
+confirmed successful terminal event and an uninvalidated `experimental.idle`
+report for the assigned input with zero shell, subagent, and image jobs. The idle
+hook's report covers background work owned by the worker and its descendants.
+An empty active-session map, an empty location shell list, a successful terminal,
+or a read-only `session.shell` check alone cannot establish that complete
+background inventory.
+
+If the report is absent, stale, positive, contradictory, or changes during the
+read, cleanup remains held: the exact worktree stays registered, no location is
+retired, and prior uncertainty is retained. Do not repeat `recover-cleanup` on
+unchanged evidence. Wait only for the original native lifecycle to produce a
+genuine, exact idle observation after its background work settles, then have the
+current owner retry with the same task, attempt, artifact, workspace, and branch
+bindings. `session.shell` is not a way to manufacture this evidence: it starts a
+shell, publishes shell events and a non-resuming synthetic notice, but does not
+run the `experimental.idle` hook or expose image/descendant job inventory. If no
+such native idle observation is available, keep the hold and ask the Architect to
+choose a supported next step; do not edit native state directly, force removal,
+replace the worker, or replay its implementation prompt.
+
 Existing retained runner paths and Root-owned review resources are not disposable
 fixtures. In particular, preserve `lz182-review-recovered` and
 `lz184-review-recovered` and their exact native registrations unless their owner

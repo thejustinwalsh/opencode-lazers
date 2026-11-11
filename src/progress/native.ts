@@ -97,7 +97,12 @@ type NativeIdleHook = { sessionID: Session.ID; background: readonly NativeIdleWo
 type NativeSessionLogReader = (
   sessionID: string,
 ) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>
-type NativeReplayedStart = { sequence: number; lastObservedEventSequence: number }
+type NativeReplayedStart = {
+  sequence: number
+  lastObservedEventSequence: number
+  reportEventSequence: number
+  terminal?: NativeIdleTerminal
+}
 
 function rejectedLineage(
   checks: Partial<Record<NativeLineageRejection, boolean>>,
@@ -134,6 +139,8 @@ async function replayCurrentExecutionStart(
   let lastSequence: number | undefined
   let lastObservedEventSequence: number | undefined
   let executionStartSequence: number | undefined
+  let reportEventSequence: number | undefined
+  let terminal: NativeIdleTerminal | undefined
 
   try {
     const log = await readSessionLog(sessionID)
@@ -170,15 +177,54 @@ async function replayCurrentExecutionStart(
       }
       if (item.type === "session.execution.started") {
         executionStartSequence = durable.seq
-      } else if (item.type === "session.inbox.delivered") {
-        // Delivery may occur inside an unfinished execution; later invalidations still clear it.
-      } else if (
-        BACKGROUND_INVALIDATING_EVENTS.has(item.type) ||
-        item.type === "session.execution.succeeded" ||
-        item.type === "session.execution.failed" ||
-        item.type === "session.execution.interrupted"
-      ) {
-        executionStartSequence = undefined
+        reportEventSequence = durable.seq
+        terminal = undefined
+      } else if (item.type === "session.execution.succeeded") {
+        const rawEventID = item.id
+        let messageID: string | undefined
+        if (typeof rawEventID === "string") {
+          try {
+            messageID = SessionMessage.ID.fromEvent(rawEventID)
+          } catch {
+            messageID = undefined
+          }
+        }
+        if (
+          executionStartSequence === undefined ||
+          reportEventSequence === undefined ||
+          durable.seq <= reportEventSequence ||
+          typeof rawEventID !== "string" ||
+          !messageID
+        ) {
+          executionStartSequence = undefined
+          reportEventSequence = undefined
+          terminal = undefined
+        } else {
+          terminal = {
+            sequence: durable.seq,
+            eventID: rawEventID,
+            messageID,
+            previousEventSequence: reportEventSequence,
+          }
+        }
+      } else if (BACKGROUND_INVALIDATING_EVENTS.has(item.type)) {
+        // The persisted idle store retains the active execution while advancing its
+        // report sequence to the latest relevant event. Input delivered after success
+        // starts a new lineage and cannot confirm the prior terminal marker.
+        if (
+          item.type === "session.execution.failed" ||
+          item.type === "session.execution.interrupted"
+        ) {
+          executionStartSequence = undefined
+          reportEventSequence = undefined
+          terminal = undefined
+        } else if (terminal) {
+          executionStartSequence = undefined
+          reportEventSequence = undefined
+          terminal = undefined
+        } else if (executionStartSequence !== undefined) {
+          reportEventSequence = durable.seq
+        }
       }
     }
   } catch {
@@ -191,9 +237,28 @@ async function replayCurrentExecutionStart(
     (lastSequence !== undefined && (watermark === undefined || watermark < lastSequence))
   )
     return undefined
-  return executionStartSequence === undefined || lastObservedEventSequence === undefined
+  return executionStartSequence === undefined ||
+    reportEventSequence === undefined ||
+    lastObservedEventSequence === undefined
     ? undefined
-    : { sequence: executionStartSequence, lastObservedEventSequence }
+    : {
+        sequence: executionStartSequence,
+        lastObservedEventSequence,
+        reportEventSequence,
+        ...(terminal ? { terminal } : {}),
+      }
+}
+
+function sameTerminal(
+  a: NativeIdleTerminal | null | undefined,
+  b: NativeIdleTerminal | null | undefined,
+) {
+  return (
+    a?.sequence === b?.sequence &&
+    a?.eventID === b?.eventID &&
+    a?.messageID === b?.messageID &&
+    a?.previousEventSequence === b?.previousEventSequence
+  )
 }
 
 function idleBinding(
@@ -633,7 +698,12 @@ export function registerProgress(
           await Effect.runPromise(reminderEffect(ctx, recorder, sessionID, 0))
       }
       const initial = idleStore.read(binding)
-      if (initial?.pendingTerminal || initial?.terminal) {
+      if (
+        initial?.terminal ||
+        (initial?.pendingTerminal &&
+          initial.report?.executionStartSequence === initial.executionStartSequence &&
+          initial.report.inputID === binding.assignedMessageID)
+      ) {
         trace(sessionID, "idle-after-terminal", {
           eventSequence: initial.lastEventSequence ?? undefined,
         })
@@ -650,10 +720,21 @@ export function registerProgress(
         let inputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
         const after = await readNativeSession(sessionID)
         const latest = idleStore.read(binding)
+        const liveLatestStart = observedExecutionStarts.get(sessionID)
+        const racedTerminal = Boolean(
+          latest?.pendingTerminal &&
+          latest.lastEventSequence === latest.pendingTerminal.sequence &&
+          latest.pendingTerminal.previousEventSequence !== undefined &&
+          latest.executionStartSequence === liveLatestStart?.sequence &&
+          sameIdleBinding(liveLatestStart.binding, binding) &&
+          liveLatestStart.current?.() !== false &&
+          (latest.invalidation === null ||
+            latest.invalidation.eventSequence === latest.executionStartSequence),
+        )
         if (
           !observing ||
           !sameIdleBinding(binding, bindingFor(sessionID)) ||
-          (latest?.revision ?? 0) !== expectedRevision
+          ((latest?.revision ?? 0) !== expectedRevision && !readSessionLog && !racedTerminal)
         ) {
           trace(sessionID, "idle-stale", {
             inputID,
@@ -661,6 +742,7 @@ export function registerProgress(
           })
           return
         }
+        let reportExpectedRevision = latest?.revision ?? 0
         if (!matchesBinding(before, binding) || !matchesBinding(after, binding)) {
           idleStore.invalidate(
             binding,
@@ -670,7 +752,8 @@ export function registerProgress(
           return
         }
         let executionStartSequence = latest?.executionStartSequence
-        let eventSequence = latest?.lastEventSequence
+        let eventSequence =
+          latest?.pendingTerminal?.previousEventSequence ?? latest?.lastEventSequence
         let observedStart = observedExecutionStarts.get(sessionID)
         if (
           executionStartSequence !== null &&
@@ -715,11 +798,13 @@ export function registerProgress(
               const lineageRejection = rejectedLineage({
                 "observer-stopped": observing,
                 "binding-changed": sameIdleBinding(binding, bindingFor(sessionID)),
-                "revision-changed": (replayedState?.revision ?? 0) === expectedRevision,
                 "start-changed": replayedState?.executionStartSequence === replayedSequence,
                 "event-changed":
                   replayedState?.lastEventSequence === replayedStart.lastObservedEventSequence,
-                "pending-terminal": replayedState?.pendingTerminal === null,
+                "pending-terminal": sameTerminal(
+                  replayedState?.pendingTerminal,
+                  replayedStart.terminal,
+                ),
                 terminal: replayedState?.terminal === null,
                 "input-changed": replayInputID === inputID,
                 "native-identity-changed": matchesBinding(replaySession, binding),
@@ -728,7 +813,8 @@ export function registerProgress(
               if (!lineageRejection && replayedState) {
                 inputID = replayInputID
                 executionStartSequence = replayedSequence
-                eventSequence = replayedState.lastEventSequence
+                eventSequence = replayedStart.reportEventSequence
+                reportExpectedRevision = replayedState.revision
                 observedStart = { binding, sequence: replayedSequence, source: "native-log-replay" }
                 observedExecutionStarts.set(sessionID, observedStart)
                 // S7-5: the synced replay proves the exact current durable lineage.
@@ -901,7 +987,7 @@ export function registerProgress(
             count: idle.background.length,
             kinds,
           },
-          expectedRevision,
+          reportExpectedRevision,
         )
         trace(
           sessionID,
@@ -921,13 +1007,21 @@ export function registerProgress(
         const sameExecutionReport =
           !recorded &&
           current !== undefined &&
-          current.pendingTerminal === null &&
           current.terminal === null &&
           current?.executionStartSequence === executionStartSequence &&
           current.report?.executionStartSequence === executionStartSequence &&
           current.report.eventSequence === eventSequence &&
           current.report.inputID === inputID
-        if (recorded || sameExecutionReport) await remindIfEmpty()
+        if ((recorded || sameExecutionReport) && current?.pendingTerminal)
+          await observeExecutionSuccess(binding, current.pendingTerminal, current.revision)
+        const settled = idleStore.read(binding)
+        if (
+          (recorded || sameExecutionReport) &&
+          idle.background.length === 0 &&
+          !settled?.pendingTerminal &&
+          !settled?.terminal
+        )
+          await remindIfEmpty()
       } catch (error) {
         trace(sessionID, "idle-observation-failed", { error })
         try {
@@ -972,23 +1066,39 @@ export function registerProgress(
       if (
         !state ||
         state.revision !== expectedRevision ||
-        state.pendingTerminal?.sequence !== terminal.sequence
+        state.pendingTerminal?.sequence !== terminal.sequence ||
+        !state.report
       )
         return
       const observedStart = observedExecutionStarts.get(binding.sessionID)
       const requiredAfterSequence = startsRequiringNewerObservation.get(binding.sessionID)
-      if (
-        state.executionStartSequence === null ||
-        state.executionStartSequence === undefined ||
-        observedStart?.sequence !== state.executionStartSequence ||
-        !sameIdleBinding(observedStart.binding, binding) ||
-        observedStart.current?.() === false ||
-        requiredAfterSequence === null ||
-        (requiredAfterSequence !== undefined &&
-          state.executionStartSequence <= requiredAfterSequence)
+      const liveLineage = Boolean(
+        state.executionStartSequence !== null &&
+        state.executionStartSequence !== undefined &&
+        observedStart?.sequence === state.executionStartSequence &&
+        sameIdleBinding(observedStart.binding, binding) &&
+        observedStart.current?.() !== false &&
+        requiredAfterSequence !== null &&
+        (requiredAfterSequence === undefined ||
+          state.executionStartSequence > requiredAfterSequence),
       )
-        // Another listener may still own the exact live start needed to confirm this terminal.
+      const replayedStart =
+        !liveLineage && readSessionLog
+          ? await replayCurrentExecutionStart(readSessionLog, binding.sessionID)
+          : undefined
+      const durableLineage = Boolean(
+        state.executionStartSequence !== null &&
+        state.executionStartSequence !== undefined &&
+        replayedStart?.sequence === state.executionStartSequence &&
+        replayedStart.lastObservedEventSequence === terminal.sequence &&
+        replayedStart.reportEventSequence === state.report?.eventSequence &&
+        sameTerminal(replayedStart.terminal, terminal),
+      )
+      if (!durableLineage && !liveLineage)
+        // A synced native log survives listener replacement and reopen; otherwise a live
+        // listener must still own the exact execution-start witness.
         return
+      if (durableLineage) startsRequiringNewerObservation.delete(binding.sessionID)
       const before = await readNativeSession(binding.sessionID)
       const messages = await Effect.runPromise(
         ctx.session.context({ sessionID: Session.ID.make(binding.sessionID) }),
@@ -997,13 +1107,26 @@ export function registerProgress(
       const after = await readNativeSession(binding.sessionID)
       const exact =
         observing &&
-        observedStart.current?.() !== false &&
+        (durableLineage || observedStart?.current?.() !== false) &&
         sameIdleBinding(binding, bindingFor(binding.sessionID)) &&
         matchesBinding(before, binding) &&
         matchesBinding(after, binding) &&
         after.outcome === "succeeded" &&
         hasExactSuccessfulIdleMarker(messages, terminal) &&
         inputID === state.report?.inputID
+      if (inputID !== state.report?.inputID) {
+        idleStore.invalidate(
+          binding,
+          "Native execution success does not match the current idle input lineage",
+          expectedRevision,
+          terminal.sequence,
+        )
+        trace(binding.sessionID, "execution-success-input-mismatch", {
+          eventSequence: terminal.sequence,
+          inputID,
+        })
+        return
+      }
       if (exact && idleStore.confirmSuccess(binding, inputID, terminal, expectedRevision)) {
         trace(binding.sessionID, "execution-success-confirmed", {
           eventSequence: terminal.sequence,
@@ -1011,12 +1134,13 @@ export function registerProgress(
         })
         return
       }
-      idleStore.invalidate(
-        binding,
-        "Native execution success could not confirm the current idle input lineage and terminal marker",
-        expectedRevision,
-        terminal.sequence,
-      )
+      // Native success can be published before the idle marker is visible in context. Keep the
+      // exact terminal candidate pending; a later session.idle event or replacement listener
+      // can verify it without treating missing history as completion.
+      trace(binding.sessionID, "execution-success-awaiting-marker", {
+        eventSequence: terminal.sequence,
+        inputID,
+      })
     }
 
     const observeNativeEvent = async (event: unknown) => {
@@ -1131,6 +1255,13 @@ export function registerProgress(
             requireNewerStart(sessionID, sequence ?? null)
             throw error
           }
+        }
+      } else if (observing && type === "session.idle" && sessionID) {
+        const binding = bindingFor(sessionID)
+        if (binding) {
+          const current = idleStore.read(binding)
+          if (current?.pendingTerminal && current.report)
+            await observeExecutionSuccess(binding, current.pendingTerminal, current.revision)
         }
       }
       try {

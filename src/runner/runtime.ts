@@ -7,6 +7,7 @@ import {
 } from "./prerequisite-proof.ts"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, extname, join, relative, resolve, sep } from "node:path"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
 import {
@@ -34,6 +35,7 @@ import { checkSucceeded, checkFailureReason } from "./checks.ts"
 import { needsMechanicalQualityPreparation } from "./quality-failure.ts"
 import type {
   HostSession,
+  NativeCleanupSettlement,
   RunnerHost,
   WorkerInstruction,
   WorktreeLocationRetirement,
@@ -183,6 +185,28 @@ const isCommitID = (value: unknown): value is string =>
   typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+type CleanupRecoveryAuthorization = {
+  schemaVersion: 1
+  projectDirectory: string
+  planID: string
+  planRevision: number
+  planArtifact: string | null
+  taskID: string
+  taskRevision: number
+  attemptID: string
+  artifact: string
+  workspace: string
+  sourceEffectID: string
+  sessionID: string
+  assignedMessageID: string
+  owner: string
+  ownerEpoch: number
+  targetBranch: string
+  requestID: string
+  reason: string
+}
+
 function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefined {
   if (!effect.receipt) return undefined
   try {
@@ -3666,6 +3690,7 @@ export class TaskRuntime {
         "retained-repair",
         "verify-retained",
         "cancel-retained-verification",
+        "recover-cleanup",
       ].includes(command.action) ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
     ) {
@@ -4589,6 +4614,115 @@ export class TaskRuntime {
           operationID: operation.id,
           generation: operation.generation,
           version: plan.version,
+        }
+      }
+      if (command.action === "recover-cleanup") {
+        if (
+          !this.validArchitect(ownerSession) ||
+          ownerSession.id !== plan.owner ||
+          caller !== plan.owner
+        )
+          throw new Error("Cleanup recovery requires the current Architect owner")
+        if (plan.state !== "cleanup-blocked")
+          throw new Error("Cleanup recovery is available only for an existing cleanup hold")
+        if (!command.taskID || !command.attemptID || !command.artifact || !command.targetBranch)
+          throw new Error("Cleanup recovery requires the exact accepted task and attempt")
+        const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+        const proposal = PlanInput.parse(JSON.parse(plan.body))
+        const proposedNode = proposal.nodes.find((item) => item.taskID === command.taskID)
+        const task = this.store.repository.get(command.taskID)
+        const attempts = this.store
+          .attempts(plan.id)
+          .filter((candidate) => candidate.task_id === command.taskID)
+        const attempt = attempts.at(-1)
+        if (
+          !node ||
+          node.state !== "accepted" ||
+          node.artifact !== command.artifact ||
+          !proposedNode ||
+          !task ||
+          task.revision !== proposedNode.revision ||
+          task.provenance.projectID !== this.projectID ||
+          task.provenance.projectDirectory !== this.directory ||
+          !attempt ||
+          attempt.id !== command.attemptID ||
+          attempt.state !== "accepted" ||
+          attempt.artifact !== command.artifact
+        )
+          throw new Error("Cleanup recovery task, accepted artifact or latest attempt changed")
+        const sourceEffect = this.store.effects(plan.id).find((effect) => {
+          if (
+            !["worktree", "worktree-recovery"].includes(effect.kind) ||
+            effect.state !== "completed" ||
+            effect.attempt_id !== attempt.id
+          )
+            return false
+          try {
+            return JSON.parse(effect.receipt ?? "{}").workspace === attempt.workspace
+          } catch {
+            return false
+          }
+        })
+        if (!sourceEffect || attempt.workspace === this.directory || !existsSync(attempt.workspace))
+          throw new Error(
+            "Exact owned attempt worktree is unavailable; preserve it for reconciliation",
+          )
+        const taskIntegration = this.store.latestTransition<{
+          artifact?: string
+          branch?: string
+        }>(plan.id, command.taskID, "TASK_INTEGRATION_RECORDED")
+        const planIntegration = this.store.latestTransition<{
+          artifact?: string
+          branch?: string
+        }>(plan.id, null, "INTEGRATION_RECORDED")
+        const integrated =
+          (taskIntegration?.artifact === command.artifact &&
+            taskIntegration.branch === command.targetBranch) ||
+          (planIntegration?.artifact === plan.artifact &&
+            planIntegration.branch === command.targetBranch)
+        if (!integrated)
+          throw new Error("Cleanup recovery requires a durable matching source integration record")
+        if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
+          throw new Error("The current checkout is not the recorded integration target branch")
+        git(this.directory, ["merge-base", "--is-ancestor", command.artifact, "HEAD"])
+        if (git(attempt.workspace, ["status", "--porcelain"]))
+          throw new Error(`Accepted attempt worktree is dirty; preserve ${attempt.workspace}`)
+
+        const ownerEpoch = this.store.planControlEpoch(plan.id)
+        this.store.record(plan.id, command.taskID, "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED", {
+          schemaVersion: 1,
+          projectDirectory: this.directory,
+          planID: plan.id,
+          planRevision: plan.revision,
+          planArtifact: plan.artifact,
+          taskID: command.taskID,
+          taskRevision: proposedNode.revision,
+          attemptID: attempt.id,
+          artifact: command.artifact,
+          workspace: attempt.workspace,
+          sourceEffectID: sourceEffect.id,
+          sessionID: attempt.session_id,
+          assignedMessageID: attempt.message_id,
+          owner: caller,
+          ownerEpoch,
+          targetBranch: command.targetBranch,
+          requestID: command.requestID,
+          reason: command.reason ?? "Owner-authorized native cleanup recovery",
+        } satisfies CleanupRecoveryAuthorization)
+        const changed = db
+          .query(
+            `UPDATE runner_plans SET version=version+1
+             WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='cleanup-blocked'`,
+          )
+          .run(plan.id, this.directory, caller, command.expectedVersion).changes
+        if (changed !== 1)
+          throw new Error("Cleanup recovery plan changed during owner authorization")
+        return {
+          status: "cleanup-recovery-requested",
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          workspace: attempt.workspace,
+          version: this.store.plan(plan.id)!.version,
         }
       }
       if (command.action === "integrated") {
@@ -5690,6 +5824,7 @@ export class TaskRuntime {
     if (
       command.action === "verify-retained" ||
       command.action === "cancel-retained-verification" ||
+      command.action === "recover-cleanup" ||
       command.action === "pause" ||
       command.action === "unpause" ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
@@ -15169,30 +15304,102 @@ export class TaskRuntime {
     effect: EffectRow,
     workspace: string,
     allowCancelled = false,
-  ) {
+  ): Promise<NativeCleanupSettlement | undefined> {
     if (effect.kind.startsWith("adoption-")) {
       if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Adoption worktree unexpectedly has an attempt owner; preserve it")
       this.assertAdoptionWorkspaceQuiescent(plan, effect, workspace, allowCancelled)
-      return
+      return undefined
     }
     if (effect.kind === "graph-worktree") {
       if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
       this.assertGraphWorkspaceQuiescent(plan, workspace, allowCancelled)
-      return
+      return undefined
     }
     const attempts = this.store
       .attempts(plan.id)
       .filter((attempt) => attempt.workspace === workspace)
     if (!attempts.length)
       throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
+    let recoverySettlement: NativeCleanupSettlement | undefined
     for (const attempt of attempts) {
       const session = await this.host.session(attempt.session_id, { messages: true })
       // RunnerHost null is authoritative native not-found. Current session and
       // background uncertainty still fail closed below; a missing historical
       // worker cannot keep its already-merged checkout forever.
-      if (!session) continue
+      if (!session) {
+        if (this.cleanupRecoveryAuthorization(plan, attempt, effect, workspace))
+          throw new Error(
+            "Native worker session is unavailable for cleanup recovery; preserve the worktree and reconcile the session binding",
+          )
+        continue
+      }
+      const backgroundReason = this.backgroundBlockReason(session, attempt, true)
+      let settlement: NativeCleanupSettlement | undefined
+      const authorization = this.cleanupRecoveryAuthorization(plan, attempt, effect, workspace)
+      if (authorization) {
+        if (!this.host.cleanupSettlement)
+          throw new Error(
+            "Fresh native cleanup settlement is unsupported by this host; preserve the worktree and wait for a new experimental.idle observation",
+          )
+        const settlementRequestedAt = Date.now()
+        settlement = await this.host.cleanupSettlement({
+          projectID: this.projectID,
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          assignedMessageID: attempt.message_id,
+        })
+        if (
+          settlement.schemaVersion !== 1 ||
+          settlement.projectID !== this.projectID ||
+          settlement.attemptID !== attempt.id ||
+          settlement.sessionID !== attempt.session_id ||
+          settlement.workspace !== attempt.workspace ||
+          settlement.assignedMessageID !== attempt.message_id ||
+          settlement.inputID !== attempt.message_id ||
+          settlement.observedAt < settlementRequestedAt - 1_000 ||
+          settlement.observedAt > this.now() + 1_000 ||
+          settlement.inventory.activeSession !== false ||
+          settlement.inventory.activeDescendants !== 0 ||
+          settlement.inventory.pendingInput !== false ||
+          settlement.inventory.pendingPermissions !== 0 ||
+          settlement.inventory.pendingForms !== 0 ||
+          settlement.inventory.runningShells !== 0 ||
+          settlement.idleReport.source !== "experimental.idle" ||
+          !Number.isFinite(settlement.idleReport.observedAt) ||
+          settlement.idleReport.observedAt > settlement.observedAt ||
+          settlement.idleReport.inputID !== attempt.message_id ||
+          !Number.isSafeInteger(settlement.idleReport.executionStartSequence) ||
+          settlement.idleReport.executionStartSequence < 0 ||
+          !Number.isSafeInteger(settlement.idleReport.eventSequence) ||
+          settlement.idleReport.eventSequence < settlement.idleReport.executionStartSequence ||
+          settlement.idleReport.count !== 0 ||
+          settlement.idleReport.kinds.shell !== 0 ||
+          settlement.idleReport.kinds.subagent !== 0 ||
+          settlement.idleReport.kinds.image !== 0 ||
+          !Number.isSafeInteger(settlement.terminal.previousEventSequence) ||
+          settlement.terminal.previousEventSequence !== settlement.idleReport.eventSequence ||
+          settlement.terminal.sequence <= settlement.idleReport.eventSequence ||
+          !Number.isSafeInteger(settlement.terminal.sequence) ||
+          settlement.terminal.sequence < 0 ||
+          !settlement.terminal.eventID ||
+          !settlement.terminal.messageID
+        )
+          throw new Error(
+            "Fresh native cleanup settlement did not match the held worker assignment",
+          )
+        let terminalMessageID: string | undefined
+        try {
+          terminalMessageID = SessionMessage.ID.fromEvent(settlement.terminal.eventID)
+        } catch {
+          terminalMessageID = undefined
+        }
+        if (terminalMessageID !== settlement.terminal.messageID)
+          throw new Error("Fresh native cleanup terminal event/message binding is invalid")
+        recoverySettlement = settlement
+      }
       const blockers: string[] = []
       if (session.id !== attempt.session_id) blockers.push("session identity changed")
       if (session.projectID !== this.projectID) blockers.push("project identity changed")
@@ -15207,11 +15414,13 @@ export class TaskRuntime {
         blockers.push("worker has pending permission requests")
       if ((session.pendingForms ?? 0) !== 0) blockers.push("worker has pending forms")
       if (!session.outcome) blockers.push("worker outcome is unknown")
+      if (settlement && session.turn?.inputID && session.turn.inputID !== settlement.inputID)
+        blockers.push("native settlement input does not match the current worker turn")
       if (!["completed", "interrupted"].includes(session.turn?.state ?? "unknown"))
         blockers.push("worker turn is not conclusively terminal")
-      const backgroundReason = this.backgroundBlockReason(session, attempt, true)
       if (
         backgroundReason &&
+        !settlement &&
         !this.isPriorContinuationBackground(attempt, session.background, session.turn?.inputID)
       )
         blockers.push(backgroundReason)
@@ -15220,6 +15429,171 @@ export class TaskRuntime {
           `Owned worktree worker is not conclusively idle; preserve it: ${blockers.join("; ")}`,
         )
     }
+    return recoverySettlement
+  }
+
+  private cleanupRecoveryAuthorization(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    source: EffectRow,
+    workspace: string,
+  ): CleanupRecoveryAuthorization | undefined {
+    const authorization = this.store.latestTransition<CleanupRecoveryAuthorization>(
+      plan.id,
+      attempt.task_id,
+      "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED",
+    )
+    if (!authorization) return undefined
+    const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
+    const proposal = PlanInput.parse(JSON.parse(plan.body))
+    const proposedNode = proposal.nodes.find((item) => item.taskID === attempt.task_id)
+    const task = this.store.repository.get(attempt.task_id)
+    const latestAttempt = this.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === attempt.task_id)
+      .at(-1)
+    const taskIntegration = this.store.latestTransition<{ artifact?: string; branch?: string }>(
+      plan.id,
+      attempt.task_id,
+      "TASK_INTEGRATION_RECORDED",
+    )
+    const planIntegration = this.store.latestTransition<{ artifact?: string; branch?: string }>(
+      plan.id,
+      null,
+      "INTEGRATION_RECORDED",
+    )
+    const integrationStillRecorded =
+      (taskIntegration?.artifact === attempt.artifact &&
+        taskIntegration.branch === authorization.targetBranch) ||
+      (planIntegration?.artifact === plan.artifact &&
+        planIntegration.branch === authorization.targetBranch)
+    const valid =
+      authorization.schemaVersion === 1 &&
+      authorization.projectDirectory === this.directory &&
+      authorization.planID === plan.id &&
+      authorization.planRevision === plan.revision &&
+      authorization.planArtifact === plan.artifact &&
+      authorization.taskID === attempt.task_id &&
+      authorization.taskRevision === proposedNode?.revision &&
+      authorization.attemptID === attempt.id &&
+      authorization.artifact === attempt.artifact &&
+      authorization.workspace === workspace &&
+      authorization.workspace === attempt.workspace &&
+      authorization.sourceEffectID === source.id &&
+      authorization.sessionID === attempt.session_id &&
+      authorization.assignedMessageID === attempt.message_id &&
+      authorization.owner === plan.owner &&
+      authorization.ownerEpoch === this.store.planControlEpoch(plan.id) &&
+      authorization.requestID.length > 0 &&
+      authorization.reason.trim().length > 0 &&
+      ["worktree", "worktree-recovery"].includes(source.kind) &&
+      source.state === "completed" &&
+      source.attempt_id === attempt.id &&
+      node?.state === "accepted" &&
+      node.artifact === attempt.artifact &&
+      attempt.state === "accepted" &&
+      latestAttempt?.id === attempt.id &&
+      task?.revision === proposedNode?.revision &&
+      task.provenance.projectID === this.projectID &&
+      task.provenance.projectDirectory === this.directory &&
+      integrationStillRecorded &&
+      this.store.repository.taskDisposition(attempt.task_id) === undefined
+    if (!valid)
+      throw new Error(
+        "Cleanup recovery authorization is stale or no longer matches the accepted attempt; preserve the worktree and have the current owner revalidate before retrying recover-cleanup",
+      )
+    try {
+      if (git(this.directory, ["branch", "--show-current"]) !== authorization.targetBranch)
+        throw new Error("current checkout is not the recorded integration branch")
+      git(this.directory, ["merge-base", "--is-ancestor", authorization.artifact, "HEAD"])
+    } catch (error) {
+      throw new Error(
+        `Cleanup recovery integration evidence is no longer valid (${errorText(error)}); preserve the worktree and have the current owner revalidate before retrying recover-cleanup`,
+        { cause: error },
+      )
+    }
+    return authorization
+  }
+
+  private appendCleanupSettlement(
+    effect: EffectRow,
+    authorization: CleanupRecoveryAuthorization,
+    settlement: NativeCleanupSettlement,
+    fence: number,
+  ) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const current = db
+        .query<{ state: string; receipt: string | null }, [string, string]>(
+          "SELECT state,receipt FROM runner_effects WHERE id=? AND plan_id=?",
+        )
+        .get(effect.id, effect.plan_id)
+      if (!current || !["held", "intended", "uncertain"].includes(current.state))
+        throw new Error("Native cleanup effect changed before settlement evidence was recorded")
+      const receipt = appendRunnerEffectReceipt(current.receipt, {
+        schema: "lazers-native-cleanup-settlement/v1",
+        authorization: {
+          requestID: authorization.requestID,
+          owner: authorization.owner,
+          ownerEpoch: authorization.ownerEpoch,
+          taskID: authorization.taskID,
+          attemptID: authorization.attemptID,
+          artifact: authorization.artifact,
+          workspace: authorization.workspace,
+        },
+        settlement,
+      })
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET receipt=? WHERE id=? AND plan_id=? AND state IN ('held','intended','uncertain')",
+        )
+        .run(receipt, effect.id, effect.plan_id).changes
+      if (changed !== 1)
+        throw new Error("Native cleanup settlement evidence lost its durable effect row")
+      this.store.record(effect.plan_id, effect.task_id, "WORKTREE_CLEANUP_SETTLEMENT_OBSERVED", {
+        effectID: effect.id,
+        requestID: authorization.requestID,
+        attemptID: authorization.attemptID,
+        sessionID: authorization.sessionID,
+        workspace: authorization.workspace,
+        terminalSequence: settlement.terminal.sequence,
+        terminalEventID: settlement.terminal.eventID,
+        observedAt: settlement.observedAt,
+      })
+    })
+  }
+
+  private completeWorktreeRemoval(effect: EffectRow, receipt: unknown, fence: number) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const current = db
+        .query<{ state: string; receipt: string | null }, [string, string]>(
+          "SELECT state,receipt FROM runner_effects WHERE id=? AND plan_id=?",
+        )
+        .get(effect.id, effect.plan_id)
+      if (!current || !["intended", "uncertain"].includes(current.state))
+        throw new Error("Native cleanup effect changed before removal completion was recorded")
+      const completion = {
+        schema: "lazers-worktree-cleanup-completion/v1",
+        ...(isRecord(receipt) ? receipt : { result: receipt }),
+      }
+      const appended = JSON.parse(appendRunnerEffectReceipt(current.receipt, completion)) as Record<
+        string,
+        unknown
+      >
+      const next = JSON.stringify({
+        ...appended,
+        ...(isRecord(receipt) ? receipt : { result: receipt }),
+      })
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state='completed',receipt=? WHERE id=? AND plan_id=? AND state IN ('intended','uncertain')",
+        )
+        .run(next, effect.id, effect.plan_id).changes
+      if (changed !== 1) throw new Error("Native cleanup completion lost its durable effect row")
+      this.store.record(effect.plan_id, effect.task_id, "EFFECT_COMPLETED", {
+        effectID: effect.id,
+        kind: effect.kind,
+      })
+    })
   }
 
   private abandonCleanupEffect(effect: EffectRow, fence: number) {
@@ -15349,6 +15723,22 @@ export class TaskRuntime {
         )
         .all(this.directory, workspace),
     )
+    const cleanupRecoveryAuthorizations = this.store.atomic((db) => {
+      const attemptIDs = new Set(attempts.map((attempt) => attempt.id))
+      return db
+        .query<{ task_id: string | null; payload: string }, [string]>(
+          `SELECT task_id,payload FROM runner_transitions
+           WHERE plan_id=? AND event='WORKTREE_CLEANUP_RECOVERY_AUTHORIZED' ORDER BY id`,
+        )
+        .all(plan.id)
+        .filter((row) => {
+          try {
+            return attemptIDs.has(JSON.parse(row.payload).attemptID)
+          } catch {
+            return true
+          }
+        })
+    })
     let adoptionFacts: unknown = null
     try {
       const payload = JSON.parse(source.payload) as { adoptionID?: unknown }
@@ -15388,6 +15778,7 @@ export class TaskRuntime {
       sessions,
       idleRevisions,
       owners,
+      cleanupRecoveryAuthorizations,
       adoptionFacts,
       source: {
         kind: source.kind,
@@ -15557,7 +15948,12 @@ export class TaskRuntime {
           .map((line) => resolve(line.slice("worktree ".length)))
         const gitRegistered = gitWorktrees.includes(target)
         if (listedWorkspace && existsSync(workspace)) {
-          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation")
+          const initialSettlement = await this.assertWorktreeQuiescent(
+            plan,
+            sourceEffect,
+            workspace,
+            mode === "cancellation",
+          )
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
@@ -15574,6 +15970,60 @@ export class TaskRuntime {
           } catch {
             throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
           }
+          const finalSettlement = await this.assertWorktreeQuiescent(
+            plan,
+            sourceEffect,
+            workspace,
+            mode === "cancellation",
+          )
+          if (!cleanupCurrent()) {
+            this.abandonCleanupEffect(effect, fence)
+            return
+          }
+          if (
+            initialSettlement &&
+            finalSettlement &&
+            fingerprint({ ...initialSettlement, observedAt: 0 }) !==
+              fingerprint({ ...finalSettlement, observedAt: 0 })
+          )
+            throw new Error(
+              "Native cleanup settlement changed before removal; preserve the worktree",
+            )
+          if (await gitAsync(workspace, ["status", "--porcelain"]))
+            throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
+          const finalHead = git(workspace, ["rev-parse", "HEAD"])
+          try {
+            git(this.directory, ["merge-base", "--is-ancestor", finalHead, "HEAD"])
+          } catch {
+            throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
+          }
+          const finalNative = await this.host.worktrees()
+          if (!cleanupCurrent()) {
+            this.abandonCleanupEffect(effect, fence)
+            return
+          }
+          const finalGitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("worktree "))
+            .map((line) => resolve(line.slice("worktree ".length)))
+          if (
+            !finalNative.some((entry) => resolve(entry) === target) ||
+            !finalGitWorktrees.includes(target)
+          )
+            throw new Error("Exact owned worktree registration changed before removal; preserve it")
+          const settlement = finalSettlement ?? initialSettlement
+          if (settlement) {
+            const attempt = this.store
+              .attempts(plan.id)
+              .find((candidate) => candidate.id === sourceEffect.attempt_id)
+            const authorization = attempt
+              ? this.cleanupRecoveryAuthorization(plan, attempt, sourceEffect, workspace)
+              : undefined
+            if (!authorization)
+              throw new Error("Cleanup recovery authorization changed before evidence was recorded")
+            this.appendCleanupSettlement(effect, authorization, settlement, fence)
+          }
+          if (!cleanupCurrent()) return
           beginCleanup()
           await this.host.removeWorktree(workspace)
         } else if (listedWorkspace || gitRegistered) {
@@ -15607,7 +16057,11 @@ export class TaskRuntime {
         if (!cleanupCurrent()) return
         if (!(["unsupported", "not-loaded", "evicted"] as string[]).includes(cacheRetirement))
           throw new Error(`Native worktree location retirement is ${cacheRetirement}`)
-        this.receipt(effect, { workspace, removed: true, native: true, cacheRetirement }, fence)
+        this.completeWorktreeRemoval(
+          effect,
+          { workspace, removed: true, native: true, cacheRetirement },
+          fence,
+        )
         if (!cleanupCurrent()) return
       } catch (error) {
         const reason = errorText(error)
@@ -15631,19 +16085,45 @@ export class TaskRuntime {
         let blocked = false
         this.store.fenced(this.owner, fence, (db) => {
           const held = !removalStarted && (!previous || previous.state === "held")
-          db.query(
-            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,?),receipt=? WHERE id=?",
-          ).run(
-            held ? "held" : "uncertain",
-            JSON.stringify({
+          const current = db
+            .query<{ receipt: string | null }, [string]>(
+              "SELECT receipt FROM runner_effects WHERE id=? AND state IN ('held','intended','uncertain')",
+            )
+            .get(effect.id)
+          if (!current)
+            throw new Error("Native cleanup effect changed before uncertainty was recorded")
+          let previousError: string | undefined
+          try {
+            const previous = JSON.parse(current.receipt ?? "{}") as unknown
+            if (isRecord(previous) && typeof previous.error === "string")
+              previousError = previous.error
+          } catch {
+            // Keep malformed legacy receipt bytes in the append-only history below.
+          }
+          const checkedAt = this.now()
+          const appended = JSON.parse(
+            appendRunnerEffectReceipt(current.receipt, {
+              schema: "lazers-worktree-cleanup-observation/v1",
               error: reason,
               ...(held ? { notSent: true } : {}),
-              ...(retryFacts
-                ? { retryFacts, retryCheckedAt: this.now() }
-                : { retryCheckedAt: this.now() }),
+              ...(retryFacts ? { retryFacts } : {}),
+              retryCheckedAt: checkedAt,
             }),
-            effect.id,
-          )
+          ) as Record<string, unknown>
+          const receipt = JSON.stringify({
+            ...appended,
+            error: previousError ?? reason,
+            ...(held ? { notSent: true } : {}),
+            ...(retryFacts ? { retryFacts } : {}),
+            retryCheckedAt: checkedAt,
+          })
+          const recorded = db
+            .query(
+              "UPDATE runner_effects SET state=lz_runner_transition('effect',state,?),receipt=? WHERE id=? AND state IN ('held','intended','uncertain')",
+            )
+            .run(held ? "held" : "uncertain", receipt, effect.id).changes
+          if (recorded !== 1)
+            throw new Error("Native cleanup uncertainty lost its durable effect row")
           blocked =
             db
               .query(
@@ -15668,7 +16148,7 @@ export class TaskRuntime {
               status: "cleanup-blocked",
               reason,
               artifact: plan.artifact,
-              allowedActions: ["integrated"],
+              allowedActions: ["integrated", "recover-cleanup"],
             },
             true,
           )
