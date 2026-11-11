@@ -177,10 +177,11 @@ function persistNativeIdle(
   withSuccess = true,
   executionStartSequence = 100,
   eventID = "evt_terminal",
+  inputID = "msg_current_input",
+  kinds = { shell: count, subagent: 0, image: 0 },
 ) {
   const started = store.observeEvent(binding, "session.execution.started", executionStartSequence)
   if (started.status !== "changed") throw new Error("Expected fresh native execution start")
-  const inputID = "msg_current_input"
   if (
     !store.recordIdle(
       binding,
@@ -190,7 +191,7 @@ function persistNativeIdle(
         executionStartSequence,
         eventSequence: executionStartSequence,
         count,
-        kinds: { shell: count, subagent: 0, image: 0 },
+        kinds,
       },
       started.revision,
     )
@@ -211,13 +212,63 @@ function persistNativeIdle(
     !store.confirmSuccess(
       binding,
       inputID,
-      { sequence: executionStartSequence + 1, eventID, messageID },
+      {
+        sequence: executionStartSequence + 1,
+        eventID,
+        messageID,
+        previousEventSequence: executionStartSequence,
+      },
       terminal.revision,
     )
   )
     throw new Error("Expected exact native execution success")
   return { eventID, messageID }
 }
+
+test.each([
+  {
+    name: "an image job",
+    eventID: "evt_cleanup_image_background",
+    kinds: { shell: 0, subagent: 0, image: 1 },
+  },
+  {
+    name: "a background shell owned by an inactive descendant",
+    eventID: "evt_cleanup_descendant_background",
+    kinds: { shell: 1, subagent: 0, image: 0 },
+  },
+])(
+  "native cleanup settlement rejects a confirmed idle report containing $name",
+  async (scenario) => {
+    const fixture = makeTrajectoryFixture()
+    try {
+      const native = nativeRevalidationHost(fixture.repository)
+      const idleStore = new NativeIdleStore(fixture.repository)
+      persistNativeIdle(
+        idleStore,
+        native.binding,
+        1,
+        true,
+        100,
+        scenario.eventID,
+        native.binding.assignedMessageID,
+        scenario.kinds,
+      )
+
+      await expect(
+        native.host.cleanupSettlement!({
+          projectID: native.binding.projectID,
+          attemptID: native.binding.attemptID,
+          sessionID: native.binding.sessionID,
+          workspace: native.binding.workspace,
+          assignedMessageID: native.binding.assignedMessageID,
+        }),
+      ).rejects.toThrow("The confirmed experimental.idle report observed shell, subagent, or image")
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 
 test("native adapter exposes inbox and paginated history reconciliation without claiming a sealed cutover", () => {

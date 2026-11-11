@@ -141,7 +141,21 @@ export type NativeCleanupSettlement = {
   workspace: string
   assignedMessageID: string
   inputID: string
-  terminal: { sequence: number; eventID: string; messageID: string }
+  idleReport: {
+    source: "experimental.idle"
+    observedAt: number
+    inputID: string
+    executionStartSequence: number
+    eventSequence: number
+    count: 0
+    kinds: { shell: 0; subagent: 0; image: 0 }
+  }
+  terminal: {
+    sequence: number
+    eventID: string
+    messageID: string
+    previousEventSequence: number
+  }
   observedAt: number
   inventory: {
     activeSession: false

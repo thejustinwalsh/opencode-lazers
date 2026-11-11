@@ -125,7 +125,12 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
       workspace,
       assignedMessageID,
       inputID: assignedMessageID,
-      terminal: { sequence: 13, eventID: recoveryEventID, messageID: recoveryMessageID },
+      terminal: {
+        sequence: 13,
+        eventID: recoveryEventID,
+        messageID: recoveryMessageID,
+        previousEventSequence: 12,
+      },
       observedAt: Date.now(),
       inventory: {
         activeSession: true,
@@ -204,7 +209,12 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
       idleStore.confirmSuccess(
         binding,
         assignedMessageID,
-        { sequence: 11, eventID: terminalEventID, messageID: terminalMessageID },
+        {
+          sequence: 11,
+          eventID: terminalEventID,
+          messageID: terminalMessageID,
+          previousEventSequence: 10,
+        },
         pending.status === "terminal-pending" ? pending.revision : -1,
       ),
     ).toBe(true)
@@ -366,7 +376,20 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
       sessionID,
       workspace,
       inputID: assignedMessageID,
-      terminal: { sequence: 11, eventID: terminalEventID, messageID: terminalMessageID },
+      idleReport: {
+        source: "experimental.idle",
+        inputID: assignedMessageID,
+        executionStartSequence: 10,
+        eventSequence: 10,
+        count: 0,
+        kinds: { shell: 0, subagent: 0, image: 0 },
+      },
+      terminal: {
+        sequence: 11,
+        eventID: terminalEventID,
+        messageID: terminalMessageID,
+        previousEventSequence: 10,
+      },
       inventory: {
         activeSession: false,
         activeDescendants: 0,
@@ -379,6 +402,15 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
     expect(idleStore.invalidate(binding, "fresh native completion has not yet been observed")).toBe(
       true,
     )
+    await expect(
+      native.cleanupSettlement!({
+        projectID: "project",
+        attemptID,
+        sessionID,
+        workspace,
+        assignedMessageID,
+      }),
+    ).rejects.toThrow("A current confirmed experimental.idle background report is unavailable")
     await runtime.command(
       {
         requestID: "integrate-cleanup-convergence-plan",
@@ -454,6 +486,15 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
 
     recoverySettlement = {
       ...recoverySettlement,
+      idleReport: {
+        source: "experimental.idle",
+        observedAt: Date.now(),
+        inputID: assignedMessageID,
+        executionStartSequence: 12,
+        eventSequence: 12,
+        count: 0,
+        kinds: { shell: 0, subagent: 0, image: 0 },
+      },
       inventory: { ...recoverySettlement.inventory, activeSession: false },
       observedAt: Date.now(),
     }

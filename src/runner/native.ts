@@ -29,7 +29,7 @@ import { sourceGuardMatches, sourceReviewBinding } from "./source-quarantine.ts"
 import { reviewMetadata } from "./review-input.ts"
 import { ModelPolicy } from "./schema.ts"
 import { NativeIdleStore } from "./native-idle.ts"
-import type { NativeIdleTerminal } from "./native-idle.ts"
+import type { NativeIdleReport, NativeIdleState, NativeIdleTerminal } from "./native-idle.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 
@@ -248,6 +248,70 @@ async function currentSuccessfulTerminal(
     (lastSequence === undefined || (watermark !== undefined && watermark >= lastSequence))
     ? terminal
     : undefined
+}
+
+type NativeCleanupIdleEvidence = {
+  state: NativeIdleState
+  report: NativeIdleReport & {
+    count: 0
+    kinds: { shell: 0; subagent: 0; image: 0 }
+  }
+  terminal: NativeIdleTerminal
+}
+
+function currentCleanupIdleEvidence(
+  state: NativeIdleState | undefined,
+  input: {
+    projectID: string
+    attemptID: string
+    sessionID: string
+    workspace: string
+    assignedMessageID: string
+  },
+): NativeCleanupIdleEvidence {
+  const report = state?.report
+  const terminal = state?.terminal
+  if (!state || !report || !terminal || state.invalidation || state.pendingTerminal)
+    throw new Error(
+      "A current confirmed experimental.idle background report is unavailable; preserve the worktree and retry only after the native idle hook records exact zero-background evidence",
+    )
+  if (
+    report.count !== 0 ||
+    report.kinds.shell !== 0 ||
+    report.kinds.subagent !== 0 ||
+    report.kinds.image !== 0
+  )
+    throw new Error(
+      "The confirmed experimental.idle report observed shell, subagent, or image background work; preserve the worktree until a later exact zero-background report is confirmed",
+    )
+  if (
+    state.binding.projectID !== input.projectID ||
+    state.binding.attemptID !== input.attemptID ||
+    state.binding.sessionID !== input.sessionID ||
+    state.binding.workspace !== input.workspace ||
+    state.binding.assignedMessageID !== input.assignedMessageID ||
+    report.inputID !== input.assignedMessageID ||
+    state.executionStartSequence !== report.executionStartSequence ||
+    state.lastEventSequence !== terminal.sequence ||
+    terminal.sequence <= report.eventSequence ||
+    terminal.previousEventSequence !== report.eventSequence
+  )
+    throw new Error(
+      "The experimental.idle background report is stale or mismatched for this worker completion; preserve the worktree",
+    )
+  return {
+    state,
+    report: {
+      ...report,
+      count: 0,
+      kinds: { shell: 0, subagent: 0, image: 0 },
+    },
+    terminal,
+  }
+}
+
+function sameCleanupTerminal(a: NativeIdleTerminal, b: NativeIdleTerminal) {
+  return a.sequence === b.sequence && a.eventID === b.eventID && a.messageID === b.messageID
 }
 
 function isMissingNativeSession(
@@ -912,15 +976,18 @@ export function nativeHost(
         binding.assignedMessageID !== input.assignedMessageID
       )
         throw new Error("Native cleanup settlement assignment changed; preserve the worktree")
-      const previous = idleStore.read(binding)
-      if (previous?.report && previous.report.count > 0)
-        throw new Error(
-          "A retained native idle report observed background work; preserve the worktree and wait for a later exact zero-background idle report before cleanup recovery",
-        )
+      const initialIdleState = idleStore.read(binding)
+      const initialIdleEvidence = currentCleanupIdleEvidence(initialIdleState, input)
 
       const client = await connectedClient()
       await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       const capture = async () => {
+        const idleBefore = idleStore.read(binding)
+        const idleEvidenceBefore = currentCleanupIdleEvidence(idleBefore, input)
+        if (JSON.stringify(idleBefore) !== JSON.stringify(initialIdleState))
+          throw new Error(
+            "Native idle settlement changed before cleanup observation; preserve the worktree",
+          )
         const before = await runNative(client, () =>
           client.session.get({ sessionID: Session.ID.make(input.sessionID) }),
         )
@@ -933,6 +1000,8 @@ export function nativeHost(
         )
         const inputID = await resolveNativeInputID(messages, () => retainedInputID(input.sessionID))
         const terminal = await currentSuccessfulTerminal(readSessionLog, input.sessionID)
+        const idleAfter = idleStore.read(binding)
+        const idleEvidenceAfter = currentCleanupIdleEvidence(idleAfter, input)
         const inventoryAfter = await observeWorker(client, input.sessionID, input.workspace)
         const activeAfter = await runNative(client, () =>
           activeSessionLineage(client, input.sessionID, input.workspace),
@@ -954,6 +1023,7 @@ export function nativeHost(
         })
         if (
           JSON.stringify(state(before)) !== JSON.stringify(state(after)) ||
+          JSON.stringify(idleBefore) !== JSON.stringify(idleAfter) ||
           JSON.stringify(inventoryBefore) !== JSON.stringify(inventoryAfter) ||
           JSON.stringify(activeBefore) !== JSON.stringify(activeAfter)
         )
@@ -991,14 +1061,26 @@ export function nativeHost(
         if (
           inputID !== input.assignedMessageID ||
           !terminal ||
+          !sameCleanupTerminal(idleEvidenceBefore.terminal, terminal) ||
+          !sameCleanupTerminal(idleEvidenceAfter.terminal, terminal) ||
+          !sameCleanupTerminal(initialIdleEvidence.terminal, terminal) ||
           !hasLatestSuccessfulIdleMarker(messages, inputID, terminal)
         )
           throw new Error(
-            "A synced current native success and exact idle marker are unavailable; preserve the worktree and let the worker reach a fresh idle observation",
+            "A synced current native success, matching confirmed zero-background report, and exact idle marker are unavailable; preserve the worktree and wait for genuine native idle evidence",
           )
         return {
           inputID,
-          terminal,
+          terminal: {
+            sequence: terminal.sequence,
+            eventID: terminal.eventID,
+            messageID: terminal.messageID,
+            previousEventSequence: idleEvidenceBefore.report.eventSequence,
+          },
+          idleReport: {
+            source: "experimental.idle" as const,
+            ...idleEvidenceBefore.report,
+          },
           activeRoot: activeBefore.activeRoot,
           activeDescendants: activeBefore.activeDescendants,
           activeAtWorkspace: activeBefore.activeAtWorkspace,
@@ -1012,6 +1094,7 @@ export function nativeHost(
       const projection = (result: typeof first) => ({
         inputID: result.inputID,
         terminal: result.terminal,
+        idleReport: result.idleReport,
         activeRoot: result.activeRoot,
         activeDescendants: result.activeDescendants,
         activeAtWorkspace: result.activeAtWorkspace,
@@ -1030,6 +1113,7 @@ export function nativeHost(
         workspace: input.workspace,
         assignedMessageID: input.assignedMessageID,
         inputID: second.inputID,
+        idleReport: second.idleReport,
         terminal: second.terminal,
         observedAt: Date.now(),
         inventory: {

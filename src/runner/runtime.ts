@@ -14728,6 +14728,21 @@ export class TaskRuntime {
           settlement.inventory.pendingPermissions !== 0 ||
           settlement.inventory.pendingForms !== 0 ||
           settlement.inventory.runningShells !== 0 ||
+          settlement.idleReport.source !== "experimental.idle" ||
+          !Number.isFinite(settlement.idleReport.observedAt) ||
+          settlement.idleReport.observedAt > settlement.observedAt ||
+          settlement.idleReport.inputID !== attempt.message_id ||
+          !Number.isSafeInteger(settlement.idleReport.executionStartSequence) ||
+          settlement.idleReport.executionStartSequence < 0 ||
+          !Number.isSafeInteger(settlement.idleReport.eventSequence) ||
+          settlement.idleReport.eventSequence < settlement.idleReport.executionStartSequence ||
+          settlement.idleReport.count !== 0 ||
+          settlement.idleReport.kinds.shell !== 0 ||
+          settlement.idleReport.kinds.subagent !== 0 ||
+          settlement.idleReport.kinds.image !== 0 ||
+          !Number.isSafeInteger(settlement.terminal.previousEventSequence) ||
+          settlement.terminal.previousEventSequence !== settlement.idleReport.eventSequence ||
+          settlement.terminal.sequence <= settlement.idleReport.eventSequence ||
           !Number.isSafeInteger(settlement.terminal.sequence) ||
           settlement.terminal.sequence < 0 ||
           !settlement.terminal.eventID ||

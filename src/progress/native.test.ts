@@ -1622,7 +1622,7 @@ test.each([
   },
 )
 
-test("native log lineage preserves a positive background idle observation", async () => {
+test("native idle evidence counts image and inactive-descendant background work", async () => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -1660,14 +1660,34 @@ test("native log lineage preserves a positive background idle observation", asyn
           )
           yield* replacement.idle()!({
             sessionID: Session.ID.make(sessionID),
-            background: [{ kind: "shell" }],
+            background: [
+              {
+                kind: "shell",
+                sessionID: Session.ID.make("ses-inactive-descendant"),
+                shellID: "sh_descendant",
+                command: "sleep 1",
+              },
+              {
+                kind: "subagent",
+                sessionID: Session.ID.make(sessionID),
+                childSessionID: Session.ID.make("ses-inactive-descendant"),
+                agent: "lazers-implementor",
+                description: "inactive descendant",
+              },
+              {
+                kind: "image",
+                sessionID: Session.ID.make(sessionID),
+                path: "generated.png",
+                model: "test-image-model",
+              },
+            ],
           } as never)
           expect(store.read(binding)?.report).toMatchObject({
             inputID: binding.assignedMessageID,
             executionStartSequence: 1,
             eventSequence: 1,
-            count: 1,
-            kinds: { shell: 1, subagent: 0, image: 0 },
+            count: 3,
+            kinds: { shell: 1, subagent: 1, image: 1 },
           })
           yield* Effect.promise(() =>
             replacement.emitEvent(executionEvent("session.execution.succeeded", sessionID, 2)),
@@ -1680,8 +1700,8 @@ test("native log lineage preserves a positive background idle observation", asyn
     )
     expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
       state: "observed",
-      count: 1,
-      kinds: { shell: 1, subagent: 0, image: 0 },
+      count: 3,
+      kinds: { shell: 1, subagent: 1, image: 1 },
       terminalSequence: 2,
     })
   } finally {
