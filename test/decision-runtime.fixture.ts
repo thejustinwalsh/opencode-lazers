@@ -482,6 +482,16 @@ const cancellationAtEachAsyncDispatchBoundaryPreventsSessionRun = async () => {
       assert.equal(counts.tensorDisposals, disposalsBefore)
     }
   }
+  const allocationsBeforeReadback = counts.tensorCreates
+  const disposalsBeforeReadback = counts.tensorDisposals
+  await assert.rejects(
+    decision.systemOne(input, new AbortController().signal, async (stage) => {
+      if (stage === "readback") throw new Error("readback trace failed")
+    }),
+    /readback trace failed/,
+  )
+  assert.equal(counts.tensorCreates - allocationsBeforeReadback, 9)
+  assert.equal(counts.tensorDisposals - disposalsBeforeReadback, 9)
   await decision.dispose()
   targetInputTokens = 1
   targetQuestionCount = 1

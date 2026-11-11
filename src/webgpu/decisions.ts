@@ -14,9 +14,10 @@ export const DecisionSpec = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("score"), minimum: Schema.Finite, maximum: Schema.Finite }),
 ])
 export type Decision = typeof DecisionSpec.Type
+export const DECISION_CONTEXT_MAX_LENGTH = 6_000
 export const DecisionRequest = Schema.Struct({
   question: Schema.String.check(Schema.isBetweenLength(1, 1_000)),
-  context: Schema.String.check(Schema.isMaxLength(6_000)),
+  context: Schema.String.check(Schema.isMaxLength(DECISION_CONTEXT_MAX_LENGTH)),
   decision: DecisionSpec,
   timeoutMs: Schema.Number.check(
     Schema.isInt(),

@@ -5958,14 +5958,10 @@ export class TaskRuntime {
       | undefined
     if (!continuation || priorContinuation) {
       const source = previous?.projectID === this.projectID ? previous : current
-      const parentID =
-        source?.projectID === this.projectID && source.directory === this.directory
-          ? source.id
-          : null
       const model = source?.projectID === this.projectID ? source.model : undefined
       next = {
         session_id: sessionID(),
-        parent_id: parentID,
+        parent_id: null,
         directory: this.directory,
         model: model ? JSON.stringify(model) : (continuation?.model ?? null),
       }
@@ -6972,7 +6968,7 @@ export class TaskRuntime {
       session.id === renewal.successor_session_id &&
       session.projectID === this.projectID &&
       session.directory === renewal.directory &&
-      session.parentID === renewal.previous_session_id &&
+      (session.parentID === undefined || session.parentID === renewal.previous_session_id) &&
       sameNativeModel(session.model, model) &&
       session.metadata?.lazersContinuation === true &&
       session.metadata.lazersSourceSessionID === renewal.previous_session_id &&
@@ -7181,7 +7177,6 @@ export class TaskRuntime {
             await this.host
               .createArchitect({
                 id: renewal.successor_session_id,
-                parentID: renewal.previous_session_id,
                 directory: renewal.directory,
                 model: JSON.parse(renewal.model),
                 title: `LAZERS · ${knownLabel ?? this.renewalLabel(renewal)}`.slice(0, 120),
@@ -7940,7 +7935,7 @@ export class TaskRuntime {
     planID: string,
     fence: number,
     phase: "step" | "cleanup" | "delivery",
-    run: () => Promise<void>,
+    run: () => void | Promise<void>,
   ) {
     try {
       await run()
@@ -8250,8 +8245,12 @@ export class TaskRuntime {
         await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
           this.requestQueueReview(waits, fence),
         )
-      for (const operation of retainedOperations)
-        this.notifyHeldRetainedVerification(operation.id, fence)
+      for (const operation of retainedOperations) {
+        if (operation.state !== "held") continue
+        await this.reconcilePlan(operation.planID, fence, "delivery", () =>
+          this.notifyHeldRetainedVerification(operation.id, fence),
+        )
+      }
       await this.deliver(fence)
     } finally {
       await heartbeat?.dispose()

@@ -220,8 +220,8 @@ export async function loadDecisionRuntime(
           if (isOrtWebGpuDeviceLoss(error)) notifyLost()
           throw error
         }
-        await trace?.("readback", { outputShape: outputs.logits?.dims })
         Object.values(outputs).forEach(own)
+        await trace?.("readback", { outputShape: outputs.logits?.dims })
         signal.throwIfAborted()
         const tensor = outputs.logits
         if (

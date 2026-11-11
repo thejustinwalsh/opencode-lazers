@@ -1055,7 +1055,10 @@ export function createInferenceRuntime(
             ),
           )
         await Promise.all(cacheOperations)
-        await ensureModel(needsChat(features()) ? "chat" : "decision", signal)
+        // Let the mailbox select the model if an inference request is already waiting.
+        // Warming chat first would allocate it only to immediately switch to decisions.
+        if (!(await worker().demand({}, { signal })).requested)
+          await ensureModel(needsChat(features()) ? "chat" : "decision", signal)
         nextLoadAttempt = 0
         loadFailures = 0
         autoload = false
@@ -1224,6 +1227,7 @@ export function createInferenceRuntime(
       )
         void load()
       else if (
+        !active &&
         models.current() &&
         state() === "ready" &&
         keepAliveMs() >= 0 &&

@@ -3554,7 +3554,8 @@ test("an uncertain current outcome follows an adopted owner across reopen withou
   const adoptedPlan = reopenedStore.plan(f.receipt.planID)!
   let current = outbox(reopenedStore)[0]!
   expect(adoptedPlan.owner).not.toBe("owner")
-  expect(f.sessions.get(adoptedPlan.owner)?.parentID).toBe("owner")
+  expect(f.sessions.get(adoptedPlan.owner)?.parentID).toBeUndefined()
+  expect(f.sessions.get(adoptedPlan.owner)?.metadata?.lazersSourceSessionID).toBe("owner")
   expect(f.sessions.get(adoptedPlan.owner)?.agent).toBe("architect")
   expect(current.id).toBe(uncertain.id)
   expect(current.session_id).toBe(adoptedPlan.owner)
@@ -12951,7 +12952,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(archiveSawDurableTransfer).toBe(true)
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(successor.id)
   expect(owner.archived).toBe(true)
-  expect(successor.parentID).toBe(owner.id)
+  expect(successor.parentID).toBeUndefined()
   expect(successor.model).toEqual(owner.model)
   expect(f.store.architectContinuity(successor.id)).toMatchObject({
     revision: 2,
@@ -12962,7 +12963,6 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(successor.metadata?.lazersPlanIDs).toContain(f.receipt.planID)
   expect(createInputs).toHaveLength(1)
   expect(createInputs[0]).toMatchObject({
-    parentID: "owner",
     planID: f.receipt.planID,
     sourceSessionID: "owner",
     title: expect.stringContaining("Implement a"),

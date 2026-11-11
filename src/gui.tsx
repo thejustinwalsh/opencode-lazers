@@ -13,6 +13,8 @@ import {
   MODEL_REVISION,
 } from "./webgpu/manifest.ts"
 import type { Decision } from "./webgpu/decisions.ts"
+import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
+import { panelErrorMessage } from "./panel-error.ts"
 import { registerDictation } from "./webgpu/dictation.tsx"
 import { audioFilePCM16 } from "./webgpu/audio.ts"
 import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
@@ -288,7 +290,7 @@ export default Plugin.define({
           await run()
         } catch (cause) {
           if (label === "clear" || (features().enabled && !testAborted()))
-            setError(cause instanceof Error ? cause.message : String(cause))
+            setError(panelErrorMessage(cause))
         } finally {
           setAction("")
           await refresh()
@@ -340,6 +342,11 @@ export default Plugin.define({
         perform("decision", async () => {
           test = new AbortController()
           setDecisionReply("")
+          const context = evidence()
+          if (context.length > DECISION_CONTEXT_MAX_LENGTH)
+            throw new Error(
+              `Decision context must be at most ${DECISION_CONTEXT_MAX_LENGTH.toLocaleString()} characters.`,
+            )
           const kind = decisionKind()
           const decision: Decision =
             kind === "boolean"
@@ -348,7 +355,7 @@ export default Plugin.define({
                 ? { kind, choices: ["approved", "not-approved"] }
                 : { kind, minimum: 0, maximum: 1 }
           const result = await runtime.decide(
-            { question: question(), context: evidence(), decision, timeoutMs: 60_000 },
+            { question: question(), context, decision, timeoutMs: 60_000 },
             test.signal,
           )
           if (!result.ok) throw new Error(result.error)
