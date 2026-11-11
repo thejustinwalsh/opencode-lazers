@@ -106,6 +106,130 @@ test("zero background is unknown until exact terminal success and a newer execut
   }
 })
 
+test.each(["session.execution.failed", "session.execution.interrupted"] as const)(
+  "%s prevents a later success from reusing the earlier execution lineage",
+  (terminalFailure) => {
+    const fixture = makeFixture()
+    const store = new NativeIdleStore(fixture.repository)
+    const binding = store.assignmentForSession("ses-accepted")!
+    try {
+      const started = store.observeEvent(binding, "session.execution.started", 20)
+      if (started.status !== "changed") throw new Error("Expected a new execution start")
+      expect(
+        store.recordIdle(
+          binding,
+          {
+            observedAt: 456,
+            inputID: binding.assignedMessageID,
+            executionStartSequence: 20,
+            eventSequence: 20,
+            count: 0,
+            kinds: { shell: 0, subagent: 0, image: 0 },
+          },
+          started.revision,
+        ),
+      ).toBe(true)
+      expect(store.observeEvent(binding, terminalFailure, 21).status).toBe("changed")
+      expect(
+        store.observeEvent(
+          binding,
+          "session.execution.succeeded",
+          22,
+          "evt_after_failure",
+          "msg_after_failure",
+        ).status,
+      ).toBe("changed")
+      expect(store.read(binding)).toMatchObject({
+        executionStartSequence: null,
+        pendingTerminal: null,
+        terminal: null,
+      })
+      expect(store.background(binding)).toMatchObject({ state: "unknown" })
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
+test("terminal success received before idle converges after reopen without weakening its sequence binding", () => {
+  const fixture = makeFixture()
+  const repository = fixture.repository
+  const path = repository.path
+  const initialStore = new NativeIdleStore(repository)
+  const binding = initialStore.assignmentForSession("ses-accepted")!
+  let reopened: TaskRepository | undefined
+  try {
+    const started = initialStore.observeEvent(binding, "session.execution.started", 20)
+    expect(started.status).toBe("changed")
+    const terminal = initialStore.observeEvent(
+      binding,
+      "session.execution.succeeded",
+      21,
+      "evt_before_idle",
+      "msg_before_idle",
+    )
+    expect(terminal).toMatchObject({ status: "terminal-pending" })
+    expect(initialStore.background(binding)).toMatchObject({ state: "unknown" })
+
+    repository.close()
+    reopened = new TaskRepository(path, binding.projectDirectory)
+    const store = new NativeIdleStore(reopened)
+    const pending = store.read(binding)!
+    expect(pending.pendingTerminal).toMatchObject({
+      sequence: 21,
+      eventID: "evt_before_idle",
+      messageID: "msg_before_idle",
+      previousEventSequence: 20,
+    })
+    expect(
+      store.recordIdle(
+        binding,
+        {
+          observedAt: 456,
+          inputID: binding.assignedMessageID,
+          executionStartSequence: 20,
+          eventSequence: 19,
+          count: 0,
+          kinds: { shell: 0, subagent: 0, image: 0 },
+        },
+        pending.revision,
+      ),
+    ).toBe(false)
+    expect(
+      store.recordIdle(
+        binding,
+        {
+          observedAt: 457,
+          inputID: binding.assignedMessageID,
+          executionStartSequence: 20,
+          eventSequence: 20,
+          count: 0,
+          kinds: { shell: 0, subagent: 0, image: 0 },
+        },
+        pending.revision,
+      ),
+    ).toBe(true)
+    const current = store.read(binding)!
+    expect(
+      store.confirmSuccess(
+        binding,
+        binding.assignedMessageID,
+        { sequence: 21, eventID: "evt_before_idle", messageID: "msg_before_idle" },
+        current.revision,
+      ),
+    ).toBe(true)
+    expect(store.background(binding)).toMatchObject({
+      state: "observed",
+      count: 0,
+      terminalSequence: 21,
+      inputID: binding.assignedMessageID,
+    })
+  } finally {
+    reopened?.close()
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
+
 test("positive native background survives store reopen even when external shell inventory may be empty", () => {
   const fixture = makeFixture()
   const repository = fixture.repository

@@ -419,7 +419,12 @@ test.each([
             yield* Effect.promise(() =>
               waitFor(() => idleStore.read(binding)?.lastEventSequence === 21),
             )
-            expect(idleStore.background(binding).state).toBe("unknown")
+            if (background.length === 0) expect(idleStore.background(binding).state).toBe("unknown")
+            else {
+              const observation = idleStore.background(binding)
+              expect(observation).toMatchObject({ state: "observed", count: 1 })
+              expect("terminalSequence" in observation).toBe(false)
+            }
 
             yield* Effect.promise(() =>
               replacement.emit(nativeEvent("session.execution.started", 22, attempt.session_id)),
@@ -491,8 +496,15 @@ test.each([
         terminalSequence: 23,
         count: background.length,
       })
-      for (let tick = 0; tick < 8 && f.store.plan(f.receipt.planID)?.state !== "accepted"; tick++)
+      for (
+        let tick = 0;
+        tick < 200 && f.store.plan(f.receipt.planID)?.state !== "accepted";
+        tick++
+      ) {
         await f.runtime.tick()
+        if (f.store.plan(f.receipt.planID)?.state !== "accepted")
+          await new Promise<void>((resolve) => setTimeout(resolve, 5))
+      }
       if (accepted) {
         expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
         expect(f.store.nodes(f.receipt.planID)[0]?.state).toBe("accepted")

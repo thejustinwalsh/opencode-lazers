@@ -26,6 +26,8 @@ export type NativeIdleTerminal = {
   sequence: number
   eventID: string
   messageID: string
+  /** Latest idle-invalidating event observed before this terminal event. */
+  previousEventSequence?: number
 }
 
 export type NativeIdleState = {
@@ -53,6 +55,7 @@ const terminalSchema = z.object({
   sequence: z.number().int().nonnegative().safe(),
   eventID: z.string().min(1),
   messageID: z.string().min(1),
+  previousEventSequence: z.number().int().nonnegative().safe().optional(),
 })
 const stateSchema = z.object({
   version: z.literal(1),
@@ -269,18 +272,60 @@ export class NativeIdleStore {
   ): boolean {
     return this.repository.atomic((db) => {
       const current = this.row(db, binding) ?? initialState(binding)
+      const terminalBeforeIdle = current.pendingTerminal
+      const priorReport = current.report
       if (
-        current.revision !== expectedRevision ||
-        current.lastEventSequence !== report.eventSequence ||
+        priorReport &&
+        current.invalidation === null &&
+        priorReport.executionStartSequence === report.executionStartSequence &&
+        priorReport.eventSequence === report.eventSequence &&
+        priorReport.inputID === report.inputID
+      ) {
+        const sameReport =
+          priorReport.count === report.count &&
+          priorReport.kinds.shell === report.kinds.shell &&
+          priorReport.kinds.subagent === report.kinds.subagent &&
+          priorReport.kinds.image === report.kinds.image
+        if (sameReport) return true
+        if (current.revision === expectedRevision)
+          this.save(db, {
+            ...current,
+            pendingTerminal: null,
+            terminal: null,
+            invalidation: {
+              reason: "Concurrent experimental.idle reports contradicted each other",
+              at: Date.now(),
+              eventSequence: report.eventSequence,
+            },
+          })
+        return false
+      }
+      const terminalMatchesReport = Boolean(
+        terminalBeforeIdle &&
+        current.terminal === null &&
+        current.lastEventSequence === terminalBeforeIdle.sequence &&
+        terminalBeforeIdle.sequence > report.eventSequence &&
+        terminalBeforeIdle.previousEventSequence === report.eventSequence &&
+        current.executionStartSequence === report.executionStartSequence &&
+        (current.invalidation === null ||
+          current.invalidation.eventSequence === report.eventSequence),
+      )
+      const expectedRevisionMatches = current.revision === expectedRevision
+      if (
+        (!expectedRevisionMatches && !terminalMatchesReport) ||
+        current.lastEventSequence !==
+          (terminalMatchesReport ? terminalBeforeIdle!.sequence : report.eventSequence) ||
         current.executionStartSequence !== report.executionStartSequence ||
-        current.pendingTerminal !== null ||
-        current.terminal !== null
+        (current.pendingTerminal !== null && !terminalMatchesReport) ||
+        current.terminal !== null ||
+        (current.invalidation !== null &&
+          current.invalidation.eventSequence !== report.eventSequence)
       )
         return false
       this.save(db, {
         ...current,
         report,
-        pendingTerminal: null,
+        pendingTerminal: terminalMatchesReport ? terminalBeforeIdle : null,
         terminal: null,
         invalidation: null,
       })
@@ -333,17 +378,32 @@ export class NativeIdleStore {
           eventSequence: sequence,
         }
       } else if (type === "session.execution.succeeded") {
+        const currentReport =
+          current.report?.executionStartSequence === current.executionStartSequence &&
+          current.invalidation === null
+            ? current.report
+            : null
+        const validExecution =
+          current.executionStartSequence !== null &&
+          current.executionStartSequence !== undefined &&
+          sequence > current.executionStartSequence &&
+          (currentReport
+            ? current.lastEventSequence === currentReport.eventSequence
+            : current.invalidation === null ||
+              current.invalidation.eventSequence === current.lastEventSequence)
         const validTerminal =
-          current.report !== null &&
-          current.invalidation === null &&
-          current.executionStartSequence === current.report.executionStartSequence &&
-          sequence > current.report.eventSequence &&
+          validExecution &&
           typeof eventID === "string" &&
           eventID.length > 0 &&
           typeof terminalMessageID === "string" &&
           terminalMessageID.length > 0
         if (validTerminal) {
-          next.pendingTerminal = { sequence, eventID, messageID: terminalMessageID }
+          next.pendingTerminal = {
+            sequence,
+            eventID,
+            messageID: terminalMessageID,
+            previousEventSequence: current.lastEventSequence ?? undefined,
+          }
           next.terminal = null
           const saved = this.save(db, next)
           return { status: "terminal-pending" as const, revision: saved.revision }
@@ -352,6 +412,15 @@ export class NativeIdleStore {
         next.terminal = null
         next.invalidation = {
           reason: "Native execution success did not match the current experimental.idle execution",
+          at: Date.now(),
+          eventSequence: sequence,
+        }
+      } else if (type === "session.execution.failed" || type === "session.execution.interrupted") {
+        next.executionStartSequence = null
+        next.pendingTerminal = null
+        next.terminal = null
+        next.invalidation = {
+          reason: `Native ${type} ended the current execution without confirmed success`,
           at: Date.now(),
           eventSequence: sequence,
         }
@@ -387,7 +456,9 @@ export class NativeIdleStore {
         current.invalidation !== null ||
         current.report === null ||
         current.report.inputID !== inputID ||
-        terminal.sequence <= current.report.eventSequence
+        terminal.sequence <= current.report.eventSequence ||
+        (current.pendingTerminal.previousEventSequence !== undefined &&
+          current.pendingTerminal.previousEventSequence !== current.report.eventSequence)
       )
         return false
       this.save(db, { ...current, terminal, pendingTerminal: null })

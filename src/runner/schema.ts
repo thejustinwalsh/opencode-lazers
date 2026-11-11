@@ -187,6 +187,7 @@ export const CommandInput = z
         "resume",
         "retry",
         "integrated",
+        "recover-cleanup",
         "schedule",
         "amend-scope",
         "adopt-descendant",
@@ -197,7 +198,7 @@ export const CommandInput = z
         "cancel-retained-verification",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. Without taskID, resume only continues a blocked plan after its combined check was interrupted and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; actual user cancellation and unrelated holds are not recoverable. Without taskID, resume only continues a blocked plan after its combined check was interrupted and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -370,6 +371,33 @@ export const CommandInput = z
             path: [field],
             message: `Startup settlement requires ${field}`,
           })
+    if (command.action === "recover-cleanup") {
+      for (const field of ["taskID", "attemptID", "artifact", "targetBranch", "reason"] as const)
+        if (!command[field])
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Cleanup recovery requires ${field}`,
+          })
+      if (command.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(command.artifact))
+        context.addIssue({
+          code: "custom",
+          path: ["artifact"],
+          message: "Cleanup recovery requires an exact full merged artifact identity",
+        })
+      if (!command.reason?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["reason"],
+          message: "Cleanup recovery requires a concrete owner reason",
+        })
+      if (!command.targetBranch?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["targetBranch"],
+          message: "Cleanup recovery requires the exact integration branch",
+        })
+    }
     if (command.action === "verify-retained") {
       for (const field of [
         "projectID",
