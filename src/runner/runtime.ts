@@ -16574,6 +16574,7 @@ export class TaskRuntime {
               return
             }
             this.receipt(effect, { check, reconciled: true }, fence)
+            if (effect.kind.startsWith("verify:")) this.tickRequested = true
             forgetVerificationActivity(
               verificationActivityKey(this.store.repository.path, effect.id),
               fingerprint(activityIdentity),

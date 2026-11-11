@@ -4801,7 +4801,6 @@ test("reopening verification reruns only the interrupted check", async () => {
   )!
   await first.settled
   await f.runtime.tick()
-  await f.runtime.tick()
   await waitForPath(join(f.root, "check-started"), 3_000)
   await f.runtime.stop()
 
@@ -6158,10 +6157,10 @@ test("combined worktree completion cannot overwrite a concurrent cancellation", 
       },
       "owner",
     )
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
     return actual
   }
   await settleVerification(f.runtime)
-  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
   expect(f.store.plan(f.receipt.planID)?.artifact).toBeNull()
   expect(
     f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("graph-verify:")),
