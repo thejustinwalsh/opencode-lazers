@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { SourceQuarantineVerificationBindingSchema } from "../source-quarantine.ts"
 
 export const RetainedVerificationPhase = z.enum(["task", "combined"])
 export type RetainedVerificationPhase = z.infer<typeof RetainedVerificationPhase>
@@ -38,6 +39,7 @@ export const RetainedVerificationSchema = z.strictObject({
   originalMessageID: z.string().min(1).max(200),
   originalWorkspace: z.string().min(1).max(1_024),
   artifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+  sourceQuarantine: SourceQuarantineVerificationBindingSchema.optional(),
   repair: z
     .strictObject({
       operationID: z.string().min(1),

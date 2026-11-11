@@ -191,6 +191,7 @@ test("retained repair commands bind the exact task attempt artifact and concrete
 })
 
 test("retained verification requests bind current revisions and cancellation names its operation", () => {
+  expect(CommandInput.shape.action.description).toContain("sealed, guarded source quarantine")
   const command = {
     requestID: "verify-exact-retained-candidate",
     planID: crypto.randomUUID(),

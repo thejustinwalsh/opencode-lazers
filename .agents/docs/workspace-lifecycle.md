@@ -64,6 +64,33 @@ dirty, unmerged, active, or uncertain resources for explicit reconciliation.
 Runner cleanup also retires only the exact cleaned native location through the
 supported host lifecycle.
 
+## Verify a sealed source-quarantined candidate
+
+Use the registered `lz-plan-command` action `verify-retained` as the current
+same-project Architect. Supply the current `projectID`, `planRevision`,
+`taskID`/`taskRevision`, latest `attemptID`, exact committed `artifact`, and a
+reason. A plan may remain `running` only when that candidate belongs to the exact
+latest `verifying` attempt and its source quarantine is sealed, unheld, bound to
+the current owner/session/assignment/workspace and review-input binding, and has
+an installed source guard. Pending, held, stale, or mismatched quarantine facts
+do not authorize verification.
+
+The action runs only the task's declared checks in a separate retained-verification
+checkout. It does not prompt or replay the original worker, or run checks in or
+alter its checkout. It does not settle original uncertain effects, infer
+background idleness, release the source/resource holds, or authorize original-
+checkout cleanup. Passing task checks can accept the task node, but combined-plan
+acceptance remains a separate gate. Failed checks retain their receipts without
+changing the original source assignment or holds. A lost response is retried with
+the same `requestID` and exact bindings so the original operation and receipts
+are reused.
+
+This route is not original execution settlement or safe cleanup. Keep the source
+quarantine and historical holds intact; use the existing explicit cleanup
+recovery route only after its independent native settlement and integration
+preconditions are proven. The existing stopped/accepted-plan `verify-retained`
+route remains available with its prior behavior.
+
 ## Recover a held runner cleanup
 
 Use the registered `recover-cleanup` action as the current plan owner, bound to the

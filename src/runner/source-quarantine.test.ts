@@ -2,12 +2,17 @@ import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import { RunnerStore } from "./store.ts"
 import {
   beginSourceGuard,
+  registerSourceGuard,
   samePhysicalWorkspace,
   sourceGuardInstalled,
   sourceGuardMatches,
+  sourceQuarantineVerificationBinding,
+  sourceQuarantineVerificationBindingMatches,
 } from "./source-quarantine.ts"
 
 test("a failed replacement restores the surviving installed source guard", () => {
@@ -106,6 +111,178 @@ test("unresolvable symlinks and filesystem errors remain conservative", () => {
     expect(samePhysicalWorkspace(dangling, root)).toBe(true)
     expect(samePhysicalWorkspace(join(root, "invalid\0path"), root)).toBe(true)
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("retained verification binding requires the exact sealed guarded source and review input", () => {
+  const root = mkdtempSync(join(tmpdir(), "lz-source-verification-binding-"))
+  const workspace = join(root, "source")
+  mkdirSync(workspace)
+  const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
+  const store = new RunnerStore(repository)
+  const task = repository.insert({
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: new Date().toISOString(),
+    provenance: {
+      projectID: "project",
+      projectDirectory: root,
+      workspaceDirectory: root,
+      sessionID: "owner",
+      startingRevision: { kind: "unborn" },
+    },
+    proposal: validProposal(),
+  })
+  const planID = crypto.randomUUID()
+  const attemptID = crypto.randomUUID()
+  store.atomic((db) => {
+    db.query(
+      "INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body) VALUES(?,?,?,1,1,'running','{}')",
+    ).run(planID, root, "owner")
+    db.query(
+      "INSERT INTO runner_nodes(plan_id,task_id,spec_revision,ordinal,state,version,snapshot,machine_version) VALUES(?,?,1,0,'verifying',1,'{}','1')",
+    ).run(planID, task.id)
+    db.query(
+      `INSERT INTO runner_attempts(
+         id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,
+         base_commit,artifact,policy,state,started_at
+       ) VALUES(?,?,?, ?,1,?,?,?, ?,?, '{}','verifying',?)`,
+    ).run(
+      attemptID,
+      planID,
+      root,
+      task.id,
+      "worker",
+      "assigned-input",
+      workspace,
+      "a".repeat(40),
+      "a".repeat(40),
+      Date.now(),
+    )
+  })
+  const attempt = {
+    id: attemptID,
+    plan_id: planID,
+    task_id: task.id,
+    state: "verifying" as const,
+    artifact: "a".repeat(40),
+    session_id: "worker",
+    message_id: "assigned-input",
+    workspace,
+  }
+  const reviewInput = { inputID: "review-input", requestID: "review-request" }
+  const now = Date.now()
+  store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_source_quarantines(
+           attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,
+           request_id,reason,phase,hold_reason,review_input_json,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?,?,?, 'pending',NULL,?,?,?)`,
+      )
+      .run(
+        attempt.id,
+        attempt.plan_id,
+        attempt.session_id,
+        attempt.message_id,
+        "owner",
+        workspace,
+        "quarantine-request",
+        "Keep the exact source assignment guarded",
+        JSON.stringify(reviewInput),
+        now,
+        now,
+      ),
+  )
+  const disposeGuard = registerSourceGuard(store, workspace)
+  try {
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+      }),
+    ).toBeUndefined()
+    store.atomic((db) =>
+      db
+        .query("UPDATE runner_source_quarantines SET phase='sealed' WHERE attempt_id=?")
+        .run(attempt.id),
+    )
+    const binding = sourceQuarantineVerificationBinding(store, {
+      planID: attempt.plan_id,
+      owner: "owner",
+      attempt,
+      artifact: attempt.artifact,
+    })
+    expect(binding).toEqual({ requestID: "quarantine-request", reviewInput })
+    expect(
+      sourceQuarantineVerificationBindingMatches(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+        expected: binding!,
+      }),
+    ).toBe(true)
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "foreign-owner",
+        attempt,
+        artifact: attempt.artifact,
+      }),
+    ).toBeUndefined()
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt: { ...attempt, message_id: "foreign-input" },
+        artifact: attempt.artifact,
+      }),
+    ).toBeUndefined()
+    store.atomic((db) =>
+      db
+        .query("UPDATE runner_source_quarantines SET review_input_json=? WHERE attempt_id=?")
+        .run(JSON.stringify({ ...reviewInput, inputID: "stale-input" }), attempt.id),
+    )
+    expect(
+      sourceQuarantineVerificationBindingMatches(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+        expected: binding!,
+      }),
+    ).toBe(false)
+    store.atomic((db) =>
+      db
+        .query("UPDATE runner_source_quarantines SET hold_reason='unresolved' WHERE attempt_id=?")
+        .run(attempt.id),
+    )
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+      }),
+    ).toBeUndefined()
+    disposeGuard()
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+      }),
+    ).toBeUndefined()
+  } finally {
+    disposeGuard()
+    repository.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
