@@ -38,3 +38,35 @@ cleanup retry symbols. This establishes request consumption and investigation;
 it does not establish corrected dispatch, integration or autonomous recovery.
 No live database records, workers, pauses or dependency links were changed by
 the external driver. Repair and observed post-repair dispatch remain pending.
+
+## Direct correction requested by Justin
+
+`TaskRuntime.tick()` no longer reopens `cleanup-blocked` plans merely to probe
+cleanup. `cleanupWorktrees()` accepts that state while retaining its existing
+native ownership/activity, dirty/unmerged work and four-way absence checks.
+An unchanged failure refreshes the removal-effect receipt and retry timestamp;
+it does not change plan state/version, append another lifecycle transition or
+call `outcome()`. A different failure reason records and notifies once. Confirmed
+native removal transitions either `cleaning` or `cleanup-blocked` to `integrated`.
+The existing fallback interval and event-driven retry facts remain unchanged.
+
+Both pre-edit cleanup-convergence runs passed 4 tests / 70 assertions. Extending
+its native-host/Git fixture reproduced the defect before production changes:
+one unchanged retry increased plan version 3→5, transitions 5→10 and outbox rows
+1→2. After correction, 4 tests / 82 assertions pass. The regression exercises
+three fallback retries, database close/reopen and lease expiry, a changed native
+worker-activity failure, unchanged repetition of that failure, and successful
+non-forced removal/integration after the blocker clears. No worker was replayed
+and no production database rows were edited by the driver.
+
+This is direct implementation requested by the user, not autonomous Architect
+recovery. Architect received a Desktop coordination notice covering these cleanup
+sections and held only LZ-203 dispatch pending this correction. The rest of
+LZ-203's current-native-observation recovery scope remains separate from this
+notification/transition convergence fix.
+
+Full runner verification after the direct correction: 741 tests passed, zero
+failures, 9,417 assertions across 34 files (282.94 seconds). `bun run verify`
+passed with automatic formatting/lint fixes. Native activation and post-activation
+measurements follow separately; passing these tests does not close the remaining
+LZ-203 recovery scope.

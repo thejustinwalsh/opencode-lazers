@@ -7847,20 +7847,7 @@ export class TaskRuntime {
         if (!this.pendingOwnedWorktreeCleanup(plan)) continue
         if (plan.state === "cleanup-blocked") {
           if (!(await this.worktreeCleanupFactsChanged(plan))) continue
-          const reopened = this.store.fenced(this.owner, fence, (db) => {
-            const changed = db
-              .query(
-                "UPDATE runner_plans SET state='cleaning',reason=NULL,version=version+1 WHERE id=? AND state='cleanup-blocked'",
-              )
-              .run(plan.id).changes
-            if (changed)
-              this.store.record(plan.id, null, "CLEANUP_RETRY_SCHEDULED", {
-                reason: plan.reason,
-                source: "scheduler-reconciliation",
-              })
-            return changed === 1
-          })
-          if (reopened) await this.cleanupWorktrees(this.store.plan(plan.id)!, fence)
+          await this.cleanupWorktrees(plan, fence)
         } else if (await this.worktreeCleanupFactsChanged(plan))
           await this.cleanupWorktrees(plan, fence, "cancellation")
       }
@@ -14834,8 +14821,14 @@ export class TaskRuntime {
     fence: number,
     mode: "integration" | "cancellation" = "integration",
   ) {
-    const expectedState = mode === "integration" ? "cleaning" : "cancelled"
-    const cleanupCurrent = () => this.store.plan(plan.id)?.state === expectedState
+    // A fallback probe is not a lifecycle change. Keep an existing hold until
+    // its reason changes or native cleanup completes.
+    const cleanupCurrent = () => {
+      const state = this.store.plan(plan.id)?.state
+      return mode === "integration"
+        ? state === "cleaning" || state === "cleanup-blocked"
+        : state === "cancelled"
+    }
     if (!cleanupCurrent()) return
     const owned = [
       ...new Set(
@@ -14998,11 +14991,10 @@ export class TaskRuntime {
             db
               .query(
                 mode === "integration"
-                  ? "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state='cleaning'"
+                  ? "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked') AND (state<>'cleanup-blocked' OR reason IS NOT ?)"
                   : "UPDATE runner_plans SET reason=?,version=version+1 WHERE id=? AND state='cancelled' AND (reason IS NULL OR reason<>?)",
               )
-              .run(...(mode === "integration" ? [reason, plan.id] : [reason, plan.id, reason]))
-              .changes === 1
+              .run(reason, plan.id, reason).changes === 1
           if (blocked)
             this.store.record(
               plan.id,
@@ -15040,7 +15032,7 @@ export class TaskRuntime {
       integrated =
         db
           .query(
-            "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=? AND state='cleaning'",
+            "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked')",
           )
           .run(plan.id).changes === 1
       if (integrated)

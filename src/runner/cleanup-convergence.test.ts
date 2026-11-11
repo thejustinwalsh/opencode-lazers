@@ -975,6 +975,7 @@ test("bounded native fallback detects an external dirty edit without deleting th
   let inventoryReads = 0
   let detailedSessionReads = 0
   let removeCalls = 0
+  let workspacePresent = true
 
   const gitCalls = () =>
     existsSync(tracePath)
@@ -998,7 +999,7 @@ test("bounded native fallback detects an external dirty edit without deleting th
     git(root, ["worktree", "add", "--detach", workspace, base])
 
     repository = new TaskRepository(databasePath, root)
-    const store = new RunnerStore(repository)
+    let store = new RunnerStore(repository)
     const proposal = validProposal()
     proposal.objective = "Keep fallback probing bounded while protecting dirty workspaces"
     proposal.writeScope = ["result.txt"]
@@ -1136,7 +1137,7 @@ test("bounded native fallback detects an external dirty edit without deleting th
     const host = {
       worktrees: async () => {
         inventoryReads++
-        return [workspace]
+        return workspacePresent ? [workspace] : []
       },
       session: async (id: string, options?: { messages?: boolean }) => {
         if (options?.messages) detailedSessionReads++
@@ -1146,7 +1147,8 @@ test("bounded native fallback detects an external dirty edit without deleting th
       notify: async () => {},
       removeWorktree: async () => {
         removeCalls++
-        throw new Error("Dirty worktree removal must never be attempted")
+        git(root, ["worktree", "remove", workspace])
+        workspacePresent = false
       },
     } as unknown as RunnerHost
     runtime = new TaskRuntime(store, host, "project", undefined, {
@@ -1192,6 +1194,68 @@ test("bounded native fallback detects an external dirty edit without deleting th
     expect(store.plan(planID)?.reason).toContain("worktree is dirty")
     expect(existsSync(workspace)).toBe(true)
     expect(removeCalls).toBe(0)
+
+    // F-S4-3: fallback probes must not turn an unchanged hold into new decisions.
+    const counts = () => ({
+      version: store.plan(planID)!.version,
+      transitions: repository!.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT count(*) count FROM runner_transitions WHERE plan_id=?",
+            )
+            .get(planID)!.count,
+      ),
+      notices: repository!.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT count(*) count FROM runner_outbox WHERE plan_id=?",
+            )
+            .get(planID)!.count,
+      ),
+    })
+    const held = counts()
+    const reads = inventoryReads
+    for (let retry = 0; retry < 3; retry++) {
+      clock += 60_000
+      await runtime.tick()
+      expect(counts()).toEqual(held)
+    }
+    expect(inventoryReads).toBeGreaterThan(reads)
+
+    await runtime.stop()
+    repository.close()
+    repository = new TaskRepository(databasePath, root)
+    store = new RunnerStore(repository)
+    // The replacement runtime acquires the expired lease of the stopped process.
+    repository.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+    runtime = new TaskRuntime(store, host, "project", undefined, {
+      now: () => clock,
+      requestTick: () => Promise.resolve(),
+    })
+    clock += 60_000
+    await runtime.tick()
+    expect(counts()).toEqual(held)
+
+    workerSession.busy = true
+    clock += 60_000
+    await runtime.tick()
+    expect(store.plan(planID)?.reason).toContain("worker execution is active")
+    expect(counts().notices).toBe(held.notices + 1)
+    const activeHold = counts()
+    clock += 60_000
+    await runtime.tick()
+    expect(counts()).toEqual(activeHold)
+    expect(removeCalls).toBe(0)
+
+    workerSession.busy = false
+    rmSync(join(workspace, "untracked.txt"))
+    clock += 60_000
+    await runtime.tick()
+    expect(removeCalls).toBe(1)
+    expect(existsSync(workspace)).toBe(false)
+    expect(store.plan(planID)?.state).toBe("integrated")
   } finally {
     await runtime?.stop()
     repository?.close()
