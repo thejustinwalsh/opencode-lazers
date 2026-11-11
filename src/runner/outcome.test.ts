@@ -28,7 +28,12 @@ test("notifications carry a concise action and identity, not full check logs", (
 })
 
 test("unresolved blockers require a native question before the Architect ends its turn", () => {
-  for (const status of ["queue-review", "blocked", "cleanup-blocked"]) {
+  for (const status of [
+    "queue-review",
+    "blocked",
+    "cleanup-blocked",
+    "retained-verification-held",
+  ]) {
     const text = outcomeText(JSON.stringify({ status, planID: "plan" }))
     expect(text).toContain("use the native question tool to state the blocker and next action")
     expect(text).toContain("ask for the human input needed")

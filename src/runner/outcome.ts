@@ -107,6 +107,10 @@ export function outcomeText(serialized: string) {
       action =
         "Unblock this plan now. Verify the cause with lz-inspect-plan, reconcile uncertain effects, and apply an allowed lz-plan-command. Confirm work can proceed. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
       break
+    case "retained-verification-held":
+      action =
+        "Resolve the held verification. Inspect the operation and its receipts with lz-inspect-plan. Preserve the candidate and prior evidence. Reconcile unsettled checks, then use lz-plan-command to cancel or replace the held verification as appropriate. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
+      break
     case "cleanup-blocked":
       action =
         "Resolve the cleanup failure without force or loss of work, then retry integration at the current plan version. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."

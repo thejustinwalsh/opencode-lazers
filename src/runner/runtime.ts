@@ -8016,10 +8016,11 @@ export class TaskRuntime {
       if (heartbeatFailed) throw heartbeatError
       await this.reconcileArchitectSources(fence)
       await this.advanceSourceQuarantines(fence)
-      for (const operation of this.store.atomic((db) =>
+      const retainedOperations = this.store.atomic((db) =>
         activeRetainedVerifications(db, this.directory),
-      )) {
-        if (this.retainedVerificationRuns.has(operation.id)) continue
+      )
+      for (const operation of retainedOperations) {
+        if (operation.state === "held" || this.retainedVerificationRuns.has(operation.id)) continue
         const id = `retained-advance:${operation.id}:${operation.generation}`
         const key = verificationActivityKey(this.store.repository.path, id)
         const identity = fingerprint({
@@ -8114,6 +8115,8 @@ export class TaskRuntime {
         await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
           this.requestQueueReview(waits, fence),
         )
+      for (const operation of retainedOperations)
+        this.notifyHeldRetainedVerification(operation.id, fence)
       await this.deliver(fence)
     } finally {
       await heartbeat?.dispose()
@@ -11235,6 +11238,41 @@ export class TaskRuntime {
     return phase === "task"
       ? (operation.taskWorkspace ?? undefined)
       : (operation.combinedWorkspace ?? undefined)
+  }
+
+  private notifyHeldRetainedVerification(operationID: string, fence: number) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const operation = retainedVerification(db, operationID)
+      if (operation?.state !== "held") return
+      const plan = this.store.plan(operation.planID)
+      if (!plan || ["cancelling", "cancelled", "integrated"].includes(plan.state)) return
+      const alreadyNotified = db
+        .query<{ id: string }, [string, string, string]>(
+          `SELECT id FROM runner_outbox WHERE plan_id=?
+           AND (session_id=? OR state IN ('pending','sending','uncertain','admitted','delivered'))
+           AND json_extract(payload,'$.status')='retained-verification-held'
+           AND json_extract(payload,'$.operationID')=?
+           AND state NOT IN ('unknown','superseded') LIMIT 1`,
+        )
+        .get(plan.id, plan.owner, operation.id)
+      if (alreadyNotified) return
+      this.outcome(
+        plan.id,
+        {
+          status: "retained-verification-held",
+          operationID: operation.id,
+          generation: operation.generation,
+          taskID: operation.taskID,
+          attemptID: operation.attemptID,
+          artifact: operation.artifact,
+          reason: safeText(
+            operation.holdReason ?? "Retained verification requires review",
+            privacyStats(),
+          ),
+        },
+        true,
+      )
+    })
   }
 
   private async holdRetainedVerification(
@@ -16399,6 +16437,29 @@ export class TaskRuntime {
     } catch {
       return
     }
+    if (payload.status === "retained-verification-held") {
+      const operationID = payload.operationID
+      const operation =
+        typeof operationID === "string"
+          ? this.store.atomic((db) => retainedVerification(db, operationID))
+          : undefined
+      if (
+        operation?.state !== "held" ||
+        operation.planID !== plan.id ||
+        ["cancelling", "cancelled", "integrated"].includes(plan.state)
+      ) {
+        if (message.state === "pending")
+          this.outcomeState(
+            message,
+            ["pending"],
+            "superseded",
+            { kind: "retained-verification-hold-cleared" },
+            "OUTCOME_SUPERSEDED",
+            fence,
+          )
+        return
+      }
+    }
     if (payload.status === "architect-source-change") {
       const sourceSessionID = payload.sourceSessionID
       if (typeof sourceSessionID !== "string") return
@@ -16708,7 +16769,8 @@ export class TaskRuntime {
             older.status === "architect-handoff" ||
             older.status === "architect-source-reference" ||
             older.status === "architect-source-change" ||
-            older.status === "queue-review"
+            older.status === "queue-review" ||
+            older.status === "retained-verification-held"
               ? undefined
               : ordered.slice(index + 1).findLast((candidate) => {
                   const next = JSON.parse(candidate.payload)
@@ -16716,7 +16778,8 @@ export class TaskRuntime {
                     next.status === "architect-handoff" ||
                     next.status === "architect-source-reference" ||
                     next.status === "architect-source-change" ||
-                    next.status === "queue-review"
+                    next.status === "queue-review" ||
+                    next.status === "retained-verification-held"
                   )
                     return false
                   // Current outcomes include the whole accepted-artifact review set.

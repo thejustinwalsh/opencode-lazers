@@ -2731,6 +2731,10 @@ test(
 
 test("owner reassignment and a newer generation reject late probe and human evidence", async () => {
   const f = await failedFixture({ humanTaskEvidence: true })
+  const notices: Parameters<typeof f.host.notify>[0][] = []
+  f.host.notify = async (notice) => {
+    notices.push(notice)
+  }
   const probes = new ProbeRepository(f.store.repository)
   const definitionResult = probes.define(
     {
@@ -2838,6 +2842,14 @@ test("owner reassignment and a newer generation reject late probe and human evid
     ["held"],
     "retained generation owner reassignment",
   )
+  await f.runtime.tick()
+  await f.runtime.tick()
+  const holdNotices = notices.filter((notice) =>
+    notice.text.includes('"status":"retained-verification-held"'),
+  )
+  expect(holdNotices).toHaveLength(1)
+  expect(holdNotices[0]).toMatchObject({ sessionID: "owner2", resume: true })
+  expect(holdNotices[0]?.text).toContain(first.operationID)
   const heldRow = f.store.atomic((db) =>
     db
       .query<{ payload: string }, [string]>(
