@@ -82,7 +82,7 @@ import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { SourceMessagesInspectPlanSchema } from "./inspection.ts"
-import { sharedScheduler } from "./scheduler-coordinator.ts"
+import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
 import {
   matchesReviewInputAlias,
@@ -7820,11 +7820,22 @@ export class TaskRuntime {
     if (!anchor) return
     const review = { waiting }
     const event = "QUEUE_REVIEW_REQUESTED"
-    if (
-      JSON.stringify(this.store.latestTransition(anchor.planID, null, event)) ===
-      JSON.stringify(review)
+    const prior = this.store.atomic((db) =>
+      db
+        .query<OutboxRow & { requestedAt: number }, [string, string]>(
+          `SELECT o.*, o.rowid AS sequence, CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
+                COALESCE(json_extract(o.payload,'$.requestedAt'),
+                  (SELECT max(t.created_at) FROM runner_transitions t
+                   WHERE t.plan_id=o.plan_id AND t.event='QUEUE_REVIEW_REQUESTED'), 0) AS requestedAt
+           FROM runner_outbox o
+          WHERE o.plan_id=? AND json_extract(o.payload,'$.status')='queue-review'
+            AND json_extract(o.payload,'$.waiting')=?
+          ORDER BY o.rowid DESC LIMIT 1`,
+        )
+        .get(anchor.planID, JSON.stringify(waiting)),
     )
-      return
+    if (prior && this.now() - prior.requestedAt < PROJECT_RECONCILIATION_INTERVAL_MS) return
+    if (prior && !["admitted", "consumed", "unknown", "superseded"].includes(prior.state)) return
     const checking = () =>
       verificationActivitiesForDatabase(this.store.repository.path).some(
         (activity) =>
@@ -7843,9 +7854,29 @@ export class TaskRuntime {
       )
         return
     }
+    const owner = this.store.plan(anchor.planID)?.owner
+    if (!owner) return
+    const architect = await this.host.session(owner)
+    if (
+      architect?.busy ||
+      architect?.pendingInput ||
+      architect?.observationUnstable ||
+      (architect?.pendingPermissions ?? 0) > 0 ||
+      (architect?.pendingForms ?? 0) > 0
+    )
+      return
+
+    let observation: Awaited<ReturnType<TaskRuntime["outcomeObservation"]>> | undefined
+    if (prior?.state === "admitted") {
+      // The existing delivery path retargets admitted notices when the owner changes.
+      if (prior.session_id !== owner || !this.validArchitect(architect)) return
+      observation = await this.outcomeObservation(prior, owner, this.ownership(prior))
+      if (observation === "queued") return
+    }
     this.store.fenced(this.owner, fence, () => {
       if (
         checking() ||
+        this.store.plan(anchor.planID)?.owner !== owner ||
         JSON.stringify(current()) !== JSON.stringify(waiting) ||
         this.store
           .activeProjectAttempts()
@@ -7860,8 +7891,21 @@ export class TaskRuntime {
           )
       )
         return
-      if (this.store.recordOnce(anchor.planID, null, event, review))
-        this.outcome(anchor.planID, { status: "queue-review", ...review }, true)
+      if (
+        prior?.state === "admitted" &&
+        !this.outcomeState(
+          prior,
+          ["admitted"],
+          observation === "consumed" ? "consumed" : "unknown",
+          { kind: "queue-review-reobserved", observation },
+          "QUEUE_REVIEW_DELIVERY_OBSERVED",
+          fence,
+        )
+      )
+        return
+      const requestedAt = this.now()
+      this.store.record(anchor.planID, null, event, { ...review, requestedAt })
+      this.outcome(anchor.planID, { status: "queue-review", ...review, requestedAt }, true)
     })
   }
 

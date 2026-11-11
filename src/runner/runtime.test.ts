@@ -14950,7 +14950,13 @@ test("a settled verification timeout preserves its attempt and releases a confli
 })
 
 test("a stalled queue requests one Architect review and leaves scheduling decisions with the Architect", async () => {
-  const f = fixture({ independent: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  let now = Date.now()
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
   const prerequisite = f.receipt.planID
   const plans = []
   for (const name of ["b", "c"]) {
@@ -14984,4 +14990,29 @@ test("a stalled queue requests one Architect review and leaves scheduling decisi
     expect(review()[0]?.text).toContain(planID)
     expect(f.store.attempts(planID)).toHaveLength(0)
   }
+
+  now += 5 * 60_000
+  await f.runtime.tick()
+  expect(review()).toHaveLength(1) // The first request still owns its native inbox entry.
+  const inbox = f.inbox.get("owner")!
+  const delivered = inbox.find((entry) => entry.id === review()[0]!.id)!
+  const architect = f.sessions.get("owner")!
+  architect.messages.push({
+    id: delivered.id,
+    type: "synthetic",
+    text: "Queue review",
+    metadata: delivered.metadata,
+  })
+  f.inbox.set(
+    "owner",
+    inbox.filter((entry) => entry.id !== delivered.id),
+  )
+  architect.pendingForms = 1
+  await f.runtime.tick()
+  expect(review()).toHaveLength(1)
+  architect.pendingForms = 0
+  await f.runtime.tick()
+  expect(review()).toHaveLength(2)
+  await f.runtime.tick()
+  expect(review()).toHaveLength(2)
 })
