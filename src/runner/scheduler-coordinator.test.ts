@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  PROJECT_RECONCILIATION_INTERVAL_MS,
   SchedulerCoordinator,
   schedulerProjectKey,
   sharedScheduler,
@@ -54,20 +55,27 @@ test("54 location registrations share one project reconciliation and one timer",
   const calls = Array.from({ length: 54 }, () => 0)
   const registrations = calls.map((_, index) =>
     scheduler.register("project", {
-      intervalMs: 2000,
+      intervalMs: PROJECT_RECONCILIATION_INTERVAL_MS,
       run: () => {
         calls[index] = calls[index]! + 1
       },
     }),
   )
   expect(clock.timers.size).toBe(1)
-  await clock.advance(60_000)
-  expect(calls[0]).toBe(31)
+  await clock.advance(299_999)
+  expect(calls[0]).toBe(1)
+  await clock.advance(1)
+  expect(calls[0]).toBe(2)
+  await clock.advance(30_000)
+  const immediate = registrations[0]!.runNow()
+  await clock.advance(0)
+  await immediate
+  expect(calls[0]).toBe(3)
   expect(calls.slice(1).every((n) => n === 0)).toBe(true)
   expect(scheduler.snapshot()).toMatchObject({
     groups: 1,
     participants: 54,
-    runs: 31,
+    runs: 3,
     timerCount: 1,
   })
   expect(clock.maximumTimers).toBe(1)

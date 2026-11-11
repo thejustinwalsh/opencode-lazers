@@ -9,7 +9,11 @@ import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { RunnerStore } from "./runner/store.ts"
 import { TaskRuntime, architectIdleWindowMs } from "./runner/runtime.ts"
-import { schedulerProjectKey, sharedScheduler } from "./runner/scheduler-coordinator.ts"
+import {
+  PROJECT_RECONCILIATION_INTERVAL_MS,
+  schedulerProjectKey,
+  sharedScheduler,
+} from "./runner/scheduler-coordinator.ts"
 import { nativeHost } from "./runner/native.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
@@ -161,7 +165,7 @@ export default Plugin.define({
               ctx.location.project.id,
             ),
             {
-              intervalMs: 2000,
+              intervalMs: PROJECT_RECONCILIATION_INTERVAL_MS,
               run: () => runtime.tick(),
               onError: (error) =>
                 Effect.runPromise(

@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs"
 import { resolve } from "node:path"
 
+export const PROJECT_RECONCILIATION_INTERVAL_MS = 5 * 60_000
+
 type Clock = {
   now(): number
   set(callback: () => void, delayMs: number): unknown
