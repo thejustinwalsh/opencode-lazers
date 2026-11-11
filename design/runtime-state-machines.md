@@ -146,3 +146,12 @@ After Desktop Relaunch, native transitions recorded LZ-154's
 confirmed LZ-203 running without a Start action. `advanceAttempt()` now leaves
 quarantined attempts to the retained verification workflow instead of trying
 mechanical edits on their protected source and replacing the original hold.
+
+On November 11, the LZ-203 Architect received
+`Permission.DeclinedError` at 10:37:26 EST while OpenCode was reloading
+loaded locations. Reload finished at 10:37:39 EST. The activation helper had
+checked for open requests and in-flight tools but admitted an active session
+between tool calls. For a live service-wide reload, wait for the native active
+session inventory to clear. OpenCode can decline a call as its location
+permission service closes. Retry the unchanged command after reload completes
+if the plan version is still current.
