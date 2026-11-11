@@ -49,3 +49,16 @@ LZ-203 has no after-plan dependency or dispatch pause and still has zero attempt
 effective scopes do not conflict with active project attempts. LZ-154 is active
 and shares runtime/native/schema/store/tools write paths with LZ-203. Preserve
 that real reservation; no additional integration gate is needed.
+
+## Observed landing and cleanup
+
+Main was fast-forwarded to `db2d84354bd5b80360c51902886f10d115db7ddb`.
+The original LZ-154 attempt remained running and subsequently completed native
+patch work; no replacement attempt, reload command, or worker prompt was sent.
+LZ-187 integration was recorded against its accepted candidate and main landing
+HEAD. Its original attempt checkout was removed with a completed native receipt
+(`native: true`, `cacheRetirement: evicted`), and its plan reached integrated.
+The clean, merged Architect review checkout was also removed natively with
+`force: false`. Native inventory retained both Root-owned review resources.
+LZ-188 was then observed running; its real prerequisite no longer stalls it.
+LZ-203 remained queued with zero attempts behind the overlapping active writer.
