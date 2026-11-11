@@ -54,7 +54,11 @@ import {
   ModelPriceSourceSettingsStore,
   ModelPriceSourceWriteOutputSchema,
 } from "./price-source-settings.ts"
-import type { ModelPriceSource } from "./price-source-settings.ts"
+import type {
+  ModelPriceSource,
+  ModelPriceSourcePolicy,
+  ModelPriceSourceSettings,
+} from "./price-source-settings.ts"
 
 type ModelsContext = Pick<
   Plugin.Context,
@@ -167,15 +171,8 @@ function nativeCatalogAccess(
   return matchingOutcome ? "configured" : "unknown"
 }
 
-/** Read-only Models-owned task valuation provider using the same configured cached price path. */
-export function createModelsTaskValuationProvider(
-  ctx: ModelsContext,
-  repository: TaskRepository,
-  evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
-    new ModelEvidenceReadStore(databasePath, directory),
-): TaskValuationProvider {
-  const projectDirectory = repository.projectDirectory
-  const priceSourceSettings = new ModelPriceSourceSettingsStore(
+function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: string) {
+  return new ModelPriceSourceSettingsStore(
     {
       get: (key, signal) =>
         Effect.runPromise(ctx.storage.get(key), signal ? { signal } : undefined),
@@ -184,6 +181,58 @@ export function createModelsTaskValuationProvider(
     },
     projectDirectory,
   )
+}
+
+function priceIndexFromSources(input: {
+  sources: readonly ModelEvidenceComparisonSourceRead[]
+  policy: ModelPriceSourcePolicy
+  openrouter: ModelPriceSourceSettings["access"]["openrouter"]
+  routes: readonly CurrentPriceApplicability[]
+}) {
+  const opencode = nativeCatalogAccess(
+    input.sources.find((source) => source.source === "native-catalog"),
+  )
+  const settings = ModelPriceSourceSettingsSchema.parse({
+    policy: input.policy,
+    access: { openrouter: input.openrouter, opencode },
+  })
+  const index = buildCurrentPriceIndex({
+    sourceStore: { readComparisonSources: () => [...input.sources] },
+    priceSources: settings,
+    observedRoutes: input.routes,
+  })
+  return { settings, opencode, index }
+}
+
+async function authorizeDecisionRead(
+  ctx: ModelsContext,
+  request: { scope: { projectDirectory: string }; sessionID: string },
+  projectDirectory: string,
+  projectID: string,
+  signal: AbortSignal,
+) {
+  if (request.scope.projectDirectory !== projectDirectory)
+    throw new Error("Models scope is unavailable")
+  await authorize(
+    ctx,
+    request.sessionID,
+    projectID,
+    "lz-read-model-decision",
+    [projectDirectory],
+    signal,
+  )
+  signal.throwIfAborted()
+}
+
+/** Read-only Models-owned task valuation provider using the same configured cached price path. */
+export function createModelsTaskValuationProvider(
+  ctx: ModelsContext,
+  repository: TaskRepository,
+  evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
+    new ModelEvidenceReadStore(databasePath, directory),
+): TaskValuationProvider {
+  const projectDirectory = repository.projectDirectory
+  const priceSourceSettings = createPriceSourceSettingsStore(ctx, projectDirectory)
   const readPriceIndex = createTaskValuationReader(async (routes, signal) => {
     signal.throwIfAborted()
     const [policy, openrouter] = await Promise.all([
@@ -196,18 +245,7 @@ export function createModelsTaskValuationProvider(
       signal.throwIfAborted()
       const sources = store.readComparisonSources()
       signal.throwIfAborted()
-      const opencode = nativeCatalogAccess(
-        sources.find((source) => source.source === "native-catalog"),
-      )
-      const settings = ModelPriceSourceSettingsSchema.parse({
-        policy,
-        access: { openrouter, opencode },
-      })
-      const index = buildCurrentPriceIndex({
-        sourceStore: { readComparisonSources: () => sources },
-        priceSources: settings,
-        observedRoutes: routes,
-      })
+      const { index, settings } = priceIndexFromSources({ sources, policy, openrouter, routes })
       return {
         index,
         freshness: currentPriceIndexFreshness(index, sources),
@@ -232,15 +270,7 @@ export function registerModelsServer(
   const path = repository.path
   const projectDirectory = repository.projectDirectory
   const projectID = ctx.location.project.id
-  const priceSourceSettings = new ModelPriceSourceSettingsStore(
-    {
-      get: (key, signal) =>
-        Effect.runPromise(ctx.storage.get(key), signal ? { signal } : undefined),
-      set: (key, value, signal) =>
-        Effect.runPromise(ctx.storage.set(key, value), signal ? { signal } : undefined),
-    },
-    projectDirectory,
-  )
+  const priceSourceSettings = createPriceSourceSettingsStore(ctx, projectDirectory)
   const withService = <T>(run: (service: ModelSettingsService) => T): T => {
     const connection = new TaskRepository(path, projectDirectory)
     try {
@@ -290,17 +320,11 @@ export function registerModelsServer(
         signal?.throwIfAborted()
         const state = withEvidenceReadStore((store) => {
           const sources = store.readComparisonSources()
-          const opencode = nativeCatalogAccess(
-            sources.find((source) => source.source === "native-catalog"),
-          )
-          const settings = ModelPriceSourceSettingsSchema.parse({
+          const { settings, opencode, index } = priceIndexFromSources({
+            sources,
             policy,
-            access: { openrouter, opencode },
-          })
-          const index = buildCurrentPriceIndex({
-            sourceStore: { readComparisonSources: () => sources },
-            priceSources: settings,
-            observedRoutes: routes,
+            openrouter,
+            routes,
           })
           return {
             settings,
@@ -580,17 +604,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelDecisionOverviewRPCInputSchema.parse(input)
-            if (request.scope.projectDirectory !== projectDirectory)
-              throw new Error("Models scope is unavailable")
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-decision",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
+            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
             const output = await decisionReader.overview(
               {
                 schemaVersion: request.schemaVersion,
@@ -608,17 +622,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelDecisionRowsRPCInputSchema.parse(input)
-            if (request.scope.projectDirectory !== projectDirectory)
-              throw new Error("Models scope is unavailable")
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-decision",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
+            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
             const output = await decisionReader.rows(
               {
                 schemaVersion: request.schemaVersion,
@@ -639,17 +643,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelDecisionConfigurationsRPCInputSchema.parse(input)
-            if (request.scope.projectDirectory !== projectDirectory)
-              throw new Error("Models scope is unavailable")
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-decision",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
+            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
             const output = await decisionReader.configurations(
               {
                 schemaVersion: request.schemaVersion,
@@ -670,17 +664,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelDecisionInspectRPCInputSchema.parse(input)
-            if (request.scope.projectDirectory !== projectDirectory)
-              throw new Error("Models scope is unavailable")
-            await authorize(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-decision",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
+            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
             const output = await decisionReader.inspect(
               {
                 schemaVersion: request.schemaVersion,

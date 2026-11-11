@@ -144,35 +144,20 @@ function decisionFromMapping(
   persona: DispatchRouteInput["persona"],
   resolution: Extract<ModelMappingResolution, { status: "assigned" }>,
 ): DispatchRouteDecision {
-  switch (resolution.provenance.target.scope) {
-    case "task":
-      return DispatchRouteDecisionSchema.parse({
-        schemaVersion: 1,
-        status: "resolved",
-        persona,
-        source: "task-mapping",
-        route: resolution.route,
-        provenance: resolution.provenance,
-      })
-    case "project":
-      return DispatchRouteDecisionSchema.parse({
-        schemaVersion: 1,
-        status: "resolved",
-        persona,
-        source: "project-mapping",
-        route: resolution.route,
-        provenance: resolution.provenance,
-      })
-    case "shared":
-      return DispatchRouteDecisionSchema.parse({
-        schemaVersion: 1,
-        status: "resolved",
-        persona,
-        source: "shared-mapping",
-        route: resolution.route,
-        provenance: resolution.provenance,
-      })
-  }
+  const source =
+    resolution.provenance.target.scope === "task"
+      ? ("task-mapping" as const)
+      : resolution.provenance.target.scope === "project"
+        ? ("project-mapping" as const)
+        : ("shared-mapping" as const)
+  return DispatchRouteDecisionSchema.parse({
+    schemaVersion: 1,
+    status: "resolved",
+    persona,
+    source,
+    route: resolution.route,
+    provenance: resolution.provenance,
+  })
 }
 
 /**
