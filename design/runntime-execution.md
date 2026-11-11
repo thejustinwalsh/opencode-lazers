@@ -116,6 +116,32 @@ dictation and speech must remain usable throughout. Production active sessions,
 queues, credentials and model caches are outside this work's mutation boundary.
 Automated fixtures supplement but never replace real GPU/native Desktop checks.
 
+### Quality decisions
+
+Freeze a small independent reference corpus before evaluating candidates: all
+three D1 primitives, reversed named options, clear positive/negative evidence,
+rubrics and representative task reviews. For F32 D1, require probability error
+at most 0.001 and exact stable final answers against pinned Liquid. For native
+Q8 require per-option absolute probability error at most 0.04, exact winning
+answers on clear-margin cases, and normalized rubric score error at most 0.05.
+These are this plan's qualification budgets, not claims that community Q8 and
+native Q8 are identical. Exceedances return to Architect; do not silently loosen
+tolerances or change fixtures. Compare Q8 with both the original and ONNX
+references and report differences separately.
+
+LFM3 uses frozen teacher-forced vectors and deterministic chat cases against the
+pinned Liquid engine, exact stable greedy-token cases and expected product
+answers. Cached native decode must match native full-forward tokens and have
+at most 0.001 probability error. Record full numerical differences against
+Liquid, with Architect review of any unexplained discrepancy before route
+qualification. Transcription must reproduce the words in fixed clean reference
+clips (normalizing case/punctuation only). Speech must produce finite nonempty
+24 kHz audio, complete real Desktop playback, and recover the requested words
+when transcribed by the retained Liquid reference. Also retain comparative
+latency/audio quality evidence; no claim of perceptual equivalence follows from
+transcription alone. A backend that cannot meet these budgets remains selectable
+only as an unqualified candidate, with its existing route retained.
+
 ## Source findings
 
 - ruNNtime D1 `decider.ts` currently loses final output handles, omits exceptional
