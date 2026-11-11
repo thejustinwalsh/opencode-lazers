@@ -46,9 +46,10 @@ remain intact. Implementation and connected qualification are still pending.
 
 ## Standing driver role
 
-Follow AGENTS.md → Dogfood driver role. Codex is the human developer in this
-loop; Architect owns recovery and raises material unresolved decisions through
-native questions. Observe outcomes rather than supplying unsolicited steering.
+When the user explicitly invokes dogfood, use
+[dogfood](../skills/dogfood/SKILL.md) for the external Codex driver workflow.
+Architect and workers retain their normal execution responsibilities. Direct
+repair requests use normal development workflow.
 
 ## Current native observations (2026-11-09)
 

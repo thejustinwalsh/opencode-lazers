@@ -1,0 +1,5 @@
+interface:
+  display_name: "Dogfood"
+  short_description: "Drive explicit LAZERS dogfood runs in Desktop"
+policy:
+  allow_implicit_invocation: false
