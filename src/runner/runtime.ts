@@ -7806,6 +7806,65 @@ export class TaskRuntime {
     })
   }
 
+  private async requestQueueReview(
+    waits: { planID: string; prerequisitePlanIDs?: string[]; reservationTaskIDs?: string[] }[],
+    fence: number,
+  ) {
+    const current = () =>
+      waits.filter(
+        ({ planID }) =>
+          this.store.plan(planID)?.state === "running" && !this.store.dispatchPause(planID),
+      )
+    const waiting = current()
+    const anchor = waiting[0]
+    if (!anchor) return
+    const review = { waiting }
+    const event = "QUEUE_REVIEW_REQUESTED"
+    if (
+      JSON.stringify(this.store.latestTransition(anchor.planID, null, event)) ===
+      JSON.stringify(review)
+    )
+      return
+    const checking = () =>
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) =>
+          activity.metadata.projectDirectory === this.directory && activity.state === "running",
+      )
+    if (checking()) return
+    const active = this.store.activeProjectAttempts()
+    for (const attempt of active) {
+      if (sourceReservationExcluded(this.store, attempt, { mode: "isolated" })) continue
+      const session = await this.host.session(attempt.session_id)
+      if (
+        session?.busy ||
+        session?.pendingInput ||
+        session?.observationUnstable ||
+        (session?.background?.state === "observed" && session.background.count > 0)
+      )
+        return
+    }
+    this.store.fenced(this.owner, fence, () => {
+      if (
+        checking() ||
+        JSON.stringify(current()) !== JSON.stringify(waiting) ||
+        this.store
+          .activeProjectAttempts()
+          .some(
+            (attempt) =>
+              !active.some(
+                (observed) =>
+                  observed.id === attempt.id &&
+                  observed.message_id === attempt.message_id &&
+                  observed.state === attempt.state,
+              ),
+          )
+      )
+        return
+      if (this.store.recordOnce(anchor.planID, null, event, review))
+        this.outcome(anchor.planID, { status: "queue-review", ...review }, true)
+    })
+  }
+
   private async runTick() {
     this.running = true
     let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
@@ -7893,6 +7952,7 @@ export class TaskRuntime {
         void running.then(finished, finished)
       }
       const terminalCleanupPlanIDs = this.store.terminalCleanupPlanIDs()
+      const waits: Parameters<TaskRuntime["requestQueueReview"]>[0] = []
       for (const candidate of this.store.runnablePlans(terminal)) {
         await this.reconcilePlan(candidate.id, fence, "step", async () => {
           let plan = candidate
@@ -7923,7 +7983,8 @@ export class TaskRuntime {
             )
           )
             return
-          await this.step(plan, fence)
+          const wait = await this.step(plan, fence)
+          if (wait) waits.push(wait)
         })
         if (heartbeatFailed) throw heartbeatError
       }
@@ -7941,6 +8002,10 @@ export class TaskRuntime {
         if (heartbeatFailed) throw heartbeatError
       }
       await this.reconcileTerminalRetainedVerifications(fence)
+      if (waits.length)
+        await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
+          this.requestQueueReview(waits, fence),
+        )
       await this.deliver(fence)
     } finally {
       await heartbeat?.dispose()
@@ -8198,7 +8263,14 @@ export class TaskRuntime {
     const prerequisiteBaseline = prerequisites.length
       ? this.integratedPrerequisiteBaseline(prerequisites)
       : undefined
-    if (prerequisites.length && !prerequisiteBaseline) return
+    if (prerequisites.length && !prerequisiteBaseline) {
+      if (
+        !this.store.dispatchPause(plan.id) &&
+        this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
+      )
+        return { planID: plan.id, prerequisitePlanIDs: prerequisites }
+      return
+    }
     if (prerequisites.length && !this.store.attempts(plan.id).length) {
       // Dependents inherit the selected checkout after every prerequisite's
       // current combined integration proof is present in its Git history.
@@ -8262,12 +8334,17 @@ export class TaskRuntime {
       )
       return
     }
-    if (
-      this.store
-        .attempts(plan.id)
-        .some((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
-    )
+    const outstanding = this.store
+      .attempts(plan.id)
+      .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
+    if (outstanding.length) {
+      if (!pause && nodes.some((node) => ["queued", "ready"].includes(node.state)))
+        return {
+          planID: plan.id,
+          reservationTaskIDs: [...new Set(outstanding.map((attempt) => attempt.task_id))].sort(),
+        }
       return
+    }
     const failed = nodes.find((n) =>
       ["failed", "cancelled", "exhausted", "blocked"].includes(n.state),
     )
@@ -8275,8 +8352,23 @@ export class TaskRuntime {
       this.hold(plan, `Task ${failed.task_id}: ${failed.reason ?? failed.state}`)
       return
     }
-    if (nodes.every((n) => n.state === "accepted" || n.state === "incorporated"))
+    if (nodes.every((n) => n.state === "accepted" || n.state === "incorporated")) {
       await this.finish(plan, fence)
+      return
+    }
+    if (ready.length && occupied.length) {
+      const reservationTaskIDs = occupied
+        .filter(
+          (entry) =>
+            input.workspaceMode === "shared" ||
+            entry.shared ||
+            ready.some((node) =>
+              scopePatternsConflict(entry.scopes, this.store.effectiveWriteScope(node.task_id)),
+            ),
+        )
+        .map((entry) => entry.taskID)
+      return { planID: plan.id, reservationTaskIDs: [...new Set(reservationTaskIDs)].sort() }
+    }
   }
 
   private async cancelWorkers(plan: PlanRow, fence: number, allowPlanSettlement = true) {
@@ -16353,14 +16445,16 @@ export class TaskRuntime {
           const replacement =
             older.status === "architect-handoff" ||
             older.status === "architect-source-reference" ||
-            older.status === "architect-source-change"
+            older.status === "architect-source-change" ||
+            older.status === "queue-review"
               ? undefined
               : ordered.slice(index + 1).findLast((candidate) => {
                   const next = JSON.parse(candidate.payload)
                   if (
                     next.status === "architect-handoff" ||
                     next.status === "architect-source-reference" ||
-                    next.status === "architect-source-change"
+                    next.status === "architect-source-change" ||
+                    next.status === "queue-review"
                   )
                     return false
                   // Current outcomes include the whole accepted-artifact review set.

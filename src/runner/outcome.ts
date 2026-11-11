@@ -99,6 +99,10 @@ export function outcomeText(serialized: string) {
       action =
         "The recorded wait has cleared. Continue the existing plan; running workers and retained work are unchanged."
       break
+    case "queue-review":
+      action =
+        "Review the stalled project queue. Inspect the current plans and reservations, resolve the blockers within the agreed plan, and continue eligible work through the scheduler. Decide sequencing, parallelism and retries yourself. Ask the human only when a material planning, task scope or required outcome decision is needed."
+      break
     case "blocked":
       action =
         "Inspect this blocked plan and resolve the recorded cause using its allowed actions. Preserve work and reconcile uncertain effects before retrying."

@@ -14948,3 +14948,39 @@ test("a settled verification timeout preserves its attempt and releases a confli
   expect(f.store.plan(f.receipt.planID)?.reason).toBe("Verification content timed out")
   expect(readFileSync(join(old.workspace, "shared.txt"), "utf8")).toBe("a")
 })
+
+test("a stalled queue requests one Architect review and leaves scheduling decisions with the Architect", async () => {
+  const f = fixture({ independent: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const prerequisite = f.receipt.planID
+  const plans = []
+  for (const name of ["b", "c"]) {
+    const task = f.createTask(name, `${name}.txt`)
+    const plan = f.store.submit(
+      {
+        ...f.inputFor([task], { requestID: `queue-review-${name}` }),
+        afterPlans: [prerequisite],
+      },
+      "owner",
+    )
+    plans.push(plan.planID)
+    await runPlan(f, plan.planID, `run-queue-review-${name}`)
+  }
+  const review = () =>
+    f.notifications.filter((notice) => notice.text.includes('"status":"queue-review"'))
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(f.store.attempts(prerequisite)[0]?.state).toBe("running")
+  expect(review()).toHaveLength(0)
+  const worker = f.store.attempts(prerequisite)[0]!
+  const session = f.sessions.get(worker.session_id)!
+  session.busy = false
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(review()).toHaveLength(1)
+  expect(review()[0]).toMatchObject({ sessionID: "owner", resume: true })
+  expect(review()[0]?.text).toContain("Decide sequencing, parallelism and retries yourself")
+  for (const planID of plans) {
+    expect(review()[0]?.text).toContain(planID)
+    expect(f.store.attempts(planID)).toHaveLength(0)
+  }
+})
