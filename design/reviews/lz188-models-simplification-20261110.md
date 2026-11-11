@@ -59,3 +59,13 @@ LZ-187; no explicit server-wide reload/restart or canonical GUI rebuild.
 Only record review evidence against the runtime's exact current candidate, then
 reconcile normally. Native non-forced cleanup must establish its own settlement;
 review approval is not idle proof.
+
+## Integration and cleanup observed
+
+The exact accepted candidate was landed on main through `d9bdf359` and runtime
+integration recorded against that landing HEAD. The plan reached integrated at
+version16. Its original worker checkout has a completed removal receipt with
+`native: true` and `cacheRetirement: evicted`. The clean, merged Architect review
+checkout was removed natively with `force: false`. The original LZ-154 worker
+continued on the same attempt after landing. Both Root-owned review resources
+remained in native inventory.
