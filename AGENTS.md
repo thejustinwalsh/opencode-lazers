@@ -4,6 +4,10 @@ Read README.md for product contracts and task acceptance boundaries. Read .agent
 
 Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Use `bun test` when behavior tests are introduced. LAZERS is one reusable plugin package.
 
+Define workflow states and transitions in XState. Reuse `lifecycleMachines` for
+runner lifecycles; do not introduce SQL-only transitions or implicit workflow
+states. See [runtime state machines](design/runtime-state-machines.md).
+
 New isolated runner, adoption, retained-verification and combined-check worktrees
 use the OpenCode native API under `<canonical-project-root>.worktrees` (for this
 project, `/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees`). The canonical

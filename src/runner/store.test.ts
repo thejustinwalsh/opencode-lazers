@@ -1992,3 +1992,27 @@ test("new and legacy untitled plan bodies remain title-absent across reopen and 
   expect(reopened.plan(receipt.planID)!.revision).toBe(1)
   expect(revisions(reopened, receipt.planID)).toEqual(originalRevisions)
 })
+
+test("runner XState transitions survive a reopened database connection", () => {
+  const f = fixture("lifecycle-connection-reopen")
+  const receipt = f.store.submit(f.input, "owner")
+  f.repository.close()
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running') WHERE id=?",
+      )
+      .run(receipt.planID),
+  )
+  expect(f.store.plan(receipt.planID)?.state).toBe("running")
+  expect(() =>
+    f.store.atomic((db) =>
+      db
+        .query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'integrated') WHERE id=?",
+        )
+        .run(receipt.planID),
+    ),
+  ).toThrow("Invalid plan transition")
+  expect(f.store.plan(receipt.planID)?.state).toBe("running")
+})

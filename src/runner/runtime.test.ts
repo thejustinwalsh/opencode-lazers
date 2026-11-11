@@ -14670,3 +14670,104 @@ test("pause does not invalidate a verification that is already in flight", async
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
+
+test.each(["initial", "detailed", "unknown"] as const)(
+  "a definitively deleted worker at %s read can be cancelled and retried without losing retained work",
+  async (disappearsAt) => {
+    const f = fixture({ delayed: true })
+    await runPlan(f)
+    await f.runtime.tick()
+    const attempt = f.store.attempts(f.receipt.planID)[0]!
+    const retained = join(attempt.workspace, "retained-notes.txt")
+    writeFileSync(retained, "useful partial work\n")
+    if (disappearsAt === "initial" || disappearsAt === "unknown") {
+      if (disappearsAt === "unknown")
+        f.repository.atomic((db) =>
+          db.query("UPDATE runner_attempts SET state='unknown' WHERE id=?").run(attempt.id),
+        )
+      f.sessions.delete(attempt.session_id)
+    } else {
+      const worker = f.sessions.get(attempt.session_id)!
+      worker.busy = false
+      worker.outcome = "succeeded"
+      worker.turn = { inputID: attempt.message_id, state: "completed" }
+      const read = f.host.session
+      f.host.session = async (id, options) => {
+        if (id === attempt.session_id && options?.messages) {
+          f.sessions.delete(id)
+          return null
+        }
+        return read(id, options)
+      }
+    }
+    await f.runtime.command(
+      {
+        requestID: "cancel-deleted-worker",
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "cancel",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+    expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+      id: attempt.id,
+      state: "cancelled",
+      workspace: attempt.workspace,
+    })
+    expect(readFileSync(retained, "utf8")).toBe("useful partial work\n")
+    expect(f.events).not.toContain(`stop:${attempt.session_id}`)
+    // A cleanup tick must preserve the dirty checkout without blocking retry.
+    await f.runtime.tick()
+    expect(
+      f.store.effects(f.receipt.planID).find((effect) => effect.kind === "worktree-remove")?.state,
+    ).toBe("held")
+    await f.runtime.command(
+      {
+        requestID: "retry-deleted-worker",
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "retry",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        reason: "Continue after native worker deletion; retain the old checkout for review",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+    const attempts = f.store.attempts(f.receipt.planID).filter((a) => a.task_id === attempt.task_id)
+    expect(attempts).toHaveLength(2)
+    expect(attempts[1]!.session_id).not.toBe(attempt.session_id)
+    expect(readFileSync(retained, "utf8")).toBe("useful partial work\n")
+  },
+)
+
+test("worker lookup failure preserves cancellation until a later authoritative observation", async () => {
+  const f = fixture({ delayed: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const read = f.host.session
+  f.host.session = async (id, options) => {
+    if (id === attempt.session_id) throw new Error("Native worker lookup temporarily unavailable")
+    return read(id, options)
+  }
+  await f.runtime.command(
+    {
+      requestID: "cancel-temporarily-unobserved-worker",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await expect(f.runtime.tick()).rejects.toThrow("temporarily unavailable")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+  f.host.session = read
+  f.sessions.delete(attempt.session_id)
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("cancelled")
+})

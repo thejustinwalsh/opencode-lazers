@@ -1,3 +1,9 @@
+import {
+  type PlanLifecycleState,
+  type AttemptLifecycleState,
+  type EffectLifecycleState,
+  registerLifecycleTransitions,
+} from "./lifecycle-machines.ts"
 import { dispatchControlTransition } from "./dispatch-control-machine.ts"
 import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
@@ -22,7 +28,7 @@ export type PlanRow = {
   owner: string
   revision: number
   version: number
-  state: string
+  state: PlanLifecycleState
   body: string
   model: string | null
   reason: string | null
@@ -50,7 +56,7 @@ export type AttemptRow = {
   base_commit: string
   artifact: string | null
   policy: string
-  state: string
+  state: AttemptLifecycleState
   started_at: number
   token_count: number | null
   tool_count: number
@@ -63,7 +69,7 @@ export type EffectRow = {
   task_id: string | null
   attempt_id: string | null
   kind: string
-  state: string
+  state: EffectLifecycleState
   payload: string
   receipt: string | null
   fence: number
@@ -310,7 +316,7 @@ function ensureArchitectSourceChangeNotices(
         currentSourceRevision: input.source.revision,
       })
       db.query(
-        "UPDATE runner_outbox SET state='superseded',receipt=? WHERE id=? AND state='pending'",
+        "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded'),receipt=? WHERE id=? AND state='pending'",
       ).run(receipt, latest.id)
     }
     const unresolved = latest && !pendingStale && !["consumed", "superseded"].includes(latest.state)
@@ -637,6 +643,7 @@ function migrateConflictScanHistory(db: Database) {
 
 export class RunnerStore {
   constructor(readonly repository: TaskRepository) {
+    repository.atomic(registerLifecycleTransitions)
     repository.installSchema(
       "runner",
       schemaModules.runner.generation,
@@ -1070,7 +1077,7 @@ export class RunnerStore {
           )
         // Version-1 delivered meant native admission, never proven model consumption.
         db.query(
-          "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
+          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'admitted'),receipt=COALESCE(receipt,?) WHERE state='delivered'",
         ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
         ensureObservationRevision(db)
         ensureArchitectSourceJournalRevisions(db)
@@ -1086,7 +1093,10 @@ export class RunnerStore {
     new RecoveryJournal(repository)
   }
   atomic<T>(run: (db: Database) => T): T {
-    return this.repository.atomic(run)
+    return this.repository.atomic((db) => {
+      registerLifecycleTransitions(db)
+      return run(db)
+    })
   }
   plan(id: string) {
     return this.atomic((db) =>
@@ -1797,7 +1807,9 @@ export class RunnerStore {
       if (!current || current.state !== input.expectedState) return false
       const receipt = appendOutboxReceipt(current.receipt, input.receipt)
       const changed = db
-        .query("UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state=?")
+        .query(
+          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state=?",
+        )
         .run(input.state, receipt, input.outboxID, input.expectedState).changes
       if (!changed) return false
       this.record(current.plan_id, null, input.event, {
@@ -1886,7 +1898,9 @@ export class RunnerStore {
         originalState: row.state === "reconciling" ? undefined : row.state,
       })
       const changed = db
-        .query("UPDATE runner_outbox SET state='reconciling',receipt=? WHERE id=? AND state=?")
+        .query(
+          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'reconciling'),receipt=? WHERE id=? AND state=?",
+        )
         .run(receipt, row.id, row.state).changes
       if (!changed) return { status: "claim-lost" as const, row }
       this.record(row.plan_id, null, "ARCHITECT_SOURCE_NOTICE_RECONCILING", {
@@ -1935,7 +1949,9 @@ export class RunnerStore {
         return false
       const receipt = appendOutboxReceipt(row.receipt, input.receipt)
       const changed = db
-        .query("UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state='reconciling'")
+        .query(
+          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state='reconciling'",
+        )
         .run(input.state, receipt, input.outboxID).changes
       if (!changed) return false
       this.record(row.plan_id, null, input.event, {
@@ -2133,7 +2149,9 @@ export class RunnerStore {
               "superseded",
             ].includes(row.state)
           ) {
-            db.query("UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state=?").run(
+            db.query(
+              "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state=?",
+            ).run(
               nextState,
               appendOutboxReceipt(row.receipt, {
                 kind: "architect-source-native-observation",
@@ -2332,7 +2350,7 @@ export class RunnerStore {
             const error =
               "Architect continuity checkpoint does not cover native input observed during renewal preparation"
             db.query(
-              `UPDATE runner_architect_renewals SET state='deferred',input_message_id=?,error=?
+              `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),input_message_id=?,error=?
                WHERE id=? AND state='creating'`,
             ).run(uncovered.message_id, error, renewal.id)
             this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
@@ -2499,7 +2517,7 @@ export class RunnerStore {
           return null
         }
         db.query(
-          `UPDATE runner_architect_renewals SET idle_at=?,state='creating',handoff_message_id=?,
+          `UPDATE runner_architect_renewals SET idle_at=?,state=lz_runner_transition('renewal',state,'creating'),handoff_message_id=?,
              handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,continuity_json=?,started_at=?
            WHERE id=? AND state IN ('deferred','archive-failed')`,
         ).run(input.idleAt, input.handoffMessageID, continuityJSON, input.now, latest.id)
@@ -2685,7 +2703,7 @@ export class RunnerStore {
         ).run(messageID, renewal.id)
       } else if (state === "creating" && detail.userPrompt) {
         db.query(
-          `UPDATE runner_architect_renewals SET state='deferred',input_message_id=?,error=NULL
+          `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),input_message_id=?,error=NULL
            WHERE id=? AND state='creating'`,
         ).run(messageID, renewal.id)
         state = "deferred"
@@ -2712,7 +2730,7 @@ export class RunnerStore {
       return (
         db
           .query(
-            `UPDATE runner_architect_renewals SET state=?,error=? WHERE id=? AND state IN (${placeholders})`,
+            `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,?),error=? WHERE id=? AND state IN (${placeholders})`,
           )
           .run(state, error, id, ...expected).changes === 1
       )
@@ -2751,7 +2769,7 @@ export class RunnerStore {
         : null
       if (currentContinuity !== renewal.continuity_json) {
         db.query(
-          `UPDATE runner_architect_renewals SET state='deferred',error=?
+          `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),error=?
            WHERE id=? AND state='creating'`,
         ).run("Architect continuity changed during renewal preparation", renewal.id)
         this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
@@ -2779,7 +2797,7 @@ export class RunnerStore {
         checkpoint.input_fingerprint !== fingerprint(coveredInputIDs)
       ) {
         db.query(
-          `UPDATE runner_architect_renewals SET state='deferred',error=?
+          `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),error=?
            WHERE id=? AND state='creating'`,
         ).run("Architect continuity input coverage changed during renewal preparation", renewal.id)
         this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
@@ -2799,7 +2817,7 @@ export class RunnerStore {
         .find((row) => !coveredInputSet.has(row.message_id))
       if (currentInput) {
         db.query(
-          `UPDATE runner_architect_renewals SET state='deferred',input_message_id=?,error=?
+          `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),input_message_id=?,error=?
            WHERE id=? AND state='creating'`,
         ).run(
           currentInput.message_id,
@@ -2821,7 +2839,7 @@ export class RunnerStore {
         .get(renewal.previous_session_id, renewal.idle_at)
       if (recentInput) {
         db.query(
-          "UPDATE runner_architect_renewals SET state='deferred',input_message_id=?,error=NULL WHERE id=? AND state='creating'",
+          "UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),input_message_id=?,error=NULL WHERE id=? AND state='creating'",
         ).run(recentInput.message_id, renewal.id)
         this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
           renewalID: renewal.id,
@@ -2988,7 +3006,7 @@ export class RunnerStore {
         input.metadata,
       )
       db.query(
-        `UPDATE runner_architect_renewals SET state='archiving',handoff_outbox_id=?,error=NULL
+        `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'archiving'),handoff_outbox_id=?,error=NULL
          WHERE id=? AND state='creating'`,
       ).run(input.outboxID, renewal.id)
       db.query(
@@ -3023,7 +3041,7 @@ export class RunnerStore {
       if (!renewal || renewal.state !== "archiving" || !renewal.continuity_json) return false
       const changed = db
         .query(
-          "UPDATE runner_architect_renewals SET state='committed',error=NULL WHERE id=? AND state='archiving'",
+          "UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'committed'),error=NULL WHERE id=? AND state='archiving'",
         )
         .run(id).changes
       if (!changed) return false
@@ -3104,7 +3122,7 @@ export class RunnerStore {
           .get(renewal.handoff_outbox_id)
         if (outbox?.state === "pending")
           db.query(
-            "UPDATE runner_outbox SET state='superseded',receipt=? WHERE id=? AND state='pending'",
+            "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded'),receipt=? WHERE id=? AND state='pending'",
           ).run(
             appendOutboxReceipt(outbox.receipt, {
               kind: "architect-renewal-rolled-back",
@@ -3116,7 +3134,7 @@ export class RunnerStore {
       }
       const changed = db
         .query(
-          `UPDATE runner_architect_renewals SET state=?,error=? WHERE id=?
+          `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,?),error=? WHERE id=?
            AND state IN ('archiving','recovering-input','rolling-back')`,
         )
         .run(state, error, renewal.id).changes
@@ -3205,7 +3223,7 @@ export class RunnerStore {
       const changed =
         db
           .query(
-            "UPDATE runner_outbox SET session_id=?,message_id=?,metadata=?,state='pending',receipt=? WHERE id=? AND state=?",
+            "UPDATE runner_outbox SET session_id=?,message_id=?,metadata=?,state=lz_runner_transition('outbox',state,'pending'),receipt=? WHERE id=? AND state=?",
           )
           .run(
             input.sessionID,
@@ -3921,7 +3939,7 @@ export class RunnerStore {
       }
       const changed = db
         .query(
-          `UPDATE runner_adoptions SET state=?,hold_reason=?,updated_at=? WHERE id=?
+          `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,?),hold_reason=?,updated_at=? WHERE id=?
            AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
         )
         .run(state, holdReason, Date.now(), id).changes
@@ -4036,7 +4054,7 @@ export class RunnerStore {
         throw new Error("Stale scheduler fence")
       const changed = db
         .query(
-          `UPDATE runner_adoption_checks SET state='completed',receipt=?
+          `UPDATE runner_adoption_checks SET state=lz_runner_transition('check',state,'completed'),receipt=?
            WHERE adoption_id=? AND phase=? AND check_id=? AND state IN ('intended','uncertain')`,
         )
         .run(JSON.stringify(receipt), adoptionID, phase, checkID).changes
@@ -4061,7 +4079,7 @@ export class RunnerStore {
         throw new Error("Stale scheduler fence")
       const changed = db
         .query(
-          `UPDATE runner_adoption_checks SET state='uncertain',receipt=?
+          `UPDATE runner_adoption_checks SET state=lz_runner_transition('check',state,'uncertain'),receipt=?
            WHERE adoption_id=? AND phase=? AND check_id=? AND state='intended'`,
         )
         .run(JSON.stringify({ error: reason }), adoptionID, phase, checkID).changes
@@ -4138,7 +4156,7 @@ export class RunnerStore {
     return this.atomic((db) => {
       const changed = db
         .query(
-          `UPDATE runner_adoptions SET state='cancelled',hold_reason=?,updated_at=?
+          `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'cancelled'),hold_reason=?,updated_at=?
            WHERE plan_id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
         )
         .run(reason, Date.now(), planID).changes

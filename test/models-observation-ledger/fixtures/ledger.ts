@@ -66,7 +66,7 @@ function attemptRow(
   taskID: string,
   number: number,
   sessionID: string,
-  state: string,
+  state: AttemptRow["state"],
   startedAt: number,
   tokenCount: number,
   artifact: string | null = null,

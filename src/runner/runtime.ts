@@ -2982,7 +2982,7 @@ export class TaskRuntime {
         return false
       const changed = db
         .query(
-          "UPDATE runner_effects SET state='completed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'completed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
         )
         .run(
           JSON.stringify({
@@ -4139,7 +4139,7 @@ export class TaskRuntime {
           .run(plan.id, task.id, retainedRepair.artifact).changes
         const updatedAttempt = db
           .query(
-            "UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=? AND state=? AND message_id=?",
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state=? AND message_id=?",
           )
           .run(
             retainedRepair.messageID,
@@ -4149,7 +4149,7 @@ export class TaskRuntime {
           ).changes
         const updatedPlan = db
           .query(
-            "UPDATE runner_plans SET state='running',reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
           )
           .run(plan.id, command.expectedVersion + 1).changes
         if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
@@ -4492,7 +4492,7 @@ export class TaskRuntime {
         }
         saveRetainedVerification(db, cancelled)
         db.query(
-          `UPDATE runner_retained_verification_resources SET state='uncertain',updated_at=?
+          `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
            WHERE operation_id=? AND state IN ('creating','active')`,
         ).run(this.now(), operation.id)
         this.retainedVerificationAborts.get(operation.id)?.abort()
@@ -4545,7 +4545,7 @@ export class TaskRuntime {
           reason: command.reason,
         })
         db.query(
-          "UPDATE runner_plans SET state='cleaning',reason=NULL,version=version+1 WHERE id=?",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cleaning'),reason=NULL,version=version+1 WHERE id=?",
         ).run(plan.id)
         return { status: "cleanup-requested", version: this.store.plan(plan.id)!.version }
       }
@@ -4616,7 +4616,7 @@ export class TaskRuntime {
         )
         const settledEffect = db
           .query(
-            `UPDATE runner_effects SET state='failed',receipt=?
+            `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=?
              WHERE id=? AND plan_id=? AND task_id=? AND attempt_id=? AND state='uncertain'`,
           )
           .run(
@@ -4694,7 +4694,7 @@ export class TaskRuntime {
             updatedAt: this.now(),
           })
           db.query(
-            `UPDATE runner_retained_verification_resources SET state='uncertain',updated_at=?
+            `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
              WHERE operation_id=? AND state IN ('creating','active')`,
           ).run(this.now(), operation.id)
           this.retainedVerificationAborts.get(operation.id)?.abort()
@@ -4707,7 +4707,7 @@ export class TaskRuntime {
         }
         // Stop admission now. In-flight work remains running until interruption is proven.
         db.query(
-          "UPDATE runner_plans SET state='cancelling',reason=?,version=version+1 WHERE id=?",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelling'),reason=?,version=version+1 WHERE id=?",
         ).run(command.reason ?? "Cancellation requested", plan.id)
         for (const node of this.store.nodes(plan.id))
           if (!terminal.has(node.state) && node.state !== "running" && node.state !== "verifying")
@@ -4954,7 +4954,7 @@ export class TaskRuntime {
               )
             const changed = db
               .query(
-                `UPDATE runner_effects SET state='failed'
+                `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed')
                  WHERE id=? AND plan_id=? AND task_id IS NULL AND attempt_id IS NULL
                    AND state='uncertain' AND payload=? AND receipt=?`,
               )
@@ -4966,7 +4966,7 @@ export class TaskRuntime {
           }
           const changedPlan = db
             .query(
-              `UPDATE runner_plans SET state='running',reason=NULL,version=version+1
+              `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
                WHERE id=? AND owner=? AND version=? AND state='blocked' AND artifact IS NULL`,
             )
             .run(plan.id, caller, command.expectedVersion).changes
@@ -5026,12 +5026,12 @@ export class TaskRuntime {
           this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
           const updatedAttempt = db
             .query(
-              "UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
+              "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
             )
             .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
           const updatedPlan = db
             .query(
-              "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
+              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
             )
             .run(
               plan.id,
@@ -5096,7 +5096,7 @@ export class TaskRuntime {
               throw new Error("Reconcile other uncertain effects first")
             for (const effect of interrupted)
               db.query(
-                "UPDATE runner_effects SET state='failed' WHERE id=? AND state='uncertain'",
+                "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state='uncertain'",
               ).run(effect.id)
             const verificationEpoch =
               (this.store.latestTransition<{ verificationEpoch: number }>(
@@ -5111,7 +5111,7 @@ export class TaskRuntime {
               reason: command.reason,
             })
             db.query(
-              "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
             ).run(plan.id)
             return {
               status: "verification-resumed",
@@ -5193,7 +5193,7 @@ export class TaskRuntime {
           this.store.move(plan.id, node.task_id, "RETRY", command.reason)
           if (plan.state !== "running")
             db.query(
-              "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
             ).run(plan.id)
           this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
             caller,
@@ -5277,7 +5277,7 @@ export class TaskRuntime {
             policy: attempt!.policy,
           }
           db.query(
-            "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
           ).run(plan.id, plan.version)
           this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_AUTHORIZED", authorization)
           this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
@@ -5347,17 +5347,16 @@ export class TaskRuntime {
         let resumedMessageID: string | undefined
         if (retry)
           db.query(
-            "UPDATE runner_attempts SET state='cancelled' WHERE id=? AND state='preparing'",
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=? AND state='preparing'",
           ).run(attempt.id)
         else {
           resumedMessageID = messageID()
-          db.query("UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=?").run(
-            resumedMessageID,
-            attempt.id,
-          )
+          db.query(
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=?",
+          ).run(resumedMessageID, attempt.id)
         }
         db.query(
-          "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
         ).run(plan.id)
         this.store.record(plan.id, node.task_id, retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED", {
           attemptID: attempt.id,
@@ -5484,7 +5483,7 @@ export class TaskRuntime {
           }
         if (plan.state === "blocked") {
           db.query(
-            "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
           ).run(plan.id)
           for (const node of this.store.nodes(plan.id))
             if (
@@ -5578,7 +5577,7 @@ export class TaskRuntime {
           `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
         )
       db.query(
-        "UPDATE runner_plans SET state='running',model=?,reason=NULL,version=version+1 WHERE id=?",
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),model=?,reason=NULL,version=version+1 WHERE id=?",
       ).run(model ? JSON.stringify(model) : null, plan.id)
       this.store.record(plan.id, null, "ADMITTED", {
         model,
@@ -7330,10 +7329,9 @@ export class TaskRuntime {
           : previousObservation !== undefined
       const changedReason = current.state !== "blocked" || current.reason !== reason
       if (!observationChanged && !changedReason) return
-      db.query("UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=?").run(
-        reason,
-        plan.id,
-      )
+      db.query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=?",
+      ).run(reason, plan.id)
       this.store.record(plan.id, null, "BLOCKED", {
         reason,
         ...(workerObservation ? { workerObservation } : {}),
@@ -7485,7 +7483,7 @@ export class TaskRuntime {
     this.store.fenced(this.owner, fence, (db) => {
       const changed = db
         .query(
-          "UPDATE runner_effects SET state='completed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'completed'),receipt=? WHERE id=? AND state IN ('intended','uncertain','held')",
         )
         .run(JSON.stringify(receipt), effect.id).changes
       if (changed !== 1) return
@@ -7506,7 +7504,7 @@ export class TaskRuntime {
       (db) =>
         db
           .query(
-            "UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'uncertain'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
           )
           .run(
             JSON.stringify({
@@ -7668,7 +7666,7 @@ export class TaskRuntime {
         this.store.fenced(this.owner, fence, (db) => {
           guarded()
           db.query(
-            `UPDATE runner_source_quarantines SET phase='sealed',hold_reason=NULL,updated_at=?
+            `UPDATE runner_source_quarantines SET phase=lz_runner_transition('quarantine',phase,'sealed'),hold_reason=NULL,updated_at=?
              WHERE attempt_id=? AND request_id=? AND phase=?`,
           ).run(Date.now(), quarantine.attempt_id, quarantine.request_id, quarantine.phase)
           this.store.record(
@@ -7943,14 +7941,12 @@ export class TaskRuntime {
         }
         if (plan.state !== "blocked" || plan.reason !== reason)
           db.query(
-            "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=?",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=?",
           ).run(reason, planID)
       } else if (!cancelledPlans.length && ownsHold) {
-        db.query("UPDATE runner_plans SET state=?,reason=?,version=version+1 WHERE id=?").run(
-          planHold!.previousState,
-          planHold!.previousReason,
-          planID,
-        )
+        db.query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,?),reason=?,version=version+1 WHERE id=?",
+        ).run(planHold!.previousState, planHold!.previousReason, planID)
         planHold = null
       } else if (!ownsHold) planHold = null
       const next: Saved = { roots, nodes, planHold }
@@ -8207,14 +8203,20 @@ export class TaskRuntime {
   }
 
   private async cancelWorkers(plan: PlanRow, fence: number, allowPlanSettlement = true) {
-    const active = this.store
-      .attempts(plan.id)
-      .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
+    const active = this.store.attempts(plan.id).filter(
+      (attempt) =>
+        ["preparing", "running", "verifying"].includes(attempt.state) ||
+        (attempt.state === "unknown" &&
+          this.store
+            .attempts(plan.id)
+            .filter((candidate) => candidate.task_id === attempt.task_id)
+            .at(-1)?.id === attempt.id),
+    )
     let waiting = false
     for (const attempt of active) {
       let session = await this.host.session(attempt.session_id)
       if (!session) {
-        waiting = true
+        if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
         continue
       }
       const promptCompleted = this.store
@@ -8271,7 +8273,7 @@ export class TaskRuntime {
         )
       session = await this.host.session(attempt.session_id, { messages: true })
       if (!session) {
-        waiting = true
+        if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
         continue
       }
       this.observeUsage(attempt, session, fence)
@@ -8337,7 +8339,11 @@ export class TaskRuntime {
         continue
       }
       this.store.fenced(this.owner, fence, (db) =>
-        db.query("UPDATE runner_attempts SET state='cancelled' WHERE id=?").run(attempt.id),
+        db
+          .query(
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
+          )
+          .run(attempt.id),
       )
       const node = this.store
         .nodes(plan.id)
@@ -8352,15 +8358,55 @@ export class TaskRuntime {
       return
     this.store.fenced(this.owner, fence, (db) =>
       db
-        .query("UPDATE runner_plans SET state='cancelled',version=version+1 WHERE id=?")
+        .query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelled'),version=version+1 WHERE id=?",
+        )
         .run(plan.id),
     )
     this.outcome(plan.id, { status: "cancelled" }, true)
   }
 
+  private cancelMissingWorker(plan: PlanRow, attempt: AttemptRow, fence: number): boolean {
+    return this.store.fenced(this.owner, fence, () => {
+      const currentPlan = this.store.plan(plan.id)
+      const current = this.store
+        .attempts(plan.id)
+        .filter((candidate) => candidate.task_id === attempt.task_id)
+        .at(-1)
+      if (
+        currentPlan?.owner !== plan.owner ||
+        currentPlan.state !== plan.state ||
+        current?.id !== attempt.id ||
+        current.session_id !== attempt.session_id ||
+        !["preparing", "running", "verifying", "unknown"].includes(current.state) ||
+        this.store
+          .effects(plan.id)
+          .some(
+            (effect) =>
+              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+          )
+      )
+        return false
+      this.cancelReservedAttempt(plan, current, fence)
+      this.store.record(plan.id, attempt.task_id, "WORKER_SESSION_ABSENT", {
+        attemptID: attempt.id,
+        sessionID: attempt.session_id,
+        workspace: attempt.workspace,
+        observedAt: this.now(),
+        action: "cancel",
+        retainedWorkPreserved: true,
+      })
+      return true
+    })
+  }
+
   private cancelReservedAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
     this.store.fenced(this.owner, fence, (db) =>
-      db.query("UPDATE runner_attempts SET state='cancelled' WHERE id=?").run(attempt.id),
+      db
+        .query(
+          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
+        )
+        .run(attempt.id),
     )
     const node = this.store
       .nodes(plan.id)
@@ -8576,7 +8622,7 @@ export class TaskRuntime {
       const changed =
         db
           .query(
-            "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
           )
           .run(plan.id, reason).changes === 1
       if (changed)
@@ -9620,7 +9666,7 @@ export class TaskRuntime {
       return (
         db
           .query(
-            "UPDATE runner_attempts SET state='running' WHERE id=? AND state='preparing' AND message_id=?",
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running') WHERE id=? AND state='preparing' AND message_id=?",
           )
           .run(attempt.id, attempt.message_id).changes === 1
       )
@@ -9853,7 +9899,11 @@ export class TaskRuntime {
     if (attempt.state === "running") {
       this.store.move(plan.id, task.id, "VERIFY")
       this.store.atomic((db) =>
-        db.query("UPDATE runner_attempts SET state='verifying' WHERE id=?").run(attempt.id),
+        db
+          .query(
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
+          )
+          .run(attempt.id),
       )
     }
     await this.verify(plan, attempt, task.proposal, fence)
@@ -10339,7 +10389,9 @@ export class TaskRuntime {
     }
     this.store.fenced(this.owner, fence, (db) => {
       if (!verificationCurrent()) return
-      db.query("UPDATE runner_attempts SET state='accepted' WHERE id=?").run(attempt.id)
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'accepted') WHERE id=?",
+      ).run(attempt.id)
       this.store.move(plan.id, attempt.task_id, "ACCEPT")
       this.store.record(plan.id, attempt.task_id, "ARTIFACT_ACCEPTED", {
         ...artifact,
@@ -12546,7 +12598,7 @@ export class TaskRuntime {
       let expectedPlanVersion = initial.planVersion
       // A still-active attempt must stop normal worker finalization; historical failures stay failed.
       db.query(
-        "UPDATE runner_attempts SET state='accepted',artifact=? WHERE id=? AND state IN ('running','verifying')",
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'accepted'),artifact=? WHERE id=? AND state IN ('running','verifying')",
       ).run(initial.artifact, initial.attemptID)
       if (currentNode.state !== "accepted") {
         db.query(
@@ -12564,7 +12616,7 @@ export class TaskRuntime {
       ) {
         const resumed = db
           .query(
-            `UPDATE runner_plans SET state='running',reason=NULL,version=version+1
+            `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
              WHERE id=? AND state='blocked' AND reason=? AND version=?`,
           )
           .run(initial.planID, currentPlan.reason, expectedPlanVersion).changes
@@ -13097,7 +13149,7 @@ export class TaskRuntime {
       saveRetainedVerification(db, updatedOperation)
       const planAcceptance = db
         .query(
-          "UPDATE runner_plans SET state='accepted',artifact=?,version=version+1 WHERE id=? AND version=?",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'accepted'),artifact=?,version=version+1 WHERE id=? AND version=?",
         )
         .run(combinedArtifact, operation.planID, expectedPlanVersion)
       if (planAcceptance.changes !== 1)
@@ -13184,7 +13236,7 @@ export class TaskRuntime {
         (db) =>
           db
             .query(
-              "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=? AND state='blocked' AND reason IS NOT ?",
+              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=? AND state='blocked' AND reason IS NOT ?",
             )
             .run(reason, plan.id, reason).changes,
       )
@@ -13455,7 +13507,7 @@ export class TaskRuntime {
       this.store.fenced(this.owner, fence, (db) =>
         db
           .query(
-            "UPDATE runner_effects SET state='failed',receipt=? WHERE id=? AND state='intended'",
+            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=? AND state='intended'",
           )
           .run(
             JSON.stringify({
@@ -13485,7 +13537,9 @@ export class TaskRuntime {
     } catch (error) {
       this.store.fenced(this.owner, fence, (db) =>
         db
-          .query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?")
+          .query(
+            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'uncertain'),receipt=? WHERE id=?",
+          )
           .run(JSON.stringify({ error: errorText(error) }), effect.id),
       )
       this.holdAdoption(
@@ -13893,13 +13947,13 @@ export class TaskRuntime {
         const reason = "Latest task attempt changed during adoption publication"
         const held = db
           .query(
-            `UPDATE runner_adoptions SET state='held',hold_reason=?,updated_at=?
+            `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'held'),hold_reason=?,updated_at=?
              WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
           )
           .run(reason, Date.now(), adoption!.id).changes
         if (!held) return
         db.query(
-          "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=? AND state='blocked'",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=? AND state='blocked'",
         ).run(reason, plan.id)
         this.store.record(plan.id, adoption!.task_id, "DESCENDANT_ADOPTION_HELD", {
           adoptionID: adoption!.id,
@@ -13920,13 +13974,13 @@ export class TaskRuntime {
         const reason = "A conflicting worker prevents descendant adoption publication"
         const held = db
           .query(
-            `UPDATE runner_adoptions SET state='held',hold_reason=?,updated_at=?
+            `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'held'),hold_reason=?,updated_at=?
              WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
           )
           .run(reason, Date.now(), adoption!.id).changes
         if (!held) return
         db.query(
-          "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=? AND state='blocked'",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=? AND state='blocked'",
         ).run(reason, plan.id)
         this.store.record(plan.id, adoption!.task_id, "DESCENDANT_ADOPTION_HELD", {
           adoptionID: adoption!.id,
@@ -13964,13 +14018,13 @@ export class TaskRuntime {
       })
       const changed = db
         .query(
-          `UPDATE runner_adoptions SET state='accepted',hold_reason=NULL,updated_at=?
+          `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'accepted'),hold_reason=NULL,updated_at=?
            WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
         )
         .run(Date.now(), adoption!.id).changes
       if (!changed) return
       db.query(
-        "UPDATE runner_plans SET state='accepted',reason=NULL,artifact=?,version=version+1 WHERE id=? AND state='blocked'",
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'accepted'),reason=NULL,artifact=?,version=version+1 WHERE id=? AND state='blocked'",
       ).run(adoption!.combined_artifact, plan.id)
       this.store.record(plan.id, null, "PLAN_ACCEPTED", {
         artifact: adoption!.combined_artifact,
@@ -14001,7 +14055,9 @@ export class TaskRuntime {
     const task = this.store.repository.get(attempt.task_id)!
     const node = this.store.nodes(plan.id).find((n) => n.task_id === task.id)!
     this.store.atomic((db) => {
-      db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id)
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'failed') WHERE id=?",
+      ).run(attempt.id)
       if (
         node.state === "verifying" &&
         (task.proposal.limits?.maxRepairAttempts ?? 1) > 0 &&
@@ -14403,7 +14459,7 @@ export class TaskRuntime {
     this.store.fenced(this.owner, fence, (db) => {
       if (!acceptedInputsCurrent()) return
       db.query(
-        "UPDATE runner_plans SET state='accepted',artifact=?,version=version+1 WHERE id=?",
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'accepted'),artifact=?,version=version+1 WHERE id=?",
       ).run(artifact, plan.id)
       this.store.record(plan.id, null, "PLAN_ACCEPTED", { artifact, checks: receipts })
       this.outcome(
@@ -14591,7 +14647,7 @@ export class TaskRuntime {
       if (plan?.state === "cleaning") return
       const changed = db
         .query(
-          "UPDATE runner_effects SET state='failed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
         )
         .run(
           JSON.stringify({ notSent: true, reason: "Cleanup was superseded before removal" }),
@@ -14849,15 +14905,27 @@ export class TaskRuntime {
     ]
     for (const workspace of owned) {
       if (workspace === this.directory) throw new Error("Refusing to remove the shared checkout")
+      const previous = this.store
+        .effects(plan.id)
+        .find(
+          (entry) =>
+            entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
+        )
       const effect =
-        this.store
-          .effects(plan.id)
-          .find(
-            (entry) =>
-              entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
-          ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
+        previous ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
       let removalStarted = false
+      const beginCleanup = () => {
+        if (!removalStarted && effect.state === "held")
+          this.store.fenced(this.owner, fence, (db) =>
+            db
+              .query(
+                "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'intended') WHERE id=? AND state='held'",
+              )
+              .run(effect.id),
+          )
+        removalStarted = true
+      }
       let retryFacts: string | undefined
       let sourceEffectForCleanup: EffectRow | undefined
       try {
@@ -14923,14 +14991,14 @@ export class TaskRuntime {
           } catch {
             throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
           }
-          removalStarted = true
+          beginCleanup()
           await this.host.removeWorktree(workspace)
         } else if (listedWorkspace || gitRegistered) {
           // A disappeared directory can still have a native/Git registration.
           // Ask the recorded native strategy to retire that exact owned path;
           // never substitute filesystem deletion or force removal.
           await this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation")
-          removalStarted = true
+          beginCleanup()
           await this.host.removeWorktree(workspace)
         } else if (existsSync(workspace))
           throw new Error(
@@ -14947,6 +15015,7 @@ export class TaskRuntime {
           existsSync(workspace)
         )
           throw new Error(`Native worktree removal is not confirmed absent: ${workspace}`)
+        if (this.host.retireWorktreeLocation) beginCleanup()
         const cacheRetirement = await this.retireCleanedWorktreeLocation(
           plan,
           workspace,
@@ -14978,9 +15047,14 @@ export class TaskRuntime {
         }
         let blocked = false
         this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?").run(
+          const held = !removalStarted && (!previous || previous.state === "held")
+          db.query(
+            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,?),receipt=? WHERE id=?",
+          ).run(
+            held ? "held" : "uncertain",
             JSON.stringify({
               error: reason,
+              ...(held ? { notSent: true } : {}),
               ...(retryFacts
                 ? { retryFacts, retryCheckedAt: this.now() }
                 : { retryCheckedAt: this.now() }),
@@ -14991,7 +15065,7 @@ export class TaskRuntime {
             db
               .query(
                 mode === "integration"
-                  ? "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked') AND (state<>'cleanup-blocked' OR reason IS NOT ?)"
+                  ? "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cleanup-blocked'),reason=?,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked') AND (state<>'cleanup-blocked' OR reason IS NOT ?)"
                   : "UPDATE runner_plans SET reason=?,version=version+1 WHERE id=? AND state='cancelled' AND (reason IS NULL OR reason<>?)",
               )
               .run(reason, plan.id, reason).changes === 1
@@ -15032,7 +15106,7 @@ export class TaskRuntime {
       integrated =
         db
           .query(
-            "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked')",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'integrated'),reason=NULL,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked')",
           )
           .run(plan.id).changes === 1
       if (integrated)
@@ -15124,7 +15198,9 @@ export class TaskRuntime {
           ].includes(JSON.parse(effect.receipt ?? "{}").error)
         ) {
           this.store.fenced(this.owner, fence, (db) => {
-            db.query("UPDATE runner_effects SET state='failed',receipt=? WHERE id=?").run(
+            db.query(
+              "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
+            ).run(
               JSON.stringify({
                 notSent: true,
                 reason: "Native prompt guard prevented dispatch",
@@ -15249,7 +15325,7 @@ export class TaskRuntime {
                 const changed =
                   db
                     .query(
-                      "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+                      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
                     )
                     .run(plan.id, startupRecoveryReason).changes === 1
                 if (!changed) return
@@ -15473,7 +15549,7 @@ export class TaskRuntime {
       const nextReceipt = appendOutboxReceipt(current.receipt, receipt)
       const changed = db
         .query(
-          `UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state=? AND state IN (${placeholders})`,
+          `UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state=? AND state IN (${placeholders})`,
         )
         .run(state, nextReceipt, message.id, current.state, ...expected).changes
       if (changed) {

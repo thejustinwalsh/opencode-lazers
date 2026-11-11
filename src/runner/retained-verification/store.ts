@@ -1,3 +1,4 @@
+import { lifecycleTransition, registerLifecycleTransitions } from "../lifecycle-machines.ts"
 import type { Database } from "bun:sqlite"
 import { Buffer } from "node:buffer"
 import { createHash } from "node:crypto"
@@ -121,6 +122,7 @@ export type RetainedVerificationInspection = {
 }
 
 export function ensureRetainedVerificationTables(db: Database): void {
+  registerLifecycleTransitions(db)
   db.exec(`
     CREATE TABLE IF NOT EXISTS runner_retained_verifications (
       id TEXT PRIMARY KEY,
@@ -295,6 +297,12 @@ export function createRetainedVerification(
   return operation
 }
 
+function validateRetainedLifecycles(previous: RetainedVerification, next: RetainedVerification) {
+  lifecycleTransition("cleanup", previous.cleanupState, next.cleanupState)
+  for (const field of ["taskWorkspaceState", "combinedWorkspaceState"] as const)
+    lifecycleTransition("workspace", previous[field] ?? "unallocated", next[field] ?? "unallocated")
+}
+
 export function updateRetainedVerification(
   db: Database,
   operation: RetainedVerification,
@@ -303,10 +311,12 @@ export function updateRetainedVerification(
   ensureRetainedVerificationTables(db)
   const current = retainedVerification(db, operation.id)
   if (!current || current.generation !== operation.generation) return false
+  if (!expectedStates.includes(current.state)) return false
+  validateRetainedLifecycles(current, operation)
   const states = expectedStates.map(() => "?").join(",")
   const changed = db
     .query(
-      `UPDATE runner_retained_verifications SET state=?,payload=?
+      `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?
        WHERE id=? AND generation=? AND state IN (${states})`,
     )
     .run(
@@ -428,7 +438,7 @@ export function completeRetainedVerificationCheck(
   return (
     db
       .query(
-        `UPDATE runner_retained_verification_checks SET state='completed',receipt=?
+        `UPDATE runner_retained_verification_checks SET state=lz_runner_transition('check',state,'completed'),receipt=?
          WHERE operation_id=? AND phase=? AND check_id=? AND state IN ('intended','uncertain')`,
       )
       .run(JSON.stringify(receipt), operationID, phase, checkID).changes === 1
@@ -444,7 +454,7 @@ export function markRetainedVerificationCheckUncertain(
 ): void {
   ensureRetainedVerificationTables(db)
   db.query(
-    `UPDATE runner_retained_verification_checks SET state='uncertain',receipt=?
+    `UPDATE runner_retained_verification_checks SET state=lz_runner_transition('check',state,'uncertain'),receipt=?
      WHERE operation_id=? AND phase=? AND check_id=? AND state='intended'`,
   ).run(JSON.stringify({ error: reason }), operationID, phase, checkID)
 }
@@ -458,7 +468,7 @@ export function setRetainedVerificationCheckCleanup(
 ): void {
   ensureRetainedVerificationTables(db)
   db.query(
-    "UPDATE runner_retained_verification_checks SET cleanup_state=? WHERE operation_id=? AND phase=? AND check_id=?",
+    "UPDATE runner_retained_verification_checks SET cleanup_state=lz_runner_transition('cleanup',COALESCE(cleanup_state,'pending'),?) WHERE operation_id=? AND phase=? AND check_id=?",
   ).run(state, operationID, phase, checkID)
 }
 
@@ -563,7 +573,7 @@ export function activateRetainedVerificationResources(
 ): void {
   ensureRetainedVerificationTables(db)
   db.query(
-    `UPDATE runner_retained_verification_resources SET state='active',updated_at=?
+    `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'active'),updated_at=?
      WHERE operation_id=? AND phase=? AND check_id=? AND state='creating'`,
   ).run(now, operationID, phase, checkID)
 }
@@ -578,7 +588,7 @@ export function settleRetainedVerificationResources(
 ): void {
   ensureRetainedVerificationTables(db)
   db.query(
-    `UPDATE runner_retained_verification_resources SET state=?,updated_at=?
+    `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,?),updated_at=?
      WHERE operation_id=? AND phase=? AND check_id=? AND state IN ('creating','active','uncertain')`,
   ).run(state, now, operationID, phase, checkID)
 }
@@ -637,9 +647,13 @@ export function hasRetainedVerificationEvidence(
 export function saveRetainedVerification(db: Database, operation: RetainedVerification): void {
   ensureRetainedVerificationTables(db)
   const parsed = RetainedVerificationSchema.parse(operation)
+  const previous = retainedVerification(db, parsed.id)
+  if (!previous || previous.generation !== parsed.generation)
+    throw new Error("Retained verification generation is no longer current")
+  validateRetainedLifecycles(previous, parsed)
   const changed = db
     .query(
-      `UPDATE runner_retained_verifications SET state=?,payload=?
+      `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?
        WHERE id=? AND generation=?`,
     )
     .run(parsed.state, JSON.stringify(parsed), parsed.id, parsed.generation).changes
