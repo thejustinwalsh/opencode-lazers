@@ -267,6 +267,7 @@ function row(
     plan.state !== "cancelled" &&
     !terminal.has(node.state) &&
     (node.state === "blocked" ||
+      summary?.status === "blocked" ||
       plan.state === "blocked" ||
       (!plan.dispatchPause &&
         ["queued", "ready"].includes(node.state) &&

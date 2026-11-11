@@ -104,3 +104,38 @@ settles the original cancellation.
 
 Validation: `runtime.test.ts` and `lifecycle-machines.test.ts`: 352 tests,
 5,787 assertions, zero failures. `bun run verify` passed.
+
+## Recovery from observed dispatch stalls
+
+- `settleSupersededRetainedVerification()` closes an older held verification
+  when an exact, authorized `ATTEMPT_RESUMED` replaces its input on the same
+  attempt, session and workspace. It requires settled checks, uses the existing
+  XState cancellation transition, and retains the operation and check history.
+  Accepted candidates and retained repairs keep their existing gates.
+- `isolateStoppedWorkerSource()` invokes the existing source quarantine for a
+  stopped worker with a completed, bound input and unknown background state
+  when its isolated checkout blocks eligible isolated work. Native archive and
+  source guard checks must succeed before the reservation is excluded. The
+  checkout and unresolved resources stay owned; no completion is recorded.
+- `failMissingWorker()` settles an authoritatively absent worker as failed
+  under the scheduler fence. It rechecks the current assignment and unsettled
+  effects before releasing the reservation. Native lookup errors do not take
+  this path; worktree contents remain available.
+- `RunnerStore.dispatchReservations()` supplies both dispatch and Tasks'
+  conflict display. `TaskReads.effectiveExecution()` displays write-scope and
+  prerequisite waits while retaining the recorded task lifecycle.
+
+On 2026-11-11, LZ-154's held operation
+`c9716b2c-f69c-4664-8143-7cb14c60ff9f` was cancelled by the scheduler at
+08:08:47 America/Detroit. A new prompt effect completed at 08:08:48 for the
+same worker. The native Tasks RPC subsequently reported LZ-154 running,
+LZ-203 waiting on LZ-154's write scope, and LZ-88 waiting on blocked prerequisite
+LZ-72. The native active-session inventory included the LZ-154 worker.
+
+The resumed LZ-154 worker reached verification. Its runner check timeout then
+exposed a second reservation hold: a settled timeout kept the stopped worker's
+source reserved. `hasSettledVerificationTimeout()` now admits that exact
+blocked artifact to the same guarded source quarantine. The timeout remains a
+failed check; resource settlement and native source isolation are distinct from
+task acceptance. A real subprocess-timeout regression confirms the queued
+overlapping task starts and the original checkout remains intact.

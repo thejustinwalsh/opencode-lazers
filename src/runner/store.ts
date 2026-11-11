@@ -1,3 +1,4 @@
+import { sourceReservationExcluded } from "./source-quarantine.ts"
 import {
   type PlanLifecycleState,
   type AttemptLifecycleState,
@@ -3288,6 +3289,23 @@ export class RunnerStore {
       ...new Set([...task.proposal.writeScope, ...(amendment?.writeScope ?? [])]),
     ])
   }
+  dispatchReservations(mode: "shared" | "isolated") {
+    return [
+      ...this.activeProjectAttempts()
+        .filter((attempt) => !sourceReservationExcluded(this, attempt, { mode }))
+        .map((attempt) => ({
+          taskID: attempt.task_id,
+          shared: attempt.workspace === this.repository.projectDirectory,
+          scopes: this.effectiveWriteScope(attempt.task_id),
+        })),
+      ...this.activeAdoptions().map((adoption) => ({
+        taskID: adoption.task_id,
+        shared: false,
+        scopes: this.effectiveWriteScope(adoption.task_id),
+      })),
+    ]
+  }
+
   execution(taskID: string): Execution | undefined {
     const node = this.atomic((db) =>
       db

@@ -1,3 +1,4 @@
+import { createRetainedVerification, retainedVerification } from "./retained-verification/store.ts"
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { DateTime, Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -1148,6 +1149,51 @@ test("source quarantine isolates a completed foreground worker with unknown back
   expect(readFileSync(join(successor.workspace, "shared.txt"), "utf8")).toBe("b")
   expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
   expect(f.store.nodes(f.receipt.planID)[0]!.state).not.toBe("accepted")
+})
+
+test("scheduler isolates a completed guarded source when it blocks queued isolated work", async () => {
+  const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const original = f.store.attempts(f.receipt.planID)[0]!
+  const guard = registerSourceGuard(f.store, original.workspace)
+  cleanup.push(guard)
+  const task = f.createTask("b", "shared.txt")
+  const next = f.store.submit(
+    f.inputFor([task], { requestID: "automatic-source-isolation" }),
+    "owner",
+  )
+  await runPlan(f, next.planID, "run-automatic-source-isolation")
+  await f.runtime.tick()
+  expect(f.store.attempts(next.planID)).toHaveLength(0)
+  expect(new TaskReads(f.repository).get({ taskID: task.id })).toMatchObject({
+    recordedState: "queued",
+    execution: {
+      state: "blocked",
+      reason: `Waiting for checkout or write scope: ${f.repository.referenceFor(original.task_id)}`,
+    },
+  })
+
+  f.completeWorker(original.session_id)
+  const worker = f.sessions.get(original.session_id)!
+  Object.assign(worker, {
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    background: {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "Historical idle missing",
+    },
+  })
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, original.id)?.phase).toBe("pending")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, original.id)?.phase).toBe("sealed")
+  expect(f.store.attempts(next.planID)[0]?.state).toBe("running")
+  expect(f.store.nodes(f.receipt.planID)[0]?.state).not.toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+  expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
 })
 
 async function completedSourceReviewFixture() {
@@ -8073,6 +8119,13 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     )
     await runPlan(f, child.planID, `run-child-${expectedParentState}`)
     const accepted = await acceptPlan(f, parentID)
+    expect(new TaskReads(f.repository).get({ taskID: childTask.id })).toMatchObject({
+      recordedState: "queued",
+      execution: {
+        state: "blocked",
+        reason: `Waiting for prerequisite integration: ${f.repository.referenceFor(accepted.attempt.task_id)} (accepted)`,
+      },
+    })
     const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
     writeFileSync(sentinel, "still owned")
     includeArtifact(f, accepted.plan.artifact!)
@@ -14784,4 +14837,112 @@ test("worker lookup failure preserves cancellation without starving independent 
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("cancelled")
+})
+
+test("an authorized same-worker resume retires its superseded held verification and dispatches", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt } = await holdInterruptedAttempt(f)
+  const plan = f.store.plan(planID)!
+  const operationID = crypto.randomUUID()
+  f.store.atomic((db) =>
+    createRetainedVerification(db, f.root, {
+      schemaVersion: 1,
+      id: operationID,
+      generation: 1,
+      projectID: "project",
+      projectDirectory: f.root,
+      planID,
+      planRevision: plan.revision,
+      planVersion: plan.version,
+      owner: "owner",
+      ownerEpoch: f.store.planControlEpoch(planID),
+      taskID: attempt.task_id,
+      taskRevision: 1,
+      attemptID: attempt.id,
+      originalSessionID: attempt.session_id,
+      originalMessageID: attempt.message_id,
+      originalWorkspace: attempt.workspace,
+      artifact: attempt.base_commit,
+      combinedArtifact: null,
+      taskWorkspace: null,
+      taskWorkspaceState: null,
+      combinedWorkspace: null,
+      combinedWorkspaceState: null,
+      inputFingerprint: "fixture",
+      environmentIdentity: "fixture",
+      reason: "Earlier verification",
+      state: "held",
+      holdReason: "Interrupted check",
+      cleanupState: "pending",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  )
+  await f.runtime.command(
+    {
+      requestID: "resume-after-held-verification",
+      planID,
+      expectedVersion: plan.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue the original worker",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.attempts(planID)).toEqual([
+    expect.objectContaining({ id: attempt.id, session_id: attempt.session_id, state: "running" }),
+  ])
+  expect(f.store.atomic((db) => retainedVerification(db, operationID))).toMatchObject({
+    state: "cancelled",
+    originalMessageID: attempt.message_id,
+  })
+})
+
+test("an authoritatively missing worker releases its reservation without deleting partial work", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const old = f.store.attempts(f.receipt.planID)[0]!
+  const partial = join(old.workspace, "shared.txt")
+  writeFileSync(partial, "partial work")
+  const task = f.createTask("b", "shared.txt")
+  const next = f.store.submit(f.inputFor([task], { requestID: "after-missing-worker" }), "owner")
+  await runPlan(f, next.planID, "run-after-missing-worker")
+  f.sessions.delete(old.session_id)
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("failed")
+  expect(f.store.nodes(f.receipt.planID)[0]?.state).toBe("failed")
+  expect(f.store.attempts(next.planID)[0]?.state).toBe("running")
+  expect(readFileSync(partial, "utf8")).toBe("partial work")
+})
+
+test("a settled verification timeout preserves its attempt and releases a conflicting isolated task", async () => {
+  const f = fixture({
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "shared.txt" }],
+    checkCommand: (name) => (name === "a" ? "sleep 5" : "true"),
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const old = f.store.attempts(f.receipt.planID)[0]!
+  cleanup.push(registerSourceGuard(f.store, old.workspace))
+  const next = f.createTask("b", "shared.txt")
+  const queued = f.store.submit(f.inputFor([next], { requestID: "after-timed-out-check" }), "owner")
+  await runPlan(f, queued.planID, "run-after-timed-out-check")
+  f.completeWorker(old.session_id)
+  Object.assign(f.sessions.get(old.session_id)!, {
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+  })
+  await settleVerification(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.reason).toBe("Verification content timed out")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, old.id)?.phase).toBe("sealed")
+  expect(f.store.attempts(queued.planID)[0]?.state).toBe("running")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("verifying")
+  expect(readFileSync(join(old.workspace, "shared.txt"), "utf8")).toBe("a")
 })

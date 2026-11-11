@@ -1,3 +1,5 @@
+import { scopePatternsConflict } from "../runner/artifacts.ts"
+import { PlanInput } from "../runner/schema.ts"
 import { taskAuditHistory } from "../audit/history.ts"
 import { createHash } from "node:crypto"
 import { z } from "zod"
@@ -246,9 +248,59 @@ export class TaskReads {
     const execution = this.runner.execution(taskID)
     if (!execution) return undefined
     const plan = this.runner.plan(execution.planID)
-    return plan?.state === "cancelled"
-      ? { ...execution, state: "cancelled" as const, reason: execution.reason ?? plan.reason }
-      : execution
+    if (plan?.state === "cancelled")
+      return { ...execution, state: "cancelled" as const, reason: execution.reason ?? plan.reason }
+    if (
+      plan?.state !== "running" ||
+      execution.dispatchPause ||
+      execution.waitingOn.length ||
+      !["queued", "ready"].includes(execution.state)
+    )
+      return execution
+    let input: ReturnType<typeof PlanInput.safeParse>
+    try {
+      input = PlanInput.safeParse(JSON.parse(plan.body))
+    } catch {
+      return execution
+    }
+    if (!input.success) return execution
+    const prerequisites = (input.data.afterPlans ?? []).flatMap((id) => {
+      const required = this.runner.plan(id)
+      if (required && ["cleaning", "cleanup-blocked", "integrated"].includes(required.state))
+        return []
+      const refs = required
+        ? this.runner
+            .nodes(id)
+            .map((node) => this.repository.referenceFor(node.task_id) ?? node.task_id)
+        : []
+      return [`${refs.join(", ") || id} (${required?.state ?? "not found"})`]
+    })
+    if (prerequisites.length)
+      return {
+        ...execution,
+        state: "blocked" as const,
+        reason: `Waiting for prerequisite integration: ${prerequisites.join("; ")}`,
+      }
+    const mode = input.data.workspaceMode
+    const scope = this.runner.effectiveWriteScope(taskID)
+    const blockers = [
+      ...new Set(
+        this.runner
+          .dispatchReservations(mode)
+          .filter(
+            (entry) =>
+              mode === "shared" || entry.shared || scopePatternsConflict(entry.scopes, scope),
+          )
+          .map((entry) => entry.taskID),
+      ),
+    ]
+    if (!blockers.length) return execution
+    const references = blockers.map((id) => this.repository.referenceFor(id) ?? id)
+    return {
+      ...execution,
+      state: "blocked" as const,
+      reason: `Waiting for checkout or write scope: ${references.join(", ")}`,
+    }
   }
 
   recordedStateForTask(taskID: string): TaskState | undefined {

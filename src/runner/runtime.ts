@@ -1525,6 +1525,27 @@ export class TaskRuntime {
     return seed
   }
 
+  private hasSettledVerificationTimeout(plan: PlanRow, attempt: AttemptRow) {
+    if (plan.state !== "blocked" || !attempt.artifact) return false
+    return this.store.effects(plan.id).some((effect) => {
+      if (
+        effect.attempt_id !== attempt.id ||
+        !effect.kind.startsWith("verify:") ||
+        effect.state !== "completed" ||
+        !effect.receipt
+      )
+        return false
+      const { check } = JSON.parse(effect.receipt) as { check?: CheckReceipt }
+      return Boolean(
+        check?.timedOut &&
+        check.cwd === attempt.workspace &&
+        check.artifact === attempt.artifact &&
+        interruptedCheckResourcesSettled(check) &&
+        plan.reason === checkFailureReason(check),
+      )
+    })
+  }
+
   private quarantineTarget(plan: PlanRow, command: PlanCommand) {
     if (!command.attemptID || !command.reason)
       throw new Error("Source quarantine requires attemptID and reason")
@@ -1541,6 +1562,7 @@ export class TaskRuntime {
       )
     if (
       attempt.state === "verifying" &&
+      !this.hasSettledVerificationTimeout(plan, attempt) &&
       !this.store
         .effects(plan.id)
         .some(
@@ -1550,7 +1572,7 @@ export class TaskRuntime {
             effect.kind.startsWith("verify:"),
         )
     )
-      throw new Error("Source quarantine requires a retained uncertain check")
+      throw new Error("Source quarantine requires a retained uncertain check or settled timeout")
     if (!this.host.archiveRetainedWorker || !this.host.ensureSourceGuard)
       throw new Error("The native worker source guard and archive control must be installed")
     return attempt
@@ -7733,6 +7755,57 @@ export class TaskRuntime {
     }
   }
 
+  private settleSupersededRetainedVerification(
+    plan: PlanRow,
+    operation: RetainedVerification,
+    fence: number,
+  ): boolean {
+    if (plan.state !== "running" || operation.state !== "held" || operation.repair) return false
+    return this.store.fenced(this.owner, fence, (db) => {
+      const current = this.store.plan(plan.id)
+      const saved = retainedVerification(db, operation.id)
+      if (
+        current?.version !== plan.version ||
+        saved?.state !== "held" ||
+        saved.generation !== operation.generation
+      )
+        return false
+      const attempt = this.store.attempts(plan.id).find((item) => item.id === operation.attemptID)
+      const resumed = this.store.latestTransition<{
+        attemptID?: string
+        previousMessageID?: string
+        messageID?: string
+      }>(plan.id, operation.taskID, "ATTEMPT_RESUMED")
+      if (
+        !attempt ||
+        attempt.state !== "preparing" ||
+        attempt.task_id !== operation.taskID ||
+        attempt.session_id !== operation.originalSessionID ||
+        attempt.workspace !== operation.originalWorkspace ||
+        resumed?.attemptID !== attempt.id ||
+        resumed.previousMessageID !== operation.originalMessageID ||
+        resumed.messageID !== attempt.message_id ||
+        resumed.messageID === operation.originalMessageID ||
+        this.retainedCheckSettlementProblem(operation.id)
+      )
+        return false
+      const reason = "Superseded by the authorized continuation of the same worker"
+      saveRetainedVerification(db, {
+        ...saved,
+        state: "cancelled",
+        holdReason: reason,
+        updatedAt: this.now(),
+      })
+      this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
+        operationID: operation.id,
+        generation: operation.generation,
+        reason,
+        oldExecutionAndResourceHoldsPreserved: true,
+      })
+      return true
+    })
+  }
+
   private async runTick() {
     this.running = true
     let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
@@ -7845,7 +7918,8 @@ export class TaskRuntime {
             retained.some(
               (operation) =>
                 !["cancelled", "task-accepted"].includes(operation.state) &&
-                !this.retainedTaskCandidateAccepted(operation),
+                !this.retainedTaskCandidateAccepted(operation) &&
+                !this.settleSupersededRetainedVerification(plan, operation, fence),
             )
           )
             return
@@ -8142,21 +8216,7 @@ export class TaskRuntime {
         input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
     }
     const nodes = this.store.nodes(plan.id)
-    const occupied = this.store
-      .activeProjectAttempts()
-      .filter(
-        (attempt) => !sourceReservationExcluded(this.store, attempt, { mode: input.workspaceMode }),
-      )
-      .map((attempt) => ({
-        shared: attempt.workspace === this.directory,
-        scopes: this.store.effectiveWriteScope(attempt.task_id),
-      }))
-    occupied.push(
-      ...this.store.activeAdoptions().map((adoption) => ({
-        shared: false,
-        scopes: this.store.effectiveWriteScope(adoption.task_id),
-      })),
-    )
+    const occupied = this.store.dispatchReservations(input.workspaceMode)
     let pause = this.store.dispatchPause(plan.id)
     if (pause?.untilPlans.length && this.integratedPrerequisiteBaseline(pause.untilPlans)) {
       this.store.fenced(this.owner, fence, () =>
@@ -8185,7 +8245,7 @@ export class TaskRuntime {
         const scope = this.store.effectiveWriteScope(node.task_id)
         if (occupied.some((entry) => scopePatternsConflict(entry.scopes, scope))) continue
         selected.push(node)
-        occupied.push({ shared: false, scopes: scope })
+        occupied.push({ taskID: node.task_id, shared: false, scopes: scope })
       }
     }
     if (selected.length) {
@@ -9692,6 +9752,109 @@ export class TaskRuntime {
     this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
   }
 
+  private async isolateStoppedWorkerSource(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    worker: HostSession,
+  ) {
+    if (
+      plan.state !== "blocked" ||
+      (attempt.state !== "running" &&
+        !(attempt.state === "verifying" && this.hasSettledVerificationTimeout(plan, attempt))) ||
+      attempt.workspace === this.directory ||
+      !this.host.ensureSourceGuard ||
+      !this.host.archiveRetainedWorker ||
+      sourceQuarantine(this.store, attempt.id) ||
+      worker.busy ||
+      worker.pendingInput !== false ||
+      worker.observationUnstable ||
+      worker.pendingPermissions !== 0 ||
+      worker.pendingForms !== 0 ||
+      worker.outcome !== "succeeded"
+    )
+      return
+    const scope = this.store.effectiveWriteScope(attempt.task_id)
+    const hasContender = Iterator.from(this.store.runnablePlans(terminal)).some((candidate) => {
+      if (
+        candidate.id === plan.id ||
+        candidate.state !== "running" ||
+        this.store.dispatchPause(candidate.id)
+      )
+        return false
+      const input = PlanInput.parse(JSON.parse(candidate.body))
+      return (
+        input.workspaceMode === "isolated" &&
+        this.store
+          .nodes(candidate.id)
+          .some(
+            (node) =>
+              ["queued", "ready"].includes(node.state) &&
+              this.store.execution(node.task_id)?.waitingOn.length === 0 &&
+              scopePatternsConflict(scope, this.store.effectiveWriteScope(node.task_id)),
+          ) &&
+        (!input.afterPlans?.length || !!this.integratedPrerequisiteBaseline(input.afterPlans))
+      )
+    })
+    if (!hasContender) return
+    const detailed = worker.turn
+      ? worker
+      : await this.host.session(attempt.session_id, { messages: true })
+    const inputID = detailed?.turn?.inputID
+    if (!inputID || !this.matchesWorkerInput(attempt, inputID)) return
+    const reviewInput = inputID === attempt.message_id ? undefined : inputID
+    if (!reviewInput && this.sourceWorkerWait(attempt, detailed)) return
+    await this.command(
+      {
+        requestID: `isolate-stopped-source:${attempt.id}:${attempt.message_id}`,
+        action: "quarantine-source",
+        planID: plan.id,
+        expectedVersion: plan.version,
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        ...(reviewInput && attempt.state === "running" ? { reviewInputID: reviewInput } : {}),
+        reason:
+          "Completed foreground; preserve the isolated checkout and release its source reservation",
+      },
+      plan.owner,
+    )
+  }
+
+  private failMissingWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
+    this.store.fenced(this.owner, fence, () => {
+      const currentPlan = this.store.plan(plan.id)
+      const latest = this.store
+        .attempts(plan.id)
+        .filter((item) => item.task_id === attempt.task_id)
+        .at(-1)
+      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
+      if (
+        !currentPlan ||
+        currentPlan.owner !== plan.owner ||
+        !["running", "blocked"].includes(currentPlan.state) ||
+        latest?.id !== attempt.id ||
+        latest.message_id !== attempt.message_id ||
+        latest.state !== attempt.state ||
+        node?.state !== attempt.state ||
+        this.store
+          .effects(plan.id)
+          .some(
+            (effect) =>
+              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+          )
+      )
+        return
+      this.failAttempt(currentPlan, latest, "Owned worker session definitively missing")
+      this.store.record(plan.id, attempt.task_id, "WORKER_SESSION_ABSENT", {
+        attemptID: attempt.id,
+        sessionID: attempt.session_id,
+        workspace: attempt.workspace,
+        observedAt: this.now(),
+        action: "fail",
+        retainedWorkPreserved: true,
+      })
+    })
+  }
+
   private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
@@ -9703,7 +9866,7 @@ export class TaskRuntime {
       return
     }
     if (!session) {
-      this.hold(plan, "Owned worker session definitively missing")
+      this.failMissingWorker(plan, attempt, fence)
       return
     }
     const task = this.store.repository.get(attempt.task_id)!
@@ -9770,6 +9933,8 @@ export class TaskRuntime {
           unchangedTerminal ? previousHold : undefined,
         )
         this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+        if (unchangedTerminal && session.background?.state === "unknown")
+          await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
       }
       return
     }
@@ -9780,7 +9945,7 @@ export class TaskRuntime {
         return
       }
       if (!detailed) {
-        this.hold(plan, "Owned worker session disappeared during terminal observation")
+        this.failMissingWorker(plan, attempt, fence)
         return
       }
       session = detailed
@@ -9864,6 +10029,8 @@ export class TaskRuntime {
             ["audit", "reconcile", "cancel"],
             this.terminalWorkerObservation(attempt, session),
           )
+          if (session.background?.state === "unknown")
+            await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
           return
         }
         if (priorBackground && !session.outcome) return
@@ -9924,6 +10091,10 @@ export class TaskRuntime {
       )
     }
     await this.verify(plan, attempt, task.proposal, fence)
+    const current = this.store.plan(plan.id)
+    const retained = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
+    if (current?.state === "blocked" && retained?.state === "verifying")
+      await this.isolateStoppedWorkerSource(current, retained, session)
   }
 
   private prepareVerificationCandidate(
