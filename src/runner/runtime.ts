@@ -1,4 +1,5 @@
 import { sameNativeModel } from "./model-route.ts"
+import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import {
   evaluatePrerequisiteIntegration,
@@ -7714,6 +7715,24 @@ export class TaskRuntime {
     }
   }
 
+  private async reconcilePlan(
+    planID: string,
+    fence: number,
+    phase: "step" | "cleanup" | "delivery",
+    run: () => Promise<void>,
+  ) {
+    try {
+      await run()
+    } catch (error) {
+      this.store.fenced(this.owner, fence, () => {
+        if (!this.store.plan(planID)) return
+        this.store.recordOnce(planID, null, `PLAN_${phase.toUpperCase()}_FAILED`, {
+          error: safeText(errorText(error), privacyStats()),
+        })
+      })
+    }
+  }
+
   private async runTick() {
     this.running = true
     let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
@@ -7742,27 +7761,19 @@ export class TaskRuntime {
         try {
           await this.continueArchitectRenewal(renewal, fence)
         } catch (error) {
-          // The renewal has durably recorded its failed recovery phase. Do not let
-          // a retained-history read failure starve cancellation of transferred work.
-          const cancellationWasRequested = this.store
-            .architectRenewalPlans(renewal.id)
-            .some((entry) => {
-              const plan = this.store.plan(entry.plan_id)
-              return (
-                plan &&
-                ["cancelling", "cancelled"].includes(plan.state) &&
-                this.store.architectRenewalForPlan(plan.id)?.id === renewal.id
-              )
-            })
-          const recordedFailure = this.store.architectRenewal(renewal.id)
-          if (
-            !cancellationWasRequested ||
-            recordedFailure?.state !== renewal.state ||
-            recordedFailure.error !== errorText(error)
-          )
-            throw error
+          // A recorded native recovery failure stays retryable without blocking
+          // dispatch for plans outside that renewal.
+          this.store.fenced(this.owner, fence, () => {
+            const recordedFailure = this.store.architectRenewal(renewal.id)
+            if (
+              recordedFailure?.state !== renewal.state ||
+              recordedFailure.error !== errorText(error)
+            )
+              throw error
+          })
         }
       }
+      if (heartbeatFailed) throw heartbeatError
       await this.reconcileArchitectSources(fence)
       await this.advanceSourceQuarantines(fence)
       for (const operation of this.store.atomic((db) =>
@@ -7809,45 +7820,51 @@ export class TaskRuntime {
         void running.then(finished, finished)
       }
       const terminalCleanupPlanIDs = this.store.terminalCleanupPlanIDs()
-      for (let plan of this.store.runnablePlans(terminal)) {
-        if (plan.state === "draft" && !this.taskStartID(plan)) continue
-        if (plan.state === "draft") {
-          const taskID = this.taskStartID(plan)!
-          await this.command(
-            {
-              requestID: `task-start-run:${taskID}:1`,
-              planID: plan.id,
-              expectedVersion: plan.version,
-              action: "run",
-            },
-            plan.owner,
+      for (const candidate of this.store.runnablePlans(terminal)) {
+        await this.reconcilePlan(candidate.id, fence, "step", async () => {
+          let plan = candidate
+          if (plan.state === "draft" && !this.taskStartID(plan)) return
+          if (plan.state === "draft") {
+            const taskID = this.taskStartID(plan)!
+            await this.command(
+              {
+                requestID: `task-start-run:${taskID}:1`,
+                planID: plan.id,
+                expectedVersion: plan.version,
+                action: "run",
+              },
+              plan.owner,
+            )
+            plan = this.store.plan(plan.id)!
+          }
+          const retained = this.store.atomic((db) =>
+            retainedVerificationsForPlan(db, this.directory, plan.id),
           )
-          plan = this.store.plan(plan.id)!
-        }
-        const retained = this.store.atomic((db) =>
-          retainedVerificationsForPlan(db, this.directory, plan.id),
-        )
-        if (
-          plan.state !== "cancelling" &&
-          retained.some(
-            (operation) =>
-              !["cancelled", "task-accepted"].includes(operation.state) &&
-              !this.retainedTaskCandidateAccepted(operation),
+          if (
+            plan.state !== "cancelling" &&
+            retained.some(
+              (operation) =>
+                !["cancelled", "task-accepted"].includes(operation.state) &&
+                !this.retainedTaskCandidateAccepted(operation),
+            )
           )
-        )
-          continue
-        await this.step(plan, fence)
+            return
+          await this.step(plan, fence)
+        })
         if (heartbeatFailed) throw heartbeatError
       }
       for (const planID of terminalCleanupPlanIDs) {
-        const plan = this.store.plan(planID)
-        if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) continue
-        if (!this.pendingOwnedWorktreeCleanup(plan)) continue
-        if (plan.state === "cleanup-blocked") {
-          if (!(await this.worktreeCleanupFactsChanged(plan))) continue
-          await this.cleanupWorktrees(plan, fence)
-        } else if (await this.worktreeCleanupFactsChanged(plan))
-          await this.cleanupWorktrees(plan, fence, "cancellation")
+        await this.reconcilePlan(planID, fence, "cleanup", async () => {
+          const plan = this.store.plan(planID)
+          if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) return
+          if (!this.pendingOwnedWorktreeCleanup(plan)) return
+          if (plan.state === "cleanup-blocked") {
+            if (!(await this.worktreeCleanupFactsChanged(plan))) return
+            await this.cleanupWorktrees(plan, fence)
+          } else if (await this.worktreeCleanupFactsChanged(plan))
+            await this.cleanupWorktrees(plan, fence, "cancellation")
+        })
+        if (heartbeatFailed) throw heartbeatError
       }
       await this.reconcileTerminalRetainedVerifications(fence)
       await this.deliver(fence)
@@ -16145,58 +16162,60 @@ export class TaskRuntime {
       if (this.store.architectRenewalBlocksDelivery(ordered[0]!.plan_id)) continue
       const plan = this.store.plan(ordered[0]!.plan_id)
       if (!plan) continue
-      const ready = new Map<string, boolean>()
-      const current = new Map<string, OutboxRow>()
-      for (const [index, message] of ordered.entries()) {
-        const older = JSON.parse(message.payload)
-        // Once all task artifacts are accepted the next actionable outcome is
-        // the combined result. Async checks must not publish a redundant task
-        // handoff merely because that result requires another tick.
-        if (
-          older.status === "task-accepted" &&
-          plan.state === "running" &&
-          this.store.nodes(plan.id).every((node) => node.state === "accepted")
-        )
-          continue
-        const replacement =
-          older.status === "architect-handoff" ||
-          older.status === "architect-source-reference" ||
-          older.status === "architect-source-change"
-            ? undefined
-            : ordered.slice(index + 1).findLast((candidate) => {
-                const next = JSON.parse(candidate.payload)
-                if (
-                  next.status === "architect-handoff" ||
-                  next.status === "architect-source-reference" ||
-                  next.status === "architect-source-change"
-                )
-                  return false
-                // Current outcomes include the whole accepted-artifact review set.
-                // Legacy partial notices cannot suppress a different actionable result.
-                if (older.status === "task-accepted")
-                  return (
-                    (Array.isArray(next.reviewableTasks) &&
-                      next.reviewableTasks.some(
-                        (task: { taskID?: string; artifact?: string }) =>
-                          task.taskID === older.taskID && task.artifact === older.artifact,
-                      )) ||
-                    (next.status === "task-accepted" &&
-                      next.taskID === older.taskID &&
-                      next.artifact === older.artifact) ||
-                    (["accepted", "integrated"].includes(next.status) &&
-                      typeof next.artifact === "string")
+      await this.reconcilePlan(plan.id, fence, "delivery", async () => {
+        const ready = new Map<string, boolean>()
+        const current = new Map<string, OutboxRow>()
+        for (const [index, message] of ordered.entries()) {
+          const older = JSON.parse(message.payload)
+          // Once all task artifacts are accepted the next actionable outcome is
+          // the combined result. Async checks must not publish a redundant task
+          // handoff merely because that result requires another tick.
+          if (
+            older.status === "task-accepted" &&
+            plan.state === "running" &&
+            this.store.nodes(plan.id).every((node) => node.state === "accepted")
+          )
+            continue
+          const replacement =
+            older.status === "architect-handoff" ||
+            older.status === "architect-source-reference" ||
+            older.status === "architect-source-change"
+              ? undefined
+              : ordered.slice(index + 1).findLast((candidate) => {
+                  const next = JSON.parse(candidate.payload)
+                  if (
+                    next.status === "architect-handoff" ||
+                    next.status === "architect-source-reference" ||
+                    next.status === "architect-source-change"
                   )
-                return next.status !== "task-accepted" || Boolean(next.currentPlan)
-              })
-        if (replacement) {
-          const ok = await this.supersedeOutcome(message, replacement, plan, fence)
-          ready.set(replacement.id, (ready.get(replacement.id) ?? true) && ok)
-        } else current.set(message.id, message)
-      }
-      const admittedTargets = new Map<string, HostSession>()
-      for (const message of current.values())
-        if (ready.get(message.id) !== false)
-          await this.deliverCurrent(message, fence, admittedTargets)
+                    return false
+                  // Current outcomes include the whole accepted-artifact review set.
+                  // Legacy partial notices cannot suppress a different actionable result.
+                  if (older.status === "task-accepted")
+                    return (
+                      (Array.isArray(next.reviewableTasks) &&
+                        next.reviewableTasks.some(
+                          (task: { taskID?: string; artifact?: string }) =>
+                            task.taskID === older.taskID && task.artifact === older.artifact,
+                        )) ||
+                      (next.status === "task-accepted" &&
+                        next.taskID === older.taskID &&
+                        next.artifact === older.artifact) ||
+                      (["accepted", "integrated"].includes(next.status) &&
+                        typeof next.artifact === "string")
+                    )
+                  return next.status !== "task-accepted" || Boolean(next.currentPlan)
+                })
+          if (replacement) {
+            const ok = await this.supersedeOutcome(message, replacement, plan, fence)
+            ready.set(replacement.id, (ready.get(replacement.id) ?? true) && ok)
+          } else current.set(message.id, message)
+        }
+        const admittedTargets = new Map<string, HostSession>()
+        for (const message of current.values())
+          if (ready.get(message.id) !== false)
+            await this.deliverCurrent(message, fence, admittedTargets)
+      })
     }
   }
 }

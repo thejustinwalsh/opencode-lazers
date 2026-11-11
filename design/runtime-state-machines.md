@@ -85,3 +85,22 @@ a cleanup tick before retry and assert this distinction.
 - Read-only native vocabulary audit: 10,760 state-field entries across 17
   groups, zero unrecognized state values.
 - `bun run verify` and `git diff --check` passed.
+
+## Scheduler progress across plans
+
+`TaskRuntime.runTick()` retries eligible plans after a failed native observation.
+`reconcilePlan()` isolates plan stepping, terminal cleanup, and outcome delivery
+by plan. It records changed failures as `PLAN_STEP_FAILED`,
+`PLAN_CLEANUP_FAILED`, or `PLAN_DELIVERY_FAILED` under the current scheduler
+fence. Error text is redacted before the transition record is written. These
+records do not change the workflow state or clear a pending side effect. Lease
+claim and stale fence failures still propagate.
+
+An Architect renewal with a recorded failure in its current phase stays
+eligible for recovery without aborting dispatch for other plans. The regression
+for a failed worker lookup checks that a second plan starts, that repeated
+identical failures produce one record, and that a later authoritative absence
+settles the original cancellation.
+
+Validation: `runtime.test.ts` and `lifecycle-machines.test.ts`: 352 tests,
+5,787 assertions, zero failures. `bun run verify` passed.

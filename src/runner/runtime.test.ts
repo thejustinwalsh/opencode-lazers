@@ -3334,7 +3334,10 @@ test("an admitted source backlog shares only same-pass no-op target observations
   f.host.session = async () => {
     throw new Error("native owner observation unavailable")
   }
-  await expect(f.runtime.tick()).rejects.toThrow("native owner observation unavailable")
+  await f.runtime.tick()
+  expect(f.store.latestTransition(f.receipt.planID, null, "PLAN_DELIVERY_FAILED")).toMatchObject({
+    error: "native owner observation unavailable",
+  })
   expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
 
   let sent = false
@@ -13440,9 +13443,9 @@ test("unavailable renewal successor fails before history sweeps and retries with
   }
   // The first failure starts the durable renewal; later recovery attempts must
   // remain retryable without rescanning history or publishing the same issue.
-  await expect(f.runtime.tick()).rejects.toThrow("successor lookup unavailable")
-  await expect(f.runtime.tick()).rejects.toThrow("successor lookup unavailable")
-  await expect(f.runtime.tick()).rejects.toThrow("successor lookup unavailable")
+  await f.runtime.tick()
+  await f.runtime.tick()
+  await f.runtime.tick()
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
   expect(renewal.state).toBe("creating")
   expect(successorReads).toBeGreaterThanOrEqual(3)
@@ -14743,8 +14746,8 @@ test.each(["initial", "detailed", "unknown"] as const)(
   },
 )
 
-test("worker lookup failure preserves cancellation until a later authoritative observation", async () => {
-  const f = fixture({ delayed: true })
+test("worker lookup failure preserves cancellation without starving independent dispatch", async () => {
+  const f = fixture({ independent: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)
   await f.runtime.tick()
   const attempt = f.store.attempts(f.receipt.planID)[0]!
@@ -14762,7 +14765,18 @@ test("worker lookup failure preserves cancellation until a later authoritative o
     },
     "owner",
   )
-  await expect(f.runtime.tick()).rejects.toThrow("temporarily unavailable")
+  const independent = f.createTask("independent", "other/independent.txt")
+  const next = f.store.submit(f.inputFor([independent], { requestID: "independent" }), "owner")
+  await runPlan(f, next.planID, "run-independent")
+  await f.runtime.tick()
+  expect(f.store.attempts(next.planID)[0]?.state).toBe("running")
+  await f.runtime.tick()
+  const activity = f.store.detail(f.receipt.planID).activity as { event: string; payload: string }[]
+  const failures = activity.filter((row) => row.event === "PLAN_STEP_FAILED")
+  expect(failures).toHaveLength(1)
+  expect(JSON.parse(failures[0]!.payload)).toEqual({
+    error: "Native worker lookup temporarily unavailable",
+  })
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
   expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
   f.host.session = read
