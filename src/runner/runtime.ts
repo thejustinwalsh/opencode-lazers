@@ -440,6 +440,24 @@ type RunnerTransitionRecord = {
   payload: string
 }
 
+type WorkerObservationFence = {
+  planID: string
+  planVersion: number
+  planState: string
+  owner: string
+  controlEpoch: number
+  reconcileRequestID: number
+  taskID: string
+  attemptID: string
+  attemptState: string
+  sessionID: string
+  workspace: string
+  messageID: string
+  policy: string
+  nodeState: string
+  nodeVersion: number
+}
+
 type RetainedVerificationSeed = RetainedVerification
 
 const cleanupObservationStages = [
@@ -7388,8 +7406,10 @@ export class TaskRuntime {
     reason: string,
     allowedActions = ["audit", "reconcile", "cancel"],
     workerObservation?: TerminalWorkerHold,
+    observationFence?: WorkerObservationFence,
   ) {
-    this.store.atomic((db) => {
+    const currentObservation = this.store.atomic((db) => {
+      if (observationFence && !this.workerObservationCurrent(observationFence)) return false
       const current = db
         .query<{ state: string; reason: string | null }, [string]>(
           "SELECT state,reason FROM runner_plans WHERE id=?",
@@ -7415,7 +7435,7 @@ export class TaskRuntime {
           ? JSON.stringify(previousObservation) !== JSON.stringify(workerObservation)
           : previousObservation !== undefined
       const changedReason = current.state !== "blocked" || current.reason !== reason
-      if (!observationChanged && !changedReason) return
+      if (!observationChanged && !changedReason) return true
       db.query(
         "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=?",
       ).run(reason, plan.id)
@@ -7424,7 +7444,9 @@ export class TaskRuntime {
         ...(workerObservation ? { workerObservation } : {}),
       })
       this.outcome(plan.id, { status: "blocked", reason, allowedActions }, true)
+      return true
     })
+    if (!currentObservation) return undefined
     return {
       status: "blocked",
       reason,
@@ -9011,21 +9033,28 @@ export class TaskRuntime {
     return undefined
   }
 
-  private approvalWait(plan: PlanRow, attempt: AttemptRow, session: HostSession, fence: number) {
+  private approvalWait(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    session: HostSession,
+    fence: number,
+    observation?: WorkerObservationFence,
+  ) {
     const pendingPermissions = session.pendingPermissions ?? 0
     const pendingForms = session.pendingForms ?? 0
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      pendingPermissions?: number
-      pendingForms?: number
-    }>(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT")
-    if (
-      previous?.attemptID === attempt.id &&
-      previous.pendingPermissions === pendingPermissions &&
-      previous.pendingForms === pendingForms
-    )
-      return
-    this.store.fenced(this.owner, fence, () =>
+    return this.store.fenced(this.owner, fence, () => {
+      if (observation && !this.workerObservationCurrent(observation)) return false
+      const previous = this.store.latestTransition<{
+        attemptID?: string
+        pendingPermissions?: number
+        pendingForms?: number
+      }>(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT")
+      if (
+        previous?.attemptID === attempt.id &&
+        previous.pendingPermissions === pendingPermissions &&
+        previous.pendingForms === pendingForms
+      )
+        return false
       this.store.record(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT", {
         attemptID: attempt.id,
         sessionID: attempt.session_id,
@@ -9034,33 +9063,197 @@ export class TaskRuntime {
         pendingPermissions,
         pendingForms,
         observedAt: Date.now(),
-      }),
+      })
+      return true
+    })
+  }
+
+  private holdApprovalObservation(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    session: HostSession,
+    observation: WorkerObservationFence,
+    fence: number,
+  ) {
+    return this.store.fenced(this.owner, fence, () => {
+      if (!this.workerObservationCurrent(observation)) return false
+      this.approvalWait(plan, attempt, session, fence, observation)
+      this.hold(
+        plan,
+        `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
+        ["audit", "reconcile", "cancel"],
+        undefined,
+        observation,
+      )
+      return true
+    })
+  }
+
+  private reconcileRequestID(planID: string) {
+    return this.store.atomic(
+      (db) =>
+        db
+          .query<{ id: number }, [string]>(
+            `SELECT COALESCE(MAX(id),0) AS id FROM runner_transitions
+             WHERE plan_id=? AND task_id IS NULL AND event='RECONCILE_REQUESTED'`,
+          )
+          .get(planID)!.id,
     )
   }
 
-  private resumeTransientObservationWait(plan: PlanRow, fence: number) {
+  private workerObservationFence(
+    plan: PlanRow,
+    attempt: AttemptRow,
+  ): WorkerObservationFence | undefined {
+    const currentPlan = this.store.plan(plan.id)
+    const currentAttempt = this.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === attempt.task_id)
+      .at(-1)
+    const node = this.store
+      .nodes(plan.id)
+      .find((candidate) => candidate.task_id === attempt.task_id)
+    if (
+      !currentPlan ||
+      currentPlan.version !== plan.version ||
+      currentPlan.state !== plan.state ||
+      currentPlan.owner !== plan.owner ||
+      !currentAttempt ||
+      currentAttempt.id !== attempt.id ||
+      currentAttempt.state !== attempt.state ||
+      currentAttempt.session_id !== attempt.session_id ||
+      currentAttempt.workspace !== attempt.workspace ||
+      currentAttempt.message_id !== attempt.message_id ||
+      currentAttempt.policy !== attempt.policy ||
+      !node
+    )
+      return undefined
+    return {
+      planID: plan.id,
+      planVersion: plan.version,
+      planState: plan.state,
+      owner: plan.owner,
+      controlEpoch: this.store.planControlEpoch(plan.id),
+      reconcileRequestID: this.reconcileRequestID(plan.id),
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      attemptState: attempt.state,
+      sessionID: attempt.session_id,
+      workspace: attempt.workspace,
+      messageID: attempt.message_id,
+      policy: attempt.policy,
+      nodeState: node.state,
+      nodeVersion: node.version,
+    }
+  }
+
+  private workerObservationCurrent(observation: WorkerObservationFence) {
+    const plan = this.store.plan(observation.planID)
+    const attempt = this.store
+      .attempts(observation.planID)
+      .filter((candidate) => candidate.task_id === observation.taskID)
+      .at(-1)
+    const node = this.store
+      .nodes(observation.planID)
+      .find((candidate) => candidate.task_id === observation.taskID)
+    return Boolean(
+      plan &&
+      plan.version === observation.planVersion &&
+      plan.state === observation.planState &&
+      plan.owner === observation.owner &&
+      this.store.planControlEpoch(observation.planID) === observation.controlEpoch &&
+      this.reconcileRequestID(observation.planID) === observation.reconcileRequestID &&
+      attempt?.id === observation.attemptID &&
+      attempt.state === observation.attemptState &&
+      attempt.session_id === observation.sessionID &&
+      attempt.workspace === observation.workspace &&
+      attempt.message_id === observation.messageID &&
+      attempt.policy === observation.policy &&
+      node?.state === observation.nodeState &&
+      node.version === observation.nodeVersion,
+    )
+  }
+
+  private approvalWaitReason(reason: string | null | undefined) {
+    return Boolean(
+      reason?.startsWith("Worker at ") &&
+      reason.includes("pending permission request(s)") &&
+      reason.includes("pending form(s)"),
+    )
+  }
+
+  private conclusiveApprovalClear(attempt: AttemptRow, session: HostSession) {
+    if (
+      session.id !== attempt.session_id ||
+      session.projectID !== this.projectID ||
+      session.directory !== attempt.workspace ||
+      !isWorkerAgent(session.agent) ||
+      session.archived ||
+      session.metadata?.lazersAttemptID !== attempt.id ||
+      session.pendingInput !== false ||
+      session.pendingPermissions !== 0 ||
+      session.pendingForms !== 0 ||
+      session.observationUnstable ||
+      !session.turn ||
+      !this.matchesWorkerInput(attempt, session.turn.inputID)
+    )
+      return false
+    try {
+      const policy = ModelPolicy.safeParse(JSON.parse(attempt.policy).model)
+      return policy.success && this.sameModel(session.model, policy.data)
+    } catch {
+      return false
+    }
+  }
+
+  private resumeTransientObservationWait(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    session: HostSession,
+    observation: WorkerObservationFence,
+    fence: number,
+    allowNonterminal = false,
+  ) {
     const current = this.store.plan(plan.id)
     const reason = current?.reason
     const backgroundWait =
       reason?.startsWith("Native idle background observation is unknown") ||
       reason?.includes(" known background job(s)")
-    const approvalWait =
-      reason?.startsWith("Worker at ") &&
-      reason.includes("pending permission request(s)") &&
-      reason.includes("pending form(s)")
+    const approvalWait = this.approvalWaitReason(reason)
     if (current?.state !== "blocked" || !reason || (!backgroundWait && !approvalWait)) return
-    this.store.fenced(this.owner, fence, (db) => {
+    if (approvalWait && !this.conclusiveApprovalClear(attempt, session)) return false
+    if (
+      allowNonterminal
+        ? !approvalWait || session.outcome !== undefined
+        : session.busy || session.pendingInput || session.observationUnstable || !session.outcome
+    )
+      return false
+    return this.store.fenced(this.owner, fence, (db) => {
+      if (!this.workerObservationCurrent(observation)) return false
+      const current = db
+        .query<{ state: string; reason: string | null; version: number; owner: string }, [string]>(
+          "SELECT state,reason,version,owner FROM runner_plans WHERE id=?",
+        )
+        .get(plan.id)
+      if (
+        current?.state !== "blocked" ||
+        current.reason !== reason ||
+        current.version !== observation.planVersion ||
+        current.owner !== observation.owner
+      )
+        return false
       const changed =
         db
           .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=? AND owner=?",
           )
-          .run(plan.id, reason).changes === 1
+          .run(plan.id, reason, observation.planVersion, observation.owner).changes === 1
       if (changed)
         this.store.record(plan.id, null, "WORKER_OBSERVATION_SETTLED", {
           previousReason: reason,
           observation: approvalWait ? "worker-approvals" : "experimental.idle-background",
         })
+      return changed
     })
   }
 
@@ -10173,8 +10366,14 @@ export class TaskRuntime {
     )
   }
 
-  private failMissingWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
+  private failMissingWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    observation?: WorkerObservationFence,
+  ) {
     this.store.fenced(this.owner, fence, () => {
+      if (observation && !this.workerObservationCurrent(observation)) return
       const currentPlan = this.store.plan(plan.id)
       const latest = this.store
         .attempts(plan.id)
@@ -10217,26 +10416,41 @@ export class TaskRuntime {
       await this.prepareWorker(plan, attempt, fence)
       return
     }
+    if (!new Set(["running", "blocked"]).has(plan.state)) return
+    let observation = this.workerObservationFence(plan, attempt)
+    if (!observation) return
     let session = await this.host.session(attempt.session_id)
-    if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) {
-      if (session) this.observeUsage(attempt, session, fence)
-      return
-    }
+    if (session) this.observeUsage(attempt, session, fence)
+    if (!this.workerObservationCurrent(observation)) return
     if (!session) {
-      this.failMissingWorker(plan, attempt, fence)
+      this.failMissingWorker(plan, attempt, fence, observation)
       return
     }
     const task = this.store.repository.get(attempt.task_id)!
-    this.observeUsage(attempt, session, fence)
-    if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
+    if (
+      plan.state === "blocked" &&
+      this.approvalWaitReason(plan.reason) &&
+      session.pendingPermissions === 0 &&
+      session.pendingForms === 0 &&
+      session.pendingInput === false &&
+      !session.observationUnstable &&
+      session.outcome === undefined
+    ) {
+      const detailed = await this.host.session(attempt.session_id, { messages: true })
+      if (detailed) this.observeUsage(attempt, detailed, fence)
+      if (!this.workerObservationCurrent(observation)) return
+      if (!detailed) return
+      session = detailed
+    }
     if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-      this.approvalWait(plan, attempt, session, fence)
-      this.hold(
-        plan,
-        `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
-        ["audit", "reconcile", "cancel"],
-      )
+      this.holdApprovalObservation(plan, attempt, session, observation, fence)
       return
+    }
+    if (plan.state === "blocked" && this.approvalWaitReason(plan.reason)) {
+      if (session.outcome === undefined) {
+        this.resumeTransientObservationWait(plan, attempt, session, observation, fence, true)
+        return
+      }
     }
     if (
       session.turn &&
@@ -10288,6 +10502,7 @@ export class TaskRuntime {
           backgroundReason,
           ["audit", "reconcile", "cancel"],
           unchangedTerminal ? previousHold : undefined,
+          observation,
         )
         this.backgroundWait(plan, attempt, session, backgroundReason, fence)
         if (unchangedTerminal && session.background?.state === "unknown")
@@ -10297,23 +10512,15 @@ export class TaskRuntime {
     }
     if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
       const detailed = await this.host.session(attempt.session_id, { messages: true })
-      if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) {
-        if (detailed) this.observeUsage(attempt, detailed, fence)
-        return
-      }
+      if (detailed) this.observeUsage(attempt, detailed, fence)
+      if (!this.workerObservationCurrent(observation)) return
       if (!detailed) {
-        this.failMissingWorker(plan, attempt, fence)
+        this.failMissingWorker(plan, attempt, fence, observation)
         return
       }
       session = detailed
-      this.observeUsage(attempt, session, fence)
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-        this.approvalWait(plan, attempt, session, fence)
-        this.hold(
-          plan,
-          `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
-          ["audit", "reconcile", "cancel"],
-        )
+        this.holdApprovalObservation(plan, attempt, session, observation, fence)
         return
       }
       if (session.busy || session.pendingInput || session.observationUnstable) return
@@ -10357,6 +10564,7 @@ export class TaskRuntime {
           reason,
           ["audit", "reconcile", "cancel"],
           this.terminalWorkerObservation(attempt, session),
+          observation,
         )
         return
       }
@@ -10385,20 +10593,30 @@ export class TaskRuntime {
             `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${detailedBackgroundReason}`,
             ["audit", "reconcile", "cancel"],
             this.terminalWorkerObservation(attempt, session),
+            observation,
           )
           if (session.background?.state === "unknown")
             await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
           return
         }
         if (priorBackground && !session.outcome) return
-        this.hold(plan, detailedBackgroundReason, ["audit", "reconcile", "cancel"])
+        this.hold(
+          plan,
+          detailedBackgroundReason,
+          ["audit", "reconcile", "cancel"],
+          undefined,
+          observation,
+        )
         this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         return
       }
     }
     if (session.busy || session.pendingInput || session.observationUnstable || !session.outcome)
       return
-    this.resumeTransientObservationWait(plan, fence)
+    if (this.resumeTransientObservationWait(plan, attempt, session, observation, fence)) {
+      plan = this.store.plan(plan.id)!
+      observation = this.workerObservationFence(plan, attempt) ?? observation
+    }
     if (
       session.outcome === "succeeded" &&
       (!session.turn ||
@@ -10415,6 +10633,8 @@ export class TaskRuntime {
         plan,
         "Native worker success does not match a completed response to the current assigned input",
         ["audit", "reconcile", "cancel"],
+        undefined,
+        observation,
       )
       return
     }
@@ -10426,6 +10646,7 @@ export class TaskRuntime {
           "Worker execution was interrupted; explicit reconciliation or cancellation is required",
           ["audit", "reconcile", "cancel"],
           this.terminalWorkerObservation(attempt, session),
+          observation,
         )
         return
       }
