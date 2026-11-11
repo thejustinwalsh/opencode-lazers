@@ -1,3 +1,6 @@
+const escalateBlocker =
+  "If you still cannot unblock work, use the native question tool before ending your turn. State the exact blocker and next action, then ask for the specific human decision or action needed to proceed. Handle sequencing, parallelism, and retries yourself."
+
 /** Human action beside durable machine identity, without replaying full check logs. */
 export function outcomeText(serialized: string) {
   const payload = JSON.parse(serialized)
@@ -101,15 +104,18 @@ export function outcomeText(serialized: string) {
       break
     case "queue-review":
       action =
-        "Unblock the project queue in this turn. Use lz-inspect-plan to find the first actionable blocker in the listed plans, then use lz-plan-command to resolve it and confirm eligible work can proceed. Decide sequencing, parallelism and retries yourself. If work still cannot proceed, identify the exact blocker and what must happen next. Ask the human only for a material decision about the plan, task scope, or required outcome."
+        "Unblock the project queue in this turn. Use lz-inspect-plan to find the first actionable blocker in the listed plans, then use lz-plan-command to resolve it and confirm eligible work can proceed. Decide sequencing, parallelism and retries yourself. " +
+        escalateBlocker
       break
     case "blocked":
       action =
-        "Unblock this plan in this turn. Use lz-inspect-plan to verify the recorded cause, then apply the appropriate allowed action through lz-plan-command. Reconcile uncertain effects before retrying. Confirm that work can proceed or identify the exact remaining blocker and what must happen next. Ask the human only for a material decision about the plan, task scope, or required outcome."
+        "Unblock this plan in this turn. Use lz-inspect-plan to verify the recorded cause, then apply the appropriate allowed action through lz-plan-command. Reconcile uncertain effects before retrying. Confirm that work can proceed. " +
+        escalateBlocker
       break
     case "cleanup-blocked":
       action =
-        "Resolve the native cleanup failure without force or loss of dirty/unmerged work, then retry the existing integration command with the current plan version."
+        "Resolve the native cleanup failure without force or loss of dirty/unmerged work, then retry the existing integration command with the current plan version. " +
+        escalateBlocker
       break
     case "cancelled":
       action =
