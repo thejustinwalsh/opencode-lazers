@@ -67,6 +67,13 @@ export const LocalInference = Rpc.define({
   methods: { ...sharedInferenceMethods },
 })
 
+export const rendererOwnershipLostType = "renderer_ownership_lost"
+export const isRendererOwnershipLost = (error: unknown) =>
+  error !== null &&
+  typeof error === "object" &&
+  "type" in error &&
+  error.type === rendererOwnershipLostType
+
 /** Renderer mailbox is deliberately separate from location-scoped public entry points. */
 export const RendererInference = Rpc.define({
   id: "lazers.webgpu-worker",
@@ -86,6 +93,7 @@ export const RendererInference = Rpc.define({
     },
     poll: {
       input: portable(Schema.Struct({ owner: ownerToken, available: Schema.Boolean })),
+      errors: { [rendererOwnershipLostType]: nothing },
       output: portable(
         Schema.Struct({ job: Schema.NullOr(Job), cancelID: Schema.NullOr(Schema.String) }),
       ),

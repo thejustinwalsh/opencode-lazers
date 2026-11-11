@@ -496,7 +496,7 @@ try {
   timerTick()
   await until(() => runtime.state() === "ready")
   assert.deepEqual({ releases, attachCalls, detachCalls }, beforeTransport)
-  pollFailure = new Error("Renderer ownership was lost")
+  pollFailure = { type: "renderer_ownership_lost", message: "Mailbox rejected this owner" }
   timerTick()
   await until(() => runtime.state() === "error")
   assert.equal(lease.occupied(), false)
@@ -521,7 +521,7 @@ try {
   assert.equal(allocations, 1)
   assert.equal(broker.demand().requested, false)
   // F-S13-1: only confirmed ownership loss enters detach/reload recovery.
-  pollFailure = new Error("Renderer ownership was lost")
+  pollFailure = { type: "renderer_ownership_lost", message: "Mailbox rejected this owner" }
   hangDetach = true
   const beforeDetachReconnect = attachCalls
   timerTick()

@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
-import { InferenceBroker, failed } from "./broker.ts"
-import { LocalInference, RendererInference } from "./rpc.ts"
+import { InferenceBroker, RendererOwnershipLost, failed } from "./broker.ts"
+import { LocalInference, RendererInference, rendererOwnershipLostType } from "./rpc.ts"
 import { OpenCode } from "@opencode/client"
 import type { RpcClient } from "@opencode/client"
 import { Service } from "@opencode/client/service"
@@ -199,10 +199,23 @@ export function registerLocalInference(
         }),
       detach: ({ owner, error }) =>
         Effect.sync(() => {
-          broker.detach(owner, error)
+          try {
+            broker.detach(owner, error)
+          } catch (cause) {
+            // This token no longer owns a mailbox attachment. Acknowledge the
+            // no-op without detaching the replacement owner.
+            if (!(cause instanceof RendererOwnershipLost)) throw cause
+          }
           return {}
         }),
-      poll: ({ owner, available }) => Effect.sync(() => broker.poll(owner, available)),
+      poll: ({ owner, available }, context) =>
+        Effect.try({ try: () => broker.poll(owner, available), catch: (error) => error }).pipe(
+          Effect.catch((error) =>
+            error instanceof RendererOwnershipLost
+              ? Effect.fail(context.error(rendererOwnershipLostType, error.message, {}))
+              : Effect.die(error),
+          ),
+        ),
       complete: ({ owner, id, result }) =>
         Effect.sync(() => {
           broker.complete(owner, id, result)

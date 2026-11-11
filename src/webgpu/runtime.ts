@@ -12,7 +12,7 @@ import {
   MODEL_SHORT_NAMES,
 } from "./manifest.ts"
 import { cachedModelFetch } from "./files-fetch.ts"
-import { LocalInference, RendererInference } from "./rpc.ts"
+import { LocalInference, RendererInference, isRendererOwnershipLost } from "./rpc.ts"
 import type { InferenceJob } from "./rpc.ts"
 import type { DecisionInput } from "./decisions.ts"
 import { failed } from "./broker.ts"
@@ -1149,7 +1149,7 @@ export function createInferenceRuntime(
             }
           }
         } catch (error) {
-          if (!/Renderer ownership was lost|Another renderer owns/.test(errorDetail(error))) {
+          if (!isRendererOwnershipLost(error)) {
             // Transport latency does not establish loss of the broker or GPU lease.
             pollDisconnected = true
             fail(

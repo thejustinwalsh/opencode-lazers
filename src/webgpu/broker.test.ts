@@ -263,6 +263,23 @@ test("typed LocalInference.review forwards a measured request through the render
         yield* Effect.promise(async () => {
           await Effect.runPromise(renderer.attach({ owner: "renderer" }, {} as never))
           const review = Effect.runPromise(local.review(input, {} as never))
+          const stalePoll = await Effect.runPromise(
+            renderer
+              .poll({ owner: "stale-renderer", available: true }, {
+                error: (type: string, message: string, data: unknown) => ({ type, message, data }),
+              } as never)
+              .pipe(
+                Effect.match({
+                  onFailure: (error) => ({ error }),
+                  onSuccess: (value) => ({ value }),
+                }),
+              ),
+          )
+          expect(stalePoll).toMatchObject({ error: { type: "renderer_ownership_lost" } })
+          await expect(
+            Effect.runPromise(renderer.detach({ owner: "stale-renderer" }, {} as never)),
+          ).resolves.toEqual({})
+          // The replacement still owns the queued review after stale detach.
           let job: InferenceJob | null = null
           for (let attempt = 0; attempt < 20 && !job; attempt++) {
             job = (

@@ -1317,3 +1317,24 @@ for a synthetic demonstration. Actual pause/resume behavior is tested with nativ
 host fixtures, not yet observed on production work. LZ-182 remains cancelled with
 its retained work and recorded recovery order; this change does not claim recovery
 or integration of LZ-182 or LZ-202.
+
+## F-S13-1 — typed renderer ownership loss for local speech (2026-11-10)
+
+The native service logged repeated `lazers.webgpu-worker/poll` HTTP 500 defects:
+`Renderer ownership was lost`. `createInferenceRuntime()` classified the failure
+by message text, so a redacted/wrapped RPC defect could leave the renderer
+polling its obsolete token as though transport alone had failed. The regression
+uses a structured ownership-loss error whose message does not match the old regex;
+before the fix the stale GPU lease remained occupied.
+
+`RendererInference.poll` now declares `renderer_ownership_lost`; the server maps
+`RendererOwnershipLost` into that typed error. The runtime enters its existing
+GPU disposal and reconnection path from the error type. Actual transport faults
+still retain the GPU lease. An obsolete `detach` acknowledges an absent attachment
+without disconnecting the replacement owner; GPU cleanup and the existing main
+`ModelLease` release fence remain required.
+
+`bun run verify`, all 137 WebGPU tests / 813 assertions, and `bun run build:gui`
+passed. A native pre-change speaker check reached `reading response` and Settings
+reported `Chat and speech ready`; this proves the observed failure was intermittent,
+not that the old recovery path was correct.

@@ -11,6 +11,12 @@ export const failed = (error: string): InferenceResult => ({
   completionTokens: 0,
 })
 
+export class RendererOwnershipLost extends Error {
+  constructor() {
+    super("Renderer ownership was lost")
+  }
+}
+
 /** A bounded reverse-call mailbox. Polling resynchronizes after transport loss without relying on event replay. */
 export class InferenceBroker {
   private owner: string | undefined
@@ -42,14 +48,14 @@ export class InferenceBroker {
     // Expiry or a lost detach reply may already have disconnected this worker.
     // Acknowledging that no-op lets the renderer retire its separate GPU lease.
     if (!this.owner) return
-    if (owner !== this.owner) throw new Error("Renderer ownership was lost")
+    if (owner !== this.owner) throw new RendererOwnershipLost()
     if (error) this.close(error.slice(0, 2_000))
     else this.disconnect("Desktop renderer disconnected")
   }
 
   private assertOwner(owner: string) {
     this.expire()
-    if (owner !== this.owner) throw new Error("Renderer ownership was lost")
+    if (owner !== this.owner) throw new RendererOwnershipLost()
   }
 
   poll(owner: string, available = true) {
