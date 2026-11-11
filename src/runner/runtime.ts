@@ -3684,20 +3684,6 @@ export class TaskRuntime {
       { operationID: string; owner: string; ownerEpoch: number } | undefined
     let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
     let combinedVerificationResume: CombinedVerificationContinuation | undefined
-    const interruptedChecksFor = (plan: PlanRow, attempt: AttemptRow) =>
-      this.store.effects(plan.id).filter((effect) => {
-        const receipt = actualCheckResultFromEffect(effect)
-        return (
-          effect.state === "uncertain" &&
-          effect.attempt_id === attempt.id &&
-          effect.kind.startsWith("verify:") &&
-          receipt?.aborted === true &&
-          receipt.cwd === attempt.workspace &&
-          receipt.artifact === attempt.artifact &&
-          receipt.inputIdentity === attempt.artifact &&
-          checkResourcesSettled(receipt)
-        )
-      })
     if (command.action === "resume" && command.taskID) {
       const attempt = this.store
         .attempts(old.id)
@@ -3712,7 +3698,7 @@ export class TaskRuntime {
         : undefined
       const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
       const interruptedVerification =
-        attempt?.state === "verifying" && interruptedChecksFor(old, attempt).length > 0
+        attempt?.state === "verifying" && this.interruptedChecksFor(old, attempt).length > 0
       if (
         !interruptedVerification &&
         (attempt?.state === "running" || attempt?.state === "verifying" || terminalNativeFailure)
@@ -5158,7 +5144,7 @@ export class TaskRuntime {
           }
         }
         if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
-          const interrupted = interruptedChecksFor(plan, attempt)
+          const interrupted = this.interruptedChecksFor(plan, attempt)
           if (interrupted.length) {
             if (
               plan.state !== "blocked" ||
@@ -8234,6 +8220,22 @@ export class TaskRuntime {
     })
   }
 
+  private interruptedChecksFor(plan: PlanRow, attempt: AttemptRow) {
+    return this.store.effects(plan.id).filter((effect) => {
+      const receipt = actualCheckResultFromEffect(effect)
+      return (
+        effect.state === "uncertain" &&
+        effect.attempt_id === attempt.id &&
+        effect.kind.startsWith("verify:") &&
+        receipt?.aborted === true &&
+        receipt.cwd === attempt.workspace &&
+        receipt.artifact === attempt.artifact &&
+        receipt.inputIdentity === attempt.artifact &&
+        checkResourcesSettled(receipt)
+      )
+    })
+  }
+
   private async step(initialPlan: PlanRow, fence: number) {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
@@ -8313,10 +8315,36 @@ export class TaskRuntime {
     // An owner read can overlap an authorized resume, cancellation, or reassignment.
     if (this.store.plan(plan.id)?.version !== plan.version) return
     plan = this.reconcileCancelledDependencies(plan.id, fence)
-    const pending = this.store
+    const unresolved = this.store
       .effects(plan.id)
-      .find((e) => ["intended", "uncertain"].includes(e.state))
+      .filter((e) => ["intended", "uncertain"].includes(e.state))
+    const pending = unresolved[0]
     if (pending) {
+      const attempt = pending.attempt_id
+        ? this.store.attempts(plan.id).find((item) => item.id === pending.attempt_id)
+        : undefined
+      if (
+        plan.state === "blocked" &&
+        plan.reason?.startsWith(`Recovery uncertain for ${pending.kind} ${pending.id}:`) &&
+        attempt?.state === "verifying" &&
+        unresolved.length === 1 &&
+        actualCheckResultFromEffect(pending)?.processCleanup &&
+        this.interruptedChecksFor(plan, attempt).some((effect) => effect.id === pending.id)
+      ) {
+        await this.command(
+          {
+            requestID: `resume-settled-check:${pending.id}:${plan.version}`,
+            planID: plan.id,
+            expectedVersion: plan.version,
+            action: "resume",
+            taskID: attempt.task_id,
+            attemptID: attempt.id,
+            reason: "Resume the interrupted check after confirming subprocess cleanup",
+          },
+          plan.owner,
+        )
+        return
+      }
       await this.reconcileEffect(pending, fence)
       return
     }
