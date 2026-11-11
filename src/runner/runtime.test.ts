@@ -14978,8 +14978,8 @@ test("a stalled queue requests one Architect review and leaves scheduling decisi
   await f.runtime.tick()
   expect(review()).toHaveLength(1)
   expect(review()[0]).toMatchObject({ sessionID: "owner", resume: true })
-  expect(review()[0]?.text).toContain("Unblock the project queue in this turn")
-  expect(review()[0]?.text).toContain("Decide sequencing, parallelism and retries yourself")
+  expect(review()[0]?.text).toContain("Unblock the queue now")
+  expect(review()[0]?.text).toContain("Own sequencing, parallelism, and retries")
   for (const planID of plans) {
     expect(review()[0]?.text).toContain(planID)
     expect(f.store.attempts(planID)).toHaveLength(0)

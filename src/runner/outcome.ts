@@ -1,6 +1,3 @@
-const escalateBlocker =
-  "If you still cannot unblock work, use the native question tool before ending your turn. State the exact blocker and next action, then ask for the specific human decision or action needed to proceed. Handle sequencing, parallelism, and retries yourself."
-
 /** Human action beside durable machine identity, without replaying full check logs. */
 export function outcomeText(serialized: string) {
   const payload = JSON.parse(serialized)
@@ -104,18 +101,15 @@ export function outcomeText(serialized: string) {
       break
     case "queue-review":
       action =
-        "Unblock the project queue in this turn. Use lz-inspect-plan to find the first actionable blocker in the listed plans, then use lz-plan-command to resolve it and confirm eligible work can proceed. Decide sequencing, parallelism and retries yourself. " +
-        escalateBlocker
+        "Unblock the queue now. Inspect the listed plans with lz-inspect-plan, act through lz-plan-command, and verify eligible work can start. Own sequencing, parallelism, and retries. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
       break
     case "blocked":
       action =
-        "Unblock this plan in this turn. Use lz-inspect-plan to verify the recorded cause, then apply the appropriate allowed action through lz-plan-command. Reconcile uncertain effects before retrying. Confirm that work can proceed. " +
-        escalateBlocker
+        "Unblock this plan now. Verify the cause with lz-inspect-plan, reconcile uncertain effects, and apply an allowed lz-plan-command. Confirm work can proceed. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
       break
     case "cleanup-blocked":
       action =
-        "Resolve the native cleanup failure without force or loss of dirty/unmerged work, then retry the existing integration command with the current plan version. " +
-        escalateBlocker
+        "Resolve the cleanup failure without force or loss of work, then retry integration at the current plan version. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
       break
     case "cancelled":
       action =
