@@ -101,11 +101,11 @@ export function outcomeText(serialized: string) {
       break
     case "queue-review":
       action =
-        "Review the stalled project queue. Inspect the current plans and reservations, resolve the blockers within the agreed plan, and continue eligible work through the scheduler. Decide sequencing, parallelism and retries yourself. Ask the human only when a material planning, task scope or required outcome decision is needed."
+        "Unblock the project queue in this turn. Use lz-inspect-plan to find the first actionable blocker in the listed plans, then use lz-plan-command to resolve it and confirm eligible work can proceed. Decide sequencing, parallelism and retries yourself. If work still cannot proceed, identify the exact blocker and what must happen next. Ask the human only for a material decision about the plan, task scope, or required outcome."
       break
     case "blocked":
       action =
-        "Inspect this blocked plan and resolve the recorded cause using its allowed actions. Preserve work and reconcile uncertain effects before retrying."
+        "Unblock this plan in this turn. Use lz-inspect-plan to verify the recorded cause, then apply the appropriate allowed action through lz-plan-command. Reconcile uncertain effects before retrying. Confirm that work can proceed or identify the exact remaining blocker and what must happen next. Ask the human only for a material decision about the plan, task scope, or required outcome."
       break
     case "cleanup-blocked":
       action =
