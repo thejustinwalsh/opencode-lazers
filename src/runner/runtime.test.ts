@@ -4649,6 +4649,47 @@ test.each([false, true])(
   },
 )
 
+test("a committed shared-checkout correction gets fresh mechanical preparation", async () => {
+  const f = fixture({
+    shared: true,
+    human: true,
+    taskFiles: [{ name: "a", path: "src/result.ts" }],
+    checkCommand: "bun fmt --check src/result.ts",
+  })
+  await runPlan(f)
+  await drive(f.runtime, 12)
+  const planID = f.receipt.planID
+  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing")
+  const attemptID = f.store.attempts(planID)[0]!.id
+  writeFileSync(join(f.root, "src/result.ts"), "export const correction=1\n")
+  git(f.root, ["add", "src/result.ts"])
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Correct the retained candidate",
+  ])
+  await f.runtime.command(
+    {
+      requestID: "reconcile-correction",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 12)
+  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing")
+  expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([attemptID])
+  expect(readFileSync(join(f.root, "src/result.ts"), "utf8")).toContain("correction = 1")
+  const effects = f.store.effects(planID).filter((effect) => effect.kind === "mechanical-fix")
+  expect(effects.map((effect) => effect.state)).toEqual(["completed", "completed"])
+  expect(new Set(effects.map((effect) => JSON.parse(effect.payload).receiptPath)).size).toBe(2)
+}, 15_000)
+
 test("out-of-scope candidate changes are not mechanically modified", async () => {
   const f = fixture({
     outside: true,

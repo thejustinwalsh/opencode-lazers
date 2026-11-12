@@ -10695,6 +10695,8 @@ export class TaskRuntime {
       timeoutMs: Math.max(...proposal.verification.map((entry) => entry.timeoutMs)),
     }
     const inputFingerprint = workingTreeIdentity(attempt.workspace, attempt.base_commit)
+    const shared = attempt.workspace === this.directory
+    const sharedDirty = shared && changedPaths(attempt.workspace).length > 0
     const environmentIdentity = verificationEnvironmentIdentity()
     const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
     const payload = {
@@ -10712,14 +10714,33 @@ export class TaskRuntime {
       ...(repairID ? { repairID } : {}),
       controlEpoch: this.store.planControlEpoch(plan.id),
       planVersion: plan.version,
-      receiptPath: join(this.dataDirectory, "receipts", attempt.id, "mechanical-preparation.json"),
+      receiptPath: join(
+        this.dataDirectory,
+        "receipts",
+        attempt.id,
+        `mechanical-preparation-${inputFingerprint}.json`,
+      ),
     }
     const existing = this.store.effects(plan.id).findLast((effect) => {
       if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
       const recorded = JSON.parse(effect.payload)
-      return (
-        recorded.messageID === attempt.message_id && (recorded.repairID ?? undefined) === repairID
+      if (
+        recorded.messageID !== attempt.message_id ||
+        (recorded.repairID ?? undefined) !== repairID
       )
+        return false
+      // A clean shared checkout can contain a newly committed correction.
+      // Preserve old receipts and prepare the new candidate independently.
+      if (shared && !sharedDirty && effect.state === "completed") {
+        const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }).check
+        if (
+          receipt?.preparation &&
+          recorded.inputFingerprint !== inputFingerprint &&
+          receipt.preparation.resultingFingerprint !== inputFingerprint
+        )
+          return false
+      }
+      return true
     })
     if (existing) {
       let recorded: typeof payload
@@ -10789,7 +10810,7 @@ export class TaskRuntime {
       }
       return "prepared"
     }
-    if (attempt.workspace === this.directory && changedPaths(attempt.workspace).length) {
+    if (sharedDirty) {
       this.hold(
         plan,
         "Commit task edits before verification; shared checkout has uncommitted changes",
