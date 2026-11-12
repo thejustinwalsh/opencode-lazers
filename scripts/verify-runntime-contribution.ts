@@ -44,6 +44,35 @@ const STAGES = {
       "apps/docs/src/content/docs/zoo/",
     ],
   },
+  "lfm3-base-chat": {
+    baseCommit: "f394a74fdaf1b78625039ee8a39bfe95ba5548ac",
+    directory: "contributions/runntime/lfm3-base-chat",
+    allowedPaths: [
+      "README.md",
+      "apps/docs/astro.config.mjs",
+      "apps/docs/src/content/docs/zoo/lfm3-chat.mdx",
+      "packages/runntime/src/core/gpu/dispatch/conv.ts",
+      "packages/runntime/src/core/gpu/dispatch/elementwise.ts",
+      "packages/runntime/src/core/gpu/dispatch/registry.ts",
+      "packages/runntime/src/core/graph/ops.ts",
+      "packages/runntime/src/core/graph/ops/conv/conv1d.ts",
+      "packages/runntime/src/core/graph/ops/elementwise.ts",
+      "packages/runntime/src/core/graph/value.ts",
+      "packages/runntime/src/core/index.ts",
+      "packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts",
+      "packages/runntime/src/core/kernels/elementwise/elementwiseF32.ts",
+      "packages/runntime/src/zoo/index.ts",
+      "packages/runntime/src/zoo/models.ts",
+      "packages/runntime/src/zoo/tasks/nlp/lfm3.ts",
+      "packages/runntime/src/zoo/lfm3/",
+      "packages/runntime/test/core/graph/ops/conv/depthwiseConv1d.test.ts",
+      "packages/runntime/test/core/graph/ops/elementwise.test.ts",
+      "packages/runntime/test/core/kernels/conv/depthwiseConv1d.gpu.test.ts",
+      "packages/runntime/test/core/kernels/elementwise/elementwiseF32.gpu.test.ts",
+      "packages/runntime/test/zoo/lfm3/",
+      "packages/runntime/playground/lfm3/",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
@@ -265,7 +294,7 @@ function verifyEvidence(
   const required: EvidenceRecord["kind"][] =
     stage === "d1-safety-correction"
       ? ["unit", "gpu", "typecheck", "lint"]
-      : stage === "d1-q8"
+      : stage === "d1-q8" || stage === "lfm3-base-chat"
         ? [
             "unit",
             "gpu",
@@ -282,7 +311,7 @@ function verifyEvidence(
     const expected =
       stage === "d1-safety-correction"
         ? "unit, GPU, typecheck and lint"
-        : stage === "d1-q8"
+        : stage === "d1-q8" || stage === "lfm3-base-chat"
           ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
           : "unit and GPU"
     throw new Error(`retained checks must include passing ${expected} evidence`)

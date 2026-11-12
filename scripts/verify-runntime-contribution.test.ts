@@ -35,7 +35,7 @@ function fixture(
   options: {
     outsideScope?: boolean
     sourcePath?: string
-    stage?: "d1-reference" | "d1-safety-correction" | "d1-q8"
+    stage?: "d1-reference" | "d1-safety-correction" | "d1-q8" | "lfm3-base-chat"
   } = {},
 ): Fixture {
   const root = mkdtempSync(join(tmpdir(), "runntime-contribution-test-"))
@@ -51,8 +51,13 @@ function fixture(
   command(repository, "config", "user.email", "verifier@example.invalid")
 
   const sourcePath = options.outsideScope
-    ? "README.md"
-    : (options.sourcePath ?? "packages/runntime/src/zoo/d1/model.ts")
+    ? contributionStage === "lfm3-base-chat"
+      ? "packages/runntime/src/zoo/d1/model.ts"
+      : "README.md"
+    : (options.sourcePath ??
+      (contributionStage === "lfm3-base-chat"
+        ? "packages/runntime/src/zoo/lfm3/model.ts"
+        : "packages/runntime/src/zoo/d1/model.ts"))
   const source = join(repository, sourcePath)
   mkdirSync(join(source, ".."), { recursive: true })
   writeFileSync(source, "base\n")
@@ -66,8 +71,12 @@ function fixture(
   command(repository, "commit", "--quiet", "-m", "fix: retain first behavior")
   const firstCommit = command(repository, "rev-parse", "HEAD")
 
-  const secondPath = "packages/runntime/test/zoo/d1/model.test.ts"
-  mkdirSync(join(repository, "packages/runntime/test/zoo/d1"), { recursive: true })
+  const secondDirectory =
+    contributionStage === "lfm3-base-chat"
+      ? "packages/runntime/test/zoo/lfm3"
+      : "packages/runntime/test/zoo/d1"
+  const secondPath = `${secondDirectory}/model.test.ts`
+  mkdirSync(join(repository, secondDirectory), { recursive: true })
   writeFileSync(join(repository, secondPath), "second\n")
   command(repository, "add", secondPath)
   command(repository, "commit", "--quiet", "-m", "test: retain second behavior")
@@ -109,7 +118,7 @@ function fixture(
           { kind: "lint", command: "pnpm lint", file: "evidence/lint.txt" },
           { kind: "build", command: "pnpm --filter runntime build", file: "evidence/build.txt" },
         ]
-      : contributionStage === "d1-q8"
+      : contributionStage === "d1-q8" || contributionStage === "lfm3-base-chat"
         ? [
             {
               kind: "typecheck",
@@ -120,14 +129,34 @@ function fixture(
             { kind: "build", command: "pnpm --filter runntime build", file: "evidence/build.txt" },
             {
               kind: "conversion",
-              command: "uv run runntime quantize",
+              command:
+                contributionStage === "lfm3-base-chat"
+                  ? "LFM3 checkpoint conversion inspection"
+                  : "uv run runntime quantize",
               file: "evidence/conversion.txt",
             },
-            { kind: "parity", command: "D1 parity qualification", file: "evidence/parity.txt" },
-            { kind: "package", command: "packed package consumer", file: "evidence/package.txt" },
+            {
+              kind: "parity",
+              command:
+                contributionStage === "lfm3-base-chat"
+                  ? "LFM3 Liquid and native parity qualification"
+                  : "D1 parity qualification",
+              file: "evidence/parity.txt",
+            },
+            {
+              kind: "package",
+              command:
+                contributionStage === "lfm3-base-chat"
+                  ? "packed LFM3 public consumer"
+                  : "packed package consumer",
+              file: "evidence/package.txt",
+            },
             {
               kind: "resource",
-              command: "D1 resource measurements",
+              command:
+                contributionStage === "lfm3-base-chat"
+                  ? "LFM3 resource measurements"
+                  : "D1 resource measurements",
               file: "evidence/resource.txt",
             },
           ]
@@ -346,6 +375,79 @@ describe("ruNNtime contribution reconstruction", () => {
         "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
       )
     }
+  })
+
+  it("requires the full quality evidence set for LFM3 base chat", () => {
+    const complete = fixture({ stage: "lfm3-base-chat" })
+    expect(
+      verifyContribution({
+        stageDirectory: complete.stage,
+        repositoryDirectory: complete.repository,
+        expectedBaseCommit: complete.baseCommit,
+      }).checks,
+    ).toEqual([
+      "unit",
+      "gpu",
+      "typecheck",
+      "lint",
+      "build",
+      "conversion",
+      "parity",
+      "package",
+      "resource",
+    ])
+
+    for (const missingKind of [
+      "unit",
+      "gpu",
+      "typecheck",
+      "lint",
+      "build",
+      "conversion",
+      "parity",
+      "package",
+      "resource",
+    ]) {
+      const incomplete = fixture({ stage: "lfm3-base-chat" })
+      const manifest = incomplete.manifest
+      if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
+      manifest.checks = manifest.checks.filter(
+        (check) => isRecord(check) && check.kind !== missingKind,
+      )
+      saveManifest(incomplete.stage, manifest)
+      expect(() =>
+        verifyContribution({
+          stageDirectory: incomplete.stage,
+          repositoryDirectory: incomplete.repository,
+          expectedBaseCommit: incomplete.baseCommit,
+        }),
+      ).toThrow(
+        "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
+      )
+    }
+  })
+
+  it("permits LFM3 documentation and rejects paths outside its contribution scope", () => {
+    const docs = fixture({
+      stage: "lfm3-base-chat",
+      sourcePath: "apps/docs/src/content/docs/zoo/lfm3-chat.mdx",
+    })
+    expect(
+      verifyContribution({
+        stageDirectory: docs.stage,
+        repositoryDirectory: docs.repository,
+        expectedBaseCommit: docs.baseCommit,
+      }).stage,
+    ).toBe("lfm3-base-chat")
+
+    const escaped = fixture({ stage: "lfm3-base-chat", outsideScope: true })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: escaped.stage,
+        repositoryDirectory: escaped.repository,
+        expectedBaseCommit: escaped.baseCommit,
+      }),
+    ).toThrow("escapes write scope")
   })
 
   it("permits D1 docs navigation and rejects changes outside the Q8 contribution scope", () => {

@@ -1,0 +1,24 @@
+{
+  "stage": "lfm3-base-chat",
+  "baseCommit": "f394a74fdaf1b78625039ee8a39bfe95ba5548ac",
+  "baseTree": "1d75d0658c199ae93f7d9a549020f8db053cce08",
+  "tipCommit": "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+  "reconstructedTree": "eb321ec29ac1a7550c3fd3c26cd813f1cea9bcd1",
+  "patchesApplied": 1,
+  "checks": [
+    "unit",
+    "gpu",
+    "typecheck",
+    "lint",
+    "build",
+    "build",
+    "conversion",
+    "parity",
+    "package",
+    "package",
+    "resource",
+    "resource",
+    "unit",
+    "typecheck"
+  ]
+}
