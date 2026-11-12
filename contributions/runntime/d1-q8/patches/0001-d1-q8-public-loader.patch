@@ -1,0 +1,1480 @@
+From f394a74fdaf1b78625039ee8a39bfe95ba5548ac Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Wed, 11 Nov 2026 23:02:06 -0500
+Subject: [PATCH] feat(zoo): add D1 Omni text Q8 loader
+
+---
+ apps/docs/astro.config.mjs                    |   1 +
+ apps/docs/src/content/docs/zoo/d1.mdx         | 105 +++++++
+ packages/runntime/src/zoo/d1/decider.ts       |  45 ++-
+ packages/runntime/src/zoo/d1/model.ts         |  11 +-
+ .../runntime/src/zoo/d1/stateDictHooks.ts     | 173 +++++++++--
+ packages/runntime/src/zoo/d1/tokenizer.ts     |  49 +++
+ packages/runntime/src/zoo/index.ts            |   2 +
+ packages/runntime/src/zoo/models.ts           |  34 +++
+ packages/runntime/src/zoo/tasks/nlp/d1.ts     | 103 +++++++
+ .../runntime/test/zoo/d1/packed-consumer.mjs  | 191 ++++++++++++
+ packages/runntime/test/zoo/d1/public.test.ts  |  11 +
+ packages/runntime/test/zoo/d1/q8.gpu.test.ts  | 281 ++++++++++++++++++
+ .../test/zoo/d1/qualification.gpu.test.ts     |   5 +-
+ .../test/zoo/d1/stateDictHooks.test.ts        | 141 +++++++++
+ .../runntime/test/zoo/d1/tokenizer.test.ts    |  74 +++++
+ 15 files changed, 1187 insertions(+), 39 deletions(-)
+ create mode 100644 apps/docs/src/content/docs/zoo/d1.mdx
+ create mode 100644 packages/runntime/src/zoo/d1/tokenizer.ts
+ create mode 100644 packages/runntime/src/zoo/tasks/nlp/d1.ts
+ create mode 100644 packages/runntime/test/zoo/d1/packed-consumer.mjs
+ create mode 100644 packages/runntime/test/zoo/d1/public.test.ts
+ create mode 100644 packages/runntime/test/zoo/d1/q8.gpu.test.ts
+ create mode 100644 packages/runntime/test/zoo/d1/stateDictHooks.test.ts
+ create mode 100644 packages/runntime/test/zoo/d1/tokenizer.test.ts
+
+diff --git a/apps/docs/astro.config.mjs b/apps/docs/astro.config.mjs
+index 8bd93b04f57ea651f9462b24fc6b89d083cadb2b..b3f3e48cb26519036603bc59fdb17fc05de56d7c 100644
+--- a/apps/docs/astro.config.mjs
++++ b/apps/docs/astro.config.mjs
+@@ -147,6 +147,7 @@ export default defineConfig({
+                     { label: 'Embedding', slug: 'zoo/embedding' },
+                     { label: 'Speech to text', slug: 'zoo/speech-to-text' },
+                     { label: 'Privacy filter', slug: 'zoo/privacy-filter' },
++                    { label: 'D1 decision model', slug: 'zoo/d1' },
+                     { label: 'Object detection', slug: 'zoo/object-detection' },
+                     { label: 'Instance segmentation', slug: 'zoo/instance-segmentation' },
+                     { label: 'Pose & keypoints', slug: 'zoo/pose-and-keypoints' },
+diff --git a/apps/docs/src/content/docs/zoo/d1.mdx b/apps/docs/src/content/docs/zoo/d1.mdx
+new file mode 100644
+index 0000000000000000000000000000000000000000..4de304543f22a782ea5f8e2135f487c559260252
+--- /dev/null
++++ b/apps/docs/src/content/docs/zoo/d1.mdx
+@@ -0,0 +1,105 @@
++---
++title: D1 decision model
++description: Score yes/no, choice and rubric questions over text.
++---
++
++`createD1Decider` runs Liquid AI's D1 Omni 600M text decision model on WebGPU.
++It scores named options in one pass and returns their probabilities and the
++processed input token count. The public zoo loader accepts the original F32
++checkpoint or a caller-generated native Q8 checkpoint; it does not host a
++derivative weight file.
++
++## Load a local Q8 checkpoint
++
++The Q8 entry has no hosted `modelPath`. Supply a `RangeSource` that returns
++standalone byte ranges from your local or application-owned storage.
++
++```ts twoslash
++import { createD1Decider, models, type RangeSource } from 'runntime/zoo';
++
++declare const q8ModelUrl: string;
++// ---cut---
++const source: RangeSource = {
++  async read(begin, end) {
++    const response = await fetch(q8ModelUrl, {
++      headers: { Range: `bytes=${begin}-${end - 1}` },
++    });
++    if (response.status !== 206) throw new Error(`Range request returned ${response.status}`);
++    return new Uint8Array(await response.arrayBuffer());
++  },
++};
++
++const runner = await createD1Decider(
++  { ...models.d1.D1_OMNI_600M.Q8, modelPath: source },
++  { onProgress: (name, done, total) => console.log(name, done, total) },
++);
++
++const result = await runner.systemOne(
++  'The production sign-in page returns HTTP 500 for every user.',
++  {
++    team: {
++      type: 'choice',
++      instructions: 'Which team should handle this?',
++      criteria: {
++        billing: 'Charges, refunds, invoices',
++        technical: 'App or site faults',
++        fraud: 'Suspected unauthorised use',
++      },
++    },
++  },
++);
++console.log(result.answers.team, result.inputTokens);
++await runner.dispose();
++```
++
++The `RangeSource` response must contain exactly the requested bytes. If you use
++a weight cache with a `RangeSource`, set `cacheId` to a stable key for that
++artifact. The loader supports the shared zoo `LoadOptions`: progress, byte
++callbacks, abort, cache and warm-up. Warm-up runs by default; set `warmUp: false`
++to defer compilation until the first decision. Calls are serialized, and
++`dispose()` waits for queued work before releasing the model's GPU resources.
++
++## Convert the original checkpoint
++
++The converter reads the original pinned Liquid safetensors checkpoint and
++writes runntime's existing symmetric int8 format with groups of 32 input
++values. The two `--drop` patterns remove the audio and vision weights. The
++converter's default embedding exclusions and dimension checks keep the token
++embedding and the width-one scorer in their supported float formats.
++
++```sh
++curl -L --fail \
++  'https://huggingface.co/LiquidAI/d1-omni-600M/resolve/02b55d7076f15129e59ab3f94783f32c4b088674/model.safetensors' \
++  -o model.safetensors
++cd tools/python
++uv sync
++uv run runntime quantize ../model.safetensors ../d1-omni-600m-text-q8.safetensors \
++  --bits 8 --group-size 32 --drop 'audio.*' --drop 'vision.*'
++shasum -a 256 ../d1-omni-600m-text-q8.safetensors
++```
++
++Keep the source revision, source and output SHA-256 digests, converter revision,
++quantization metadata and parity measurements with your build record. The
++public model entry pins the matching tokenizer and calibration temperatures.
++
++## Verify the packed package
++
++After converting the checkpoint, run the browser qualification against the
++package tarball. It uses the pinned TypeGPU build, the public `runntime/zoo`
++entry and a caller-owned `RangeSource`.
++
++```sh
++D1_Q8_MODEL_PATH=/path/to/d1-omni-600m-text-q8.safetensors \
++D1_Q8_TOKENIZER_PATH=/path/to/tokenizer.json \
++D1_Q8_ARTIFACT_SHA256=<sha256> \
++D1_Q8_VITEST_REPORT=/path/to/qualification.json \
++node packages/runntime/test/zoo/d1/packed-consumer.mjs
++```
++
++## License and attribution
++
++The D1 weights are © Liquid AI, Inc. and licensed under the
++[LFM Open License v1.0](https://huggingface.co/LiquidAI/d1-omni-600M/blob/02b55d7076f15129e59ab3f94783f32c4b088674/LICENSE).
++Its commercial-use threshold and other terms apply to locally converted
++derivatives. This package's MIT license covers the runtime code, not D1 model
++weights. ruNNtime does not redistribute the original or converted weights.
+diff --git a/packages/runntime/src/zoo/d1/decider.ts b/packages/runntime/src/zoo/d1/decider.ts
+index db01ec273dbe73b55babf66b9f7307bd9c894bab..561c1b6629511290f449031ec28192212c09c416 100644
+--- a/packages/runntime/src/zoo/d1/decider.ts
++++ b/packages/runntime/src/zoo/d1/decider.ts
+@@ -17,7 +17,7 @@ import {
+ import { asLoadError, rethrowRunError } from '../errors.ts';
+ import { throwIfAborted } from '../load.ts';
+ import { preprocessImage, resizeAA, type RgbImage } from './image.ts';
+-import { D1, D1Model } from './model.ts';
++import { D1, D1Model, D1TextModel } from './model.ts';
+ import {
+   encodeQuestion,
+   optionCount,
+@@ -48,6 +48,12 @@ export interface D1Decider {
+   dispose(): Promise<void>;
+ }
+ 
++interface D1DeciderOptions {
++  temperatures?: Record<string, number>;
++  onProgress?: (name: string, done: number, total: number) => void;
++  signal?: AbortSignal;
++}
++
+ /** Pair-duplicated RoPE tables [T, headDim] for positions 0..T−1. */
+ function ropeTables(t: number): { cos: Float32Array; sin: Float32Array } {
+   const hd = D1.headDim;
+@@ -67,14 +73,27 @@ function ropeTables(t: number): { cos: Float32Array; sin: Float32Array } {
+ export async function createD1Decider(
+   sd: LazyStateDict,
+   tokenizer: D1Tokenizer,
+-  opts: {
+-    temperatures?: Record<string, number>;
+-    onProgress?: (name: string, done: number, total: number) => void;
+-    signal?: AbortSignal;
+-  } = {},
++  opts: D1DeciderOptions = {},
++): Promise<D1Decider> {
++  return createD1DeciderWithModel(sd, tokenizer, new D1Model(), opts);
++}
++
++/** Loads the text-only D1 model and ignores audio and vision checkpoint tensors. */
++export async function createD1TextDecider(
++  sd: LazyStateDict,
++  tokenizer: D1Tokenizer,
++  opts: D1DeciderOptions = {},
++): Promise<D1Decider> {
++  return createD1DeciderWithModel(sd, tokenizer, new D1TextModel(), opts);
++}
++
++async function createD1DeciderWithModel(
++  sd: LazyStateDict,
++  tokenizer: D1Tokenizer,
++  model: D1TextModel,
++  opts: D1DeciderOptions,
+ ): Promise<D1Decider> {
+   const root = defaultRoot();
+-  const model = new D1Model();
+   const ex = gpuExecutor(root);
+   let zeroRow: Value | undefined;
+   try {
+@@ -90,8 +109,6 @@ export async function createD1Decider(
+     zeroRow = tensor(root, new Float32Array(D1.hidden), [1, D1.hidden]);
+ 
+     const temperatures = opts.temperatures ?? {};
+-    const posTable = model.vision.position_embedding.data;
+-    if (!(posTable instanceof Float32Array)) throw new Error('d1: position table must be f32');
+ 
+     let disposed = false;
+     let queue: Promise<void> = Promise.resolve();
+@@ -107,6 +124,11 @@ export async function createD1Decider(
+ 
+     /** One image's crops through the tower and projector, rows concatenated. */
+     const encodeImage = (img: RgbImage, uploads: Value[]): Value => {
++      if (!(model instanceof D1Model)) {
++        throw new RunntimeError('INVALID_ARGUMENT', 'D1 text decider does not accept images');
++      }
++      const posTable = model.vision.position_embedding.data;
++      if (!(posTable instanceof Float32Array)) throw new Error('d1: position table must be f32');
+       const parts = preprocessImage(img).map(({ ph, pw, patches }) => {
+         const pos = resizeAA(posTable, D1.posGrid, D1.posGrid, D1.visionHidden, ph, pw);
+         const p = tensor(root, patches, [ph * pw, 3 * 16 * 16]);
+@@ -170,6 +192,11 @@ export async function createD1Decider(
+       if (disposed) {
+         return Promise.reject(new RunntimeError('RESOURCE_DISPOSED', 'D1 decider is disposed'));
+       }
++      if (images && images.length > 0 && !(model instanceof D1Model)) {
++        return Promise.reject(
++          new RunntimeError('INVALID_ARGUMENT', 'D1 text decider does not accept images'),
++        );
++      }
+       const job = queue.then(async () => {
+         if (disposed) throw new RunntimeError('RESOURCE_DISPOSED', 'D1 decider is disposed');
+         const signal = options?.signal;
+diff --git a/packages/runntime/src/zoo/d1/model.ts b/packages/runntime/src/zoo/d1/model.ts
+index 0ab822e2c502a78706ccc38aac607642ff32d304..7d6a61d2e5dedc08d3c9c061e617d7017d37924a 100644
+--- a/packages/runntime/src/zoo/d1/model.ts
++++ b/packages/runntime/src/zoo/d1/model.ts
+@@ -265,9 +265,18 @@ export class Vision extends nn.Module<[Value, Value, number, number], Value> {
+   }
+ }
+ 
+-export class D1Model extends nn.Module {
++/** Text-only D1 model used by the public decision runner. */
++export class D1TextModel extends nn.Module {
+   readonly encoder = new Trunk();
+   readonly head = new DecisionHead();
++
++  override transformStateDict(sd: LazyStateDict): void {
++    transformD1StateDict(sd, false);
++  }
++}
++
++/** Full D1 model, including the optional image tower used by the playground. */
++export class D1Model extends D1TextModel {
+   readonly vision = new Vision();
+ 
+   override transformStateDict(sd: LazyStateDict): void {
+diff --git a/packages/runntime/src/zoo/d1/stateDictHooks.ts b/packages/runntime/src/zoo/d1/stateDictHooks.ts
+index 7a97b4c33bd439ef21bc8e4295e1420d8d1147dc..b344f103f94ed7be553bfb28a37e3ac29b0e6615 100644
+--- a/packages/runntime/src/zoo/d1/stateDictHooks.ts
++++ b/packages/runntime/src/zoo/d1/stateDictHooks.ts
+@@ -2,7 +2,14 @@
+  *  tensors; nothing is fetched here. Audio tensors are dropped. Weights stay
+  *  in torch layout for the core Linear hook to transpose. */
+ 
+-import { derivedTensor, type LazyStateDict, type LazyTensor } from '../../core/index.ts';
++import { f16ToF32 } from '../../core/weights/convert.ts';
++import {
++  derivedTensor,
++  type LazyStateDict,
++  type LazyTensor,
++  type QuantTensor,
++} from '../../core/index.ts';
++import { quantTensor } from '../../core/weights/safetensors.ts';
+ import { checkpointMismatch } from '../errors.ts';
+ 
+ const HIDDEN = 1024;
+@@ -28,15 +35,19 @@ function ropeRows(t: LazyTensor, scale = 1): LazyTensor {
+   const rows = t.shape[0]!;
+   const cols = t.shape.length === 2 ? t.shape[1]! : 1;
+   const half = HEAD_DIM / 2;
++  const sourceRow = (r: number) => {
++    const head = r - (r % HEAD_DIM);
++    const i = r % HEAD_DIM;
++    return head + (i % 2 === 0 ? i / 2 : half + (i - 1) / 2);
++  };
++  if (t.kind === 'quant') return quantRows(t, sourceRow);
+   return derivedTensor(
+     t.shape,
+     async () => {
+       const src = await t.f32();
+       const out = new Float32Array(src.length);
+       for (let r = 0; r < rows; r++) {
+-        const head = r - (r % HEAD_DIM);
+-        const i = r % HEAD_DIM;
+-        const from = head + (i % 2 === 0 ? i / 2 : half + (i - 1) / 2);
++        const from = sourceRow(r);
+         for (let c = 0; c < cols; c++) out[r * cols + c] = src[from * cols + c]! * scale;
+       }
+       return out;
+@@ -50,6 +61,13 @@ function ropeRows(t: LazyTensor, scale = 1): LazyTensor {
+ function stackRows(parts: LazyTensor[], scale = 1, scaledRows = 0): LazyTensor {
+   const cols = parts[0]!.shape.length === 2 ? parts[0]!.shape[1]! : 1;
+   const rows = parts.reduce((s, p) => s + p.shape[0]!, 0);
++  const quantized = parts.filter((part): part is QuantTensor => part.kind === 'quant');
++  if (quantized.length > 0) {
++    if (quantized.length !== parts.length) {
++      throw checkpointMismatch('d1 state dict', 'cannot stack quantized and float linear weights');
++    }
++    return stackQuantRows(quantized, scale, scaledRows);
++  }
+   return derivedTensor(
+     cols === 1 ? [rows] : [rows, cols],
+     async () => {
+@@ -70,6 +88,97 @@ function stackRows(parts: LazyTensor[], scale = 1, scaledRows = 0): LazyTensor {
+ /** Scales the first `rows` rows of a torch-layout tensor. */
+ const scaleRows = (t: LazyTensor, rows: number, scale: number) => stackRows([t], scale, rows);
+ 
++/** Remaps output rows without dequantizing a linear weight. */
++function quantRows(t: QuantTensor, sourceRow: (row: number) => number): QuantTensor {
++  const [rows, cols] = t.shape;
++  const groups = cols! / t.groupSize;
++  return quantTensor({
++    name: t.name,
++    shape: t.shape,
++    bits: t.bits,
++    groupSize: t.groupSize,
++    byteLength: t.byteLength,
++    async ints() {
++      const source = await t.ints();
++      const output = new Int8Array(source.length);
++      for (let row = 0; row < rows!; row++) {
++        const from = sourceRow(row);
++        output.set(source.subarray(from * cols!, (from + 1) * cols!), row * cols!);
++      }
++      return output;
++    },
++    async scales() {
++      const source = await t.scales();
++      const output =
++        source instanceof Uint16Array
++          ? new Uint16Array(source.length)
++          : new Float32Array(source.length);
++      for (let row = 0; row < rows!; row++) {
++        const from = sourceRow(row);
++        output.set(source.subarray(from * groups, (from + 1) * groups), row * groups);
++      }
++      return output;
++    },
++  });
++}
++
++/** Joins compatible quantized output rows and scales. */
++function stackQuantRows(parts: QuantTensor[], scale: number, scaledRows: number): QuantTensor {
++  const first = parts[0]!;
++  const cols = first.shape[1]!;
++  const groups = cols / first.groupSize;
++  const rows = parts.reduce((sum, part) => sum + part.shape[0]!, 0);
++  if (
++    parts.some(
++      (part) =>
++        part.shape.length !== 2 ||
++        part.shape[1] !== cols ||
++        part.bits !== first.bits ||
++        part.groupSize !== first.groupSize,
++    )
++  ) {
++    throw checkpointMismatch(
++      'd1 state dict',
++      'stacked quantized linear weights must have matching formats and widths',
++    );
++  }
++  return quantTensor({
++    name: parts.map((part) => part.name).join(', '),
++    shape: [rows, cols],
++    bits: first.bits,
++    groupSize: first.groupSize,
++    byteLength: parts.reduce((sum, part) => sum + part.byteLength, 0),
++    async ints() {
++      const source = await Promise.all(parts.map((part) => part.ints()));
++      const output = new Int8Array(rows * cols);
++      let row = 0;
++      for (const values of source) {
++        output.set(values, row * cols);
++        row += values.length / cols;
++      }
++      return output;
++    },
++    async scales() {
++      const source = await Promise.all(parts.map((part) => part.scales()));
++      const needsScale = scaledRows > 0 && scale !== 1;
++      const half = !needsScale && source.every((values) => values instanceof Uint16Array);
++      const output = half ? new Uint16Array(rows * groups) : new Float32Array(rows * groups);
++      let row = 0;
++      for (const values of source) {
++        const data = values instanceof Uint16Array && !half ? f16ToF32(values) : values;
++        for (let partRow = 0; partRow < data.length / groups; partRow++) {
++          const factor = row + partRow < scaledRows ? scale : 1;
++          for (let group = 0; group < groups; group++) {
++            output[(row + partRow) * groups + group] = data[partRow * groups + group]! * factor;
++          }
++        }
++        row += data.length / groups;
++      }
++      return output;
++    },
++  });
++}
++
+ /** The depthwise conv weight [hidden, 1, 3] split into its three taps. */
+ function convTaps(sd: LazyStateDict, from: string, to: string): void {
+   const w = take(sd, from);
+@@ -89,8 +198,13 @@ function convTaps(sd: LazyStateDict, from: string, to: string): void {
+   }
+ }
+ 
+-export function transformD1StateDict(sd: LazyStateDict): void {
+-  for (const name of [...sd.tensors.keys()]) if (name.startsWith('audio.')) sd.tensors.delete(name);
++/** Maps D1 checkpoint names and layouts; set `includeVision` false for text-only weights. */
++export function transformD1StateDict(sd: LazyStateDict, includeVision = true): void {
++  for (const name of [...sd.tensors.keys()]) {
++    if (name.startsWith('audio.') || (!includeVision && name.startsWith('vision.'))) {
++      sd.tensors.delete(name);
++    }
++  }
+   const qScale = 1 / Math.sqrt(HEAD_DIM);
+ 
+   move(sd, 'encoder.embedding_norm.weight', 'encoder.embedding_norm.scale');
+@@ -137,28 +251,31 @@ export function transformD1StateDict(sd: LazyStateDict): void {
+     for (const n of ['weight', 'bias']) move(sd, `head.scorer.${from}.${n}`, `head.${to}.${n}`);
+   }
+ 
+-  const v = 'vision.tower.vision_model';
+-  for (const n of ['patch_embedding.weight', 'patch_embedding.bias']) {
+-    move(sd, `${v}.embeddings.${n}`, `vision.${n}`);
+-  }
+-  move(sd, `${v}.embeddings.position_embedding.weight`, 'vision.position_embedding');
+-  for (const n of ['weight', 'bias'])
+-    move(sd, `${v}.post_layernorm.${n}`, `vision.post_layernorm.${n}`);
+-  for (const n of ['linear_1', 'linear_2']) {
+-    for (const k of ['weight', 'bias']) move(sd, `vision.projector.${n}.${k}`, `vision.${n}.${k}`);
+-  }
+-  for (let i = 0; i < VISION_LAYERS; i++) {
+-    const from = `${v}.encoder.layers.${i}`;
+-    const to = `vision.layers.${i}`;
+-    for (const k of ['weight', 'bias']) {
+-      const qkv = ['q_proj', 'k_proj', 'v_proj'].map((n) =>
+-        take(sd, `${from}.self_attn.${n}.${k}`),
+-      );
+-      sd.tensors.set(`${to}.qkv.${k}`, stackRows(qkv, qScale, VISION));
+-      move(sd, `${from}.self_attn.out_proj.${k}`, `${to}.out_proj.${k}`);
+-      for (const m of ['layer_norm1', 'layer_norm2'])
+-        move(sd, `${from}.${m}.${k}`, `${to}.${m}.${k}`);
+-      for (const m of ['fc1', 'fc2']) move(sd, `${from}.mlp.${m}.${k}`, `${to}.${m}.${k}`);
++  if (includeVision) {
++    const v = 'vision.tower.vision_model';
++    for (const n of ['patch_embedding.weight', 'patch_embedding.bias']) {
++      move(sd, `${v}.embeddings.${n}`, `vision.${n}`);
++    }
++    move(sd, `${v}.embeddings.position_embedding.weight`, 'vision.position_embedding');
++    for (const n of ['weight', 'bias'])
++      move(sd, `${v}.post_layernorm.${n}`, `vision.post_layernorm.${n}`);
++    for (const n of ['linear_1', 'linear_2']) {
++      for (const k of ['weight', 'bias'])
++        move(sd, `vision.projector.${n}.${k}`, `vision.${n}.${k}`);
++    }
++    for (let i = 0; i < VISION_LAYERS; i++) {
++      const from = `${v}.encoder.layers.${i}`;
++      const to = `vision.layers.${i}`;
++      for (const k of ['weight', 'bias']) {
++        const qkv = ['q_proj', 'k_proj', 'v_proj'].map((n) =>
++          take(sd, `${from}.self_attn.${n}.${k}`),
++        );
++        sd.tensors.set(`${to}.qkv.${k}`, stackRows(qkv, qScale, VISION));
++        move(sd, `${from}.self_attn.out_proj.${k}`, `${to}.out_proj.${k}`);
++        for (const m of ['layer_norm1', 'layer_norm2'])
++          move(sd, `${from}.${m}.${k}`, `${to}.${m}.${k}`);
++        for (const m of ['fc1', 'fc2']) move(sd, `${from}.mlp.${m}.${k}`, `${to}.${m}.${k}`);
++      }
+     }
+   }
+ }
+diff --git a/packages/runntime/src/zoo/d1/tokenizer.ts b/packages/runntime/src/zoo/d1/tokenizer.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e8c7a31c1ebe590460e0d7b40ff47f5ce70fe5df
+--- /dev/null
++++ b/packages/runntime/src/zoo/d1/tokenizer.ts
+@@ -0,0 +1,49 @@
++/** D1's BPE tokenizer, with the model's fixed decision markers. */
++
++import { Tokenizer } from '@huggingface/tokenizers';
++import { checkpointMismatch } from '../errors.ts';
++import type { D1Tokenizer } from './prompt.ts';
++
++const SPECIAL_TOKENS = {
++  '<|startoftext|>': 1,
++  '<|mask|>': 16,
++  '<|reserved_7|>': 17,
++  '<|reserved_8|>': 18,
++  '<|reserved_9|>': 19,
++  '<|reserved_10|>': 20,
++  '<|reserved_11|>': 21,
++} as const;
++
++const isBpeTokenizerJson = (json: unknown): json is object =>
++  typeof json === 'object' &&
++  json !== null &&
++  'model' in json &&
++  typeof json.model === 'object' &&
++  json.model !== null &&
++  'type' in json.model &&
++  json.model.type === 'BPE';
++
++/** Builds the D1 tokenizer from its pinned Hugging Face tokenizer.json. */
++export function createD1Tokenizer(json: unknown): D1Tokenizer {
++  const bad = (why: string) => checkpointMismatch('d1 tokenizer', why);
++  if (!isBpeTokenizerJson(json)) throw bad('expected a BPE tokenizer.json');
++
++  const tokenizer = new Tokenizer(json, {});
++  const ids = new Map<string, number>();
++  for (const [token, expected] of Object.entries(SPECIAL_TOKENS)) {
++    const id = tokenizer.token_to_id(token);
++    if (id === undefined) throw bad(`vocab has no ${token}`);
++    if (id !== expected) throw bad(`${token} has id ${id}, expected ${expected}`);
++    ids.set(token, id);
++  }
++
++  return {
++    bosId: ids.get('<|startoftext|>')!,
++    encode: (text) => tokenizer.encode(text, { add_special_tokens: false }).ids,
++    tokenId(token) {
++      const id = ids.get(token);
++      if (id === undefined) throw bad(`unknown special token ${token}`);
++      return id;
++    },
++  };
++}
+diff --git a/packages/runntime/src/zoo/index.ts b/packages/runntime/src/zoo/index.ts
+index 544d2ca46dc806a799c93f01a1d4ea46d06bea85..ccba41a5e5c824bb1837804f90e7c45089c8a37e 100644
+--- a/packages/runntime/src/zoo/index.ts
++++ b/packages/runntime/src/zoo/index.ts
+@@ -43,6 +43,8 @@ export {
+   type PrivacyFilterModel,
+   type PrivacySpan,
+ } from './tasks/nlp/privacyFilter.ts';
++export { createD1Decider, type D1Decider, type D1DeciderModel } from './tasks/nlp/d1.ts';
++export type { Answer, Question, QuestionType } from './d1/prompt.ts';
+ 
+ export {
+   createSpeechToText,
+diff --git a/packages/runntime/src/zoo/models.ts b/packages/runntime/src/zoo/models.ts
+index 8e18a6eca04cbda9c28a970ade473eef17fd06d8..3bacbff69f4f1595b83875ffc2bbea9967a684f8 100644
+--- a/packages/runntime/src/zoo/models.ts
++++ b/packages/runntime/src/zoo/models.ts
+@@ -16,6 +16,7 @@ import type { ObjectDetectorModel } from './tasks/cv/objectDetection.ts';
+ import type { KeypointDetectorModel } from './tasks/cv/keypointDetection.ts';
+ import type { EmbedderModel } from './tasks/multimodal/embedding.ts';
+ import type { PrivacyFilterModel } from './tasks/nlp/privacyFilter.ts';
++import type { D1DeciderModel } from './tasks/nlp/d1.ts';
+ 
+ const HUB = 'https://huggingface.co/software-mansion';
+ 
+@@ -102,7 +103,40 @@ const YOLO26_POSE_M = {
+ const DEPTHART_S = { modelPath: weights('depthart', 's', 'f16') } satisfies DepthEstimatorModel;
+ const DEPTHART_B = { modelPath: weights('depthart', 'b', 'f16') } satisfies DepthEstimatorModel;
+ 
++const D1_REVISION = '02b55d7076f15129e59ab3f94783f32c4b088674';
++const D1_TOKENIZER = `https://huggingface.co/LiquidAI/d1-omni-600M/resolve/${D1_REVISION}/tokenizer.json`;
++const D1_TEMPERATURES = {
++  'choice:11+': 1.372515082359314,
++  'choice:2': 1.7465145587921143,
++  'choice:3-5': 1.3998981714248657,
++  'choice:6-10': 1.1751071214675903,
++  'noul:2': 1.6663223505020142,
++  'score:3-5': 1.7301132678985596,
++  'score:6-10': 1.0,
++  choice: 1.0,
++  score: 1.0,
++  noul: 1.0,
++};
++const D1_Q8 = {
++  tokenizerPath: D1_TOKENIZER,
++  temperatures: D1_TEMPERATURES,
++} satisfies D1DeciderModel;
++const D1_F32 = {
++  ...D1_Q8,
++  modelPath: `https://huggingface.co/LiquidAI/d1-omni-600M/resolve/${D1_REVISION}/model.safetensors`,
++} satisfies D1DeciderModel;
++
+ export const models = {
++  d1: {
++    /** Liquid's D1 Omni 600M text decision model. Q8 weights are generated locally. */
++    D1_OMNI_600M: {
++      /** Original float checkpoint. */
++      DEFAULT: D1_F32,
++      F32: D1_F32,
++      /** Supply a locally converted native Q8 checkpoint as modelPath. */
++      Q8: D1_Q8,
++    },
++  },
+   embedding: {
+     /** Google's EmbeddingGemma 2: text in 100+ languages and code, images
+      *  and video in one 768-dim space, inputs up to 2048 tokens. 270M
+diff --git a/packages/runntime/src/zoo/tasks/nlp/d1.ts b/packages/runntime/src/zoo/tasks/nlp/d1.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8969e708798d9a1669856a6f58e5d8f014b048f1
+--- /dev/null
++++ b/packages/runntime/src/zoo/tasks/nlp/d1.ts
+@@ -0,0 +1,103 @@
++/** D1 Omni text decisions on the initRunntime() device. */
++
++import { defaultRoot, RunntimeError, warmUp } from '../../../core/index.ts';
++import { asLoadError, rethrowRunError } from '../../errors.ts';
++import {
++  fetchJson,
++  openWeights,
++  throwIfAborted,
++  type LoadOptions,
++  type ModelPath,
++} from '../../load.ts';
++import { models } from '../../models.ts';
++import { createD1TextDecider, type D1Decider as D1CoreDecider } from '../../d1/decider.ts';
++import { createD1Tokenizer } from '../../d1/tokenizer.ts';
++import type { Answer, Question } from '../../d1/prompt.ts';
++
++/** What to load. Q8 weights are caller-provided; no derivative weights are hosted. */
++export interface D1DeciderModel {
++  /** A native runntime safetensors checkpoint, URL or caller-owned RangeSource. */
++  readonly modelPath?: ModelPath;
++  /** The Hugging Face tokenizer.json. Defaults to the pinned D1 tokenizer. */
++  readonly tokenizerPath?: string;
++  /** Calibration temperatures keyed by question type and option count. */
++  readonly temperatures?: Record<string, number>;
++}
++
++/** Text-only D1 Omni decision runner. */
++export interface D1Decider {
++  /** Answers named yes/no, choice, or rubric questions over one text state. */
++  systemOne(
++    state: string,
++    questions: Record<string, Question>,
++    options?: { signal?: AbortSignal },
++  ): Promise<{ answers: Record<string, Answer>; inputTokens: number }>;
++  /** Stops accepting work and releases the model's owned resources. */
++  dispose(): Promise<void>;
++}
++
++/** Loads D1 text weights and tokenizer, optionally warms the model, and returns a serialized runner. */
++export async function createD1Decider(
++  config: D1DeciderModel = models.d1.D1_OMNI_600M.DEFAULT,
++  opts: LoadOptions = {},
++): Promise<D1Decider> {
++  const { modelPath, tokenizerPath, temperatures } = config;
++  if (modelPath === undefined) {
++    throw new RunntimeError(
++      'INVALID_ARGUMENT',
++      'createD1Decider: modelPath is required for a caller-provided D1 Q8 artifact',
++    );
++  }
++
++  let decider: D1CoreDecider | undefined;
++  try {
++    const device = defaultRoot().device;
++    throwIfAborted(opts.signal);
++    const weights = await openWeights(modelPath, {
++      ...opts,
++      cacheId: opts.cacheId ?? cacheKey(modelPath),
++    });
++    const tokPath = tokenizerPath ?? models.d1.D1_OMNI_600M.DEFAULT.tokenizerPath!;
++    const json = await fetchJson(tokPath, {
++      cache: opts.cache,
++      cacheId: cacheKey(tokPath),
++      signal: opts.signal,
++    });
++    const tokenizer = createD1Tokenizer(json);
++
++    throwIfAborted(opts.signal);
++    decider = await createD1TextDecider(weights, tokenizer, {
++      temperatures,
++      onProgress: opts.onProgress,
++      signal: opts.signal,
++    });
++    if (opts.warmUp !== false) {
++      await warmUp(device, async () => {
++        const { answers } = await decider!.systemOne('', {
++          warmup: { type: 'noul', instructions: 'Is this a decision?' },
++        });
++        const answer = answers.warmup!;
++        if (answer.type !== 'noul') {
++          throw new RunntimeError('EXECUTION_FAILED', 'D1 warm-up returned a non-binary answer');
++        }
++        return Float32Array.of(answer.noul, 1 - answer.noul);
++      });
++    }
++
++    return {
++      systemOne: (state, questions, callOptions) =>
++        decider!.systemOne(state, questions, undefined, callOptions).catch(rethrowRunError),
++      dispose: () => decider!.dispose(),
++    };
++  } catch (err) {
++    try {
++      await decider?.dispose();
++    } catch {
++      // Keep the load or warm-up failure as the visible error.
++    }
++    throw asLoadError(err, opts.signal);
++  }
++}
++
++const cacheKey = (path: ModelPath): string | undefined =>
++  typeof path === 'string' ? `d1-v1/${path.replace(/^https?:\/\//, '')}` : undefined;
+diff --git a/packages/runntime/test/zoo/d1/packed-consumer.mjs b/packages/runntime/test/zoo/d1/packed-consumer.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..2e781071b8575cc7fc24941fbae4ad654a6b1264
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/packed-consumer.mjs
+@@ -0,0 +1,191 @@
++/** Packs ruNNtime, then runs the public D1 Q8 fixture through that tarball. */
++
++import {
++  copyFileSync,
++  lstatSync,
++  mkdirSync,
++  mkdtempSync,
++  readFileSync,
++  readdirSync,
++  renameSync,
++  rmSync,
++  symlinkSync,
++  writeFileSync,
++} from 'node:fs';
++import { tmpdir } from 'node:os';
++import { dirname, join, resolve } from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { spawnSync } from 'node:child_process';
++
++const scriptDirectory = dirname(fileURLToPath(import.meta.url));
++const packageDirectory = resolve(scriptDirectory, '../../..');
++const repositoryDirectory = resolve(packageDirectory, '../..');
++const modelPath = process.env.D1_Q8_MODEL_PATH;
++const tokenizerPath = process.env.D1_Q8_TOKENIZER_PATH;
++const reportPath = process.env.D1_Q8_VITEST_REPORT;
++
++if (!modelPath || !tokenizerPath) {
++  throw new Error('set D1_Q8_MODEL_PATH and D1_Q8_TOKENIZER_PATH to local artifacts');
++}
++
++const temporaryDirectory = mkdtempSync(join(tmpdir(), 'runntime-packed-d1-'));
++
++function run(command, args, cwd, env = process.env) {
++  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
++  if (result.status !== 0)
++    throw new Error(`${command} ${args.join(' ')} failed (${result.status})`);
++}
++
++function linkDependencies(source, destination) {
++  for (const name of readdirSync(source)) {
++    if (name.startsWith('.')) continue;
++    const from = join(source, name);
++    const to = join(destination, name);
++    if (name.startsWith('@') && lstatSync(from).isDirectory()) {
++      mkdirSync(to);
++      for (const scopedName of readdirSync(from)) {
++        symlinkSync(resolve(from, scopedName), join(to, scopedName), 'dir');
++      }
++    } else {
++      symlinkSync(resolve(from), to, 'dir');
++    }
++  }
++}
++
++try {
++  const packDirectory = join(temporaryDirectory, 'pack');
++  const consumerDirectory = join(temporaryDirectory, 'consumer');
++  mkdirSync(packDirectory);
++  mkdirSync(consumerDirectory);
++  run('pnpm', ['pack', '--pack-destination', packDirectory], packageDirectory);
++
++  const tarballs = readdirSync(packDirectory).filter((name) => name.endsWith('.tgz'));
++  if (tarballs.length !== 1)
++    throw new Error(`expected one package tarball, found ${tarballs.length}`);
++  run(
++    'tar',
++    ['-xzf', join(packDirectory, tarballs[0]), '-C', consumerDirectory],
++    consumerDirectory,
++  );
++
++  const nodeModules = join(consumerDirectory, 'node_modules');
++  mkdirSync(nodeModules);
++  renameSync(join(consumerDirectory, 'package'), join(nodeModules, 'runntime'));
++  linkDependencies(join(packageDirectory, 'node_modules'), nodeModules);
++
++  const publicDirectory = join(consumerDirectory, 'public');
++  const testDirectory = join(consumerDirectory, 'test', 'zoo', 'd1');
++  mkdirSync(publicDirectory);
++  mkdirSync(testDirectory, { recursive: true });
++  symlinkSync(resolve(modelPath), join(publicDirectory, 'model.safetensors'), 'file');
++  copyFileSync(tokenizerPath, join(publicDirectory, 'tokenizer.json'));
++  copyFileSync(
++    join(packageDirectory, 'playground/d1/reference-vectors.json'),
++    join(testDirectory, 'reference-vectors.json'),
++  );
++
++  const qualificationSource = readFileSync(
++    join(packageDirectory, 'test/zoo/d1/q8.gpu.test.ts'),
++    'utf8',
++  )
++    .replace("from '../../../src/zoo/index.ts'", "from 'runntime/zoo'")
++    .replace(
++      "from '../../../playground/d1/reference-vectors.json'",
++      "from './reference-vectors.json'",
++    );
++  if (!qualificationSource.includes("from 'runntime/zoo'")) {
++    throw new Error('Q8 consumer test did not switch to the packed public entry point');
++  }
++  writeFileSync(join(testDirectory, 'q8.gpu.test.ts'), qualificationSource);
++  writeFileSync(
++    join(consumerDirectory, 'test/gpu.ts'),
++    `/** Minimal WebGPU setup for the packed public-zoo consumer. */
++import tgpu from 'typegpu';
++import { initRunntime } from 'runntime/zoo';
++
++const live = new Set<GPUBuffer>();
++if (typeof GPUDevice !== 'undefined') {
++  const createBuffer = GPUDevice.prototype.createBuffer;
++  const destroyBuffer = GPUBuffer.prototype.destroy;
++  GPUDevice.prototype.createBuffer = function (descriptor) {
++    const buffer = createBuffer.call(this, descriptor);
++    live.add(buffer);
++    return buffer;
++  };
++  GPUBuffer.prototype.destroy = function () {
++    live.delete(this);
++    destroyBuffer.call(this);
++  };
++}
++
++export function liveBuffers() {
++  return new Set(live);
++}
++
++export function buffersSince(before) {
++  return [...live]
++    .filter((buffer) => !before.has(buffer))
++    .map((buffer) => buffer.size + ' B, usage ' + buffer.usage);
++}
++
++let rootPromise;
++export function gpu() {
++  rootPromise ??= tgpu.init({ device: { optionalFeatures: ['subgroups', 'shader-f16'] } }).then((root) => {
++    initRunntime(root);
++    return { root };
++  });
++  return rootPromise;
++}
++`,
++  );
++
++  const config = `import { playwright } from '@vitest/browser-playwright';
++import typegpu from 'unplugin-typegpu/vite';
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  plugins: [typegpu()],
++  optimizeDeps: { include: ['typegpu'] },
++  server: { fs: { allow: [${JSON.stringify(repositoryDirectory)}, ${JSON.stringify(temporaryDirectory)}] } },
++  test: {
++    include: ['test/**/*.gpu.test.ts'],
++    browser: {
++      enabled: true,
++      headless: true,
++      provider: playwright({ launchOptions: { channel: 'chromium', args: ['--enable-unsafe-webgpu'] } }),
++      instances: [{ browser: 'chromium' }],
++    },
++  },
++});
++`;
++  writeFileSync(join(consumerDirectory, 'vitest.config.ts'), config);
++  writeFileSync(join(consumerDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
++
++  const env = {
++    ...process.env,
++    VITE_D1_Q8_QUALIFICATION_MODE: 'q8',
++    VITE_D1_Q8_MODEL_URL: '/model.safetensors',
++    VITE_D1_Q8_TOKENIZER_URL: '/tokenizer.json',
++    VITE_D1_Q8_ARTIFACT_SHA256: process.env.D1_Q8_ARTIFACT_SHA256 ?? '',
++  };
++  if (!env.VITE_D1_Q8_ARTIFACT_SHA256) {
++    throw new Error('set D1_Q8_ARTIFACT_SHA256 to the converted artifact SHA-256');
++  }
++
++  const vitestArgs = [
++    join(nodeModules, 'vitest/vitest.mjs'),
++    'run',
++    '--config',
++    join(consumerDirectory, 'vitest.config.ts'),
++  ];
++  if (reportPath) {
++    vitestArgs.push(
++      '--reporter=verbose',
++      '--reporter=json',
++      `--outputFile.json=${resolve(reportPath)}`,
++    );
++  }
++  run(process.execPath, vitestArgs, consumerDirectory, env);
++} finally {
++  rmSync(temporaryDirectory, { recursive: true, force: true });
++}
+diff --git a/packages/runntime/test/zoo/d1/public.test.ts b/packages/runntime/test/zoo/d1/public.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9c6283a3dc05652f611725c5b937c814a784f3b6
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/public.test.ts
+@@ -0,0 +1,11 @@
++import { describe, expect, it } from 'vitest';
++import { createD1Decider, models } from '../../../src/zoo/index.ts';
++
++describe('public D1 zoo entry', () => {
++  it('requires caller-provided weights for the unhosted Q8 model', async () => {
++    expect('modelPath' in models.d1.D1_OMNI_600M.Q8).toBe(false);
++    await expect(createD1Decider(models.d1.D1_OMNI_600M.Q8)).rejects.toMatchObject({
++      code: 'INVALID_ARGUMENT',
++    });
++  });
++});
+diff --git a/packages/runntime/test/zoo/d1/q8.gpu.test.ts b/packages/runntime/test/zoo/d1/q8.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c1ea8ec9ed2414b28f5dcdcc268c42703f17bba2
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/q8.gpu.test.ts
+@@ -0,0 +1,281 @@
++/** Opt-in public-loader qualification for a locally converted D1 text Q8 file. */
++
++import { expect, it } from 'vitest';
++import {
++  createD1Decider,
++  models,
++  type Answer,
++  type Question,
++  type RangeSource,
++} from '../../../src/zoo/index.ts';
++import { buffersSince, gpu, liveBuffers } from '../../gpu.ts';
++import vectors from '../../../playground/d1/reference-vectors.json';
++
++declare global {
++  interface ImportMetaEnv {
++    readonly VITE_D1_Q8_QUALIFICATION_MODE?: string;
++    readonly VITE_D1_Q8_MODEL_URL?: string;
++    readonly VITE_D1_Q8_TOKENIZER_URL?: string;
++    readonly VITE_D1_Q8_ARTIFACT_SHA256?: string;
++  }
++  interface ImportMeta {
++    readonly env: ImportMetaEnv;
++  }
++}
++
++const MODE = import.meta.env.VITE_D1_Q8_QUALIFICATION_MODE;
++const MODEL_URL = import.meta.env.VITE_D1_Q8_MODEL_URL;
++const TOKENIZER_URL = import.meta.env.VITE_D1_Q8_TOKENIZER_URL;
++const ARTIFACT_SHA256 = import.meta.env.VITE_D1_Q8_ARTIFACT_SHA256;
++const PROBABILITY_TOLERANCE = 0.04;
++const CLEAR_MARGIN = 0.1;
++
++interface ReferenceCase {
++  id: string;
++  state: string;
++  question: Question;
++  reference: { probabilities: number[]; answer: string; inputTokens: number };
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value);
++}
++
++function isReferenceCase(value: unknown): value is ReferenceCase {
++  if (!isRecord(value) || !isRecord(value.reference) || !isRecord(value.question)) return false;
++  const question = value.question;
++  const reference = value.reference;
++  return (
++    typeof value.id === 'string' &&
++    typeof value.state === 'string' &&
++    typeof question.type === 'string' &&
++    typeof question.instructions === 'string' &&
++    Array.isArray(reference.probabilities) &&
++    reference.probabilities.every((probability) => typeof probability === 'number') &&
++    typeof reference.answer === 'string' &&
++    typeof reference.inputTokens === 'number'
++  );
++}
++
++function casesFrom(value: unknown): ReferenceCase[] {
++  if (!isRecord(value) || !Array.isArray(value.cases) || !value.cases.every(isReferenceCase)) {
++    throw new Error('pinned D1 reference cases are malformed');
++  }
++  return value.cases;
++}
++
++function probabilities(answer: Answer, question: Question): number[] {
++  if (answer.type === 'noul') return [answer.noul, 1 - answer.noul];
++  if (answer.type === 'choice' && question.type === 'choice') {
++    return Object.keys(question.criteria).map((name) => answer.probabilities[name]!);
++  }
++  if (answer.type === 'score' && question.type === 'score') {
++    return question.criteria.map((_, index) => answer.probabilities[String(index)]!);
++  }
++  throw new Error(`D1 answer type did not match ${question.type}`);
++}
++
++function stableAnswer(answer: Answer): string {
++  if (answer.type === 'noul') return answer.noul >= 0.5 ? 'yes' : 'no';
++  if (answer.type === 'choice') return answer.choice;
++  let best = 0;
++  const scores = Object.values(answer.probabilities);
++  for (let i = 1; i < scores.length; i++) if (scores[i]! > scores[best]!) best = i;
++  return String(best);
++}
++
++function margin(values: readonly number[]): number {
++  const sorted = [...values].sort((a, b) => b - a);
++  return sorted[0]! - sorted[1]!;
++}
++
++function rangeSource(url: string): RangeSource & { bytesReceived(): number; rangeMode(): string } {
++  let whole: Promise<Uint8Array> | undefined;
++  let received = 0;
++  let mode = 'range';
++  return {
++    async read(begin, end) {
++      if (whole) return (await whole).slice(begin, end);
++      const response = await fetch(url, { headers: { Range: `bytes=${begin}-${end - 1}` } });
++      if (!response.ok) throw new Error(`D1 Q8 artifact request returned ${response.status}`);
++      if (response.status === 200) {
++        mode = 'whole-file fallback';
++        whole = response.arrayBuffer().then((buffer) => {
++          const bytes = new Uint8Array(buffer);
++          received += bytes.byteLength;
++          return bytes;
++        });
++        return (await whole).slice(begin, end);
++      }
++      if (response.status !== 206) throw new Error(`D1 Q8 range returned ${response.status}`);
++      const bytes = new Uint8Array(await response.arrayBuffer());
++      if (bytes.byteLength !== end - begin) {
++        throw new Error(`D1 Q8 range returned ${bytes.byteLength} bytes, expected ${end - begin}`);
++      }
++      received += bytes.byteLength;
++      return bytes;
++    },
++    bytesReceived: () => received,
++    rangeMode: () => mode,
++  };
++}
++
++function gpuBufferBytes(): number {
++  return [...liveBuffers()].reduce((sum, buffer) => sum + buffer.size, 0);
++}
++
++function ownedBuffersSince(before: ReadonlySet<GPUBuffer>): string[] {
++  return buffersSince(before).filter((_, index) => {
++    const buffer = [...liveBuffers()].filter((current) => !before.has(current))[index]!;
++    return (buffer.usage & (GPUBufferUsage.MAP_READ | GPUBufferUsage.UNIFORM)) === 0;
++  });
++}
++
++function sampledHostBytes(): number | null {
++  const memory = Reflect.get(performance, 'memory');
++  const bytes =
++    typeof memory === 'object' && memory !== null ? Reflect.get(memory, 'usedJSHeapSize') : null;
++  return typeof bytes === 'number' ? bytes : null;
++}
++
++it.skipIf(MODE !== 'q8' || MODEL_URL === undefined)(
++  'loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity',
++  async (ctx) => {
++    const cases = casesFrom(vectors);
++    const { root } = await gpu();
++    const source = rangeSource(MODEL_URL!);
++    const config = {
++      ...models.d1.D1_OMNI_600M.Q8,
++      modelPath: source,
++      ...(TOKENIZER_URL === undefined ? {} : { tokenizerPath: TOKENIZER_URL }),
++    };
++
++    const malformed = {
++      ...models.d1.D1_OMNI_600M.Q8,
++      modelPath: { read: async () => new Uint8Array(8) },
++    };
++    await expect(createD1Decider(malformed, { warmUp: false })).rejects.toMatchObject({
++      code: 'LOAD_FAILED',
++    });
++
++    const beforeAbort = liveBuffers();
++    const abort = new AbortController();
++    await expect(
++      createD1Decider(config, {
++        signal: abort.signal,
++        warmUp: false,
++        onProgress: () => abort.abort('D1 Q8 upload abort test'),
++      }),
++    ).rejects.toMatchObject({ code: 'LOAD_ABORTED' });
++    await root.device.queue.onSubmittedWorkDone();
++    expect(ownedBuffersSince(beforeAbort)).toEqual([]);
++
++    const beforeLoad = liveBuffers();
++    let loadedWeightBytes = 0;
++    let progressDoneBytes = 0;
++    let progressTotalBytes = 0;
++    let peakGpuBufferBytes = gpuBufferBytes();
++    let peakHostBytes = sampledHostBytes();
++    const progressNames = new Set<string>();
++    const runner = await createD1Decider(config, {
++      onProgress: (name, done, total) => {
++        progressNames.add(name);
++        loadedWeightBytes = total;
++        progressDoneBytes = done;
++        progressTotalBytes = total;
++        peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++        const hostBytes = sampledHostBytes();
++        if (hostBytes !== null) peakHostBytes = Math.max(peakHostBytes ?? 0, hostBytes);
++      },
++    });
++
++    const decisions: Record<string, unknown>[] = [];
++    try {
++      await expect(
++        runner.systemOne('unit '.repeat(20_000), { answer: cases[0]!.question }),
++      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
++
++      for (const item of cases) {
++        const result = await runner.systemOne(item.state, { answer: item.question });
++        const answer = result.answers.answer!;
++        const got = probabilities(answer, item.question);
++        const maxAbsError = Math.max(
++          ...got.map((probability, index) =>
++            Math.abs(probability - item.reference.probabilities[index]!),
++          ),
++        );
++        const referenceMargin = margin(item.reference.probabilities);
++        expect(result.inputTokens).toBe(item.reference.inputTokens);
++        expect(maxAbsError).toBeLessThanOrEqual(PROBABILITY_TOLERANCE);
++        if (referenceMargin >= CLEAR_MARGIN) {
++          expect(stableAnswer(answer)).toBe(item.reference.answer);
++        }
++        const decision: Record<string, unknown> = {
++          id: item.id,
++          inputTokens: result.inputTokens,
++          answer: stableAnswer(answer),
++          referenceAnswer: item.reference.answer,
++          clearMargin: referenceMargin,
++          probabilities: got,
++          maxAbsError,
++        };
++        if (item.question.type === 'score' && answer.type === 'score') {
++          const referenceScore = item.reference.probabilities.reduce(
++            (sum, probability, index) => sum + probability * index,
++            0,
++          );
++          const normalizedRubricError =
++            Math.abs(answer.score - referenceScore) /
++            Math.max(1, item.question.criteria.length - 1);
++          expect(normalizedRubricError).toBeLessThanOrEqual(0.05);
++          decision.normalizedRubricError = normalizedRubricError;
++        }
++        decisions.push(decision);
++        peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++        const hostBytes = sampledHostBytes();
++        if (hostBytes !== null) peakHostBytes = Math.max(peakHostBytes ?? 0, hostBytes);
++      }
++
++      const report = {
++        mode: MODE,
++        model: 'LiquidAI/d1-omni-600M',
++        modelRevision: '02b55d7076f15129e59ab3f94783f32c4b088674',
++        artifactSha256: ARTIFACT_SHA256 ?? null,
++        tokenizerRevision: '02b55d7076f15129e59ab3f94783f32c4b088674',
++        quantization: 'runntime.quant v1, symmetric int8, groupSize 32',
++        artifactDelivery: source.rangeMode(),
++        bytesReceived: source.bytesReceived(),
++        loadedWeightBytes,
++        progressDoneBytes,
++        progressTotalBytes,
++        progressTensorCount: progressNames.size,
++        peakHostBytes,
++        peakGpuBufferBytes,
++        decisions,
++        probabilityTolerance: PROBABILITY_TOLERANCE,
++        normalizedRubricTolerance: 0.05,
++        gpuBuffersBeforeLoad: beforeLoad.size,
++      };
++      console.info('D1_Q8_QUALIFICATION', JSON.stringify(report));
++      await ctx.annotate('D1_Q8_QUALIFICATION', {
++        contentType: 'application/json',
++        body: JSON.stringify(report, null, 2),
++      });
++      expect(progressDoneBytes).toBe(progressTotalBytes);
++      expect(loadedWeightBytes).toBeGreaterThan(0);
++      expect(decisions).toHaveLength(cases.length);
++    } finally {
++      await runner.dispose();
++    }
++
++    await root.device.queue.onSubmittedWorkDone();
++    const disposedOwnedBuffers = ownedBuffersSince(beforeLoad);
++    expect(disposedOwnedBuffers).toEqual([]);
++    await expect(
++      runner.systemOne('', { warmup: { type: 'noul', instructions: 'disposed' } }),
++    ).rejects.toMatchObject({
++      code: 'RESOURCE_DISPOSED',
++    });
++  },
++  900_000,
++);
+diff --git a/packages/runntime/test/zoo/d1/qualification.gpu.test.ts b/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+index 62b280906e952144a63f3d5a450292adec11e27d..ed8dc1aa80710f497b134a92bb763b7dbc52bfb9 100644
+--- a/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
++++ b/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+@@ -18,6 +18,7 @@ import vectors from '../../../playground/d1/reference-vectors.json';
+ declare global {
+   interface ImportMetaEnv {
+     readonly VITE_D1_QUALIFICATION_MODE?: string;
++    readonly VITE_D1_QUALIFICATION_MODEL_URL?: string;
+   }
+   interface ImportMeta {
+     readonly env: ImportMetaEnv;
+@@ -26,7 +27,9 @@ declare global {
+ 
+ const MODEL = 'LiquidAI/d1-omni-600M';
+ const REVISION = '02b55d7076f15129e59ab3f94783f32c4b088674';
+-const MODEL_URL = `https://huggingface.co/${MODEL}/resolve/${REVISION}/model.safetensors`;
++const MODEL_URL =
++  import.meta.env.VITE_D1_QUALIFICATION_MODEL_URL ??
++  `https://huggingface.co/${MODEL}/resolve/${REVISION}/model.safetensors`;
+ const MODE = import.meta.env.VITE_D1_QUALIFICATION_MODE;
+ const TOLERANCE = 0.001;
+ 
+diff --git a/packages/runntime/test/zoo/d1/stateDictHooks.test.ts b/packages/runntime/test/zoo/d1/stateDictHooks.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fecfd47958b1cf7fd6c567e31dbf977783f22907
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/stateDictHooks.test.ts
+@@ -0,0 +1,141 @@
++import { describe, expect, it } from 'vitest';
++import {
++  derivedTensor,
++  quantTensor,
++  type LazyStateDict,
++  type LazyTensor,
++  type QuantTensor,
++} from '../../../src/core/weights/safetensors.ts';
++import { D1TextModel } from '../../../src/zoo/d1/model.ts';
++
++const LAYER_TYPES = 'ccaccaccacacacac';
++const HIDDEN = 1024;
++const FFW = 4608;
++
++function floats(shape: number[]): LazyTensor {
++  const elems = shape.reduce((size, part) => size * part, 1);
++  return derivedTensor(shape, () => Promise.resolve(new Float32Array(elems)), elems * 4);
++}
++
++function quant(name: string, shape: [number, number], base: number): QuantTensor {
++  const [rows, cols] = shape;
++  const groups = cols / 32;
++  return quantTensor({
++    name,
++    shape,
++    bits: 8,
++    groupSize: 32,
++    byteLength: rows * cols + rows * groups * 2,
++    async ints() {
++      const output = new Int8Array(rows * cols);
++      for (let row = 0; row < rows; row++)
++        output.fill((base + row) % 120, row * cols, (row + 1) * cols);
++      return output;
++    },
++    async scales() {
++      const output = new Float32Array(rows * groups);
++      for (let row = 0; row < rows; row++)
++        output.fill(base + row + 1, row * groups, (row + 1) * groups);
++      return output;
++    },
++  });
++}
++
++function textCheckpoint(): LazyStateDict {
++  const tensors = new Map<string, LazyTensor>();
++  const add = (name: string, shape: number[], isQuant = false, base = 0) => {
++    tensors.set(name, isQuant ? quant(name, shape as [number, number], base) : floats(shape));
++  };
++  add('encoder.embedding_norm.weight', [HIDDEN]);
++  for (const [i, kind] of [...LAYER_TYPES].entries()) {
++    const prefix = `encoder.layers.${i}`;
++    add(`${prefix}.operator_norm.weight`, [HIDDEN]);
++    add(`${prefix}.ffn_norm.weight`, [HIDDEN]);
++    add(`${prefix}.feed_forward.w1.weight`, [FFW, HIDDEN], true, 20);
++    add(`${prefix}.feed_forward.w3.weight`, [FFW, HIDDEN], true, 10);
++    if (kind === 'c') {
++      add(`${prefix}.conv.conv.weight`, [HIDDEN, 1, 3]);
++    } else {
++      add(`${prefix}.self_attn.q_proj.weight`, [HIDDEN, HIDDEN], true);
++      add(`${prefix}.self_attn.k_proj.weight`, [HIDDEN / 2, HIDDEN], true);
++      add(`${prefix}.self_attn.q_layernorm.weight`, [64]);
++      add(`${prefix}.self_attn.k_layernorm.weight`, [64]);
++    }
++  }
++
++  for (let i = 0; i < 2; i++) {
++    const prefix = `head.head.layers.${i}`;
++    add(`${prefix}.self_attn.in_proj_weight`, [3 * HIDDEN, HIDDEN], true);
++    add(`${prefix}.self_attn.in_proj_bias`, [3 * HIDDEN]);
++    for (const name of ['out_proj.weight', 'out_proj.bias']) {
++      add(
++        `${prefix}.self_attn.${name}`,
++        name.endsWith('weight') ? [HIDDEN, HIDDEN] : [HIDDEN],
++        name.endsWith('weight'),
++      );
++    }
++    add(`${prefix}.linear1.weight`, [4096, HIDDEN], true);
++    add(`${prefix}.linear1.bias`, [4096]);
++    add(`${prefix}.linear2.weight`, [HIDDEN, 4096], true);
++    add(`${prefix}.linear2.bias`, [HIDDEN]);
++    for (const name of ['norm1', 'norm2']) {
++      add(`${prefix}.${name}.weight`, [HIDDEN]);
++      add(`${prefix}.${name}.bias`, [HIDDEN]);
++    }
++  }
++  add('head.scorer.0.weight', [HIDDEN]);
++  add('head.scorer.0.bias', [HIDDEN]);
++  add('head.scorer.1.weight', [HIDDEN, HIDDEN], true);
++  add('head.scorer.1.bias', [HIDDEN]);
++  add('head.scorer.3.weight', [1, HIDDEN]);
++  add('head.scorer.3.bias', [1]);
++  add('vision.unused.weight', [HIDDEN, HIDDEN]);
++  add('audio.unused.weight', [HIDDEN, HIDDEN]);
++  return {
++    metadata: {},
++    tensors,
++    totalBytes: () => [...tensors.values()].reduce((sum, t) => sum + t.byteLength, 0),
++  };
++}
++
++describe('D1 quantized checkpoint transforms', () => {
++  it('reorders and stacks native quant rows while keeping row scales', async () => {
++    const model = new D1TextModel();
++    const sd = textCheckpoint();
++    model.transformStateDict(sd);
++
++    const q = sd.tensors.get('encoder.layers.2.self_attn.q_proj.weight');
++    if (q?.kind !== 'quant') throw new Error('q projection should stay quantized');
++    const qInts = await q.ints();
++    expect([qInts[0], qInts[HIDDEN], qInts[2 * HIDDEN], qInts[3 * HIDDEN]]).toEqual([0, 32, 1, 33]);
++    const qScales = await q.scales();
++    expect([qScales[0], qScales[HIDDEN / 32], qScales[2 * (HIDDEN / 32)]]).toEqual([1, 33, 2]);
++
++    const w13 = sd.tensors.get('encoder.layers.0.feed_forward.w13.weight');
++    if (w13?.kind !== 'quant') throw new Error('stacked feed-forward weight should stay quantized');
++    const w13Ints = await w13.ints();
++    const w13Scales = await w13.scales();
++    expect(w13.shape).toEqual([2 * FFW, HIDDEN]);
++    expect([w13Ints[0], w13Ints[FFW * HIDDEN]]).toEqual([10, 20]);
++    expect([w13Scales[0], w13Scales[FFW * (HIDDEN / 32)]]).toEqual([11, 21]);
++
++    const qkv = sd.tensors.get('head.layers.0.in_proj.weight');
++    if (qkv?.kind !== 'quant') throw new Error('attention projection should stay quantized');
++    const scales = await qkv.scales();
++    expect(scales[0]).toBe(0.125);
++    expect(scales[(HIDDEN - 1) * (HIDDEN / 32)]).toBe(128);
++    expect(scales[HIDDEN * (HIDDEN / 32)]).toBe(1025);
++    expect(sd.tensors.has('vision.unused.weight')).toBe(false);
++    expect(sd.tensors.has('audio.unused.weight')).toBe(false);
++    expect(sd.tensors.get('head.scorer_out.weight')?.kind).toBe('derived');
++  });
++
++  it('rejects a stacked linear weight with mixed float and quantized members', () => {
++    const model = new D1TextModel();
++    const sd = textCheckpoint();
++    sd.tensors.set('encoder.layers.0.feed_forward.w1.weight', floats([FFW, HIDDEN]));
++    expect(() => model.transformStateDict(sd)).toThrow(
++      expect.objectContaining({ code: 'CHECKPOINT_MISMATCH' }),
++    );
++  });
++});
+diff --git a/packages/runntime/test/zoo/d1/tokenizer.test.ts b/packages/runntime/test/zoo/d1/tokenizer.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2ae7fc5792c94ef3867b2a3595305f7c57b88e8a
+--- /dev/null
++++ b/packages/runntime/test/zoo/d1/tokenizer.test.ts
+@@ -0,0 +1,74 @@
++import { describe, expect, it } from 'vitest';
++import { createD1Tokenizer } from '../../../src/zoo/d1/tokenizer.ts';
++
++const specialTokens = {
++  '<|startoftext|>': 1,
++  '<|mask|>': 16,
++  '<|reserved_7|>': 17,
++  '<|reserved_8|>': 18,
++  '<|reserved_9|>': 19,
++  '<|reserved_10|>': 20,
++  '<|reserved_11|>': 21,
++};
++
++const vocabulary = Object.fromEntries(
++  Array.from({ length: 22 }, (_, id) => [
++    Object.entries(specialTokens).find(([, tokenId]) => tokenId === id)?.[0] ?? `unused_${id}`,
++    id,
++  ]),
++);
++const pieces = Object.fromEntries(
++  [...new Set('heloworld')].map((piece, index) => [piece, index + 22]),
++);
++
++const json = {
++  added_tokens: Object.entries(specialTokens).map(([content, id]) => ({
++    id,
++    content,
++    single_word: false,
++    lstrip: false,
++    rstrip: false,
++    normalized: false,
++    special: true,
++  })),
++  normalizer: null,
++  pre_tokenizer: { type: 'Whitespace' },
++  post_processor: null,
++  decoder: null,
++  model: {
++    type: 'BPE',
++    dropout: null,
++    unk_token: 'unused_0',
++    continuing_subword_prefix: null,
++    end_of_word_suffix: null,
++    fuse_unk: false,
++    byte_fallback: false,
++    vocab: { ...vocabulary, ...pieces },
++    merges: [],
++  },
++};
++
++describe('createD1Tokenizer', () => {
++  it('uses the pinned marker ids and BPE encoding without adding special tokens', () => {
++    const tokenizer = createD1Tokenizer(json);
++
++    expect(tokenizer.bosId).toBe(1);
++    expect(tokenizer.tokenId('<|mask|>')).toBe(16);
++    expect(tokenizer.tokenId('<|reserved_11|>')).toBe(21);
++    expect(tokenizer.encode('hello world')).toEqual([22, 23, 24, 24, 25, 26, 25, 27, 24, 28]);
++  });
++
++  it('rejects another tokenizer type and mismatched D1 marker ids', () => {
++    expect(() =>
++      createD1Tokenizer({ ...json, model: { ...json.model, type: 'WordPiece' } }),
++    ).toThrow(expect.objectContaining({ code: 'CHECKPOINT_MISMATCH' }));
++    expect(() =>
++      createD1Tokenizer({
++        ...json,
++        added_tokens: json.added_tokens.map((token) =>
++          token.content === '<|mask|>' ? { ...token, id: 15 } : token,
++        ),
++      }),
++    ).toThrow(expect.objectContaining({ code: 'CHECKPOINT_MISMATCH' }));
++  });
++});
+-- 
+2.54.0
+

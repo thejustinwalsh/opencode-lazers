@@ -1,0 +1,11 @@
+LiquidAI/d1-omni-600M/model.safetensors @ 02b55d7076f15129e59ab3f94783f32c4b088674
+  sha256 0713bb05270c2685ad106522f4092bceeeb3a93cf79b401f399a712296c911e1
+  bytes 2348774500
+LiquidAI/d1-omni-600M/tokenizer.json @ 02b55d7076f15129e59ab3f94783f32c4b088674
+  sha256 1efc3a6609abf6b63b1f47188d139f3b59973a6a434dffe970a7261a51ed2711
+  bytes 4733371
+d1-omni-600m-text-q8.safetensors (runntime.quant v1, int8, groupSize 32)
+  sha256 a5f94915d38627f0755df90372f1cda3d30e4d489066aaff44d2eeb98d2793e5
+  bytes 620464044
+The repeated conversion output has the same SHA-256 and is byte-identical.
+Converter source: ruNNtime tree based on fd28773ca30facdaf6e56d8e9fba06e242ff623d.

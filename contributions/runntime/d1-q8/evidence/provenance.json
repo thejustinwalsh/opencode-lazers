@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "LiquidAI/d1-omni-600M",
+    "revision": "02b55d7076f15129e59ab3f94783f32c4b088674",
+    "checkpoint": {
+      "file": "model.safetensors",
+      "bytes": 2348774500,
+      "sha256": "0713bb05270c2685ad106522f4092bceeeb3a93cf79b401f399a712296c911e1"
+    },
+    "tokenizer": {
+      "file": "tokenizer.json",
+      "bytes": 4733371,
+      "sha256": "1efc3a6609abf6b63b1f47188d139f3b59973a6a434dffe970a7261a51ed2711"
+    },
+    "license": "LFM Open License v1.0; see https://huggingface.co/LiquidAI/d1-omni-600M/blob/02b55d7076f15129e59ab3f94783f32c4b088674/LICENSE"
+  },
+  "converter": {
+    "repository": "thejustinwalsh/runntime",
+    "sourceBase": "fd28773ca30facdaf6e56d8e9fba06e242ff623d",
+    "command": "uv run runntime quantize model.safetensors d1-omni-600m-text-q8.safetensors --bits 8 --group-size 32 --drop 'audio.*' --drop 'vision.*'",
+    "format": "runntime.quant v1",
+    "quantization": "symmetric int8, groupSize 32",
+    "excludedTensors": ["audio.*", "vision.*"],
+    "unsupportedLayers": "Embedding defaults and dimension checks retain the token embedding and width-one scorer in supported float formats."
+  },
+  "artifact": {
+    "file": "d1-omni-600m-text-q8.safetensors",
+    "bytes": 620464044,
+    "sha256": "a5f94915d38627f0755df90372f1cda3d30e4d489066aaff44d2eeb98d2793e5",
+    "repeatConversion": "byte-identical"
+  },
+  "distribution": "The original and converted weight files are retained outside Git. ruNNtime does not host or redistribute either file."
+}

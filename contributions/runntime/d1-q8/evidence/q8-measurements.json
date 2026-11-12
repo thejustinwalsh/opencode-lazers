@@ -1,0 +1,79 @@
+{
+  "mode": "q8",
+  "model": "LiquidAI/d1-omni-600M",
+  "modelRevision": "02b55d7076f15129e59ab3f94783f32c4b088674",
+  "artifactSha256": "a5f94915d38627f0755df90372f1cda3d30e4d489066aaff44d2eeb98d2793e5",
+  "tokenizerRevision": "02b55d7076f15129e59ab3f94783f32c4b088674",
+  "quantization": "runntime.quant v1, symmetric int8, groupSize 32",
+  "artifactDelivery": "range",
+  "bytesReceived": 1266157224,
+  "loadedWeightBytes": 620432388,
+  "progressDoneBytes": 620432388,
+  "progressTotalBytes": 620432388,
+  "progressTensorCount": 266,
+  "peakHostBytes": 1232617010,
+  "peakGpuBufferBytes": 371192740,
+  "decisions": [
+    {
+      "id": "refund-positive",
+      "inputTokens": 47,
+      "answer": "yes",
+      "referenceAnswer": "yes",
+      "clearMargin": 0.9957497119903564,
+      "probabilities": [0.9979279751860438, 0.002072024813956186],
+      "maxAbsError": 5.311919086559147e-5
+    },
+    {
+      "id": "refund-negative",
+      "inputTokens": 51,
+      "answer": "no",
+      "referenceAnswer": "no",
+      "clearMargin": 0.9898504624143243,
+      "probabilities": [0.005321980231859559, 0.9946780197681404],
+      "maxAbsError": 0.0002472114390217328
+    },
+    {
+      "id": "choice-forward",
+      "inputTokens": 56,
+      "answer": "technical",
+      "referenceAnswer": "technical",
+      "clearMargin": 0.9809020892716944,
+      "probabilities": [0.006604498800601761, 0.9878532929957051, 0.00554220820369309],
+      "maxAbsError": 0.00029561939764400236
+    },
+    {
+      "id": "choice-reversed",
+      "inputTokens": 56,
+      "answer": "technical",
+      "referenceAnswer": "technical",
+      "clearMargin": 0.9780361452139914,
+      "probabilities": [0.0072505679041449805, 0.9857309933824926, 0.007018438713362413],
+      "maxAbsError": 0.0003605958147435695
+    },
+    {
+      "id": "incident-rubric",
+      "inputTokens": 111,
+      "answer": "4",
+      "referenceAnswer": "4",
+      "clearMargin": 0.32252155244350433,
+      "probabilities": [
+        0.1726687665072908, 0.06088215914065164, 0.08981767317232899, 0.1798877021921444,
+        0.49674369898758414
+      ],
+      "maxAbsError": 0.007052843893842697,
+      "normalizedRubricError": 0.0028722852213202144
+    },
+    {
+      "id": "task-review",
+      "inputTokens": 93,
+      "answer": "no",
+      "referenceAnswer": "no",
+      "clearMargin": 0.8197530955076218,
+      "probabilities": [0.08777110194981613, 0.9122288980501838],
+      "maxAbsError": 0.0023523502963729848
+    }
+  ],
+  "probabilityTolerance": 0.04,
+  "normalizedRubricTolerance": 0.05,
+  "gpuBuffersBeforeLoad": 0
+}

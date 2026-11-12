@@ -1,0 +1,71 @@
+{
+  "numTotalTestSuites": 1,
+  "numPassedTestSuites": 1,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 3,
+  "numPassedTests": 1,
+  "numFailedTests": 0,
+  "numPendingTests": 2,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1794455334879,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "records the original D1 branch against the pinned Liquid text corpus",
+          "status": "passed",
+          "title": "records the original D1 branch against the pinned Liquid text corpus",
+          "duration": 8244.90000000596,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "qualifies D1 references, resource cleanup, serialization, abort, disposal, and device recovery",
+          "status": "skipped",
+          "title": "qualifies D1 references, resource cleanup, serialization, abort, disposal, and device recovery",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "qualifies D1 exceptional cleanup, captured-root uploads, and healthy disposal",
+          "status": "skipped",
+          "title": "qualifies D1 exceptional cleanup, captured-root uploads, and healthy disposal",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1794455336744,
+      "endTime": 1794455344988.9,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/test/zoo/d1/qualification.gpu.test.ts"
+    }
+  ]
+}

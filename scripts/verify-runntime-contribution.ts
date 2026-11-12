@@ -31,6 +31,19 @@ const STAGES = {
       "packages/runntime/playground/d1/",
     ],
   },
+  "d1-q8": {
+    baseCommit: "fd28773ca30facdaf6e56d8e9fba06e242ff623d",
+    directory: "contributions/runntime/d1-q8",
+    allowedPaths: [
+      "packages/runntime/src/zoo/",
+      "packages/runntime/test/zoo/d1/",
+      "packages/runntime/test/core/weights/",
+      "packages/runntime/playground/d1/",
+      "tools/python/",
+      "apps/docs/astro.config.mjs",
+      "apps/docs/src/content/docs/zoo/",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
@@ -45,7 +58,16 @@ interface PatchRecord {
 }
 
 interface EvidenceRecord {
-  kind: "unit" | "gpu" | "typecheck" | "lint" | "build"
+  kind:
+    | "unit"
+    | "gpu"
+    | "typecheck"
+    | "lint"
+    | "build"
+    | "conversion"
+    | "parity"
+    | "package"
+    | "resource"
   command: string
   exitCode: number
   path: string
@@ -187,9 +209,15 @@ function readManifest(stageDirectory: string): Manifest {
       check.kind !== "gpu" &&
       check.kind !== "typecheck" &&
       check.kind !== "lint" &&
-      check.kind !== "build"
+      check.kind !== "build" &&
+      check.kind !== "conversion" &&
+      check.kind !== "parity" &&
+      check.kind !== "package" &&
+      check.kind !== "resource"
     ) {
-      throw new Error(`manifest.checks[${index}].kind must be unit, gpu, typecheck, lint or build`)
+      throw new Error(
+        `manifest.checks[${index}].kind must be unit, gpu, typecheck, lint, build, conversion, parity, package or resource`,
+      )
     }
     if (check.exitCode !== 0) throw new Error(`manifest.checks[${index}] did not pass`)
     return {
@@ -235,10 +263,28 @@ function verifyEvidence(
     kinds.add(check.kind)
   }
   const required: EvidenceRecord["kind"][] =
-    stage === "d1-safety-correction" ? ["unit", "gpu", "typecheck", "lint"] : ["unit", "gpu"]
+    stage === "d1-safety-correction"
+      ? ["unit", "gpu", "typecheck", "lint"]
+      : stage === "d1-q8"
+        ? [
+            "unit",
+            "gpu",
+            "typecheck",
+            "lint",
+            "build",
+            "conversion",
+            "parity",
+            "package",
+            "resource",
+          ]
+        : ["unit", "gpu"]
   if (required.some((kind) => !kinds.has(kind))) {
     const expected =
-      stage === "d1-safety-correction" ? "unit, GPU, typecheck and lint" : "unit and GPU"
+      stage === "d1-safety-correction"
+        ? "unit, GPU, typecheck and lint"
+        : stage === "d1-q8"
+          ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
+          : "unit and GPU"
     throw new Error(`retained checks must include passing ${expected} evidence`)
   }
   return checks.map((check) => check.kind)

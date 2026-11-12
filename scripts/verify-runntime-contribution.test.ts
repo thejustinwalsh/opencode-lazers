@@ -35,7 +35,7 @@ function fixture(
   options: {
     outsideScope?: boolean
     sourcePath?: string
-    stage?: "d1-reference" | "d1-safety-correction"
+    stage?: "d1-reference" | "d1-safety-correction" | "d1-q8"
   } = {},
 ): Fixture {
   const root = mkdtempSync(join(tmpdir(), "runntime-contribution-test-"))
@@ -109,7 +109,29 @@ function fixture(
           { kind: "lint", command: "pnpm lint", file: "evidence/lint.txt" },
           { kind: "build", command: "pnpm --filter runntime build", file: "evidence/build.txt" },
         ]
-      : []),
+      : contributionStage === "d1-q8"
+        ? [
+            {
+              kind: "typecheck",
+              command: "pnpm --filter runntime typecheck",
+              file: "evidence/typecheck.txt",
+            },
+            { kind: "lint", command: "pnpm lint", file: "evidence/lint.txt" },
+            { kind: "build", command: "pnpm --filter runntime build", file: "evidence/build.txt" },
+            {
+              kind: "conversion",
+              command: "uv run runntime quantize",
+              file: "evidence/conversion.txt",
+            },
+            { kind: "parity", command: "D1 parity qualification", file: "evidence/parity.txt" },
+            { kind: "package", command: "packed package consumer", file: "evidence/package.txt" },
+            {
+              kind: "resource",
+              command: "D1 resource measurements",
+              file: "evidence/resource.txt",
+            },
+          ]
+        : []),
   ].map((check) => {
     const bytes = Buffer.from(`${check.kind} checks passed\n`)
     writeFileSync(join(stage, check.file), bytes)
@@ -284,6 +306,66 @@ describe("ruNNtime contribution reconstruction", () => {
         expectedBaseCommit: incomplete.baseCommit,
       }),
     ).toThrow("reconstructed")
+  })
+
+  it("requires conversion, parity, packaging and resource evidence for D1 Q8", () => {
+    const complete = fixture({ stage: "d1-q8" })
+    expect(
+      verifyContribution({
+        stageDirectory: complete.stage,
+        repositoryDirectory: complete.repository,
+        expectedBaseCommit: complete.baseCommit,
+      }).checks,
+    ).toContain("conversion")
+
+    for (const missingKind of [
+      "unit",
+      "gpu",
+      "typecheck",
+      "lint",
+      "build",
+      "conversion",
+      "parity",
+      "package",
+      "resource",
+    ]) {
+      const incomplete = fixture({ stage: "d1-q8" })
+      const manifest = incomplete.manifest
+      if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
+      manifest.checks = manifest.checks.filter(
+        (check) => isRecord(check) && check.kind !== missingKind,
+      )
+      saveManifest(incomplete.stage, manifest)
+      expect(() =>
+        verifyContribution({
+          stageDirectory: incomplete.stage,
+          repositoryDirectory: incomplete.repository,
+          expectedBaseCommit: incomplete.baseCommit,
+        }),
+      ).toThrow(
+        "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
+      )
+    }
+  })
+
+  it("permits D1 docs navigation and rejects changes outside the Q8 contribution scope", () => {
+    const docs = fixture({ stage: "d1-q8", sourcePath: "apps/docs/astro.config.mjs" })
+    expect(
+      verifyContribution({
+        stageDirectory: docs.stage,
+        repositoryDirectory: docs.repository,
+        expectedBaseCommit: docs.baseCommit,
+      }).stage,
+    ).toBe("d1-q8")
+
+    const escaped = fixture({ stage: "d1-q8", outsideScope: true })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: escaped.stage,
+        repositoryDirectory: escaped.repository,
+        expectedBaseCommit: escaped.baseCommit,
+      }),
+    ).toThrow("escapes write scope")
   })
 
   it("rejects tampered check evidence and an incomplete quality check set", () => {
