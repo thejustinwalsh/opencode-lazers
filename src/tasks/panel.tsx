@@ -1150,11 +1150,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                     Start
                   </Ui.Button>
                 </Show>
-                <Show
-                  when={
-                    selectedExecution()?.state === "blocked" && selectedDetail()?.architectSessionID
-                  }
-                >
+                <Show when={selectedIsWaiting() && selectedDetail()?.architectSessionID}>
                   {(sessionID) => (
                     <Ui.Button
                       size="small"
