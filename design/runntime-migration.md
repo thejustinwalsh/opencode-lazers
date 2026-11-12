@@ -1,9 +1,12 @@
 # Liquid models on ruNNtime
 
-Add two native WebGPU entries to the ruNNtime zoo: quantized D1 Omni 600M
-for System One decisions and LFM3 Omni for streaming chat, transcription,
-and speech. Build both from the public zoo API and prove both through
-LAZERS in OpenCode Desktop. Start with D1 text decisions.
+Add two native WebGPU entries to the ruNNtime zoo: D1 Omni 600M for System One
+decisions and LFM3 Omni for streaming chat, transcription and speech. First run
+their base checkpoints through supported public zoo APIs, then qualify quantized
+versions of both through those APIs and LAZERS in OpenCode Desktop. Preserve the
+running D1 Q8 work and GPU result. LFM3 baseline work does not depend on D1 Q8
+Desktop integration; serialize only overlapping writers and GPU/Desktop resources.
+The corrected graph and qualification details are in runntime-execution.md.
 
 The starting point is [ruNNtime's D1 branch][branch] at `68f3a125` in
 [the fork][fork]. The branch contains a text/image decider under

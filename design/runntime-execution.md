@@ -18,12 +18,23 @@ and compare the resulting tree; hashes or a manifest alone do not prove behavior
 Keep model binaries out of Git. Architect reviews the actual sibling diff and
 callers as well as the retained series before integration.
 
-Order: D1 safety/reference → D1 Q8/public zoo → LAZERS D1/Desktop → LFM3
-streaming chat/public zoo/Desktop → LFM3 audio/public zoo/Desktop → upstream
-contribution qualification. Dependent producer manifests name their predecessor
-tip. No simultaneous writers or GPU qualification runs in the sibling checkout
-or the owned Desktop. Architect owns rebases/composition against upstream main;
-workers do not chase a moving integration base.
+Product correction: establish both models through supported public zoo APIs with
+their pinned base checkpoints, then qualify quantized variants. Preserve the
+running D1 Q8 task, commits and GPU results; do not restart or discard them.
+Base means original floating checkpoint weights, with documented lossless key/layout
+conversion where needed, not a quantized derivative or private source-only API.
+
+After D1 safety/upstream composition, LFM3 base streaming chat/public zoo may
+proceed without D1 Q8 Desktop integration. Its base audio work follows its causal
+backbone; quantized LFM3 qualification follows both base modalities. D1 base/public
+zoo/Desktop and retained Q8 Desktop qualification form a separate branch.
+Combine both branches for upstream contribution qualification. The single authorized
+sibling checkout and GPU/Desktop remain exclusive resources: finish the running
+D1 Q8 producer before another sibling writer starts, but do not impose a D1
+Desktop dependency on LFM3. Prefer LFM3 baseline producer admission next. Independent
+LAZERS-only work may overlap where scopes and native resources allow.
+Dependent producer manifests name their predecessor tip. Architect owns composition
+and conflicts; workers do not chase a moving integration base.
 
 After the original branch qualification, Architect integrates reviewed upstream
 main `79cb8b564c8aec92474ecdedd8101557497e1c6b` (19 upstream-side commits;
@@ -60,7 +71,13 @@ transform. No ONNX Runtime dependency in the zoo.
 
 ## LAZERS D1 and Desktop qualification
 
-Integrate the public Q8 loader through the existing mailbox, exclusive GPU lease
+First prove the pinned original D1 600M floating checkpoint through the supported
+packed public zoo loader, including a caller RangeSource, tokenizer, normal load
+options and the frozen F32 corpus. Reuse the retained public loader rather than
+introducing a second API. Private createD1TextDecider qualification alone is not
+public baseline acceptance. Then qualify retained Q8 through that same API.
+
+Integrate both checkpoint variants through the existing mailbox, exclusive GPU lease
 and verified cache. Supply the lease-owned bounded range reader and cancellation;
 preserve typed System One results, explicit overflow and actual model/precision/
 revision/input-token identity through task review and GUI. Keep the 2B backend
@@ -82,22 +99,40 @@ decoder observations remain historical comparators, not new measurements.
 
 Implement LFM3 separately from D1's bidirectional LFM2 trunk. Pin architecture,
 tokenizer, checkpoint and reference contracts against the current Liquid engine.
-Deliver the public native zoo generation/session API and its LAZERS chat adapter
-together, including prefill/decode/cache parity, streaming order, EOS, context
-exhaustion, reset, cancellation and disposal. Prove the packed consumer and real
-Desktop chat controls. Retain the Liquid chat route while qualifying; audio
-continues to use the existing route in this increment.
+Deliver the public native zoo generation/session API using original base checkpoint
+21d75123f86c1f7ffb4bef1ea202710c4e7ebe67, including prefill/decode/cache parity,
+streaming order, EOS, context exhaustion, reset, cancellation and disposal.
+Prove a packed public consumer on real GPU before quantizing. Desktop adapters are
+a downstream qualification boundary, not a prerequisite for this producer. Retain
+the Liquid chat route while qualifying.
 
 ## LFM3 audio input and speech
 
-Complete LFM3's public multimodal/audio operators and supported weight loading,
-then connect its transcription and voice output through LAZERS' existing product
-controls. Compare against the pinned Liquid engine for preprocessing, transcript,
+Complete LFM3's public audio operators and original floating checkpoint/codec
+loading on the accepted base backbone. Compare against the pinned Liquid engine for preprocessing, transcript,
 streaming/audio sample behavior, cancellation and cleanup. Do not substitute a
 different speech recognizer. Exercise actual Desktop dictation/transcription and
 speech/playback controls before changing their selected routes; retain the
 existing routes until each passes. Include failure/load/device-loss coverage and
 measurements rather than treating a generated file as successful playback.
+
+## LFM3 quantized qualification and Desktop
+
+After base chat and audio public consumers pass, produce reproducible native Q8
+artifacts from the same original checkpoints using upstream quantization. Keep
+unsupported/nonlinear tensors floating with explicit provenance; no ONNX/GGUF
+relabeling. Compare each quantized path with the frozen native base and retained
+Liquid references, retaining exact stable greedy/product answers, cache agreement,
+clean-clip words and speech/playback quality requirements below. Record numerical
+differences and return unexplained deviations to Architect; do not invent or loosen
+budgets. Measure actual weight/transient memory and latency for both variants.
+
+Connect base and quantized chat, transcription and speech through the existing
+LAZERS mailbox/cache/lease and actual isolated Desktop controls. Both variants must
+have accurate model/precision/revision/usage identities and demonstrate cancellation,
+reset/unload, route switching, real device loss and a successful fresh request.
+Preserve the original Liquid routes until each replacement qualifies. Native public
+zoo/GPU evidence does not replace actual Desktop chat, dictation and audio playback.
 
 ## Upstream contributions and combined acceptance
 
@@ -110,7 +145,7 @@ Test both as installed package consumers, including the actual Desktop bundle.
 Retain upstream review results and submission-ready patches; do not publish model
 weights or merge upstream without any required separate authorization.
 
-Combined acceptance requires both native public zoo backends and retained actual
+Combined acceptance requires base and quantized variants of both native public zoo backends and retained actual
 Desktop evidence, quality comparisons and resource measurements. Existing chat,
 dictation and speech must remain usable throughout. Production active sessions,
 queues, credentials and model caches are outside this work's mutation boundary.
