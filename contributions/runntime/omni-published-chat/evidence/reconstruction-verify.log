@@ -1,0 +1,27 @@
+{
+  "stage": "omni-published-chat",
+  "baseCommit": "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+  "baseTree": "eb321ec29ac1a7550c3fd3c26cd813f1cea9bcd1",
+  "tipCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+  "reconstructedTree": "2b45cba19bc5ce2142744c9e21d86c356fecb916",
+  "patchesApplied": 1,
+  "checks": [
+    "unit",
+    "unit",
+    "gpu",
+    "gpu",
+    "gpu",
+    "typecheck",
+    "typecheck",
+    "lint",
+    "lint",
+    "build",
+    "build",
+    "conversion",
+    "parity",
+    "package",
+    "package",
+    "resource",
+    "resource"
+  ]
+}

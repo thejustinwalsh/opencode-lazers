@@ -97,6 +97,44 @@ const STAGES = {
       "packages/runntime/test/zoo/lfm3/",
     ],
   },
+  "omni-published-chat": {
+    baseCommit: "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+    directory: "contributions/runntime/omni-published-chat",
+    allowedPaths: [
+      "README.md",
+      "apps/docs/src/content/docs/zoo/lfm3-chat.mdx",
+      "packages/runntime/src/core/gpu/dispatch/matmul.ts",
+      "packages/runntime/src/core/graph/ops/matmul.ts",
+      "packages/runntime/src/core/index.ts",
+      "packages/runntime/src/core/kernels/matmul/",
+      "packages/runntime/src/core/kernels/quantCommon.ts",
+      "packages/runntime/src/core/nn/layers.ts",
+      "packages/runntime/src/core/nn/loadStateDict.ts",
+      "packages/runntime/src/core/nn/module.ts",
+      "packages/runntime/src/core/weights/gguf.ts",
+      "packages/runntime/src/core/weights/safetensors.ts",
+      "packages/runntime/src/core/weights/sha256.ts",
+      "packages/runntime/src/core/weights/transforms.ts",
+      "packages/runntime/src/zoo/lfm3/gguf.ts",
+      "packages/runntime/src/zoo/lfm3/model.ts",
+      "packages/runntime/src/zoo/models.ts",
+      "packages/runntime/src/zoo/tasks/nlp/lfm3.ts",
+      "packages/runntime/test/core/graph/ops/matmul.test.ts",
+      "packages/runntime/test/core/kernels/matmul/",
+      "packages/runntime/test/core/nn/layers.test.ts",
+      "packages/runntime/test/core/nn/loadStateDict.test.ts",
+      "packages/runntime/test/core/weights/gguf.test.ts",
+      "packages/runntime/test/core/weights/sha256.test.ts",
+      "packages/runntime/test/core/weights/transforms.test.ts",
+      "packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts",
+      "packages/runntime/test/zoo/lfm3/liquid-reference.json",
+      "packages/runntime/test/zoo/lfm3/native-reference.gpu.test.ts",
+      "packages/runntime/test/zoo/lfm3/packed-consumer.mjs",
+      "packages/runntime/test/zoo/lfm3/public.gpu.test.ts",
+      "packages/runntime/test/zoo/lfm3/recovery.gpu.test.ts",
+      "packages/runntime/test/zoo/lfm3/stateDictHooks.test.ts",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
@@ -318,7 +356,10 @@ function verifyEvidence(
   const required: EvidenceRecord["kind"][] =
     stage === "d1-safety-correction"
       ? ["unit", "gpu", "typecheck", "lint"]
-      : stage === "d1-q8" || stage === "lfm3-base-chat" || stage === "lfm3-base-audio"
+      : stage === "d1-q8" ||
+          stage === "lfm3-base-chat" ||
+          stage === "lfm3-base-audio" ||
+          stage === "omni-published-chat"
         ? [
             "unit",
             "gpu",
@@ -335,7 +376,10 @@ function verifyEvidence(
     const expected =
       stage === "d1-safety-correction"
         ? "unit, GPU, typecheck and lint"
-        : stage === "d1-q8" || stage === "lfm3-base-chat" || stage === "lfm3-base-audio"
+        : stage === "d1-q8" ||
+            stage === "lfm3-base-chat" ||
+            stage === "lfm3-base-audio" ||
+            stage === "omni-published-chat"
           ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
           : "unit and GPU"
     throw new Error(`retained checks must include passing ${expected} evidence`)

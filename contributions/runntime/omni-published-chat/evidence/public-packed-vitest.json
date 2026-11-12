@@ -1,0 +1,51 @@
+{
+  "numTotalTestSuites": 1,
+  "numPassedTestSuites": 1,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 1,
+  "numPassedTests": 1,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1794524190168,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "loads the published Q4_K_M GGUF and streams text through a packed public consumer",
+          "status": "passed",
+          "title": "loads the published Q4_K_M GGUF and streams text through a packed public consumer",
+          "duration": 223658.09999996424,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1794524192531,
+      "endTime": 1794524416189.1,
+      "status": "passed",
+      "message": "",
+      "name": "/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-md7kE1/consumer/test/zoo/lfm3/public.gpu.test.ts"
+    }
+  ]
+}

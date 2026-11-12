@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "stage": "omni-published-chat",
+  "base": {
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "commit": "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+    "tree": "eb321ec29ac1a7550c3fd3c26cd813f1cea9bcd1"
+  },
+  "tip": {
+    "commit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+    "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
+  },
+  "patches": [
+    {
+      "commit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+      "parent": "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+      "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916",
+      "path": "patches/0001-omni-published-chat.patch",
+      "sha256": "c51972afe27f4d3bc6e48f98eae4543b60c358b3362526559812d20ca050eb81"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime exec vitest run --project unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "3d1ef8d0090cf3273e90796bc45a96ceb812472e348fd9ebcd9d05a8de0ce0e9"
+    },
+    {
+      "kind": "unit",
+      "command": "bun test scripts/verify-runntime-contribution.test.ts",
+      "exitCode": 0,
+      "path": "evidence/retention-tests.log",
+      "sha256": "e52bf9a21e421a05a1cf13c244cf1d19f2c258d4fedbfda21b50e522f1032d70"
+    },
+    {
+      "kind": "gpu",
+      "command": "pnpm --filter runntime exec vitest run --project gpu --maxWorkers=1 test/core/kernels/matmul/matmulQuantTiled.gpu.test.ts test/core/kernels/matmul/matmulQuantW.gpu.test.ts test/core/nn/layers.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/quant-kernels-gpu.log",
+      "sha256": "4f4544009625a38a49987cf332ecfae7f8147d6a37e5a4dc42dfc10a9e260d58"
+    },
+    {
+      "kind": "gpu",
+      "command": "packed published LFM3 chat consumer on real WebGPU",
+      "exitCode": 0,
+      "path": "evidence/public-packed-vitest.json",
+      "sha256": "12ec425295837e3bb246cb1bf04bbbe6529dcbd33c5c5b0cc43a1cb64c3b6c50"
+    },
+    {
+      "kind": "gpu",
+      "command": "packed LFM3 device-loss and fresh-session recovery on real WebGPU",
+      "exitCode": 0,
+      "path": "evidence/recovery-packed-vitest.json",
+      "sha256": "0b112e8f8b27ed36a1feb8ca32a9c8db195110c50c624307eab5c4c38dd661cd"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm -r run typecheck",
+      "exitCode": 0,
+      "path": "evidence/typecheck.log",
+      "sha256": "d318868863d485d2e56d27a308a51707e9a89df1f93891e266052da2fa7c1899"
+    },
+    {
+      "kind": "typecheck",
+      "command": "bun run verify",
+      "exitCode": 0,
+      "path": "evidence/lazers-verify.log",
+      "sha256": "f19784f7b596251af20579560ebe0d2a409d92abbc1d413a5119e66c467cd7d7"
+    },
+    {
+      "kind": "lint",
+      "command": "eslint . --max-warnings=0",
+      "exitCode": 0,
+      "path": "evidence/lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8"
+    },
+    {
+      "kind": "lint",
+      "command": "prettier --check .",
+      "exitCode": 0,
+      "path": "evidence/format-check.log",
+      "sha256": "1d66faad74f5e8709353f7288592866bd3a9095da1174a916e7aa632949971e2"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/package-build.log",
+      "sha256": "e7175f7d370a24d0bfeea30e2dd5844fe4b8deed5470f345fe8db9db7f1bfd94"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter docs run build",
+      "exitCode": 0,
+      "path": "evidence/docs-build.log",
+      "sha256": "a47b2e8dc95dcb809ee39c1680c582518099644b9b719ba5276dad52f1a4b840"
+    },
+    {
+      "kind": "conversion",
+      "command": "SHA-256 verification of the pinned Liquid GGUF pair and engine",
+      "exitCode": 0,
+      "path": "evidence/source-hashes.log",
+      "sha256": "e10784d4b4f491b9d1ced43ec02c14edbb29a8e23e5fb9e5c8ef582d8c7791ff"
+    },
+    {
+      "kind": "parity",
+      "command": "12-vector native Q4_K_M teacher-forced real-WebGPU comparison against pinned Liquid",
+      "exitCode": 0,
+      "path": "evidence/native-reference.log",
+      "sha256": "e88218a6ecdc37ec83e1a7daa71914aa037939dbbb1cf81f1e52f03ba6d85900"
+    },
+    {
+      "kind": "package",
+      "command": "installed packed public chat consumer and deterministic product answers",
+      "exitCode": 0,
+      "path": "evidence/public-packed-vitest.json",
+      "sha256": "12ec425295837e3bb246cb1bf04bbbe6529dcbd33c5c5b0cc43a1cb64c3b6c50"
+    },
+    {
+      "kind": "package",
+      "command": "installed packed public consumer device-loss recovery",
+      "exitCode": 0,
+      "path": "evidence/recovery-packed-vitest.json",
+      "sha256": "0b112e8f8b27ed36a1feb8ca32a9c8db195110c50c624307eab5c4c38dd661cd"
+    },
+    {
+      "kind": "resource",
+      "command": "packed Q4_K_M public chat load, inference, peak and disposal measurements",
+      "exitCode": 0,
+      "path": "evidence/public-packed.log",
+      "sha256": "97491f462f5ea4cfb6048f53dbce72ce4ab20bd16d233f4761e36a22a772a55c"
+    },
+    {
+      "kind": "resource",
+      "command": "packed device-loss/fresh-session load, inference and residual measurements",
+      "exitCode": 0,
+      "path": "evidence/recovery-packed.log",
+      "sha256": "b2f6a355a655d2675456def3e9ebca67c9d09a327356b5a79bc140d5b3bb0512"
+    }
+  ]
+}
