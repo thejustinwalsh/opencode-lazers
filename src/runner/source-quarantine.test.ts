@@ -138,6 +138,7 @@ test("retained verification binding requires the exact sealed guarded source and
   })
   const planID = crypto.randomUUID()
   const attemptID = crypto.randomUUID()
+  const startedAt = Date.now()
   store.atomic((db) => {
     db.query(
       "INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body) VALUES(?,?,?,1,1,'running','{}')",
@@ -160,7 +161,7 @@ test("retained verification binding requires the exact sealed guarded source and
       workspace,
       "a".repeat(40),
       "a".repeat(40),
-      Date.now(),
+      startedAt,
     )
   })
   const attempt = {
@@ -172,6 +173,7 @@ test("retained verification binding requires the exact sealed guarded source and
     session_id: "worker",
     message_id: "assigned-input",
     workspace,
+    started_at: startedAt,
   }
   const reviewInput = { inputID: "review-input", requestID: "review-request" }
   const now = Date.now()
@@ -218,7 +220,11 @@ test("retained verification binding requires the exact sealed guarded source and
       attempt,
       artifact: attempt.artifact,
     })
-    expect(binding).toEqual({ requestID: "quarantine-request", reviewInput })
+    expect(binding).toEqual({
+      requestID: "quarantine-request",
+      requestedOwner: "owner",
+      reviewInput,
+    })
     expect(
       sourceQuarantineVerificationBindingMatches(store, {
         planID: attempt.plan_id,
@@ -228,6 +234,33 @@ test("retained verification binding requires the exact sealed guarded source and
         expected: binding!,
       }),
     ).toBe(true)
+    const legacyBinding = { requestID: binding!.requestID, reviewInput: binding!.reviewInput }
+    expect(
+      sourceQuarantineVerificationBindingMatches(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+        expected: legacyBinding,
+      }),
+    ).toBe(true)
+    expect(store.updatePlanOwner(planID, "owner", "continued-owner")).toBe(true)
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "continued-owner",
+        attempt,
+        artifact: attempt.artifact,
+      }),
+    ).toEqual(binding)
+    expect(
+      sourceQuarantineVerificationBinding(store, {
+        planID: attempt.plan_id,
+        owner: "owner",
+        attempt,
+        artifact: attempt.artifact,
+      }),
+    ).toBeUndefined()
     expect(
       sourceQuarantineVerificationBinding(store, {
         planID: attempt.plan_id,
@@ -239,11 +272,32 @@ test("retained verification binding requires the exact sealed guarded source and
     expect(
       sourceQuarantineVerificationBinding(store, {
         planID: attempt.plan_id,
-        owner: "owner",
+        owner: "continued-owner",
         attempt: { ...attempt, message_id: "foreign-input" },
         artifact: attempt.artifact,
       }),
     ).toBeUndefined()
+    store.atomic((db) =>
+      db
+        .query(
+          "UPDATE runner_source_quarantines SET requested_owner='continued-owner' WHERE attempt_id=?",
+        )
+        .run(attempt.id),
+    )
+    expect(
+      sourceQuarantineVerificationBindingMatches(store, {
+        planID: attempt.plan_id,
+        owner: "continued-owner",
+        attempt,
+        artifact: attempt.artifact,
+        expected: binding!,
+      }),
+    ).toBe(false)
+    store.atomic((db) =>
+      db
+        .query("UPDATE runner_source_quarantines SET requested_owner='owner' WHERE attempt_id=?")
+        .run(attempt.id),
+    )
     store.atomic((db) =>
       db
         .query("UPDATE runner_source_quarantines SET review_input_json=? WHERE attempt_id=?")
@@ -252,7 +306,7 @@ test("retained verification binding requires the exact sealed guarded source and
     expect(
       sourceQuarantineVerificationBindingMatches(store, {
         planID: attempt.plan_id,
-        owner: "owner",
+        owner: "continued-owner",
         attempt,
         artifact: attempt.artifact,
         expected: binding!,
@@ -266,7 +320,7 @@ test("retained verification binding requires the exact sealed guarded source and
     expect(
       sourceQuarantineVerificationBinding(store, {
         planID: attempt.plan_id,
-        owner: "owner",
+        owner: "continued-owner",
         attempt,
         artifact: attempt.artifact,
       }),
@@ -275,7 +329,7 @@ test("retained verification binding requires the exact sealed guarded source and
     expect(
       sourceQuarantineVerificationBinding(store, {
         planID: attempt.plan_id,
-        owner: "owner",
+        owner: "continued-owner",
         attempt,
         artifact: attempt.artifact,
       }),
