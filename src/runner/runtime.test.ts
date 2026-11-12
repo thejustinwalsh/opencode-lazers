@@ -9938,6 +9938,7 @@ test("worker-location permissions and forms block terminal work and surface acti
   worker.busy = false
   worker.outcome = "succeeded"
   worker.turn = { inputID: attempt.message_id, state: "completed" }
+  worker.pendingInput = false
   worker.pendingPermissions = 1
   worker.pendingForms = 1
 
@@ -9969,6 +9970,257 @@ test("worker-location permissions and forms block terminal work and surface acti
   expect(f.store.plan(planID)?.state).toBe("accepted")
   expect(f.store.attempts(planID)).toHaveLength(1)
 })
+
+test("fresh zero approvals clear an approval-only hold while the same worker remains busy without churn", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.pendingInput = false
+  worker.pendingPermissions = 1
+  worker.pendingForms = 0
+
+  await f.runtime.tick()
+  const blocked = f.store.plan(planID)!
+  expect(blocked.state).toBe("blocked")
+  expect(blocked.reason).toContain("1 pending permission request(s)")
+  const before = f.store.attempts(planID)[0]!
+  const workerMessages = structuredClone(worker.messages)
+  const workerTurn = structuredClone(worker.turn)
+  const workerRoute = structuredClone(worker.model)
+  const workerEvents = f.events.filter((event) => /^(create|prompt|start|stop):/.test(event))
+  const count = (event: string) =>
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            "SELECT COUNT(*) AS count FROM runner_transitions WHERE plan_id=? AND event=?",
+          )
+          .get(planID, event)?.count ?? 0,
+    )
+  const settledBefore = count("WORKER_OBSERVATION_SETTLED")
+
+  worker.pendingPermissions = 0
+  worker.pendingForms = 0
+  await f.runtime.tick()
+
+  const resumed = f.store.plan(planID)!
+  expect(resumed.state).toBe("running")
+  expect(resumed.reason).toBeNull()
+  expect(resumed.version).toBe(blocked.version + 1)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: before.id,
+    state: "running",
+    session_id: before.session_id,
+    message_id: before.message_id,
+    workspace: before.workspace,
+    policy: before.policy,
+    artifact: before.artifact,
+    token_count: before.token_count,
+    tool_count: before.tool_count,
+    cost: before.cost,
+  })
+  expect(worker.id).toBe(attempt.session_id)
+  expect(worker.busy).toBe(true)
+  expect(worker.messages).toEqual(workerMessages)
+  expect(worker.turn).toEqual(workerTurn)
+  expect(worker.model).toEqual(workerRoute)
+  expect(f.events.filter((event) => /^(create|prompt|start|stop):/.test(event))).toEqual(
+    workerEvents,
+  )
+  expect(f.store.effects(planID).some((effect) => effect.kind.startsWith("verify:"))).toBe(false)
+  expect(count("WORKER_OBSERVATION_SETTLED")).toBe(settledBefore + 1)
+  expect(count("WORKER_APPROVAL_WAIT")).toBe(1)
+  const notificationsAfterClear = f.notifications.length
+  const versionAfterClear = resumed.version
+
+  await f.runtime.tick()
+
+  expect(f.store.plan(planID)?.version).toBe(versionAfterClear)
+  expect(count("WORKER_OBSERVATION_SETTLED")).toBe(settledBefore + 1)
+  expect(count("WORKER_APPROVAL_WAIT")).toBe(1)
+  expect(f.notifications).toHaveLength(notificationsAfterClear)
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: before.id,
+    session_id: before.session_id,
+    message_id: before.message_id,
+    policy: before.policy,
+    token_count: before.token_count,
+    tool_count: before.tool_count,
+    cost: before.cost,
+    artifact: before.artifact,
+  })
+})
+
+test.each([
+  "missing-permissions",
+  "missing-forms",
+  "unstable",
+  "foreign-worker",
+  "changed-route",
+  "unrelated-hold",
+] as const)("fresh zero approvals do not clear %s", async (condition) => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.pendingInput = false
+  worker.pendingPermissions = 1
+  worker.pendingForms = 0
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  const blocked = f.store.plan(planID)!
+
+  worker.pendingPermissions = 0
+  worker.pendingForms = 0
+  if (condition === "missing-permissions") delete worker.pendingPermissions
+  if (condition === "missing-forms") delete worker.pendingForms
+  if (condition === "unstable") worker.observationUnstable = true
+  if (condition === "foreign-worker")
+    worker.metadata = { ...worker.metadata, lazersAttemptID: "foreign-attempt" }
+  if (condition === "changed-route") worker.model = { ...worker.model!, id: "foreign-model" }
+  if (condition === "unrelated-hold")
+    f.store.atomic((db) =>
+      db
+        .query("UPDATE runner_plans SET reason='Review found a concrete defect' WHERE id=?")
+        .run(planID),
+    )
+
+  await f.runtime.tick()
+
+  const current = f.store.plan(planID)!
+  expect(current.state).toBe("blocked")
+  expect(current.version).toBe(blocked.version)
+  if (condition === "unrelated-hold") expect(current.reason).toBe("Review found a concrete defect")
+  else expect(current.reason).toBe(blocked.reason)
+  expect(f.store.latestTransition(planID, null, "WORKER_OBSERVATION_SETTLED")).toBeUndefined()
+})
+
+test.each(["reconcile", "cancel", "reassign"] as const)(
+  "deferred pre-%s approval observations cannot override concurrent control",
+  async (action) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await f.runtime.tick()
+    const planID = f.receipt.planID
+    const attempt = f.store.attempts(planID)[0]!
+    const worker = f.sessions.get(attempt.session_id)!
+    worker.pendingInput = false
+    worker.pendingPermissions = 0
+    worker.pendingForms = 0
+
+    if (action === "reconcile") {
+      worker.pendingPermissions = 1
+      await f.runtime.tick()
+      expect(f.store.plan(planID)?.state).toBe("blocked")
+      worker.pendingPermissions = 0
+    }
+
+    const staleObservation = {
+      ...structuredClone(worker),
+      pendingPermissions: 1,
+      pendingForms: 0,
+    }
+    let release!: () => void
+    let entered!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const readStarted = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const originalSession = f.host.session
+    let deferred = true
+    f.host.session = async (sessionID, options) => {
+      if (sessionID === attempt.session_id && deferred) {
+        deferred = false
+        entered()
+        await barrier
+        return structuredClone(staleObservation)
+      }
+      return originalSession(sessionID, options)
+    }
+
+    const priorBlockedEvents = f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            "SELECT COUNT(*) AS count FROM runner_transitions WHERE plan_id=? AND event=?",
+          )
+          .get(planID, "BLOCKED")?.count ?? 0,
+    )
+    const planVersion = f.store.plan(planID)!.version
+    const tick = f.runtime.tick()
+    await readStarted
+    const owner2 = structuredClone(f.sessions.get("owner")!)
+    owner2.id = "owner-2"
+    f.sessions.set(owner2.id, owner2)
+
+    let result: { status: string; version: number }
+    try {
+      result = (await f.runtime.command(
+        {
+          requestID: `approval-race-${action}`,
+          planID,
+          expectedVersion: planVersion,
+          action,
+          ...(action === "reassign" ? { targetSessionID: owner2.id } : {}),
+          ...(action === "cancel" ? { reason: "Cancel during worker approval observation" } : {}),
+        },
+        "owner",
+      )) as { status: string; version: number }
+    } finally {
+      release()
+    }
+    await tick
+
+    const current = f.store.plan(planID)!
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string, string]>(
+              "SELECT COUNT(*) AS count FROM runner_transitions WHERE plan_id=? AND event=?",
+            )
+            .get(planID, "BLOCKED")?.count ?? 0,
+      ),
+    ).toBe(priorBlockedEvents)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string, string]>(
+              "SELECT COUNT(*) AS count FROM runner_transitions WHERE plan_id=? AND event=?",
+            )
+            .get(planID, "WORKER_APPROVAL_WAIT")?.count ?? 0,
+      ),
+    ).toBe(action === "reconcile" ? 1 : 0)
+
+    if (action === "reconcile") {
+      expect(result.status).toBe("reconciling")
+      expect(current).toMatchObject({ state: "running", reason: null, version: result.version })
+      worker.pendingPermissions = 1
+      await f.runtime.tick()
+      expect(f.store.plan(planID)).toMatchObject({
+        state: "blocked",
+        reason: expect.stringContaining("1 pending permission request(s)"),
+        version: result.version + 1,
+      })
+    } else if (action === "reassign") {
+      expect(result.status).toBe("reassigned")
+      expect(current).toMatchObject({ state: "running", owner: owner2.id, version: result.version })
+    } else {
+      expect(result.status).toBe("cancelling")
+      expect(["cancelling", "cancelled"]).toContain(current.state)
+      expect(current.state).not.toBe("blocked")
+    }
+  },
+)
 
 test("a durably admitted same-attempt handoff reminder can finish with fresh matching evidence", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
