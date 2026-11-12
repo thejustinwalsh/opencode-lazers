@@ -31,11 +31,18 @@ interface Fixture {
   patchPaths: string[]
 }
 
-function fixture(options: { outsideScope?: boolean } = {}): Fixture {
+function fixture(
+  options: {
+    outsideScope?: boolean
+    sourcePath?: string
+    stage?: "d1-reference" | "d1-safety-correction"
+  } = {},
+): Fixture {
   const root = mkdtempSync(join(tmpdir(), "runntime-contribution-test-"))
   temporaryDirectories.push(root)
   const repository = join(root, "runntime")
-  const stage = join(root, "contributions", "d1-reference")
+  const contributionStage = options.stage ?? "d1-reference"
+  const stage = join(root, "contributions", contributionStage)
   mkdirSync(repository)
   mkdirSync(join(stage, "patches"), { recursive: true })
   mkdirSync(join(stage, "evidence"), { recursive: true })
@@ -43,7 +50,9 @@ function fixture(options: { outsideScope?: boolean } = {}): Fixture {
   command(repository, "config", "user.name", "Verifier Test")
   command(repository, "config", "user.email", "verifier@example.invalid")
 
-  const sourcePath = options.outsideScope ? "README.md" : "packages/runntime/src/zoo/d1/model.ts"
+  const sourcePath = options.outsideScope
+    ? "README.md"
+    : (options.sourcePath ?? "packages/runntime/src/zoo/d1/model.ts")
   const source = join(repository, sourcePath)
   mkdirSync(join(source, ".."), { recursive: true })
   writeFileSync(source, "base\n")
@@ -104,7 +113,7 @@ function fixture(options: { outsideScope?: boolean } = {}): Fixture {
 
   const manifest: Record<string, unknown> = {
     schemaVersion: 1,
-    stage: "d1-reference",
+    stage: contributionStage,
     base: { repository: "local test repository", commit: baseCommit, tree: baseTree },
     tip: { commit: secondCommit, tree: command(repository, "rev-parse", "HEAD^{tree}") },
     patches,
@@ -151,6 +160,36 @@ describe("ruNNtime contribution reconstruction", () => {
         stageDirectory: test.stage,
         repositoryDirectory: test.repository,
         expectedBaseCommit: test.baseCommit,
+      }),
+    ).toThrow("escapes write scope")
+  })
+
+  it("uses the safety-correction base and permits its scoped core ownership fix", () => {
+    const test = fixture({
+      stage: "d1-safety-correction",
+      sourcePath: "packages/runntime/src/core/nn/layers.ts",
+    })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: test.stage,
+        repositoryDirectory: test.repository,
+      }),
+    ).toThrow("base commit mismatch: expected 735fbd94195a8c2a7c40a12aec6b86fa34ebd48c")
+
+    const result = verifyContribution({
+      stageDirectory: test.stage,
+      repositoryDirectory: test.repository,
+      expectedBaseCommit: test.baseCommit,
+    })
+    expect(result.stage).toBe("d1-safety-correction")
+    expect(result.patchesApplied).toBe(2)
+
+    const escaped = fixture({ stage: "d1-safety-correction", outsideScope: true })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: escaped.stage,
+        repositoryDirectory: escaped.repository,
+        expectedBaseCommit: escaped.baseCommit,
       }),
     ).toThrow("escapes write scope")
   })

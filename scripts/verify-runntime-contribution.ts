@@ -6,15 +6,32 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const BASE_COMMIT = "68f3a12506bada2c9ac6cb3629426f3e06a56349"
-const ALLOWED_PATHS = [
-  "packages/runntime/src/zoo/d1/",
-  "packages/runntime/src/core/gpu/dispatch/shape.ts",
-  "packages/runntime/src/core/gpu/dispatch/spec.ts",
-  "packages/runntime/src/core/gpu/eval.ts",
-  "packages/runntime/test/",
-  "packages/runntime/playground/d1/",
-]
+const STAGES = {
+  "d1-reference": {
+    baseCommit: "68f3a12506bada2c9ac6cb3629426f3e06a56349",
+    directory: "contributions/runntime/d1-reference",
+    allowedPaths: [
+      "packages/runntime/src/zoo/d1/",
+      "packages/runntime/src/core/gpu/dispatch/shape.ts",
+      "packages/runntime/src/core/gpu/dispatch/spec.ts",
+      "packages/runntime/src/core/gpu/eval.ts",
+      "packages/runntime/test/",
+      "packages/runntime/playground/d1/",
+    ],
+  },
+  "d1-safety-correction": {
+    baseCommit: "735fbd94195a8c2a7c40a12aec6b86fa34ebd48c",
+    directory: "contributions/runntime/d1-safety-correction",
+    allowedPaths: [
+      "packages/runntime/src/zoo/d1/",
+      "packages/runntime/src/core/gpu/",
+      "packages/runntime/src/core/nn/layers.ts",
+      "packages/runntime/test/",
+      "packages/runntime/playground/d1/",
+    ],
+  },
+} as const
+type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
 const DIGEST = /^[a-f0-9]{64}$/
 
@@ -36,7 +53,7 @@ interface EvidenceRecord {
 
 interface Manifest {
   schemaVersion: 1
-  stage: "d1-reference"
+  stage: ContributionStage
   base: { repository: string; commit: string; tree: string }
   tip: { commit: string; tree: string }
   patches: PatchRecord[]
@@ -61,6 +78,10 @@ export interface VerifyResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isContributionStage(value: unknown): value is ContributionStage {
+  return typeof value === "string" && Object.hasOwn(STAGES, value)
 }
 
 function record(value: unknown, where: string): Record<string, unknown> {
@@ -116,8 +137,8 @@ function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex")
 }
 
-function allowedPath(path: string): boolean {
-  return ALLOWED_PATHS.some((prefix) =>
+function allowedPath(path: string, stage: ContributionStage): boolean {
+  return STAGES[stage].allowedPaths.some((prefix) =>
     prefix.endsWith("/") ? path.startsWith(prefix) : path === prefix,
   )
 }
@@ -135,7 +156,10 @@ function readManifest(stageDirectory: string): Manifest {
   const parsed: unknown = JSON.parse(readFileSync(join(stageDirectory, "manifest.json"), "utf8"))
   const root = record(parsed, "manifest")
   if (root.schemaVersion !== 1) throw new Error("manifest.schemaVersion must be 1")
-  if (root.stage !== "d1-reference") throw new Error("manifest.stage must be d1-reference")
+  if (!isContributionStage(root.stage)) {
+    throw new Error(`manifest.stage must be one of ${Object.keys(STAGES).join(", ")}`)
+  }
+  const stage = root.stage
 
   const base = record(root.base, "manifest.base")
   const tip = record(root.tip, "manifest.tip")
@@ -172,7 +196,7 @@ function readManifest(stageDirectory: string): Manifest {
 
   return {
     schemaVersion: 1,
-    stage: "d1-reference",
+    stage,
     base: {
       repository: string(base.repository, "manifest.base.repository"),
       commit: hash(base.commit, "manifest.base.commit"),
@@ -210,7 +234,7 @@ export function verifyContribution(options: VerifyOptions): VerifyResult {
   const stageDirectory = resolve(options.stageDirectory)
   const repository = resolve(options.repositoryDirectory)
   const manifest = readManifest(stageDirectory)
-  const expectedBase = options.expectedBaseCommit ?? BASE_COMMIT
+  const expectedBase = options.expectedBaseCommit ?? STAGES[manifest.stage].baseCommit
   if (manifest.base.commit !== expectedBase) {
     throw new Error(`base commit mismatch: expected ${expectedBase}, got ${manifest.base.commit}`)
   }
@@ -263,7 +287,7 @@ export function verifyContribution(options: VerifyOptions): VerifyResult {
       if (header !== patch.commit)
         throw new Error(`patch ${index + 1} does not identify its recorded commit`)
       for (const touched of patchPaths(text)) {
-        if (!allowedPath(touched))
+        if (!allowedPath(touched, manifest.stage))
           throw new Error(`patch ${index + 1} escapes write scope: ${touched}`)
       }
       git(reconstruction, "apply", "--index", "--binary", path)
@@ -293,12 +317,15 @@ export function verifyContribution(options: VerifyOptions): VerifyResult {
 
 function main(args: string[]): void {
   const stageIndex = args.indexOf("--stage")
-  if (stageIndex < 0 || args[stageIndex + 1] !== "d1-reference") {
-    throw new Error("usage: bun scripts/verify-runntime-contribution.ts --stage d1-reference")
+  const stage = stageIndex < 0 ? undefined : args[stageIndex + 1]
+  if (!isContributionStage(stage)) {
+    throw new Error(
+      `usage: bun scripts/verify-runntime-contribution.ts --stage ${Object.keys(STAGES).join(" | ")}`,
+    )
   }
   const root = dirname(dirname(fileURLToPath(import.meta.url)))
   const result = verifyContribution({
-    stageDirectory: join(root, "design/reviews/runntime/d1-reference"),
+    stageDirectory: join(root, STAGES[stage].directory),
     repositoryDirectory: join(root, "..", "runntime"),
   })
   console.log(JSON.stringify(result, null, 2))
