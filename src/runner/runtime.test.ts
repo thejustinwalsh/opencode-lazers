@@ -955,6 +955,38 @@ test("native location activation restores pending and sealed quarantine after re
   }
 })
 
+test("reconciliation sends a quarantined verifying attempt to retained verification", async () => {
+  const f = await retainedSourceFixture()
+  f.install()
+  attachNativeQuarantineHost(f)
+  await f.runtime.command(f.command(), "owner")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
+  const planID = f.receipt.planID
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_effects SET state='completed' WHERE id=?").run(f.effectID)
+    db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?").run(planID)
+  })
+  await f.runtime.tick()
+  expect(f.store.plan(planID)).toMatchObject({
+    state: "blocked",
+    reason: expect.stringContaining("verify-retained"),
+  })
+  const version = f.store.plan(planID)!.version
+  expect(
+    await f.runtime.command(
+      {
+        planID,
+        expectedVersion: version,
+        requestID: "reconcile-quarantined-verification",
+        action: "reconcile",
+      },
+      "owner",
+    ),
+  ).toMatchObject({ status: "blocked", version })
+  expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([f.retained.id])
+})
+
 test("failed or mismatched native activation retains sealed resources and recovers only a current exact guard", async () => {
   const f = await retainedSourceFixture()
   const guards = [f.install()]
@@ -2324,18 +2356,18 @@ test("scope amendment requires this plan's unfinished task and explicit additive
   expect(f.store.plan(planID)!.version).toBe(1)
 })
 
-test("Architect run wakes the scheduler before periodic reconciliation", async () => {
+test("Architect run and reconcile wake the scheduler before periodic reconciliation", async () => {
   const f = fixture({ delayed: true })
-  const dispatched = Promise.withResolvers<void>()
+  let drained = Promise.withResolvers<void>()
   const registration = sharedScheduler.register(
     schedulerProjectKey(f.repository.path, f.root, "project"),
     {
       intervalMs: 300_000,
       run: async () => {
         await f.runtime.tick()
-        dispatched.resolve()
+        drained.resolve()
       },
-      onError: (error) => dispatched.reject(error),
+      onError: (error) => drained.reject(error),
     },
     300_000,
   )
@@ -2357,10 +2389,25 @@ test("Architect run wakes the scheduler before periodic reconciliation", async (
     }
     const receipt = await tool.execute(command)
     expect(await tool.execute(command)).toEqual(receipt)
-    await dispatched.promise
+    await drained.promise
     expect(wakes).toBe(1)
-    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    const attempts = f.store.attempts(f.receipt.planID)
+    expect(attempts).toHaveLength(1)
     expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+    f.completeWorker(attempts[0]!.session_id)
+    drained = Promise.withResolvers<void>()
+    await tool.execute({
+      ...command,
+      requestID: "architect-reconcile",
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "reconcile",
+    })
+    await drained.promise
+    expect(wakes).toBe(2)
+    expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+      id: attempts[0]!.id,
+      state: "verifying",
+    })
   } finally {
     await registration.dispose()
     await runtime.stop()
@@ -4598,37 +4645,90 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
 })
 
-test("authorized formatting is committed before the exact candidate is verified", async () => {
+test.each([false, true])(
+  "authorized formatting is committed before verification (shared=%s)",
+  async (shared) => {
+    const f = fixture({
+      shared,
+      taskFiles: [{ name: "a", path: "src/result.ts" }],
+      checkCommand: "bun fmt --check src/result.ts",
+      combinedCheckCommand: "test -f src/result.ts",
+    })
+    await runPlan(f)
+    await drive(f.runtime, 18)
+    const plan = f.store.plan(f.receipt.planID)!
+    const attempt = f.store.attempts(plan.id)[0]!
+    expect(plan.state).toBe("accepted")
+    expect(f.store.attempts(plan.id)).toHaveLength(1)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+    const committed = spawnSync("git", ["show", `${attempt.artifact}:src/result.ts`], {
+      cwd: f.root,
+      encoding: "utf8",
+    }).stdout
+    expect(committed).toBe(readFileSync(join(attempt.workspace, "src/result.ts"), "utf8"))
+    expect(committed).not.toBe("a")
+    expect(attempt.artifact).toBeTruthy()
+    const preparation = f.store.effects(plan.id).find((effect) => effect.kind === "mechanical-fix")!
+    expect(preparation.state).toBe("completed")
+    const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: CheckReceipt }).check
+    expect(preparedReceipt.preparation?.inputFingerprint).not.toBe(
+      preparedReceipt.preparation?.resultingFingerprint,
+    )
+    const verified = attemptCheck(f, f.tasks[0]!.id, attempt.id)
+    expect(verified.artifact).toBe(attempt.artifact!)
+    expect(verified.inputIdentity).toBe(attempt.artifact!)
+    expect(verified.exitCode).toBe(0)
+  },
+)
+
+test("a committed shared-checkout correction gets fresh mechanical preparation", async () => {
   const f = fixture({
+    shared: true,
+    human: true,
     taskFiles: [{ name: "a", path: "src/result.ts" }],
     checkCommand: "bun fmt --check src/result.ts",
-    combinedCheckCommand: "test -f src/result.ts",
   })
   await runPlan(f)
-  await drive(f.runtime, 18)
-  const plan = f.store.plan(f.receipt.planID)!
-  const attempt = f.store.attempts(plan.id)[0]!
-  expect(plan.state).toBe("accepted")
-  expect(f.store.attempts(plan.id)).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  const committed = spawnSync("git", ["show", `${attempt.artifact}:src/result.ts`], {
-    cwd: f.root,
-    encoding: "utf8",
-  }).stdout
-  expect(committed).toBe(readFileSync(join(attempt.workspace, "src/result.ts"), "utf8"))
-  expect(committed).not.toBe("a")
-  expect(attempt.artifact).toBeTruthy()
-  const preparation = f.store.effects(plan.id).find((effect) => effect.kind === "mechanical-fix")!
-  expect(preparation.state).toBe("completed")
-  const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: CheckReceipt }).check
-  expect(preparedReceipt.preparation?.inputFingerprint).not.toBe(
-    preparedReceipt.preparation?.resultingFingerprint,
+  await drive(f.runtime, 12)
+  const planID = f.receipt.planID
+  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing")
+  const attemptID = f.store.attempts(planID)[0]!.id
+  writeFileSync(join(f.root, "src/result.ts"), "export const correction=1\n")
+  git(f.root, ["add", "src/result.ts"])
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Correct the retained candidate",
+  ])
+  await f.runtime.command(
+    {
+      requestID: "reconcile-correction",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
   )
-  const verified = attemptCheck(f, f.tasks[0]!.id, attempt.id)
-  expect(verified.artifact).toBe(attempt.artifact!)
-  expect(verified.inputIdentity).toBe(attempt.artifact!)
-  expect(verified.exitCode).toBe(0)
-})
+  await f.runtime.tick()
+  const activities = verificationActivitiesForDatabase(f.repository.path)
+  expect(activities).toHaveLength(1)
+  await activities[0]!.settled
+  await f.runtime.tick()
+  expect(
+    f.store.effects(planID).filter((effect) => effect.kind.startsWith("verify:")),
+  ).toHaveLength(2)
+  await drive(f.runtime, 12)
+  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing")
+  expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([attemptID])
+  expect(readFileSync(join(f.root, "src/result.ts"), "utf8")).toContain("correction = 1")
+  const effects = f.store.effects(planID).filter((effect) => effect.kind === "mechanical-fix")
+  expect(effects.map((effect) => effect.state)).toEqual(["completed", "completed"])
+  expect(new Set(effects.map((effect) => JSON.parse(effect.payload).receiptPath)).size).toBe(2)
+}, 15_000)
 
 test("out-of-scope candidate changes are not mechanically modified", async () => {
   const f = fixture({

@@ -5644,6 +5644,10 @@ export class TaskRuntime {
       }
       if (command.action === "reconcile") {
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+        if (!reviewInput) {
+          const quarantined = this.quarantinedVerification(plan)
+          if (quarantined) return quarantined
+        }
         let existingReviewInput = false
         if (reviewInput) {
           const { binding, evidence } = reviewInput
@@ -5849,7 +5853,11 @@ export class TaskRuntime {
       })
       return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
     })
-    if (command.action === "run" && result.status === "running") this.wakeScheduler?.()
+    if (
+      (command.action === "run" && result.status === "running") ||
+      (command.action === "reconcile" && result.status === "reconciling")
+    )
+      this.wakeScheduler?.()
     if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
       await this.finalizeRetainedVerificationCancellation(command.retainedVerificationID)
     if (
@@ -10420,10 +10428,30 @@ export class TaskRuntime {
     })
   }
 
+  private quarantinedVerification(plan: PlanRow) {
+    const attempt = this.store
+      .attempts(plan.id)
+      .find(
+        (candidate) =>
+          candidate.state === "verifying" &&
+          sourceQuarantine(this.store, candidate.id)?.phase === "sealed",
+      )
+    if (!attempt) return
+    return this.hold(
+      plan,
+      "The verifying worker's checkout is quarantined. Run verify-retained on its candidate in an isolated checkout.",
+      ["verify-retained", "audit", "cancel"],
+    )
+  }
+
   private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
     // Quarantined source is retained for isolated verification, not ordinary
     // worker execution or mechanical edits in its original checkout.
-    if (sourceQuarantine(this.store, attempt.id)) return
+    if (sourceQuarantine(this.store, attempt.id)) {
+      if (plan.state === "running" && attempt.state === "verifying")
+        this.quarantinedVerification(plan)
+      return
+    }
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
       return
@@ -10670,7 +10698,7 @@ export class TaskRuntime {
     attempt: AttemptRow,
     proposal: TaskProposal,
     fence: number,
-  ): "ready" | "pending" | "held" {
+  ): "ready" | "prepared" | "pending" | "held" {
     if (!needsMechanicalQualityPreparation(proposal.verification.map((check) => check.command)))
       return "ready"
     const scope = this.store.effectiveWriteScope(attempt.task_id)
@@ -10710,13 +10738,6 @@ export class TaskRuntime {
       if (lintExtensions.has(extension)) lintPaths.push(path)
     }
     if (!formatPaths.length && !lintPaths.length) return "ready"
-    if (attempt.workspace === this.directory) {
-      this.hold(
-        plan,
-        "Mechanical formatting is required for a shared-checkout candidate; preserve the original attempt and authorize a candidate repair before changing the shared checkout",
-      )
-      return "held"
-    }
     if (!this.preparationAllowed(attempt)) {
       this.hold(
         plan,
@@ -10739,6 +10760,8 @@ export class TaskRuntime {
       timeoutMs: Math.max(...proposal.verification.map((entry) => entry.timeoutMs)),
     }
     const inputFingerprint = workingTreeIdentity(attempt.workspace, attempt.base_commit)
+    const shared = attempt.workspace === this.directory
+    const sharedDirty = shared && changedPaths(attempt.workspace).length > 0
     const environmentIdentity = verificationEnvironmentIdentity()
     const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
     const payload = {
@@ -10756,14 +10779,33 @@ export class TaskRuntime {
       ...(repairID ? { repairID } : {}),
       controlEpoch: this.store.planControlEpoch(plan.id),
       planVersion: plan.version,
-      receiptPath: join(this.dataDirectory, "receipts", attempt.id, "mechanical-preparation.json"),
+      receiptPath: join(
+        this.dataDirectory,
+        "receipts",
+        attempt.id,
+        `mechanical-preparation-${inputFingerprint}.json`,
+      ),
     }
     const existing = this.store.effects(plan.id).findLast((effect) => {
       if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
       const recorded = JSON.parse(effect.payload)
-      return (
-        recorded.messageID === attempt.message_id && (recorded.repairID ?? undefined) === repairID
+      if (
+        recorded.messageID !== attempt.message_id ||
+        (recorded.repairID ?? undefined) !== repairID
       )
+        return false
+      // A clean shared checkout can contain a newly committed correction.
+      // Preserve old receipts and prepare the new candidate independently.
+      if (shared && !sharedDirty && effect.state === "completed") {
+        const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }).check
+        if (
+          receipt?.preparation &&
+          recorded.inputFingerprint !== inputFingerprint &&
+          receipt.preparation.resultingFingerprint !== inputFingerprint
+        )
+          return false
+      }
+      return true
     })
     if (existing) {
       let recorded: typeof payload
@@ -10831,7 +10873,14 @@ export class TaskRuntime {
         )
         return "held"
       }
-      return "ready"
+      return "prepared"
+    }
+    if (sharedDirty) {
+      this.hold(
+        plan,
+        "Commit task edits before verification; shared checkout has uncommitted changes",
+      )
+      return "held"
     }
     const effect = this.effect(
       plan.id,
@@ -10899,7 +10948,7 @@ export class TaskRuntime {
     }
     if (!verificationCurrent()) return
     const preparation = this.prepareVerificationCandidate(plan, attempt, proposal, fence)
-    if (preparation !== "ready") return
+    if (preparation === "pending" || preparation === "held") return
     let artifact: Awaited<ReturnType<typeof commitArtifact>>
     try {
       const head = git(attempt.workspace, ["rev-parse", "HEAD"])
@@ -10920,7 +10969,8 @@ export class TaskRuntime {
           (payload.repairID ?? undefined) === repairID
         )
       })
-      const retainFixes = checkedCandidate && this.preparationAllowed(attempt)
+      const retainFixes =
+        (preparation === "prepared" || checkedCandidate) && this.preparationAllowed(attempt)
       artifact = await commitArtifact(
         attempt.workspace,
         attempt.base_commit,
@@ -16617,6 +16667,7 @@ export class TaskRuntime {
               verificationActivityKey(this.store.repository.path, effect.id),
               fingerprint(activityIdentity),
             )
+            this.tickRequested = true
             return
           }
         }
@@ -16689,7 +16740,7 @@ export class TaskRuntime {
               return
             }
             this.receipt(effect, { check, reconciled: true }, fence)
-            if (effect.kind.startsWith("verify:")) this.tickRequested = true
+            this.tickRequested = true
             forgetVerificationActivity(
               verificationActivityKey(this.store.repository.path, effect.id),
               fingerprint(activityIdentity),
