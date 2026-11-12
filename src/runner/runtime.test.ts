@@ -2324,18 +2324,18 @@ test("scope amendment requires this plan's unfinished task and explicit additive
   expect(f.store.plan(planID)!.version).toBe(1)
 })
 
-test("Architect run wakes the scheduler before periodic reconciliation", async () => {
+test("Architect run and reconcile wake the scheduler before periodic reconciliation", async () => {
   const f = fixture({ delayed: true })
-  const dispatched = Promise.withResolvers<void>()
+  let drained = Promise.withResolvers<void>()
   const registration = sharedScheduler.register(
     schedulerProjectKey(f.repository.path, f.root, "project"),
     {
       intervalMs: 300_000,
       run: async () => {
         await f.runtime.tick()
-        dispatched.resolve()
+        drained.resolve()
       },
-      onError: (error) => dispatched.reject(error),
+      onError: (error) => drained.reject(error),
     },
     300_000,
   )
@@ -2357,10 +2357,25 @@ test("Architect run wakes the scheduler before periodic reconciliation", async (
     }
     const receipt = await tool.execute(command)
     expect(await tool.execute(command)).toEqual(receipt)
-    await dispatched.promise
+    await drained.promise
     expect(wakes).toBe(1)
-    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    const attempts = f.store.attempts(f.receipt.planID)
+    expect(attempts).toHaveLength(1)
     expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+    f.completeWorker(attempts[0]!.session_id)
+    drained = Promise.withResolvers<void>()
+    await tool.execute({
+      ...command,
+      requestID: "architect-reconcile",
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "reconcile",
+    })
+    await drained.promise
+    expect(wakes).toBe(2)
+    expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+      id: attempts[0]!.id,
+      state: "verifying",
+    })
   } finally {
     await registration.dispose()
     await runtime.stop()

@@ -5808,7 +5808,11 @@ export class TaskRuntime {
       })
       return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
     })
-    if (command.action === "run" && result.status === "running") this.wakeScheduler?.()
+    if (
+      (command.action === "run" && result.status === "running") ||
+      (command.action === "reconcile" && result.status === "reconciling")
+    )
+      this.wakeScheduler?.()
     if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
       await this.finalizeRetainedVerificationCancellation(command.retainedVerificationID)
     if (
