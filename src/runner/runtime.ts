@@ -5814,7 +5814,8 @@ export class TaskRuntime {
     })
     if (
       (command.action === "run" && result.status === "running") ||
-      (command.action === "reconcile" && result.status === "reconciling")
+      (command.action === "reconcile" && result.status === "reconciling") ||
+      (command.action === "retained-repair" && result.status === "retained-repair-requested")
     )
       this.wakeScheduler?.()
     if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
