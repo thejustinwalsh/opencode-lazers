@@ -1,0 +1,79 @@
+[
+  {
+    "stage": "d1-reference",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-reference/prompt-unit.log",
+    "expectedSha256": "0febae4f49c5dac9a35d3fe036dbe685994c47949c3f181d33cc03e0be3d3680",
+    "actualSha256": "0febae4f49c5dac9a35d3fe036dbe685994c47949c3f181d33cc03e0be3d3680",
+    "matches": true
+  },
+  {
+    "stage": "d1-reference",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-reference/executor-gpu.log",
+    "expectedSha256": "1ed7909d7229c771fe37e54c09b89993e647ba8c198e55159d48ceb4b6f950ab",
+    "actualSha256": "1ed7909d7229c771fe37e54c09b89993e647ba8c198e55159d48ceb4b6f950ab",
+    "matches": true
+  },
+  {
+    "stage": "d1-reference",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-reference/baseline-webgpu.log",
+    "expectedSha256": "419100688a99e0a03602691fd1554a3f4a0cf0ffeaf8ed2f636ab55da9a5943b",
+    "actualSha256": "419100688a99e0a03602691fd1554a3f4a0cf0ffeaf8ed2f636ab55da9a5943b",
+    "matches": true
+  },
+  {
+    "stage": "d1-reference",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-reference/repaired-webgpu.log",
+    "expectedSha256": "7291fae3e8971b5ab020b51943e9c37f633efae9f53494ca9889a93fe11debf7",
+    "actualSha256": "7291fae3e8971b5ab020b51943e9c37f633efae9f53494ca9889a93fe11debf7",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/unit.log",
+    "expectedSha256": "910df93d2a85e431dc3d1f6b3ea0611780a47f574b28382d7e4892832e05256e",
+    "actualSha256": "910df93d2a85e431dc3d1f6b3ea0611780a47f574b28382d7e4892832e05256e",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/executor-gpu.log",
+    "expectedSha256": "93efaff752dd81bb17af29b611454286f5523b7d7311b9dece08f96e6694661a",
+    "actualSha256": "93efaff752dd81bb17af29b611454286f5523b7d7311b9dece08f96e6694661a",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/d1-correction-webgpu.log",
+    "expectedSha256": "a59aa4f34e439ada1a5d707a5a6ab343b8200fae3f92f4e3571bea0f757f9fcf",
+    "actualSha256": "a59aa4f34e439ada1a5d707a5a6ab343b8200fae3f92f4e3571bea0f757f9fcf",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/d1-correction-vitest.json",
+    "expectedSha256": "db52a69a9a4f748c424590863033bbb40c42b37915450b9aec82e914f11f7e39",
+    "actualSha256": "db52a69a9a4f748c424590863033bbb40c42b37915450b9aec82e914f11f7e39",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/typecheck.log",
+    "expectedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+    "actualSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/lint.log",
+    "expectedSha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8",
+    "actualSha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8",
+    "matches": true
+  },
+  {
+    "stage": "d1-safety-correction",
+    "path": "/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/build.log",
+    "expectedSha256": "2a29f13213b9291074b5aadbabff0954bd47f93298c62d3067419c383658d794",
+    "actualSha256": "2a29f13213b9291074b5aadbabff0954bd47f93298c62d3067419c383658d794",
+    "matches": true
+  }
+]

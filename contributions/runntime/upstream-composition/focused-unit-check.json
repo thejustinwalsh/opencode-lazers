@@ -1,0 +1,24 @@
+{
+  "command": [
+    "pnpm",
+    "--filter",
+    "runntime",
+    "exec",
+    "vitest",
+    "run",
+    "--project",
+    "unit",
+    "test/core/nn/layers.test.ts",
+    "test/core/nn/loadStateDict.test.ts",
+    "test/core/nn/module.test.ts",
+    "test/core/graph/ops/shape.test.ts",
+    "test/core/weights/quantPack.test.ts",
+    "test/core/weights/safetensors.test.ts",
+    "test/core/weights/transforms.test.ts",
+    "test/zoo/d1/prompt.test.ts",
+    "--reporter=verbose"
+  ],
+  "exitCode": 0,
+  "startedAt": "2026-11-12T02:14:22.154967+00:00",
+  "finishedAt": "2026-11-12T02:14:23.192789+00:00"
+}

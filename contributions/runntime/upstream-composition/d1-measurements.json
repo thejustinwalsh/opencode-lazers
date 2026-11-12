@@ -1,0 +1,171 @@
+{
+  "mode": "correction",
+  "correctionBase": "735fbd94195a8c2a7c40a12aec6b86fa34ebd48c",
+  "model": "LiquidAI/d1-omni-600M",
+  "revision": "02b55d7076f15129e59ab3f94783f32c4b088674",
+  "elapsedMs": 228504.4,
+  "loadMs": 108222.4,
+  "loadedWeightBytes": 1899868164,
+  "progressDoneBytes": 1899868164,
+  "progressTotalBytes": 1899868164,
+  "decisions": [
+    {
+      "id": "refund-positive",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 1050.6
+    },
+    {
+      "id": "refund-negative",
+      "inputTokens": 51,
+      "answer": "no",
+      "probabilities": [0.005074966749142484, 0.9949250332508575],
+      "maxAbsError": 1.9795630468166792e-7,
+      "latencyMs": 42.5
+    },
+    {
+      "id": "choice-forward",
+      "inputTokens": 56,
+      "answer": "technical",
+      "probabilities": [0.006900143790023428, 0.9878022037407178, 0.005297652469258756],
+      "maxAbsError": 2.559177766404963e-8,
+      "latencyMs": 41.3
+    },
+    {
+      "id": "choice-reversed",
+      "inputTokens": 56,
+      "answer": "technical",
+      "probabilities": [0.0072952651823491475, 0.9853704990751164, 0.007334235742534527],
+      "maxAbsError": 1.0150736740044408e-7,
+      "latencyMs": 39.8
+    },
+    {
+      "id": "incident-rubric",
+      "inputTokens": 111,
+      "answer": "4",
+      "probabilities": [
+        0.17572019777912387, 0.062211411920616744, 0.09098936980368344, 0.1728346383879818,
+        0.4982443821085941
+      ],
+      "maxAbsError": 1.7654551517365391e-6,
+      "latencyMs": 56
+    },
+    {
+      "id": "task-review",
+      "inputTokens": 93,
+      "answer": "no",
+      "probabilities": [0.0901228496475712, 0.9098771503524288],
+      "maxAbsError": 6.02598617921446e-7,
+      "latencyMs": 47.4
+    },
+    {
+      "id": "old-decider-after-root-reinitialization",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 43.8
+    },
+    {
+      "id": "recovered-after-command-encoding-failure",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 36.7
+    },
+    {
+      "id": "recovered-after-queue-submission-failure",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 37.3
+    },
+    {
+      "id": "recovered-after-partial-evaluation-failure",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 37.8
+    },
+    {
+      "id": "recovered-after-readback-failure",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 37.6
+    },
+    {
+      "id": "active-before-queued-abort",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8
+    },
+    {
+      "id": "recovered-after-active-abort",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8,
+      "latencyMs": 39.5
+    },
+    {
+      "id": "active-during-healthy-disposal",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8
+    },
+    {
+      "id": "fresh-device-reference",
+      "inputTokens": 47,
+      "answer": "yes",
+      "probabilities": [0.997874871177824, 0.00212512882217597],
+      "maxAbsError": 1.518264580724349e-8
+    }
+  ],
+  "peakJsHeapBytes": 434780041,
+  "peakAgentBytes": null,
+  "peakGpuBufferBytes": 1630640148,
+  "healthyAllocationBaseline": {
+    "gpuBufferCount": 4,
+    "gpuBufferBytes": 108,
+    "sharedStagingBufferCount": 1,
+    "sharedStagingBufferBytes": 32,
+    "sharedUniformBufferCount": 1,
+    "sharedUniformBufferBytes": 12,
+    "newSharedStagingBufferCount": 0,
+    "newSharedStagingBufferBytes": 0,
+    "newSharedUniformBufferCount": 104,
+    "newSharedUniformBufferBytes": 1516,
+    "unownedBuffersAfterDispose": 0,
+    "disposeMs": 37.3
+  },
+  "freshDevice": {
+    "loadMs": 108895.3,
+    "decisionMs": 423.4,
+    "inputTokens": 47,
+    "answer": "yes",
+    "sharedStagingBufferCount": 2,
+    "sharedStagingBufferBytes": 64,
+    "sharedUniformBufferCount": 106,
+    "sharedUniformBufferBytes": 1540,
+    "newSharedStagingBufferCount": 0,
+    "newSharedStagingBufferBytes": 0,
+    "newSharedUniformBufferCount": 22,
+    "newSharedUniformBufferBytes": 316,
+    "unownedBuffersAfterDispose": 0,
+    "disposeMs": 20.1
+  },
+  "measurements": {
+    "hostPeak": "sampled browser memory; not a process-wide peak",
+    "gpuPeak": "sum of live GPUBuffer.size snapshots; driver-private allocations are unknown",
+    "disposal": "no new D1-owned buffers after healthy disposal; per-root uniform buffers are retained by dispatchCache and MAP_READ staging is shared by readback; both are reported separately; neither device was destroyed"
+  }
+}

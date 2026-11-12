@@ -1,0 +1,12 @@
+{
+  "upstreamCommit": "79cb8b564c8aec92474ecdedd8101557497e1c6b",
+  "preservedD1Tip": "82250160386691dc36565ae59aa70545150f4e06",
+  "mergedCommit": "fd28773ca30facdaf6e56d8e9fba06e242ff623d",
+  "mergedTree": "1c98121e4200cc8f76ab126e68987e244032d3e5",
+  "patch": "d1-on-upstream.patch",
+  "patchSha256": "3a8513c1acefc27e086fa67eb089f3095bdd35303463e8eb9ae860c6202469a5",
+  "reconstruction": "git read-tree upstreamCommit into a temporary index; git apply --cached d1-on-upstream.patch; git write-tree",
+  "observedReconstructedTree": "1c98121e4200cc8f76ab126e68987e244032d3e5",
+  "review": "Independent safety correction and upstream composition reviews found no blocking issues. Original baseline evidence is preserved; correction and merged-tip observations establish healthy disposal and exceptional execution safety.",
+  "qualification": "Float D1 only; public Q8 and Desktop replacements remain dependent migration work. Existing product routes remain available."
+}

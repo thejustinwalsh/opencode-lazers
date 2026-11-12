@@ -1,0 +1,11 @@
+$ pnpm --filter runntime test:unit
+$ vitest run --project unit
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+
+ Test Files  44 passed (44)
+      Tests  1112 passed (1112)
+   Start at  21:12:33
+   Duration  1.40s (import 55%, transform 38%, tests 6%, worker 2%)
+

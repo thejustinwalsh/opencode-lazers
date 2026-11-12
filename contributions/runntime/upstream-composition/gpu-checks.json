@@ -1,0 +1,63 @@
+[
+  {
+    "name": "focused-gpu",
+    "command": [
+      "pnpm",
+      "--filter",
+      "runntime",
+      "exec",
+      "vitest",
+      "run",
+      "--project",
+      "gpu",
+      "test/core/gpu/eval.gpu.test.ts",
+      "test/core/nn/layers.gpu.test.ts",
+      "test/core/kernels/shape/rows.gpu.test.ts",
+      "test/core/kernels/matmul/matmulQuantW.gpu.test.ts",
+      "test/core/kernels/matmul/matmulQuantTiled.gpu.test.ts",
+      "--reporter=verbose"
+    ],
+    "environment": {},
+    "exitCode": 0,
+    "startedAt": "2026-11-12T02:12:40.510326+00:00",
+    "finishedAt": "2026-11-12T02:12:52.062086+00:00",
+    "result": {
+      "testFilesPassed": 5,
+      "testsPassed": 291,
+      "expectedFailures": 2,
+      "testsTotal": 293
+    }
+  },
+  {
+    "name": "d1-correction-webgpu",
+    "command": [
+      "pnpm",
+      "--filter",
+      "runntime",
+      "exec",
+      "vitest",
+      "run",
+      "test/zoo/d1/qualification.gpu.test.ts",
+      "--project",
+      "gpu",
+      "--reporter=verbose",
+      "--reporter=json",
+      "--outputFile.json=/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/upstream-composition/d1-correction-vitest.json"
+    ],
+    "environment": {
+      "VITE_D1_QUALIFICATION_MODE": "correction"
+    },
+    "exitCode": 0,
+    "startedAt": "2026-11-12T02:12:52.063594+00:00",
+    "finishedAt": "2026-11-12T02:16:43.093725+00:00",
+    "result": {
+      "testFilesPassed": 1,
+      "testsPassed": 1,
+      "testsSkippedOtherModes": 2,
+      "decisionChecks": 15,
+      "maxAbsError": 1.7654551517365391e-6,
+      "measurementsPath": "d1-measurements.json",
+      "vitestReportPath": "d1-correction-vitest.json"
+    }
+  }
+]
