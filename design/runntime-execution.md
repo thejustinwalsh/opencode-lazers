@@ -40,8 +40,10 @@ After the original branch qualification, Architect integrates reviewed upstream
 main `79cb8b564c8aec92474ecdedd8101557497e1c6b` (19 upstream-side commits;
 diverged history) while preserving D1 work. Later tasks reuse its native
 `runntime.quant` safetensors, quant-aware Linear and Python quantizer instead of
-inventing a parallel format. Integration is a boundary between the first plan
-and its dependent implementation plan. Recheck relevant reference behavior after
+inventing a parallel format. Replacement plans preserve the running D1 Q8 attempt;
+the paused original plan is not their prerequisite. After its running producer
+finishes, review/integrate that exact artifact before retiring the superseded
+waiting nodes. Recheck relevant reference behavior after
 composition. Public APIs may load caller-provided RangeSource artifacts generated
 locally; uploading derivative weights is not authorized by this plan.
 
@@ -111,12 +113,12 @@ the Liquid chat route while qualifying.
 Complete LFM3's public audio operators and original floating checkpoint/codec
 loading on the accepted base backbone. Compare against the pinned Liquid engine for preprocessing, transcript,
 streaming/audio sample behavior, cancellation and cleanup. Do not substitute a
-different speech recognizer. Exercise actual Desktop dictation/transcription and
-speech/playback controls before changing their selected routes; retain the
-existing routes until each passes. Include failure/load/device-loss coverage and
-measurements rather than treating a generated file as successful playback.
+different speech recognizer. Prove installed public consumers on real GPU with
+failure/load/device-loss coverage and resource measurements. Actual Desktop
+dictation and playback qualification belongs to the downstream Desktop task;
+native audio generation alone is not a playback result.
 
-## LFM3 quantized qualification and Desktop
+## LFM3 quantized public zoo qualification
 
 After base chat and audio public consumers pass, produce reproducible native Q8
 artifacts from the same original checkpoints using upstream quantization. Keep
@@ -126,6 +128,8 @@ Liquid references, retaining exact stable greedy/product answers, cache agreemen
 clean-clip words and speech/playback quality requirements below. Record numerical
 differences and return unexplained deviations to Architect; do not invent or loosen
 budgets. Measure actual weight/transient memory and latency for both variants.
+
+## LFM3 base and quantized Desktop qualification
 
 Connect base and quantized chat, transcription and speech through the existing
 LAZERS mailbox/cache/lease and actual isolated Desktop controls. Both variants must
