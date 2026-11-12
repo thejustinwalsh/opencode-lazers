@@ -5603,6 +5603,10 @@ export class TaskRuntime {
       }
       if (command.action === "reconcile") {
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+        if (!reviewInput) {
+          const quarantined = this.quarantinedVerification(plan)
+          if (quarantined) return quarantined
+        }
         let existingReviewInput = false
         if (reviewInput) {
           const { binding, evidence } = reviewInput
@@ -10383,10 +10387,30 @@ export class TaskRuntime {
     })
   }
 
+  private quarantinedVerification(plan: PlanRow) {
+    const attempt = this.store
+      .attempts(plan.id)
+      .find(
+        (candidate) =>
+          candidate.state === "verifying" &&
+          sourceQuarantine(this.store, candidate.id)?.phase === "sealed",
+      )
+    if (!attempt) return
+    return this.hold(
+      plan,
+      "The verifying worker's checkout is quarantined. Run verify-retained on its candidate in an isolated checkout.",
+      ["verify-retained", "audit", "cancel"],
+    )
+  }
+
   private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
     // Quarantined source is retained for isolated verification, not ordinary
     // worker execution or mechanical edits in its original checkout.
-    if (sourceQuarantine(this.store, attempt.id)) return
+    if (sourceQuarantine(this.store, attempt.id)) {
+      if (plan.state === "running" && attempt.state === "verifying")
+        this.quarantinedVerification(plan)
+      return
+    }
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
       return

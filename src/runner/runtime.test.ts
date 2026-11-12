@@ -955,6 +955,38 @@ test("native location activation restores pending and sealed quarantine after re
   }
 })
 
+test("reconciliation sends a quarantined verifying attempt to retained verification", async () => {
+  const f = await retainedSourceFixture()
+  f.install()
+  attachNativeQuarantineHost(f)
+  await f.runtime.command(f.command(), "owner")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
+  const planID = f.receipt.planID
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_effects SET state='completed' WHERE id=?").run(f.effectID)
+    db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?").run(planID)
+  })
+  await f.runtime.tick()
+  expect(f.store.plan(planID)).toMatchObject({
+    state: "blocked",
+    reason: expect.stringContaining("verify-retained"),
+  })
+  const version = f.store.plan(planID)!.version
+  expect(
+    await f.runtime.command(
+      {
+        planID,
+        expectedVersion: version,
+        requestID: "reconcile-quarantined-verification",
+        action: "reconcile",
+      },
+      "owner",
+    ),
+  ).toMatchObject({ status: "blocked", version })
+  expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([f.retained.id])
+})
+
 test("failed or mismatched native activation retains sealed resources and recovers only a current exact guard", async () => {
   const f = await retainedSourceFixture()
   const guards = [f.install()]
