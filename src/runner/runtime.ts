@@ -16532,6 +16532,7 @@ export class TaskRuntime {
               verificationActivityKey(this.store.repository.path, effect.id),
               fingerprint(activityIdentity),
             )
+            this.tickRequested = true
             return
           }
         }

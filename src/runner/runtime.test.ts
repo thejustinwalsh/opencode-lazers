@@ -4681,6 +4681,14 @@ test("a committed shared-checkout correction gets fresh mechanical preparation",
     },
     "owner",
   )
+  await f.runtime.tick()
+  const activities = verificationActivitiesForDatabase(f.repository.path)
+  expect(activities).toHaveLength(1)
+  await activities[0]!.settled
+  await f.runtime.tick()
+  expect(
+    f.store.effects(planID).filter((effect) => effect.kind.startsWith("verify:")),
+  ).toHaveLength(2)
   await drive(f.runtime, 12)
   expect(f.store.plan(planID)?.reason).toContain("Required evidence missing")
   expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([attemptID])
