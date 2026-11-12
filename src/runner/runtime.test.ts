@@ -1116,6 +1116,48 @@ test("source quarantine seals only a stopped guarded native writer and permits i
   expect(f.store.attempts(dependentPlan.planID)).toHaveLength(0)
 })
 
+test("a settled human evidence hold releases its isolated scope for a waiting plan", async () => {
+  const f = fixture({
+    human: true,
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "shared.txt" }],
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const original = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(original.session_id)!
+  f.completeWorker(original.session_id)
+  Object.assign(worker, { pendingInput: false, pendingPermissions: 0, pendingForms: 0 })
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing:")
+  const retained = f.store.attempts(planID)[0]!
+  const guard = registerSourceGuard(f.store, retained.workspace)
+  cleanup.push(guard)
+  const readSession = f.host.session
+  const adapter = attachNativeQuarantineHost({
+    ...f,
+    retained,
+    worker,
+    guardID: guard.registrationID,
+  })
+  f.host.session = readSession
+  const next = f.createTask("overlap-human-hold", "shared.txt")
+  const following = f.store.submit(f.inputFor([next], { requestID: "overlap-human-hold" }), "owner")
+  await runPlan(f, following.planID, "run-overlap-human-hold")
+  await drive(f.runtime, 4)
+  expect(sourceQuarantine(f.store, retained.id)?.phase).toBe("sealed")
+  expect(adapter.archives).toBe(1)
+  expect(f.store.attempts(following.planID)).toHaveLength(1)
+  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing:")
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: retained.id,
+    state: "verifying",
+    artifact: retained.artifact,
+  })
+}, 15_000)
+
 test("source quarantine isolates a completed foreground worker with unknown background without accepting it", async () => {
   const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
   await runPlan(f)

@@ -23,6 +23,7 @@ type FixtureOptions = {
   ambiguousRepair?: boolean
   repairRace?: boolean
   repairOwnerAdmissionRace?: boolean
+  wakeScheduler?: () => void
 }
 
 function fixture(options: FixtureOptions = {}) {
@@ -270,6 +271,7 @@ function fixture(options: FixtureOptions = {}) {
   }
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     requestTick: async () => {},
+    wakeScheduler: options.wakeScheduler,
   })
   cleanups.push(async () => {
     await runtime.stop()
@@ -406,17 +408,20 @@ function addActivePlanAttempt(
 }
 
 test("retained repair directly corrects an accepted task blocked on combined product review", async () => {
-  const f = fixture({ combinedHumanEvidence: true })
+  let wakes = 0
+  const f = fixture({ combinedHumanEvidence: true, wakeScheduler: () => wakes++ })
   await accept(f)
   const prior = f.store.attempts(f.planID)[0]!
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(prior.state).toBe("accepted")
+  const beforeRepair = wakes
   const requested = await f.runtime.command(retainedRepairCommand(f), "owner")
   expect(requested).toMatchObject({
     status: "retained-repair-requested",
     attemptID: prior.id,
   })
+  expect(wakes).toBe(beforeRepair + 1)
   await f.runtime.tick()
   expect(f.prompts).toHaveLength(2)
   expect(f.created).toEqual([prior.session_id])

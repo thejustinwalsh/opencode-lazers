@@ -374,6 +374,44 @@ test("F-S3-1 the existing native stream invalidates source caches on activity an
   }
 })
 
+test("the native stream wakes reconciliation when an assigned worker goes idle", async () => {
+  const fixture = makeFixture()
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  const ctx = makeContext(fixture, { liveEvents: true })
+  const wakes: string[] = []
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(
+            ctx.context,
+            recorder,
+            "project",
+            undefined,
+            undefined,
+            (id) => {
+              if (id) wakes.push(id)
+            },
+            () => {
+              wakes.push("scheduler")
+            },
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent({ type: "session.idle", data: { sessionID: "unassigned" } }),
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent({ type: "session.idle", data: { sessionID: "ses-accepted" } }),
+          )
+          yield* Effect.promise(() => waitForNativeState(async () => wakes.includes("scheduler")))
+          expect(wakes).toEqual(["unassigned", "ses-accepted", "scheduler"])
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
 test("registered execute.before records only an assigned bounded requested target", async () => {
   const fixture = makeFixture()
   try {

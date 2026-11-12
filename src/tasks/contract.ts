@@ -129,6 +129,7 @@ export const GetOutput = z.discriminatedUnion("status", [
     /** Raw node lifecycle, if planned, distinct from plan-level blocked presentation. */
     recordedState: TaskState.nullable().optional(),
     execution: Execution.optional(),
+    architectSessionID: z.string().min(1).optional(),
     attempts: z.array(TaskAttempt).optional(),
     activity: z.array(TaskActivity).optional(),
   }),

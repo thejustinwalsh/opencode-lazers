@@ -220,6 +220,7 @@ export class TaskReads {
       payload: event.payload,
       createdAt: event.created_at,
     }))
+    const architectSessionID = this.runner.plan(execution.planID)?.owner
     return GetOutput.parse({
       status: "found",
       task,
@@ -239,6 +240,7 @@ export class TaskReads {
       ...(disposition ? { disposition } : {}),
       recordedState: this.recordedNodeState(task.id, execution.planID) ?? null,
       execution,
+      ...(architectSessionID ? { architectSessionID } : {}),
       attempts,
       activity,
     })
