@@ -4598,37 +4598,41 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
 })
 
-test("authorized formatting is committed before the exact candidate is verified", async () => {
-  const f = fixture({
-    taskFiles: [{ name: "a", path: "src/result.ts" }],
-    checkCommand: "bun fmt --check src/result.ts",
-    combinedCheckCommand: "test -f src/result.ts",
-  })
-  await runPlan(f)
-  await drive(f.runtime, 18)
-  const plan = f.store.plan(f.receipt.planID)!
-  const attempt = f.store.attempts(plan.id)[0]!
-  expect(plan.state).toBe("accepted")
-  expect(f.store.attempts(plan.id)).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  const committed = spawnSync("git", ["show", `${attempt.artifact}:src/result.ts`], {
-    cwd: f.root,
-    encoding: "utf8",
-  }).stdout
-  expect(committed).toBe(readFileSync(join(attempt.workspace, "src/result.ts"), "utf8"))
-  expect(committed).not.toBe("a")
-  expect(attempt.artifact).toBeTruthy()
-  const preparation = f.store.effects(plan.id).find((effect) => effect.kind === "mechanical-fix")!
-  expect(preparation.state).toBe("completed")
-  const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: CheckReceipt }).check
-  expect(preparedReceipt.preparation?.inputFingerprint).not.toBe(
-    preparedReceipt.preparation?.resultingFingerprint,
-  )
-  const verified = attemptCheck(f, f.tasks[0]!.id, attempt.id)
-  expect(verified.artifact).toBe(attempt.artifact!)
-  expect(verified.inputIdentity).toBe(attempt.artifact!)
-  expect(verified.exitCode).toBe(0)
-})
+test.each([false, true])(
+  "authorized formatting is committed before verification (shared=%s)",
+  async (shared) => {
+    const f = fixture({
+      shared,
+      taskFiles: [{ name: "a", path: "src/result.ts" }],
+      checkCommand: "bun fmt --check src/result.ts",
+      combinedCheckCommand: "test -f src/result.ts",
+    })
+    await runPlan(f)
+    await drive(f.runtime, 18)
+    const plan = f.store.plan(f.receipt.planID)!
+    const attempt = f.store.attempts(plan.id)[0]!
+    expect(plan.state).toBe("accepted")
+    expect(f.store.attempts(plan.id)).toHaveLength(1)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+    const committed = spawnSync("git", ["show", `${attempt.artifact}:src/result.ts`], {
+      cwd: f.root,
+      encoding: "utf8",
+    }).stdout
+    expect(committed).toBe(readFileSync(join(attempt.workspace, "src/result.ts"), "utf8"))
+    expect(committed).not.toBe("a")
+    expect(attempt.artifact).toBeTruthy()
+    const preparation = f.store.effects(plan.id).find((effect) => effect.kind === "mechanical-fix")!
+    expect(preparation.state).toBe("completed")
+    const preparedReceipt = (JSON.parse(preparation.receipt!) as { check: CheckReceipt }).check
+    expect(preparedReceipt.preparation?.inputFingerprint).not.toBe(
+      preparedReceipt.preparation?.resultingFingerprint,
+    )
+    const verified = attemptCheck(f, f.tasks[0]!.id, attempt.id)
+    expect(verified.artifact).toBe(attempt.artifact!)
+    expect(verified.inputIdentity).toBe(attempt.artifact!)
+    expect(verified.exitCode).toBe(0)
+  },
+)
 
 test("out-of-scope candidate changes are not mechanically modified", async () => {
   const f = fixture({

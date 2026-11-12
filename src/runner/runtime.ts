@@ -10629,7 +10629,7 @@ export class TaskRuntime {
     attempt: AttemptRow,
     proposal: TaskProposal,
     fence: number,
-  ): "ready" | "pending" | "held" {
+  ): "ready" | "prepared" | "pending" | "held" {
     if (!needsMechanicalQualityPreparation(proposal.verification.map((check) => check.command)))
       return "ready"
     const scope = this.store.effectiveWriteScope(attempt.task_id)
@@ -10669,13 +10669,6 @@ export class TaskRuntime {
       if (lintExtensions.has(extension)) lintPaths.push(path)
     }
     if (!formatPaths.length && !lintPaths.length) return "ready"
-    if (attempt.workspace === this.directory) {
-      this.hold(
-        plan,
-        "Mechanical formatting is required for a shared-checkout candidate; preserve the original attempt and authorize a candidate repair before changing the shared checkout",
-      )
-      return "held"
-    }
     if (!this.preparationAllowed(attempt)) {
       this.hold(
         plan,
@@ -10790,7 +10783,14 @@ export class TaskRuntime {
         )
         return "held"
       }
-      return "ready"
+      return "prepared"
+    }
+    if (attempt.workspace === this.directory && changedPaths(attempt.workspace).length) {
+      this.hold(
+        plan,
+        "Commit task edits before verification; shared checkout has uncommitted changes",
+      )
+      return "held"
     }
     const effect = this.effect(
       plan.id,
@@ -10858,7 +10858,7 @@ export class TaskRuntime {
     }
     if (!verificationCurrent()) return
     const preparation = this.prepareVerificationCandidate(plan, attempt, proposal, fence)
-    if (preparation !== "ready") return
+    if (preparation === "pending" || preparation === "held") return
     let artifact: Awaited<ReturnType<typeof commitArtifact>>
     try {
       const head = git(attempt.workspace, ["rev-parse", "HEAD"])
@@ -10879,7 +10879,8 @@ export class TaskRuntime {
           (payload.repairID ?? undefined) === repairID
         )
       })
-      const retainFixes = checkedCandidate && this.preparationAllowed(attempt)
+      const retainFixes =
+        (preparation === "prepared" || checkedCandidate) && this.preparationAllowed(attempt)
       artifact = await commitArtifact(
         attempt.workspace,
         attempt.base_commit,
