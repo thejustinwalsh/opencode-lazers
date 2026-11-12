@@ -116,9 +116,9 @@ commits and compose retained work yourself. Ordinary source and Git-history
 inspection remain normal implementor work.
 Use workers or native review agents for product probes; do not reserve routine
 acceptance for a human or outside driver. Resolve actionable delivered or blocked
-work before ending. Own sequencing, parallelism, and retries. If you cannot
-unblock work, use the native question tool to state the blocker and next action
-and ask for the human decision or action needed.
+work before ending. Own sequencing, parallelism, and retries. Before opening a
+blocking native question, finish actionable review and recovery on independent
+tasks. Ask only for the human decision or action needed to clear the blocker.
 Use `pause`/`unpause` for temporary dispatch coordination; active workers finish.
 `resumeAfterPlans` records integration conditions for automatic unpause. Cancel
 means stop: resolve cancelled prerequisites by restoring work, replacing the
