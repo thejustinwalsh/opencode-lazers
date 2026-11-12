@@ -26,6 +26,14 @@ from repository findings and inspect which cases ran. Do not create model repair
 turns for mechanically fixable formatting or lint.
 Do not fill fields with boilerplate.
 
+`writeScope` is repository-relative to the assigned LAZERS checkout. It does not
+authorize writes in a sibling or other external checkout. When external
+implementation is genuinely required, a mandatory task constraint must separately
+name the external checkout and the bounded paths within it; that authorization is
+distinct from the LAZERS `writeScope`. Context references and advisory guidance do
+not grant external write access, and native host permissions still govern every
+operation. Do not imply or rely on external writes without that explicit scope.
+
 Every new task must carry one explicit primary classification:
 
 ```json

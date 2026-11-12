@@ -774,6 +774,13 @@ test("worker guidance teaches bundled task discovery and optional progressive sk
   expect(workerInstructions).toContain("optional\nnative skill")
   expect(workerInstructions).toContain("unavailable suggestion does not block")
   expect(workerInstructions).toContain("Do not launch subagents")
+  expect(workerInstructions).toContain("relative to the assigned LAZERS checkout")
+  expect(workerInstructions).toContain("mandatory task\nconstraint may separately authorize")
+  expect(workerInstructions).toContain("specifically named external\ncheckout")
+  expect(workerInstructions).toContain("limited to explicitly bounded paths")
+  expect(workerInstructions).toContain("not implied by context, guidance, read access")
+  expect(workerInstructions).toContain("Follow normal native host permissions")
+  expect(workerInstructions).toContain("never bypass a denial")
 })
 
 test("optional skills are not resolved, and only the legacy LAZERS entry is removed before prompting", async () => {

@@ -12,8 +12,13 @@ import { sourceGuardInstalled } from "./source-quarantine.ts"
 test("worker personas retain read-only catalog access but cannot delegate", async () => {
   const model = { providerID: "custom-provider", id: "selected", variant: "deep" }
   const customRule = { action: "edit", resource: "protected/**", effect: "ask" }
+  const externalRule = {
+    action: "edit",
+    resource: "/authorized/runntime/packages/runntime/src/zoo/**",
+    effect: "ask",
+  }
   const agent = { model, permissions: [customRule] as unknown[] }
-  const auditor = { permissions: [] as unknown[], model: undefined as unknown }
+  const auditor = { permissions: [externalRule] as unknown[], model: undefined as unknown }
   let contextHook: ((context: never) => Effect.Effect<void>) | undefined
   let executeHook: ((call: never) => Effect.Effect<void>) | undefined
   let permissionHook: ((request: PermissionEvaluation) => Effect.Effect<void>) | undefined
@@ -82,13 +87,19 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
     hidden: true,
   })
   expect(auditor).toHaveProperty("system", expect.stringContaining("lz-fallow-report"))
+  expect(auditor).toHaveProperty("system", expect.stringContaining(workerInstructions.trim()))
   expect(agent.model).toEqual(model)
   expect(agent.permissions).toContainEqual({ action: "*", resource: "*", effect: "allow" })
   expect(agent.permissions).toContainEqual({ action: "read", resource: "*.env", effect: "ask" })
   expect(agent.permissions).toContainEqual(customRule)
+  expect(auditor.permissions).toContainEqual(externalRule)
+  for (const role of [agent, auditor])
+    expect(role.permissions).toContainEqual({ action: "subagent", resource: "*", effect: "deny" })
   const permissionsBeforeReplay = structuredClone(agent.permissions)
+  const auditorPermissionsBeforeReplay = structuredClone(auditor.permissions)
   await Effect.runPromise(Effect.scoped(registerWorker(ctx, store)))
   expect(agent.permissions).toEqual(permissionsBeforeReplay)
+  expect(auditor.permissions).toEqual(auditorPermissionsBeforeReplay)
   expect(agent).toHaveProperty("system", workerInstructions.trim())
   expect(agent.permissions).not.toContainEqual({
     action: "lz-worker-catalog",
@@ -142,6 +153,14 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   }
   await Effect.runPromise(permissionHook!(fetchRequest))
   expect(fetchRequest.effect).toBe("allow")
+  const externalEditRequest: PermissionEvaluation = {
+    sessionID: Session.ID.make("ses_worker"),
+    action: "edit",
+    resources: ["/authorized/runntime/packages/runntime/src/zoo/model.ts"],
+    effect: "ask",
+  }
+  await Effect.runPromise(permissionHook!(externalEditRequest))
+  expect(externalEditRequest.effect).toBe("ask")
   quarantined = true
   await Effect.runPromise(permissionHook!(fetchRequest))
   expect(fetchRequest.effect).toBe("deny")

@@ -3,9 +3,15 @@ before editing. Read the relevant repository guidance and source with normal Ope
 tools, Code Mode, shell and available LSP or diagnostics. In Code Mode, use
 brackets: `tools["lz-get-task"](...)`. Cached source is a starting point;
 read the working source directly as needed. Missing cached context does not block
-work. Ask Architect when
-missing information changes the task. Read outside `writeScope` as needed to
-understand the change, but keep edits within it.
+work. Ask Architect when missing information changes the task. Task `writeScope`
+is relative to the assigned LAZERS checkout and governs edits in that checkout;
+read outside it as needed, but keep LAZERS edits within it. A mandatory task
+constraint may separately authorize edits in a specifically named external
+checkout, limited to explicitly bounded paths within that checkout. This is a
+distinct authorization, not implied by context, guidance, read access, or
+`writeScope`. Follow normal native host permissions for every checkout and path;
+never bypass a denial. If the external checkout or path bounds are missing or
+unclear, ask Architect before writing there.
 
 Discover actual paths before reading them. Native grep takes one search path;
 shell path lists, globs and brace expansion are not expanded there. Escape literal
