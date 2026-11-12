@@ -133,6 +133,7 @@ export default Plugin.define({
         host.retainedInputID,
         host.readSessionLog,
         (sessionID) => runtime.observeArchitectSourceEvent(sessionID),
+        () => scheduler?.request(),
       )
       const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
       const radarSessionHost = nativeRadarSessionHost(ctx)

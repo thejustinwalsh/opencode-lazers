@@ -469,6 +469,7 @@ export function registerProgress(
   retainedInputID: (sessionID: string) => Promise<string | undefined> = async () => undefined,
   readSessionLog?: NativeSessionLogReader,
   sourceChanged?: (sessionID?: string) => void,
+  workerIdle?: () => void,
 ) {
   return Effect.gen(function* () {
     const readInputID = (sessionID: Session.ID) =>
@@ -1259,9 +1260,13 @@ export function registerProgress(
       } else if (observing && type === "session.idle" && sessionID) {
         const binding = bindingFor(sessionID)
         if (binding) {
-          const current = idleStore.read(binding)
-          if (current?.pendingTerminal && current.report)
-            await observeExecutionSuccess(binding, current.pendingTerminal, current.revision)
+          try {
+            const current = idleStore.read(binding)
+            if (current?.pendingTerminal && current.report)
+              await observeExecutionSuccess(binding, current.pendingTerminal, current.revision)
+          } finally {
+            workerIdle?.()
+          }
         }
       }
       try {
