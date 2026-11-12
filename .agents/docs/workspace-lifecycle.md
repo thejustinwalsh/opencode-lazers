@@ -73,10 +73,18 @@ reason. A `running` plan may use this route for a candidate belonging to the exa
 latest `verifying` attempt. Existing stopped/accepted-plan verification remains
 available; if its attempt has a source-quarantine record, that record must meet
 the same exact authority checks rather than falling through to legacy admission.
-The source quarantine must be sealed, unheld, bound to the current
-owner/session/assignment/workspace and review-input binding, and have an installed
-source guard. Pending, held, stale, absent-guard, or mismatched quarantine facts
-do not authorize verification. An active source-only operation remains valid if
+The source quarantine must be sealed, unheld, bound to the original
+request/session/assignment/workspace and immutable review-input binding, and have
+an installed source guard. The recorded requester may differ from the current
+owner only when the current same-project Architect owner is authorized for the
+plan and the durable plan history proves an ordered `OWNER_CONTINUED` or
+`OWNER_REASSIGNED` path from that requester after the original attempt began.
+This continuity grants current verification authority only: it does not rewrite
+the original requester, quarantine request, or review-input pin. Stale owners or
+unproven/contradictory transfer history remain denied. Pending, held, absent-guard,
+or otherwise mismatched quarantine facts do not authorize verification. Admission,
+isolated checks, and result publication retain the current owner/control-epoch
+fences, including across reopen. An active source-only operation remains valid if
 supported reconciliation changes its plan from `running` to `blocked`, provided
 the exact source authority and original verifying attempt remain unchanged.
 

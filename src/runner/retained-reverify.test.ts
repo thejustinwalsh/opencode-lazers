@@ -475,7 +475,7 @@ function fixture(
   }
 }
 
-async function registeredPlanCommand(runtime: TaskRuntime) {
+async function registeredPlanCommand(runtime: TaskRuntime, sessionID = "owner") {
   const tools = new Map<string, RegisteredRunnerTool>()
   const editor = {
     add: (tool: RegisteredRunnerTool) => tools.set(tool.name, tool),
@@ -503,7 +503,7 @@ async function registeredPlanCommand(runtime: TaskRuntime) {
     execute: async (input: unknown) => {
       const result = await Effect.runPromise(
         tool.execute(input, {
-          sessionID: "owner" as never,
+          sessionID: sessionID as never,
           agent: Agent.ID.make("architect"),
           messageID: SessionMessage.ID.make("msg_test"),
           id: Tool.CallID.make("call_test"),
@@ -1666,7 +1666,11 @@ test("registered verify-retained checks a sealed quarantined candidate without s
     state: "waiting-human-combined",
     artifact: f.artifact,
     attemptID: f.attempt.id,
-    sourceQuarantine: { requestID: f.quarantine.request_id, reviewInput: null },
+    sourceQuarantine: {
+      requestID: f.quarantine.request_id,
+      requestedOwner: f.quarantine.requested_owner,
+      reviewInput: null,
+    },
   })
   expect(f.store.plan(f.planID)?.state).toBe("running")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
@@ -1805,6 +1809,151 @@ test("registered verify-retained checks a sealed quarantined candidate without s
     f.originalAttempt,
   )
 })
+
+test("registered verify-retained accepts a reassigned owner after reopen without changing quarantine provenance", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({ combinedHumanEvidence: true })
+  const previousOwner = f.store.plan(f.planID)!.owner
+  const reassignment = await f.runtime.command(
+    {
+      requestID: "reassign-sealed-source-verification-owner",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "reassign",
+      targetSessionID: "owner2",
+      reason: "Continue review of the sealed candidate under the current Architect owner",
+    },
+    previousOwner,
+  )
+  expect(reassignment).toMatchObject({ status: "reassigned" })
+  expect(f.store.plan(f.planID)?.owner).toBe("owner2")
+  const request = retainedVerifyCommand(f, "verify-continued-sealed-source-candidate")
+  const prompts = structuredClone(f.prompts)
+  const created = [...f.created]
+  const attemptID = f.attempt.id
+
+  await f.runtime.stop()
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
+  )
+  f.releaseSourceGuard()
+  f.store.repository.close()
+  const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  const restoreGuard = registerSourceGuard(reopenedStore, f.attempt.workspace)
+  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project")
+  cleanups.push(async () => {
+    await reopenedRuntime.stop()
+    reopenedRepository.close()
+  })
+  cleanups.push(restoreGuard)
+  const reopenedFixture = { ...f, store: reopenedStore, runtime: reopenedRuntime }
+  const control = await registeredPlanCommand(reopenedRuntime, "owner2")
+  const requested = await control.execute(request)
+  expect(requested.status).toBe("retained-verification-requested")
+  const operationID = String(requested.operationID)
+  await waitForRetainedOperationState(
+    reopenedFixture,
+    operationID,
+    ["waiting-human-combined"],
+    "continued-owner isolated task acceptance with combined gate pending",
+  )
+
+  const checks = reopenedStore.atomic((db) =>
+    db
+      .query<{ phase: string; artifact: string; state: string; receipt: string | null }, [string]>(
+        "SELECT phase,artifact,state,receipt FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase,check_id",
+      )
+      .all(operationID),
+  )
+  expect(checks.map((row) => row.phase)).toEqual(["combined", "task"])
+  for (const row of checks) {
+    expect(row.state).toBe("completed")
+    const receipt = JSON.parse(row.receipt!) as CheckReceipt
+    expect(receipt.command).toBe("bun test src/runner/retained-check.test.ts")
+    expect(receipt.exitCode).toBe(0)
+    expect(receipt.cwd).not.toBe(f.attempt.workspace)
+  }
+  expect(reopenedStore.plan(f.planID)).toMatchObject({ state: "running", owner: "owner2" })
+  expect(f.quarantine.requested_owner).toBe(previousOwner)
+  const retainedOperation = reopenedStore.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(operationID),
+  )
+  expect(JSON.parse(retainedOperation!.payload)).toMatchObject({
+    owner: "owner2",
+    sourceQuarantine: {
+      requestID: f.quarantine.request_id,
+      requestedOwner: previousOwner,
+    },
+  })
+  expect(reopenedStore.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(
+    reopenedStore.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+  ).toBeDefined()
+  expect(reopenedStore.attempts(f.planID).find((attempt) => attempt.id === attemptID)).toEqual(
+    f.originalAttempt,
+  )
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+  expect(sourceQuarantine(reopenedStore, attemptID)).toEqual(f.quarantine)
+  expect(
+    reopenedStore.effects(f.planID).filter((effect) => effect.attempt_id === attemptID),
+  ).toEqual(f.originalEffects)
+  expect({
+    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
+    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
+  }).toEqual(f.originalWorkspace)
+  expect(f.prompts).toEqual(prompts)
+  expect(f.created).toEqual(created)
+  expect(f.archiveCalls).toHaveLength(1)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+}, 60_000)
+
+test.each(["missing", "contradictory"] as const)(
+  "sealed source verification rejects %s owner continuity",
+  async (continuity) => {
+    const f = await sourceQuarantinedVerifyingFixture()
+    const changed = f.store.atomic(
+      (db) =>
+        db
+          .query(
+            "UPDATE runner_plans SET owner='owner2',version=version+1 WHERE id=? AND owner='owner'",
+          )
+          .run(f.planID).changes,
+    )
+    expect(changed).toBe(1)
+    if (continuity === "contradictory") {
+      // Simulate conflicting orphaned history without changing the current plan owner.
+      f.store.record(f.planID, null, "OWNER_REASSIGNED", { from: "owner", to: "unrelated" })
+      f.store.record(f.planID, null, "OWNER_REASSIGNED", { from: "owner", to: "owner2" })
+    }
+    const control = await registeredPlanCommand(f.runtime, "owner2")
+    const request = retainedVerifyCommand(f, `deny-${continuity}-source-owner-continuity`)
+    await expect(control.execute(request)).rejects.toThrow(
+      "exact sealed source-quarantined verifying candidate",
+    )
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+            )
+            .get(f.planID)?.n,
+      ),
+    ).toBe(0)
+    expect(f.store.plan(f.planID)?.owner).toBe("owner2")
+    expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+    expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+      f.originalAttempt,
+    )
+    expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+    expect(f.prompts).toHaveLength(1)
+    expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+  },
+)
 
 test("stopped-plan verify-retained binds and accepts a sealed quarantined candidate only in isolation", async () => {
   const f = await sourceQuarantinedVerifyingFixture({ combinedHumanEvidence: true })
@@ -2023,6 +2172,41 @@ test("failed sealed-source checks retain their receipts without prompting or cha
   ).toBeUndefined()
 }, 60_000)
 
+test("an owner change during source verification admission prevents reservation", async () => {
+  const f = await sourceQuarantinedVerifyingFixture()
+  const request = retainedVerifyCommand(f, "source-owner-change-during-admission")
+  const session = f.host.session
+  let ownerLookups = 0
+  f.host.session = async (id, options) => {
+    const observed = await session(id, options)
+    if (id === "owner" && ++ownerLookups === 2)
+      expect(f.store.updatePlanOwner(f.planID, "owner", "owner2")).toBe(true)
+    return observed
+  }
+
+  await expect(f.control.execute(request)).rejects.toThrow(
+    "owner or plan authorization changed before reservation",
+  )
+  expect(f.store.plan(f.planID)?.owner).toBe("owner2")
+  expect(
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+          )
+          .get(f.planID)?.n,
+    ),
+  ).toBe(0)
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+    f.originalAttempt,
+  )
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.prompts).toHaveLength(1)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+})
+
 test("a source binding change after admission fences publication of retained check results", async () => {
   const f = await sourceQuarantinedVerifyingFixture({
     taskCheckCommand: "bun run verify",
@@ -2083,6 +2267,60 @@ test("a source binding change after admission fences publication of retained che
         .get(f.attempt.id),
     ),
   ).toEqual({ request_id: "changed-after-admission", phase: "sealed", hold_reason: null })
+  expect(f.prompts).toHaveLength(1)
+  expect(f.archiveCalls).toHaveLength(1)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+})
+
+test("an owner change after admission fences publication of retained check results", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({
+    taskCheckCommand: "bun run verify",
+    verificationScript: gatedRetainedCheckScript(),
+    candidateContentsCheck: false,
+    requestTick: async () => {},
+  })
+  const request = retainedVerifyCommand(f, "source-owner-change-after-admission")
+  const requested = await f.control.execute(request)
+  const operationID = String(requested.operationID)
+  const contextPath = await waitForRetainedCheckStart(f, operationID)
+  expect(f.store.updatePlanOwner(f.planID, "owner", "owner2")).toBe(true)
+
+  await waitForFixtureObservation(f, "retained verification owner race hold", () => {
+    const row = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(operationID),
+    )
+    return Boolean(row && JSON.parse(row.payload).state === "held")
+  })
+  writeFileSync(join(contextPath, "home", "release"), "continue\n")
+  const activity = await waitForRetainedCheckActivity(f, operationID)
+  await activity.settled
+  await f.runtime.tick()
+
+  const operation = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(operationID),
+  )!
+  expect(JSON.parse(operation.payload)).toMatchObject({ state: "held", artifact: f.artifact })
+  expect(f.store.plan(f.planID)).toMatchObject({ state: "running", owner: "owner2" })
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
+    undefined,
+  )
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+    f.originalAttempt,
+  )
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
+    f.originalEffects,
+  )
   expect(f.prompts).toHaveLength(1)
   expect(f.archiveCalls).toHaveLength(1)
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
