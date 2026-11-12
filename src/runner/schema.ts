@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { WorkerAgent } from "./worker-agent.ts"
 import { TaskProposalSchema } from "../task.ts"
+import { VerificationPhase } from "./verification-timeout.ts"
 
 export const TaskState = z.enum([
   "queued",
@@ -196,9 +197,10 @@ export const CommandInput = z
         "retained-repair",
         "verify-retained",
         "cancel-retained-verification",
+        "extend-verification-deadline",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its combined check was interrupted and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -286,6 +288,19 @@ export const CommandInput = z
       .positive()
       .optional()
       .describe("Current task revision for retained verification."),
+    verificationPhase: VerificationPhase.optional().describe(
+      "Exact task or combined check phase for extend-verification-deadline.",
+    ),
+    checkID: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,63}$/)
+      .optional()
+      .describe("Exact declared verification check ID for extend-verification-deadline."),
+    timeoutMs: z
+      .int()
+      .positive()
+      .optional()
+      .describe("Strictly larger effective verification allowance in milliseconds."),
     retainedVerificationID: z
       .uuid()
       .optional()
@@ -421,6 +436,75 @@ export const CommandInput = z
           message: "Retained verification requires an exact full commit identity",
         })
     }
+    if (command.action === "extend-verification-deadline") {
+      for (const field of [
+        "projectID",
+        "planRevision",
+        "verificationPhase",
+        "checkID",
+        "timeoutMs",
+        "artifact",
+        "reason",
+      ] as const)
+        if (command[field] === undefined || command[field] === "")
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Deadline extension requires ${field}`,
+          })
+      if (!command.reason?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["reason"],
+          message: "Deadline extension requires a concrete reason",
+        })
+      if (command.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(command.artifact))
+        context.addIssue({
+          code: "custom",
+          path: ["artifact"],
+          message: "Deadline extension requires an exact full candidate identity",
+        })
+      if (command.verificationPhase === "task") {
+        for (const field of ["taskID", "taskRevision", "attemptID"] as const)
+          if (command[field] === undefined)
+            context.addIssue({
+              code: "custom",
+              path: [field],
+              message: `Task-check deadline extension requires ${field}`,
+            })
+      } else if (command.verificationPhase === "combined") {
+        for (const field of ["taskID", "taskRevision", "attemptID"] as const)
+          if (command[field] !== undefined)
+            context.addIssue({
+              code: "custom",
+              path: [field],
+              message: `Combined-check deadline extension cannot target ${field}`,
+            })
+      }
+      for (const field of [
+        "priority",
+        "afterPlans",
+        "resumeAfterPlans",
+        "workspaceMode",
+        "baseCommit",
+        "targetSessionID",
+        "sourceSessionID",
+        "reviewInputID",
+        "scopeAdditions",
+        "scopeRemovals",
+        "assertionID",
+        "descendantCommit",
+        "adoptionID",
+        "targetBranch",
+        "retainedVerificationID",
+      ] as const)
+        if (command[field] !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Deadline extension does not accept ${field}`,
+          })
+    }
     if (command.action === "cancel-retained-verification" && !command.retainedVerificationID)
       context.addIssue({
         code: "custom",
@@ -443,6 +527,13 @@ export const CommandInput = z
         path: ["retainedVerificationID"],
         message: "Retained verification ID is valid only for cancellation or human evidence",
       })
+    for (const field of ["verificationPhase", "checkID", "timeoutMs"] as const)
+      if (command[field] !== undefined && command.action !== "extend-verification-deadline")
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `Deadline extension field ${field} requires extend-verification-deadline`,
+        })
   })
 export type CommandInput = z.infer<typeof CommandInput>
 

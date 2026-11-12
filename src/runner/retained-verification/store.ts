@@ -57,6 +57,12 @@ type RetainedCheckProjection = {
     durationMs: number | null
     output: "recorded" | "truncated" | "not-recorded"
   }
+  verificationDeadline: {
+    authoredTimeoutMs: number
+    effectiveTimeoutMs: number
+    amendmentID: string | null
+    policyRevision: number
+  } | null
   cleanupState: "pending" | "complete" | "failed" | "unknown"
 }
 
@@ -985,6 +991,10 @@ function jsonValue(value: string | null): unknown {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function stateReason(state: RetainedVerificationProjection["state"]): string {
   switch (state) {
     case "pending":
@@ -1186,6 +1196,23 @@ function operationProjection(
         : null
     const timedOut =
       receiptMatches && typeof receipt.timedOut === "boolean" ? receipt.timedOut : null
+    const deadlineValue =
+      receiptMatches && isRecord(receipt.verificationDeadline)
+        ? receipt.verificationDeadline
+        : undefined
+    const verificationDeadline =
+      deadlineValue &&
+      Number.isSafeInteger(deadlineValue.authoredTimeoutMs) &&
+      Number.isSafeInteger(deadlineValue.effectiveTimeoutMs) &&
+      Number.isSafeInteger(deadlineValue.policyRevision) &&
+      (deadlineValue.amendmentID === null || typeof deadlineValue.amendmentID === "string")
+        ? {
+            authoredTimeoutMs: deadlineValue.authoredTimeoutMs as number,
+            effectiveTimeoutMs: deadlineValue.effectiveTimeoutMs as number,
+            amendmentID: deadlineValue.amendmentID as string | null,
+            policyRevision: deadlineValue.policyRevision as number,
+          }
+        : null
     const resultStatus =
       rowState !== "completed" || !receiptMatches
         ? "unknown"
@@ -1222,6 +1249,7 @@ function operationProjection(
         durationMs: validTiming ? receiptEndedAt! - receiptStartedAt! : null,
         output: !receiptMatches ? "not-recorded" : outputTruncated ? "truncated" : "recorded",
       },
+      verificationDeadline,
       cleanupState: knownState(check.cleanup_state, retainedCleanupStates),
     }
   })

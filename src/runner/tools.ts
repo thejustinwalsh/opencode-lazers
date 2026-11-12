@@ -20,7 +20,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lz-plan-command",
         description:
-          "Use expectedVersion and stable requestID. `recover-cleanup` authorizes owner recovery of an exact accepted merge hold; give taskID, attemptID, artifact, targetBranch, reason. Fresh native settlement required; never reruns or forces removal. `resume` continues terminal workers or, without taskID, a blocked plan after conclusively settled combined-check interruption; never prompts accepted workers. `retained-repair` recovers runtime-fenced retained repair only; user cancellation is excluded. `verify-retained` runs checks without an implementation turn. Handles startup settlement.",
+          "Use expectedVersion and stable requestID. Resume without taskID continues settled combined checks, not accepted workers. `extend-verification-deadline` binds owner/project, plan version/revision, phase/check, artifact and task revision/attempt; timeoutMs strictly extends settled timeout, then resume candidate. Policy only: no start/restart or spec/evidence rewrite. `retained-repair` recovers runtime-fenced retained repair only; user cancellation is excluded. `recover-cleanup` needs settlement; no force. `verify-retained` checks without an implementation turn. Handles startup settlement.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },

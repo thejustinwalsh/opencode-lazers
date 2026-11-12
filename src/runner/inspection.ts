@@ -8,6 +8,7 @@ import type {
 } from "./retained-verification/store.ts"
 import type { RunnerStore } from "./store.ts"
 import type { SourceQuarantine } from "./source-quarantine.ts"
+import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
 
 const CompactInspectPlanInput = z.strictObject({
   planID: z.uuid().optional(),
@@ -104,6 +105,7 @@ export type CompactPlanDetail = {
   nodes: CompactNode[]
   latestOutcomes: Record<string, unknown>[]
   checks: Record<string, unknown>[]
+  verificationDeadlines: VerificationTimeoutAmendment[]
   sourceQuarantines?: Array<{
     attemptID: string
     phase: string
@@ -299,10 +301,14 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
   const checks = new Map<string, Record<string, unknown>>()
   for (const effect of effects) {
     if (!effect.kind.includes("verify")) continue
-    const receipt = json(effect.receipt)
+    const envelope = json(effect.receipt)
+    const result =
+      envelope && typeof envelope === "object" && "result" in envelope
+        ? (envelope as { result?: unknown }).result
+        : envelope
     const check =
-      receipt && typeof receipt === "object" && "check" in receipt && receipt.check
-        ? receipt.check
+      result && typeof result === "object" && "check" in result
+        ? (result as { check?: unknown }).check
         : undefined
     const summary: Record<string, unknown> = {
       kind: effect.kind,
@@ -313,6 +319,8 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
     if (check && typeof check === "object") {
       for (const key of ["exitCode", "timedOut", "unchanged"])
         if (key in check) summary[key] = (check as Record<string, unknown>)[key]
+      if ("verificationDeadline" in check)
+        summary.verificationDeadline = (check as Record<string, unknown>).verificationDeadline
     }
     checks.set(`${effect.task_id ?? "plan"}:${effect.attempt_id ?? "none"}:${effect.kind}`, summary)
   }
@@ -407,6 +415,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
     }),
     latestOutcomes,
     checks: [...checks.values()],
+    verificationDeadlines: store.verificationTimeoutAmendments(plan.id),
     ...(quarantines.length
       ? {
           sourceQuarantines: quarantines.map((row) => ({

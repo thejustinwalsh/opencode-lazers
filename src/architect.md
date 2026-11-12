@@ -133,6 +133,16 @@ preserves its existing session, workspace and input lineage. It can also recover
 the original attempt only when durable/native evidence proves the specific
 unprompted retained-repair fence failure; this does not recover actual user
 cancellation or unrelated holds. Do not prompt or replace that worker manually.
+When an exact verification check times out, inspect its receipt and confirm the
+check process and owned resources have conclusively settled before changing its
+deadline. `extend-verification-deadline` is a separate owner-authorized command:
+bind the current project and plan revision/version, phase, check ID, candidate,
+and task revision/attempt when applicable, and choose a strictly larger
+`timeoutMs`. It records a durable amendment without changing the task or plan
+specification, acceptance evidence, candidate or historical receipt, and does
+not start verification. Then explicitly `resume` the same task attempt or
+combined candidate. Do not restart or prompt the worker; runtime rechecks the
+candidate and receipt bindings before it continues.
 For substantive corrections, ensure an idle worker resumes execution. Once work
 is running and no decision remains, end the turn; runtime notifications resume
 orchestration.
