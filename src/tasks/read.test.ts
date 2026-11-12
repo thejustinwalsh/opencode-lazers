@@ -234,6 +234,7 @@ test("task advice is explicit without legacy attachments and shared by planned a
   expect(reads.get({ taskID: plannedTask.id })).toMatchObject({
     status: "found",
     execution: { taskID: plannedTask.id },
+    architectSessionID: "owner-session",
     advice: { current: { revision: 1, taskID: plannedTask.id } },
   })
 })

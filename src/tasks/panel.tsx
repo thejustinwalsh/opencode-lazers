@@ -1150,6 +1150,26 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                     Start
                   </Ui.Button>
                 </Show>
+                <Show
+                  when={
+                    selectedExecution()?.state === "blocked" && selectedDetail()?.architectSessionID
+                  }
+                >
+                  {(sessionID) => (
+                    <Ui.Button
+                      size="small"
+                      variant="ghost-muted"
+                      onClick={() =>
+                        ctx.tabs.open(
+                          { server: props.session.server.id, id: sessionID() },
+                          { focus: true },
+                        )
+                      }
+                    >
+                      Open Architect
+                    </Ui.Button>
+                  )}
+                </Show>
                 <Ui.Button
                   size="small"
                   variant="ghost-muted"
