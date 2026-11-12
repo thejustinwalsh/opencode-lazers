@@ -1628,6 +1628,63 @@ export class TaskRuntime {
     })
   }
 
+  private hasSettledHumanEvidenceHold(plan: PlanRow, attempt: AttemptRow): boolean {
+    const artifact = attempt.artifact
+    if (
+      plan.state !== "blocked" ||
+      !artifact ||
+      !plan.reason?.startsWith("Required evidence missing:")
+    )
+      return false
+    const proposal = this.store.repository.get(attempt.task_id)?.proposal
+    if (!proposal) return false
+    const effects = this.store.effects(plan.id).filter((effect) => effect.attempt_id === attempt.id)
+    if (effects.some((effect) => ["intended", "uncertain"].includes(effect.state))) return false
+    const repairID: string | undefined = this.retainedRepairGeneration(plan.id, attempt.task_id)
+    const receipts: CheckReceipt[] = []
+    for (const check of proposal.verification) {
+      const effect: EffectRow | undefined = effects.findLast((item): boolean => {
+        if (item.kind !== `verify:${check.id}`) return false
+        const payload = JSON.parse(item.payload)
+        return (
+          payload.artifact === artifact &&
+          (payload.repairID ?? undefined) === repairID &&
+          fingerprint(payload.check) === fingerprint(check)
+        )
+      })
+      const receipt: CheckReceipt | undefined =
+        effect?.state === "completed" && effect.receipt
+          ? (JSON.parse(effect.receipt) as { check?: CheckReceipt }).check
+          : undefined
+      if (
+        !receipt ||
+        receipt.id !== check.id ||
+        receipt.cwd !== attempt.workspace ||
+        receipt.artifact !== artifact ||
+        receipt.command !== check.command ||
+        !checkSucceeded(receipt) ||
+        !checkResourcesSettled(receipt)
+      )
+        return false
+      receipts.push(receipt)
+    }
+    const missing = this.missingEvidence(
+      plan.id,
+      attempt.task_id,
+      artifact,
+      attempt.workspace,
+      proposal.acceptance,
+      receipts,
+      undefined,
+      repairID,
+    )
+    return (
+      missing.length > 0 &&
+      missing.every((item) => item.endsWith(":human")) &&
+      plan.reason === `Required evidence missing: ${missing.join(", ")}`
+    )
+  }
+
   private quarantineTarget(plan: PlanRow, command: PlanCommand) {
     if (!command.attemptID || !command.reason)
       throw new Error("Source quarantine requires attemptID and reason")
@@ -1645,6 +1702,7 @@ export class TaskRuntime {
     if (
       attempt.state === "verifying" &&
       !this.hasSettledVerificationTimeout(plan, attempt) &&
+      !this.hasSettledHumanEvidenceHold(plan, attempt) &&
       !this.store
         .effects(plan.id)
         .some(
@@ -1654,7 +1712,9 @@ export class TaskRuntime {
             effect.kind.startsWith("verify:"),
         )
     )
-      throw new Error("Source quarantine requires a retained uncertain check or settled timeout")
+      throw new Error(
+        "Source quarantine requires a retained uncertain check, settled timeout, or settled human evidence hold",
+      )
     if (!this.host.archiveRetainedWorker || !this.host.ensureSourceGuard)
       throw new Error("The native worker source guard and archive control must be installed")
     return attempt
@@ -5815,7 +5875,8 @@ export class TaskRuntime {
     if (
       (command.action === "run" && result.status === "running") ||
       (command.action === "reconcile" && result.status === "reconciling") ||
-      (command.action === "retained-repair" && result.status === "retained-repair-requested")
+      (command.action === "retained-repair" && result.status === "retained-repair-requested") ||
+      (command.action === "quarantine-source" && result.status === "quarantining-source")
     )
       this.wakeScheduler?.()
     if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
@@ -10293,7 +10354,11 @@ export class TaskRuntime {
     if (
       plan.state !== "blocked" ||
       (attempt.state !== "running" &&
-        !(attempt.state === "verifying" && this.hasSettledVerificationTimeout(plan, attempt))) ||
+        !(
+          attempt.state === "verifying" &&
+          (this.hasSettledVerificationTimeout(plan, attempt) ||
+            this.hasSettledHumanEvidenceHold(plan, attempt))
+        )) ||
       attempt.workspace === this.directory ||
       !this.host.ensureSourceGuard ||
       !this.host.archiveRetainedWorker ||
