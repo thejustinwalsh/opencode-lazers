@@ -69,11 +69,16 @@ supported host lifecycle.
 Use the registered `lz-plan-command` action `verify-retained` as the current
 same-project Architect. Supply the current `projectID`, `planRevision`,
 `taskID`/`taskRevision`, latest `attemptID`, exact committed `artifact`, and a
-reason. A plan may remain `running` only when that candidate belongs to the exact
-latest `verifying` attempt and its source quarantine is sealed, unheld, bound to
-the current owner/session/assignment/workspace and review-input binding, and has
-an installed source guard. Pending, held, stale, or mismatched quarantine facts
-do not authorize verification.
+reason. A `running` plan may use this route for a candidate belonging to the exact
+latest `verifying` attempt. Existing stopped/accepted-plan verification remains
+available; if its attempt has a source-quarantine record, that record must meet
+the same exact authority checks rather than falling through to legacy admission.
+The source quarantine must be sealed, unheld, bound to the current
+owner/session/assignment/workspace and review-input binding, and have an installed
+source guard. Pending, held, stale, absent-guard, or mismatched quarantine facts
+do not authorize verification. An active source-only operation remains valid if
+supported reconciliation changes its plan from `running` to `blocked`, provided
+the exact source authority and original verifying attempt remain unchanged.
 
 The action runs only the task's declared checks in a separate retained-verification
 checkout. It does not prompt or replay the original worker, or run checks in or
@@ -88,8 +93,7 @@ are reused.
 This route is not original execution settlement or safe cleanup. Keep the source
 quarantine and historical holds intact; use the existing explicit cleanup
 recovery route only after its independent native settlement and integration
-preconditions are proven. The existing stopped/accepted-plan `verify-retained`
-route remains available with its prior behavior.
+preconditions are proven.
 
 ## Recover a held runner cleanup
 

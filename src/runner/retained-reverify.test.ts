@@ -644,6 +644,24 @@ async function sourceQuarantinedVerifyingFixture(options: Parameters<typeof fixt
   }
 }
 
+function blockSourceQuarantinePlan(
+  f: Awaited<ReturnType<typeof sourceQuarantinedVerifyingFixture>>,
+  reason: string,
+) {
+  const changes = f.store.atomic(
+    (db) =>
+      db
+        .query(
+          `UPDATE runner_plans
+         SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1
+         WHERE id=? AND state='running'`,
+        )
+        .run(reason, f.planID).changes,
+  )
+  if (changes !== 1) throw new Error("Source-quarantine fixture plan was not running")
+  f.store.record(f.planID, null, "BLOCKED", { reason })
+}
+
 function gatedRetainedCheckScript(): string {
   return [
     'import { appendFileSync, existsSync, mkdirSync, watch } from "node:fs"',
@@ -1777,6 +1795,173 @@ test("registered verify-retained checks a sealed quarantined candidate without s
   )
 })
 
+test("stopped-plan verify-retained binds and accepts a sealed quarantined candidate only in isolation", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({ combinedHumanEvidence: true })
+  const reason = "Operator retained the sealed source hold for explicit candidate verification"
+  blockSourceQuarantinePlan(f, reason)
+  const request = retainedVerifyCommand(f, "verify-stopped-sealed-source-candidate")
+  const prompts = structuredClone(f.prompts)
+  const created = [...f.created]
+  const requested = await f.control.execute(request)
+  expect(requested.status).toBe("retained-verification-requested")
+  const operationID = String(requested.operationID)
+  await waitForRetainedOperationState(
+    f,
+    operationID,
+    ["task-accepted"],
+    "stopped-plan retained task acceptance",
+  )
+
+  const checks = f.store.atomic((db) =>
+    db
+      .query<{ phase: string; artifact: string; state: string; receipt: string | null }, [string]>(
+        "SELECT phase,artifact,state,receipt FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase,check_id",
+      )
+      .all(operationID),
+  )
+  expect(checks).toHaveLength(1)
+  expect(checks[0]).toMatchObject({ phase: "task", artifact: f.artifact, state: "completed" })
+  expect(JSON.parse(checks[0]!.receipt!) as CheckReceipt).toMatchObject({ exitCode: 0 })
+  expect(JSON.parse(checks[0]!.receipt!) as CheckReceipt).not.toMatchObject({
+    cwd: f.attempt.workspace,
+  })
+  expect(f.store.plan(f.planID)).toMatchObject({ state: "blocked", reason })
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+    f.originalAttempt,
+  )
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
+    f.originalEffects,
+  )
+  expect({
+    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
+    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
+  }).toEqual(f.originalWorkspace)
+  expect(f.prompts).toEqual(prompts)
+  expect(f.created).toEqual(created)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+
+  expect(await f.control.execute(request)).toEqual(requested)
+  expect(
+    f.store.atomic((db) =>
+      db
+        .query<
+          { phase: string; artifact: string; state: string; receipt: string | null },
+          [string]
+        >(
+          "SELECT phase,artifact,state,receipt FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase,check_id",
+        )
+        .all(operationID),
+    ),
+  ).toEqual(checks)
+})
+
+test("stopped-plan verify-retained preserves failed sealed-source check receipts and holds", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({
+    taskCheckCommand: "bun run verify",
+    combinedCheckCommand: "true",
+    verificationScript: [
+      'if (process.env.LAZERS_VERIFICATION_SQLITE) throw new Error("fixture retained check failure")',
+      "process.exit(1)",
+      "",
+    ].join("\n"),
+  })
+  blockSourceQuarantinePlan(f, "Keep the original uncertain attempt held")
+  const prompts = structuredClone(f.prompts)
+  const requested = await f.control.execute(
+    retainedVerifyCommand(f, "verify-failing-stopped-sealed-source-candidate"),
+  )
+  const operationID = String(requested.operationID)
+  await waitForRetainedOperationState(f, operationID, ["held"], "stopped-plan failed checks")
+
+  const check = f.store.atomic((db) =>
+    db
+      .query<{ phase: string; artifact: string; state: string; receipt: string | null }, [string]>(
+        "SELECT phase,artifact,state,receipt FROM runner_retained_verification_checks WHERE operation_id=?",
+      )
+      .get(operationID),
+  )
+  expect(check).toMatchObject({ phase: "task", artifact: f.artifact, state: "completed" })
+  const receipt = JSON.parse(check!.receipt!) as CheckReceipt
+  expect(receipt.exitCode).not.toBe(0)
+  expect(`${receipt.stdout}\n${receipt.stderr}`).toContain("fixture retained check failure")
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+    f.originalAttempt,
+  )
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
+    f.originalEffects,
+  )
+  expect({
+    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
+    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
+  }).toEqual(f.originalWorkspace)
+  expect(f.prompts).toEqual(prompts)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
+    undefined,
+  )
+}, 60_000)
+
+test("stopped-plan verify-retained cancellation leaves the sealed source and original holds intact", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({
+    taskCheckCommand: "bun run verify",
+    verificationScript: gatedRetainedCheckScript(),
+    candidateContentsCheck: false,
+    requestTick: async () => {},
+  })
+  blockSourceQuarantinePlan(f, "Keep the source assignment blocked during isolated checks")
+  const request = retainedVerifyCommand(f, "cancel-stopped-source-verification")
+  const requested = await f.control.execute(request)
+  const operationID = String(requested.operationID)
+  await waitForRetainedCheckStart(f, operationID)
+  const checkActivity = await waitForRetainedCheckActivity(f, operationID)
+  await f.control.execute({
+    requestID: "cancel-stopped-source-retained-verification",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "cancel-retained-verification",
+    retainedVerificationID: operationID,
+    reason: "Cancel only the isolated source check",
+  })
+  await checkActivity.settled
+  await f.runtime.tick()
+
+  const operation = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(operationID),
+  )!
+  expect(JSON.parse(operation.payload)).toMatchObject({ state: "cancelled", artifact: f.artifact })
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
+    undefined,
+  )
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+    f.originalAttempt,
+  )
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
+    f.originalEffects,
+  )
+  expect({
+    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
+    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
+  }).toEqual(f.originalWorkspace)
+  expect(f.prompts).toHaveLength(1)
+  expect(f.archiveCalls).toHaveLength(1)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+}, 60_000)
+
 test("failed sealed-source checks retain their receipts without prompting or changing original holds", async () => {
   const f = await sourceQuarantinedVerifyingFixture({
     taskCheckCommand: "bun run verify",
@@ -1887,6 +2072,52 @@ test("a source binding change after admission fences publication of retained che
         .get(f.attempt.id),
     ),
   ).toEqual({ request_id: "changed-after-admission", phase: "sealed", hold_reason: null })
+  expect(f.prompts).toHaveLength(1)
+  expect(f.archiveCalls).toHaveLength(1)
+  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+})
+
+test("source-only verification survives supported running-to-blocked reconciliation", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({
+    taskCheckCommand: "bun run verify",
+    verificationScript: gatedRetainedCheckScript(),
+    candidateContentsCheck: false,
+    requestTick: async () => {},
+  })
+  const request = retainedVerifyCommand(f, "source-verification-blocked-reconciliation")
+  const requested = await f.control.execute(request)
+  const operationID = String(requested.operationID)
+  const contextPath = await waitForRetainedCheckStart(f, operationID)
+  const activity = await waitForRetainedCheckActivity(f, operationID)
+
+  blockSourceQuarantinePlan(f, "Reconcile the plan while preserving its verifying source attempt")
+  writeFileSync(join(contextPath, "home", "release"), "continue\n")
+  await activity.settled
+  await f.runtime.tick()
+  await waitForRetainedOperationState(
+    f,
+    operationID,
+    ["task-accepted"],
+    "reconciled source-only task acceptance",
+  )
+
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(
+    f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+  ).toBeDefined()
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+    f.originalAttempt,
+  )
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
+    f.originalEffects,
+  )
+  expect({
+    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
+    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
+  }).toEqual(f.originalWorkspace)
   expect(f.prompts).toHaveLength(1)
   expect(f.archiveCalls).toHaveLength(1)
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
@@ -2064,6 +2295,100 @@ test.each([
   )
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
 })
+
+test.each([
+  "pending",
+  "held",
+  "misbound",
+  "foreign-owner",
+  "foreign-session",
+  "foreign-workspace",
+  "malformed",
+  "unguarded",
+  "wrong-candidate",
+] as const)(
+  "stopped-plan verification rejects %s quarantine instead of using legacy admission",
+  async (kind) => {
+    const f = await sourceQuarantinedVerifyingFixture({
+      taskCheckCommand: "true",
+      combinedCheckCommand: "true",
+      candidateContentsCheck: false,
+      requestTick: async () => {},
+    })
+    blockSourceQuarantinePlan(f, "Keep source-only verification behind its sealed authority")
+    const request = retainedVerifyCommand(f, `reject-stopped-${kind}-source-verification`)
+    if (kind === "pending")
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_source_quarantines SET phase='pending' WHERE attempt_id=?")
+          .run(f.attempt.id),
+      )
+    if (kind === "held")
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_source_quarantines SET hold_reason='unresolved' WHERE attempt_id=?")
+          .run(f.attempt.id),
+      )
+    if (kind === "misbound")
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_source_quarantines SET assigned_message_id='foreign-input' WHERE attempt_id=?",
+          )
+          .run(f.attempt.id),
+      )
+    if (kind === "foreign-owner")
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_source_quarantines SET requested_owner='owner2' WHERE attempt_id=?")
+          .run(f.attempt.id),
+      )
+    if (kind === "foreign-session")
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_source_quarantines SET session_id='foreign-session' WHERE attempt_id=?",
+          )
+          .run(f.attempt.id),
+      )
+    if (kind === "foreign-workspace")
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_source_quarantines SET workspace='foreign-workspace' WHERE attempt_id=?",
+          )
+          .run(f.attempt.id),
+      )
+    if (kind === "malformed")
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_source_quarantines SET review_input_json='not-json' WHERE attempt_id=?",
+          )
+          .run(f.attempt.id),
+      )
+    if (kind === "unguarded") f.releaseSourceGuard()
+    if (kind === "wrong-candidate") request.artifact = f.attempt.base_commit
+
+    await expect(f.control.execute(request)).rejects.toThrow()
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+            )
+            .get(f.planID)?.n,
+      ),
+    ).toBe(0)
+    expect(f.prompts).toHaveLength(1)
+    expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+    expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
+      f.originalAttempt,
+    )
+    expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+  },
+)
 
 async function acceptedFailedAttemptFixture() {
   const f = await failedFixture()
