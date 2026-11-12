@@ -617,6 +617,17 @@ async function sourceQuarantinedVerifyingFixture(options: Parameters<typeof fixt
     return quarantine?.phase === "sealed" && quarantine.hold_reason === null
   })
 
+  // Main now routes an unadmitted sealed candidate to a blocked-plan hint.
+  // These cases explicitly exercise admission before that next reconciliation;
+  // stopped-plan cases below establish their own independently asserted hold.
+  f.store.atomic((db) => {
+    db.query(
+      `UPDATE runner_plans
+       SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
+       WHERE id=? AND state='blocked'`,
+    ).run(f.planID)
+  })
+
   const currentAttempt = f.store.attempts(f.planID).at(-1)!
   const quarantine = sourceQuarantine(f.store, attempt.id)
   const originalWorker = f.sessions.get(attempt.session_id)
@@ -2172,7 +2183,10 @@ test("competing and cancelled source verification cannot publish or settle the q
       .get(operationID),
   )!
   expect(JSON.parse(operation.payload)).toMatchObject({ state: "cancelled", artifact: f.artifact })
-  expect(f.store.plan(f.planID)?.state).toBe("running")
+  expect(f.store.plan(f.planID)).toMatchObject({
+    state: "blocked",
+    reason: expect.stringContaining("verify-retained"),
+  })
   expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
   expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
     undefined,

@@ -10508,6 +10508,20 @@ export class TaskRuntime {
           sourceQuarantine(this.store, candidate.id)?.phase === "sealed",
       )
     if (!attempt) return
+    const node = this.store
+      .nodes(plan.id)
+      .find((candidate) => candidate.task_id === attempt.task_id)
+    if (node?.state !== "verifying") return
+    const retained = this.store.atomic((db) =>
+      activeRetainedVerifications(db, this.directory, plan.id).find(
+        (operation) =>
+          operation.attemptID === attempt.id &&
+          operation.artifact === attempt.artifact &&
+          operation.sourceQuarantine !== undefined &&
+          operation.state !== "held",
+      ),
+    )
+    if (retained && this.retainedVerificationLive(retained.id, retained.generation)) return
     return this.hold(
       plan,
       "The verifying worker's checkout is quarantined. Run verify-retained on its candidate in an isolated checkout.",
