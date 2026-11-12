@@ -1,0 +1,901 @@
+From 82250160386691dc36565ae59aa70545150f4e06 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Wed, 11 Nov 2026 20:59:37 -0500
+Subject: [PATCH] fix(zoo): make D1 exceptional cleanup safe
+
+
+diff --git a/packages/runntime/src/core/gpu/buffers.ts b/packages/runntime/src/core/gpu/buffers.ts
+index f6ee2806ad4a6466e2a698efe012c80598f91216..8b4ba299b4d2cf93b62b68ba5b335f1e9ffcbc6f 100644
+--- a/packages/runntime/src/core/gpu/buffers.ts
++++ b/packages/runntime/src/core/gpu/buffers.ts
+@@ -189,6 +189,8 @@ const stagingPerRoot = new WeakMap<TgpuRoot, { buf: GPUBuffer; size: number; bus
+  *  the standalone encode-and-submit form. */
+ export interface StagingLease {
+   staging: GPUBuffer;
++  /** Releases a lease when its command buffer was not submitted. */
++  cancel(): void;
+   finish<T>(read: (mapped: ArrayBuffer) => T): Promise<T>;
+ }
+ 
+@@ -221,8 +223,16 @@ export function leaseStaging(root: TgpuRoot, byteSize: number): StagingLease {
+     staging = entry.buf;
+   }
+   const shared = entry;
++  let released = false;
++  const release = () => {
++    if (released) return;
++    released = true;
++    if (transient) staging.destroy();
++    else shared.busy = false;
++  };
+   return {
+     staging,
++    cancel: release,
+     async finish<T>(read: (mapped: ArrayBuffer) => T): Promise<T> {
+       // On every path: a throw must not leave the slot marked busy, which
+       // would push every later readback onto a transient buffer.
+@@ -234,8 +244,7 @@ export function leaseStaging(root: TgpuRoot, byteSize: number): StagingLease {
+           staging.unmap();
+         }
+       } finally {
+-        if (transient) staging.destroy();
+-        else shared.busy = false;
++        release();
+       }
+     },
+   };
+diff --git a/packages/runntime/src/core/gpu/eval.ts b/packages/runntime/src/core/gpu/eval.ts
+index a1f7eb0877d16fb079cfd0fe205b97c75c8ae812..a341aecd70374ab8f75474d72ffc5fff8fc66609 100644
+--- a/packages/runntime/src/core/gpu/eval.ts
++++ b/packages/runntime/src/core/gpu/eval.ts
+@@ -157,6 +157,12 @@ export function gpuExecutor(root: TgpuRoot, opts: { perf?: GpuPerfSink } = {}):
+   /** Uploads used only by one submitted dispatch, unless a capture retains them. */
+   const pendingUploads = new Set<{ destroy(): void }>();
+   const submittedUploads = new Set<{ destroy(): void }>();
++  const discard = () => {
++    handles.length = 0;
++    handleCache.clear();
++    for (const b of pendingUploads) b.destroy();
++    pendingUploads.clear();
++  };
+ 
+   // Filler for bind slots a pipeline never reads. One per dtype, 4 elements,
+   // since vec4 layouts need 16 bytes minimum.
+@@ -275,6 +281,7 @@ export function gpuExecutor(root: TgpuRoot, opts: { perf?: GpuPerfSink } = {}):
+       return pool.acquire(shape);
+     },
+     releaseOutput: (buffer, shape) => pool.release(buffer, shape),
++    discard,
+     // Forgets every handle, dummy and scratch it destroys, so a later
+     // dispatch makes fresh ones instead of binding a destroyed buffer. A
+     // captured executor can eval and capture again; its old replays throw.
+@@ -336,8 +343,7 @@ export function gpuExecutor(root: TgpuRoot, opts: { perf?: GpuPerfSink } = {}):
+           }
+         });
+       } catch (err) {
+-        for (const b of pendingUploads) b.destroy();
+-        pendingUploads.clear();
++        discard();
+         throw err;
+       }
+       const release = [...pendingUploads];
+diff --git a/packages/runntime/src/core/gpu/readbackQueue.ts b/packages/runntime/src/core/gpu/readbackQueue.ts
+index bed21c38c5313ed6c29e6f5c46fb0ef5f088b0cd..429129dd59b989f82bdc33568f1174a3dd9aa5ce 100644
+--- a/packages/runntime/src/core/gpu/readbackQueue.ts
++++ b/packages/runntime/src/core/gpu/readbackQueue.ts
+@@ -56,16 +56,22 @@ export class ReadbackQueue {
+     if (this.pending === undefined) return undefined;
+     const rb = this.pending;
+     this.pending = undefined;
++    let spans: ReturnType<typeof shapeSpan>[];
++    try {
++      spans = rb.values.map((value) => shapeSpan(value.shape));
++    } catch (err) {
++      rb.reject(err);
++      throw err;
++    }
++    const total = spans.reduce((sum, span) => sum + span.bytes, 0);
+     let lease: ReturnType<typeof leaseStaging>;
+-    const spans: ReturnType<typeof shapeSpan>[] = [];
+-    let total = 0;
+     try {
+-      for (const v of rb.values) {
+-        const span = shapeSpan(v.shape);
+-        spans.push(span);
+-        total += span.bytes;
+-      }
+       lease = leaseStaging(this.root, total);
++    } catch (err) {
++      rb.reject(err);
++      throw err;
++    }
++    try {
+       let offset = 0;
+       rb.values.forEach((v, i) => {
+         encoder.copyBufferToBuffer(
+@@ -78,13 +84,14 @@ export class ReadbackQueue {
+         offset += spans[i]!.bytes;
+       });
+     } catch (err) {
++      lease.cancel();
+       rb.reject(err);
+-      return undefined;
++      throw err;
+     }
+     return (err?: unknown) => {
+       if (err !== undefined) {
+         rb.reject(err);
+-        void lease.finish(() => undefined).catch(() => undefined);
++        lease.cancel();
+         return;
+       }
+       lease
+diff --git a/packages/runntime/src/core/graph/evalCore.ts b/packages/runntime/src/core/graph/evalCore.ts
+index e04c989e03623241febe0cfd9398b14f4daa5867..7f696c5c2e3f9628c1fa92b4d230f99083963127 100644
+--- a/packages/runntime/src/core/graph/evalCore.ts
++++ b/packages/runntime/src/core/graph/evalCore.ts
+@@ -14,6 +14,8 @@ export interface DispatchExtras {
+ export interface Executor {
+   acquireOutput(shape: ValueMeta): GpuBufferRef;
+   releaseOutput(buffer: GpuBufferRef, shape: ValueMeta): void;
++  /** Discards commands queued by a failed evaluation before they are submitted. */
++  discard?(): void;
+   dispatch(
+     node: Value,
+     inputs: readonly GpuBufferRef[],
+@@ -177,93 +179,114 @@ export function evalValues(targets: readonly Value[], ex: Executor): void {
+ 
+   // Acquired by the first elided writer, always before the concat itself.
+   const holderBuf = new Map<Value, GpuBufferRef>();
++  const acquired = new Map<GpuBufferRef, ValueMeta>();
++  const acquireOutput = (shape: ValueMeta): GpuBufferRef => {
++    const buffer = ex.acquireOutput(shape);
++    acquired.set(buffer, shape);
++    return buffer;
++  };
++  const releaseOutput = (buffer: GpuBufferRef, shape: ValueMeta): void => {
++    acquired.delete(buffer);
++    ex.releaseOutput(buffer, shape);
++  };
+   const bufferFor = (holder: Value) => {
+     let buf = holderBuf.get(holder);
+     if (buf === undefined) {
+-      buf = ex.acquireOutput(holder.shape);
++      buf = acquireOutput(holder.shape);
+       holderBuf.set(holder, buf);
+     }
+     return buf;
+   };
+ 
+-  order.forEach((v, i) => {
+-    const aliasedConv = addAlias.get(v);
+-    if (IN_PLACE_OPS.has(v.pending!.op)) {
+-      // In-place op: writes rows of its first input's caller-owned buffer.
+-      const out = v.pending!.inputs[0]!.buffer;
+-      const inputs = v.pending!.inputs.map((input) => input.buffer);
+-      ex.dispatch(v, inputs, out);
+-      v.setMaterialized(out);
+-    } else if (aliasedConv !== undefined) {
+-      // Fused add: the conv already wrote act(conv)+x — just take its buffer.
+-      v.setMaterialized(aliasedConv.buffer);
+-    } else if (
+-      (v.pending!.op === 'concatChannels' || v.pending!.op === 'concatChannelsHwc4') &&
+-      concatInto.has(v)
+-    ) {
+-      // Writers targeted the holder directly; copy only what was not elided.
+-      const slot = concatInto.get(v)!;
+-      const buf = bufferFor(slot.holder);
+-      const [a, b] = v.pending!.inputs as [Value, Value];
+-      [a, b].forEach((inp, j) => {
+-        if (!ownedElsewhere.has(inp)) {
+-          ex.copyInto!(
+-            inp.buffer,
+-            buf,
+-            inp.shape,
+-            slot.holder.shape,
+-            slot.base + (j === 0 ? 0 : a.shape.elems),
+-          );
+-        }
+-      });
+-      v.setMaterialized(buf);
+-    } else if (
+-      (v.pending!.op === 'concatChannels' || v.pending!.op === 'concatChannelsHwc4') &&
+-      ex.copyInto &&
+-      holderBuf.has(v)
+-    ) {
+-      // Root concat with at least one elided input.
+-      const buf = bufferFor(v);
+-      const [a, b] = v.pending!.inputs as [Value, Value];
+-      [a, b].forEach((inp, j) => {
+-        if (!ownedElsewhere.has(inp)) {
+-          ex.copyInto!(inp.buffer, buf, inp.shape, v.shape, j === 0 ? 0 : a.shape.elems);
+-        }
+-      });
+-      v.setMaterialized(buf);
+-    } else {
+-      const slot = concatInto.get(v);
+-      const out = slot !== undefined ? bufferFor(slot.holder) : ex.acquireOutput(v.shape);
+-      const inputs = v.pending!.inputs.map((input) => input.buffer);
+-      const addend = fusedAddend.get(v);
+-      const extras: DispatchExtras | undefined =
+-        addend !== undefined || slot !== undefined
+-          ? {
+-              addend: addend?.buffer,
+-              outBase: slot?.base ?? 0,
+-              outElems: slot?.holder.shape.elems,
+-            }
+-          : undefined;
+-      ex.dispatch(v, inputs, out, extras);
+-      v.setMaterialized(out);
+-      if (slot !== undefined) ownedElsewhere.add(v);
+-    }
+-    // Dedupe: mul(x, x) would otherwise release one buffer twice.
+-    // ownedElsewhere inputs belong to an alias or holder now.
+-    for (const input of new Set(v.pending!.inputs)) {
+-      if (
+-        produced.has(input) &&
+-        lastUse.get(input) === i &&
+-        !targetSet.has(input) &&
+-        !IN_PLACE_OPS.has(input.pending!.op) &&
+-        !ownedElsewhere.has(input)
++  try {
++    order.forEach((v, i) => {
++      const aliasedConv = addAlias.get(v);
++      if (IN_PLACE_OPS.has(v.pending!.op)) {
++        // In-place op: writes rows of its first input's caller-owned buffer.
++        const out = v.pending!.inputs[0]!.buffer;
++        const inputs = v.pending!.inputs.map((input) => input.buffer);
++        ex.dispatch(v, inputs, out);
++        v.setMaterialized(out);
++      } else if (aliasedConv !== undefined) {
++        // Fused add: the conv already wrote act(conv)+x — just take its buffer.
++        v.setMaterialized(aliasedConv.buffer);
++      } else if (
++        (v.pending!.op === 'concatChannels' || v.pending!.op === 'concatChannelsHwc4') &&
++        concatInto.has(v)
++      ) {
++        // Writers targeted the holder directly; copy only what was not elided.
++        const slot = concatInto.get(v)!;
++        const buf = bufferFor(slot.holder);
++        const [a, b] = v.pending!.inputs as [Value, Value];
++        [a, b].forEach((inp, j) => {
++          if (!ownedElsewhere.has(inp)) {
++            ex.copyInto!(
++              inp.buffer,
++              buf,
++              inp.shape,
++              slot.holder.shape,
++              slot.base + (j === 0 ? 0 : a.shape.elems),
++            );
++          }
++        });
++        v.setMaterialized(buf);
++      } else if (
++        (v.pending!.op === 'concatChannels' || v.pending!.op === 'concatChannelsHwc4') &&
++        ex.copyInto &&
++        holderBuf.has(v)
+       ) {
+-        ex.releaseOutput(input.buffer, input.shape);
+-        input.markReleased(); // any later use of this Value now fails loudly
++        // Root concat with at least one elided input.
++        const buf = bufferFor(v);
++        const [a, b] = v.pending!.inputs as [Value, Value];
++        [a, b].forEach((inp, j) => {
++          if (!ownedElsewhere.has(inp)) {
++            ex.copyInto!(inp.buffer, buf, inp.shape, v.shape, j === 0 ? 0 : a.shape.elems);
++          }
++        });
++        v.setMaterialized(buf);
++      } else {
++        const slot = concatInto.get(v);
++        const out = slot !== undefined ? bufferFor(slot.holder) : acquireOutput(v.shape);
++        const inputs = v.pending!.inputs.map((input) => input.buffer);
++        const addend = fusedAddend.get(v);
++        const extras: DispatchExtras | undefined =
++          addend !== undefined || slot !== undefined
++            ? {
++                addend: addend?.buffer,
++                outBase: slot?.base ?? 0,
++                outElems: slot?.holder.shape.elems,
++              }
++            : undefined;
++        ex.dispatch(v, inputs, out, extras);
++        v.setMaterialized(out);
++        if (slot !== undefined) ownedElsewhere.add(v);
++      }
++      // Dedupe: mul(x, x) would otherwise release one buffer twice.
++      // ownedElsewhere inputs belong to an alias/holder now.
++      for (const input of new Set(v.pending!.inputs)) {
++        if (
++          produced.has(input) &&
++          lastUse.get(input) === i &&
++          !targetSet.has(input) &&
++          !IN_PLACE_OPS.has(input.pending!.op) &&
++          !ownedElsewhere.has(input)
++        ) {
++          releaseOutput(input.buffer, input.shape);
++          input.markReleased(); // any later use of this Value now fails loudly
++        }
++      }
++    });
++    ex.submit();
++  } catch (err) {
++    ex.discard?.();
++    for (const value of order) {
++      if (value.state === 'materialized') {
++        value.markReleased('evalValues: evaluation failed before submission');
+       }
+     }
+-  });
+-  ex.submit();
++    for (const [buffer, shape] of acquired) ex.releaseOutput(buffer, shape);
++    throw err;
++  }
+ }
+ 
+ export async function toArray(value: Value, ex: Executor & Readback): Promise<Float32Array> {
+diff --git a/packages/runntime/src/core/nn/layers.ts b/packages/runntime/src/core/nn/layers.ts
+index 65dbf171c5cbdbd36a915453acc4f2617cc1f3e3..5bc52ff872c87b8eddb54384ce810e9341504457 100644
+--- a/packages/runntime/src/core/nn/layers.ts
++++ b/packages/runntime/src/core/nn/layers.ts
+@@ -1,6 +1,7 @@
+ /** Stock nn layers: each holds Parameters and calls the matching op. */
+ 
+ import { RunntimeError } from '../error.ts';
++import type { TgpuRoot } from 'typegpu';
+ import { groupNorm, linear } from '../graph/compose.ts';
+ import {
+   type ConvAct,
+@@ -28,6 +29,7 @@ import {
+ import { foldBnIntoConv } from '../weights/foldBn.ts';
+ import { derivedTensor, type LazyStateDict } from '../weights/safetensors.ts';
+ import { tensor } from '../gpu/buffers.ts';
++import { defaultRoot } from '../gpu/context.ts';
+ import { CpuParameter, Module, Parameter, type AnyModule } from './module.ts';
+ 
+ /** Token-id lookup table: ids to rows of a [numEmbeddings, dims] weight.
+@@ -35,7 +37,7 @@ import { CpuParameter, Module, Parameter, type AnyModule } from './module.ts';
+  *  On 'gpu' the weight doubles as a tied LM head, read through `weight.value`
+  *  in its raw orientation. On 'cpu' it never reaches the GPU — forward()
+  *  gathers the requested rows and uploads those — and tying is unavailable. */
+-export class Embedding extends Module<[readonly number[] | Value], Value> {
++export class Embedding extends Module<[readonly number[] | Value, TgpuRoot?], Value> {
+   readonly weight: Parameter;
+   constructor(
+     readonly numEmbeddings: number,
+@@ -77,10 +79,10 @@ export class Embedding extends Module<[readonly number[] | Value], Value> {
+   /** Token ids to embedded rows [t, dims], always f32. A GPU-resident id
+    *  vector lets a captured graph re-run on new tokens; cpu tables take the
+    *  array form only. */
+-  forward(ids: readonly number[] | Value): Value {
++  forward(ids: readonly number[] | Value, root?: TgpuRoot): Value {
+     if (Array.isArray(ids)) {
+       return this.weight instanceof CpuParameter
+-        ? tensor(this.gather(ids), {
++        ? tensor(root ?? defaultRoot(), this.gather(ids), {
+             elems: ids.length * this.embeddingDim,
+             dtype: this.weight.shape.dtype,
+             dims: [ids.length, this.embeddingDim],
+diff --git a/packages/runntime/src/zoo/d1/decider.ts b/packages/runntime/src/zoo/d1/decider.ts
+index f48bfc8a2167ce385331b086b11d4bab9af9557d..db01ec273dbe73b55babf66b9f7307bd9c894bab 100644
+--- a/packages/runntime/src/zoo/d1/decider.ts
++++ b/packages/runntime/src/zoo/d1/decider.ts
+@@ -87,7 +87,7 @@ export async function createD1Decider(
+       },
+     });
+     throwIfAborted(opts.signal);
+-    zeroRow = tensor(new Float32Array(D1.hidden), [1, D1.hidden]);
++    zeroRow = tensor(root, new Float32Array(D1.hidden), [1, D1.hidden]);
+ 
+     const temperatures = opts.temperatures ?? {};
+     const posTable = model.vision.position_embedding.data;
+@@ -109,9 +109,9 @@ export async function createD1Decider(
+     const encodeImage = (img: RgbImage, uploads: Value[]): Value => {
+       const parts = preprocessImage(img).map(({ ph, pw, patches }) => {
+         const pos = resizeAA(posTable, D1.posGrid, D1.posGrid, D1.visionHidden, ph, pw);
+-        const p = tensor(patches, [ph * pw, 3 * 16 * 16]);
++        const p = tensor(root, patches, [ph * pw, 3 * 16 * 16]);
+         uploads.push(p);
+-        const q = tensor(pos, [ph * pw, D1.visionHidden]);
++        const q = tensor(root, pos, [ph * pw, D1.visionHidden]);
+         uploads.push(q);
+         return model.vision.forward(p, q, ph, pw);
+       });
+@@ -131,10 +131,10 @@ export async function createD1Decider(
+         throwIfDecisionAborted(signal);
+         const p = prefix ? prefix.shape.dims![0]! : 0;
+         const t = p + ids.length;
+-        const emb = track(model.encoder.embed_tokens.forward(ids), uploads);
++        const emb = track(model.encoder.embed_tokens.forward(ids, root), uploads);
+         const { cos: c, sin: s } = ropeTables(t);
+-        const cos = track(tensor(c, [t, D1.headDim]), uploads);
+-        const sin = track(tensor(s, [t, D1.headDim]), uploads);
++        const cos = track(tensor(root, c, [t, D1.headDim]), uploads);
++        const sin = track(tensor(root, s, [t, D1.headDim]), uploads);
+         let segments: Value | undefined;
+         let keepRight: Value | undefined;
+         if (p > 0) {
+@@ -142,10 +142,10 @@ export async function createD1Decider(
+           const keep = new Float32Array(t).fill(1);
+           for (let i = 0; i < t; i++) seg[2 * i + 1] = i < p ? p : t;
+           keep[p - 1] = 0;
+-          segments = track(tensor(seg, [t, 2]), uploads);
+-          keepRight = track(tensor(keep, [t, 1]), uploads);
++          segments = track(tensor(root, seg, [t, 2]), uploads);
++          keepRight = track(tensor(root, keep, [t, 1]), uploads);
+         }
+-        const typeRow = track(model.head.type_emb.forward([QTYPES[q.type]]), uploads);
++        const typeRow = track(model.head.type_emb.forward([QTYPES[q.type]], root), uploads);
+         const h = model.encoder.forward(prefix ? cat([prefix, emb], 0) : emb, {
+           cos,
+           sin,
+diff --git a/packages/runntime/test/core/gpu/eval.gpu.test.ts b/packages/runntime/test/core/gpu/eval.gpu.test.ts
+index 7edc9d88a8465c6ce9106c8a929e186e84417c1a..d6f97be016da3f7b151bab36132ceec4dab710d5 100644
+--- a/packages/runntime/test/core/gpu/eval.gpu.test.ts
++++ b/packages/runntime/test/core/gpu/eval.gpu.test.ts
+@@ -316,3 +316,44 @@ describe('gpuExecutor trim', () => {
+     expectClose(await got, ref(next, rows));
+   });
+ });
++
++it('rolls back outputs and queued commands after a partial evaluation failure', async () => {
++  const ex = gpuExecutor(root);
++  const firstInput = upload(root, randomF32(ROWS * COLS, 31), [ROWS, COLS]);
++  let dispatches = 0;
++  const failingExecutor: RunntimeExecutor = {
++    ...ex,
++    dispatch: (...args) => {
++      if (++dispatches === 2) throw new Error('injected partial evaluation failure');
++      ex.dispatch(...args);
++    },
++  };
++  try {
++    const warmOutput = tanh(add(firstInput, 1));
++    evalValues([warmOutput], ex);
++    await ex.readback(warmOutput.buffer, warmOutput.shape);
++    ex.releaseValues([warmOutput]);
++    ex.trim();
++
++    const failed = tanh(add(firstInput, 1));
++    expect(() => evalValues([failed], failingExecutor)).toThrow(
++      'injected partial evaluation failure',
++    );
++    expect(failed.state).toBe('pending');
++    expect(() => evalValues([failed], ex)).toThrow('evaluation failed before submission');
++
++    firstInput.buffer.destroy();
++    const nextInput = upload(root, randomF32(ROWS * COLS, 32), [ROWS, COLS]);
++    const beforeRecovery = liveBuffers();
++    const output = tanh(add(nextInput, 1));
++    evalValues([output], ex);
++    const actual = await ex.readback(output.buffer, output.shape);
++    const expected = Float32Array.from(randomF32(ROWS * COLS, 32), (value) => Math.tanh(value + 1));
++    expectClose(actual, expected);
++    ex.releaseValues([output]);
++    ex.trim();
++    expect(buffersSince(beforeRecovery)).toEqual([]);
++  } finally {
++    ex.dispose();
++  }
++});
+diff --git a/packages/runntime/test/zoo/d1/qualification.gpu.test.ts b/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+index bb41b5355fadc56cb089c81bad372238cc23f43b..62b280906e952144a63f3d5a450292adec11e27d 100644
+--- a/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
++++ b/packages/runntime/test/zoo/d1/qualification.gpu.test.ts
+@@ -7,10 +7,12 @@ import {
+   type LazyStateDict,
+   type LazyTensor,
+ } from '../../../src/core/weights/safetensors.ts';
+-import { initRunntime } from '../../../src/core/gpu/eval.ts';
+-import { createD1Decider } from '../../../src/zoo/d1/decider.ts';
++import { tensor } from '../../../src/core/gpu/buffers.ts';
++import { initRunntime, toArray } from '../../../src/core/gpu/eval.ts';
++import { add } from '../../../src/core/graph/ops.ts';
++import { createD1Decider, type D1Decider } from '../../../src/zoo/d1/decider.ts';
+ import type { Answer, D1Tokenizer, Question } from '../../../src/zoo/d1/prompt.ts';
+-import { buffersSince, liveBuffers, gpu } from '../../gpu.ts';
++import { buffersSince, expectClose, liveBuffers, gpu } from '../../gpu.ts';
+ import vectors from '../../../playground/d1/reference-vectors.json';
+ 
+ declare global {
+@@ -544,3 +546,397 @@ it.skipIf(MODE !== 'repaired')(
+   },
+   900_000,
+ );
++
++it.skipIf(MODE !== 'correction')(
++  'qualifies D1 exceptional cleanup, captured-root uploads, and healthy disposal',
++  async (ctx) => {
++    const corpus = requireReferenceCorpus(vectors);
++    const started = performance.now();
++    const { root, ex: sharedExecutor } = await gpu();
++    const original = await fromSafetensors(MODEL_URL);
++    const rawTensors = new Map(original.tensors);
++    const stateDict = () => cloneStateDict(original, new Map(rawTensors));
++    const tokenizer = makeTokenizer(corpus);
++    const temps = temperatures(corpus);
++    const sharedInput = tensor(root, Float32Array.of(2, 4, 6, 8, 10, 12, 14, 16), [1, 8]);
++    const sharedOutput = add(sharedInput, 3);
++    expectClose(await toArray(sharedOutput, sharedExecutor), [5, 7, 9, 11, 13, 15, 17, 19]);
++    sharedExecutor.releaseValues([sharedOutput]);
++
++    const beforeAbortedLoad = liveBuffers();
++    const loadAbort = new AbortController();
++    await expect(
++      createD1Decider(stateDict(), tokenizer, {
++        signal: loadAbort.signal,
++        onProgress: () => loadAbort.abort('correction load abort after first upload'),
++      }),
++    ).rejects.toMatchObject({ code: 'LOAD_ABORTED' });
++    expect(buffersSince(beforeAbortedLoad)).toEqual([]);
++
++    const replacementRoot = await tgpu.init({
++      device: { optionalFeatures: ['subgroups', 'shader-f16'] },
++    });
++    const beforeHealthyCreate = liveBuffers();
++    const baselineStaging = [...beforeHealthyCreate].filter(
++      (buffer) => (buffer.usage & GPUBufferUsage.MAP_READ) !== 0,
++    );
++    const baselineUniforms = [...beforeHealthyCreate].filter(
++      (buffer) => (buffer.usage & GPUBufferUsage.UNIFORM) !== 0,
++    );
++    const baselineGpuBufferBytes = [...beforeHealthyCreate].reduce(
++      (sum, buffer) => sum + buffer.size,
++      0,
++    );
++    let replacementExecutor: ReturnType<typeof initRunntime> | undefined;
++    let changedRootDuringLoad = false;
++    let loadedWeightBytes = 0;
++    let progressDoneBytes = 0;
++    let progressTotalBytes = 0;
++    let peakGpuBufferBytes = gpuBufferBytes();
++    let peakJsHeapBytes: number | null = null;
++    let peakAgentBytes: number | null = null;
++    const loadStarted = performance.now();
++    let decider: D1Decider | undefined;
++    let freshDecider: D1Decider | undefined;
++    let freshInput: ReturnType<typeof tensor> | undefined;
++    const decisions: Record<string, unknown>[] = [];
++    const verifyDecision = (
++      result: Awaited<ReturnType<D1Decider['systemOne']>>,
++      item: ReferenceCase,
++      id = item.id,
++    ) => {
++      const answer = result.answers.answer!;
++      const got = probabilities(answer, item.question);
++      const maxAbsError = Math.max(
++        ...got.map((probability, index) =>
++          Math.abs(probability - item.reference.probabilities[index]!),
++        ),
++      );
++      expect(result.inputTokens).toBe(item.reference.inputTokens);
++      expect(stableAnswer(answer, item.question)).toBe(item.reference.answer);
++      expect(maxAbsError).toBeLessThanOrEqual(TOLERANCE);
++      decisions.push({
++        id,
++        inputTokens: result.inputTokens,
++        answer: stableAnswer(answer, item.question),
++        probabilities: got,
++        maxAbsError,
++      });
++      peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++    };
++    const decide = async (item: ReferenceCase, id = item.id) => {
++      const decisionStarted = performance.now();
++      const result = await decider!.systemOne(item.state, { answer: item.question });
++      verifyDecision(result, item, id);
++      decisions.at(-1)!.latencyMs = +(performance.now() - decisionStarted).toFixed(2);
++      const memory = await hostMemory();
++      if (memory.jsHeapBytes !== null)
++        peakJsHeapBytes = Math.max(peakJsHeapBytes ?? 0, memory.jsHeapBytes);
++      if (memory.agentBytes !== null)
++        peakAgentBytes = Math.max(peakAgentBytes ?? 0, memory.agentBytes);
++    };
++
++    try {
++      decider = await createD1Decider(stateDict(), tokenizer, {
++        temperatures: temps,
++        onProgress: (_name, done, total) => {
++          loadedWeightBytes = total;
++          progressDoneBytes = done;
++          progressTotalBytes = total;
++          peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++          if (!changedRootDuringLoad) {
++            replacementExecutor = initRunntime(replacementRoot);
++            changedRootDuringLoad = true;
++          }
++        },
++      });
++      const loadMs = performance.now() - loadStarted;
++      const loadedMemory = await hostMemory();
++      peakJsHeapBytes = loadedMemory.jsHeapBytes;
++      peakAgentBytes = loadedMemory.agentBytes;
++      peakGpuBufferBytes = Math.max(peakGpuBufferBytes, gpuBufferBytes());
++      expect(changedRootDuringLoad).toBe(true);
++
++      for (const item of corpus.cases) await decide(item);
++      initRunntime(replacementRoot);
++      await decide(corpus.cases[0]!, 'old-decider-after-root-reinitialization');
++
++      const firstCase = corpus.cases[0]!;
++      const expectExecutionFailure = (promise: Promise<unknown>) =>
++        expect(promise).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++
++      const originalDispatch = GPUComputePassEncoder.prototype.dispatchWorkgroups;
++      let dispatches = 0;
++      GPUComputePassEncoder.prototype.dispatchWorkgroups = function (x, y, z) {
++        dispatches++;
++        if (dispatches === 4) throw new Error('correction rejected command encoding');
++        return originalDispatch.call(this, x, y, z);
++      };
++      try {
++        await expectExecutionFailure(
++          decider.systemOne(firstCase.state, { answer: firstCase.question }),
++        );
++      } finally {
++        GPUComputePassEncoder.prototype.dispatchWorkgroups = originalDispatch;
++      }
++      expect(dispatches).toBe(4);
++      await decide(firstCase, 'recovered-after-command-encoding-failure');
++
++      const originalSubmit = GPUQueue.prototype.submit;
++      let rejectedSubmission = false;
++      GPUQueue.prototype.submit = function (commands) {
++        if (this === root.device.queue && !rejectedSubmission) {
++          rejectedSubmission = true;
++          throw new Error('correction rejected queue submission');
++        }
++        return originalSubmit.call(this, commands);
++      };
++      try {
++        await expectExecutionFailure(
++          decider.systemOne(firstCase.state, { answer: firstCase.question }),
++        );
++      } finally {
++        GPUQueue.prototype.submit = originalSubmit;
++      }
++      expect(rejectedSubmission).toBe(true);
++      await decide(firstCase, 'recovered-after-queue-submission-failure');
++
++      const originalCreateBindGroup = GPUDevice.prototype.createBindGroup;
++      let bindGroups = 0;
++      GPUDevice.prototype.createBindGroup = function (descriptor) {
++        if (this === root.device && ++bindGroups === 9) {
++          throw new Error('correction rejected partial graph evaluation');
++        }
++        return originalCreateBindGroup.call(this, descriptor);
++      };
++      try {
++        await expectExecutionFailure(
++          decider.systemOne(firstCase.state, { answer: firstCase.question }),
++        );
++      } finally {
++        GPUDevice.prototype.createBindGroup = originalCreateBindGroup;
++      }
++      expect(bindGroups).toBe(9);
++      await decide(firstCase, 'recovered-after-partial-evaluation-failure');
++
++      const beforeReadbackFailure = liveBuffers();
++      const originalMapAsync = GPUBuffer.prototype.mapAsync;
++      let rejectReadback = true;
++      GPUBuffer.prototype.mapAsync = function (mode, offset, size) {
++        if (rejectReadback) {
++          rejectReadback = false;
++          return Promise.reject(new Error('correction rejected readback'));
++        }
++        return originalMapAsync.call(this, mode, offset, size);
++      };
++      try {
++        await expectExecutionFailure(
++          decider.systemOne(firstCase.state, { answer: firstCase.question }),
++        );
++      } finally {
++        GPUBuffer.prototype.mapAsync = originalMapAsync;
++      }
++      await root.device.queue.onSubmittedWorkDone();
++      expect(buffersSince(beforeReadbackFailure)).toEqual([]);
++      await decide(firstCase, 'recovered-after-readback-failure');
++
++      const preAborted = new AbortController();
++      preAborted.abort('correction pre-abort');
++      const beforePreAbort = liveBuffers();
++      await expect(
++        decider.systemOne(firstCase.state, { answer: firstCase.question }, undefined, {
++          signal: preAborted.signal,
++        }),
++      ).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++      expect(buffersSince(beforePreAbort)).toEqual([]);
++
++      const queuedAbort = new AbortController();
++      const first = decider.systemOne(firstCase.state, { answer: firstCase.question });
++      const second = decider.systemOne(
++        corpus.cases[1]!.state,
++        { answer: corpus.cases[1]!.question },
++        undefined,
++        { signal: queuedAbort.signal },
++      );
++      queuedAbort.abort('correction queued abort');
++      verifyDecision(await first, firstCase, 'active-before-queued-abort');
++      await expect(second).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++
++      const activeAbort = new AbortController();
++      const abortWork = decider.systemOne(
++        firstCase.state,
++        { answer: firstCase.question },
++        undefined,
++        { signal: activeAbort.signal },
++      );
++      await Promise.resolve();
++      activeAbort.abort('correction active abort');
++      await expect(abortWork).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++      await decide(firstCase, 'recovered-after-active-abort');
++
++      const disposeCase = corpus.cases[0]!;
++      const active = decider.systemOne(disposeCase.state, { answer: disposeCase.question });
++      await Promise.resolve();
++      const queued = decider.systemOne(corpus.cases[1]!.state, {
++        answer: corpus.cases[1]!.question,
++      });
++      const disposeStarted = performance.now();
++      const disposal = decider.dispose();
++      expect(decider.dispose()).toBe(disposal);
++      verifyDecision(await active, disposeCase, 'active-during-healthy-disposal');
++      await expect(queued).rejects.toMatchObject({ code: 'RESOURCE_DISPOSED' });
++      await expect(
++        decider.systemOne(firstCase.state, { answer: firstCase.question }),
++      ).rejects.toMatchObject({ code: 'RESOURCE_DISPOSED' });
++      await disposal;
++      const healthyDisposeMs = performance.now() - disposeStarted;
++      const afterHealthyDispose = [...liveBuffers()].filter(
++        (buffer) => !beforeHealthyCreate.has(buffer),
++      );
++      const healthyUniforms = afterHealthyDispose.filter(
++        (buffer) => (buffer.usage & GPUBufferUsage.UNIFORM) !== 0,
++      );
++      const healthyStaging = afterHealthyDispose.filter(
++        (buffer) => (buffer.usage & GPUBufferUsage.MAP_READ) !== 0,
++      );
++      const healthyOwned = afterHealthyDispose.filter(
++        (buffer) =>
++          (buffer.usage & GPUBufferUsage.UNIFORM) === 0 &&
++          (buffer.usage & GPUBufferUsage.MAP_READ) === 0,
++      );
++      expect(healthyOwned).toHaveLength(0);
++
++      const sharedAfterDispose = add(sharedInput, 3);
++      expectClose(await toArray(sharedAfterDispose, sharedExecutor), [5, 7, 9, 11, 13, 15, 17, 19]);
++      sharedExecutor.releaseValues([sharedAfterDispose]);
++
++      initRunntime(replacementRoot);
++      const currentReplacementExecutor = replacementExecutor;
++      if (currentReplacementExecutor === undefined) {
++        throw new Error('replacement executor was not initialized during loading');
++      }
++      freshInput = tensor(replacementRoot, Float32Array.of(4, 6, 8, 10, 12, 14, 16, 18), [1, 8]);
++      const freshSharedOutput = add(freshInput, 2);
++      expectClose(
++        await toArray(freshSharedOutput, currentReplacementExecutor),
++        [6, 8, 10, 12, 14, 16, 18, 20],
++      );
++      currentReplacementExecutor.releaseValues([freshSharedOutput]);
++      const beforeFreshCreate = liveBuffers();
++      const freshStaging = [...beforeFreshCreate].filter(
++        (buffer) => (buffer.usage & GPUBufferUsage.MAP_READ) !== 0,
++      );
++      const freshUniforms = [...beforeFreshCreate].filter(
++        (buffer) => (buffer.usage & GPUBufferUsage.UNIFORM) !== 0,
++      );
++      const freshLoadStarted = performance.now();
++      freshDecider = await createD1Decider(stateDict(), tokenizer, { temperatures: temps });
++      const freshLoadMs = performance.now() - freshLoadStarted;
++      const freshCase = corpus.cases[0]!;
++      const freshDecisionStarted = performance.now();
++      const freshResult = await freshDecider.systemOne(freshCase.state, {
++        answer: freshCase.question,
++      });
++      const freshDecisionMs = performance.now() - freshDecisionStarted;
++      verifyDecision(freshResult, freshCase, 'fresh-device-reference');
++      const freshDisposeStarted = performance.now();
++      await freshDecider.dispose();
++      await replacementRoot.device.queue.onSubmittedWorkDone();
++      const freshDisposeMs = performance.now() - freshDisposeStarted;
++      const afterFreshDispose = [...liveBuffers()].filter(
++        (buffer) => !beforeFreshCreate.has(buffer),
++      );
++      const freshUniformsAfterDispose = afterFreshDispose.filter(
++        (buffer) => (buffer.usage & GPUBufferUsage.UNIFORM) !== 0,
++      );
++      const freshStagingAfterDispose = afterFreshDispose.filter(
++        (buffer) => (buffer.usage & GPUBufferUsage.MAP_READ) !== 0,
++      );
++      const freshOwned = afterFreshDispose.filter(
++        (buffer) =>
++          (buffer.usage & GPUBufferUsage.UNIFORM) === 0 &&
++          (buffer.usage & GPUBufferUsage.MAP_READ) === 0,
++      );
++      expect(freshOwned).toHaveLength(0);
++
++      const report = {
++        mode: MODE,
++        correctionBase: '735fbd94195a8c2a7c40a12aec6b86fa34ebd48c',
++        model: MODEL,
++        revision: REVISION,
++        elapsedMs: +(performance.now() - started).toFixed(2),
++        loadMs: +loadMs.toFixed(2),
++        loadedWeightBytes,
++        progressDoneBytes,
++        progressTotalBytes,
++        decisions,
++        peakJsHeapBytes,
++        peakAgentBytes,
++        peakGpuBufferBytes,
++        healthyAllocationBaseline: {
++          gpuBufferCount: beforeHealthyCreate.size,
++          gpuBufferBytes: baselineGpuBufferBytes,
++          sharedStagingBufferCount: baselineStaging.length,
++          sharedStagingBufferBytes: baselineStaging.reduce((sum, buffer) => sum + buffer.size, 0),
++          sharedUniformBufferCount: baselineUniforms.length,
++          sharedUniformBufferBytes: baselineUniforms.reduce((sum, buffer) => sum + buffer.size, 0),
++          newSharedStagingBufferCount: healthyStaging.length,
++          newSharedStagingBufferBytes: healthyStaging.reduce((sum, buffer) => sum + buffer.size, 0),
++          newSharedUniformBufferCount: healthyUniforms.length,
++          newSharedUniformBufferBytes: healthyUniforms.reduce(
++            (sum, buffer) => sum + buffer.size,
++            0,
++          ),
++          unownedBuffersAfterDispose: healthyOwned.length,
++          disposeMs: +healthyDisposeMs.toFixed(2),
++        },
++        freshDevice: {
++          loadMs: +freshLoadMs.toFixed(2),
++          decisionMs: +freshDecisionMs.toFixed(2),
++          inputTokens: freshResult.inputTokens,
++          answer: stableAnswer(freshResult.answers.answer!, freshCase.question),
++          sharedStagingBufferCount: freshStaging.length,
++          sharedStagingBufferBytes: freshStaging.reduce((sum, buffer) => sum + buffer.size, 0),
++          sharedUniformBufferCount: freshUniforms.length,
++          sharedUniformBufferBytes: freshUniforms.reduce((sum, buffer) => sum + buffer.size, 0),
++          newSharedStagingBufferCount: freshStagingAfterDispose.length,
++          newSharedStagingBufferBytes: freshStagingAfterDispose.reduce(
++            (sum, buffer) => sum + buffer.size,
++            0,
++          ),
++          newSharedUniformBufferCount: freshUniformsAfterDispose.length,
++          newSharedUniformBufferBytes: freshUniformsAfterDispose.reduce(
++            (sum, buffer) => sum + buffer.size,
++            0,
++          ),
++          unownedBuffersAfterDispose: freshOwned.length,
++          disposeMs: +freshDisposeMs.toFixed(2),
++        },
++        measurements: {
++          hostPeak:
++            peakJsHeapBytes === null && peakAgentBytes === null
++              ? 'unknown: browser exposes no host peak'
++              : 'sampled browser memory; not a process-wide peak',
++          gpuPeak: 'sum of live GPUBuffer.size snapshots; driver-private allocations are unknown',
++          disposal:
++            'no new D1-owned buffers after healthy disposal; per-root uniform buffers are retained by dispatchCache and MAP_READ staging is shared by readback; both are reported separately; neither device was destroyed',
++        },
++      };
++      console.info('D1_SAFETY_CORRECTION', JSON.stringify(report));
++      await ctx.annotate('D1_SAFETY_CORRECTION', {
++        contentType: 'application/json',
++        body: JSON.stringify(report, null, 2),
++      });
++      expect(decisions).toHaveLength(corpus.cases.length + 9);
++      expect(sharedInput.state).toBe('materialized');
++    } finally {
++      await decider?.dispose();
++      await freshDecider?.dispose();
++      sharedExecutor.dispose();
++      replacementExecutor?.dispose();
++      sharedInput.buffer.destroy();
++      freshInput?.buffer.destroy();
++    }
++  },
++  900_000,
++);
+-- 
+2.54.0
+

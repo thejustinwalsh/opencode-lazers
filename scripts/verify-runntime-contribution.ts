@@ -25,6 +25,7 @@ const STAGES = {
     allowedPaths: [
       "packages/runntime/src/zoo/d1/",
       "packages/runntime/src/core/gpu/",
+      "packages/runntime/src/core/graph/evalCore.ts",
       "packages/runntime/src/core/nn/layers.ts",
       "packages/runntime/test/",
       "packages/runntime/playground/d1/",
@@ -44,7 +45,7 @@ interface PatchRecord {
 }
 
 interface EvidenceRecord {
-  kind: "unit" | "gpu"
+  kind: "unit" | "gpu" | "typecheck" | "lint" | "build"
   command: string
   exitCode: number
   path: string
@@ -181,8 +182,14 @@ function readManifest(stageDirectory: string): Manifest {
 
   const checks = root.checks.map((item, index): EvidenceRecord => {
     const check = record(item, `manifest.checks[${index}]`)
-    if (check.kind !== "unit" && check.kind !== "gpu") {
-      throw new Error(`manifest.checks[${index}].kind must be unit or gpu`)
+    if (
+      check.kind !== "unit" &&
+      check.kind !== "gpu" &&
+      check.kind !== "typecheck" &&
+      check.kind !== "lint" &&
+      check.kind !== "build"
+    ) {
+      throw new Error(`manifest.checks[${index}].kind must be unit, gpu, typecheck, lint or build`)
     }
     if (check.exitCode !== 0) throw new Error(`manifest.checks[${index}] did not pass`)
     return {
@@ -211,7 +218,11 @@ function readManifest(stageDirectory: string): Manifest {
   }
 }
 
-function verifyEvidence(stageDirectory: string, checks: EvidenceRecord[]): string[] {
+function verifyEvidence(
+  stageDirectory: string,
+  stage: ContributionStage,
+  checks: EvidenceRecord[],
+): string[] {
   const kinds = new Set<EvidenceRecord["kind"]>()
   for (const check of checks) {
     const path = resolve(stageDirectory, check.path)
@@ -223,8 +234,12 @@ function verifyEvidence(stageDirectory: string, checks: EvidenceRecord[]): strin
       throw new Error(`check evidence digest mismatch: ${check.path}`)
     kinds.add(check.kind)
   }
-  if (!kinds.has("unit") || !kinds.has("gpu")) {
-    throw new Error("retained checks must include passing unit and GPU evidence")
+  const required: EvidenceRecord["kind"][] =
+    stage === "d1-safety-correction" ? ["unit", "gpu", "typecheck", "lint"] : ["unit", "gpu"]
+  if (required.some((kind) => !kinds.has(kind))) {
+    const expected =
+      stage === "d1-safety-correction" ? "unit, GPU, typecheck and lint" : "unit and GPU"
+    throw new Error(`retained checks must include passing ${expected} evidence`)
   }
   return checks.map((check) => check.kind)
 }
@@ -266,7 +281,7 @@ export function verifyContribution(options: VerifyOptions): VerifyResult {
     throw new Error("tip tree does not match the final patch tree")
   }
 
-  const checks = verifyEvidence(stageDirectory, manifest.checks)
+  const checks = verifyEvidence(stageDirectory, manifest.stage, manifest.checks)
   const temporaryRoot = mkdtempSync(join(tmpdir(), "runntime-contribution-"))
   const reconstruction = join(temporaryRoot, "repo")
   try {

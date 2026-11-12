@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "stage": "d1-safety-correction",
+  "base": {
+    "repository": "../runntime (thejustinwalsh/runntime)",
+    "commit": "735fbd94195a8c2a7c40a12aec6b86fa34ebd48c",
+    "tree": "d22fa69014942938defdd9c766bd6a57f41f9dc5"
+  },
+  "tip": {
+    "commit": "82250160386691dc36565ae59aa70545150f4e06",
+    "tree": "f1e3712cf37b32a4b78f97c22853c5894fb85b89"
+  },
+  "patches": [
+    {
+      "commit": "82250160386691dc36565ae59aa70545150f4e06",
+      "parent": "735fbd94195a8c2a7c40a12aec6b86fa34ebd48c",
+      "tree": "f1e3712cf37b32a4b78f97c22853c5894fb85b89",
+      "path": "patches/0001-d1-exceptional-cleanup.patch",
+      "sha256": "a2de2e09834c3b8efc92499dda40f9cc17d6518252639a543ac0d64ec3788277"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "910df93d2a85e431dc3d1f6b3ea0611780a47f574b28382d7e4892832e05256e"
+    },
+    {
+      "kind": "gpu",
+      "command": "pnpm --filter runntime exec vitest run --project gpu test/core/gpu/eval.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/executor-gpu.log",
+      "sha256": "93efaff752dd81bb17af29b611454286f5523b7d7311b9dece08f96e6694661a"
+    },
+    {
+      "kind": "gpu",
+      "command": "VITE_D1_QUALIFICATION_MODE=correction pnpm --filter runntime exec vitest run test/zoo/d1/qualification.gpu.test.ts --project gpu --reporter=verbose --reporter=json --outputFile.json=/private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-safety-correction/evidence/d1-correction-vitest.json",
+      "exitCode": 0,
+      "path": "evidence/d1-correction-webgpu.log",
+      "sha256": "a59aa4f34e439ada1a5d707a5a6ab343b8200fae3f92f4e3571bea0f757f9fcf"
+    },
+    {
+      "kind": "gpu",
+      "command": "Vitest JSON report from the D1 correction WebGPU qualification",
+      "exitCode": 0,
+      "path": "evidence/d1-correction-vitest.json",
+      "sha256": "db52a69a9a4f748c424590863033bbb40c42b37915450b9aec82e914f11f7e39"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/typecheck.log",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/build.log",
+      "sha256": "2a29f13213b9291074b5aadbabff0954bd47f93298c62d3067419c383658d794"
+    }
+  ]
+}

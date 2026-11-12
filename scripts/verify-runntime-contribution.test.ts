@@ -99,6 +99,17 @@ function fixture(
   const evidence = [
     { kind: "unit", command: "pnpm --filter runntime test:unit", file: "evidence/unit.txt" },
     { kind: "gpu", command: "pnpm --filter runntime test:gpu", file: "evidence/gpu.txt" },
+    ...(contributionStage === "d1-safety-correction"
+      ? [
+          {
+            kind: "typecheck",
+            command: "pnpm --filter runntime typecheck",
+            file: "evidence/typecheck.txt",
+          },
+          { kind: "lint", command: "pnpm lint", file: "evidence/lint.txt" },
+          { kind: "build", command: "pnpm --filter runntime build", file: "evidence/build.txt" },
+        ]
+      : []),
   ].map((check) => {
     const bytes = Buffer.from(`${check.kind} checks passed\n`)
     writeFileSync(join(stage, check.file), bytes)
@@ -137,6 +148,7 @@ describe("ruNNtime contribution reconstruction", () => {
     })
     expect(result.patchesApplied).toBe(2)
     expect(result.tipCommit).toBe((test.manifest.tip as { commit: string }).commit)
+    expect(result.checks).toEqual(["unit", "gpu"])
   })
 
   it("rejects patches recorded out of commit order", () => {
@@ -164,7 +176,7 @@ describe("ruNNtime contribution reconstruction", () => {
     ).toThrow("escapes write scope")
   })
 
-  it("uses the safety-correction base and permits its scoped core ownership fix", () => {
+  it("uses the safety-correction base and permits scoped executor ownership fixes", () => {
     const test = fixture({
       stage: "d1-safety-correction",
       sourcePath: "packages/runntime/src/core/nn/layers.ts",
@@ -183,6 +195,20 @@ describe("ruNNtime contribution reconstruction", () => {
     })
     expect(result.stage).toBe("d1-safety-correction")
     expect(result.patchesApplied).toBe(2)
+    expect(result.checks).toContain("typecheck")
+    expect(result.checks).toContain("build")
+
+    const graph = fixture({
+      stage: "d1-safety-correction",
+      sourcePath: "packages/runntime/src/core/graph/evalCore.ts",
+    })
+    expect(
+      verifyContribution({
+        stageDirectory: graph.stage,
+        repositoryDirectory: graph.repository,
+        expectedBaseCommit: graph.baseCommit,
+      }).stage,
+    ).toBe("d1-safety-correction")
 
     const escaped = fixture({ stage: "d1-safety-correction", outsideScope: true })
     expect(() =>
@@ -260,9 +286,12 @@ describe("ruNNtime contribution reconstruction", () => {
     ).toThrow("reconstructed")
   })
 
-  it("rejects tampered check evidence and an incomplete unit/GPU check set", () => {
-    const changedEvidence = fixture()
-    writeFileSync(join(changedEvidence.stage, "evidence/unit.txt"), "modified unit evidence\n")
+  it("rejects tampered check evidence and an incomplete quality check set", () => {
+    const changedEvidence = fixture({ stage: "d1-safety-correction" })
+    writeFileSync(
+      join(changedEvidence.stage, "evidence/typecheck.txt"),
+      "modified typecheck evidence\n",
+    )
     expect(() =>
       verifyContribution({
         stageDirectory: changedEvidence.stage,
@@ -271,18 +300,22 @@ describe("ruNNtime contribution reconstruction", () => {
       }),
     ).toThrow("check evidence digest mismatch")
 
-    const missingGpuCheck = fixture()
-    const manifest = missingGpuCheck.manifest
-    if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
-    manifest.checks = manifest.checks.filter((check) => isRecord(check) && check.kind === "unit")
-    saveManifest(missingGpuCheck.stage, manifest)
-    expect(() =>
-      verifyContribution({
-        stageDirectory: missingGpuCheck.stage,
-        repositoryDirectory: missingGpuCheck.repository,
-        expectedBaseCommit: missingGpuCheck.baseCommit,
-      }),
-    ).toThrow("passing unit and GPU evidence")
+    for (const missingKind of ["unit", "gpu", "typecheck", "lint"]) {
+      const incomplete = fixture({ stage: "d1-safety-correction" })
+      const manifest = incomplete.manifest
+      if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
+      manifest.checks = manifest.checks.filter(
+        (check) => isRecord(check) && check.kind !== missingKind,
+      )
+      saveManifest(incomplete.stage, manifest)
+      expect(() =>
+        verifyContribution({
+          stageDirectory: incomplete.stage,
+          repositoryDirectory: incomplete.repository,
+          expectedBaseCommit: incomplete.baseCommit,
+        }),
+      ).toThrow("passing unit, GPU, typecheck and lint evidence")
+    }
   })
 })
 
