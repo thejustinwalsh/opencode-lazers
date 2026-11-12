@@ -23,6 +23,8 @@ import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.t
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
 import { parseOutcomeOwnership } from "./inbox.ts"
+import { VerificationTimeoutAmendmentSchema } from "./verification-timeout.ts"
+import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
 
 export type PlanRow = {
   id: string
@@ -3511,6 +3513,32 @@ export class RunnerStore {
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
   }
+  latestTransitionVersion(
+    planID: string,
+    taskID: string | null,
+    event: string,
+  ): number | undefined {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    return this.atomic(
+      (db) =>
+        db
+          .query<{ version: number }, [string, string | null, string]>(
+            "SELECT version FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
+          )
+          .get(planID, taskID, event)?.version,
+    )
+  }
+  verificationTimeoutAmendments(planID: string): VerificationTimeoutAmendment[] {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    return this.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EXTENDED' ORDER BY id",
+        )
+        .all(planID)
+        .map((row) => VerificationTimeoutAmendmentSchema.parse(JSON.parse(row.payload))),
+    )
+  }
   latestRetainedRepair<T>(planID: string, taskID?: string): T | undefined {
     if (!this.plan(planID)) throw new Error("Plan not found")
     const row = this.atomic((db) =>
@@ -4213,6 +4241,7 @@ export class RunnerStore {
       activity: db
         .query("SELECT * FROM runner_transitions WHERE plan_id=? ORDER BY id")
         .all(planID),
+      verificationTimeoutAmendments: this.verificationTimeoutAmendments(planID),
       delivery: db.query("SELECT * FROM runner_outbox WHERE plan_id=? ORDER BY rowid").all(planID),
     }))
   }

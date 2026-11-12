@@ -96,3 +96,22 @@ Existing retained runner paths and Root-owned review resources are not disposabl
 fixtures. In particular, preserve `lz182-review-recovered` and
 `lz184-review-recovered` and their exact native registrations unless their owner
 separately authorizes a reviewed cleanup.
+
+## Extend a settled verification deadline
+
+Inspect the exact task or combined check receipt first. Only the current plan
+owner may use `extend-verification-deadline`, and only after the plan is stopped,
+the candidate is unchanged, the timeout receipt is conclusive, and every check
+process and owned resource has settled. Bind `projectID`, `planRevision`, the
+current `expectedVersion`, `verificationPhase`, `checkID`, and exact `artifact`;
+task checks additionally require `taskID`, `taskRevision`, and latest `attemptID`.
+Choose a strictly larger `timeoutMs` than the current effective allowance.
+
+Extension appends a deadline amendment; it does not change the authored plan or
+task, acceptance/evidence requirements, candidate, or original check receipt. It
+does not start work or grant acceptance. After the amendment is recorded, the
+owner must issue a separate `resume` bound to the same task attempt, or a
+plan-level resume for the same combined candidate. The runtime preserves passing
+receipts, reruns only checks that need the amended policy, and never restarts or
+prompts the implementation worker. If any binding, receipt, process or resource
+is uncertain, leave the candidate stopped for reconciliation instead.

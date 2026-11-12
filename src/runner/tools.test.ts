@@ -139,7 +139,8 @@ test("authorized callers read native catalog advice; only orchestration requires
   const planCommandDescription = tools.get("lz-plan-command")!.description
   expect(planCommandDescription).toContain("expectedVersion and stable requestID")
   expect(planCommandDescription).toContain("without taskID")
-  expect(planCommandDescription).toContain("conclusively settled combined-check interruption")
+  expect(planCommandDescription).toContain("settled combined checks")
+  expect(planCommandDescription).toContain("extend-verification-deadline")
   expect(planCommandDescription).toContain("verify-retained")
   expect(planCommandDescription).toContain("without an implementation turn")
   expect(planCommandDescription).toContain("startup settlement")

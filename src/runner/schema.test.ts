@@ -92,6 +92,56 @@ test("plan-level resume requires a reason and excludes task or candidate control
   expect(CommandInput.shape.action.description).toContain("Without taskID")
 })
 
+test("verification deadline extension is bound to one exact task or combined check", () => {
+  const task = {
+    requestID: "extend-task-check-deadline",
+    planID: crypto.randomUUID(),
+    expectedVersion: 7,
+    action: "extend-verification-deadline" as const,
+    projectID: "project",
+    planRevision: 1,
+    verificationPhase: "task" as const,
+    taskID: crypto.randomUUID(),
+    taskRevision: 1,
+    attemptID: crypto.randomUUID(),
+    artifact: "a".repeat(40),
+    checkID: "tests",
+    timeoutMs: 5_000,
+    reason: "The settled timeout needs a larger allowance.",
+  }
+  expect(CommandInput.parse(task)).toEqual(task)
+  for (const field of [
+    "projectID",
+    "planRevision",
+    "verificationPhase",
+    "taskID",
+    "taskRevision",
+    "attemptID",
+    "artifact",
+    "checkID",
+    "timeoutMs",
+    "reason",
+  ] as const) {
+    const invalid = { ...task }
+    delete invalid[field]
+    expect(CommandInput.safeParse(invalid).success).toBe(false)
+  }
+  expect(
+    CommandInput.safeParse({
+      ...task,
+      verificationPhase: "combined",
+      taskID: undefined,
+      taskRevision: undefined,
+      attemptID: undefined,
+    }).success,
+  ).toBe(true)
+  expect(CommandInput.safeParse({ ...task, timeoutMs: 1_000 }).success).toBe(true)
+  expect(CommandInput.safeParse({ ...task, workspaceMode: "shared" }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...task, nativeInputID: "caller-controlled" }).success).toBe(
+    false,
+  )
+})
+
 test("Architect continuity preserves exact authored decisions and bounds the handoff", () => {
   const continuity = {
     decisions: [" Keep the accepted direction. "],

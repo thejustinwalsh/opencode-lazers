@@ -9,6 +9,18 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "no
 import { dirname, extname, join, relative, resolve, sep } from "node:path"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { fingerprint } from "../identity.ts"
+import {
+  effectiveVerificationCheck,
+  verificationCommandFingerprint,
+  verificationDeadline as resolveVerificationDeadline,
+  verificationReceiptDeadline,
+  VerificationTimeoutAmendmentSchema,
+} from "./verification-timeout.ts"
+import type {
+  VerificationDeadline,
+  VerificationTimeoutAmendment,
+  VerificationTimeoutTarget,
+} from "./verification-timeout.ts"
 import type { TaskProposal } from "../task.ts"
 import {
   artifactExists,
@@ -211,9 +223,11 @@ function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefine
   if (!effect.receipt) return undefined
   try {
     const envelope: unknown = JSON.parse(effect.receipt)
-    if (!isRecord(envelope) || !isRecord(envelope.result) || !isRecord(envelope.result.check))
-      return undefined
-    return envelope.result.check as unknown as CheckReceipt
+    if (!isRecord(envelope)) return undefined
+    if (isRecord(envelope.check)) return envelope.check as unknown as CheckReceipt
+    if (isRecord(envelope.result) && isRecord(envelope.result.check))
+      return envelope.result.check as unknown as CheckReceipt
+    return undefined
   } catch {
     return undefined
   }
@@ -251,10 +265,20 @@ type CombinedVerificationContinuationBinding = {
   sourceGeneration: string | null
   verificationEpoch: number
   interruptedEffects: CombinedVerificationContinuationEffect[]
+  settledTimeouts?: CombinedVerificationContinuationEffect[]
 }
 
 type CombinedVerificationContinuation = CombinedVerificationContinuationBinding & {
   inputFingerprint: string
+}
+
+type PreparedVerificationDeadlineExtension = {
+  target: VerificationTimeoutTarget
+  deadline: VerificationDeadline
+  ownerEpoch: number
+  sourceEffectID: string
+  sourcePayloadFingerprint: string
+  sourceReceiptFingerprint: string
 }
 
 function parseCombinedVerificationContinuation(
@@ -293,6 +317,15 @@ function parseCombinedVerificationContinuation(
         typeof item.payloadFingerprint === "string" &&
         typeof item.receiptFingerprint === "string",
     ) ||
+    (value.settledTimeouts !== undefined &&
+      (!Array.isArray(value.settledTimeouts) ||
+        !value.settledTimeouts.every(
+          (item) =>
+            isRecord(item) &&
+            typeof item.id === "string" &&
+            typeof item.payloadFingerprint === "string" &&
+            typeof item.receiptFingerprint === "string",
+        ))) ||
     typeof value.inputFingerprint !== "string"
   )
     return undefined
@@ -604,6 +637,79 @@ export class TaskRuntime {
       verificationActivityKey(this.store.repository.path, id),
       fingerprint(identity),
     )
+  }
+
+  private verificationDeadline(target: VerificationTimeoutTarget): VerificationDeadline {
+    return resolveVerificationDeadline(
+      this.store.verificationTimeoutAmendments(target.planID),
+      target,
+    )
+  }
+
+  private deadlineAwaitingTaskContinuation(
+    plan: PlanRow,
+    target: VerificationTimeoutTarget,
+    deadline: VerificationDeadline,
+  ): boolean {
+    if (!deadline.amendmentID || !target.taskID) return false
+    const amendment = this.store
+      .verificationTimeoutAmendments(plan.id)
+      .find((candidate) => candidate.amendmentID === deadline.amendmentID)
+    if (!amendment) throw new Error("Current verification deadline amendment is missing")
+    const resumedVersion = this.store.latestTransitionVersion(
+      plan.id,
+      target.taskID,
+      "VERIFICATION_RESUMED",
+    )
+    return resumedVersion === undefined || resumedVersion < amendment.planVersion
+  }
+
+  private verificationTarget(
+    plan: PlanRow,
+    phase: "task" | "combined",
+    check: TaskProposal["verification"][number],
+    artifact: string,
+    taskID: string | null,
+    taskRevision: number | null,
+    attemptID: string | null,
+  ): VerificationTimeoutTarget {
+    return {
+      projectID: this.projectID,
+      projectDirectory: this.directory,
+      planID: plan.id,
+      planRevision: plan.revision,
+      phase,
+      taskID,
+      taskRevision,
+      attemptID,
+      artifact,
+      checkID: check.id,
+      command: check.command,
+      authoredTimeoutMs: check.timeoutMs,
+    }
+  }
+
+  private async runVerificationCheck(
+    workspace: string,
+    artifact: string,
+    check: TaskProposal["verification"][number],
+    deadline: VerificationDeadline,
+    receiptPath: string,
+    options?: Parameters<typeof runDeclaredCheck>[4],
+  ): Promise<CheckReceipt> {
+    const receipt = await runDeclaredCheck(
+      workspace,
+      artifact,
+      effectiveVerificationCheck(check, deadline),
+      receiptPath,
+      options,
+    )
+    const annotated = {
+      ...receipt,
+      verificationDeadline: verificationReceiptDeadline(deadline),
+    }
+    writeCheckReceipt(receiptPath, annotated)
+    return annotated
   }
 
   private async cancelCheckActivities(planID: string): Promise<VerificationActivity[]> {
@@ -1623,6 +1729,365 @@ export class TaskRuntime {
         plan.reason === checkFailureReason(check),
       )
     })
+  }
+
+  private async prepareVerificationDeadlineExtension(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+  ): Promise<PreparedVerificationDeadlineExtension> {
+    if (
+      command.action !== "extend-verification-deadline" ||
+      !command.projectID ||
+      !command.planRevision ||
+      !command.verificationPhase ||
+      !command.checkID ||
+      !command.timeoutMs ||
+      !command.artifact ||
+      !command.reason?.trim()
+    )
+      throw new Error("Verification deadline extension requires every exact check binding")
+    if (
+      caller !== plan.owner ||
+      !this.validArchitect(ownerSession) ||
+      ownerSession.id !== plan.owner ||
+      ownerSession.projectID !== this.projectID ||
+      command.projectID !== this.projectID
+    )
+      throw new Error("Verification deadline extension requires the current same-project Architect")
+    if (
+      plan.state !== "blocked" ||
+      plan.artifact !== null ||
+      plan.revision !== command.planRevision
+    )
+      throw new Error("Verification deadline extension requires the exact stopped plan revision")
+    if (this.store.activeAdoptions(plan.id).length)
+      throw new Error("An active descendant adoption prevents verification deadline extension")
+    if (
+      this.store.atomic((db) => activeRetainedVerifications(db, this.directory, plan.id).length > 0)
+    )
+      throw new Error("An active retained verification prevents verification deadline extension")
+    if (
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+      )
+    )
+      throw new Error("A live verification activity prevents verification deadline extension")
+    const effects = this.store.effects(plan.id)
+    if (effects.some((effect) => ["intended", "uncertain"].includes(effect.state)))
+      throw new Error("Unresolved effects prevent verification deadline extension")
+
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    let target: VerificationTimeoutTarget
+    let authoredCheck: TaskProposal["verification"][number] | undefined
+    let taskWorkspace: string | undefined
+    let attempt: AttemptRow | undefined
+    if (command.verificationPhase === "task") {
+      if (!command.taskID || !command.taskRevision || !command.attemptID)
+        throw new Error("Task-check deadline extension requires an exact task attempt")
+      const task = this.store.repository.get(command.taskID)
+      const node = this.store
+        .nodes(plan.id)
+        .find((candidate) => candidate.task_id === command.taskID)
+      attempt = this.store
+        .attempts(plan.id)
+        .filter((candidate) => candidate.task_id === command.taskID)
+        .at(-1)
+      if (
+        !task ||
+        !node ||
+        !attempt ||
+        attempt.id !== command.attemptID ||
+        attempt.state !== "verifying" ||
+        node.state !== "verifying" ||
+        task.revision !== command.taskRevision ||
+        input.nodes.find((candidate) => candidate.taskID === task.id)?.revision !== task.revision ||
+        task.provenance.projectID !== this.projectID ||
+        task.provenance.projectDirectory !== this.directory ||
+        this.store.repository.taskDisposition(task.id) !== undefined ||
+        attempt.artifact !== command.artifact ||
+        node.artifact !== command.artifact ||
+        !existsSync(attempt.workspace) ||
+        git(attempt.workspace, ["rev-parse", "HEAD"]) !== command.artifact ||
+        !artifactUnchanged(attempt.workspace, command.artifact)
+      )
+        throw new Error(
+          "Task, latest attempt or unchanged candidate no longer matches the extension",
+        )
+      taskWorkspace = attempt.workspace
+      authoredCheck = task.proposal.verification.find(
+        (candidate) => candidate.id === command.checkID,
+      )
+      if (!authoredCheck) throw new Error("Deadline extension does not name a declared task check")
+      target = this.verificationTarget(
+        plan,
+        "task",
+        authoredCheck,
+        command.artifact,
+        task.id,
+        task.revision,
+        attempt.id,
+      )
+    } else {
+      if (command.taskID !== undefined || command.taskRevision !== undefined || command.attemptID)
+        throw new Error("Combined deadline extension cannot target a task attempt")
+      const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
+      const artifact = await combineArtifacts(
+        this.directory,
+        input.baseCommit,
+        acceptedArtifacts.map((item) => item.artifact),
+      )
+      if (artifact !== command.artifact)
+        throw new Error(
+          "Combined deadline extension candidate is no longer the exact accepted result",
+        )
+      authoredCheck = input.verification.find((candidate) => candidate.id === command.checkID)
+      if (!authoredCheck)
+        throw new Error("Deadline extension does not name a declared combined check")
+      target = this.verificationTarget(plan, "combined", authoredCheck, artifact, null, null, null)
+    }
+
+    const deadline = this.verificationDeadline(target)
+    if (command.timeoutMs <= deadline.effectiveTimeoutMs)
+      throw new Error(
+        "Verification deadline extension must be strictly larger than the effective timeout",
+      )
+    const prefix = target.phase === "task" ? "verify:" : "graph-verify:"
+    const taskID = target.taskID
+    const attemptID = target.attemptID
+    const source = effects.toReversed().find((effect) => {
+      if (
+        effect.kind !== `${prefix}${target.checkID}` ||
+        effect.task_id !== taskID ||
+        effect.attempt_id !== attemptID
+      )
+        return false
+      try {
+        const payload: unknown = JSON.parse(effect.payload)
+        return Boolean(
+          isRecord(payload) &&
+          payload.artifact === target.artifact &&
+          payload.identity &&
+          typeof payload.workspace === "string" &&
+          isRecord(payload.check) &&
+          payload.check.id === target.checkID &&
+          payload.check.command === target.command,
+        )
+      } catch {
+        return false
+      }
+    })
+    if (!source || source.state !== "completed" || !source.receipt)
+      throw new Error(
+        "Deadline extension requires a conclusive settled timeout receipt for this check",
+      )
+    const payload = JSON.parse(source.payload) as {
+      artifact?: unknown
+      identity?: unknown
+      workspace?: unknown
+      check?: { id?: unknown; command?: unknown; timeoutMs?: unknown }
+      verificationDeadline?: {
+        authoredTimeoutMs?: unknown
+        effectiveTimeoutMs?: unknown
+        amendmentID?: unknown
+        policyRevision?: unknown
+      }
+    }
+    const actual = actualCheckResultFromEffect(source)
+    const recordedEffective = payload.verificationDeadline?.effectiveTimeoutMs
+    if (
+      !authoredCheck ||
+      payload.check?.timeoutMs !== (recordedEffective ?? authoredCheck.timeoutMs) ||
+      (payload.verificationDeadline !== undefined &&
+        (payload.verificationDeadline.authoredTimeoutMs !== authoredCheck.timeoutMs ||
+          !Number.isSafeInteger(payload.verificationDeadline.effectiveTimeoutMs) ||
+          !Number.isSafeInteger(payload.verificationDeadline.policyRevision))) ||
+      typeof payload.check?.timeoutMs !== "number" ||
+      payload.check.timeoutMs > deadline.effectiveTimeoutMs ||
+      !actual ||
+      !actual.timedOut ||
+      actual.id !== target.checkID ||
+      actual.command !== target.command ||
+      actual.cwd !== payload.workspace ||
+      actual.artifact !== target.artifact ||
+      actual.inputIdentity !== payload.identity ||
+      !interruptedCheckResourcesSettled(actual) ||
+      (target.phase === "task" && plan.reason !== checkFailureReason(actual)) ||
+      (target.phase === "combined" && plan.reason !== "Combined artifact verification failed")
+    )
+      throw new Error(
+        "The exact candidate check is not a current, conclusively settled deadline failure",
+      )
+    const workspace = payload.workspace!
+    if (
+      (target.phase === "task" && workspace !== taskWorkspace) ||
+      !existsSync(workspace) ||
+      git(workspace, ["rev-parse", "HEAD"]) !== target.artifact ||
+      !artifactUnchanged(workspace, target.artifact)
+    )
+      throw new Error(
+        "The stopped verification workspace no longer contains the unchanged candidate",
+      )
+    return {
+      target,
+      deadline,
+      ownerEpoch: this.store.planControlEpoch(plan.id),
+      sourceEffectID: source.id,
+      sourcePayloadFingerprint: fingerprint(source.payload),
+      sourceReceiptFingerprint: fingerprint(source.receipt),
+    }
+  }
+
+  private assertVerificationDeadlineExtensionCurrent(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    prepared: PreparedVerificationDeadlineExtension,
+  ): void {
+    if (
+      plan.owner !== caller ||
+      plan.version !== command.expectedVersion ||
+      plan.revision !== prepared.target.planRevision ||
+      plan.state !== "blocked" ||
+      plan.artifact !== null ||
+      command.projectID !== prepared.target.projectID ||
+      command.planRevision !== prepared.target.planRevision ||
+      command.verificationPhase !== prepared.target.phase ||
+      command.taskID !== (prepared.target.taskID ?? undefined) ||
+      command.taskRevision !== (prepared.target.taskRevision ?? undefined) ||
+      command.attemptID !== (prepared.target.attemptID ?? undefined) ||
+      command.artifact !== prepared.target.artifact ||
+      command.checkID !== prepared.target.checkID ||
+      !command.timeoutMs ||
+      command.timeoutMs <= prepared.deadline.effectiveTimeoutMs ||
+      this.store.planControlEpoch(plan.id) !== prepared.ownerEpoch
+    )
+      throw new Error("Verification deadline owner or plan authorization changed before admission")
+    const current = this.store
+      .effects(plan.id)
+      .find((effect) => effect.id === prepared.sourceEffectID)
+    if (
+      !current ||
+      current.state !== "completed" ||
+      fingerprint(current.payload) !== prepared.sourcePayloadFingerprint ||
+      fingerprint(current.receipt) !== prepared.sourceReceiptFingerprint
+    )
+      throw new Error("The settled timeout receipt changed before deadline extension")
+    const deadline = this.verificationDeadline(prepared.target)
+    if (
+      deadline.effectiveTimeoutMs !== prepared.deadline.effectiveTimeoutMs ||
+      deadline.policyRevision !== prepared.deadline.policyRevision
+    )
+      throw new Error("Verification deadline amendment history changed before admission")
+  }
+
+  private settledExtendedTaskTimeouts(plan: PlanRow, attempt: AttemptRow): EffectRow[] {
+    if (plan.state !== "blocked" || attempt.state !== "verifying" || !attempt.artifact) return []
+    const task = this.store.repository.get(attempt.task_id)
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    if (!task || input.nodes.find((node) => node.taskID === task.id)?.revision !== task.revision)
+      return []
+    const effects = this.store.effects(plan.id)
+    const matches: EffectRow[] = []
+    for (const check of task.proposal.verification) {
+      const target = this.verificationTarget(
+        plan,
+        "task",
+        check,
+        attempt.artifact,
+        task.id,
+        task.revision,
+        attempt.id,
+      )
+      const deadline = this.verificationDeadline(target)
+      if (!deadline.amendmentID) continue
+      const effect = effects.toReversed().find((candidate) => {
+        if (
+          candidate.kind !== `verify:${check.id}` ||
+          candidate.task_id !== task.id ||
+          candidate.attempt_id !== attempt.id
+        )
+          return false
+        try {
+          const payload: unknown = JSON.parse(candidate.payload)
+          return Boolean(
+            isRecord(payload) &&
+            payload.artifact === attempt.artifact &&
+            payload.workspace === attempt.workspace &&
+            isRecord(payload.check) &&
+            payload.check.id === check.id &&
+            payload.check.command === check.command,
+          )
+        } catch {
+          return false
+        }
+      })
+      const receipt = effect && actualCheckResultFromEffect(effect)
+      if (
+        effect?.state === "completed" &&
+        receipt?.timedOut === true &&
+        receipt.id === check.id &&
+        receipt.command === check.command &&
+        receipt.cwd === attempt.workspace &&
+        receipt.artifact === attempt.artifact &&
+        interruptedCheckResourcesSettled(receipt) &&
+        plan.reason === checkFailureReason(receipt)
+      )
+        matches.push(effect)
+    }
+    return matches
+  }
+
+  private settledExtendedCombinedTimeouts(
+    plan: PlanRow,
+    input: ReturnType<typeof PlanInput.parse>,
+    artifact: string,
+    sourceGeneration: string | undefined,
+  ): EffectRow[] {
+    if (plan.state !== "blocked" || plan.artifact !== null) return []
+    const effects = this.store.effects(plan.id)
+    const matches: EffectRow[] = []
+    for (const check of input.verification) {
+      const target = this.verificationTarget(plan, "combined", check, artifact, null, null, null)
+      const deadline = this.verificationDeadline(target)
+      if (!deadline.amendmentID) continue
+      const effect = effects.toReversed().find((candidate) => {
+        if (
+          candidate.kind !== `graph-verify:${check.id}` ||
+          candidate.task_id !== null ||
+          candidate.attempt_id !== null
+        )
+          return false
+        try {
+          const payload: unknown = JSON.parse(candidate.payload)
+          return Boolean(
+            isRecord(payload) &&
+            payload.artifact === artifact &&
+            payload.identity === artifact &&
+            (payload.sourceGeneration ?? undefined) === sourceGeneration &&
+            isRecord(payload.check) &&
+            payload.check.id === check.id &&
+            payload.check.command === check.command,
+          )
+        } catch {
+          return false
+        }
+      })
+      const receipt = effect && actualCheckResultFromEffect(effect)
+      if (
+        effect?.state === "completed" &&
+        receipt?.timedOut === true &&
+        receipt.id === check.id &&
+        receipt.command === check.command &&
+        receipt.artifact === artifact &&
+        receipt.inputIdentity === artifact &&
+        interruptedCheckResourcesSettled(receipt) &&
+        plan.reason === "Combined artifact verification failed"
+      )
+        matches.push(effect)
+    }
+    return matches
   }
 
   private quarantineTarget(plan: PlanRow, command: PlanCommand) {
@@ -3510,7 +3975,7 @@ export class TaskRuntime {
           payload.identity === artifact &&
           typeof payload.workspace === "string" &&
           (payload.sourceGeneration ?? undefined) === sourceGeneration &&
-          fingerprint(payload.check) === fingerprint(check) &&
+          fingerprint(payload.authoredCheck ?? payload.check) === fingerprint(check) &&
           receipt.id === check.id &&
           receipt.command === check.command &&
           receipt.cwd === payload.workspace &&
@@ -3562,8 +4027,16 @@ export class TaskRuntime {
       artifact,
       sourceGeneration ?? undefined,
     ).toSorted((left, right) => left.id.localeCompare(right.id))
-    if (!interrupted.length)
-      throw new Error("No conclusively settled interrupted combined verification can be resumed")
+    const settledTimeouts = this.settledExtendedCombinedTimeouts(
+      plan,
+      input,
+      artifact,
+      sourceGeneration ?? undefined,
+    ).toSorted((left, right) => left.id.localeCompare(right.id))
+    if (!interrupted.length && !settledTimeouts.length)
+      throw new Error(
+        "No conclusively settled interrupted or extended combined verification can be resumed",
+      )
     const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
     if (
       effects.some(
@@ -3584,7 +4057,9 @@ export class TaskRuntime {
       throw new Error("An unresolved retained verification prevents combined verification resume")
 
     const workspaces = new Set(
-      interrupted.map((effect) => (JSON.parse(effect.payload) as { workspace: string }).workspace),
+      [...interrupted, ...settledTimeouts].map(
+        (effect) => (JSON.parse(effect.payload) as { workspace: string }).workspace,
+      ),
     )
     if (workspaces.size !== 1)
       throw new Error("Interrupted combined checks do not share one candidate")
@@ -3619,6 +4094,15 @@ export class TaskRuntime {
         payloadFingerprint: fingerprint(effect.payload),
         receiptFingerprint: fingerprint(effect.receipt),
       })),
+      ...(settledTimeouts.length
+        ? {
+            settledTimeouts: settledTimeouts.map((effect) => ({
+              id: effect.id,
+              payloadFingerprint: fingerprint(effect.payload),
+              receiptFingerprint: fingerprint(effect.receipt),
+            })),
+          }
+        : {}),
     }
     const inputFingerprint = combinedVerificationContinuationFingerprint(binding)
 
@@ -3639,6 +4123,22 @@ export class TaskRuntime {
       (this.retainedRepairGeneration(plan.id) ?? null) !== sourceGeneration
     )
       throw new Error("Combined verification owner, plan or candidate changed during admission")
+    const currentSettledTimeouts = this.settledExtendedCombinedTimeouts(
+      currentPlan!,
+      PlanInput.parse(JSON.parse(currentPlan!.body)),
+      artifact,
+      sourceGeneration ?? undefined,
+    ).toSorted((left, right) => left.id.localeCompare(right.id))
+    const timeoutFingerprint = (items: EffectRow[]) =>
+      fingerprint(
+        items.map((effect) => ({
+          id: effect.id,
+          payloadFingerprint: fingerprint(effect.payload),
+          receiptFingerprint: fingerprint(effect.receipt),
+        })),
+      )
+    if (timeoutFingerprint(currentSettledTimeouts) !== timeoutFingerprint(settledTimeouts))
+      throw new Error("Combined verification timeout receipt changed during admission")
     if (
       verificationActivitiesForDatabase(this.store.repository.path).some(
         (activity) => activity.metadata.planID === plan.id && activity.state === "running",
@@ -3690,6 +4190,7 @@ export class TaskRuntime {
         "retained-repair",
         "verify-retained",
         "cancel-retained-verification",
+        "extend-verification-deadline",
         "recover-cleanup",
       ].includes(command.action) ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
@@ -3722,8 +4223,11 @@ export class TaskRuntime {
           )
         : undefined
       const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
-      const interruptedVerification =
-        attempt?.state === "verifying" && this.interruptedChecksFor(old, attempt).length > 0
+      const interruptedVerification = Boolean(
+        attempt?.state === "verifying" &&
+        (this.interruptedChecksFor(old, attempt).length > 0 ||
+          this.settledExtendedTaskTimeouts(old, attempt).length > 0),
+      )
       if (
         !interruptedVerification &&
         (attempt?.state === "running" || attempt?.state === "verifying" || terminalNativeFailure)
@@ -3804,6 +4308,28 @@ export class TaskRuntime {
       command.action === "verify-retained"
         ? await this.prepareRetainedVerification(old, command, caller, ownerSession)
         : undefined
+    const verificationDeadlineExtension =
+      command.action === "extend-verification-deadline"
+        ? await this.prepareVerificationDeadlineExtension(old, command, caller, ownerSession)
+        : undefined
+    if (verificationDeadlineExtension) {
+      const confirmedOwner = await this.host.session(caller)
+      const confirmedPlan = this.store.plan(old.id)
+      if (
+        !confirmedPlan ||
+        !this.validArchitect(confirmedOwner) ||
+        confirmedOwner.id !== old.owner ||
+        confirmedOwner.projectID !== this.projectID
+      )
+        throw new Error("Verification deadline owner changed during admission")
+      this.assertVerificationDeadlineExtensionCurrent(
+        confirmedPlan,
+        command,
+        caller,
+        verificationDeadlineExtension,
+      )
+      ownerSession = confirmedOwner
+    }
     let quarantineAttempt: AttemptRow | undefined
     let quarantineReview: SourceReviewBinding | undefined
     if (command.action === "quarantine-source") {
@@ -4279,6 +4805,87 @@ export class TaskRuntime {
           artifact: retainedRepair.artifact,
           messageID: retainedRepair.messageID,
           version: this.store.plan(plan.id)!.version,
+        }
+      }
+      if (command.action === "extend-verification-deadline") {
+        const prepared = verificationDeadlineExtension
+        if (
+          !prepared ||
+          !ownerSession ||
+          !this.validArchitect(ownerSession) ||
+          ownerSession.id !== plan.owner ||
+          ownerSession.projectID !== this.projectID
+        )
+          throw new Error("Verification deadline extension requires the current Architect owner")
+        this.assertVerificationDeadlineExtensionCurrent(plan, command, caller, prepared)
+        if (
+          this.store.activeAdoptions(plan.id).length ||
+          activeRetainedVerifications(db, this.directory, plan.id).length > 0 ||
+          this.store
+            .effects(plan.id)
+            .some((effect) => ["intended", "uncertain"].includes(effect.state)) ||
+          verificationActivitiesForDatabase(this.store.repository.path).some(
+            (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+          )
+        )
+          throw new Error("An active or uncertain check/resource prevents deadline extension")
+        const changed = db
+          .query(
+            `UPDATE runner_plans SET version=version+1
+             WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
+               AND state='blocked' AND artifact IS NULL`,
+          )
+          .run(
+            plan.id,
+            this.directory,
+            caller,
+            command.expectedVersion,
+            prepared.target.planRevision,
+          ).changes
+        if (changed !== 1)
+          throw new Error("Verification deadline plan changed during owner authorization")
+        const nextPlan = this.store.plan(plan.id)!
+        const amendment = VerificationTimeoutAmendmentSchema.parse({
+          schemaVersion: 1,
+          amendmentID: crypto.randomUUID(),
+          policyRevision: prepared.deadline.policyRevision + 1,
+          requestID: command.requestID,
+          projectID: this.projectID,
+          projectDirectory: this.directory,
+          planID: plan.id,
+          planRevision: plan.revision,
+          planVersion: nextPlan.version,
+          owner: caller,
+          ownerEpoch: prepared.ownerEpoch,
+          phase: prepared.target.phase,
+          taskID: prepared.target.taskID,
+          taskRevision: prepared.target.taskRevision,
+          attemptID: prepared.target.attemptID,
+          artifact: prepared.target.artifact,
+          checkID: prepared.target.checkID,
+          commandFingerprint: verificationCommandFingerprint(prepared.target.command),
+          authoredTimeoutMs: prepared.deadline.authoredTimeoutMs,
+          previousTimeoutMs: prepared.deadline.effectiveTimeoutMs,
+          effectiveTimeoutMs: command.timeoutMs,
+          reason: command.reason!.trim(),
+          createdAt: this.now(),
+        }) satisfies VerificationTimeoutAmendment
+        this.store.record(plan.id, amendment.taskID, "VERIFICATION_DEADLINE_EXTENDED", amendment)
+        return {
+          status: "verification-deadline-extended",
+          planID: plan.id,
+          phase: amendment.phase,
+          taskID: amendment.taskID,
+          attemptID: amendment.attemptID,
+          artifact: amendment.artifact,
+          checkID: amendment.checkID,
+          authoredTimeoutMs: amendment.authoredTimeoutMs,
+          previousTimeoutMs: amendment.previousTimeoutMs,
+          effectiveTimeoutMs: amendment.effectiveTimeoutMs,
+          amendmentID: amendment.amendmentID,
+          policyRevision: amendment.policyRevision,
+          reason: amendment.reason,
+          version: nextPlan.version,
         }
       }
       if (command.action === "amend-scope") {
@@ -5116,6 +5723,17 @@ export class TaskRuntime {
             sourceGeneration ?? undefined,
           ).toSorted((left, right) => left.id.localeCompare(right.id))
           const expectedEffects = currentBinding.interruptedEffects
+          const settledTimeouts = this.settledExtendedCombinedTimeouts(
+            plan,
+            input,
+            currentBinding.artifact,
+            sourceGeneration ?? undefined,
+          ).toSorted((left, right) => left.id.localeCompare(right.id))
+          const timeoutBindings = settledTimeouts.map((effect) => ({
+            id: effect.id,
+            payloadFingerprint: fingerprint(effect.payload),
+            receiptFingerprint: fingerprint(effect.receipt),
+          }))
           if (
             fingerprint(
               interrupted.map((effect) => ({
@@ -5124,6 +5742,7 @@ export class TaskRuntime {
                 receiptFingerprint: fingerprint(effect.receipt),
               })),
             ) !== fingerprint(expectedEffects) ||
+            fingerprint(timeoutBindings) !== fingerprint(currentBinding.settledTimeouts ?? []) ||
             effects.some(
               (effect) =>
                 ["intended", "uncertain"].includes(effect.state) &&
@@ -5278,7 +5897,13 @@ export class TaskRuntime {
           }
         }
         if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
-          const interrupted = this.interruptedChecksFor(plan, attempt)
+          const interrupted = [
+            ...this.interruptedChecksFor(plan, attempt),
+            ...this.settledExtendedTaskTimeouts(plan, attempt),
+          ].filter(
+            (effect, index, effects) =>
+              effects.findIndex((candidate) => candidate.id === effect.id) === index,
+          )
           if (interrupted.length) {
             if (
               plan.state !== "blocked" ||
@@ -10853,6 +11478,28 @@ export class TaskRuntime {
       )
     }
     if (!verificationCurrent()) return
+    const currentPlanBeforeVerification = this.store.plan(plan.id)
+    if (
+      currentPlanBeforeVerification?.state === "blocked" &&
+      attempt.artifact &&
+      proposal.verification.some((check) => {
+        const target = this.verificationTarget(
+          currentPlanBeforeVerification,
+          "task",
+          check,
+          attempt.artifact!,
+          attempt.task_id,
+          this.store.repository.get(attempt.task_id)?.revision ?? null,
+          attempt.id,
+        )
+        return this.deadlineAwaitingTaskContinuation(
+          currentPlanBeforeVerification,
+          target,
+          this.verificationDeadline(target),
+        )
+      })
+    )
+      return
     const preparation = this.prepareVerificationCandidate(plan, attempt, proposal, fence)
     if (preparation !== "ready") return
     let artifact: Awaited<ReturnType<typeof commitArtifact>>
@@ -10866,11 +11513,17 @@ export class TaskRuntime {
         )
           return false
         const payload = JSON.parse(effect.payload)
+        const recordedCheck =
+          isRecord(payload) && payload.authoredCheck !== undefined
+            ? payload.authoredCheck
+            : isRecord(payload)
+              ? payload.check
+              : undefined
         return (
           payload.artifact === head &&
           payload.workspace === attempt.workspace &&
           proposal.verification.some(
-            (check) => fingerprint(check) === fingerprint(payload.check),
+            (check) => fingerprint(check) === fingerprint(recordedCheck),
           ) &&
           (payload.repairID ?? undefined) === repairID
         )
@@ -10940,6 +11593,18 @@ export class TaskRuntime {
     const receipts: CheckReceipt[] = []
     for (const check of proposal.verification) {
       if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
+      const deadline = this.verificationDeadline(
+        this.verificationTarget(
+          plan,
+          "task",
+          check,
+          artifact.commit,
+          attempt.task_id,
+          this.store.repository.get(attempt.task_id)?.revision ?? null,
+          attempt.id,
+        ),
+      )
+      const effectiveCheck = effectiveVerificationCheck(check, deadline)
       const known = this.store
         .effects(plan.id)
         .toReversed()
@@ -10952,6 +11617,7 @@ export class TaskRuntime {
             repairID?: unknown
             verificationEpoch?: number
             check?: unknown
+            authoredCheck?: unknown
           }
           // A resume replaces interrupted checks. Preserve completed checks
           // for the same candidate, attempt, command, and repair generation.
@@ -10966,9 +11632,27 @@ export class TaskRuntime {
             (payload.repairID ?? undefined) === repairID &&
             ((payload.verificationEpoch ?? 0) === verificationEpoch ||
               (passed && checkSucceeded(passed))) &&
-            fingerprint(payload.check) === fingerprint(check)
+            fingerprint(payload.check) === fingerprint(effectiveCheck)
           )
         })
+      if (
+        !known &&
+        this.store.plan(plan.id)?.state === "blocked" &&
+        this.deadlineAwaitingTaskContinuation(
+          plan,
+          this.verificationTarget(
+            plan,
+            "task",
+            check,
+            artifact.commit,
+            attempt.task_id,
+            this.store.repository.get(attempt.task_id)?.revision ?? null,
+            attempt.id,
+          ),
+          deadline,
+        )
+      )
+        return
       if (known && known.state !== "completed") {
         const activityIdentity = { effectID: known.id, payload: known.payload }
         const activity = this.checkActivity(known.id, activityIdentity)
@@ -11005,7 +11689,9 @@ export class TaskRuntime {
         attempt.id,
         `verify:${check.id}`,
         {
-          check,
+          check: effectiveCheck,
+          authoredCheck: check,
+          verificationDeadline: verificationReceiptDeadline(deadline),
           workspace: attempt.workspace,
           artifact: artifact.commit,
           identity: artifact.identity,
@@ -11031,7 +11717,14 @@ export class TaskRuntime {
             receiptPath,
           },
           run: (signal) =>
-            runDeclaredCheck(attempt.workspace, artifact.commit, check, receiptPath, { signal }),
+            this.runVerificationCheck(
+              attempt.workspace,
+              artifact.commit,
+              check,
+              deadline,
+              receiptPath,
+              { signal },
+            ),
         })
         return
       } catch (error) {
@@ -11828,6 +12521,20 @@ export class TaskRuntime {
     for (const check of checks) {
       if (parentSignal?.aborted || !this.retainedVerificationLive(initial.id, initial.generation))
         return undefined
+      const plan = this.store.plan(initial.planID)
+      if (!plan || plan.revision !== initial.planRevision)
+        throw new Error("Retained verification plan revision changed")
+      const target = this.verificationTarget(
+        plan,
+        phase,
+        check,
+        artifact,
+        phase === "task" ? initial.taskID : null,
+        phase === "task" ? initial.taskRevision : null,
+        phase === "task" ? initial.attemptID : null,
+      )
+      const deadline = this.verificationDeadline(target)
+      const effectiveCheck = effectiveVerificationCheck(check, deadline)
       const procedure = retainedProcedurePlan(check.command)
       if (procedure.status !== "supported") {
         await this.holdRetainedVerification(
@@ -11863,7 +12570,7 @@ export class TaskRuntime {
         if (
           existing.artifact !== artifact ||
           existing.workspace !== workspace ||
-          fingerprint(JSON.parse(existing.checkJSON)) !== fingerprint(check)
+          fingerprint(JSON.parse(existing.checkJSON)) !== fingerprint(effectiveCheck)
         ) {
           await this.holdRetainedVerification(
             initial,
@@ -11877,7 +12584,7 @@ export class TaskRuntime {
             JSON.parse(existing.receipt),
             initial,
             phase,
-            check,
+            effectiveCheck,
             workspace,
             artifact,
             existing.environmentIdentity,
@@ -11952,7 +12659,7 @@ export class TaskRuntime {
                 onDisk,
                 initial,
                 phase,
-                check,
+                effectiveCheck,
                 workspace,
                 artifact,
                 existing.environmentIdentity,
@@ -12253,7 +12960,9 @@ export class TaskRuntime {
         generation: initial.generation,
         operationInputFingerprint: this.retainedVerificationInputFingerprint(initial, phase),
         phase,
-        check,
+        check: effectiveCheck,
+        authoredCheck: check,
+        verificationDeadline: verificationReceiptDeadline(deadline),
         workspace,
         artifact,
         contextIdentity: context.identity,
@@ -12266,7 +12975,7 @@ export class TaskRuntime {
             operationID: initial.id,
             phase,
             checkID: check.id,
-            check,
+            check: effectiveCheck,
             workspace,
             artifact,
             inputFingerprint,
@@ -12348,7 +13057,7 @@ export class TaskRuntime {
             isolation: retainedCheckIsolationWitness(context),
           },
           run: (signal) =>
-            runDeclaredCheck(workspace, artifact, check, receiptPath, {
+            this.runVerificationCheck(workspace, artifact, check, deadline, receiptPath, {
               environment: context.environment,
               environmentIdentity: context.environmentIdentity,
               ownedUntrackedPaths: context.dependencyLink ? ["node_modules"] : [],
@@ -14919,6 +15628,16 @@ export class TaskRuntime {
             fingerprint(effect.receipt) === expected.receiptFingerprint,
           )
         })
+        const settledTimeouts = (continuation.settledTimeouts ?? []).every((expected) => {
+          const effect = this.store
+            .effects(plan.id)
+            .find((candidate) => candidate.id === expected.id)
+          return Boolean(
+            effect?.state === "completed" &&
+            fingerprint(effect.payload) === expected.payloadFingerprint &&
+            fingerprint(effect.receipt) === expected.receiptFingerprint,
+          )
+        })
         const { inputFingerprint: _inputFingerprint, ...bindingData } = continuation
         const currentBinding: CombinedVerificationContinuationBinding = {
           ...bindingData,
@@ -14933,6 +15652,7 @@ export class TaskRuntime {
         }
         return Boolean(
           interruptedEffects &&
+          settledTimeouts &&
           fingerprint(currentBinding) === continuation.inputFingerprint &&
           existsSync(continuation.workspace) &&
           git(continuation.workspace, ["rev-parse", "HEAD"]) === candidateArtifact &&
@@ -14961,6 +15681,9 @@ export class TaskRuntime {
         if (!check) return false
         try {
           const payload: unknown = JSON.parse(effect.payload)
+          const deadline = this.verificationDeadline(
+            this.verificationTarget(plan, "combined", check, candidateArtifact, null, null, null),
+          )
           if (
             !isRecord(payload) ||
             payload.artifact !== candidateArtifact ||
@@ -14970,7 +15693,8 @@ export class TaskRuntime {
               (continuation.sourceGeneration ?? undefined) ||
             payload.verificationEpoch !== continuation.verificationEpoch ||
             payload.combinedContinuationFingerprint !== continuation.inputFingerprint ||
-            fingerprint(payload.check) !== fingerprint(check)
+            fingerprint(payload.authoredCheck ?? payload.check) !== fingerprint(check) ||
+            fingerprint(payload.check) !== fingerprint(effectiveVerificationCheck(check, deadline))
           )
             return false
           unresolvedEffectIDs.add(effect.id)
@@ -15086,6 +15810,10 @@ export class TaskRuntime {
     // never replay uncertain effects or silently retry on ordinary ticks.
     const receipts: CheckReceipt[] = []
     for (const check of input.verification) {
+      const deadline = this.verificationDeadline(
+        this.verificationTarget(plan, "combined", check, artifact, null, null, null),
+      )
+      const effectiveCheck = effectiveVerificationCheck(check, deadline)
       if (!acceptedInputsCurrent()) {
         if (continuation && this.store.plan(plan.id)?.state === "running")
           this.hold(
@@ -15105,15 +15833,21 @@ export class TaskRuntime {
             combinedContinuationFingerprint?: unknown
             check?: unknown
           }
+          const previous =
+            e.state === "completed" && e.receipt
+              ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
+              : undefined
           return (
             payload.artifact === artifact &&
             payload.workspace === workspace &&
             (payload.sourceGeneration ?? undefined) === sourceGeneration &&
-            (payload.verificationEpoch ?? 0) === verificationEpoch &&
             (continuation
-              ? payload.combinedContinuationFingerprint === continuation.inputFingerprint
+              ? payload.combinedContinuationFingerprint === continuation.inputFingerprint ||
+                (previous !== undefined && payload.combinedContinuationFingerprint === undefined)
               : payload.combinedContinuationFingerprint === undefined) &&
-            fingerprint(payload.check) === fingerprint(check)
+            ((payload.verificationEpoch ?? 0) === verificationEpoch ||
+              (previous !== undefined && checkSucceeded(previous))) &&
+            fingerprint(payload.check) === fingerprint(effectiveCheck)
           )
         } catch {
           return false
@@ -15150,7 +15884,9 @@ export class TaskRuntime {
           workspace,
           artifact,
           identity: artifact,
-          check,
+          check: effectiveCheck,
+          authoredCheck: check,
+          verificationDeadline: verificationReceiptDeadline(deadline),
           receiptPath,
           ...(sourceGeneration ? { sourceGeneration } : {}),
           ...(verificationEpoch ? { verificationEpoch } : {}),
@@ -15171,7 +15907,10 @@ export class TaskRuntime {
             effectID: effect.id,
             receiptPath,
           },
-          run: (signal) => runDeclaredCheck(workspace, artifact, check, receiptPath, { signal }),
+          run: (signal) =>
+            this.runVerificationCheck(workspace, artifact, check, deadline, receiptPath, {
+              signal,
+            }),
         })
         return
       } catch (error) {
