@@ -73,6 +73,30 @@ const STAGES = {
       "packages/runntime/playground/lfm3/",
     ],
   },
+  "lfm3-base-audio": {
+    baseCommit: "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+    directory: "contributions/runntime/lfm3-base-audio",
+    allowedPaths: [
+      "README.md",
+      "apps/docs/astro.config.mjs",
+      "apps/docs/src/content/docs/zoo/lfm3-audio.mdx",
+      "apps/docs/src/content/docs/zoo/lfm3-chat.mdx",
+      "packages/runntime/playground/lfm3/",
+      "packages/runntime/src/core/gpu/dispatch/conv.ts",
+      "packages/runntime/src/core/gpu/dispatch/registry.ts",
+      "packages/runntime/src/core/graph/ops/conv/conv1d.ts",
+      "packages/runntime/src/core/graph/ops/conv/conv2d.ts",
+      "packages/runntime/src/core/kernels/conv/",
+      "packages/runntime/src/zoo/index.ts",
+      "packages/runntime/src/zoo/lfm3/",
+      "packages/runntime/src/zoo/models.ts",
+      "packages/runntime/src/zoo/tasks/audio/lfm3.ts",
+      "packages/runntime/src/zoo/tasks/nlp/lfm3.ts",
+      "packages/runntime/test/core/graph/ops/conv/",
+      "packages/runntime/test/core/kernels/conv/",
+      "packages/runntime/test/zoo/lfm3/",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
@@ -294,7 +318,7 @@ function verifyEvidence(
   const required: EvidenceRecord["kind"][] =
     stage === "d1-safety-correction"
       ? ["unit", "gpu", "typecheck", "lint"]
-      : stage === "d1-q8" || stage === "lfm3-base-chat"
+      : stage === "d1-q8" || stage === "lfm3-base-chat" || stage === "lfm3-base-audio"
         ? [
             "unit",
             "gpu",
@@ -311,7 +335,7 @@ function verifyEvidence(
     const expected =
       stage === "d1-safety-correction"
         ? "unit, GPU, typecheck and lint"
-        : stage === "d1-q8" || stage === "lfm3-base-chat"
+        : stage === "d1-q8" || stage === "lfm3-base-chat" || stage === "lfm3-base-audio"
           ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
           : "unit and GPU"
     throw new Error(`retained checks must include passing ${expected} evidence`)

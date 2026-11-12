@@ -35,7 +35,7 @@ function fixture(
   options: {
     outsideScope?: boolean
     sourcePath?: string
-    stage?: "d1-reference" | "d1-safety-correction" | "d1-q8" | "lfm3-base-chat"
+    stage?: "d1-reference" | "d1-safety-correction" | "d1-q8" | "lfm3-base-chat" | "lfm3-base-audio"
   } = {},
 ): Fixture {
   const root = mkdtempSync(join(tmpdir(), "runntime-contribution-test-"))
@@ -51,12 +51,12 @@ function fixture(
   command(repository, "config", "user.email", "verifier@example.invalid")
 
   const sourcePath = options.outsideScope
-    ? contributionStage === "lfm3-base-chat"
+    ? contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
       ? "packages/runntime/src/zoo/d1/model.ts"
       : "README.md"
     : (options.sourcePath ??
-      (contributionStage === "lfm3-base-chat"
-        ? "packages/runntime/src/zoo/lfm3/model.ts"
+      (contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
+        ? "packages/runntime/src/zoo/lfm3/audio/model.ts"
         : "packages/runntime/src/zoo/d1/model.ts"))
   const source = join(repository, sourcePath)
   mkdirSync(join(source, ".."), { recursive: true })
@@ -72,7 +72,7 @@ function fixture(
   const firstCommit = command(repository, "rev-parse", "HEAD")
 
   const secondDirectory =
-    contributionStage === "lfm3-base-chat"
+    contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
       ? "packages/runntime/test/zoo/lfm3"
       : "packages/runntime/test/zoo/d1"
   const secondPath = `${secondDirectory}/model.test.ts`
@@ -118,7 +118,9 @@ function fixture(
           { kind: "lint", command: "pnpm lint", file: "evidence/lint.txt" },
           { kind: "build", command: "pnpm --filter runntime build", file: "evidence/build.txt" },
         ]
-      : contributionStage === "d1-q8" || contributionStage === "lfm3-base-chat"
+      : contributionStage === "d1-q8" ||
+          contributionStage === "lfm3-base-chat" ||
+          contributionStage === "lfm3-base-audio"
         ? [
             {
               kind: "typecheck",
@@ -130,15 +132,15 @@ function fixture(
             {
               kind: "conversion",
               command:
-                contributionStage === "lfm3-base-chat"
-                  ? "LFM3 checkpoint conversion inspection"
+                contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
+                  ? "LFM3 original checkpoint conversion inspection"
                   : "uv run runntime quantize",
               file: "evidence/conversion.txt",
             },
             {
               kind: "parity",
               command:
-                contributionStage === "lfm3-base-chat"
+                contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
                   ? "LFM3 Liquid and native parity qualification"
                   : "D1 parity qualification",
               file: "evidence/parity.txt",
@@ -146,7 +148,7 @@ function fixture(
             {
               kind: "package",
               command:
-                contributionStage === "lfm3-base-chat"
+                contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
                   ? "packed LFM3 public consumer"
                   : "packed package consumer",
               file: "evidence/package.txt",
@@ -154,7 +156,7 @@ function fixture(
             {
               kind: "resource",
               command:
-                contributionStage === "lfm3-base-chat"
+                contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
                   ? "LFM3 resource measurements"
                   : "D1 resource measurements",
               file: "evidence/resource.txt",
@@ -377,55 +379,58 @@ describe("ruNNtime contribution reconstruction", () => {
     }
   })
 
-  it("requires the full quality evidence set for LFM3 base chat", () => {
-    const complete = fixture({ stage: "lfm3-base-chat" })
-    expect(
-      verifyContribution({
-        stageDirectory: complete.stage,
-        repositoryDirectory: complete.repository,
-        expectedBaseCommit: complete.baseCommit,
-      }).checks,
-    ).toEqual([
-      "unit",
-      "gpu",
-      "typecheck",
-      "lint",
-      "build",
-      "conversion",
-      "parity",
-      "package",
-      "resource",
-    ])
-
-    for (const missingKind of [
-      "unit",
-      "gpu",
-      "typecheck",
-      "lint",
-      "build",
-      "conversion",
-      "parity",
-      "package",
-      "resource",
-    ]) {
-      const incomplete = fixture({ stage: "lfm3-base-chat" })
-      const manifest = incomplete.manifest
-      if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
-      manifest.checks = manifest.checks.filter(
-        (check) => isRecord(check) && check.kind !== missingKind,
-      )
-      saveManifest(incomplete.stage, manifest)
-      expect(() =>
+  it.each(["lfm3-base-chat", "lfm3-base-audio"] as const)(
+    "requires the full quality evidence set for %s",
+    (stage) => {
+      const complete = fixture({ stage })
+      expect(
         verifyContribution({
-          stageDirectory: incomplete.stage,
-          repositoryDirectory: incomplete.repository,
-          expectedBaseCommit: incomplete.baseCommit,
-        }),
-      ).toThrow(
-        "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
-      )
-    }
-  })
+          stageDirectory: complete.stage,
+          repositoryDirectory: complete.repository,
+          expectedBaseCommit: complete.baseCommit,
+        }).checks,
+      ).toEqual([
+        "unit",
+        "gpu",
+        "typecheck",
+        "lint",
+        "build",
+        "conversion",
+        "parity",
+        "package",
+        "resource",
+      ])
+
+      for (const missingKind of [
+        "unit",
+        "gpu",
+        "typecheck",
+        "lint",
+        "build",
+        "conversion",
+        "parity",
+        "package",
+        "resource",
+      ]) {
+        const incomplete = fixture({ stage })
+        const manifest = incomplete.manifest
+        if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
+        manifest.checks = manifest.checks.filter(
+          (check) => isRecord(check) && check.kind !== missingKind,
+        )
+        saveManifest(incomplete.stage, manifest)
+        expect(() =>
+          verifyContribution({
+            stageDirectory: incomplete.stage,
+            repositoryDirectory: incomplete.repository,
+            expectedBaseCommit: incomplete.baseCommit,
+          }),
+        ).toThrow(
+          "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
+        )
+      }
+    },
+  )
 
   it("permits LFM3 documentation and rejects paths outside its contribution scope", () => {
     const docs = fixture({
@@ -448,6 +453,51 @@ describe("ruNNtime contribution reconstruction", () => {
         expectedBaseCommit: escaped.baseCommit,
       }),
     ).toThrow("escapes write scope")
+  })
+
+  it("permits LFM3 audio API and documentation files while rejecting unrelated paths", () => {
+    const audioApi = fixture({
+      stage: "lfm3-base-audio",
+      sourcePath: "packages/runntime/src/zoo/tasks/audio/lfm3.ts",
+    })
+    expect(
+      verifyContribution({
+        stageDirectory: audioApi.stage,
+        repositoryDirectory: audioApi.repository,
+        expectedBaseCommit: audioApi.baseCommit,
+      }).stage,
+    ).toBe("lfm3-base-audio")
+
+    const docs = fixture({
+      stage: "lfm3-base-audio",
+      sourcePath: "apps/docs/src/content/docs/zoo/lfm3-audio.mdx",
+    })
+    expect(
+      verifyContribution({
+        stageDirectory: docs.stage,
+        repositoryDirectory: docs.repository,
+        expectedBaseCommit: docs.baseCommit,
+      }).stage,
+    ).toBe("lfm3-base-audio")
+
+    const escaped = fixture({ stage: "lfm3-base-audio", outsideScope: true })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: escaped.stage,
+        repositoryDirectory: escaped.repository,
+        expectedBaseCommit: escaped.baseCommit,
+      }),
+    ).toThrow("escapes write scope")
+  })
+
+  it("pins the LFM3 base-audio series to the accepted base-chat tip", () => {
+    const audio = fixture({ stage: "lfm3-base-audio" })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: audio.stage,
+        repositoryDirectory: audio.repository,
+      }),
+    ).toThrow("base commit mismatch: expected e8a4604d5d2603b20447c334ca0a6d6c5edc1374")
   })
 
   it("permits D1 docs navigation and rejects changes outside the Q8 contribution scope", () => {
