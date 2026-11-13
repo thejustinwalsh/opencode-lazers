@@ -76,7 +76,7 @@ export const RetainedVerificationCheckSchema = z.strictObject({
   inputFingerprint: z.string().min(1),
   environmentIdentity: z.string().min(1),
   receiptPath: z.string().min(1),
-  state: z.enum(["intended", "completed", "uncertain"]),
+  state: z.enum(["intended", "completed", "uncertain", "retry-authorized"]),
   receipt: z.string().nullable(),
   contextPath: z.string().min(1),
   cleanupState: RetainedVerificationCleanupState,

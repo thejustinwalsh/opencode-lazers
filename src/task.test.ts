@@ -202,6 +202,30 @@ describe("task proposals", () => {
     expect(TaskProposalSchema.safeParse({ ...proposal, verification: [] }).success).toBe(false)
   })
 
+  test("verification checks accept explicit inactivity and hard-backstop overrides", () => {
+    const proposal = validProposal()
+    const check = proposal.verification[0]!
+    proposal.verification = [
+      {
+        ...check,
+        timeoutMs: 500,
+        inactivityTimeoutMs: 5_000,
+        hardTimeoutMs: 10_000,
+      },
+    ]
+    expect(TaskProposalSchema.parse(proposal).verification[0]).toMatchObject({
+      timeoutMs: 500,
+      inactivityTimeoutMs: 5_000,
+      hardTimeoutMs: 10_000,
+    })
+    expect(
+      TaskProposalSchema.safeParse({
+        ...proposal,
+        verification: [{ ...proposal.verification[0]!, inactivityTimeoutMs: 10_001 }],
+      }).success,
+    ).toBe(false)
+  })
+
   test("accepts tasks without guessed budgets and validates legacy limits when supplied", () => {
     const { limits: _limits, ...withoutBudget } = validProposal()
     expect(TaskProposalSchema.safeParse(withoutBudget).success).toBe(true)

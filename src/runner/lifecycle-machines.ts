@@ -194,10 +194,10 @@ export const retainedVerificationMachine = defineLifecycle(
     "task-accepted": ["combined-checks", "held", "failed", "cancelled"],
     "combined-checks": ["waiting-human-combined", "accepted", "held", "failed", "cancelled"],
     "waiting-human-combined": ["combined-checks", "accepted", "held", "failed", "cancelled"],
-    held: ["cancelled"],
+    held: ["task-checks", "combined-checks", "cancelled"],
     accepted: [],
     failed: [],
-    cancelled: [],
+    cancelled: ["task-checks", "combined-checks"],
   },
 )
 export const verificationResourceMachine = defineLifecycle(
@@ -207,13 +207,14 @@ export const verificationResourceMachine = defineLifecycle(
     creating: ["active", "uncertain", "removed"],
     active: ["uncertain", "removed"],
     uncertain: ["active", "removed"],
-    removed: [],
+    removed: ["creating"],
   },
 )
 export const verificationCheckMachine = defineLifecycle("runner-verification-check", "intended", {
   intended: ["completed", "uncertain"],
   uncertain: ["completed"],
-  completed: ["uncertain"],
+  completed: ["uncertain", "retry-authorized"],
+  "retry-authorized": ["intended"],
 })
 export const verificationCleanupMachine = defineLifecycle(
   "runner-verification-cleanup",
@@ -221,7 +222,7 @@ export const verificationCleanupMachine = defineLifecycle(
   {
     pending: ["complete", "failed"],
     failed: ["complete"],
-    complete: [],
+    complete: ["pending"],
   },
 )
 

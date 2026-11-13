@@ -18,9 +18,18 @@ import { promisify } from "node:util"
 import { canonical } from "../identity.ts"
 import { checkEnvironment, checkSucceeded } from "./checks.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
+import {
+  DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+  DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
+} from "./verification-timeout.ts"
+import type { VerificationDeadlineReceipt } from "./verification-timeout.ts"
 import type { TaskProposal } from "../task.ts"
 
 const execFileAsync = promisify(execFile)
+
+type ExecutableVerificationCheck = Omit<TaskProposal["verification"][number], "timeoutMs"> & {
+  timeoutMs?: number
+}
 
 /** Repository-size observations must not block the scheduler and RPC event loop. */
 export async function gitAsync(
@@ -416,6 +425,10 @@ export type CheckReceipt = {
   endedAt: number
   exitCode: number | null
   timedOut: boolean
+  stopCause?: "inactivity" | "hard-backstop" | "cancelled" | null
+  inactivityTimeoutMs?: number
+  hardTimeoutMs?: number
+  verificationDeadline?: VerificationDeadlineReceipt
   aborted?: boolean
   stdout: string
   stderr: string
@@ -444,6 +457,7 @@ export type CheckPhaseReceipt = {
   command: string
   exitCode: number | null
   timedOut: boolean
+  stopCause?: "inactivity" | "hard-backstop" | "cancelled" | null
   aborted?: boolean
   stdout: string
   stderr: string
@@ -463,6 +477,8 @@ export type CheckRunOptions = {
   signal?: AbortSignal
   /** Injectable native process-tree adapter, also used to exercise Windows semantics off-host. */
   processTreeAdapter?: WindowsProcessTreeAdapter
+  /** Shared monotonic hard deadline for recognized multi-phase declarations. */
+  hardDeadline?: number
 }
 
 export type WindowsProcessTreeAdapter = {
@@ -489,13 +505,14 @@ export function verificationEnvironmentIdentity(): string {
     environment: verificationEnvironment(),
   })
 }
-async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768) {
+async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768, onProgress?: () => void) {
   const reader = stream.getReader()
   let bytes = 0
   const chunks: Uint8Array[] = []
   while (true) {
     const part = await reader.read()
     if (part.done) break
+    if (part.value.byteLength > 0) onProgress?.()
     const remaining = Math.max(0, limit - bytes)
     if (remaining) chunks.push(part.value.slice(0, remaining))
     bytes += part.value.byteLength
@@ -626,7 +643,7 @@ async function terminateAndObserveWindowsProcessTree(
 export async function runCheck(
   directory: string,
   artifact: string,
-  check: TaskProposal["verification"][number],
+  check: ExecutableVerificationCheck,
   receiptPath: string,
   options: CheckRunOptions = {},
 ): Promise<CheckReceipt> {
@@ -635,7 +652,12 @@ export async function runCheck(
   // Record runtime metadata without persisting environment credentials.
   const environmentIdentity = options.environmentIdentity ?? verificationEnvironmentIdentity()
   const startedAt = Date.now()
-  let timedOut = false
+  const inactivityTimeoutMs =
+    check.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS
+  const hardTimeoutMs = check.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS
+  if (inactivityTimeoutMs > hardTimeoutMs)
+    throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
+  let stopCause: CheckReceipt["stopCause"] = null
   const child = Bun.spawn(["/bin/sh", "-c", check.command], {
     cwd: directory,
     stdout: "pipe",
@@ -649,9 +671,9 @@ export async function runCheck(
     (process.platform === "win32" ? nativeWindowsProcessTreeAdapter : undefined)
   let termination: Promise<void> | undefined
   let terminationRequested = false
-  const terminate = (timeout: boolean) => {
+  const terminate = () => {
+    if (terminationRequested) return
     terminationRequested = true
-    if (timeout) timedOut = true
     if (windowsTreeAdapter) {
       termination ??= windowsTreeAdapter.terminate(child.pid).catch((error: unknown) => {
         child.kill("SIGKILL")
@@ -672,27 +694,56 @@ export async function runCheck(
         child.kill("SIGKILL")
     }
   }
-  const onAbort = () => terminate(false)
-  const deadline = performance.now() + check.timeoutMs
-  let timer: ReturnType<typeof setTimeout>
-  const onTimeout = () => {
+  const terminateFor = (cause: NonNullable<CheckReceipt["stopCause"]>) => {
+    if (stopCause !== null || terminationRequested) return
+    stopCause = cause
+    terminate()
+  }
+  const onAbort = () => terminateFor("cancelled")
+  const hardDeadline = options.hardDeadline ?? performance.now() + hardTimeoutMs
+  let inactivityDeadline = performance.now() + inactivityTimeoutMs
+  let hardTimer: ReturnType<typeof setTimeout> | undefined
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined
+  const armDeadline = (
+    cause: "inactivity" | "hard-backstop",
+    deadline: number,
+    setTimer: (timer: ReturnType<typeof setTimeout>) => void,
+  ) => {
     const remaining = deadline - performance.now()
-    if (remaining > 0) {
-      timer = setTimeout(onTimeout, Math.min(remaining, 2147483647))
+    if (remaining <= 0) {
+      terminateFor(cause)
       return
     }
-    timedOut = true
-    terminate(true)
+    setTimer(
+      setTimeout(() => armDeadline(cause, deadline, setTimer), Math.min(remaining, 2147483647)),
+    )
+  }
+  const armInactivity = () =>
+    armDeadline("inactivity", inactivityDeadline, (timer) => {
+      if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
+      inactivityTimer = timer
+    })
+  const onProgress = () => {
+    if (stopCause !== null) return
+    inactivityDeadline = performance.now() + inactivityTimeoutMs
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
+    armInactivity()
   }
   options.signal?.addEventListener("abort", onAbort, { once: true })
-  timer = setTimeout(onTimeout, Math.min(check.timeoutMs, 2147483647))
+  if (options.signal?.aborted) onAbort()
+  armDeadline("hard-backstop", hardDeadline, (timer) => {
+    clearTimeout(hardTimer)
+    hardTimer = timer
+  })
+  armInactivity()
   try {
     const [stdout, initialStderr, initialExitCode] = await Promise.all([
-      bounded(child.stdout),
-      bounded(child.stderr),
+      bounded(child.stdout, 32768, onProgress),
+      bounded(child.stderr, 32768, onProgress),
       child.exited,
     ])
-    clearTimeout(timer)
+    if (hardTimer !== undefined) clearTimeout(hardTimer)
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
     const stderr = initialStderr
     const exitCode = initialExitCode
     let processCleanup: CheckReceipt["processCleanup"]
@@ -755,8 +806,12 @@ export async function runCheck(
       startedAt,
       endedAt: Date.now(),
       exitCode,
-      timedOut,
-      aborted: options.signal?.aborted === true && !timedOut,
+      timedOut: stopCause === "inactivity" || stopCause === "hard-backstop",
+      stopCause,
+      inactivityTimeoutMs,
+      hardTimeoutMs,
+      aborted:
+        stopCause === "cancelled" || (options.signal?.aborted === true && stopCause === null),
       stdout,
       stderr,
       processCleanup,
@@ -767,7 +822,7 @@ export async function runCheck(
     renameSync(`${receiptPath}.tmp`, receiptPath)
     return receipt
   } catch (error) {
-    terminate(false)
+    terminate()
     await child.exited.catch(() => -1)
     try {
       if (windowsTreeAdapter) {
@@ -783,7 +838,8 @@ export async function runCheck(
     }
     throw error
   } finally {
-    clearTimeout(timer)
+    if (hardTimer !== undefined) clearTimeout(hardTimer)
+    if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
     options.signal?.removeEventListener("abort", onAbort)
   }
 }
@@ -808,7 +864,7 @@ export function writeCheckReceipt(receiptPath: string, receipt: CheckReceipt): v
 export async function runDeclaredCheck(
   directory: string,
   artifact: string,
-  check: TaskProposal["verification"][number],
+  check: ExecutableVerificationCheck,
   receiptPath: string,
   options: CheckRunOptions = {},
 ): Promise<CheckReceipt> {
@@ -816,21 +872,64 @@ export async function runDeclaredCheck(
   if (!commands) return runCheck(directory, artifact, check, receiptPath, options)
   const phases: CheckPhaseReceipt[] = []
   const startedAt = Date.now()
-  const deadline = performance.now() + check.timeoutMs
+  const inactivityTimeoutMs =
+    check.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS
+  const hardTimeoutMs = check.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS
+  if (inactivityTimeoutMs > hardTimeoutMs)
+    throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
+  const deadline = options.hardDeadline ?? performance.now() + hardTimeoutMs
   let latest: CheckReceipt | undefined
   for (let index = 0; index < commands.length; index++) {
     const command = commands[index]!
+    if (options.signal?.aborted || deadline <= performance.now()) {
+      const cancelled = options.signal?.aborted === true
+      latest = {
+        id: check.id,
+        command,
+        cwd: directory,
+        artifact,
+        inputIdentity: options.inputIdentity ?? artifact,
+        environmentIdentity: options.environmentIdentity ?? verificationEnvironmentIdentity(),
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+        exitCode: null,
+        timedOut: !cancelled,
+        stopCause: cancelled ? "cancelled" : "hard-backstop",
+        inactivityTimeoutMs,
+        hardTimeoutMs,
+        aborted: cancelled,
+        stdout: "",
+        stderr: "",
+      }
+      phases.push({
+        command,
+        exitCode: latest.exitCode,
+        timedOut: latest.timedOut,
+        stopCause: latest.stopCause,
+        aborted: latest.aborted,
+        stdout: latest.stdout,
+        stderr: latest.stderr,
+        environmentIdentity: latest.environmentIdentity,
+      })
+      break
+    }
     latest = await runCheck(
       directory,
       artifact,
-      { ...check, command, timeoutMs: Math.max(1, deadline - performance.now()) },
+      {
+        ...check,
+        command,
+        inactivityTimeoutMs,
+        hardTimeoutMs,
+      },
       `${receiptPath}.phase-${index}.json`,
-      options,
+      { ...options, hardDeadline: deadline },
     )
     phases.push({
       command,
       exitCode: latest.exitCode,
       timedOut: latest.timedOut,
+      stopCause: latest.stopCause,
       aborted: latest.aborted,
       stdout: latest.stdout,
       stderr: latest.stderr,
@@ -848,6 +947,9 @@ export async function runDeclaredCheck(
     artifact,
     inputIdentity: options.inputIdentity ?? artifact,
     startedAt,
+    inactivityTimeoutMs,
+    hardTimeoutMs,
+    stopCause: latest.stopCause,
     stdout: phases.map((phase) => phase.stdout).join(""),
     stderr: phases.map((phase) => phase.stderr).join(""),
     processCleanup:
@@ -855,7 +957,8 @@ export async function runDeclaredCheck(
       phases.find((phase) => phase.processCleanup?.state === "terminated")?.processCleanup ??
       latest.processCleanup,
     phases,
-    phasesComplete: phases.length === commands.length,
+    phasesComplete:
+      phases.length === commands.length && !latest.timedOut && latest.aborted !== true,
   }
   writeCheckReceipt(receiptPath, result)
   return result

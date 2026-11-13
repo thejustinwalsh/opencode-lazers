@@ -71,6 +71,13 @@ limits. Group shared context and changing interfaces; each split must earn its
 coordination cost. Internal implementation steps and regression cases belong to
 the worker, not separate dispatches. Epics and phases remain plans.
 
+Verification checks have a 15-minute inactivity allowance and a 60-minute total
+hard backstop by default. Use `inactivityTimeoutMs` and `hardTimeoutMs` only when a
+check needs explicit timing; inactivity cannot exceed the hard limit. Project
+options `verificationInactivityTimeoutMs` and `verificationHardTimeoutMs` override
+defaults. Legacy `timeoutMs` is retained for historical compatibility and does not
+govern current execution.
+
 Keep related implementation, fixes and tests with the same worker; revise scope
 through existing controls when needed. Verify coherent results rather than every
 edit. Focused debugging checks remain useful; repeat broader checks when changes

@@ -1,5 +1,9 @@
 import { z } from "zod"
 import { TaskClassification } from "./task-classification.ts"
+import {
+  DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
+  DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
+} from "./runner/verification-timeout.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
 const identifier = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
@@ -101,7 +105,26 @@ export const TaskProposalSchema = z
           command: text.describe(
             "Executable verification. Run available formatter/linter automatic fixes before remaining checks; for LAZERS use bun run verify plus relevant tests.",
           ),
-          timeoutMs: z.int().positive(),
+          timeoutMs: z
+            .int()
+            .positive()
+            .describe(
+              "Historical single wall-clock limit. Preserved on legacy tasks and receipts; current execution uses inactivityTimeoutMs and hardTimeoutMs or the project defaults.",
+            ),
+          inactivityTimeoutMs: z
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Optional per-check inactivity allowance in milliseconds; absent uses the project default of 15 minutes.",
+            ),
+          hardTimeoutMs: z
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Optional per-check total hard backstop in milliseconds; absent uses the project default of 60 minutes.",
+            ),
         }),
       )
       .max(100),
@@ -133,6 +156,17 @@ export const TaskProposalSchema = z
         seen.add(item.id)
       })
     }
+    proposal.verification.forEach((item, index) => {
+      if (
+        (item.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS) >
+        (item.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS)
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["verification", index, "inactivityTimeoutMs"],
+          message: "Inactivity allowance cannot exceed the total hard backstop",
+        })
+    })
     const verificationIDs = new Set(proposal.verification.map((item) => item.id))
     proposal.acceptance.forEach((item, index) => {
       item.evidence.forEach((evidence, evidenceIndex) => {

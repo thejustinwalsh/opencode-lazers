@@ -52,19 +52,32 @@ type RetainedCheckProjection = {
     status: "passed" | "failed" | "unknown"
     exitCode: number | null
     timedOut: boolean | null
+    stopCause: "inactivity" | "hard-backstop" | "cancelled" | null
     startedAt: number | null
     endedAt: number | null
     durationMs: number | null
     output: "recorded" | "truncated" | "not-recorded"
   }
   verificationDeadline: {
-    authoredTimeoutMs: number
+    timingPolicyVersion: number | null
+    authoredTimeoutMs: number | null
+    authoredInactivityTimeoutMs: number | null
+    authoredHardTimeoutMs: number | null
+    defaultInactivityTimeoutMs: number | null
+    defaultHardTimeoutMs: number | null
+    effectiveInactivityTimeoutMs: number | null
+    effectiveHardTimeoutMs: number
     effectiveTimeoutMs: number
     amendmentID: string | null
-    policyRevision: number
+    policyRevision: number | null
+    inactivityProvenance: "project-default" | "per-check" | "amendment" | "legacy" | "unknown"
+    hardTimeoutProvenance: "project-default" | "per-check" | "amendment" | "legacy" | "unknown"
+    historicalAmendmentIDs: string[]
   } | null
   cleanupState: "pending" | "complete" | "failed" | "unknown"
 }
+
+type RetainedTimingProvenance = "project-default" | "per-check" | "amendment" | "legacy" | "unknown"
 
 export type RetainedVerificationProjection = {
   recordStatus: "recorded" | "unavailable"
@@ -400,6 +413,50 @@ export function beginRetainedVerificationCheck(
     )
     .get(input.operationID, input.phase, input.checkID)
   if (current) {
+    if (current.state === "retry-authorized") {
+      let priorCheck: unknown
+      try {
+        priorCheck = JSON.parse(current.checkJSON) as unknown
+      } catch {
+        throw new Error("Retained retry authorization has an unreadable prior check binding")
+      }
+      if (
+        current.cleanupState !== "complete" ||
+        current.workspace !== input.workspace ||
+        current.artifact !== input.artifact ||
+        current.receipt === null ||
+        fingerprint(priorCheck) === fingerprint(input.check) ||
+        !isRecord(priorCheck) ||
+        !isRecord(input.check) ||
+        priorCheck.id !== input.check.id ||
+        priorCheck.command !== input.check.command ||
+        current.receiptPath === input.receiptPath
+      )
+        throw new Error("Retained retry no longer matches its explicitly authorized check")
+      const changed = db
+        .query(
+          `UPDATE runner_retained_verification_checks
+           SET state=lz_runner_transition('check',state,'intended'),check_json=?,input_fingerprint=?,
+               environment_identity=?,receipt_path=?,receipt=NULL,context_path=?,
+               cleanup_state=lz_runner_transition('cleanup',cleanup_state,'pending'),created_at=?
+           WHERE operation_id=? AND phase=? AND check_id=? AND state='retry-authorized'`,
+        )
+        .run(
+          JSON.stringify(input.check),
+          input.inputFingerprint,
+          input.environmentIdentity,
+          input.receiptPath,
+          input.contextPath,
+          input.createdAt,
+          input.operationID,
+          input.phase,
+          input.checkID,
+        ).changes
+      if (changed !== 1) throw new Error("Retained retry authorization changed before check setup")
+      return retainedVerificationChecks(db, input.operationID, input.phase).find(
+        (check) => check.checkID === input.checkID,
+      )!
+    }
     if (
       current.workspace !== input.workspace ||
       current.artifact !== input.artifact ||
@@ -428,6 +485,39 @@ export function beginRetainedVerificationCheck(
     input.contextPath,
     input.createdAt,
   )
+  return retainedVerificationChecks(db, input.operationID, input.phase).find(
+    (check) => check.checkID === input.checkID,
+  )!
+}
+
+export function authorizeRetainedVerificationCheckRetry(
+  db: Database,
+  input: {
+    operationID: string
+    phase: "task" | "combined"
+    checkID: string
+    receiptFingerprint: string
+  },
+): RetainedVerificationCheck {
+  const current = retainedVerificationChecks(db, input.operationID, input.phase).find(
+    (check) => check.checkID === input.checkID,
+  )
+  if (
+    !current ||
+    current.state !== "completed" ||
+    current.receipt === null ||
+    fingerprint(current.receipt) !== input.receiptFingerprint ||
+    current.cleanupState !== "complete"
+  )
+    throw new Error("Retained check changed before retry authorization")
+  const changed = db
+    .query(
+      `UPDATE runner_retained_verification_checks
+       SET state=lz_runner_transition('check',state,'retry-authorized')
+       WHERE operation_id=? AND phase=? AND check_id=? AND state='completed' AND receipt=?`,
+    )
+    .run(input.operationID, input.phase, input.checkID, current.receipt).changes
+  if (changed !== 1) throw new Error("Retained check retry authorization lost its receipt fence")
   return retainedVerificationChecks(db, input.operationID, input.phase).find(
     (check) => check.checkID === input.checkID,
   )!
@@ -515,7 +605,34 @@ export function registerRetainedVerificationResources(
     if (overlap)
       throw new Error(`Verification resource ${resource.name} has an active or unknown writer`)
   }
-  for (const resource of input.resources)
+  for (const resource of input.resources) {
+    const existing = db
+      .query<{ state: string }, [string, string, string, string]>(
+        `SELECT state FROM runner_retained_verification_resources
+         WHERE operation_id=? AND phase=? AND check_id=? AND resource_name=?`,
+      )
+      .get(input.operationID, input.phase, input.checkID, resource.name)
+    if (existing) {
+      if (existing.state !== "removed")
+        throw new Error(`Retained verification resource ${resource.name} is already reserved`)
+      db.query(
+        `UPDATE runner_retained_verification_resources
+         SET canonical_path=?,device=?,inode=?,state=lz_runner_transition('resource',state,'creating'),
+             created_at=?,updated_at=?
+         WHERE operation_id=? AND phase=? AND check_id=? AND resource_name=? AND state='removed'`,
+      ).run(
+        resource.realPath,
+        resource.device,
+        resource.inode,
+        input.now,
+        input.now,
+        input.operationID,
+        input.phase,
+        input.checkID,
+        resource.name,
+      )
+      continue
+    }
     db.query(
       `INSERT INTO runner_retained_verification_resources
        (project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,device,inode,state,created_at,updated_at)
@@ -534,6 +651,7 @@ export function registerRetainedVerificationResources(
       input.now,
       input.now,
     )
+  }
 }
 
 export function updateRetainedVerificationResourceIdentity(
@@ -978,6 +1096,14 @@ function safeTimestamp(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
+function safePositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+function safeNullablePositiveInteger(value: unknown): number | null {
+  return value === null ? null : safePositiveInteger(value)
+}
+
 function safeHash(value: unknown): string | null {
   return typeof value === "string" && retainedHash.test(value) ? value : null
 }
@@ -1196,21 +1322,56 @@ function operationProjection(
         : null
     const timedOut =
       receiptMatches && typeof receipt.timedOut === "boolean" ? receipt.timedOut : null
+    const stopCause =
+      receiptMatches &&
+      (receipt.stopCause === "inactivity" ||
+        receipt.stopCause === "hard-backstop" ||
+        receipt.stopCause === "cancelled")
+        ? receipt.stopCause
+        : null
     const deadlineValue =
       receiptMatches && isRecord(receipt.verificationDeadline)
         ? receipt.verificationDeadline
         : undefined
+    const effectiveHardTimeoutMs =
+      safePositiveInteger(deadlineValue?.effectiveHardTimeoutMs) ??
+      safePositiveInteger(deadlineValue?.effectiveTimeoutMs)
+    const provenance = (value: unknown): RetainedTimingProvenance =>
+      value === "project-default" || value === "per-check" || value === "amendment"
+        ? value
+        : deadlineValue?.timingPolicyVersion === undefined
+          ? "legacy"
+          : "unknown"
     const verificationDeadline =
-      deadlineValue &&
-      Number.isSafeInteger(deadlineValue.authoredTimeoutMs) &&
-      Number.isSafeInteger(deadlineValue.effectiveTimeoutMs) &&
-      Number.isSafeInteger(deadlineValue.policyRevision) &&
-      (deadlineValue.amendmentID === null || typeof deadlineValue.amendmentID === "string")
+      deadlineValue && effectiveHardTimeoutMs !== null
         ? {
-            authoredTimeoutMs: deadlineValue.authoredTimeoutMs as number,
-            effectiveTimeoutMs: deadlineValue.effectiveTimeoutMs as number,
-            amendmentID: deadlineValue.amendmentID as string | null,
-            policyRevision: deadlineValue.policyRevision as number,
+            timingPolicyVersion: safePositiveInteger(deadlineValue.timingPolicyVersion),
+            authoredTimeoutMs: safeNullablePositiveInteger(deadlineValue.authoredTimeoutMs),
+            authoredInactivityTimeoutMs: safeNullablePositiveInteger(
+              deadlineValue.authoredInactivityTimeoutMs,
+            ),
+            authoredHardTimeoutMs: safeNullablePositiveInteger(deadlineValue.authoredHardTimeoutMs),
+            defaultInactivityTimeoutMs: safePositiveInteger(
+              deadlineValue.defaultInactivityTimeoutMs,
+            ),
+            defaultHardTimeoutMs: safePositiveInteger(deadlineValue.defaultHardTimeoutMs),
+            effectiveInactivityTimeoutMs: safePositiveInteger(
+              deadlineValue.effectiveInactivityTimeoutMs,
+            ),
+            effectiveHardTimeoutMs,
+            effectiveTimeoutMs: effectiveHardTimeoutMs,
+            amendmentID:
+              deadlineValue.amendmentID === null || typeof deadlineValue.amendmentID === "string"
+                ? deadlineValue.amendmentID
+                : null,
+            policyRevision: safeTimestamp(deadlineValue.policyRevision),
+            inactivityProvenance: provenance(deadlineValue.inactivityProvenance),
+            hardTimeoutProvenance: provenance(deadlineValue.hardTimeoutProvenance),
+            historicalAmendmentIDs: Array.isArray(deadlineValue.historicalAmendmentIDs)
+              ? deadlineValue.historicalAmendmentIDs.filter(
+                  (id): id is string => typeof id === "string" && id.length <= 64,
+                )
+              : [],
           }
         : null
     const resultStatus =
@@ -1244,6 +1405,7 @@ function operationProjection(
         status: resultStatus,
         exitCode,
         timedOut,
+        stopCause,
         startedAt: validTiming ? receiptStartedAt : null,
         endedAt: validTiming ? receiptEndedAt : null,
         durationMs: validTiming ? receiptEndedAt! - receiptStartedAt! : null,
