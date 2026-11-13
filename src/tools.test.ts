@@ -66,7 +66,10 @@ afterEach(() => {
   for (const clean of cleanup.splice(0)) clean()
 })
 
-async function setup(deny = false) {
+async function setup(
+  deny = false,
+  timeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number },
+) {
   const directory = mkdtempSync(join(tmpdir(), "lazers-tool-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), process.cwd())
   cleanup.push(() => {
@@ -108,6 +111,8 @@ async function setup(deny = false) {
           },
         },
         repository,
+        undefined,
+        timeoutDefaults,
       ),
     ),
   )
@@ -161,6 +166,36 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   expect(get.output).toEqual(JSON.parse(String(get.content)))
   expect(repository.list()).toHaveLength(1)
   expect(assertions).toEqual(["lz-submit-task", "lz-get-task", "lz-get-task", "lz-list-tasks"])
+})
+
+test("registered task authoring validates partial timing against project defaults", async () => {
+  const defaults = { inactivityTimeoutMs: 500, hardTimeoutMs: 1_000 }
+  const { tools, repository } = await setup(false, defaults)
+  const submit = tools.get("lz-submit-task")!
+  const invalid = keyedProposal("project-default-task-deadline-invalid")
+  delete invalid.verification[0]!.timeoutMs
+  invalid.verification[0]!.inactivityTimeoutMs = 2_000
+  const rejected = JSON.parse(
+    String((await Effect.runPromise(submit.execute(invalid, context))).content),
+  )
+  expect(rejected).toMatchObject({
+    status: "invalid",
+    errors: [{ path: "verification.0.inactivityTimeoutMs" }],
+  })
+  expect(repository.list()).toHaveLength(0)
+
+  const valid = keyedProposal("project-default-task-deadline-valid")
+  delete valid.verification[0]!.timeoutMs
+  valid.verification[0]!.inactivityTimeoutMs = 800
+  const accepted = JSON.parse(
+    String((await Effect.runPromise(submit.execute(valid, context))).content),
+  )
+  expect(accepted.status).toBe("submitted")
+  expect(repository.get(accepted.taskID)?.proposal.verification[0]).toEqual({
+    id: "tests",
+    command: "bun test",
+    inactivityTimeoutMs: 800,
+  })
 })
 
 test("native task submission round-trips all task-kind/v1 values through effective reads", async () => {

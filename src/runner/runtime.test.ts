@@ -7074,6 +7074,63 @@ test("schema rejects cycles, foreign dependency IDs and duplicate nodes before p
   ).toThrow()
 })
 
+test("plan admission resolves partial task and combined overrides against project defaults", () => {
+  const f = fixture({
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 600, hardTimeoutMs: 700 },
+  })
+  const contradictory = {
+    ...f.input,
+    requestID: "invalid-explicit-combined-timing",
+    verification: [
+      {
+        id: "combined",
+        command: "true",
+        inactivityTimeoutMs: 800,
+        hardTimeoutMs: 700,
+      },
+    ],
+  }
+  expect(PlanInput.safeParse(contradictory).success).toBe(true)
+  expect(() => f.runtime.submitPlan(contradictory, "owner")).toThrow(
+    "Combined verification check combined inactivity allowance exceeds the configured hard backstop",
+  )
+  const invalid = {
+    ...f.input,
+    requestID: "invalid-configured-combined-timing",
+    verification: [
+      {
+        id: "combined",
+        command: "true",
+        inactivityTimeoutMs: 800,
+      },
+    ],
+  }
+  expect(PlanInput.safeParse(invalid).success).toBe(true)
+  expect(() => f.runtime.submitPlan(invalid, "owner")).toThrow(
+    "Combined verification check combined inactivity allowance exceeds the configured hard backstop",
+  )
+  const task = f.tasks[0]!
+  const taskProposal = structuredClone(task.proposal)
+  taskProposal.verification = [{ id: "content", command: "true", inactivityTimeoutMs: 800 }]
+  const taskID = crypto.randomUUID()
+  const taskPlanTask = f.repository.insert({
+    ...task,
+    id: taskID,
+    proposal: taskProposal,
+    provenance: { ...task.provenance, startingRevision: { kind: "git", commit: f.base } },
+  })
+  const invalidTaskTiming = {
+    ...f.input,
+    requestID: "invalid-configured-task-timing",
+    nodes: [{ taskID: taskPlanTask.id, revision: 1 as const }],
+    dependencies: [],
+    integrationOrder: [taskPlanTask.id],
+  }
+  expect(() => f.runtime.submitPlan(invalidTaskTiming, "owner")).toThrow(
+    "Task verification check content inactivity allowance exceeds the configured hard backstop",
+  )
+})
+
 test("historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage", async () => {
   const f = fixture()
   await f.runtime.command(

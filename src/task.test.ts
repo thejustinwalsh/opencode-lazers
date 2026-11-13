@@ -47,6 +47,10 @@ describe("task proposals", () => {
     expect(taskProposalJSONSchema.additionalProperties).toBe(false)
     expect(taskProposalJSONSchema.required).not.toContain("limits")
     expect(taskProposalJSONSchema.required).not.toContain("guidance")
+    const verification = taskProposalJSONSchema.properties?.verification as {
+      items: { required?: string[] }
+    }
+    expect(verification.items.required).not.toContain("timeoutMs")
     const requirements = taskProposalJSONSchema.properties?.requirements as {
       required?: string[]
       properties: { skills: { description?: string } }
@@ -224,6 +228,11 @@ describe("task proposals", () => {
         verification: [{ ...proposal.verification[0]!, inactivityTimeoutMs: 10_001 }],
       }).success,
     ).toBe(false)
+    const withoutHistoricalLimit = structuredClone(validProposal())
+    delete withoutHistoricalLimit.verification[0]!.timeoutMs
+    expect(TaskProposalSchema.parse(withoutHistoricalLimit).verification[0]).not.toHaveProperty(
+      "timeoutMs",
+    )
   })
 
   test("accepts tasks without guessed budgets and validates legacy limits when supplied", () => {

@@ -40,6 +40,13 @@ test("PlanInput keeps the title absent for untitled and legacy plan bodies", () 
   expect(parsed.objective).toBe(legacyBody.objective)
 })
 
+test("combined verification authoring omits the historical single limit", () => {
+  const plan = planInput()
+  expect(
+    PlanInput.safeParse({ ...plan, verification: [{ id: "check", command: "true" }] }).success,
+  ).toBe(true)
+})
+
 test("startup settlement command requires exact task, attempt and decision", () => {
   const base = {
     requestID: "settle-startup-test",

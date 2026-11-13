@@ -86,6 +86,35 @@ test("declared quality phases preserve all output and share the hard deadline", 
   }
 })
 
+test("silent recognized phases share one inactivity deadline", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-silent-phases-"))
+  try {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { first: "sleep 0.35", second: "sleep 0.35" } }),
+    )
+    const receipt = await runDeclaredCheck(
+      root,
+      "candidate",
+      {
+        id: "silent-phases",
+        command: "bun run --silent first && bun run --silent second",
+        inactivityTimeoutMs: 550,
+        hardTimeoutMs: 2_000,
+      },
+      join(root, "silent-phases.json"),
+    )
+    expect(receipt.timedOut).toBe(true)
+    expect(receipt.stopCause).toBe("inactivity")
+    expect(receipt.phases).toHaveLength(2)
+    expect(receipt.phases?.[0]).toMatchObject({ exitCode: 0, timedOut: false })
+    expect(receipt.phases?.[1]).toMatchObject({ stopCause: "inactivity", timedOut: true })
+    expect(receipt.phasesComplete).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test("verification identity records stable runtime metadata without hashing unrelated credentials", () => {
   const identity = verificationEnvironmentIdentity()
   const previous = process.env.LAZERS_IDENTITY_SECRET_CANARY

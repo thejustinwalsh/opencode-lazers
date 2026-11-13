@@ -15,7 +15,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         description:
           "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Does not run until lz-plan-command action run. Stable requestID is mandatory for safe retries.",
         schema: PlanInput,
-        run: (input: unknown, sessionID: string) => runtime.store.submit(input, sessionID),
+        run: (input: unknown, sessionID: string) => runtime.submitPlan(input, sessionID),
       },
       {
         name: "lz-plan-command",

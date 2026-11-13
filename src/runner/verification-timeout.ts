@@ -26,6 +26,24 @@ export function verificationTimeoutDefaults(value?: unknown): VerificationTimeou
   return defaults
 }
 
+export type VerificationTimingCheck = {
+  id: string
+  inactivityTimeoutMs?: number
+  hardTimeoutMs?: number
+}
+
+export function invalidVerificationTimings(
+  checks: readonly VerificationTimingCheck[],
+  defaults: VerificationTimeoutDefaults,
+): Array<{ index: number; checkID: string }> {
+  return checks.flatMap((check, index) =>
+    (check.inactivityTimeoutMs ?? defaults.inactivityTimeoutMs) >
+    (check.hardTimeoutMs ?? defaults.hardTimeoutMs)
+      ? [{ index, checkID: check.id }]
+      : [],
+  )
+}
+
 export const VerificationPhase = z.enum(["task", "combined"])
 export type VerificationPhase = z.infer<typeof VerificationPhase>
 

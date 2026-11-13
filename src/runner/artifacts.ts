@@ -479,6 +479,8 @@ export type CheckRunOptions = {
   processTreeAdapter?: WindowsProcessTreeAdapter
   /** Shared monotonic hard deadline for recognized multi-phase declarations. */
   hardDeadline?: number
+  /** Shared inactivity deadline, reset only by real stdout/stderr progress. */
+  inactivityDeadline?: { value: number }
 }
 
 export type WindowsProcessTreeAdapter = {
@@ -701,7 +703,9 @@ export async function runCheck(
   }
   const onAbort = () => terminateFor("cancelled")
   const hardDeadline = options.hardDeadline ?? performance.now() + hardTimeoutMs
-  let inactivityDeadline = performance.now() + inactivityTimeoutMs
+  const inactivityDeadline = options.inactivityDeadline ?? {
+    value: performance.now() + inactivityTimeoutMs,
+  }
   let hardTimer: ReturnType<typeof setTimeout> | undefined
   let inactivityTimer: ReturnType<typeof setTimeout> | undefined
   const armDeadline = (
@@ -719,13 +723,13 @@ export async function runCheck(
     )
   }
   const armInactivity = () =>
-    armDeadline("inactivity", inactivityDeadline, (timer) => {
+    armDeadline("inactivity", inactivityDeadline.value, (timer) => {
       if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
       inactivityTimer = timer
     })
   const onProgress = () => {
     if (stopCause !== null) return
-    inactivityDeadline = performance.now() + inactivityTimeoutMs
+    inactivityDeadline.value = performance.now() + inactivityTimeoutMs
     if (inactivityTimer !== undefined) clearTimeout(inactivityTimer)
     armInactivity()
   }
@@ -878,6 +882,9 @@ export async function runDeclaredCheck(
   if (inactivityTimeoutMs > hardTimeoutMs)
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
   const deadline = options.hardDeadline ?? performance.now() + hardTimeoutMs
+  const inactivityDeadline = options.inactivityDeadline ?? {
+    value: performance.now() + inactivityTimeoutMs,
+  }
   let latest: CheckReceipt | undefined
   for (let index = 0; index < commands.length; index++) {
     const command = commands[index]!
@@ -923,7 +930,7 @@ export async function runDeclaredCheck(
         hardTimeoutMs,
       },
       `${receiptPath}.phase-${index}.json`,
-      { ...options, hardDeadline: deadline },
+      { ...options, hardDeadline: deadline, inactivityDeadline },
     )
     phases.push({
       command,

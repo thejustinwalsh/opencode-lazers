@@ -2308,6 +2308,89 @@ test("the current owner continues an exact cancelled-held retained task timeout 
   )
 }, 120_000)
 
+test.each(["active-cancel", "unrelated-hold", "cancelled-receipt"] as const)(
+  "cancelled retained continuation rejects stale timeout evidence after %s",
+  async (scenario) => {
+    const f = await sourceQuarantinedVerifyingFixture({
+      requestTick: () => Promise.resolve(),
+      taskCheckInactivityTimeoutMs: 1,
+      taskCheckHardTimeoutMs: 1,
+    })
+    const requested = await f.control.execute(
+      retainedVerifyCommand(f, `reserve-stale-timeout-${scenario}`),
+    )
+    const operationID = String(requested.operationID)
+    await waitForFixtureCondition(f, "settled retained task timeout", () => {
+      const operation = f.store.atomic((db) => retainedVerification(db, operationID))
+      const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
+      if (!operation || !check?.receipt || operation.state !== "held") return false
+      const receipt = JSON.parse(check.receipt) as CheckReceipt
+      return receipt.timedOut && checkResourcesSettled(receipt)
+    })
+
+    const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
+    if (scenario === "active-cancel") {
+      f.store.atomic((db) =>
+        saveRetainedVerification(db, { ...operation, state: "task-checks", holdReason: null }),
+      )
+    } else if (scenario === "unrelated-hold") {
+      const reason = "An unrelated retained verification hold"
+      f.store.atomic((db) =>
+        saveRetainedVerification(db, { ...operation, state: "held", holdReason: reason }),
+      )
+      f.store.record(f.planID, f.task.id, "RETAINED_VERIFICATION_HELD", {
+        operationID: operation.id,
+        generation: operation.generation,
+        reason,
+        originalAttemptPreserved: true,
+      })
+    }
+
+    await f.control.execute({
+      requestID: `cancel-stale-timeout-${scenario}`,
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "cancel-retained-verification",
+      retainedVerificationID: operation.id,
+      reason: "Stop this retained operation without authorizing a timeout retry",
+    })
+    const cancelled = f.store.atomic((db) => retainedVerification(db, operation.id))!
+    expect(cancelled.state).toBe("cancelled")
+
+    if (scenario === "cancelled-receipt") {
+      const check = f.store.atomic((db) => retainedVerificationChecks(db, operation.id, "task")[0])!
+      const prior = JSON.parse(check.receipt!) as CheckReceipt
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_retained_verification_checks SET receipt=? WHERE operation_id=? AND phase='task' AND check_id=?",
+          )
+          .run(
+            JSON.stringify({
+              ...prior,
+              exitCode: null,
+              timedOut: false,
+              aborted: true,
+              stopCause: "cancelled",
+            }),
+            operation.id,
+            check.checkID,
+          ),
+      )
+    }
+
+    const continuation = retainedTimingContinuationInput(
+      f,
+      cancelled,
+      "task",
+      `reject-stale-timeout-${scenario}`,
+    )
+    await expect(f.control.execute(continuation)).rejects.toThrow(
+      "exact settled timeout failure holding this operation",
+    )
+  },
+)
+
 test("combined retained continuation keeps the already accepted task evidence and source binding", async () => {
   const f = await sourceQuarantinedVerifyingFixture({
     requestTick: () => Promise.resolve(),

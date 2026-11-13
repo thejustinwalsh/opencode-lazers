@@ -1,9 +1,5 @@
 import { z } from "zod"
 import { TaskClassification } from "./task-classification.ts"
-import {
-  DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
-  DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
-} from "./runner/verification-timeout.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
 const identifier = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
@@ -108,8 +104,9 @@ export const TaskProposalSchema = z
           timeoutMs: z
             .int()
             .positive()
+            .optional()
             .describe(
-              "Historical single wall-clock limit. Preserved on legacy tasks and receipts; current execution uses inactivityTimeoutMs and hardTimeoutMs or the project defaults.",
+              "Optional historical single wall-clock limit. Preserved on legacy tasks and receipts; current execution uses inactivityTimeoutMs and hardTimeoutMs or the project defaults.",
             ),
           inactivityTimeoutMs: z
             .int()
@@ -158,8 +155,9 @@ export const TaskProposalSchema = z
     }
     proposal.verification.forEach((item, index) => {
       if (
-        (item.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS) >
-        (item.hardTimeoutMs ?? DEFAULT_VERIFICATION_HARD_TIMEOUT_MS)
+        item.inactivityTimeoutMs !== undefined &&
+        item.hardTimeoutMs !== undefined &&
+        item.inactivityTimeoutMs > item.hardTimeoutMs
       )
         ctx.addIssue({
           code: "custom",

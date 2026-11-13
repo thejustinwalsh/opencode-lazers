@@ -1863,6 +1863,49 @@ export class TaskRuntime {
     )
   }
 
+  private cancelledRetainedTimeoutMatchesHold(
+    operation: RetainedVerification,
+    timeoutReason: string,
+  ): boolean {
+    const events = this.store.activity(operation.planID, operation.taskID).flatMap((event) => {
+      if (!event.payload) return []
+      try {
+        const payload: unknown = JSON.parse(event.payload)
+        return isRecord(payload) &&
+          payload.operationID === operation.id &&
+          payload.generation === operation.generation
+          ? [{ ...event, payload }]
+          : []
+      } catch {
+        return []
+      }
+    })
+    const cancelled = events.findLast((event) => event.event === "RETAINED_VERIFICATION_CANCELLED")
+    if (
+      !cancelled ||
+      cancelled.payload.source !== "owner-command" ||
+      cancelled.payload.previousState !== "held" ||
+      cancelled.payload.previousHoldReason !== timeoutReason ||
+      cancelled.payload.reason !== operation.holdReason
+    )
+      return false
+    const held = events.findLast(
+      (event) => event.event === "RETAINED_VERIFICATION_HELD" && event.id < cancelled.id,
+    )
+    if (!held || held.payload.reason !== timeoutReason) return false
+    const laterStateChanges = events.filter(
+      (event) =>
+        event.id > held.id &&
+        event.id < cancelled.id &&
+        [
+          "RETAINED_VERIFICATION_HELD",
+          "RETAINED_VERIFICATION_CANCELLED",
+          "RETAINED_TASK_CANDIDATE_ACCEPTED",
+        ].includes(event.event),
+    )
+    return laterStateChanges.length === 0
+  }
+
   private async prepareRetainedVerificationDeadlineContinuation(
     plan: PlanRow,
     command: PlanCommand,
@@ -2032,13 +2075,19 @@ export class TaskRuntime {
       phaseArtifact,
       check.environmentIdentity,
     )
+    const exactTimeoutHold = receipt
+      ? operation.state === "held"
+        ? operation.holdReason === checkFailureReason(receipt)
+        : this.cancelledRetainedTimeoutMatchesHold(operation, checkFailureReason(receipt))
+      : false
     if (
       !receipt ||
       receipt.environmentIdentity !== check.environmentIdentity ||
       !receipt.timedOut ||
+      receipt.aborted === true ||
       !["inactivity", "hard-backstop", undefined, null].includes(receipt.stopCause) ||
       !checkResourcesSettled(receipt) ||
-      (operation.state === "held" && operation.holdReason !== checkFailureReason(receipt))
+      !exactTimeoutHold
     )
       throw new Error(
         "Retained check is not the exact settled timeout failure holding this operation",
@@ -5773,6 +5822,9 @@ export class TaskRuntime {
         this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
           operationID: operation.id,
           generation: operation.generation,
+          source: "owner-command",
+          previousState: operation.state,
+          previousHoldReason: operation.holdReason,
           reason: cancelled.holdReason,
           oldExecutionAndResourceHoldsPreserved: true,
         })
@@ -6089,6 +6141,9 @@ export class TaskRuntime {
           this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
             operationID: operation.id,
             generation: operation.generation,
+            source: "plan-cancellation",
+            previousState: operation.state,
+            previousHoldReason: operation.holdReason,
             reason: "Plan cancellation requested",
             oldExecutionAndResourceHoldsPreserved: true,
           })
@@ -7034,6 +7089,10 @@ export class TaskRuntime {
     return result
   }
 
+  submitPlan(input: unknown, owner: string) {
+    return this.store.submit(input, owner, this.verificationTimeoutDefaults)
+  }
+
   async startTask(input: StartTaskInput): Promise<StartTaskResult> {
     const actor = await this.host.session(input.sessionID)
     if (!actor || actor.archived || actor.projectID !== this.projectID)
@@ -7088,6 +7147,7 @@ export class TaskRuntime {
           dispositions: [],
         },
         task.provenance.sessionID,
+        this.verificationTimeoutDefaults,
       )
       plan = this.store.plan(receipt.planID)!
       created = true
@@ -9193,6 +9253,9 @@ export class TaskRuntime {
       this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
         operationID: operation.id,
         generation: operation.generation,
+        source: "worker-continuation",
+        previousState: saved.state,
+        previousHoldReason: saved.holdReason,
         reason,
         oldExecutionAndResourceHoldsPreserved: true,
       })

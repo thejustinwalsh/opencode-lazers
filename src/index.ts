@@ -103,7 +103,11 @@ export default Plugin.define({
       )
       yield* registerContextTools(ctx, projectIndex)
       yield* registerNativeInteraction(ctx).pipe(Effect.orDie)
-      yield* registerTaskTools(ctx, repository, projectIndex)
+      const verificationDefaults = verificationTimeoutDefaults({
+        inactivityTimeoutMs: ctx.options.verificationInactivityTimeoutMs,
+        hardTimeoutMs: ctx.options.verificationHardTimeoutMs,
+      })
+      yield* registerTaskTools(ctx, repository, projectIndex, verificationDefaults)
       yield* registerModelTools(ctx, repository)
       yield* registerModelsServer(ctx, repository).pipe(Effect.orDie)
       yield* registerArchitect(ctx)
@@ -114,10 +118,7 @@ export default Plugin.define({
       let scheduler: ReturnType<typeof sharedScheduler.register> | undefined
       const runtime = new TaskRuntime(runnerStore, host, ctx.location.project.id, progress, {
         architectIdleWindowMs: architectIdleWindowMs(ctx.options.architectIdleWindowMs),
-        verificationTimeoutDefaults: verificationTimeoutDefaults({
-          inactivityTimeoutMs: ctx.options.verificationInactivityTimeoutMs,
-          hardTimeoutMs: ctx.options.verificationHardTimeoutMs,
-        }),
+        verificationTimeoutDefaults: verificationDefaults,
         architectPromptHook: true,
         requestTick: () => (scheduler ? scheduler.runNow() : runtime.tick()),
         wakeScheduler: () => scheduler?.request(),

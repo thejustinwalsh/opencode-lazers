@@ -23,8 +23,15 @@ import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.t
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
 import { parseOutcomeOwnership } from "./inbox.ts"
-import { VerificationTimeoutAmendmentSchema } from "./verification-timeout.ts"
-import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
+import {
+  invalidVerificationTimings,
+  verificationTimeoutDefaults,
+  VerificationTimeoutAmendmentSchema,
+} from "./verification-timeout.ts"
+import type {
+  VerificationTimeoutAmendment,
+  VerificationTimeoutDefaults,
+} from "./verification-timeout.ts"
 
 export type PlanRow = {
   id: string
@@ -3397,16 +3404,33 @@ export class RunnerStore {
           .run(now + 30000, this.repository.projectDirectory, owner, fence).changes === 1,
     )
   }
-  submit(input: unknown, owner: string) {
+  submit(
+    input: unknown,
+    owner: string,
+    timeoutDefaults: VerificationTimeoutDefaults = verificationTimeoutDefaults(),
+  ) {
     const plan = PlanInput.parse(input)
     return this.command(plan.requestID, { plan, owner }, (db) => {
       this.validatePlanDependencies(plan.afterPlans ?? [])
+      const invalidCombinedTimings = invalidVerificationTimings(plan.verification, timeoutDefaults)
+      if (invalidCombinedTimings.length)
+        throw new Error(
+          `Combined verification check ${invalidCombinedTimings[0]!.checkID} inactivity allowance exceeds the configured hard backstop`,
+        )
       for (const node of plan.nodes) {
         if (this.repository.taskDisposition(node.taskID))
           throw new Error("Task has been retired; inspect its disposition")
         const task = this.repository.get(node.taskID)
         if (!task || task.revision !== node.revision)
           throw new Error(`Missing, foreign, or stale task ${node.taskID}`)
+        const invalidTaskTimings = invalidVerificationTimings(
+          task.proposal.verification,
+          timeoutDefaults,
+        )
+        if (invalidTaskTimings.length)
+          throw new Error(
+            `Task verification check ${invalidTaskTimings[0]!.checkID} inactivity allowance exceeds the configured hard backstop`,
+          )
       }
       for (const relation of plan.dispositions)
         if (!this.repository.get(relation.otherTaskID)) throw new Error("Foreign relation target")
