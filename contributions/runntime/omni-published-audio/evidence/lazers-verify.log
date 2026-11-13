@@ -1,6 +1,6 @@
+$ bun run verify
 $ bun fmt && bun lint --fix && bun fmt && bun check
-contributions/runntime/omni-published-audio/sol-review-status.md
-Formatted 1 file, 1062 unchanged [97.75ms]
-✓ No problems in 477 files [43.97ms]
-Formatted 0 files, 1063 unchanged [50.96ms]
-✓ No type errors in 465 files [384.36ms]
+Formatted 0 files, 1064 unchanged [69.89ms]
+✓ No problems in 477 files [36.44ms]
+Formatted 0 files, 1064 unchanged [38.23ms]
+✓ No type errors in 465 files [246.86ms]

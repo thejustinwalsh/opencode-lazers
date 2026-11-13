@@ -19,3 +19,17 @@ present is the standalone CPU frontend; there is no projector, depth decoder,
 LiquidCodec, public transcription/speech API, fixed same-file audio corpus or
 real-WebGPU audio qualification. No audio parity, playback, complete-pair
 resource, or installed-package audio claim is made.
+
+The current ruNNtime source commit and ordered patch are recorded in
+`partial-manifest.json`. The complete contribution verifier is intentionally
+not accepted by this partial receipt; it still requires the pending conversion,
+parity, package and resource evidence before a final manifest can be issued.
+Applying the retained patch to the recorded `b824c95` base reconstructed the
+recorded `a6752b6` tip tree (`evidence/reconstruction.log`).
+
+The exact pinned language, projector and Liquid engine identities are also
+retained in the partial manifest. Their local source bytes match the pinned
+language and projector digests. No fixed clean speech clips or captured
+same-file Liquid audio outputs are present in the assigned workspace/cache, so
+no transcription or speech parity result is claimed. The public audio encoder,
+depthformer and LiquidCodec are not implemented in this source tip.

@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "status": "incomplete-not-acceptance",
+  "stage": "omni-published-audio",
+  "source": {
+    "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
+    "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+    "language": {
+      "file": "LFM3-Omni-2B-Q4_K_M.gguf",
+      "bytes": 1099630080,
+      "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2"
+    },
+    "projector": {
+      "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+      "bytes": 506842528,
+      "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
+    },
+    "referenceEngine": {
+      "revision": "9c2fb176f4c222da394e8037d3c0d0837f70b978",
+      "sha256": "77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb"
+    }
+  },
+  "base": {
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "commit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+    "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
+  },
+  "tip": {
+    "commit": "f31f72549dc74d2f01d60c9ce55dd705216879db",
+    "tree": "a6752b65521afc8fff2e52e85b6ff5f3920e9b08"
+  },
+  "patchReconstruction": {
+    "baseCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+    "observedTree": "a6752b65521afc8fff2e52e85b6ff5f3920e9b08",
+    "evidence": "evidence/reconstruction.log"
+  },
+  "patches": [
+    {
+      "commit": "f31f72549dc74d2f01d60c9ce55dd705216879db",
+      "parent": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+      "tree": "a6752b65521afc8fff2e52e85b6ff5f3920e9b08",
+      "path": "patches/0001-omni-audio-primitives.patch",
+      "sha256": "5a81848c086b07f849c5df7b3b896744f6acf538e3ad0a94a1a61fe20f457989"
+    }
+  ],
+  "passingChecks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "73b61a234de9542c0e1032281debeaf57d5898efd587655e3850feeabd57d8cd",
+      "observed": "54 test files, 1,160 tests passed"
+    },
+    {
+      "kind": "gpu",
+      "command": "pnpm --filter runntime exec vitest run --project gpu test/zoo/lfm3/model-lifecycle.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/model-lifecycle.gpu.log",
+      "sha256": "1ea01f8007c31c1e418281c2eb2c6965d8d2d227b40e16e1fa2ad6558a3ec615",
+      "observed": "1 real-WebGPU synchronous graph-failure upload-ownership test passed"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "path": "evidence/runntime-quality.log",
+      "sha256": "59b0f3fe48aeb853b617f57bdea2a858cc86eeb5034d165e537519a3d23c328c",
+      "observed": "ruNNtime package typecheck passed"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/runntime-quality.log",
+      "sha256": "59b0f3fe48aeb853b617f57bdea2a858cc86eeb5034d165e537519a3d23c328c",
+      "observed": "Repository ESLint passed with max warnings set to zero"
+    },
+    {
+      "kind": "format",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/runntime-quality.log",
+      "sha256": "59b0f3fe48aeb853b617f57bdea2a858cc86eeb5034d165e537519a3d23c328c",
+      "observed": "Prettier check passed"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/runntime-quality.log",
+      "sha256": "59b0f3fe48aeb853b617f57bdea2a858cc86eeb5034d165e537519a3d23c328c",
+      "observed": "Package build completed with existing TypeGPU ambient-declaration parse warnings"
+    },
+    {
+      "kind": "unit",
+      "command": "bun run verify",
+      "exitCode": 0,
+      "path": "evidence/lazers-verify.log",
+      "sha256": "db33ce55af7a2bbd97ac6d71ed4f12d17c400de573c2f8de149a0b3f517d95c4",
+      "observed": "Formatter, lint --fix, formatter and typecheck passed"
+    },
+    {
+      "kind": "unit",
+      "command": "bun test scripts/verify-runntime-contribution.test.ts",
+      "exitCode": 0,
+      "path": "evidence/retention-tests.log",
+      "sha256": "8e01c286d7b821401963afb286c13fcd465d33de6d20a922551e6a2799995506",
+      "observed": "18 tests and 92 assertions passed"
+    }
+  ],
+  "pendingChecks": [
+    "public-entry warm-up abort and partial-load cleanup",
+    "public scoped-generation stream/result failure and shared-executor survival run",
+    "independent same-file Liquid logits/probability comparison",
+    "independent projector/operator/codec references",
+    "pinned same-file Liquid audio parity and clean transcription clips",
+    "real-WebGPU public transcription and 24 kHz speech",
+    "installed-package audio consumer",
+    "complete-pair load/inference/unload and temporary-memory measurements",
+    "controlled-seed/depth speech quality and requested-word recovery"
+  ]
+}

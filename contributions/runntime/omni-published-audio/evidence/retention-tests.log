@@ -1,6 +1,7 @@
+$ bun test scripts/verify-runntime-contribution.test.ts
 bun test v1.4.4-canary.1 (da867c60b)
 
  18 pass
  0 fail
  92 expect() calls
-Ran 18 tests across 1 file. [23.31s]
+Ran 18 tests across 1 file. [20.25s]

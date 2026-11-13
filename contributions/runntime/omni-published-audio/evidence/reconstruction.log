@@ -1,0 +1,5 @@
+$ git clone --shared --no-checkout /private/tmp/lazers-runntime-handoff.GSDeio/runntime /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/opencode/lz17-reconstruct.JjNlJV/repo
+$ git apply --index /private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/omni-published-audio/patches/0001-omni-audio-primitives.patch
+reconstructed tree: a6752b65521afc8fff2e52e85b6ff5f3920e9b08
+expected tree:      a6752b65521afc8fff2e52e85b6ff5f3920e9b08
+PASS
