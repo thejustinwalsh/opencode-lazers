@@ -11023,6 +11023,8 @@ export class TaskRuntime {
     attempt: AttemptRow,
     worker: HostSession,
   ) {
+    // A matching foreground completion can be retained even when the last
+    // idle report belongs to another input. Known jobs still keep the source.
     if (
       plan.state !== "blocked" ||
       (attempt.state !== "running" &&
@@ -11040,6 +11042,7 @@ export class TaskRuntime {
       worker.observationUnstable ||
       worker.pendingPermissions !== 0 ||
       worker.pendingForms !== 0 ||
+      (worker.background?.state === "observed" && worker.background.count > 0) ||
       worker.outcome !== "succeeded"
     )
       return
@@ -11240,7 +11243,7 @@ export class TaskRuntime {
           unchangedTerminal ? previousHold : undefined,
         )
         this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        if (unchangedTerminal && session.background?.state === "unknown")
+        if (unchangedTerminal)
           await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
       }
       return
@@ -11336,8 +11339,7 @@ export class TaskRuntime {
             ["audit", "reconcile", "cancel"],
             this.terminalWorkerObservation(attempt, session),
           )
-          if (session.background?.state === "unknown")
-            await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
+          await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
           return
         }
         if (priorBackground && !session.outcome) return

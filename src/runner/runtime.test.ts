@@ -1234,50 +1234,69 @@ test("source quarantine isolates a completed foreground worker with unknown back
   expect(f.store.nodes(f.receipt.planID)[0]!.state).not.toBe("accepted")
 })
 
-test("scheduler isolates a completed guarded source when it blocks queued isolated work", async () => {
-  const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
-  await runPlan(f)
-  await f.runtime.tick()
-  const original = f.store.attempts(f.receipt.planID)[0]!
-  const guard = registerSourceGuard(f.store, original.workspace)
-  cleanup.push(guard)
-  const task = f.createTask("b", "shared.txt")
-  const next = f.store.submit(
-    f.inputFor([task], { requestID: "automatic-source-isolation" }),
-    "owner",
-  )
-  await runPlan(f, next.planID, "run-automatic-source-isolation")
-  await f.runtime.tick()
-  expect(f.store.attempts(next.planID)).toHaveLength(0)
-  expect(new TaskReads(f.repository).get({ taskID: task.id })).toMatchObject({
-    recordedState: "queued",
-    execution: {
-      state: "blocked",
-      reason: `Waiting for checkout or write scope: ${f.repository.referenceFor(original.task_id)}`,
-    },
-  })
+test.each(["unknown", "stale"] as const)(
+  "scheduler isolates a completed guarded source with %s idle data when it blocks queued isolated work",
+  async (idle) => {
+    const f = fixture({
+      delayed: true,
+      commit: true,
+      taskFiles: [{ name: "a", path: "shared.txt" }],
+    })
+    await runPlan(f)
+    await f.runtime.tick()
+    const original = f.store.attempts(f.receipt.planID)[0]!
+    const guard = registerSourceGuard(f.store, original.workspace)
+    cleanup.push(guard)
+    const task = f.createTask("b", "shared.txt")
+    const next = f.store.submit(
+      f.inputFor([task], { requestID: "automatic-source-isolation" }),
+      "owner",
+    )
+    await runPlan(f, next.planID, "run-automatic-source-isolation")
+    await f.runtime.tick()
+    expect(f.store.attempts(next.planID)).toHaveLength(0)
+    expect(new TaskReads(f.repository).get({ taskID: task.id })).toMatchObject({
+      recordedState: "queued",
+      execution: {
+        state: "blocked",
+        reason: `Waiting for checkout or write scope: ${f.repository.referenceFor(original.task_id)}`,
+      },
+    })
 
-  f.completeWorker(original.session_id)
-  const worker = f.sessions.get(original.session_id)!
-  Object.assign(worker, {
-    pendingInput: false,
-    pendingPermissions: 0,
-    pendingForms: 0,
-    background: {
-      state: "unknown",
-      source: "experimental.idle",
-      reason: "Historical idle missing",
-    },
-  })
-  await f.runtime.tick()
-  expect(sourceQuarantine(f.store, original.id)?.phase).toBe("pending")
-  await f.runtime.tick()
-  expect(sourceQuarantine(f.store, original.id)?.phase).toBe("sealed")
-  expect(f.store.attempts(next.planID)[0]?.state).toBe("running")
-  expect(f.store.nodes(f.receipt.planID)[0]?.state).not.toBe("accepted")
-  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
-  expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
-})
+    f.completeWorker(original.session_id)
+    const worker = f.sessions.get(original.session_id)!
+    Object.assign(worker, {
+      pendingInput: false,
+      pendingPermissions: 0,
+      pendingForms: 0,
+      background:
+        idle === "unknown"
+          ? {
+              state: "unknown",
+              source: "experimental.idle",
+              reason: "Historical idle missing",
+            }
+          : {
+              state: "observed",
+              source: "experimental.idle",
+              observedAt: Date.now(),
+              inputID: "msg_previous_input",
+              executionStartSequence: 10,
+              eventSequence: 11,
+              count: 0,
+              kinds: { shell: 0, subagent: 0, image: 0 },
+            },
+    })
+    await f.runtime.tick()
+    expect(sourceQuarantine(f.store, original.id)?.phase).toBe("pending")
+    await f.runtime.tick()
+    expect(sourceQuarantine(f.store, original.id)?.phase).toBe("sealed")
+    expect(f.store.attempts(next.planID)[0]?.state).toBe("running")
+    expect(f.store.nodes(f.receipt.planID)[0]?.state).not.toBe("accepted")
+    expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+    expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
+  },
+)
 
 async function completedSourceReviewFixture() {
   const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
