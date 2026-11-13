@@ -9952,9 +9952,10 @@ export class TaskRuntime {
   private resumeTransientObservationWait(plan: PlanRow, fence: number) {
     const current = this.store.plan(plan.id)
     const reason = current?.reason
+    const observationReason = reason?.replace(/^Worker execution (?:failed|completed); /, "")
     const backgroundWait =
-      reason?.startsWith("Native idle background observation is unknown") ||
-      reason?.includes(" known background job(s)")
+      observationReason?.startsWith("Native idle background observation") ||
+      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "")
     const approvalWait =
       reason?.startsWith("Worker at ") &&
       reason.includes("pending permission request(s)") &&

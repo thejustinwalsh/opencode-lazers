@@ -10815,6 +10815,12 @@ test("terminal verification rejects a fresh idle report from a different native 
   expect(
     f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
   ).toBe(false)
+
+  worker.background = { ...worker.background, inputID: attempt.message_id }
+  await f.runtime.tick()
+  expect(
+    f.store.latestTransition(f.receipt.planID, null, "WORKER_OBSERVATION_SETTLED"),
+  ).toMatchObject({ observation: "experimental.idle-background" })
 })
 
 test.each([false, true])(
