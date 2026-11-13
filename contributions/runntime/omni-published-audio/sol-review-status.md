@@ -14,18 +14,22 @@ unchanged.
 | 6. LFM3 depthwise-convolution pipeline key   | Not changed; the audio/model path is not yet integrated.                                                                                                                                                                                                                                                                                                            |
 | 7. Fused LFM3 logits readback                | Not changed.                                                                                                                                                                                                                                                                                                                                                        |
 
-The audio contribution is incomplete: the only audio model source currently
-present is the standalone CPU frontend; there is no projector, depth decoder,
-LiquidCodec, public transcription/speech API, fixed same-file audio corpus or
-real-WebGPU audio qualification. No audio parity, playback, complete-pair
-resource, or installed-package audio claim is made.
+The audio contribution is incomplete. Audio source currently includes the
+standalone CPU frontend, a metadata/schema-only projector GGUF guard, and a
+selected-tensor inventory. The frontend normalization now matches the pinned
+Liquid kernel's `(log10(power) + 4) * 0.25` formula, with an independent direct
+DFT test. The speech encoder blocks, language-model audio-row integration,
+depth decoder, LiquidCodec, public transcription/speech API, fixed same-file
+audio corpus and real-WebGPU audio qualification are not implemented. No audio
+parity, playback, complete-pair resource, or installed-package audio claim is
+made.
 
-The current ruNNtime source commit and ordered patch are recorded in
+The current ruNNtime source commit and ordered patches are recorded in
 `partial-manifest.json`. The complete contribution verifier is intentionally
-not accepted by this partial receipt; it still requires the pending conversion,
-parity, package and resource evidence before a final manifest can be issued.
-Applying the retained patch to the recorded `b824c95` base reconstructed the
-recorded `a6752b6` tip tree (`evidence/reconstruction.log`).
+not accepted by this partial receipt; it still requires the pending model
+execution, parity, package and resource evidence before a final manifest can be
+issued. Applying all three retained patches to the recorded `b824c95` base
+reconstructed the current `26ffe2b` tip tree (`evidence/reconstruction-final.log`).
 
 The exact pinned language, projector and Liquid engine identities are also
 retained in the partial manifest. Their local source bytes match the pinned

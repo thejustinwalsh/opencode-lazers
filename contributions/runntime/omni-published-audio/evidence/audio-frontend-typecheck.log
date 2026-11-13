@@ -1,0 +1,4 @@
+$ pnpm -r run typecheck
+Scope: 2 of 3 workspace projects
+packages/runntime typecheck$ tsc --noEmit
+packages/runntime typecheck: Done

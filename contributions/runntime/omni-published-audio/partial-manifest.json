@@ -26,13 +26,13 @@
     "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
   },
   "tip": {
-    "commit": "f31f72549dc74d2f01d60c9ce55dd705216879db",
-    "tree": "a6752b65521afc8fff2e52e85b6ff5f3920e9b08"
+    "commit": "bf3b7c0ae66439144a04c3b524a12a338525ce62",
+    "tree": "26ffe2b9b187c5e69902f2ee05c429223ac49caf"
   },
   "patchReconstruction": {
     "baseCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
-    "observedTree": "a6752b65521afc8fff2e52e85b6ff5f3920e9b08",
-    "evidence": "evidence/reconstruction.log"
+    "observedTree": "26ffe2b9b187c5e69902f2ee05c429223ac49caf",
+    "evidence": "evidence/reconstruction-final.log"
   },
   "patches": [
     {
@@ -41,6 +41,20 @@
       "tree": "a6752b65521afc8fff2e52e85b6ff5f3920e9b08",
       "path": "patches/0001-omni-audio-primitives.patch",
       "sha256": "5a81848c086b07f849c5df7b3b896744f6acf538e3ad0a94a1a61fe20f457989"
+    },
+    {
+      "commit": "70bfdbb2493cea5019c25230b0f2da17a02df748",
+      "parent": "f31f72549dc74d2f01d60c9ce55dd705216879db",
+      "tree": "878c0860ac045077790c161ba55cebd2be7bb8d4",
+      "path": "patches/0002-omni-audio-projector-layout.patch",
+      "sha256": "a059e0f7954aaba8535c062b75e7ad7b08e3291c837f1a51789ca6e9f6874bd9"
+    },
+    {
+      "commit": "bf3b7c0ae66439144a04c3b524a12a338525ce62",
+      "parent": "70bfdbb2493cea5019c25230b0f2da17a02df748",
+      "tree": "26ffe2b9b187c5e69902f2ee05c429223ac49caf",
+      "path": "patches/0003-omni-audio-frontend-reference-scaling.patch",
+      "sha256": "a797a1ba60ea6e2bc0fcab50852b0e3e01ad29d20e0edc89c54bf43dee8f16c7"
     }
   ],
   "passingChecks": [
@@ -96,28 +110,77 @@
       "kind": "unit",
       "command": "bun run verify",
       "exitCode": 0,
-      "path": "evidence/lazers-verify.log",
-      "sha256": "db33ce55af7a2bbd97ac6d71ed4f12d17c400de573c2f8de149a0b3f517d95c4",
+      "path": "evidence/lazers-final-verify.log",
+      "sha256": "fe706e5602b34d0b106ac6b56c896238abc9e9263c402ef2a0b09c2a0429f852",
       "observed": "Formatter, lint --fix, formatter and typecheck passed"
     },
     {
       "kind": "unit",
       "command": "bun test scripts/verify-runntime-contribution.test.ts",
       "exitCode": 0,
-      "path": "evidence/retention-tests.log",
-      "sha256": "8e01c286d7b821401963afb286c13fcd465d33de6d20a922551e6a2799995506",
+      "path": "evidence/lazers-final-retention-tests.log",
+      "sha256": "110c5f5b329eb2974a157846af05a95ae40d68f8c32b109cfd0d415d1c4a4709",
       "observed": "18 tests and 92 assertions passed"
+    },
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime exec vitest run --project unit test/zoo/lfm3/audio/frontend.test.ts test/zoo/lfm3/audio/projector.test.ts",
+      "exitCode": 0,
+      "path": "evidence/audio-frontend-focused.log",
+      "sha256": "38eb0cd4ceefcb2543106eb9e5910350d6de135024c3cf5d8e4e79b962f63da2",
+      "observed": "14 focused frontend and projector metadata tests passed"
+    },
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/audio-frontend-unit.log",
+      "sha256": "37096075d4a992ffe0c83f1d134e51ba95ee3b66ddf6dd660ddc81864177ac28",
+      "observed": "55 test files, 1,165 tests passed"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "path": "evidence/audio-frontend-typecheck.log",
+      "sha256": "d318868863d485d2e56d27a308a51707e9a89df1f93891e266052da2fa7c1899",
+      "observed": "ruNNtime typecheck passed"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/audio-frontend-quality.log",
+      "sha256": "451442526314de8b90df986b1165eab224410c4dc3caa77501f7e8dcd04c3a45",
+      "observed": "Repository ESLint passed with max warnings set to zero"
+    },
+    {
+      "kind": "format",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/audio-frontend-quality.log",
+      "sha256": "451442526314de8b90df986b1165eab224410c4dc3caa77501f7e8dcd04c3a45",
+      "observed": "Prettier check passed"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/audio-frontend-build.log",
+      "sha256": "ad6314c207599f503c8c9f0e1d3da4480fabd4e822b79cbe0a41a63d67f36424",
+      "observed": "Package build completed; existing TypeGPU ambient-declaration parse warnings remain"
     }
   ],
   "pendingChecks": [
     "public-entry warm-up abort and partial-load cleanup",
     "public scoped-generation stream/result failure and shared-executor survival run",
     "independent same-file Liquid logits/probability comparison",
-    "independent projector/operator/codec references",
+    "independent audio attention, convolution, depth-decoder and codec references",
     "pinned same-file Liquid audio parity and clean transcription clips",
     "real-WebGPU public transcription and 24 kHz speech",
     "installed-package audio consumer",
     "complete-pair load/inference/unload and temporary-memory measurements",
-    "controlled-seed/depth speech quality and requested-word recovery"
+    "controlled-seed/depth speech quality and requested-word recovery",
+    "public examples, license and attribution for the audio consumers"
   ]
 }

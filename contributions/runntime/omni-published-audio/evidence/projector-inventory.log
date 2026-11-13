@@ -1,0 +1,198 @@
+{
+  "fileBytes": 506842528,
+  "tensorCount": 458,
+  "dataStart": 32064,
+  "groups": {
+    "encoder": {
+      "tensors": 176,
+      "byType": {
+        "F32": 74,
+        "Q8_0": 102
+      },
+      "storedBytes": 123061504
+    },
+    "depth": {
+      "tensors": 43,
+      "byType": {
+        "F32": 16,
+        "Q8_0": 27
+      },
+      "storedBytes": 141906944
+    },
+    "codec": {
+      "tensors": 100,
+      "byType": {
+        "F32": 49,
+        "Q8_0": 51
+      },
+      "storedBytes": 38820680
+    },
+    "vision": {
+      "tensors": 139,
+      "byType": {
+        "F16": 2,
+        "F32": 53,
+        "Q8_0": 84
+      },
+      "storedBytes": 203021312
+    }
+  },
+  "encoderBlocks": [
+    {
+      "layer": 0,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 1,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 2,
+      "type": "attention",
+      "tensors": 11
+    },
+    {
+      "layer": 3,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 4,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 5,
+      "type": "attention",
+      "tensors": 11
+    },
+    {
+      "layer": 6,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 7,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 8,
+      "type": "attention",
+      "tensors": 11
+    },
+    {
+      "layer": 9,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 10,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 11,
+      "type": "attention",
+      "tensors": 11
+    },
+    {
+      "layer": 12,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 13,
+      "type": "short-conv",
+      "tensors": 8
+    },
+    {
+      "layer": 14,
+      "type": "attention",
+      "tensors": 11
+    },
+    {
+      "layer": 15,
+      "type": "attention",
+      "tensors": 11
+    },
+    {
+      "layer": 16,
+      "type": "attention",
+      "tensors": 11
+    }
+  ],
+  "codecBlocks": [
+    {
+      "layer": 0,
+      "type": "short-conv",
+      "tensors": 10
+    },
+    {
+      "layer": 1,
+      "type": "short-conv",
+      "tensors": 10
+    },
+    {
+      "layer": 2,
+      "type": "attention",
+      "tensors": 14
+    },
+    {
+      "layer": 3,
+      "type": "short-conv",
+      "tensors": 10
+    },
+    {
+      "layer": 4,
+      "type": "attention",
+      "tensors": 14
+    },
+    {
+      "layer": 5,
+      "type": "short-conv",
+      "tensors": 10
+    },
+    {
+      "layer": 6,
+      "type": "attention",
+      "tensors": 14
+    },
+    {
+      "layer": 7,
+      "type": "short-conv",
+      "tensors": 10
+    }
+  ],
+  "validatedConfig": {
+    "encoder": {
+      "sampleRate": 16000,
+      "fftSize": 400,
+      "hopSize": 160,
+      "melBins": 128,
+      "hiddenSize": 768,
+      "feedForwardSize": 1792,
+      "layers": 17,
+      "attentionHeads": 8,
+      "keyValueHeads": 4,
+      "attentionWindow": 32,
+      "outputSize": 2048
+    },
+    "depthDecoder": {
+      "hiddenSize": 1024,
+      "feedForwardSize": 2816,
+      "layers": 3,
+      "attentionHeads": 32,
+      "keyValueHeads": 8,
+      "codebooks": 12,
+      "codebookSize": 2017
+    },
+    "codec": {
+      "sampleRate": 24000,
+      "hiddenSize": 512,
+      "layers": 8
+    }
+  }
+}

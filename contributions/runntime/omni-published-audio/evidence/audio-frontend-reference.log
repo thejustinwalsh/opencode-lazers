@@ -1,0 +1,15 @@
+Reference: pinned Liquid engine revision 9c2fb176f4c222da394e8037d3c0d0837f70b978
+SHA-256: 77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb
+Bundle: /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/opencode/liquid-lfm3-engine.js
+
+The retained `com.xenova.LogMelSpectrogram` kernel computes
+`log(max(acc, params.logFloor)) * 0.43429448190325176`, then with
+`clamp_to_peak=false` applies `(value + postAdd) * postScale`. The LFM3 audio
+frontend passes `post_add: 4` and `post_scale: 1 / Wx`; the pinned `Wx` is 4.
+Thus the required post-scale is 0.25, not 0.125.
+
+`test/zoo/lfm3/audio/frontend.test.ts` independently compares the implementation
+FFT with a direct DFT and Slaney filter calculation using this normalization.
+The full ruNNtime unit suite passed (55 files, 1,165 tests). This is frontend
+operator evidence only: no clean audio clip or same-file Liquid encoder output
+was available, and it does not qualify transcription or speech generation.

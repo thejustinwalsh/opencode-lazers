@@ -1,0 +1,5 @@
+$ bun fmt && bun lint --fix && bun fmt && bun check
+Formatted 0 files, 1064 unchanged [68.62ms]
+✓ No problems in 477 files [33.88ms]
+Formatted 0 files, 1064 unchanged [38.59ms]
+✓ No type errors in 465 files [252.43ms]
