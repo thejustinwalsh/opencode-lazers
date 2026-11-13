@@ -261,6 +261,18 @@ test("unknown background remains explicit while the exact interrupted assignment
   expect(terminalWorkerContinuationProblem(facts())).toBeUndefined()
 })
 
+test("an exact failed input can resume after an older adapter recorded its hold as pending", () => {
+  const value = facts()
+  value.worker!.outcome = "failed"
+  value.worker!.turn = { inputID, state: "completed" }
+  value.stopObservation!.outcome = "failed"
+  value.planHoldObservation!.outcome = "failed"
+  value.planHoldObservation!.turnState = "pending"
+  expect(terminalWorkerContinuationProblem(value)).toBeUndefined()
+  value.assignedInputMatches = false
+  expect(terminalWorkerContinuationProblem(value)).toContain("input lineage")
+})
+
 test("a stopped verifying attempt can continue without a running-turn hold record", () => {
   const value = facts()
   value.node!.state = "verifying"
