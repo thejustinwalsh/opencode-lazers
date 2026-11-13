@@ -29,15 +29,18 @@ The current ruNNtime source commit and ordered patches are recorded in
 `partial-manifest.json`. The complete contribution verifier is intentionally
 not accepted by this partial receipt; it still requires the pending model
 execution, parity, package and resource evidence before a final manifest can be
-issued. Applying all four retained patches to the recorded `b824c95` base
-reconstructed the current `4934be1` tip tree; see the refreshed
-`evidence/reconstruction-final.log`.
+issued. Applying all five retained patches to the recorded `b824c95` base
+reconstructed the current `6b5641a` tip tree; see
+`evidence/reconstruction-liquid-capture.log`.
 
 The exact pinned language, projector and Liquid engine identities are also
 retained in the partial manifest. Their local source bytes match the pinned
 language and projector digests (`evidence/audio-projector-source-identity.log`).
 The projector check reads only the GGUF header and does not inspect tensor
-payloads or run model inference. No fixed clean speech clips or captured
-same-file Liquid audio outputs are present in the assigned workspace/cache, so
-no transcription or speech parity result is claimed. The public audio encoder,
+payloads or run model inference. The two frozen synthetic clips are retained
+locally and described in `evidence/audio-reference-inputs.md`; no captured
+same-file Liquid audio outputs are present, so no transcription or speech parity
+result is claimed. The Liquid capture harness is retained, but its inference run
+is blocked because the existing Portless proxy is HTTP-only; see
+`evidence/liquid-audio-reference-capture-blocker.md`. The public audio encoder,
 depthformer and LiquidCodec are not implemented in this source tip.

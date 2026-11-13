@@ -26,13 +26,13 @@
     "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
   },
   "tip": {
-    "commit": "06ca7ba0356214a705c8f1061601bd643c39d717",
-    "tree": "4934be1d808b7431d31b594d336a26abc9a11a01"
+    "commit": "b0f8f2750c80bb962ffb58e277724487eabbabe4",
+    "tree": "6b5641ae4765ee2f50134e694252cd1fecca6cad"
   },
   "patchReconstruction": {
     "baseCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
-    "observedTree": "4934be1d808b7431d31b594d336a26abc9a11a01",
-    "evidence": "evidence/reconstruction-final.log"
+    "observedTree": "6b5641ae4765ee2f50134e694252cd1fecca6cad",
+    "evidence": "evidence/reconstruction-liquid-capture.log"
   },
   "patches": [
     {
@@ -62,6 +62,13 @@
       "tree": "4934be1d808b7431d31b594d336a26abc9a11a01",
       "path": "patches/0004-omni-audio-complete-projector-schema.patch",
       "sha256": "1cc972d9a8e9c39bd6df8dab045974efb1e87cb70512a9c7a46283fb114db364"
+    },
+    {
+      "commit": "b0f8f2750c80bb962ffb58e277724487eabbabe4",
+      "parent": "06ca7ba0356214a705c8f1061601bd643c39d717",
+      "tree": "6b5641ae4765ee2f50134e694252cd1fecca6cad",
+      "path": "patches/0005-omni-liquid-audio-capture-harness.patch",
+      "sha256": "02ef09681c384c742ed40c8a7ce596b9490f46d3dd826d329efad6cb8010fbe6"
     }
   ],
   "passingChecks": [
@@ -232,6 +239,70 @@
       "path": "evidence/audio-projector-source-identity.log",
       "sha256": "1b3d22d8a3371b3a4ca3533425b7760d64920b4bc9b84a42c9c0a666df023c58",
       "observed": "Both source sizes and SHA-256 values match the pinned pair; projector header schema validated 319 audio tensors among 458 total tensors"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "path": "evidence/liquid-capture-typecheck.log",
+      "sha256": "d318868863d485d2e56d27a308a51707e9a89df1f93891e266052da2fa7c1899",
+      "observed": "ruNNtime package typecheck passed"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/liquid-capture-lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8",
+      "observed": "Repository ESLint passed with max warnings set to zero"
+    },
+    {
+      "kind": "format",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/liquid-capture-format.log",
+      "sha256": "1d66faad74f5e8709353f7288592866bd3a9095da1174a916e7aa632949971e2",
+      "observed": "Prettier check passed"
+    },
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/liquid-capture-unit.log",
+      "sha256": "f1fcc7046b25a3b9d634c3b36066ff2a9bae74ba6bad8c89a5261fdb5771940b",
+      "observed": "55 test files, 1,167 tests passed"
+    },
+    {
+      "kind": "build",
+      "command": "LFM3_BASE_QUALIFICATION_MODE=base LFM3_PACKED_TEST_FILE=test/zoo/lfm3/liquid-reference.gpu.test.ts pnpm --filter runntime exec node test/zoo/lfm3/packed-consumer.mjs",
+      "exitCode": 0,
+      "path": "evidence/liquid-capture-packed-consumer.log",
+      "sha256": "15f032ef892976a336f16d98cf4a25dda79896a986d05d9255cec6415d2e973e",
+      "observed": "Package build and packed-consumer setup passed; the Liquid test was skipped in base mode, so this is not inference evidence"
+    },
+    {
+      "kind": "conversion",
+      "command": "apply the ordered five-patch audio series from the recorded base and compare git write-tree with the current tip",
+      "exitCode": 0,
+      "path": "evidence/reconstruction-liquid-capture.log",
+      "sha256": "1dd56e646adb9dc64eb011f1927010bc8878eab8add8a1c11c091bc990bcb8b5",
+      "observed": "All five patches reconstruct tree 6b5641ae4765ee2f50134e694252cd1fecca6cad"
+    },
+    {
+      "kind": "unit",
+      "command": "bun run verify",
+      "exitCode": 0,
+      "path": "evidence/lazers-receipt-final-verify.log",
+      "sha256": "7fdab71de87992cd764c79164885373c8b77807adc82a55e731581d656bc048a",
+      "observed": "Formatter, lint --fix, formatter and typecheck passed"
+    },
+    {
+      "kind": "unit",
+      "command": "bun test scripts/verify-runntime-contribution.test.ts",
+      "exitCode": 0,
+      "path": "evidence/lazers-receipt-final-retention.log",
+      "sha256": "eeeb7ba68feaa4ad18d79e807b5f993e3bd7102b62b4c4019335185db133b944",
+      "observed": "18 tests and 92 assertions passed"
     }
   ],
   "pendingChecks": [
@@ -244,6 +315,7 @@
     "installed-package audio consumer",
     "complete-pair load/inference/unload and temporary-memory measurements",
     "controlled-seed/depth speech quality and requested-word recovery",
-    "public examples, license and attribution for the audio consumers"
+    "public examples, license and attribution for the audio consumers",
+    "Liquid audio inference was not run because the existing Portless proxy is HTTP-only; see evidence/liquid-audio-reference-capture-blocker.md"
   ]
 }
