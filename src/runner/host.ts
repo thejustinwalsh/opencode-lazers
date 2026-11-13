@@ -225,6 +225,13 @@ export interface RunnerHost {
   ensureSourceGuard?(input: { directory: string; projectID: string }): Promise<void>
   /** Waits for foreground completion only; callers must still inspect active/inbox controls. */
   waitForSession?(sessionID: string): Promise<void>
+  /** Retire an already integrated worker after observing its current native inventory. */
+  retireIntegratedWorker?(input: {
+    projectID: string
+    attemptID: string
+    sessionID: string
+    workspace: string
+  }): Promise<void>
   /** Fresh synced native terminal and resource-inventory proof for explicit cleanup recovery. */
   cleanupSettlement?(input: {
     projectID: string

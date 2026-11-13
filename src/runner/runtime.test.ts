@@ -8088,6 +8088,43 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
 })
 
+test("scheduler retires an integrated worker with a missing historical idle report", async () => {
+  const f = fixture({ commit: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await drive(f.runtime)
+  const plan = f.store.plan(f.receipt.planID)!
+  const attempt = f.store.attempts(plan.id)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.background = { state: "unknown", source: "experimental.idle", reason: "missing history" }
+  git(f.root, ["merge", "--ff-only", plan.artifact!])
+  const retired: string[] = []
+  f.host.retireIntegratedWorker = async (input) => {
+    expect(input).toMatchObject({
+      attemptID: attempt.id,
+      workspace: attempt.workspace,
+      sessionID: attempt.session_id,
+    })
+    retired.push(input.sessionID)
+    worker.archived = true
+  }
+  await f.runtime.command(
+    {
+      requestID: "record-integration-without-historical-idle",
+      planID: plan.id,
+      expectedVersion: plan.version,
+      action: "integrated",
+      artifact: plan.artifact!,
+      targetBranch: "main",
+      reason: "Merged reviewed artifact",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(retired).toEqual([attempt.session_id, attempt.session_id])
+  expect(f.store.plan(plan.id)).toMatchObject({ state: "integrated", reason: null })
+  expect(await f.host.worktrees()).not.toContain(attempt.workspace)
+})
+
 test("cleanup preserves current activity and unknown holds but accepts authoritative worker absence", async () => {
   const f = fixture({ commit: true })
   await runPlan(f)
@@ -8802,7 +8839,7 @@ test("priority orders conflicting plans without rejecting their overlapping scop
 })
 
 test("afterPlans dispatches from combined integration while prerequisite cleanup is still pending", async () => {
-  for (const expectedParentState of ["cleaning", "cleanup-blocked"] as const) {
+  for (const childPriority of [10, -10]) {
     const f = fixture({
       independent: true,
       delayed: true,
@@ -8813,13 +8850,13 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     const childTask = f.createTask("b", "b.txt")
     const child = f.store.submit(
       {
-        ...f.inputFor([childTask], { requestID: `dependent-${expectedParentState}` }),
+        ...f.inputFor([childTask], { requestID: `dependent-${childPriority}` }),
         afterPlans: [parentID],
-        priority: expectedParentState === "cleaning" ? 10 : -10,
+        priority: childPriority,
       },
       "owner",
     )
-    await runPlan(f, child.planID, `run-child-${expectedParentState}`)
+    await runPlan(f, child.planID, `run-child-${childPriority}`)
     const accepted = await acceptPlan(f, parentID)
     expect(new TaskReads(f.repository).get({ taskID: childTask.id })).toMatchObject({
       recordedState: "queued",
@@ -8852,7 +8889,7 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
 
     await f.runtime.tick()
     expect(observations).toHaveLength(1)
-    expect(observations[0]!.parentState).toBe(expectedParentState)
+    expect(observations[0]!.parentState).toBe("cleanup-blocked")
     expect(observations[0]!.source).toBe(accepted.plan.artifact!)
     expect(f.store.plan(parentID)!.state).toBe("cleanup-blocked")
     const childAttempt = f.store.attempts(child.planID)[0]!
@@ -8906,7 +8943,8 @@ test("afterPlans cleanup cannot publish over cancellation or reuse the historica
   const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-cleanup", -10)
   const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
   writeFileSync(sentinel, "still owned")
-  const originalSession = f.host.session
+  const originalWorktrees = f.host.worktrees
+  let firstInventory = true
   let enter!: () => void
   let release!: () => void
   const entered = new Promise<void>((resolve) => {
@@ -8915,12 +8953,13 @@ test("afterPlans cleanup cannot publish over cancellation or reuse the historica
   const blocked = new Promise<void>((resolve) => {
     release = resolve
   })
-  f.host.session = async (id, options) => {
-    if (id === accepted.attempt.session_id && options?.messages) {
+  f.host.worktrees = async () => {
+    if (firstInventory) {
+      firstInventory = false
       enter()
       await blocked
     }
-    return originalSession(id, options)
+    return originalWorktrees()
   }
 
   const cleanup = f.runtime.tick()

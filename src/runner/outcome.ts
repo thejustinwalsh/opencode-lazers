@@ -92,7 +92,7 @@ export function outcomeText(serialized: string) {
       break
     case "accepted":
       action =
-        "Review and merge the accepted combined artifact, then record integration through runtime commands and verify native non-forced cleanup. Continue existing work; acceptance alone is not integration."
+        "Review and merge the accepted combined artifact before starting new work. If it is already in the target branch, record integration against that branch now. Verify native cleanup and continue the queue."
       break
     case "dispatch-resumed":
     case "dependency-resolved":
@@ -113,7 +113,7 @@ export function outcomeText(serialized: string) {
       break
     case "cleanup-blocked":
       action =
-        "Resolve the cleanup failure without force or loss of work, then retry integration at the current plan version. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
+        "Resolve cleanup before starting new work. Inspect the held worktree and retry with recover-cleanup or integrated at the current plan version. Use the native question tool when a decision requires human input."
       break
     case "cancelled":
       action =

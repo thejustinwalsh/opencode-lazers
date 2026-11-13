@@ -428,7 +428,11 @@ async function activeSessionLineage(
   const atWorkspace: string[] = []
   const activeIDs = Object.entries(active).sort(([a], [b]) => a.localeCompare(b))
   for (const [activeID, status] of activeIDs) {
-    if (!status || typeof status !== "object" || !["idle", "retry", "busy"].includes(status.type))
+    if (
+      !status ||
+      typeof status !== "object" ||
+      !["idle", "retry", "busy", "running"].includes(status.type)
+    )
       throw new Error("Native active-session inventory is contradictory")
     if (activeID === rootSessionID) continue
     const visited = new Set<string>()
@@ -961,6 +965,54 @@ export function nativeHost(
           })),
         ],
       }
+    },
+    async retireIntegratedWorker(input) {
+      const client = await connectedClient()
+      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      await runNative(client, async () => {
+        const read = () => client.session.get({ sessionID: Session.ID.make(input.sessionID) })
+        const observe = async () => {
+          const session = await read()
+          const [active, inventory] = await Promise.all([
+            activeSessionLineage(client, input.sessionID, input.workspace),
+            workerObservation(client, input.sessionID, input.workspace),
+          ])
+          const after = await read()
+          if (
+            session.id !== input.sessionID ||
+            session.projectID !== input.projectID ||
+            session.location.directory !== input.workspace ||
+            session.metadata?.lazersAttemptID !== input.attemptID ||
+            !isWorkerAgent(session.agent) ||
+            !session.outcome ||
+            !session.time.idle ||
+            (session.time.busy ?? 0) >= session.time.idle ||
+            JSON.stringify(session) !== JSON.stringify(after) ||
+            active.activeRoot ||
+            active.activeDescendants.length ||
+            active.activeAtWorkspace.length ||
+            inventory.active ||
+            inventory.pendingInput ||
+            inventory.locationPendingForms ||
+            inventory.locationPendingPermissions ||
+            inventory.runningShells
+          )
+            throw new Error(
+              "Integrated worker or its workspace still has unsettled native activity",
+            )
+          return session
+        }
+        const before = await observe()
+        if (before.time.archived === undefined)
+          await client.session.update({ sessionID: input.sessionID, archived: true })
+        const after = await observe()
+        if (
+          after.time.archived === undefined ||
+          before.time.busy !== after.time.busy ||
+          before.time.idle !== after.time.idle
+        )
+          throw new Error("Integrated worker archival or idle state could not be confirmed")
+      })
     },
     async cleanupSettlement(input): Promise<NativeCleanupSettlement> {
       if (!idleStore)

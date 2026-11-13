@@ -1206,19 +1206,28 @@ export class RunnerStore {
     )
   }
   /** Page execution candidates after filtering history; never use the display window for scheduling. */
-  *runnablePlans(terminalStates: ReadonlySet<string>): Generator<PlanRow> {
+  *runnablePlans(terminalStates: ReadonlySet<string>): Generator<PlanRow & { queue_rank: number }> {
     type Candidate = PlanRow & { queue_rank: number; priority: number; sequence: number }
     const states = [...terminalStates]
+    const queueRank = `CASE
+      WHEN state IN ('cancelling','cleaning') THEN 2
+      WHEN state='blocked' OR EXISTS (
+        SELECT 1 FROM runner_nodes n WHERE n.plan_id=runner_plans.id AND n.state='verifying'
+      ) OR (state='running' AND EXISTS (
+        SELECT 1 FROM runner_nodes n WHERE n.plan_id=runner_plans.id AND n.state='accepted'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM runner_nodes n WHERE n.plan_id=runner_plans.id AND n.state<>'accepted'
+      )) THEN 1 ELSE 0 END`
     let cursor: Candidate | undefined
     for (;;) {
       const page: Candidate[] = this.atomic((db) =>
         db
           .query<Candidate, (string | number)[]>(
-            `SELECT *,CASE WHEN state='cancelling' THEN 1 ELSE 0 END AS queue_rank,
+            `SELECT *,${queueRank} AS queue_rank,
            COALESCE(json_extract(body,'$.priority'),0) AS priority,rowid AS sequence
            FROM runner_plans WHERE project_directory=?
            ${states.length ? `AND state NOT IN (${states.map(() => "?").join(",")})` : ""}
-           ${cursor ? "AND (CASE WHEN state='cancelling' THEN 1 ELSE 0 END,COALESCE(json_extract(body,'$.priority'),0),-rowid) < (?,?,?)" : ""}
+           ${cursor ? `AND (${queueRank},COALESCE(json_extract(body,'$.priority'),0),-rowid) < (?,?,?)` : ""}
            ORDER BY queue_rank DESC,priority DESC,rowid LIMIT 1000`,
           )
           .all(
@@ -1248,6 +1257,29 @@ export class RunnerStore {
        LIMIT 1`,
         )
         .get(planID, this.repository.projectDirectory, this.repository.projectDirectory, planID),
+    )
+  }
+  closeoutReviewPlanIDs(): string[] {
+    return this.atomic((db) =>
+      db
+        .query<{ id: string }, [string]>(
+          `SELECT p.id FROM runner_plans p
+           WHERE p.project_directory=? AND p.artifact IS NOT NULL
+           AND (p.state='accepted' OR (p.state='cleanup-blocked' AND EXISTS (
+             SELECT 1 FROM runner_outbox prior WHERE prior.plan_id=p.id
+             AND json_extract(prior.payload,'$.status')='cleanup-blocked'
+           )))
+           AND NOT EXISTS (
+             SELECT 1 FROM runner_outbox o WHERE o.plan_id=p.id
+             AND json_extract(o.payload,'$.status')=p.state
+             AND json_extract(o.payload,'$.version')=p.version
+             AND (o.state IN ('pending','sending','uncertain','admitted','delivered')
+               OR json_extract(o.payload,'$.closeoutReminder')=1)
+           )
+           ORDER BY p.state='cleanup-blocked' DESC,COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid`,
+        )
+        .all(this.repository.projectDirectory)
+        .map(({ id }) => id),
     )
   }
   terminalCleanupPlanIDs(): string[] {

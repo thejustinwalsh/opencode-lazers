@@ -6563,6 +6563,7 @@ export class TaskRuntime {
     })
     if (
       (command.action === "run" && result?.status === "running") ||
+      (command.action === "integrated" && result?.status === "cleanup-requested") ||
       (command.action === "reconcile" && result?.status === "reconciling") ||
       (command.action === "retained-repair" && result?.status === "retained-repair-requested") ||
       (command.action === "quarantine-source" && result?.status === "quarantining-source")
@@ -8653,6 +8654,19 @@ export class TaskRuntime {
               resourceHoldsRetained: true,
             },
           )
+          if (quarantine.phase === "pending" && attempt.state === "verifying")
+            this.outcome(
+              quarantine.plan_id,
+              {
+                status: "blocked",
+                taskID: attempt.task_id,
+                attemptID: attempt.id,
+                reason:
+                  "The worker checkout is sealed. Verify the retained candidate in isolation.",
+                allowedActions: ["verify-retained", "audit", "cancel"],
+              },
+              true,
+            )
         })
       } catch (error) {
         wait(errorText(error))
@@ -8944,10 +8958,42 @@ export class TaskRuntime {
         void running.then(finished, finished)
       }
       const terminalCleanupPlanIDs = this.store.terminalCleanupPlanIDs()
+      for (const planID of terminalCleanupPlanIDs) {
+        await this.reconcilePlan(planID, fence, "cleanup", async () => {
+          const plan = this.store.plan(planID)
+          if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) return
+          if (!this.pendingOwnedWorktreeCleanup(plan)) return
+          if (plan.state === "cleanup-blocked") {
+            if (!(await this.worktreeCleanupFactsChanged(plan))) return
+            await this.cleanupWorktrees(plan, fence)
+          } else if (await this.worktreeCleanupFactsChanged(plan))
+            await this.cleanupWorktrees(plan, fence, "cancellation")
+        })
+        if (heartbeatFailed) throw heartbeatError
+      }
+      await this.reconcileTerminalRetainedVerifications(fence)
+      for (const planID of this.store.closeoutReviewPlanIDs()) {
+        const plan = this.store.plan(planID)!
+        this.outcome(
+          planID,
+          {
+            status: plan.state,
+            artifact: plan.artifact,
+            reason: plan.reason,
+            closeoutReminder: true,
+          },
+          true,
+        )
+      }
       const waits: Parameters<TaskRuntime["requestQueueReview"]>[0] = []
+      let closeoutDelivered = false
       for (const candidate of this.store.runnablePlans(terminal)) {
+        if (!closeoutDelivered && candidate.queue_rank === 0) {
+          await this.deliver(fence, true)
+          closeoutDelivered = true
+        }
         await this.reconcilePlan(candidate.id, fence, "step", async () => {
-          let plan = candidate
+          let plan: PlanRow = candidate
           if (plan.state === "draft" && !this.taskStartID(plan)) return
           if (plan.state === "draft") {
             const taskID = this.taskStartID(plan)!
@@ -8980,20 +9026,6 @@ export class TaskRuntime {
         })
         if (heartbeatFailed) throw heartbeatError
       }
-      for (const planID of terminalCleanupPlanIDs) {
-        await this.reconcilePlan(planID, fence, "cleanup", async () => {
-          const plan = this.store.plan(planID)
-          if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) return
-          if (!this.pendingOwnedWorktreeCleanup(plan)) return
-          if (plan.state === "cleanup-blocked") {
-            if (!(await this.worktreeCleanupFactsChanged(plan))) return
-            await this.cleanupWorktrees(plan, fence)
-          } else if (await this.worktreeCleanupFactsChanged(plan))
-            await this.cleanupWorktrees(plan, fence, "cancellation")
-        })
-        if (heartbeatFailed) throw heartbeatError
-      }
-      await this.reconcileTerminalRetainedVerifications(fence)
       if (waits.length)
         await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
           this.requestQueueReview(waits, fence),
@@ -11261,7 +11293,7 @@ export class TaskRuntime {
         (!input.afterPlans?.length || !!this.integratedPrerequisiteBaseline(input.afterPlans))
       )
     })
-    if (!hasContender) return
+    if (!hasContender && attempt.state !== "verifying") return
     const detailed = worker.turn
       ? worker
       : await this.host.session(attempt.session_id, { messages: true })
@@ -11279,7 +11311,7 @@ export class TaskRuntime {
         attemptID: attempt.id,
         ...(reviewInput && attempt.state === "running" ? { reviewInputID: reviewInput } : {}),
         reason:
-          "Completed foreground; preserve the isolated checkout and release its source reservation",
+          "Completed foreground; preserve the isolated checkout for review and release its source reservation",
       },
       plan.owner,
     )
@@ -16615,7 +16647,14 @@ export class TaskRuntime {
     effect: EffectRow,
     workspace: string,
     allowCancelled = false,
+    mergedCheckout = false,
   ): Promise<NativeCleanupSettlement | undefined> {
+    if (
+      this.store
+        .activeProjectAttempts()
+        .some((attempt) => resolve(attempt.workspace) === resolve(workspace))
+    )
+      throw new Error("Owned worktree still has an active runner attempt; preserve it")
     if (effect.kind.startsWith("adoption-")) {
       if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Adoption worktree unexpectedly has an attempt owner; preserve it")
@@ -16730,6 +16769,23 @@ export class TaskRuntime {
       if (!["completed", "interrupted"].includes(session.turn?.state ?? "unknown"))
         blockers.push("worker turn is not conclusively terminal")
       if (
+        !blockers.length &&
+        mergedCheckout &&
+        !settlement &&
+        !allowCancelled &&
+        attempt.state === "accepted" &&
+        this.host.retireIntegratedWorker &&
+        !(session.background?.state === "observed" && session.background.count > 0) &&
+        session.turn?.inputID &&
+        this.matchesWorkerInput(attempt, session.turn.inputID)
+      ) {
+        await this.host.retireIntegratedWorker({
+          projectID: this.projectID,
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace,
+        })
+      } else if (
         backgroundReason &&
         !settlement &&
         !this.isPriorContinuationBackground(attempt, session.background, session.turn?.inputID)
@@ -17259,16 +17315,6 @@ export class TaskRuntime {
           .map((line) => resolve(line.slice("worktree ".length)))
         const gitRegistered = gitWorktrees.includes(target)
         if (listedWorkspace && existsSync(workspace)) {
-          const initialSettlement = await this.assertWorktreeQuiescent(
-            plan,
-            sourceEffect,
-            workspace,
-            mode === "cancellation",
-          )
-          if (!cleanupCurrent()) {
-            this.abandonCleanupEffect(effect, fence)
-            return
-          }
           if (await gitAsync(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
           if (!cleanupCurrent()) {
@@ -17281,11 +17327,23 @@ export class TaskRuntime {
           } catch {
             throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
           }
+          const initialSettlement = await this.assertWorktreeQuiescent(
+            plan,
+            sourceEffect,
+            workspace,
+            mode === "cancellation",
+            true,
+          )
+          if (!cleanupCurrent()) {
+            this.abandonCleanupEffect(effect, fence)
+            return
+          }
           const finalSettlement = await this.assertWorktreeQuiescent(
             plan,
             sourceEffect,
             workspace,
             mode === "cancellation",
+            true,
           )
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
@@ -18531,7 +18589,7 @@ export class TaskRuntime {
     }
   }
 
-  private async deliver(fence: number) {
+  private async deliver(fence: number, closeoutOnly = false) {
     const messages = this.store.outboxForDelivery(this.directory)
     const groups = new Map<string, OutboxRow[]>()
     for (const message of messages) {
@@ -18541,6 +18599,16 @@ export class TaskRuntime {
     }
     for (const group of groups.values()) {
       const ordered = group.toSorted((a, b) => a.version - b.version || a.sequence - b.sequence)
+      if (closeoutOnly) {
+        const latest = ordered.at(-1)!
+        if (
+          !["pending", "sending", "uncertain", "delivered"].includes(latest.state) ||
+          !["accepted", "task-accepted", "cleanup-blocked"].includes(
+            JSON.parse(latest.payload).status,
+          )
+        )
+          continue
+      }
       if (this.store.architectRenewalBlocksDelivery(ordered[0]!.plan_id)) continue
       const plan = this.store.plan(ordered[0]!.plan_id)
       if (!plan) continue
