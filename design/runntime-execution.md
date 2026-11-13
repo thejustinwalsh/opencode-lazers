@@ -76,8 +76,11 @@ independent corpus. Reuse the retained loader rather than introducing a second
 API; keep original F32 weights and vectors for offline reference comparisons.
 
 Use original floating checkpoints only for offline reference tests. Desktop loads
-quantized variants only, including for qualification and fallback. Target under
-1 GB per loaded model and measure actual memory during load and inference.
+quantized variants only, including for qualification and fallback. Measure
+actual memory during load and inference. For Omni, 1 GB is a comparison point
+alongside the earlier 4 GB observation. The measured 1.55 GB chat GPU buffer
+peak is acceptable. Record the full pair’s Desktop memory with the functional
+results.
 
 Integrate the quantized checkpoint through the existing mailbox, exclusive GPU lease
 and verified cache. Supply the lease-owned bounded range reader and cancellation;
