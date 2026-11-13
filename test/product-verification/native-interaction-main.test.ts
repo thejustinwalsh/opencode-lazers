@@ -80,6 +80,7 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void, onActiv
       contentsListeners.set(name, callback)
     },
     removeListener: (name) => {
+      if (destroyed) throw new TypeError("Object has been destroyed")
       contentsListeners.delete(name)
     },
   }
@@ -100,6 +101,7 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void, onActiv
       windowListeners.set(name, callback)
     },
     removeListener: (name) => {
+      if (destroyed) throw new TypeError("Object has been destroyed")
       windowListeners.delete(name)
     },
   }

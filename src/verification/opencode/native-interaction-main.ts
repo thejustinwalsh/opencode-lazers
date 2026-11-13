@@ -358,7 +358,11 @@ export class NativeInteractionMainAdapter {
     this.unwatchOpen = this.ctx.windows.on("open", (window) =>
       this.track(window as unknown as NativeWindow),
     )
-    this.unwatchClose = this.ctx.windows.on("close", (window) => this.forget(window.id))
+    this.unwatchClose = this.ctx.windows.on("close", (window) => {
+      for (const [id, tracker] of this.windows) {
+        if (tracker.window === (window as unknown as NativeWindow)) this.forget(id)
+      }
+    })
     try {
       await this.rpc().attach({
         binding,
@@ -760,7 +764,7 @@ export class NativeInteractionMainAdapter {
     const windowID = window.id
     const contents = window.webContents
     const existing = this.windows.get(windowID)
-    if (existing !== undefined && existing.contents.id === contents.id) return
+    if (existing?.contents === contents) return
     if (existing !== undefined) this.forget(windowID)
     const onNavigation = () => this.invalidate(windowID)
     const onRendererGone = () => this.invalidate(windowID)
@@ -791,12 +795,14 @@ export class NativeInteractionMainAdapter {
   private forget(windowID: number): void {
     const tracker = this.windows.get(windowID)
     if (tracker === undefined) return
-    tracker.contents.removeListener("did-start-navigation", tracker.onNavigation)
-    tracker.contents.removeListener("render-process-gone", tracker.onRendererGone)
-    tracker.contents.removeListener("destroyed", tracker.onRendererGone)
-    tracker.window.removeListener("closed", tracker.onClosed)
     this.windows.delete(windowID)
     this.snapshots.delete(windowID)
+    if (!tracker.contents.isDestroyed()) {
+      tracker.contents.removeListener("did-start-navigation", tracker.onNavigation)
+      tracker.contents.removeListener("render-process-gone", tracker.onRendererGone)
+      tracker.contents.removeListener("destroyed", tracker.onRendererGone)
+    }
+    if (!tracker.window.isDestroyed()) tracker.window.removeListener("closed", tracker.onClosed)
   }
 
   private windowReferences(): NativeWindowReference[] {
