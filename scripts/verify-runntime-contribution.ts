@@ -135,6 +135,22 @@ const STAGES = {
       "packages/runntime/test/zoo/lfm3/stateDictHooks.test.ts",
     ],
   },
+  "omni-published-audio": {
+    baseCommit: "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
+    directory: "contributions/runntime/omni-published-audio",
+    allowedPaths: [
+      "apps/docs/astro.config.mjs",
+      "apps/docs/src/content/docs/zoo/lfm3-audio.mdx",
+      "packages/runntime/src/core/weights/gguf.ts",
+      "packages/runntime/src/zoo/index.ts",
+      "packages/runntime/src/zoo/lfm3/",
+      "packages/runntime/src/zoo/models.ts",
+      "packages/runntime/src/zoo/tasks/audio/lfm3.ts",
+      "packages/runntime/src/zoo/tasks/nlp/lfm3.ts",
+      "packages/runntime/test/core/weights/gguf.test.ts",
+      "packages/runntime/test/zoo/lfm3/",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
@@ -359,7 +375,8 @@ function verifyEvidence(
       : stage === "d1-q8" ||
           stage === "lfm3-base-chat" ||
           stage === "lfm3-base-audio" ||
-          stage === "omni-published-chat"
+          stage === "omni-published-chat" ||
+          stage === "omni-published-audio"
         ? [
             "unit",
             "gpu",
@@ -379,7 +396,8 @@ function verifyEvidence(
         : stage === "d1-q8" ||
             stage === "lfm3-base-chat" ||
             stage === "lfm3-base-audio" ||
-            stage === "omni-published-chat"
+            stage === "omni-published-chat" ||
+            stage === "omni-published-audio"
           ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
           : "unit and GPU"
     throw new Error(`retained checks must include passing ${expected} evidence`)

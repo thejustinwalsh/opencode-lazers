@@ -42,6 +42,7 @@ function fixture(
       | "lfm3-base-chat"
       | "lfm3-base-audio"
       | "omni-published-chat"
+      | "omni-published-audio"
   } = {},
 ): Fixture {
   const root = mkdtempSync(join(tmpdir(), "runntime-contribution-test-"))
@@ -59,15 +60,18 @@ function fixture(
   const sourcePath = options.outsideScope
     ? contributionStage === "lfm3-base-chat" ||
       contributionStage === "lfm3-base-audio" ||
-      contributionStage === "omni-published-chat"
+      contributionStage === "omni-published-chat" ||
+      contributionStage === "omni-published-audio"
       ? "packages/runntime/src/zoo/d1/model.ts"
       : "README.md"
     : (options.sourcePath ??
       (contributionStage === "omni-published-chat"
         ? "packages/runntime/src/core/weights/gguf.ts"
-        : contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
-          ? "packages/runntime/src/zoo/lfm3/audio/model.ts"
-          : "packages/runntime/src/zoo/d1/model.ts"))
+        : contributionStage === "omni-published-audio"
+          ? "packages/runntime/src/zoo/tasks/audio/lfm3.ts"
+          : contributionStage === "lfm3-base-chat" || contributionStage === "lfm3-base-audio"
+            ? "packages/runntime/src/zoo/lfm3/audio/model.ts"
+            : "packages/runntime/src/zoo/d1/model.ts"))
   const source = join(repository, sourcePath)
   mkdirSync(join(source, ".."), { recursive: true })
   writeFileSync(source, "base\n")
@@ -84,13 +88,16 @@ function fixture(
   const secondDirectory =
     contributionStage === "lfm3-base-chat" ||
     contributionStage === "lfm3-base-audio" ||
-    contributionStage === "omni-published-chat"
+    contributionStage === "omni-published-chat" ||
+    contributionStage === "omni-published-audio"
       ? "packages/runntime/test/zoo/lfm3"
       : "packages/runntime/test/zoo/d1"
   const secondPath =
     contributionStage === "omni-published-chat"
       ? `${secondDirectory}/liquid-reference.gpu.test.ts`
-      : `${secondDirectory}/model.test.ts`
+      : contributionStage === "omni-published-audio"
+        ? `${secondDirectory}/audio-reference.gpu.test.ts`
+        : `${secondDirectory}/model.test.ts`
   mkdirSync(join(repository, secondDirectory), { recursive: true })
   writeFileSync(join(repository, secondPath), "second\n")
   command(repository, "add", secondPath)
@@ -136,7 +143,8 @@ function fixture(
       : contributionStage === "d1-q8" ||
           contributionStage === "lfm3-base-chat" ||
           contributionStage === "lfm3-base-audio" ||
-          contributionStage === "omni-published-chat"
+          contributionStage === "omni-published-chat" ||
+          contributionStage === "omni-published-audio"
         ? [
             {
               kind: "typecheck",
@@ -150,10 +158,12 @@ function fixture(
               command:
                 contributionStage === "omni-published-chat"
                   ? "published LFM3 Q4_K_M GGUF source identity"
-                  : contributionStage === "lfm3-base-chat" ||
-                      contributionStage === "lfm3-base-audio"
-                    ? "LFM3 original checkpoint conversion inspection"
-                    : "uv run runntime quantize",
+                  : contributionStage === "omni-published-audio"
+                    ? "published LFM3 Omni language and projector GGUF source identity"
+                    : contributionStage === "lfm3-base-chat" ||
+                        contributionStage === "lfm3-base-audio"
+                      ? "LFM3 original checkpoint conversion inspection"
+                      : "uv run runntime quantize",
               file: "evidence/conversion.txt",
             },
             {
@@ -161,10 +171,12 @@ function fixture(
               command:
                 contributionStage === "omni-published-chat"
                   ? "published LFM3 Liquid and native parity qualification"
-                  : contributionStage === "lfm3-base-chat" ||
-                      contributionStage === "lfm3-base-audio"
-                    ? "LFM3 Liquid and native parity qualification"
-                    : "D1 parity qualification",
+                  : contributionStage === "omni-published-audio"
+                    ? "published LFM3 Omni audio and pinned same-file Liquid reference qualification"
+                    : contributionStage === "lfm3-base-chat" ||
+                        contributionStage === "lfm3-base-audio"
+                      ? "LFM3 Liquid and native parity qualification"
+                      : "D1 parity qualification",
               file: "evidence/parity.txt",
             },
             {
@@ -172,10 +184,12 @@ function fixture(
               command:
                 contributionStage === "omni-published-chat"
                   ? "packed published LFM3 public consumer"
-                  : contributionStage === "lfm3-base-chat" ||
-                      contributionStage === "lfm3-base-audio"
-                    ? "packed LFM3 public consumer"
-                    : "packed package consumer",
+                  : contributionStage === "omni-published-audio"
+                    ? "packed published LFM3 transcription and streaming speech consumer"
+                    : contributionStage === "lfm3-base-chat" ||
+                        contributionStage === "lfm3-base-audio"
+                      ? "packed LFM3 public consumer"
+                      : "packed package consumer",
               file: "evidence/package.txt",
             },
             {
@@ -183,10 +197,12 @@ function fixture(
               command:
                 contributionStage === "omni-published-chat"
                   ? "published LFM3 resource measurements"
-                  : contributionStage === "lfm3-base-chat" ||
-                      contributionStage === "lfm3-base-audio"
-                    ? "LFM3 resource measurements"
-                    : "D1 resource measurements",
+                  : contributionStage === "omni-published-audio"
+                    ? "complete published LFM3 Omni audio model resource measurements"
+                    : contributionStage === "lfm3-base-chat" ||
+                        contributionStage === "lfm3-base-audio"
+                      ? "LFM3 resource measurements"
+                      : "D1 resource measurements",
               file: "evidence/resource.txt",
             },
           ]
@@ -407,58 +423,60 @@ describe("ruNNtime contribution reconstruction", () => {
     }
   })
 
-  it.each(["lfm3-base-chat", "lfm3-base-audio", "omni-published-chat"] as const)(
-    "requires the full quality evidence set for %s",
-    (stage) => {
-      const complete = fixture({ stage })
-      expect(
-        verifyContribution({
-          stageDirectory: complete.stage,
-          repositoryDirectory: complete.repository,
-          expectedBaseCommit: complete.baseCommit,
-        }).checks,
-      ).toEqual([
-        "unit",
-        "gpu",
-        "typecheck",
-        "lint",
-        "build",
-        "conversion",
-        "parity",
-        "package",
-        "resource",
-      ])
+  it.each([
+    "lfm3-base-chat",
+    "lfm3-base-audio",
+    "omni-published-chat",
+    "omni-published-audio",
+  ] as const)("requires the full quality evidence set for %s", (stage) => {
+    const complete = fixture({ stage })
+    expect(
+      verifyContribution({
+        stageDirectory: complete.stage,
+        repositoryDirectory: complete.repository,
+        expectedBaseCommit: complete.baseCommit,
+      }).checks,
+    ).toEqual([
+      "unit",
+      "gpu",
+      "typecheck",
+      "lint",
+      "build",
+      "conversion",
+      "parity",
+      "package",
+      "resource",
+    ])
 
-      for (const missingKind of [
-        "unit",
-        "gpu",
-        "typecheck",
-        "lint",
-        "build",
-        "conversion",
-        "parity",
-        "package",
-        "resource",
-      ]) {
-        const incomplete = fixture({ stage })
-        const manifest = incomplete.manifest
-        if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
-        manifest.checks = manifest.checks.filter(
-          (check) => isRecord(check) && check.kind !== missingKind,
-        )
-        saveManifest(incomplete.stage, manifest)
-        expect(() =>
-          verifyContribution({
-            stageDirectory: incomplete.stage,
-            repositoryDirectory: incomplete.repository,
-            expectedBaseCommit: incomplete.baseCommit,
-          }),
-        ).toThrow(
-          "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
-        )
-      }
-    },
-  )
+    for (const missingKind of [
+      "unit",
+      "gpu",
+      "typecheck",
+      "lint",
+      "build",
+      "conversion",
+      "parity",
+      "package",
+      "resource",
+    ]) {
+      const incomplete = fixture({ stage })
+      const manifest = incomplete.manifest
+      if (!Array.isArray(manifest.checks)) throw new Error("test manifest has no checks")
+      manifest.checks = manifest.checks.filter(
+        (check) => isRecord(check) && check.kind !== missingKind,
+      )
+      saveManifest(incomplete.stage, manifest)
+      expect(() =>
+        verifyContribution({
+          stageDirectory: incomplete.stage,
+          repositoryDirectory: incomplete.repository,
+          expectedBaseCommit: incomplete.baseCommit,
+        }),
+      ).toThrow(
+        "passing unit, GPU, typecheck, lint, build, conversion, parity, package and resource evidence",
+      )
+    }
+  })
 
   it("pins published Omni chat to the accepted LFM3 chat tip and rejects audio scope", () => {
     const loader = fixture({
@@ -493,6 +511,47 @@ describe("ruNNtime contribution reconstruction", () => {
         stageDirectory: audio.stage,
         repositoryDirectory: audio.repository,
         expectedBaseCommit: audio.baseCommit,
+      }),
+    ).toThrow("escapes write scope")
+  })
+
+  it("pins published Omni audio after chat and limits patches to the audio composition", () => {
+    const audio = fixture({ stage: "omni-published-audio" })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: audio.stage,
+        repositoryDirectory: audio.repository,
+      }),
+    ).toThrow("base commit mismatch: expected b824c956ad79a9273876d27c2ac1b09fc8fa19cc")
+
+    for (const sourcePath of [
+      "packages/runntime/src/core/weights/gguf.ts",
+      "packages/runntime/src/zoo/lfm3/audio/projector.ts",
+      "packages/runntime/src/zoo/tasks/audio/lfm3.ts",
+      "packages/runntime/src/zoo/index.ts",
+      "packages/runntime/test/zoo/lfm3/audio-reference.gpu.test.ts",
+      "packages/runntime/test/core/weights/gguf.test.ts",
+      "apps/docs/src/content/docs/zoo/lfm3-audio.mdx",
+    ]) {
+      const scoped = fixture({ stage: "omni-published-audio", sourcePath })
+      expect(
+        verifyContribution({
+          stageDirectory: scoped.stage,
+          repositoryDirectory: scoped.repository,
+          expectedBaseCommit: scoped.baseCommit,
+        }).stage,
+      ).toBe("omni-published-audio")
+    }
+
+    const unrelated = fixture({
+      stage: "omni-published-audio",
+      sourcePath: "packages/runntime/src/zoo/d1/model.ts",
+    })
+    expect(() =>
+      verifyContribution({
+        stageDirectory: unrelated.stage,
+        repositoryDirectory: unrelated.repository,
+        expectedBaseCommit: unrelated.baseCommit,
       }),
     ).toThrow("escapes write scope")
   })
