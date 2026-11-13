@@ -1,1 +1,1 @@
-PASS ordered patches reconstruct exact ruNNtime tip tree
+PASS ordered four-patch series reconstructs the current ruNNtime tip tree

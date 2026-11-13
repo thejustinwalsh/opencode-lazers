@@ -1,0 +1,5 @@
+Language file bytes: 1099630080
+9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2  /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/opencode/LFM3-Omni-2B-Q4_K_M.gguf
+Projector file bytes: 506842528
+8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1  /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/opencode/mmproj-LFM3-Omni-2B-Q8_0.gguf
+PASS header-only schema: GGUF v3, 458 total tensors, 319 validated audio tensors (expected 319)

@@ -15,25 +15,29 @@ unchanged.
 | 7. Fused LFM3 logits readback                | Not changed.                                                                                                                                                                                                                                                                                                                                                        |
 
 The audio contribution is incomplete. Audio source currently includes the
-standalone CPU frontend, a metadata/schema-only projector GGUF guard, and a
-selected-tensor inventory. The frontend normalization now matches the pinned
-Liquid kernel's `(log10(power) + 4) * 0.25` formula, with an independent direct
-DFT test. The speech encoder blocks, language-model audio-row integration,
-depth decoder, LiquidCodec, public transcription/speech API, fixed same-file
-audio corpus and real-WebGPU audio qualification are not implemented. No audio
-parity, playback, complete-pair resource, or installed-package audio claim is
-made.
+standalone CPU frontend and a metadata/schema projector guard that checks every
+one of the 319 audio-related tensors (including type and shape) in the pinned
+GGUF header and rejects unknown audio tensors. The frontend normalization now
+matches the pinned Liquid kernel's `(log10(power) + 4) * 0.25` formula, with an
+independent direct DFT test. The speech encoder blocks, language-model audio-row
+integration, depth decoder, LiquidCodec, public transcription/speech API, fixed
+same-file audio corpus and real-WebGPU audio qualification are not implemented.
+No audio parity, playback, complete-pair resource, or installed-package audio
+claim is made.
 
 The current ruNNtime source commit and ordered patches are recorded in
 `partial-manifest.json`. The complete contribution verifier is intentionally
 not accepted by this partial receipt; it still requires the pending model
 execution, parity, package and resource evidence before a final manifest can be
-issued. Applying all three retained patches to the recorded `b824c95` base
-reconstructed the current `26ffe2b` tip tree (`evidence/reconstruction-final.log`).
+issued. Applying all four retained patches to the recorded `b824c95` base
+reconstructed the current `4934be1` tip tree; see the refreshed
+`evidence/reconstruction-final.log`.
 
 The exact pinned language, projector and Liquid engine identities are also
 retained in the partial manifest. Their local source bytes match the pinned
-language and projector digests. No fixed clean speech clips or captured
+language and projector digests (`evidence/audio-projector-source-identity.log`).
+The projector check reads only the GGUF header and does not inspect tensor
+payloads or run model inference. No fixed clean speech clips or captured
 same-file Liquid audio outputs are present in the assigned workspace/cache, so
 no transcription or speech parity result is claimed. The public audio encoder,
 depthformer and LiquidCodec are not implemented in this source tip.
