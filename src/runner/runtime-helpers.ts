@@ -1,0 +1,73 @@
+import { lstatSync } from "node:fs"
+import { checkResourcesSettled, type CheckReceipt } from "./artifacts.ts"
+import type { EffectRow } from "./store.ts"
+import type { VerificationActivity } from "./verification-activities.ts"
+
+export const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`
+
+export const isCommitID = (value: unknown): value is string =>
+  typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
+
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+export type CleanupRecoveryAuthorization = {
+  schemaVersion: 1
+  projectDirectory: string
+  planID: string
+  planRevision: number
+  planArtifact: string | null
+  taskID: string
+  taskRevision: number
+  attemptID: string
+  artifact: string
+  workspace: string
+  sourceEffectID: string
+  sessionID: string
+  assignedMessageID: string
+  owner: string
+  ownerEpoch: number
+  targetBranch: string
+  requestID: string
+  reason: string
+}
+
+export function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefined {
+  if (!effect.receipt) return undefined
+  try {
+    const envelope: unknown = JSON.parse(effect.receipt)
+    if (!isRecord(envelope)) return undefined
+    if (isRecord(envelope.check)) return envelope.check as unknown as CheckReceipt
+    if (isRecord(envelope.result) && isRecord(envelope.result.check))
+      return envelope.result.check as unknown as CheckReceipt
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function checkSettlementProblem(activity: VerificationActivity): string | undefined {
+  if (activity.state === "failed") return errorText(activity.error)
+  if (activity.state !== "completed") return "Verification is still running"
+  if (activity.metadata.kind === "retained-advance") return undefined
+  const receipt = activity.result as CheckReceipt | undefined
+  if (!receipt) return "Verification has no final receipt"
+  if (!checkResourcesSettled(receipt))
+    return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain: ${receipt.processCleanup?.detail ?? "process-tree settlement was not confirmed"}`
+  return undefined
+}
+
+export const errorText = (error: unknown) =>
+  error instanceof Error ? error.message || String(error) : String(error)
+
+export function pathEntryExists(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return false
+    throw error
+  }
+}
+
+export const WORKTREE_CLEANUP_FALLBACK_MS = 60_000

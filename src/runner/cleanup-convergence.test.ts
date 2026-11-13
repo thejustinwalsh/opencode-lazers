@@ -570,9 +570,11 @@ test("completed retained verification cleanup probes on fallback and after runti
   const reconcile = (candidate: TaskRuntime) =>
     (
       candidate as unknown as {
-        reconcileTerminalRetainedVerifications(fence: number): Promise<void>
+        retainedVerificationExecution: {
+          reconcileTerminalRetainedVerifications(fence: number): Promise<void>
+        }
       }
-    ).reconcileTerminalRetainedVerifications(1)
+    ).retainedVerificationExecution.reconcileTerminalRetainedVerifications(1)
 
   try {
     git(root, ["init", "--initial-branch=main"])
@@ -939,7 +941,9 @@ test("cleanup discovery exceeds the display window while unchanged holds skip ex
       requestTick: () => Promise.resolve(),
     })
     const internals = runtime as unknown as {
-      worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, workspace: string): string
+      worktreeCleanup: {
+        worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, workspace: string): string
+      }
     }
     for (const record of records) {
       const plan = store.plan(record.planID)!
@@ -959,7 +963,11 @@ test("cleanup discovery exceeds the display window while unchanged holds skip ex
               effect.kind === "worktree-remove" &&
               JSON.parse(effect.payload).workspace === workspace,
           )!
-        const retryFacts = internals.worktreeCleanupRetryFacts(plan, source, workspace)
+        const retryFacts = internals.worktreeCleanup.worktreeCleanupRetryFacts(
+          plan,
+          source,
+          workspace,
+        )
         repository.atomic((db) =>
           db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(
             JSON.stringify({
@@ -1284,10 +1292,16 @@ test("bounded native fallback detects an external dirty edit without deleting th
       requestTick: () => Promise.resolve(),
     })
     const internals = runtime as unknown as {
-      worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, directory: string): string
+      worktreeCleanup: {
+        worktreeCleanupRetryFacts(plan: PlanRow, source: EffectRow, directory: string): string
+      }
     }
     const source = store.effects(planID).find((effect) => effect.id === sourceID)!
-    const retryFacts = internals.worktreeCleanupRetryFacts(store.plan(planID)!, source, workspace)
+    const retryFacts = internals.worktreeCleanup.worktreeCleanupRetryFacts(
+      store.plan(planID)!,
+      source,
+      workspace,
+    )
     repository.atomic((db) =>
       db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(
         JSON.stringify({
@@ -1366,6 +1380,7 @@ test("bounded native fallback detects an external dirty edit without deleting th
     await runtime.tick()
     expect(counts()).toEqual(held)
 
+    rmSync(join(workspace, "untracked.txt"))
     workerSession.busy = true
     clock += 60_000
     await runtime.tick()
@@ -1378,7 +1393,6 @@ test("bounded native fallback detects an external dirty edit without deleting th
     expect(removeCalls).toBe(0)
 
     workerSession.busy = false
-    rmSync(join(workspace, "untracked.txt"))
     clock += 60_000
     await runtime.tick()
     expect(removeCalls).toBe(1)

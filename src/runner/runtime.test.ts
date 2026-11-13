@@ -3829,14 +3829,16 @@ test("F-S4-2 retirement preserves a live owner's location outside the display wi
     return "evicted"
   }
   const runtime = f.runtime as unknown as {
-    retireCleanedWorktreeLocation(
-      plan: { id: string },
-      workspace: string,
-      current: () => boolean,
-    ): Promise<string>
+    worktreeCleanup: {
+      retireCleanedWorktreeLocation(
+        plan: { id: string },
+        workspace: string,
+        current: () => boolean,
+      ): Promise<string>
+    }
   }
   expect(
-    await runtime.retireCleanedWorktreeLocation(
+    await runtime.worktreeCleanup.retireCleanedWorktreeLocation(
       { id: "another-cleanup" },
       attempt.workspace,
       () => true,
@@ -8261,16 +8263,18 @@ test("location retirement uses active project ownership outside the display plan
     return "not-loaded"
   }
   const internals = f.runtime as unknown as {
-    retireCleanedWorktreeLocation(
-      plan: NonNullable<ReturnType<typeof f.store.plan>>,
-      workspace: string,
-      cleanupCurrent: () => boolean,
-    ): Promise<string>
+    worktreeCleanup: {
+      retireCleanedWorktreeLocation(
+        plan: NonNullable<ReturnType<typeof f.store.plan>>,
+        workspace: string,
+        cleanupCurrent: () => boolean,
+      ): Promise<string>
+    }
   }
 
-  await expect(internals.retireCleanedWorktreeLocation(plan, workspace, () => true)).resolves.toBe(
-    "reserved-by-other-attempt",
-  )
+  await expect(
+    internals.worktreeCleanup.retireCleanedWorktreeLocation(plan, workspace, () => true),
+  ).resolves.toBe("reserved-by-other-attempt")
   expect(displayedPlans).not.toHaveBeenCalled()
   expect(inventoryReads).toBe(0)
   expect(retireCalls).toBe(0)
