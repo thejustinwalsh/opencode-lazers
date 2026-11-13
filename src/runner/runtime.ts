@@ -1,3 +1,9 @@
+import {
+  changeDispatchPause,
+  changeSchedule,
+  recordIntegration,
+  terminalPlanStates as terminal,
+} from "./plan-control.ts"
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
 import {
   messageID,
@@ -164,15 +170,6 @@ import {
   retainedProjectIdentity,
 } from "./retained-verification/procedure.ts"
 
-const terminal = new Set([
-  "accepted",
-  "failed",
-  "cancelled",
-  "exhausted",
-  "incorporated",
-  "integrated",
-  "cleanup-blocked",
-])
 const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 function interruptedCheckResourcesSettled(receipt: CheckReceipt): boolean {
@@ -5441,96 +5438,19 @@ export class TaskRuntime {
           version: this.store.plan(plan.id)!.version,
         }
       }
-      if (command.action === "integrated") {
-        if (command.taskID) {
-          const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-          if (node?.state !== "accepted" || !node.artifact)
-            throw new Error("Only an accepted task result can be recorded as integrated")
-          if (command.artifact !== node.artifact || !command.targetBranch || !command.reason)
-            throw new Error("Record the accepted task artifact, reviewed targetBranch and reason")
-          if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
-            throw new Error("The current checkout is not the reviewed target branch")
-          git(this.directory, ["merge-base", "--is-ancestor", node.artifact, "HEAD"])
-          const head = git(this.directory, ["rev-parse", "HEAD"])
-          this.store.record(plan.id, node.task_id, "TASK_INTEGRATION_RECORDED", {
-            artifact: node.artifact,
-            branch: command.targetBranch,
-            head,
-            reason: command.reason,
-          })
-          db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-          // A task source landing is not combined acceptance. Keep its artifact
-          // and workspace available to dependencies until normal plan cleanup.
-          return { status: "task-integration-recorded", version: plan.version + 1, head }
-        }
-        if (!["accepted", "cleanup-blocked"].includes(plan.state) || !plan.artifact)
-          throw new Error("Only an accepted result can be integrated")
-        if (command.artifact !== plan.artifact || !command.targetBranch || !command.reason)
-          throw new Error("Record the accepted artifact, reviewed targetBranch and reason")
-        if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
-          throw new Error("The current checkout is not the reviewed target branch")
-        git(this.directory, ["merge-base", "--is-ancestor", plan.artifact, "HEAD"])
-        this.store.record(plan.id, null, "INTEGRATION_RECORDED", {
-          artifact: plan.artifact,
-          branch: command.targetBranch,
-          head: git(this.directory, ["rev-parse", "HEAD"]),
-          reason: command.reason,
-        })
-        db.query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cleaning'),reason=NULL,version=version+1 WHERE id=?",
-        ).run(plan.id)
-        return { status: "cleanup-requested", version: this.store.plan(plan.id)!.version }
-      }
-      if (command.action === "pause" || command.action === "unpause") {
-        if (!this.validArchitect(ownerSession) || ownerSession.id !== plan.owner)
-          throw new Error("Pause controls require the current Architect")
-        if (terminal.has(plan.state) || ["cancelling", "cleaning"].includes(plan.state))
-          throw new Error("Plan has ended")
-        const untilPlans = command.resumeAfterPlans ?? []
-        if (command.action === "pause") this.store.validatePlanDependencies(untilPlans, plan.id)
-        this.store.setDispatchPause(
-          plan.id,
-          command.action === "pause"
-            ? { reason: command.reason ?? "Paused by Architect", untilPlans }
-            : null,
-          { caller, reason: command.reason },
-        )
-        return {
-          status: command.action === "pause" ? "paused" : "unpaused",
-          version: this.store.plan(plan.id)!.version,
-        }
-      }
-      if (command.action === "schedule") {
-        if (terminal.has(plan.state) || plan.state === "cancelling" || plan.state === "cleaning")
-          throw new Error("Plan has ended")
-        if (!command.reason) throw new Error("Scheduling changes require a reason")
-        const attempts = this.store.attempts(plan.id)
-        if (
-          attempts.length &&
-          (command.afterPlans !== undefined ||
-            command.baseCommit !== undefined ||
-            command.workspaceMode !== undefined)
-        )
-          throw new Error("Only priority may change after execution has started")
-        const updated = PlanInput.parse({
-          ...JSON.parse(plan.body),
-          ...(command.priority !== undefined ? { priority: command.priority } : {}),
-          ...(command.afterPlans !== undefined ? { afterPlans: command.afterPlans } : {}),
-          ...(command.baseCommit !== undefined ? { baseCommit: command.baseCommit } : {}),
-          ...(command.workspaceMode !== undefined ? { workspaceMode: command.workspaceMode } : {}),
-        })
-        this.store.validatePlanDependencies(updated.afterPlans ?? [], plan.id)
-        if (command.baseCommit)
-          git(this.directory, ["merge-base", "--is-ancestor", command.baseCommit, "HEAD"])
-        this.store.revisePlan(plan, updated, "SCHEDULE_UPDATED", {
+      if (command.action === "integrated")
+        return recordIntegration(this.store, db, plan, command, this.directory)
+      if (command.action === "pause" || command.action === "unpause")
+        return changeDispatchPause(
+          this.store,
+          plan,
+          command,
           caller,
-          reason: command.reason,
-          priority: updated.priority ?? 0,
-          afterPlans: updated.afterPlans ?? [],
-          baseCommit: updated.baseCommit,
-        })
-        return { status: "scheduled", version: this.store.plan(plan.id)!.version }
-      }
+          ownerSession,
+          this.validArchitect(ownerSession),
+        )
+      if (command.action === "schedule")
+        return changeSchedule(this.store, plan, command, caller, this.directory)
       if (command.action === "audit")
         return {
           status: "audited",
