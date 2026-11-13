@@ -327,7 +327,9 @@ export function terminalWorkerContinuationProblem(
     !verifying &&
     (stopObservation!.inputID !== worker.turn.inputID ||
       planHoldObservation!.inputID !== worker.turn.inputID ||
-      planHoldObservation!.turnState !== worker.turn.state)
+      (planHoldObservation!.turnState !== worker.turn.state &&
+        // Older adapters called a pre-response provider failure pending.
+        !(nativeOutcome === "failed" && planHoldObservation!.turnState === "pending")))
   )
     return "Terminal worker hold does not match the current assigned input lineage"
 

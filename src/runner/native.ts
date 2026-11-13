@@ -830,6 +830,17 @@ export function nativeHost(
         !pendingInteraction &&
         !observationUnstable &&
         (busyAt > idleAt || unfinishedAssistant)
+      // Provider admission can fail before OpenCode creates an assistant message.
+      const terminalMarker =
+        lastInputIndex >= 0
+          ? messages.slice(lastInputIndex + 1).findLast((message) => message.type === "idle")
+          : undefined
+      const failedBeforeResponse =
+        response === undefined &&
+        latest.outcome === "failed" &&
+        terminalMarker?.outcome === "failed" &&
+        idleAt > 0 &&
+        DateTime.toEpochMillis(terminalMarker.time.created) === idleAt
       const turn = options?.messages
         ? {
             inputID: currentInputID ?? null,
@@ -837,7 +848,7 @@ export function nativeHost(
               ? "unknown"
               : interrupted
                 ? "interrupted"
-                : response === undefined
+                : response === undefined && !failedBeforeResponse
                   ? "pending"
                   : unfinishedAssistant
                     ? "interrupted"

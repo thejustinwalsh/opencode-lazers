@@ -1586,6 +1586,24 @@ test("compacted worker with no response remains pending and no durable input sta
   }
 })
 
+test("a current failed idle marker completes an input that never received an assistant response", async () => {
+  const now = DateTime.nowUnsafe()
+  for (const markerTime of [now, DateTime.makeUnsafe(DateTime.toEpochMillis(now) - 1)]) {
+    const fixture = nativeLivenessFixture({
+      idle: now,
+      outcome: "failed",
+      messages: [
+        { id: "msg_assigned", type: "user", time: { created: now } },
+        { id: "msg_idle", type: "idle", outcome: "failed", time: { created: markerTime } },
+      ],
+    })
+    expect(await fixture.host.session("ses_worker", { messages: true })).toMatchObject({
+      outcome: "failed",
+      turn: { inputID: "msg_assigned", state: markerTime === now ? "completed" : "pending" },
+    })
+  }
+})
+
 test("foreground inventory overrides idle-looking timestamps and cached discovery is reused", async () => {
   const now = DateTime.nowUnsafe()
   const fixture = nativeLivenessFixture({
