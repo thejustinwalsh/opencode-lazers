@@ -163,6 +163,20 @@ dictation and speech must remain usable throughout. Production active sessions,
 queues, credentials and model caches are outside this work's mutation boundary.
 Automated fixtures supplement but never replace real GPU/native Desktop checks.
 
+## ONNX and ruNNtime performance comparison
+
+After both quantized models pass Desktop qualification, benchmark each model
+on ONNX Runtime Web WebGPU and ruNNtime WebGPU in the same isolated Desktop
+build. Use the same checkpoint, equivalent quantized weights, and identical
+inputs and settings. Verify output parity before comparing performance. If
+equivalent exports are unavailable, report that limitation without treating
+a different checkpoint or precision as a runtime comparison.
+
+Repeat cold and warm loads, record inference latency and throughput for the
+supported workloads, and measure peak and post-unload Desktop memory. Report
+tracked GPU buffers and process memory separately. Retain the model revisions,
+test inputs, run counts and raw measurements alongside the comparison.
+
 ### Quality decisions
 
 Freeze a small independent reference corpus before evaluating candidates: all
