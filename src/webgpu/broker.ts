@@ -7,8 +7,8 @@ export const failed = (error: string): InferenceResult => ({
   ok: false,
   text: "",
   error: error.slice(0, 2_000),
-  promptTokens: 0,
-  completionTokens: 0,
+  promptTokens: null,
+  completionTokens: null,
 })
 
 export class RendererOwnershipLost extends Error {

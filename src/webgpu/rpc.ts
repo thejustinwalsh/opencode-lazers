@@ -30,8 +30,12 @@ export const GenerationResult = Schema.Struct({
   ok: Schema.Boolean,
   text: Schema.String.check(Schema.isMaxLength(64_000)),
   error: Schema.String.check(Schema.isMaxLength(2_000)),
-  promptTokens: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-  completionTokens: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  promptTokens: Schema.NullOr(
+    Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  ),
+  completionTokens: Schema.NullOr(
+    Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  ),
   audioBase64: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000_000))),
 })
 export type InferenceResult = typeof GenerationResult.Type

@@ -3,6 +3,9 @@ export const MODEL_REVISION = "3d29af2ad166f8299c2d820937e47dc0add20ffc"
 export const ENGINE_REVISION = "9c2fb176f4c222da394e8037d3c0d0837f70b978"
 export const ENGINE_SHA256 = "77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb"
 export const ENGINE_URL = `https://huggingface.co/spaces/LiquidAI/LFM3-Omni-2B-WebGPU/resolve/${ENGINE_REVISION}/Lfm3OmniForConditionalGeneration.js`
+export const RUNNTIME_REVISION = "4bec7104f2e70290982864963f6b194e6d5439fe"
+export const LFM3_TOKENIZER_REVISION = "21d75123f86c1f7ffb4bef1ea202710c4e7ebe67"
+export const LFM3_TOKENIZER_URL = `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/${LFM3_TOKENIZER_REVISION}/tokenizer.json`
 
 export const MODEL_FILES = [
   {

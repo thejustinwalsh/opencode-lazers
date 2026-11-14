@@ -11,6 +11,8 @@ import {
   DECISION_REVISION,
   MODEL_BYTES,
   MODEL_REVISION,
+  LFM3_TOKENIZER_REVISION,
+  RUNNTIME_REVISION,
 } from "./webgpu/manifest.ts"
 import type { Decision } from "./webgpu/decisions.ts"
 import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
@@ -43,6 +45,9 @@ export default Plugin.define({
     ...radarStores,
     voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
       selected: DEFAULT_VOICE,
+    }),
+    modelRoute: Store.global(Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }), {
+      selected: "liquid",
     }),
     runtime: Store.global(
       Schema.Struct({
@@ -197,6 +202,7 @@ export default Plugin.define({
       () => ctx.stores.runtime.value?.keepAliveMs ?? -1,
       () => ctx.stores.voice.value?.selected ?? DEFAULT_VOICE,
       features,
+      { chatRoute: () => ctx.stores.modelRoute.value?.selected ?? "liquid" },
     )
     registerDictation(ctx, runtime)
     registerReadAloud(ctx, runtime)
@@ -303,7 +309,7 @@ export default Plugin.define({
           const result = await runtime.generate(prompt(), test.signal)
           if (!result.ok) throw new Error(result.error)
           setReply(
-            `${result.text}\n\n${result.promptTokens} input tokens · ${result.completionTokens} output tokens`,
+            `${result.text}\n\n${result.promptTokens ?? "unknown"} input tokens · ${result.completionTokens ?? "unknown"} output tokens`,
           )
         })
       const clear = async () => {
@@ -464,7 +470,38 @@ export default Plugin.define({
               <Show when={runtime.gpu()}>
                 <p class="lazers-local-meta">{runtime.gpu()}</p>
               </Show>
+              <Show when={runtime.modelIdentity()}>
+                {(identity) => (
+                  <p class="lazers-local-meta">
+                    {identity().backend} · {identity().repository} · {identity().precision} · model{" "}
+                    <code>{identity().revision}</code> · runtime{" "}
+                    <code>{identity().runtimeRevision}</code>
+                    <br />
+                    Artifacts: <code>{identity().artifacts}</code>
+                  </p>
+                )}
+              </Show>
               <p>Enabled local features load their model automatically and share GPU memory.</p>
+              <Ui.Menu
+                label={`Chat and audio route: ${ctx.stores.modelRoute.value?.selected === "runntime" ? "ruNNtime Omni (unqualified)" : "Liquid WebGPU (default)"}`}
+                trigger="button"
+                disabled={!settingsReady()}
+                items={[
+                  {
+                    label: "Liquid WebGPU (default)",
+                    onSelect: () => ctx.stores.modelRoute.set({ selected: "liquid" }),
+                  },
+                  {
+                    label: "ruNNtime Omni (unqualified)",
+                    onSelect: () => ctx.stores.modelRoute.set({ selected: "runntime" }),
+                  },
+                ]}
+              />
+              <p class="lazers-local-meta">
+                Route changes unload the active chat/audio model before loading the selected route.
+                ruNNtime failures remain visible and never fall back automatically. System One
+                decisions remain on d1.
+              </p>
               <Ui.Menu
                 label={`Unload when idle: ${ctx.stores.runtime.value?.keepAliveMs === 60_000 ? "1 minute" : ctx.stores.runtime.value?.keepAliveMs === 300_000 ? "5 minutes" : ctx.stores.runtime.value?.keepAliveMs === 900_000 ? "15 minutes" : "Never"}`}
                 trigger="button"
@@ -481,7 +518,10 @@ export default Plugin.define({
             </section>
             <section aria-labelledby="lazers-voice-title">
               <h2 id="lazers-voice-title">Voice</h2>
-              <p>Local read aloud and speech tests use this voice.</p>
+              <p>
+                Liquid read aloud uses this voice. ruNNtime Omni currently uses its public API
+                default, American English female.
+              </p>
               <Ui.Menu
                 label={`Voice: ${VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label}`}
                 trigger="button"
@@ -646,7 +686,7 @@ export default Plugin.define({
                     Unload from GPU
                   </Ui.Button>
                   <Ui.Button
-                    disabled={runtime.resident() !== "decision" || runtime.state() !== "ready"}
+                    disabled={!runtime.canSimulateDeviceLoss() || runtime.state() !== "ready"}
                     onClick={runtime.simulateDeviceLoss}
                   >
                     Test GPU recovery
@@ -702,6 +742,11 @@ export default Plugin.define({
                 <p class="lazers-local-meta">
                   Q4_K_M model + Q8 projector · verified immutable revision{" "}
                   <code>{MODEL_REVISION.slice(0, 8)}</code>
+                </p>
+                <p class="lazers-local-meta">
+                  ruNNtime public API: exact Q4_K_M language and Q8_0 projector pair · code revision{" "}
+                  <code>{RUNNTIME_REVISION.slice(0, 8)}</code> · tokenizer revision{" "}
+                  <code>{LFM3_TOKENIZER_REVISION.slice(0, 8)}</code>
                 </p>
                 <p class="lazers-local-meta">
                   d1-Omni-2B Q4f16 decoder · text decisions · revision{" "}

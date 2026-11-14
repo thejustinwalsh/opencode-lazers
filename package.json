@@ -33,6 +33,7 @@
     "effect": "4.0.6",
     "happy-dom": "^21.0.4",
     "solid-js": "1.9.18",
+    "typegpu": "0.12.5",
     "typescript": "7.0.2",
     "vite": "8.3.5",
     "vite-plugin-solid": "2.11.15"

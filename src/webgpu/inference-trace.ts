@@ -27,6 +27,7 @@ export type TraceStage =
   | "error"
 
 export type TraceProvider = "webgpu" | "wasm" | "unknown"
+export type TraceBackend = "liquid" | "runntime" | "d1" | "unknown"
 
 export type TraceMode = "text" | "transcribe" | "speak" | "systemone"
 
@@ -51,6 +52,12 @@ export type InferenceTraceEvent = {
   active?: boolean
   configuredEP: TraceProvider
   observedEP: TraceProvider
+  backend?: TraceBackend
+  modelRepository?: string
+  modelRevision?: string
+  modelPrecision?: string
+  modelArtifacts?: string
+  runtimeRevision?: string
   contextCapacityTokens?: number
   configuredMaxTokens?: number
   actualInputTokens?: number
@@ -74,6 +81,12 @@ export type InferenceTraceStart = {
   feature?: TraceFeature
   configuredEP?: TraceProvider
   observedEP?: TraceProvider
+  backend?: TraceBackend
+  modelRepository?: string
+  modelRevision?: string
+  modelPrecision?: string
+  modelArtifacts?: string
+  runtimeRevision?: string
   contextCapacityTokens?: number
   configuredMaxTokens?: number
 }
@@ -248,6 +261,22 @@ export class InferenceTraceSpan {
       deltaMs: boundedInteger(current - this.#last, MAX_TIME) ?? 0,
       configuredEP: provider(mark?.configuredEP ?? this.request.configuredEP),
       observedEP: provider(mark?.observedEP ?? this.request.observedEP),
+      ...(this.request.backend ? { backend: this.request.backend } : {}),
+      ...(this.request.modelRepository
+        ? { modelRepository: this.request.modelRepository.slice(0, 256) }
+        : {}),
+      ...(this.request.modelRevision
+        ? { modelRevision: this.request.modelRevision.slice(0, 128) }
+        : {}),
+      ...(this.request.modelPrecision
+        ? { modelPrecision: this.request.modelPrecision.slice(0, 64) }
+        : {}),
+      ...(this.request.modelArtifacts
+        ? { modelArtifacts: this.request.modelArtifacts.slice(0, 1_024) }
+        : {}),
+      ...(this.request.runtimeRevision
+        ? { runtimeRevision: this.request.runtimeRevision.slice(0, 128) }
+        : {}),
       ...(this.request.contextCapacityTokens === undefined
         ? {}
         : {
