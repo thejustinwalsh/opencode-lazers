@@ -14,6 +14,7 @@ import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { Accessor, JSX } from "solid-js"
+import type { TaskProposal } from "../task.ts"
 import { Tasks } from "./contract.ts"
 import { Observability } from "../observability/contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
@@ -83,6 +84,18 @@ export type TaskTrajectoryOpener = (
   session: PanelProps["session"],
   target: TaskTrajectoryRequest,
 ) => void
+
+export function verificationTimingSummary(check: TaskProposal["verification"][number]): string {
+  const timing = (value: number | undefined) =>
+    value === undefined ? "project default (not resolved here)" : `${value / 1000}s (authored)`
+  const parts = [
+    `Inactivity allowance: ${timing(check.inactivityTimeoutMs)}`,
+    `Hard backstop: ${timing(check.hardTimeoutMs)}`,
+  ]
+  if (check.timeoutMs !== undefined)
+    parts.push(`Legacy timeout (historical): ${check.timeoutMs / 1000}s (not used for execution)`)
+  return parts.join(" · ")
+}
 
 function distinctReasons(reasons: readonly (string | null | undefined)[]) {
   return [...new Set(reasons.filter((reason): reason is string => Boolean(reason?.trim())))]
@@ -1496,7 +1509,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                         {(item) => (
                           <div>
                             <p>
-                              {item.id} · timeout {item.timeoutMs / 1000}s
+                              {item.id} · {verificationTimingSummary(item)}
                             </p>
                             <Ui.Code content={item.command} language="bash" />
                           </div>
