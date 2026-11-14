@@ -15,6 +15,8 @@ import {
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import { checkSucceeded } from "./checks.ts"
+import { verificationCheckWithDefaults } from "./verification-timeout.ts"
+import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 import { PlanInput } from "./schema.ts"
 import type { PlanRow, AttemptRow, AdoptionRow, AdoptionCheckRow } from "./store.ts"
 import { canonicalProjectWorktreePath } from "./workspace-location.ts"
@@ -45,6 +47,7 @@ export class AdoptionExecution {
       startCheckActivity: TaskRuntime["startCheckActivity"]
       store: TaskRuntime["store"]
       validArchitect: TaskRuntime["validArchitect"]
+      verificationTimeoutDefaults: VerificationTimeoutDefaults
     },
   ) {}
 
@@ -306,11 +309,16 @@ export class AdoptionExecution {
             adoption.id,
             `${phase}-${check.id}.json`,
           )
+          const effectiveCheck = verificationCheckWithDefaults(
+            check,
+            this.runtime.verificationTimeoutDefaults,
+          )
           const expectedInputFingerprint = fingerprint({
             adoptionID: adoption.id,
             adoptionInputFingerprint: adoption.input_fingerprint,
             phase,
-            check,
+            authoredCheck: check,
+            check: effectiveCheck,
             workspace,
             artifact: base,
             environmentIdentity: row.environment_identity,
@@ -323,7 +331,8 @@ export class AdoptionExecution {
           )
             return false
           try {
-            if (fingerprint(JSON.parse(row.check_json)) !== fingerprint(check)) return false
+            if (fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck))
+              return false
             const receipt =
               row.state === "completed" && row.receipt
                 ? (JSON.parse(row.receipt) as CheckReceipt)
@@ -455,6 +464,10 @@ export class AdoptionExecution {
     const receipts: CheckReceipt[] = []
     for (const check of checks) {
       if (!this.adoptionIsLive(adoption.id)) return undefined
+      const effectiveCheck = verificationCheckWithDefaults(
+        check,
+        this.runtime.verificationTimeoutDefaults,
+      )
       const row = this.runtime.store
         .adoptionChecks(adoption.id, phase)
         .find((item) => item.check_id === check.id)
@@ -463,7 +476,8 @@ export class AdoptionExecution {
         adoptionID: adoption.id,
         adoptionInputFingerprint: adoption.input_fingerprint,
         phase,
-        check,
+        authoredCheck: check,
+        check: effectiveCheck,
         workspace,
         artifact,
         environmentIdentity,
@@ -489,7 +503,7 @@ export class AdoptionExecution {
         if (
           row.workspace !== workspace ||
           row.artifact !== artifact ||
-          fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
+          fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck) ||
           row.receipt_path !== receiptPath
         ) {
           this.holdAdoption(
@@ -510,7 +524,7 @@ export class AdoptionExecution {
         } catch {
           previous = undefined
         }
-        if (previous && this.adoptionCheckReceiptMatches(previous, row, check)) {
+        if (previous && this.adoptionCheckReceiptMatches(previous, row, effectiveCheck)) {
           if (row.state !== "completed") {
             this.runtime.store.completeAdoptionCheck(adoption.id, phase, check.id, previous, {
               owner: this.runtime.owner,
@@ -579,7 +593,7 @@ export class AdoptionExecution {
         adoptionID: adoption.id,
         phase,
         checkID: check.id,
-        check,
+        check: effectiveCheck,
         workspace,
         artifact,
         inputFingerprint,
@@ -610,7 +624,8 @@ export class AdoptionExecution {
             phase,
             checkID: check.id,
           },
-          run: (signal) => runDeclaredCheck(workspace, artifact, check, receiptPath, { signal }),
+          run: (signal) =>
+            runDeclaredCheck(workspace, artifact, effectiveCheck, receiptPath, { signal }),
         })
         return undefined
       } catch (error) {

@@ -13,7 +13,7 @@ const safeTarget = (value: string) =>
 
 function recognizedStep(command: string): boolean {
   if (qualitySteps.has(command)) return true
-  if (/^bun run [A-Za-z0-9][A-Za-z0-9._:-]*$/.test(command)) return true
+  if (/^bun run(?: --silent)? [A-Za-z0-9][A-Za-z0-9._:-]*$/.test(command)) return true
   const scopedFormat = /^bun fmt(?: --check)? (.+)$/.exec(command)
   if (scopedFormat) return scopedFormat[1]!.split(" ").every(safeTarget)
   const tests = /^bun test(?: (.+))?$/.exec(command)

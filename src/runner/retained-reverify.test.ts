@@ -19,7 +19,7 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { git } from "./artifacts.ts"
+import { checkResourcesSettled, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import {
   verificationActivitiesForDatabase,
@@ -46,6 +46,8 @@ import {
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
 import {
   registerRetainedVerificationResources,
+  retainedVerification,
+  retainedVerificationChecks,
   saveRetainedVerification,
   updateRetainedVerificationResourceIdentity,
 } from "./retained-verification/store.ts"
@@ -67,6 +69,11 @@ function fixture(
   options: {
     taskCheckCommand?: string
     combinedCheckCommand?: string
+    taskCheckInactivityTimeoutMs?: number
+    taskCheckHardTimeoutMs?: number
+    combinedCheckInactivityTimeoutMs?: number
+    combinedCheckHardTimeoutMs?: number
+    verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     failRetainedCleanup?: boolean
     humanTaskEvidence?: boolean
     retainedDependencyInstaller?: RetainedDependencyInstaller
@@ -203,6 +210,12 @@ function fixture(
         options.taskCheckCommand ??
         "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
       timeoutMs: 10_000,
+      ...(options.taskCheckInactivityTimeoutMs === undefined
+        ? {}
+        : { inactivityTimeoutMs: options.taskCheckInactivityTimeoutMs }),
+      ...(options.taskCheckHardTimeoutMs === undefined
+        ? {}
+        : { hardTimeoutMs: options.taskCheckHardTimeoutMs }),
     },
   ]
   proposal.acceptance = [
@@ -286,6 +299,12 @@ function fixture(
             options.combinedCheckCommand ??
             "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
           timeoutMs: 10_000,
+          ...(options.combinedCheckInactivityTimeoutMs === undefined
+            ? {}
+            : { inactivityTimeoutMs: options.combinedCheckInactivityTimeoutMs }),
+          ...(options.combinedCheckHardTimeoutMs === undefined
+            ? {}
+            : { hardTimeoutMs: options.combinedCheckHardTimeoutMs }),
         },
       ],
       acceptance: [
@@ -445,6 +464,9 @@ function fixture(
   }
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     ...(options.requestTick === undefined ? {} : { requestTick: options.requestTick }),
+    ...(options.verificationTimeoutDefaults === undefined
+      ? {}
+      : { verificationTimeoutDefaults: options.verificationTimeoutDefaults }),
     retainedDependencyInstaller: options.retainedDependencyInstaller,
   })
   cleanups.push(async () => {
@@ -671,6 +693,40 @@ function blockSourceQuarantinePlan(
   )
   if (changes !== 1) throw new Error("Source-quarantine fixture plan was not running")
   f.store.record(f.planID, null, "BLOCKED", { reason })
+}
+
+function retainedTimingContinuationInput(
+  f: Awaited<ReturnType<typeof sourceQuarantinedVerifyingFixture>>,
+  operation: NonNullable<ReturnType<typeof retainedVerification>>,
+  phase: "task" | "combined",
+  requestID: string,
+  timeouts = { inactivityTimeoutMs: 10_000, hardTimeoutMs: 30_000 },
+) {
+  const plan = f.store.plan(f.planID)
+  const check = f.store.atomic((db) =>
+    retainedVerificationChecks(db, operation.id, phase).find(
+      (candidate) => candidate.state === "completed",
+    ),
+  )
+  if (!plan || !check) throw new Error("Retained continuation requires a held, recorded check")
+  return {
+    requestID,
+    planID: f.planID,
+    expectedVersion: plan.version,
+    action: "extend-verification-deadline" as const,
+    projectID: "project",
+    planRevision: plan.revision,
+    taskID: operation.taskID,
+    taskRevision: operation.taskRevision,
+    attemptID: operation.attemptID,
+    verificationPhase: phase,
+    checkID: check.checkID,
+    artifact: check.artifact,
+    retainedVerificationID: operation.id,
+    retainedGeneration: operation.generation,
+    ...timeouts,
+    reason: "Continue this exact settled retained timeout without changing its candidate",
+  }
 }
 
 function gatedRetainedCheckScript(): string {
@@ -1641,7 +1697,10 @@ function retainedVerifyCommand(f: Awaited<ReturnType<typeof failedFixture>>, req
 
 test("registered verify-retained checks a sealed quarantined candidate without settling its source", async () => {
   const check = "bun test src/runner/retained-check.test.ts"
-  const f = await sourceQuarantinedVerifyingFixture({ combinedHumanEvidence: true })
+  const f = await sourceQuarantinedVerifyingFixture({
+    combinedHumanEvidence: true,
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 20_000, hardTimeoutMs: 40_000 },
+  })
   const request = retainedVerifyCommand(f, "verify-sealed-source-candidate")
   const prompts = structuredClone(f.prompts)
   const created = [...f.created]
@@ -1720,6 +1779,15 @@ test("registered verify-retained checks a sealed quarantined candidate without s
     expect(receipt.command).toBe(check)
     expect(receipt.exitCode).toBe(0)
     expect(receipt.cwd).not.toBe(f.attempt.workspace)
+    expect(receipt.inactivityTimeoutMs).toBe(20_000)
+    expect(receipt.hardTimeoutMs).toBe(40_000)
+    expect(receipt.verificationDeadline).toMatchObject({
+      authoredTimeoutMs: 10_000,
+      effectiveInactivityTimeoutMs: 20_000,
+      effectiveHardTimeoutMs: 40_000,
+      inactivityProvenance: "project-default",
+      hardTimeoutProvenance: "project-default",
+    })
   }
 
   expect(await f.control.execute(request)).toEqual(requested)
@@ -1759,7 +1827,9 @@ test("registered verify-retained checks a sealed quarantined candidate without s
   f.store.repository.close()
   const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project")
+  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 20_000, hardTimeoutMs: 40_000 },
+  })
   cleanups.push(async () => {
     await reopenedRuntime.stop()
     reopenedRepository.close()
@@ -1808,7 +1878,7 @@ test("registered verify-retained checks a sealed quarantined candidate without s
   expect(reopenedStore.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
     f.originalAttempt,
   )
-})
+}, 120_000)
 
 test("registered verify-retained accepts a reassigned owner after reopen without changing quarantine provenance", async () => {
   const f = await sourceQuarantinedVerifyingFixture({ combinedHumanEvidence: true })
@@ -2017,6 +2087,396 @@ test("stopped-plan verify-retained binds and accepts a sealed quarantined candid
     ),
   ).toEqual(checks)
 })
+
+test("the current owner continues an exact cancelled-held retained task timeout without replacing its candidate", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({
+    requestTick: () => Promise.resolve(),
+    taskCheckInactivityTimeoutMs: 1,
+    taskCheckHardTimeoutMs: 1,
+  })
+  const prompts = structuredClone(f.prompts)
+  const acceptance = structuredClone(f.task.proposal.acceptance)
+  const requested = await f.control.execute(
+    retainedVerifyCommand(f, "reserve-timing-continuation-task-check"),
+  )
+  const operationID = String(requested.operationID)
+  await waitForFixtureCondition(f, "settled retained task timeout", () => {
+    const operation = f.store.atomic((db) => retainedVerification(db, operationID))
+    const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
+    if (
+      !operation ||
+      !check?.receipt ||
+      check.state !== "completed" ||
+      check.cleanupState !== "complete"
+    )
+      return false
+    const receipt = JSON.parse(check.receipt) as CheckReceipt
+    return operation.state === "held" && receipt.timedOut && checkResourcesSettled(receipt)
+  })
+  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
+  const failedCheck = f.store.atomic(
+    (db) => retainedVerificationChecks(db, operationID, "task")[0],
+  )!
+  const priorReceipt = JSON.parse(failedCheck.receipt!) as CheckReceipt
+  expect(priorReceipt.timedOut).toBe(true)
+  expect(priorReceipt.stopCause).toMatch(/^(?:inactivity|hard-backstop)$/)
+
+  await f.control.execute({
+    requestID: "cancel-held-timeout-before-continue",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "cancel-retained-verification",
+    retainedVerificationID: operation.id,
+    reason: "Preserve the settled timeout while stopping the retained operation",
+  })
+  expect(f.store.atomic((db) => retainedVerification(db, operation.id))?.state).toBe("cancelled")
+  const continuation = retainedTimingContinuationInput(
+    f,
+    f.store.atomic((db) => retainedVerification(db, operation.id))!,
+    "task",
+    "continue-cancelled-held-task-check",
+  )
+
+  await expect(
+    f.control.execute({
+      ...continuation,
+      requestID: "reject-stale-retained-generation",
+      retainedGeneration: operation.generation + 1,
+    }),
+  ).rejects.toThrow("current owner and candidate")
+  await expect(
+    f.control.execute({
+      ...continuation,
+      requestID: "reject-retargeted-retained-candidate",
+      artifact: "f".repeat(40),
+    }),
+  ).rejects.toThrow("exact candidate workspace")
+  await expect(
+    f.runtime.command({ ...continuation, requestID: "reject-foreign-owner" }, "owner2"),
+  ).rejects.toThrow("Only the plan owner")
+  await expect(
+    f.control.execute({
+      ...continuation,
+      requestID: "reject-changed-task",
+      taskID: crypto.randomUUID(),
+    }),
+  ).rejects.toThrow()
+  await expect(
+    f.control.execute({
+      ...continuation,
+      requestID: "reject-changed-attempt",
+      attemptID: crypto.randomUUID(),
+    }),
+  ).rejects.toThrow()
+  await expect(
+    f.control.execute({
+      ...continuation,
+      requestID: "reject-changed-operation",
+      retainedVerificationID: crypto.randomUUID(),
+    }),
+  ).rejects.toThrow()
+  await expect(
+    f.control.execute({
+      ...continuation,
+      requestID: "reject-changed-phase",
+      verificationPhase: "combined",
+    }),
+  ).rejects.toThrow()
+
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_retained_verification_checks SET check_json=? WHERE operation_id=? AND phase='task' AND check_id=?",
+      )
+      .run(
+        JSON.stringify({ ...JSON.parse(failedCheck.checkJSON), command: "false" }),
+        operation.id,
+        failedCheck.checkID,
+      ),
+  )
+  await expect(
+    f.control.execute({ ...continuation, requestID: "reject-changed-command" }),
+  ).rejects.toThrow("current declared command")
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_retained_verification_checks SET check_json=? WHERE operation_id=? AND phase='task' AND check_id=?",
+      )
+      .run(failedCheck.checkJSON, operation.id, failedCheck.checkID),
+  )
+
+  for (const [resourceName, state] of [
+    ["continuation-active-resource", "active"],
+    ["continuation-uncertain-resource", "uncertain"],
+  ] as const) {
+    f.store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_retained_verification_resources(
+        project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,
+        device,inode,state,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,?, ?,?,?)`,
+      ).run(
+        f.root,
+        operation.id,
+        operation.generation,
+        "task",
+        failedCheck.checkID,
+        resourceName,
+        join(f.state, `${resourceName}-path`),
+        1,
+        1,
+        state,
+        Date.now(),
+        Date.now(),
+      )
+    })
+    await expect(
+      f.control.execute({ ...continuation, requestID: `reject-${resourceName}` }),
+    ).rejects.toThrow("resource obligations")
+    f.store.atomic((db) =>
+      db
+        .query(
+          "DELETE FROM runner_retained_verification_resources WHERE operation_id=? AND resource_name=?",
+        )
+        .run(operation.id, resourceName),
+    )
+  }
+
+  const result = await f.control.execute(continuation)
+  expect(result.status).toBe("retained-verification-check-continued")
+  expect(await f.control.execute(continuation)).toEqual(result)
+  await f.runtime.stop()
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
+  )
+  f.store.repository.close()
+  const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project")
+  cleanups.push(async () => {
+    await reopenedRuntime.stop()
+    reopenedRepository.close()
+  })
+  f.store = reopenedStore
+  f.runtime = reopenedRuntime
+  f.control = await registeredPlanCommand(reopenedRuntime)
+  expect(await f.control.execute(continuation)).toEqual(result)
+  await waitForFixtureCondition(f, "continued retained task candidate", () => {
+    const current = f.store.atomic((db) => retainedVerification(db, operation.id))
+    return current?.state === "task-accepted" || current?.state === "accepted"
+  })
+
+  const updatedOperation = f.store.atomic((db) => retainedVerification(db, operation.id))!
+  const updatedCheck = f.store.atomic(
+    (db) => retainedVerificationChecks(db, operation.id, "task")[0],
+  )!
+  const actualReceipt = JSON.parse(updatedCheck.receipt!) as CheckReceipt
+  const retryAuthorization = f.store.latestTransition<{
+    priorReceipt?: CheckReceipt
+    priorReceiptFingerprint?: string
+    candidateArtifact?: string
+    commandFingerprint?: string
+  }>(f.planID, f.task.id, "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED")
+  expect(updatedOperation.artifact).toBe(operation.artifact)
+  expect(updatedOperation.state).toMatch(/^(?:task-accepted|accepted)$/)
+  expect(updatedCheck.cleanupState).toBe("complete")
+  expect(actualReceipt).toMatchObject({
+    id: failedCheck.checkID,
+    command: JSON.parse(failedCheck.checkJSON).command,
+    artifact: operation.artifact,
+    timedOut: false,
+    inactivityTimeoutMs: 10_000,
+    hardTimeoutMs: 30_000,
+    verificationDeadline: {
+      effectiveInactivityTimeoutMs: 10_000,
+      effectiveHardTimeoutMs: 30_000,
+      inactivityProvenance: "amendment",
+      hardTimeoutProvenance: "amendment",
+    },
+  })
+  expect(retryAuthorization).toMatchObject({
+    priorReceipt,
+    priorReceiptFingerprint: expect.any(String),
+    candidateArtifact: operation.artifact,
+    commandFingerprint: expect.any(String),
+  })
+  expect(f.task.proposal.acceptance).toEqual(acceptance)
+  expect(f.prompts).toEqual(prompts)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)?.artifact).toBe(
+    f.artifact,
+  )
+}, 120_000)
+
+test.each(["active-cancel", "unrelated-hold", "cancelled-receipt"] as const)(
+  "cancelled retained continuation rejects stale timeout evidence after %s",
+  async (scenario) => {
+    const f = await sourceQuarantinedVerifyingFixture({
+      requestTick: () => Promise.resolve(),
+      taskCheckInactivityTimeoutMs: 1,
+      taskCheckHardTimeoutMs: 1,
+    })
+    const requested = await f.control.execute(
+      retainedVerifyCommand(f, `reserve-stale-timeout-${scenario}`),
+    )
+    const operationID = String(requested.operationID)
+    await waitForFixtureCondition(f, "settled retained task timeout", () => {
+      const operation = f.store.atomic((db) => retainedVerification(db, operationID))
+      const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
+      if (!operation || !check?.receipt || operation.state !== "held") return false
+      const receipt = JSON.parse(check.receipt) as CheckReceipt
+      return receipt.timedOut && checkResourcesSettled(receipt)
+    })
+
+    const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
+    if (scenario === "active-cancel") {
+      f.store.atomic((db) =>
+        saveRetainedVerification(db, { ...operation, state: "task-checks", holdReason: null }),
+      )
+    } else if (scenario === "unrelated-hold") {
+      const reason = "An unrelated retained verification hold"
+      f.store.atomic((db) =>
+        saveRetainedVerification(db, { ...operation, state: "held", holdReason: reason }),
+      )
+      f.store.record(f.planID, f.task.id, "RETAINED_VERIFICATION_HELD", {
+        operationID: operation.id,
+        generation: operation.generation,
+        reason,
+        originalAttemptPreserved: true,
+      })
+    }
+
+    await f.control.execute({
+      requestID: `cancel-stale-timeout-${scenario}`,
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "cancel-retained-verification",
+      retainedVerificationID: operation.id,
+      reason: "Stop this retained operation without authorizing a timeout retry",
+    })
+    const cancelled = f.store.atomic((db) => retainedVerification(db, operation.id))!
+    expect(cancelled.state).toBe("cancelled")
+
+    if (scenario === "cancelled-receipt") {
+      const check = f.store.atomic((db) => retainedVerificationChecks(db, operation.id, "task")[0])!
+      const prior = JSON.parse(check.receipt!) as CheckReceipt
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_retained_verification_checks SET receipt=? WHERE operation_id=? AND phase='task' AND check_id=?",
+          )
+          .run(
+            JSON.stringify({
+              ...prior,
+              exitCode: null,
+              timedOut: false,
+              aborted: true,
+              stopCause: "cancelled",
+            }),
+            operation.id,
+            check.checkID,
+          ),
+      )
+    }
+
+    const continuation = retainedTimingContinuationInput(
+      f,
+      cancelled,
+      "task",
+      `reject-stale-timeout-${scenario}`,
+    )
+    await expect(f.control.execute(continuation)).rejects.toThrow(
+      "exact settled timeout failure holding this operation",
+    )
+  },
+)
+
+test("combined retained continuation keeps the already accepted task evidence and source binding", async () => {
+  const f = await sourceQuarantinedVerifyingFixture({
+    requestTick: () => Promise.resolve(),
+    taskCheckInactivityTimeoutMs: 10_000,
+    taskCheckHardTimeoutMs: 30_000,
+    combinedCheckInactivityTimeoutMs: 1,
+    combinedCheckHardTimeoutMs: 1,
+  })
+  const requested = await f.control.execute(
+    retainedVerifyCommand(f, "reserve-timing-continuation-combined-check"),
+  )
+  const operationID = String(requested.operationID)
+  await waitForFixtureCondition(
+    f,
+    "settled retained combined timeout after task acceptance",
+    () => {
+      const operation = f.store.atomic((db) => retainedVerification(db, operationID))
+      const check = f.store.atomic(
+        (db) => retainedVerificationChecks(db, operationID, "combined")[0],
+      )
+      if (
+        !operation ||
+        !check?.receipt ||
+        check.state !== "completed" ||
+        check.cleanupState !== "complete"
+      )
+        return false
+      const receipt = JSON.parse(check.receipt) as CheckReceipt
+      return operation.state === "held" && receipt.timedOut && checkResourcesSettled(receipt)
+    },
+    120_000,
+  )
+  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
+  const priorTaskCheck = f.store.atomic(
+    (db) => retainedVerificationChecks(db, operation.id, "task")[0],
+  )!
+  const priorCombinedCheck = f.store.atomic(
+    (db) => retainedVerificationChecks(db, operation.id, "combined")[0],
+  )!
+  const priorTaskReceipt = priorTaskCheck.receipt
+  const priorTimeout = JSON.parse(priorCombinedCheck.receipt!) as CheckReceipt
+  expect(operation.state).toBe("held")
+  expect(priorTimeout.timedOut).toBe(true)
+  expect(
+    f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+  ).toBeDefined()
+
+  const continuation = retainedTimingContinuationInput(
+    f,
+    operation,
+    "combined",
+    "continue-held-combined-check",
+  )
+  const result = await f.control.execute(continuation)
+  expect(result.status).toBe("retained-verification-check-continued")
+  await waitForFixtureCondition(
+    f,
+    "continued retained combined candidate",
+    () => f.store.atomic((db) => retainedVerification(db, operation.id))?.state === "accepted",
+    120_000,
+  )
+
+  const updated = f.store.atomic((db) => retainedVerification(db, operation.id))!
+  const taskCheck = f.store.atomic((db) => retainedVerificationChecks(db, operation.id, "task")[0])!
+  const combinedCheck = f.store.atomic(
+    (db) => retainedVerificationChecks(db, operation.id, "combined")[0],
+  )!
+  const combinedReceipt = JSON.parse(combinedCheck.receipt!) as CheckReceipt
+  expect(updated.artifact).toBe(operation.artifact)
+  expect(updated.combinedArtifact).toBe(operation.combinedArtifact)
+  expect(taskCheck.receipt).toBe(priorTaskReceipt)
+  expect(combinedReceipt).toMatchObject({
+    id: priorCombinedCheck.checkID,
+    artifact: operation.combinedArtifact,
+    timedOut: false,
+    inactivityTimeoutMs: 10_000,
+    hardTimeoutMs: 30_000,
+  })
+  expect(
+    f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+  ).toBeDefined()
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
+  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)?.state).toBe(
+    "verifying",
+  )
+}, 180_000)
 
 test("stopped-plan verify-retained preserves failed sealed-source check receipts and holds", async () => {
   const f = await sourceQuarantinedVerifyingFixture({

@@ -3,7 +3,12 @@ import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fingerprint } from "../identity.ts"
-import { effectiveVerificationCheck, verificationReceiptDeadline } from "./verification-timeout.ts"
+import {
+  effectiveVerificationCheck,
+  verificationCommandFingerprint,
+  verificationReceiptDeadline,
+} from "./verification-timeout.ts"
+import type { VerificationTimeoutTarget } from "./verification-timeout.ts"
 import type { TaskProposal } from "../task.ts"
 import {
   artifactExists,
@@ -113,7 +118,7 @@ export class RetainedVerificationExecution {
     },
   ) {}
 
-  private sourceQuarantinePlanVersionCurrent(
+  sourceQuarantinePlanVersionCurrent(
     operation: RetainedVerification,
     plan: PlanRow,
     database?: Database,
@@ -794,15 +799,22 @@ export class RetainedVerificationExecution {
       const plan = this.runtime.store.plan(initial.planID)
       if (!plan || plan.revision !== initial.planRevision)
         throw new Error("Retained verification plan revision changed")
-      const target = this.runtime.verificationTarget(
-        plan,
-        phase,
-        check,
-        artifact,
-        phase === "task" ? initial.taskID : null,
-        phase === "task" ? initial.taskRevision : null,
-        phase === "task" ? initial.attemptID : null,
-      )
+      const target: VerificationTimeoutTarget = {
+        ...this.runtime.verificationTarget(
+          plan,
+          phase,
+          check,
+          artifact,
+          phase === "task" ? initial.taskID : null,
+          phase === "task" ? initial.taskRevision : null,
+          phase === "task" ? initial.attemptID : null,
+        ),
+        retainedVerificationID: initial.id,
+        retainedGeneration: initial.generation,
+        retainedTaskID: initial.taskID,
+        retainedTaskRevision: initial.taskRevision,
+        retainedAttemptID: initial.attemptID,
+      }
       const deadline = this.runtime.verificationDeadline(target)
       const effectiveCheck = effectiveVerificationCheck(check, deadline)
       const procedure = retainedProcedurePlan(check.command)
@@ -818,7 +830,92 @@ export class RetainedVerificationExecution {
         retainedVerificationChecks(db, initial.id, phase).find((row) => row.checkID === check.id),
       )
       const activityID = `retained:${initial.id}:${initial.generation}:${phase}:${check.id}`
-      if (existing) {
+      if (existing?.state === "retry-authorized") {
+        let previousCheck: unknown
+        let previousReceipt: unknown
+        try {
+          previousCheck = JSON.parse(existing.checkJSON) as unknown
+          previousReceipt = existing.receipt ? (JSON.parse(existing.receipt) as unknown) : undefined
+        } catch {
+          previousCheck = undefined
+          previousReceipt = undefined
+        }
+        const authorization = this.runtime.store.latestTransition<{
+          requestID?: unknown
+          owner?: unknown
+          ownerEpoch?: unknown
+          planRevision?: unknown
+          operationID?: unknown
+          generation?: unknown
+          taskID?: unknown
+          taskRevision?: unknown
+          attemptID?: unknown
+          phase?: unknown
+          checkID?: unknown
+          candidateArtifact?: unknown
+          commandFingerprint?: unknown
+          amendmentID?: unknown
+          priorReceiptFingerprint?: unknown
+          priorCheckFingerprint?: unknown
+          reason?: unknown
+        }>(initial.planID, initial.taskID, "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED")
+        const retryResources = this.runtime.store.atomic((db) =>
+          db
+            .query<{ state: string }, [string, string, string]>(
+              `SELECT state FROM runner_retained_verification_resources
+               WHERE operation_id=? AND phase=? AND check_id=?`,
+            )
+            .all(initial.id, phase, check.id),
+        )
+        const previousBoundReceipt =
+          isRecord(previousCheck) && previousReceipt
+            ? this.retainedVerificationCheckReceipt(
+                previousReceipt,
+                initial,
+                phase,
+                previousCheck as TaskProposal["verification"][number],
+                workspace,
+                artifact,
+                existing.environmentIdentity,
+              )
+            : undefined
+        if (
+          !deadline.amendmentID ||
+          existing.cleanupState !== "complete" ||
+          existing.artifact !== artifact ||
+          existing.workspace !== workspace ||
+          !isRecord(previousCheck) ||
+          previousCheck.id !== check.id ||
+          previousCheck.command !== check.command ||
+          !previousBoundReceipt?.timedOut ||
+          !checkResourcesSettled(previousBoundReceipt) ||
+          authorization?.owner !== initial.owner ||
+          authorization.ownerEpoch !== initial.ownerEpoch ||
+          authorization.planRevision !== initial.planRevision ||
+          authorization?.operationID !== initial.id ||
+          authorization.generation !== initial.generation ||
+          authorization.taskID !== initial.taskID ||
+          authorization.taskRevision !== initial.taskRevision ||
+          authorization.attemptID !== initial.attemptID ||
+          authorization.phase !== phase ||
+          authorization.checkID !== check.id ||
+          authorization.candidateArtifact !== artifact ||
+          authorization.commandFingerprint !== verificationCommandFingerprint(check.command) ||
+          authorization.amendmentID !== deadline.amendmentID ||
+          authorization.priorReceiptFingerprint !== fingerprint(existing.receipt) ||
+          authorization.priorCheckFingerprint !== fingerprint(existing.checkJSON) ||
+          retryResources.length === 0 ||
+          retryResources.some((resource) => resource.state !== "removed")
+        ) {
+          await this.holdRetainedVerification(
+            initial,
+            `Explicit retained timing continuation ${phase}:${check.id} lost its settled retry binding`,
+            fence,
+          )
+          return undefined
+        }
+      }
+      if (existing && existing.state !== "retry-authorized") {
         const activityIdentity = {
           operationID: initial.id,
           generation: initial.generation,
@@ -1217,12 +1314,14 @@ export class RetainedVerificationExecution {
         )
         return undefined
       }
+      const retryReceiptSuffix =
+        existing?.state === "retry-authorized" ? `-amendment-${deadline.amendmentID}` : ""
       const receiptPath = join(
         this.runtime.dataDirectory,
         "receipts",
         "retained-verification",
         initial.id,
-        `${initial.generation}-${phase}-${check.id}.json`,
+        `${initial.generation}-${phase}-${check.id}${retryReceiptSuffix}.json`,
       )
       const inputFingerprint = fingerprint({
         operationID: initial.id,

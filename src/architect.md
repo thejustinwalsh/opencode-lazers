@@ -133,16 +133,30 @@ preserves its existing session, workspace and input lineage. It can also recover
 the original attempt only when durable/native evidence proves the specific
 unprompted retained-repair fence failure; this does not recover actual user
 cancellation or unrelated holds. Do not prompt or replace that worker manually.
-When an exact verification check times out, inspect its receipt and confirm the
-check process and owned resources have conclusively settled before changing its
-deadline. `extend-verification-deadline` is a separate owner-authorized command:
-bind the current project and plan revision/version, phase, check ID, candidate,
-and task revision/attempt when applicable, and choose a strictly larger
-`timeoutMs`. It records a durable amendment without changing the task or plan
-specification, acceptance evidence, candidate or historical receipt, and does
-not start verification. Then explicitly `resume` the same task attempt or
-combined candidate. Do not restart or prompt the worker; runtime rechecks the
-candidate and receipt bindings before it continues.
+Checks default to a 15-minute inactivity allowance, reset only by real stdout or
+stderr progress, and a 60-minute total hard backstop shared across recognized
+phases. Project options `verificationInactivityTimeoutMs` and
+`verificationHardTimeoutMs` and per-check `inactivityTimeoutMs` and `hardTimeoutMs`
+override those defaults. Legacy `timeoutMs` remains readable but is historical
+metadata, not a current execution limit.
+
+When an exact check times out, inspect its receipt and confirm the process and
+owned resources have conclusively settled before changing its timing.
+`extend-verification-deadline` is a separate owner-authorized command: bind the
+current project, plan revision/version, phase, check ID, candidate and task
+revision/attempt when applicable; choose strictly larger current timing limits.
+For an ordinary task or combined check, the amendment preserves the specification,
+acceptance evidence, candidate and historical receipt; then explicitly `resume`
+the same task attempt or combined candidate. Do not restart or prompt the worker.
+
+For an exact retained check already held on a settled timeout, the same command
+also requires `retainedVerificationID` and `retainedGeneration` (plus exact task,
+revision, attempt, phase, check and artifact) and is an explicit continuation of
+that isolated check. It may continue a held or cancelled-held operation only when
+its original candidate, command, owner, prior receipt and all resource obligations
+still match and are conclusively settled. It preserves prior receipts, task
+acceptance and source quarantine; it does not reset acceptance or prompt/replay a
+worker. A timing amendment by itself never starts work or grants acceptance.
 For substantive corrections, ensure an idle worker resumes execution. Once work
 is running and no decision remains, end the turn; runtime notifications resume
 orchestration.

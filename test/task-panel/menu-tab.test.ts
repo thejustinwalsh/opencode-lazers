@@ -15,7 +15,7 @@ const vite = await createServer({
   appType: "custom",
 })
 afterAll(() => vite.close())
-const { setupTaskPanel } = (await vite.ssrLoadModule(
+const { setupTaskPanel, verificationTimingSummary } = (await vite.ssrLoadModule(
   "/src/tasks/panel.tsx",
 )) as typeof import("../../src/tasks/panel.tsx")
 const { ExecutionPlanGroupView } = (await vite.ssrLoadModule(
@@ -76,6 +76,52 @@ const panelTab = () => {
 }
 
 describe("tasks native affordances", () => {
+  test("verification detail separates project defaults, authored overrides, and legacy timing", () => {
+    const omitted = verificationTimingSummary({ id: "check", command: "bun test" })
+    expect(omitted).toBe(
+      "Inactivity allowance: project default (not resolved here) · Hard backstop: project default (not resolved here)",
+    )
+    expect(omitted).not.toMatch(/NaN|undefined/)
+
+    const legacyOnly = verificationTimingSummary({
+      id: "legacy",
+      command: "bun test",
+      timeoutMs: 5_000,
+    })
+    expect(legacyOnly).toContain("Inactivity allowance: project default")
+    expect(legacyOnly).toContain("Hard backstop: project default")
+    expect(legacyOnly).toContain("Legacy timeout (historical): 5s (not used for execution)")
+
+    const dualTiming = verificationTimingSummary({
+      id: "current",
+      command: "bun test",
+      inactivityTimeoutMs: 15_000,
+      hardTimeoutMs: 60_000,
+    })
+    expect(dualTiming).toContain("Inactivity allowance: 15s (authored)")
+    expect(dualTiming).toContain("Hard backstop: 60s (authored)")
+    expect(dualTiming).not.toContain("Legacy timeout")
+
+    const partial = verificationTimingSummary({
+      id: "partial",
+      command: "bun test",
+      inactivityTimeoutMs: 30_000,
+    })
+    expect(partial).toContain("Inactivity allowance: 30s (authored)")
+    expect(partial).toContain("Hard backstop: project default (not resolved here)")
+
+    const mixed = verificationTimingSummary({
+      id: "mixed",
+      command: "bun test",
+      timeoutMs: 4_000,
+      inactivityTimeoutMs: 7_000,
+      hardTimeoutMs: 9_000,
+    })
+    expect(mixed).toContain("Inactivity allowance: 7s (authored)")
+    expect(mixed).toContain("Hard backstop: 9s (authored)")
+    expect(mixed).toContain("Legacy timeout (historical): 4s (not used for execution)")
+  })
+
   test("plan nonterminal counts stay distinct from native activity", () => {
     const group = (title: string, nonterminalCount: number, totalCount: number) => ({
       planID: title,

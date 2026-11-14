@@ -317,7 +317,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
       attemptID: effect.attempt_id,
     }
     if (check && typeof check === "object") {
-      for (const key of ["exitCode", "timedOut", "unchanged"])
+      for (const key of ["exitCode", "timedOut", "stopCause", "unchanged"])
         if (key in check) summary[key] = (check as Record<string, unknown>)[key]
       if ("verificationDeadline" in check)
         summary.verificationDeadline = (check as Record<string, unknown>).verificationDeadline

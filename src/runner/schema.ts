@@ -300,13 +300,28 @@ export const CommandInput = z
       .int()
       .positive()
       .optional()
-      .describe("Strictly larger effective verification allowance in milliseconds."),
+      .describe("Legacy spelling for a strictly larger effective hard timeout in milliseconds."),
+    inactivityTimeoutMs: z
+      .int()
+      .positive()
+      .optional()
+      .describe("Strictly larger inactivity allowance for the exact check, in milliseconds."),
+    hardTimeoutMs: z
+      .int()
+      .positive()
+      .optional()
+      .describe("Strictly larger total hard backstop for the exact check, in milliseconds."),
     retainedVerificationID: z
       .uuid()
       .optional()
       .describe(
-        "Exact durable retained-verification operation to cancel or provide human evidence for.",
+        "Exact durable retained-verification operation for cancellation, human evidence, or an explicit settled-check timing continuation.",
       ),
+    retainedGeneration: z
+      .int()
+      .positive()
+      .optional()
+      .describe("Exact retained-verification generation for a settled-check timing continuation."),
   })
   .superRefine((input, context) => {
     if (input.scopeRemovals && input.action !== "amend-scope")
@@ -442,7 +457,6 @@ export const CommandInput = z
         "planRevision",
         "verificationPhase",
         "checkID",
-        "timeoutMs",
         "artifact",
         "reason",
       ] as const)
@@ -452,6 +466,55 @@ export const CommandInput = z
             path: [field],
             message: `Deadline extension requires ${field}`,
           })
+      if (
+        command.timeoutMs === undefined &&
+        command.hardTimeoutMs === undefined &&
+        command.inactivityTimeoutMs === undefined
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["hardTimeoutMs"],
+          message: "Deadline extension requires a new hard or inactivity timeout",
+        })
+      if (command.retainedGeneration !== undefined && command.retainedVerificationID === undefined)
+        context.addIssue({
+          code: "custom",
+          path: ["retainedGeneration"],
+          message: "Retained generation requires retainedVerificationID",
+        })
+      if (
+        command.retainedVerificationID !== undefined &&
+        (!command.retainedGeneration ||
+          !command.taskID ||
+          !command.taskRevision ||
+          !command.attemptID)
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["retainedVerificationID"],
+          message:
+            "Retained timing continuation requires exact generation, task, revision and attempt bindings",
+        })
+      if (
+        command.inactivityTimeoutMs !== undefined &&
+        command.hardTimeoutMs !== undefined &&
+        command.inactivityTimeoutMs > command.hardTimeoutMs
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["inactivityTimeoutMs"],
+          message: "Inactivity allowance cannot exceed the hard backstop",
+        })
+      if (
+        command.timeoutMs !== undefined &&
+        command.hardTimeoutMs !== undefined &&
+        command.timeoutMs !== command.hardTimeoutMs
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["timeoutMs"],
+          message: "Legacy timeoutMs and hardTimeoutMs must agree when both are supplied",
+        })
       if (!command.reason?.trim())
         context.addIssue({
           code: "custom",
@@ -472,7 +535,10 @@ export const CommandInput = z
               path: [field],
               message: `Task-check deadline extension requires ${field}`,
             })
-      } else if (command.verificationPhase === "combined") {
+      } else if (
+        command.verificationPhase === "combined" &&
+        command.retainedVerificationID === undefined
+      ) {
         for (const field of ["taskID", "taskRevision", "attemptID"] as const)
           if (command[field] !== undefined)
             context.addIssue({
@@ -496,7 +562,6 @@ export const CommandInput = z
         "descendantCommit",
         "adoptionID",
         "targetBranch",
-        "retainedVerificationID",
       ] as const)
         if (command[field] !== undefined)
           context.addIssue({
@@ -504,6 +569,12 @@ export const CommandInput = z
             path: [field],
             message: `Deadline extension does not accept ${field}`,
           })
+      if (command.retainedVerificationID === undefined && command.retainedGeneration !== undefined)
+        context.addIssue({
+          code: "custom",
+          path: ["retainedGeneration"],
+          message: "Only a retained timing continuation accepts retainedGeneration",
+        })
     }
     if (command.action === "cancel-retained-verification" && !command.retainedVerificationID)
       context.addIssue({
@@ -520,14 +591,23 @@ export const CommandInput = z
     if (
       command.retainedVerificationID !== undefined &&
       command.action !== "cancel-retained-verification" &&
-      command.action !== "human-evidence"
+      command.action !== "human-evidence" &&
+      command.action !== "extend-verification-deadline"
     )
       context.addIssue({
         code: "custom",
         path: ["retainedVerificationID"],
-        message: "Retained verification ID is valid only for cancellation or human evidence",
+        message:
+          "Retained verification ID is valid only for cancellation, human evidence or explicit timing continuation",
       })
-    for (const field of ["verificationPhase", "checkID", "timeoutMs"] as const)
+    for (const field of [
+      "verificationPhase",
+      "checkID",
+      "timeoutMs",
+      "inactivityTimeoutMs",
+      "hardTimeoutMs",
+      "retainedGeneration",
+    ] as const)
       if (command[field] !== undefined && command.action !== "extend-verification-deadline")
         context.addIssue({
           code: "custom",

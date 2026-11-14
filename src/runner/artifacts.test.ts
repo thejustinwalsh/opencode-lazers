@@ -46,7 +46,7 @@ test("F-S5-11 a slow Git observation leaves timers responsive and preserves comm
   }
 })
 
-test("declared quality phases preserve all output and share the command timeout", async () => {
+test("declared quality phases preserve all output and share the hard deadline", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-check-phases-"))
   try {
     writeFileSync(
@@ -71,7 +71,7 @@ test("declared quality phases preserve all output and share the command timeout"
     const timedOut = await runDeclaredCheck(
       root,
       "candidate",
-      { id: "deadline", command, timeoutMs: 130 },
+      { id: "deadline", command, inactivityTimeoutMs: 120, hardTimeoutMs: 130 },
       join(root, "deadline.json"),
     )
     expect(timedOut.timedOut).toBe(true)
@@ -81,6 +81,35 @@ test("declared quality phases preserve all output and share the command timeout"
       exitCode: timedOut.exitCode,
       timedOut: true,
     })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("silent recognized phases share one inactivity deadline", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-silent-phases-"))
+  try {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ scripts: { first: "sleep 0.35", second: "sleep 0.35" } }),
+    )
+    const receipt = await runDeclaredCheck(
+      root,
+      "candidate",
+      {
+        id: "silent-phases",
+        command: "bun run --silent first && bun run --silent second",
+        inactivityTimeoutMs: 550,
+        hardTimeoutMs: 2_000,
+      },
+      join(root, "silent-phases.json"),
+    )
+    expect(receipt.timedOut).toBe(true)
+    expect(receipt.stopCause).toBe("inactivity")
+    expect(receipt.phases).toHaveLength(2)
+    expect(receipt.phases?.[0]).toMatchObject({ exitCode: 0, timedOut: false })
+    expect(receipt.phases?.[1]).toMatchObject({ stopCause: "inactivity", timedOut: true })
+    expect(receipt.phasesComplete).toBe(false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -126,7 +155,8 @@ test("exit-zero verification keeps its result when owned subprocess cleanup is u
         id: "leaked-child",
         command:
           'printf "%s" "$$" > leader.pid; sleep 30 >/dev/null 2>&1 & printf "%s" "$!" > child.pid; exit 0',
-        timeoutMs: 2000,
+        inactivityTimeoutMs: 2000,
+        hardTimeoutMs: 5000,
       },
       join(root, "receipt.json"),
     )
@@ -174,10 +204,11 @@ test("failed and timed-out checks retain their actual outcomes independently of 
     const timedOut = await runCheck(
       root,
       "candidate",
-      { id: "timed-out", command: "sleep 30", timeoutMs: 50 },
+      { id: "timed-out", command: "sleep 30", inactivityTimeoutMs: 50, hardTimeoutMs: 2000 },
       join(root, "timed-out.json"),
     )
     expect(timedOut.timedOut).toBe(true)
+    expect(timedOut.stopCause).toBe("inactivity")
     expect(checkSucceeded(timedOut)).toBe(false)
     expect(checkResourcesSettled(timedOut)).toBe(true)
   } finally {
@@ -204,7 +235,7 @@ test("the Windows process-tree adapter distinguishes child exit from remaining d
     const empty = await runCheck(
       root,
       "candidate",
-      { id: "empty-tree", command: "exit 0", timeoutMs: 2000 },
+      { id: "empty-tree", command: "exit 0", inactivityTimeoutMs: 2000, hardTimeoutMs: 5000 },
       join(root, "empty.json"),
       { processTreeAdapter: adapter },
     )
@@ -222,7 +253,8 @@ test("the Windows process-tree adapter distinguishes child exit from remaining d
       {
         id: "remaining-descendant",
         command: "sleep 30 >/dev/null 2>&1 & exit 0",
-        timeoutMs: 2000,
+        inactivityTimeoutMs: 2000,
+        hardTimeoutMs: 5000,
       },
       join(root, "remaining.json"),
       { processTreeAdapter: adapter },
@@ -248,6 +280,109 @@ test("the Windows process-tree adapter distinguishes child exit from remaining d
   }
 }, 15_000)
 
+test("historical wall limits do not stop a quiet check inside current inactivity defaults", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-quiet-defaults-"))
+  try {
+    const receipt = await runCheck(
+      root,
+      "candidate",
+      {
+        id: "quiet",
+        command: "sleep 0.12; printf done",
+        timeoutMs: 20,
+        inactivityTimeoutMs: 300,
+        hardTimeoutMs: 600,
+      },
+      join(root, "quiet.json"),
+    )
+    expect(receipt.exitCode).toBe(0)
+    expect(receipt.timedOut).toBe(false)
+    expect(receipt.stdout).toBe("done")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test.each(["stdout", "stderr"] as const)(
+  "%s progress resets inactivity after bounded output capture truncates",
+  async (stream) => {
+    const root = mkdtempSync(join(tmpdir(), `lazers-check-${stream}-progress-`))
+    try {
+      const emit = stream === "stdout" ? "printf '%04000d' 1" : "printf '%04000d' 1 >&2"
+      const receipt = await runCheck(
+        root,
+        "candidate",
+        {
+          id: stream,
+          command: `for i in 1 2 3 4 5 6 7 8 9 10; do ${emit}; sleep 0.04; done`,
+          inactivityTimeoutMs: 100,
+          hardTimeoutMs: 1200,
+        },
+        join(root, `${stream}.json`),
+      )
+      expect(receipt.exitCode).toBe(0)
+      expect(receipt.timedOut).toBe(false)
+      expect(receipt[stream]).toContain("[output truncated]")
+      expect(Date.now() - receipt.startedAt).toBeGreaterThan(250)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+)
+
+test("continuous recognized phases share the total hard backstop and cancellation stays prompt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-shared-hard-timeout-"))
+  const controller = new AbortController()
+  try {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        scripts: {
+          first: "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf x; sleep 0.04; done",
+          second: "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf y; sleep 0.04; done",
+        },
+      }),
+    )
+    const noisy = await runDeclaredCheck(
+      root,
+      "candidate",
+      {
+        id: "shared-hard-timeout",
+        command: "bun run first && bun run second",
+        inactivityTimeoutMs: 100,
+        hardTimeoutMs: 800,
+      },
+      join(root, "noisy.json"),
+    )
+    expect(noisy.timedOut).toBe(true)
+    expect(noisy.stopCause).toBe("hard-backstop")
+    expect(noisy.phases).toHaveLength(2)
+    expect(noisy.phasesComplete).toBe(false)
+    expect(noisy.stdout.length).toBeGreaterThan(0)
+
+    const running = runCheck(
+      root,
+      "candidate",
+      {
+        id: "cancelled",
+        command: "sleep 30",
+        inactivityTimeoutMs: 5000,
+        hardTimeoutMs: 10_000,
+      },
+      join(root, "cancelled.json"),
+      { signal: controller.signal },
+    )
+    setTimeout(() => controller.abort(), 50)
+    const cancelled = await running
+    expect(cancelled.aborted).toBe(true)
+    expect(cancelled.stopCause).toBe("cancelled")
+    expect(cancelled.timedOut).toBe(false)
+    expect(checkResourcesSettled(cancelled)).toBe(true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15_000)
+
 test("identical check modules retain the same environment identity across reload", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-check-reload-"))
   try {
@@ -267,6 +402,10 @@ test("identical check modules retain the same environment identity across reload
       .replace(
         '"./quality-failure.ts"',
         JSON.stringify(fileURLToPath(new URL("./quality-failure.ts", import.meta.url))),
+      )
+      .replace(
+        '"./verification-timeout.ts"',
+        JSON.stringify(fileURLToPath(new URL("./verification-timeout.ts", import.meta.url))),
       )
     const paths = [join(directory, "first.ts"), join(directory, "second.ts")]
     for (const path of paths) writeFileSync(path, source)

@@ -47,6 +47,10 @@ describe("task proposals", () => {
     expect(taskProposalJSONSchema.additionalProperties).toBe(false)
     expect(taskProposalJSONSchema.required).not.toContain("limits")
     expect(taskProposalJSONSchema.required).not.toContain("guidance")
+    const verification = taskProposalJSONSchema.properties?.verification as {
+      items: { required?: string[] }
+    }
+    expect(verification.items.required).not.toContain("timeoutMs")
     const requirements = taskProposalJSONSchema.properties?.requirements as {
       required?: string[]
       properties: { skills: { description?: string } }
@@ -200,6 +204,35 @@ describe("task proposals", () => {
       }).success,
     ).toBe(false)
     expect(TaskProposalSchema.safeParse({ ...proposal, verification: [] }).success).toBe(false)
+  })
+
+  test("verification checks accept explicit inactivity and hard-backstop overrides", () => {
+    const proposal = validProposal()
+    const check = proposal.verification[0]!
+    proposal.verification = [
+      {
+        ...check,
+        timeoutMs: 500,
+        inactivityTimeoutMs: 5_000,
+        hardTimeoutMs: 10_000,
+      },
+    ]
+    expect(TaskProposalSchema.parse(proposal).verification[0]).toMatchObject({
+      timeoutMs: 500,
+      inactivityTimeoutMs: 5_000,
+      hardTimeoutMs: 10_000,
+    })
+    expect(
+      TaskProposalSchema.safeParse({
+        ...proposal,
+        verification: [{ ...proposal.verification[0]!, inactivityTimeoutMs: 10_001 }],
+      }).success,
+    ).toBe(false)
+    const withoutHistoricalLimit = structuredClone(validProposal())
+    delete withoutHistoricalLimit.verification[0]!.timeoutMs
+    expect(TaskProposalSchema.parse(withoutHistoricalLimit).verification[0]).not.toHaveProperty(
+      "timeoutMs",
+    )
   })
 
   test("accepts tasks without guessed budgets and validates legacy limits when supplied", () => {

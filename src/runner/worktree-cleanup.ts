@@ -16,6 +16,8 @@ import { isRecord } from "./runtime-helpers.ts"
 import { WORKTREE_CLEANUP_FALLBACK_MS } from "./runtime-helpers.ts"
 import { type CleanupRecoveryAuthorization } from "./runtime-helpers.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
+import { verificationCheckWithDefaults } from "./verification-timeout.ts"
+import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 
 export class WorktreeCleanup {
   constructor(
@@ -33,6 +35,7 @@ export class WorktreeCleanup {
       progress: TaskRuntime["progress"]
       projectID: TaskRuntime["projectID"]
       store: TaskRuntime["store"]
+      verificationTimeoutDefaults: VerificationTimeoutDefaults
     },
   ) {}
 
@@ -67,6 +70,10 @@ export class WorktreeCleanup {
       throw new Error("Adoption worktree has no complete receipt for every check; preserve it")
     const artifact = phase === "task" ? adoption.descendant_commit : adoption.combined_artifact
     for (const check of checks) {
+      const effectiveCheck = verificationCheckWithDefaults(
+        check,
+        this.runtime.verificationTimeoutDefaults,
+      )
       const row = rows.find((item) => item.check_id === check.id)
       let receipt: CheckReceipt | undefined
       try {
@@ -79,7 +86,7 @@ export class WorktreeCleanup {
         row.state !== "completed" ||
         row.workspace !== workspace ||
         row.artifact !== artifact ||
-        fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
+        fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck) ||
         !receipt ||
         !this.runtime.adoptionCheckReceiptMatches(receipt, row, check)
       )

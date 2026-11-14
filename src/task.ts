@@ -101,7 +101,27 @@ export const TaskProposalSchema = z
           command: text.describe(
             "Executable verification. Run available formatter/linter automatic fixes before remaining checks; for LAZERS use bun run verify plus relevant tests.",
           ),
-          timeoutMs: z.int().positive(),
+          timeoutMs: z
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Optional historical single wall-clock limit. Preserved on legacy tasks and receipts; current execution uses inactivityTimeoutMs and hardTimeoutMs or the project defaults.",
+            ),
+          inactivityTimeoutMs: z
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Optional per-check inactivity allowance in milliseconds; absent uses the project default of 15 minutes.",
+            ),
+          hardTimeoutMs: z
+            .int()
+            .positive()
+            .optional()
+            .describe(
+              "Optional per-check total hard backstop in milliseconds; absent uses the project default of 60 minutes.",
+            ),
         }),
       )
       .max(100),
@@ -133,6 +153,18 @@ export const TaskProposalSchema = z
         seen.add(item.id)
       })
     }
+    proposal.verification.forEach((item, index) => {
+      if (
+        item.inactivityTimeoutMs !== undefined &&
+        item.hardTimeoutMs !== undefined &&
+        item.inactivityTimeoutMs > item.hardTimeoutMs
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["verification", index, "inactivityTimeoutMs"],
+          message: "Inactivity allowance cannot exceed the total hard backstop",
+        })
+    })
     const verificationIDs = new Set(proposal.verification.map((item) => item.id))
     proposal.acceptance.forEach((item, index) => {
       item.evidence.forEach((evidence, evidenceIndex) => {

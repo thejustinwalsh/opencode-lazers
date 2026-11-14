@@ -27,7 +27,14 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-function fixture(mode: Mode, sharedAssertionID?: string, options: { manualTicks?: boolean } = {}) {
+function fixture(
+  mode: Mode,
+  sharedAssertionID?: string,
+  options: {
+    manualTicks?: boolean
+    taskTiming?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "lazers-adopt-descendant-"))
   const worktreeParent = `${realpathSync(root)}.worktrees`
   const data = mkdtempSync(join(tmpdir(), "lazers-adopt-data-"))
@@ -67,7 +74,14 @@ function fixture(mode: Mode, sharedAssertionID?: string, options: { manualTicks?
     const proposal = validProposal()
     proposal.objective = "Verify an adopted committed descendant"
     proposal.writeScope = ["result.txt"]
-    proposal.verification = [{ id: "task-check", command: taskCommand, timeoutMs: 1000 }]
+    proposal.verification = [
+      {
+        id: "task-check",
+        command: taskCommand,
+        timeoutMs: 1000,
+        ...options.taskTiming,
+      },
+    ]
     proposal.acceptance = [
       {
         id: "task-result",
@@ -1628,7 +1642,9 @@ test("cancellation during combined checks prevents acceptance and cleans settled
 })
 
 test("timed-out adoption checks hold without repair, new worker turns, or acceptance", async () => {
-  const f = fixture("failed-task")
+  const f = fixture("failed-task", undefined, {
+    taskTiming: { inactivityTimeoutMs: 1_000, hardTimeoutMs: 5_000 },
+  })
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
   const requested = (await f.runtime.command(

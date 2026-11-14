@@ -141,7 +141,14 @@ function retainedOperation(
 function insertCheck(
   f: ReturnType<typeof fixture>,
   operation: RetainedVerification,
-  input: { exitCode: number; stdout: string; stderr?: string },
+  input: {
+    exitCode: number | null
+    stdout: string
+    stderr?: string
+    timedOut?: boolean
+    stopCause?: "inactivity" | "hard-backstop" | "cancelled" | null
+    verificationDeadline?: Record<string, unknown>
+  },
 ) {
   const environmentIdentity = JSON.stringify({ PATH: "/private/CHECK_ENVIRONMENT_CANARY" })
   f.store.atomic((db) => {
@@ -170,7 +177,11 @@ function insertCheck(
         startedAt: 1_700_000_001_000,
         endedAt: 1_700_000_002_000,
         exitCode: input.exitCode,
-        timedOut: false,
+        timedOut: input.timedOut ?? false,
+        stopCause: input.stopCause ?? null,
+        ...(input.verificationDeadline === undefined
+          ? {}
+          : { verificationDeadline: input.verificationDeadline }),
         stdout: input.stdout,
         stderr: input.stderr ?? "PRIVATE_STDERR_CANARY",
       }),
@@ -408,7 +419,25 @@ test("selected full inspection projects latest retained generations and bounded 
     f.store.atomic((db) => createRetainedVerification(db, f.projectDirectory, operation))
   insertCheck(f, olderFailure, {
     exitCode: 1,
+    timedOut: true,
+    stopCause: "hard-backstop",
     stdout: "PRIVATE_STDOUT_CANARY\n[output truncated]",
+    verificationDeadline: {
+      timingPolicyVersion: 2,
+      authoredTimeoutMs: null,
+      authoredInactivityTimeoutMs: 2_000,
+      authoredHardTimeoutMs: 5_000,
+      defaultInactivityTimeoutMs: 900_000,
+      defaultHardTimeoutMs: 3_600_000,
+      effectiveInactivityTimeoutMs: 2_000,
+      effectiveHardTimeoutMs: 5_000,
+      effectiveTimeoutMs: 5_000,
+      amendmentID: null,
+      policyRevision: 0,
+      inactivityProvenance: "per-check",
+      hardTimeoutProvenance: "per-check",
+      historicalAmendmentIDs: ["old-amendment"],
+    },
   })
   f.store.atomic((db) => {
     db.query(
@@ -515,9 +544,24 @@ test("selected full inspection projects latest retained generations and bounded 
           result: expect.objectContaining({
             status: "failed",
             exitCode: 1,
+            timedOut: true,
+            stopCause: "hard-backstop",
             startedAt: 1_700_000_001_000,
             endedAt: 1_700_000_002_000,
             output: "truncated",
+          }),
+          verificationDeadline: expect.objectContaining({
+            timingPolicyVersion: 2,
+            authoredTimeoutMs: null,
+            authoredInactivityTimeoutMs: 2_000,
+            authoredHardTimeoutMs: 5_000,
+            defaultInactivityTimeoutMs: 900_000,
+            defaultHardTimeoutMs: 3_600_000,
+            effectiveInactivityTimeoutMs: 2_000,
+            effectiveHardTimeoutMs: 5_000,
+            inactivityProvenance: "per-check",
+            hardTimeoutProvenance: "per-check",
+            historicalAmendmentIDs: ["old-amendment"],
           }),
           cleanupState: "failed",
         }),

@@ -97,6 +97,8 @@ function fixture(
     checkCommand?: string | ((name: string, path: string, root: string) => string)
     beforeCheck?: string
     combinedCheckCommand?: string
+    verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+    useProjectVerificationDefaults?: boolean
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -131,7 +133,16 @@ function fixture(
     proposal.writeScope = scope
     proposal.verification = [
       ...(options.beforeCheck
-        ? [{ id: "before", command: options.beforeCheck, timeoutMs: 1000 }]
+        ? [
+            {
+              id: "before",
+              command: options.beforeCheck,
+              timeoutMs: 1000,
+              ...(options.useProjectVerificationDefaults
+                ? {}
+                : { inactivityTimeoutMs: 1000, hardTimeoutMs: 1000 }),
+            },
+          ]
         : []),
       {
         id: "content",
@@ -141,6 +152,9 @@ function fixture(
             : options.checkCommand) ??
           (options.fail && failing ? "exit 7" : `test "$(cat ${path})" = "${name}"`),
         timeoutMs: 1000,
+        ...(options.useProjectVerificationDefaults
+          ? {}
+          : { inactivityTimeoutMs: 1000, hardTimeoutMs: 1000 }),
       },
     ]
     proposal.acceptance = [
@@ -452,6 +466,9 @@ function fixture(
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     architectIdleWindowMs: options.architectIdleWindowMs,
     architectPromptHook: options.architectPromptHook,
+    ...(options.verificationTimeoutDefaults === undefined
+      ? {}
+      : { verificationTimeoutDefaults: options.verificationTimeoutDefaults }),
     now: options.now,
     requestTick: () =>
       verificationActivitiesForDatabase(repository.path).length
@@ -495,6 +512,9 @@ function fixture(
             options.combinedCheckCommand ??
             `${options.requireVerifierPreparation ? `test -f '${join(stateDirectory, "verifier-ready")}' && ` : ""}test "$(cat ${files.map((file) => file.path).join(" ")})" = "${files.map((file) => file.name).join("")}"`,
           timeoutMs: 1000,
+          ...(options.useProjectVerificationDefaults
+            ? {}
+            : { inactivityTimeoutMs: 1000, hardTimeoutMs: 1000 }),
         },
       ],
       acceptance: [
@@ -7073,6 +7093,63 @@ test("schema rejects cycles, foreign dependency IDs and duplicate nodes before p
       "owner",
     ),
   ).toThrow()
+})
+
+test("plan admission resolves partial task and combined overrides against project defaults", () => {
+  const f = fixture({
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 600, hardTimeoutMs: 700 },
+  })
+  const contradictory = {
+    ...f.input,
+    requestID: "invalid-explicit-combined-timing",
+    verification: [
+      {
+        id: "combined",
+        command: "true",
+        inactivityTimeoutMs: 800,
+        hardTimeoutMs: 700,
+      },
+    ],
+  }
+  expect(PlanInput.safeParse(contradictory).success).toBe(true)
+  expect(() => f.runtime.submitPlan(contradictory, "owner")).toThrow(
+    "Combined verification check combined inactivity allowance exceeds the configured hard backstop",
+  )
+  const invalid = {
+    ...f.input,
+    requestID: "invalid-configured-combined-timing",
+    verification: [
+      {
+        id: "combined",
+        command: "true",
+        inactivityTimeoutMs: 800,
+      },
+    ],
+  }
+  expect(PlanInput.safeParse(invalid).success).toBe(true)
+  expect(() => f.runtime.submitPlan(invalid, "owner")).toThrow(
+    "Combined verification check combined inactivity allowance exceeds the configured hard backstop",
+  )
+  const task = f.tasks[0]!
+  const taskProposal = structuredClone(task.proposal)
+  taskProposal.verification = [{ id: "content", command: "true", inactivityTimeoutMs: 800 }]
+  const taskID = crypto.randomUUID()
+  const taskPlanTask = f.repository.insert({
+    ...task,
+    id: taskID,
+    proposal: taskProposal,
+    provenance: { ...task.provenance, startingRevision: { kind: "git", commit: f.base } },
+  })
+  const invalidTaskTiming = {
+    ...f.input,
+    requestID: "invalid-configured-task-timing",
+    nodes: [{ taskID: taskPlanTask.id, revision: 1 as const }],
+    dependencies: [],
+    integrationOrder: [taskPlanTask.id],
+  }
+  expect(() => f.runtime.submitPlan(invalidTaskTiming, "owner")).toThrow(
+    "Task verification check content inactivity allowance exceeds the configured hard backstop",
+  )
 })
 
 test("historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage", async () => {
@@ -16003,6 +16080,7 @@ test(
       artifact: originalArtifact,
       checkID: "content",
       timeoutMs: 3_000,
+      inactivityTimeoutMs: 3_000,
       reason: "Allow the exact candidate check more time to complete.",
     }
     const invalidExtensions = [
@@ -16021,9 +16099,9 @@ test(
           "owner",
         ),
       ).rejects.toThrow(message)
-    await expect(f.runtime.command({ ...extend, timeoutMs: 1_000 }, "owner")).rejects.toThrow(
-      "strictly larger",
-    )
+    await expect(
+      f.runtime.command({ ...extend, timeoutMs: 1_000, inactivityTimeoutMs: 1_000 }, "owner"),
+    ).rejects.toThrow("strictly larger")
     await expect(f.runtime.command(extend, "foreign-owner")).rejects.toThrow("Only the plan owner")
     const activeProbe = deferred<void>()
     const activeIdentity = "deadline-extension-active-check-probe"
@@ -16250,6 +16328,7 @@ test("an Architect extends a settled combined-check deadline without restarting 
     artifact,
     checkID: "combined",
     timeoutMs: 3_000,
+    inactivityTimeoutMs: 3_000,
     reason: "Allow the exact combined candidate check more time.",
   }
   const result = await f.runtime.command(extend, "owner")
@@ -16364,4 +16443,47 @@ test("a stalled queue requests one Architect review and leaves scheduling decisi
   expect(review()).toHaveLength(2)
   await f.runtime.tick()
   expect(review()).toHaveLength(2)
+})
+
+test("project timing configuration overrides legacy task and combined timeout metadata", async () => {
+  const f = fixture({
+    shared: true,
+    delayed: true,
+    commit: true,
+    independent: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: "true",
+    combinedCheckCommand: "true",
+    useProjectVerificationDefaults: true,
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 2_000, hardTimeoutMs: 5_000 },
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id)
+  await drive(f.runtime)
+
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  const receipts = f.store.effects(f.receipt.planID).flatMap((effect) => {
+    if (!effect.kind.startsWith("verify:") && !effect.kind.startsWith("graph-verify:")) return []
+    if (!effect.receipt) return []
+    const envelope = JSON.parse(effect.receipt) as { check?: CheckReceipt }
+    return envelope.check ? [{ kind: effect.kind, check: envelope.check }] : []
+  })
+  expect(receipts.map(({ kind }) => kind).sort()).toEqual([
+    "graph-verify:combined",
+    "verify:content",
+  ])
+  for (const { check } of receipts)
+    expect(check).toMatchObject({
+      inactivityTimeoutMs: 2_000,
+      hardTimeoutMs: 5_000,
+      verificationDeadline: {
+        authoredTimeoutMs: 1_000,
+        effectiveInactivityTimeoutMs: 2_000,
+        effectiveHardTimeoutMs: 5_000,
+        inactivityProvenance: "project-default",
+        hardTimeoutProvenance: "project-default",
+      },
+    })
 })

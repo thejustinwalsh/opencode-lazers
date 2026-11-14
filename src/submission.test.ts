@@ -136,6 +136,49 @@ test("invalid keys/proposals and provenance failures never reserve a key", () =>
   expect(submitTask(repository, keyedProposal(), provenance).status).toBe("submitted")
 })
 
+test("task timing uses configured defaults without requiring a legacy timeout", () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const defaults = { inactivityTimeoutMs: 500, hardTimeoutMs: 1_000 }
+  const invalid = keyedProposal("configured-task-deadline-invalid")
+  delete invalid.verification[0]!.timeoutMs
+  invalid.verification[0]!.inactivityTimeoutMs = 2_000
+  let provenanceCalls = 0
+  const rejected = submitTask(
+    repository,
+    invalid,
+    () => {
+      provenanceCalls++
+      return provenance()
+    },
+    defaults,
+  )
+  expect(rejected).toMatchObject({
+    status: "invalid",
+    errors: [{ path: "verification.0.inactivityTimeoutMs" }],
+  })
+  expect(provenanceCalls).toBe(0)
+
+  const valid = keyedProposal("configured-task-deadline-valid")
+  delete valid.verification[0]!.timeoutMs
+  valid.verification[0]!.inactivityTimeoutMs = 800
+  const submitted = submitTask(repository, valid, provenance, defaults)
+  expect(submitted.status).toBe("submitted")
+  if (submitted.status !== "submitted") throw new Error("Expected submitted task")
+  expect(repository.get(submitted.taskID)?.proposal.verification[0]).toEqual({
+    id: "tests",
+    command: "bun test",
+    inactivityTimeoutMs: 800,
+  })
+
+  expect(
+    submitTask(repository, valid, noProvenance, {
+      inactivityTimeoutMs: 600,
+      hardTimeoutMs: 700,
+    }),
+  ).toEqual(submitted)
+})
+
 test("fresh requests require an explicit kind while exact unclassified historical replay stays unchanged", () => {
   const { path, provenance } = fixture()
   const repository = open(path)

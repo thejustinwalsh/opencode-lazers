@@ -24,6 +24,8 @@ import {
   TaskCorrectionInspection,
 } from "./task-correction.ts"
 import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
+import { verificationTimeoutDefaults } from "./runner/verification-timeout.ts"
+import type { VerificationTimeoutDefaults } from "./runner/verification-timeout.ts"
 
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
@@ -57,6 +59,7 @@ export function registerTaskTools(
   ctx: TaskToolContext,
   repository: TaskRepository,
   index?: Pick<ProjectIndex, "taskContext">,
+  timeoutDefaults: VerificationTimeoutDefaults = verificationTimeoutDefaults(),
 ) {
   // The host may retain an admitted tool callback while a plugin reload closes
   // its setup-scoped connection. Each execution owns its connection; never
@@ -102,13 +105,18 @@ export function registerTaskTools(
                       }),
                     }
                   const receipt = withRepository((connection) => {
-                    const submitted = submitTask(connection, parsed.data, () => ({
-                      projectID: ctx.location.project.id,
-                      projectDirectory: ctx.location.project.canonical,
-                      workspaceDirectory: ctx.location.directory,
-                      sessionID: context.sessionID,
-                      startingRevision: startingRevision(ctx.location.directory),
-                    }))
+                    const submitted = submitTask(
+                      connection,
+                      parsed.data,
+                      () => ({
+                        projectID: ctx.location.project.id,
+                        projectDirectory: ctx.location.project.canonical,
+                        workspaceDirectory: ctx.location.directory,
+                        sessionID: context.sessionID,
+                        startingRevision: startingRevision(ctx.location.directory),
+                      }),
+                      timeoutDefaults,
+                    )
                     if (submitted.status !== "submitted") return submitted
                     const detail = new TaskReads(connection).get({ taskID: submitted.taskID })
                     if (detail.status !== "found") return submitted

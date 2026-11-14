@@ -25,19 +25,22 @@ import {
   type PrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
-import { dirname, extname, join } from "node:path"
+import { dirname, extname, join, resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
 import {
   effectiveVerificationCheck,
   verificationCommandFingerprint,
   verificationDeadline as resolveVerificationDeadline,
+  verificationCheckWithDefaults,
   verificationReceiptDeadline,
+  verificationTimeoutDefaults,
   VerificationTimeoutAmendmentSchema,
 } from "./verification-timeout.ts"
 import type {
   VerificationDeadline,
   VerificationTimeoutAmendment,
   VerificationTimeoutTarget,
+  VerificationTimeoutDefaults,
 } from "./verification-timeout.ts"
 import type { TaskProposal } from "../task.ts"
 import {
@@ -137,6 +140,7 @@ import {
 import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
 import {
   activeRetainedVerifications,
+  authorizeRetainedVerificationCheckRetry,
   createRetainedVerification,
   ensureRetainedVerificationTables,
   latestRetainedVerificationGeneration,
@@ -158,7 +162,10 @@ import {
   verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
-import type { RetainedVerification } from "./retained-verification/schema.ts"
+import type {
+  RetainedVerification,
+  RetainedVerificationCheck,
+} from "./retained-verification/schema.ts"
 import {
   observeRetainedCheckIsolationWitness,
   retainedVerificationEnvironmentIdentity,
@@ -214,10 +221,41 @@ type CombinedVerificationContinuation = CombinedVerificationContinuationBinding 
 type PreparedVerificationDeadlineExtension = {
   target: VerificationTimeoutTarget
   deadline: VerificationDeadline
+  effectiveInactivityTimeoutMs: number
+  effectiveHardTimeoutMs: number
   ownerEpoch: number
-  sourceEffectID: string
-  sourcePayloadFingerprint: string
-  sourceReceiptFingerprint: string
+  sourceEffect?: {
+    id: string
+    payloadFingerprint: string
+    receiptFingerprint: string
+  }
+  retained?: {
+    operation: RetainedVerification
+    check: RetainedVerificationCheck
+    receipt: CheckReceipt
+    resources: Array<{ resource_name: string; canonical_path: string; state: string }>
+  }
+}
+
+function requestedVerificationTimeouts(
+  command: PlanCommand,
+  deadline: VerificationDeadline,
+): { inactivityTimeoutMs: number; hardTimeoutMs: number } {
+  const inactivityTimeoutMs = command.inactivityTimeoutMs ?? deadline.effectiveInactivityTimeoutMs
+  const hardTimeoutMs =
+    command.hardTimeoutMs ?? command.timeoutMs ?? deadline.effectiveHardTimeoutMs
+  if (
+    inactivityTimeoutMs < deadline.effectiveInactivityTimeoutMs ||
+    hardTimeoutMs < deadline.effectiveHardTimeoutMs ||
+    (inactivityTimeoutMs === deadline.effectiveInactivityTimeoutMs &&
+      hardTimeoutMs === deadline.effectiveHardTimeoutMs)
+  )
+    throw new Error(
+      "Verification deadline extension must be strictly larger than at least one effective timeout",
+    )
+  if (inactivityTimeoutMs > hardTimeoutMs)
+    throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
+  return { inactivityTimeoutMs, hardTimeoutMs }
 }
 
 function parseCombinedVerificationContinuation(
@@ -308,6 +346,7 @@ export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
 // observations on every ordinary scheduler tick when durable facts are stable.
 export type TaskRuntimeOptions = {
   architectIdleWindowMs?: number
+  verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
   architectPromptHook?: boolean
   requestTick?: () => Promise<void>
@@ -518,6 +557,7 @@ export class TaskRuntime {
   >()
   private readonly now: () => number
   private readonly architectIdleWindowMs: number
+  private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
   private readonly wakeScheduler: (() => void) | undefined
@@ -535,6 +575,9 @@ export class TaskRuntime {
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
     this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
+    this.verificationTimeoutDefaults = verificationTimeoutDefaults(
+      options.verificationTimeoutDefaults,
+    )
     this.architectPromptHook = options.architectPromptHook ?? false
     this.requestTick = options.requestTick ?? (() => this.tick())
     this.wakeScheduler = options.wakeScheduler
@@ -566,6 +609,7 @@ export class TaskRuntime {
       progress: this.progress,
       projectID: this.projectID,
       store: this.store,
+      verificationTimeoutDefaults: this.verificationTimeoutDefaults,
     })
     this.adoptionExecution = new AdoptionExecution({
       adoptionArtifactScopeViolations: (...args) => this.adoptionArtifactScopeViolations(...args),
@@ -587,6 +631,7 @@ export class TaskRuntime {
       startCheckActivity: (...args) => this.startCheckActivity(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
+      verificationTimeoutDefaults: this.verificationTimeoutDefaults,
     })
     this.retainedVerificationExecution = new RetainedVerificationExecution({
       checkActivity: (...args) => this.checkActivity(...args),
@@ -698,7 +743,11 @@ export class TaskRuntime {
       artifact,
       checkID: check.id,
       command: check.command,
-      authoredTimeoutMs: check.timeoutMs,
+      authoredTimeoutMs: check.timeoutMs ?? null,
+      authoredInactivityTimeoutMs: check.inactivityTimeoutMs ?? null,
+      authoredHardTimeoutMs: check.hardTimeoutMs ?? null,
+      defaultInactivityTimeoutMs: this.verificationTimeoutDefaults.inactivityTimeoutMs,
+      defaultHardTimeoutMs: this.verificationTimeoutDefaults.hardTimeoutMs,
     }
   }
 
@@ -1827,6 +1876,307 @@ export class TaskRuntime {
     )
   }
 
+  private cancelledRetainedTimeoutMatchesHold(
+    operation: RetainedVerification,
+    timeoutReason: string,
+  ): boolean {
+    const events = this.store.activity(operation.planID, operation.taskID).flatMap((event) => {
+      if (!event.payload) return []
+      try {
+        const payload: unknown = JSON.parse(event.payload)
+        return isRecord(payload) &&
+          payload.operationID === operation.id &&
+          payload.generation === operation.generation
+          ? [{ ...event, payload }]
+          : []
+      } catch {
+        return []
+      }
+    })
+    const cancelled = events.findLast((event) => event.event === "RETAINED_VERIFICATION_CANCELLED")
+    if (
+      !cancelled ||
+      cancelled.payload.source !== "owner-command" ||
+      cancelled.payload.previousState !== "held" ||
+      cancelled.payload.previousHoldReason !== timeoutReason ||
+      cancelled.payload.reason !== operation.holdReason
+    )
+      return false
+    const held = events.findLast(
+      (event) => event.event === "RETAINED_VERIFICATION_HELD" && event.id < cancelled.id,
+    )
+    if (!held || held.payload.reason !== timeoutReason) return false
+    const laterStateChanges = events.filter(
+      (event) =>
+        event.id > held.id &&
+        event.id < cancelled.id &&
+        [
+          "RETAINED_VERIFICATION_HELD",
+          "RETAINED_VERIFICATION_CANCELLED",
+          "RETAINED_TASK_CANDIDATE_ACCEPTED",
+        ].includes(event.event),
+    )
+    return laterStateChanges.length === 0
+  }
+
+  private async prepareRetainedVerificationDeadlineContinuation(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    input: ReturnType<typeof PlanInput.parse>,
+  ): Promise<PreparedVerificationDeadlineExtension> {
+    if (
+      !command.retainedVerificationID ||
+      !command.retainedGeneration ||
+      !command.taskID ||
+      !command.taskRevision ||
+      !command.attemptID ||
+      !command.verificationPhase ||
+      !command.checkID
+    )
+      throw new Error(
+        "Retained timing continuation requires exact operation, generation and candidate bindings",
+      )
+    const operation = this.store.atomic((db) =>
+      retainedVerification(db, command.retainedVerificationID!),
+    )
+    const task = this.store.repository.get(command.taskID)
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === command.taskID)
+      .at(-1)
+    const node = this.store.nodes(plan.id).find((candidate) => candidate.task_id === command.taskID)
+    if (
+      !operation ||
+      operation.generation !== command.retainedGeneration ||
+      !["held", "cancelled"].includes(operation.state) ||
+      operation.planID !== plan.id ||
+      operation.projectID !== this.projectID ||
+      operation.projectDirectory !== this.directory ||
+      operation.planRevision !== plan.revision ||
+      plan.owner !== caller ||
+      operation.taskID !== command.taskID ||
+      operation.taskRevision !== command.taskRevision ||
+      operation.attemptID !== command.attemptID ||
+      !task ||
+      !node ||
+      !attempt ||
+      attempt.id !== operation.attemptID ||
+      task.revision !== operation.taskRevision ||
+      input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
+      task.provenance.projectID !== this.projectID ||
+      task.provenance.projectDirectory !== this.directory ||
+      this.store.repository.taskDisposition(task.id) !== undefined ||
+      attempt.session_id !== operation.originalSessionID ||
+      attempt.message_id !== operation.originalMessageID ||
+      realpathSync(attempt.workspace) !== operation.originalWorkspace ||
+      !["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
+      (operation.sourceQuarantine
+        ? !this.retainedVerificationExecution.sourceQuarantinePlanVersionCurrent(operation, plan)
+        : operation.planVersion !== plan.version)
+    )
+      throw new Error(
+        "Retained check timing continuation no longer matches the current owner and candidate",
+      )
+    if (
+      operation.repair &&
+      (!this.retainedRepairCandidateCurrent(plan, attempt, operation.repair) ||
+        ![operation.repair.previousArtifact, operation.artifact].includes(
+          attempt.artifact ?? operation.artifact,
+        ))
+    )
+      throw new Error("Retained repaired candidate authority changed before continuation")
+    const phase = command.verificationPhase
+    if (
+      operation.sourceQuarantine &&
+      (attempt.state !== "verifying" ||
+        (phase === "task"
+          ? node.state !== "verifying"
+          : node.state !== "accepted" ||
+            !this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)) ||
+        !sourceQuarantineVerificationBindingMatches(this.store, {
+          planID: plan.id,
+          owner: caller,
+          attempt,
+          artifact: operation.artifact,
+          expected: operation.sourceQuarantine,
+        }))
+    )
+      throw new Error("Retained source-quarantine binding changed before continuation")
+
+    const phaseArtifact = phase === "task" ? operation.artifact : operation.combinedArtifact
+    const phaseWorkspace = this.retainedVerificationExecution.retainedVerificationIsolatedWorkspace(
+      operation,
+      phase,
+    )
+    const phaseWorkspaceState =
+      phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
+    const nativeWorkspaces = phaseWorkspace ? await this.host.worktrees() : []
+    const gitWorkspaces = phaseWorkspace
+      ? git(this.directory, ["worktree", "list", "--porcelain"])
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => resolve(line.slice("worktree ".length)))
+      : []
+    if (
+      !phaseArtifact ||
+      command.artifact !== phaseArtifact ||
+      !phaseWorkspace ||
+      phaseWorkspaceState !== "owned" ||
+      !existsSync(phaseWorkspace) ||
+      !nativeWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, phaseWorkspace)) ||
+      !gitWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, phaseWorkspace)) ||
+      git(phaseWorkspace, ["rev-parse", "HEAD"]) !== phaseArtifact ||
+      !artifactUnchanged(phaseWorkspace, phaseArtifact)
+    )
+      throw new Error(
+        "Retained timing continuation requires the unchanged exact candidate workspace",
+      )
+    if (phase === "combined") {
+      if (!this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation))
+        throw new Error("Combined-check continuation requires the original task acceptance")
+      const artifacts = this.acceptedCombinedArtifacts(plan, input, operation)
+      const currentCombinedArtifact = await combineArtifacts(
+        this.directory,
+        input.baseCommit,
+        artifacts.map((item) => item.artifact),
+      )
+      if (currentCombinedArtifact !== operation.combinedArtifact)
+        throw new Error("Retained combined candidate no longer matches its accepted task artifacts")
+    } else if (this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)) {
+      throw new Error("An accepted retained task candidate cannot restart its task checks")
+    }
+
+    const checks = phase === "task" ? task.proposal.verification : input.verification
+    const authoredCheck = checks.find((check) => check.id === command.checkID)
+    if (!authoredCheck)
+      throw new Error("Retained timing continuation does not name a declared phase check")
+    const check = this.store.atomic((db) =>
+      retainedVerificationChecks(db, operation.id, phase).find(
+        (candidate) => candidate.checkID === authoredCheck.id,
+      ),
+    )
+    if (
+      !check ||
+      check.state !== "completed" ||
+      check.cleanupState !== "complete" ||
+      check.workspace !== phaseWorkspace ||
+      check.artifact !== phaseArtifact ||
+      !check.receipt
+    )
+      throw new Error("Retained timing continuation requires the exact completed check receipt")
+    let previousCheck: unknown
+    try {
+      previousCheck = JSON.parse(check.checkJSON) as unknown
+    } catch {
+      previousCheck = undefined
+    }
+    if (
+      !isRecord(previousCheck) ||
+      previousCheck.id !== authoredCheck.id ||
+      previousCheck.command !== authoredCheck.command
+    )
+      throw new Error("Retained timing continuation does not match the current declared command")
+    let rawReceipt: unknown
+    try {
+      rawReceipt = JSON.parse(check.receipt) as unknown
+    } catch {
+      rawReceipt = undefined
+    }
+    const receipt = this.retainedVerificationExecution.retainedVerificationCheckReceipt(
+      rawReceipt,
+      operation,
+      phase,
+      authoredCheck,
+      phaseWorkspace,
+      phaseArtifact,
+      check.environmentIdentity,
+    )
+    const exactTimeoutHold = receipt
+      ? operation.state === "held"
+        ? operation.holdReason === checkFailureReason(receipt)
+        : this.cancelledRetainedTimeoutMatchesHold(operation, checkFailureReason(receipt))
+      : false
+    if (
+      !receipt ||
+      receipt.environmentIdentity !== check.environmentIdentity ||
+      !receipt.timedOut ||
+      receipt.aborted === true ||
+      !["inactivity", "hard-backstop", undefined, null].includes(receipt.stopCause) ||
+      !checkResourcesSettled(receipt) ||
+      !exactTimeoutHold
+    )
+      throw new Error(
+        "Retained check is not the exact settled timeout failure holding this operation",
+      )
+    const resources = this.store.atomic((db) =>
+      db
+        .query<
+          { resource_name: string; canonical_path: string; state: string },
+          [string, string, string]
+        >(
+          `SELECT resource_name,canonical_path,state FROM runner_retained_verification_resources
+           WHERE operation_id=? AND phase=? AND check_id=? ORDER BY resource_name`,
+        )
+        .all(operation.id, phase, authoredCheck.id),
+    )
+    const outstandingResources = this.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            `SELECT COUNT(*) AS count FROM runner_retained_verification_resources
+           WHERE operation_id=? AND state<>'removed'`,
+          )
+          .get(operation.id)?.count ?? 0,
+    )
+    if (
+      !resources.length ||
+      resources.some((resource) => resource.state !== "removed") ||
+      outstandingResources !== 0
+    )
+      throw new Error("Retained check resource obligations are not conclusively settled")
+    if (
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) =>
+          activity.metadata.operationID === operation.id && activity.state === "running",
+      )
+    )
+      throw new Error("A live retained check activity prevents timing continuation")
+    if (
+      this.store
+        .atomic((db) => activeRetainedVerifications(db, this.directory, plan.id))
+        .some((candidate) => candidate.id !== operation.id)
+    )
+      throw new Error("A different retained verification authority prevents timing continuation")
+
+    const target: VerificationTimeoutTarget = {
+      ...this.verificationTarget(
+        plan,
+        phase,
+        authoredCheck,
+        phaseArtifact,
+        phase === "task" ? operation.taskID : null,
+        phase === "task" ? operation.taskRevision : null,
+        phase === "task" ? operation.attemptID : null,
+      ),
+      retainedVerificationID: operation.id,
+      retainedGeneration: operation.generation,
+      retainedTaskID: operation.taskID,
+      retainedTaskRevision: operation.taskRevision,
+      retainedAttemptID: operation.attemptID,
+    }
+    const deadline = this.verificationDeadline(target)
+    const requested = requestedVerificationTimeouts(command, deadline)
+    return {
+      target,
+      deadline,
+      effectiveInactivityTimeoutMs: requested.inactivityTimeoutMs,
+      effectiveHardTimeoutMs: requested.hardTimeoutMs,
+      ownerEpoch: this.store.planControlEpoch(plan.id),
+      retained: { operation, check, receipt, resources },
+    }
+  }
+
   private async prepareVerificationDeadlineExtension(
     plan: PlanRow,
     command: PlanCommand,
@@ -1839,7 +2189,9 @@ export class TaskRuntime {
       !command.planRevision ||
       !command.verificationPhase ||
       !command.checkID ||
-      !command.timeoutMs ||
+      (command.timeoutMs === undefined &&
+        command.inactivityTimeoutMs === undefined &&
+        command.hardTimeoutMs === undefined) ||
       !command.artifact ||
       !command.reason?.trim()
     )
@@ -1852,16 +2204,20 @@ export class TaskRuntime {
       command.projectID !== this.projectID
     )
       throw new Error("Verification deadline extension requires the current same-project Architect")
+    const retainedContinuation = command.retainedVerificationID !== undefined
     if (
-      plan.state !== "blocked" ||
-      plan.artifact !== null ||
-      plan.revision !== command.planRevision
+      plan.revision !== command.planRevision ||
+      (!retainedContinuation && (plan.state !== "blocked" || plan.artifact !== null)) ||
+      (retainedContinuation &&
+        !["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state))
     )
       throw new Error("Verification deadline extension requires the exact stopped plan revision")
     if (this.store.activeAdoptions(plan.id).length)
       throw new Error("An active descendant adoption prevents verification deadline extension")
     if (
-      this.store.atomic((db) => activeRetainedVerifications(db, this.directory, plan.id).length > 0)
+      this.store
+        .atomic((db) => activeRetainedVerifications(db, this.directory, plan.id))
+        .some((operation) => operation.id !== command.retainedVerificationID)
     )
       throw new Error("An active retained verification prevents verification deadline extension")
     if (
@@ -1871,10 +2227,15 @@ export class TaskRuntime {
     )
       throw new Error("A live verification activity prevents verification deadline extension")
     const effects = this.store.effects(plan.id)
-    if (effects.some((effect) => ["intended", "uncertain"].includes(effect.state)))
+    if (
+      !retainedContinuation &&
+      effects.some((effect) => ["intended", "uncertain"].includes(effect.state))
+    )
       throw new Error("Unresolved effects prevent verification deadline extension")
 
     const input = PlanInput.parse(JSON.parse(plan.body))
+    if (retainedContinuation)
+      return this.prepareRetainedVerificationDeadlineContinuation(plan, command, caller, input)
     let target: VerificationTimeoutTarget
     let authoredCheck: TaskProposal["verification"][number] | undefined
     let taskWorkspace: string | undefined
@@ -1945,10 +2306,7 @@ export class TaskRuntime {
     }
 
     const deadline = this.verificationDeadline(target)
-    if (command.timeoutMs <= deadline.effectiveTimeoutMs)
-      throw new Error(
-        "Verification deadline extension must be strictly larger than the effective timeout",
-      )
+    const requested = requestedVerificationTimeouts(command, deadline)
     const prefix = target.phase === "task" ? "verify:" : "graph-verify:"
     const taskID = target.taskID
     const attemptID = target.attemptID
@@ -1982,25 +2340,48 @@ export class TaskRuntime {
       artifact?: unknown
       identity?: unknown
       workspace?: unknown
-      check?: { id?: unknown; command?: unknown; timeoutMs?: unknown }
+      check?: {
+        id?: unknown
+        command?: unknown
+        timeoutMs?: unknown
+        inactivityTimeoutMs?: unknown
+        hardTimeoutMs?: unknown
+      }
       verificationDeadline?: {
         authoredTimeoutMs?: unknown
         effectiveTimeoutMs?: unknown
+        effectiveInactivityTimeoutMs?: unknown
+        effectiveHardTimeoutMs?: unknown
         amendmentID?: unknown
         policyRevision?: unknown
       }
     }
     const actual = actualCheckResultFromEffect(source)
-    const recordedEffective = payload.verificationDeadline?.effectiveTimeoutMs
+    const recordedEffectiveHard =
+      payload.verificationDeadline?.effectiveHardTimeoutMs ??
+      payload.verificationDeadline?.effectiveTimeoutMs ??
+      payload.check?.hardTimeoutMs ??
+      payload.check?.timeoutMs
+    const recordedEffectiveInactivity =
+      payload.verificationDeadline?.effectiveInactivityTimeoutMs ??
+      payload.check?.inactivityTimeoutMs ??
+      deadline.effectiveInactivityTimeoutMs
     if (
       !authoredCheck ||
-      payload.check?.timeoutMs !== (recordedEffective ?? authoredCheck.timeoutMs) ||
+      payload.check?.timeoutMs !== recordedEffectiveHard ||
+      (payload.check?.hardTimeoutMs !== undefined &&
+        payload.check.hardTimeoutMs !== recordedEffectiveHard) ||
       (payload.verificationDeadline !== undefined &&
-        (payload.verificationDeadline.authoredTimeoutMs !== authoredCheck.timeoutMs ||
+        ((payload.verificationDeadline.authoredTimeoutMs ?? null) !==
+          (authoredCheck.timeoutMs ?? null) ||
           !Number.isSafeInteger(payload.verificationDeadline.effectiveTimeoutMs) ||
           !Number.isSafeInteger(payload.verificationDeadline.policyRevision))) ||
       typeof payload.check?.timeoutMs !== "number" ||
-      payload.check.timeoutMs > deadline.effectiveTimeoutMs ||
+      payload.check.timeoutMs > deadline.effectiveHardTimeoutMs ||
+      typeof recordedEffectiveInactivity !== "number" ||
+      recordedEffectiveInactivity > deadline.effectiveInactivityTimeoutMs ||
+      (payload.check.inactivityTimeoutMs !== undefined &&
+        payload.check.inactivityTimeoutMs !== recordedEffectiveInactivity) ||
       !actual ||
       !actual.timedOut ||
       actual.id !== target.checkID ||
@@ -2028,10 +2409,14 @@ export class TaskRuntime {
     return {
       target,
       deadline,
+      effectiveInactivityTimeoutMs: requested.inactivityTimeoutMs,
+      effectiveHardTimeoutMs: requested.hardTimeoutMs,
       ownerEpoch: this.store.planControlEpoch(plan.id),
-      sourceEffectID: source.id,
-      sourcePayloadFingerprint: fingerprint(source.payload),
-      sourceReceiptFingerprint: fingerprint(source.receipt),
+      sourceEffect: {
+        id: source.id,
+        payloadFingerprint: fingerprint(source.payload),
+        receiptFingerprint: fingerprint(source.receipt),
+      },
     }
   }
 
@@ -2041,38 +2426,75 @@ export class TaskRuntime {
     caller: string,
     prepared: PreparedVerificationDeadlineExtension,
   ): void {
+    const retained = prepared.retained
+    const requested = requestedVerificationTimeouts(command, prepared.deadline)
     if (
       plan.owner !== caller ||
       plan.version !== command.expectedVersion ||
       plan.revision !== prepared.target.planRevision ||
-      plan.state !== "blocked" ||
-      plan.artifact !== null ||
+      (retained
+        ? !["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state)
+        : plan.state !== "blocked" || plan.artifact !== null) ||
       command.projectID !== prepared.target.projectID ||
       command.planRevision !== prepared.target.planRevision ||
       command.verificationPhase !== prepared.target.phase ||
-      command.taskID !== (prepared.target.taskID ?? undefined) ||
-      command.taskRevision !== (prepared.target.taskRevision ?? undefined) ||
-      command.attemptID !== (prepared.target.attemptID ?? undefined) ||
+      command.taskID !== (retained?.operation.taskID ?? prepared.target.taskID ?? undefined) ||
+      command.taskRevision !==
+        (retained?.operation.taskRevision ?? prepared.target.taskRevision ?? undefined) ||
+      command.attemptID !==
+        (retained?.operation.attemptID ?? prepared.target.attemptID ?? undefined) ||
       command.artifact !== prepared.target.artifact ||
       command.checkID !== prepared.target.checkID ||
-      !command.timeoutMs ||
-      command.timeoutMs <= prepared.deadline.effectiveTimeoutMs ||
+      command.retainedVerificationID !== (retained?.operation.id ?? undefined) ||
+      command.retainedGeneration !== (retained?.operation.generation ?? undefined) ||
+      requested.inactivityTimeoutMs !== prepared.effectiveInactivityTimeoutMs ||
+      requested.hardTimeoutMs !== prepared.effectiveHardTimeoutMs ||
       this.store.planControlEpoch(plan.id) !== prepared.ownerEpoch
     )
       throw new Error("Verification deadline owner or plan authorization changed before admission")
-    const current = this.store
-      .effects(plan.id)
-      .find((effect) => effect.id === prepared.sourceEffectID)
-    if (
-      !current ||
-      current.state !== "completed" ||
-      fingerprint(current.payload) !== prepared.sourcePayloadFingerprint ||
-      fingerprint(current.receipt) !== prepared.sourceReceiptFingerprint
-    )
-      throw new Error("The settled timeout receipt changed before deadline extension")
+    if (retained) {
+      const currentOperation = this.store.atomic((db) =>
+        retainedVerification(db, retained.operation.id),
+      )
+      const currentCheck = this.store.atomic((db) =>
+        retainedVerificationChecks(db, retained.operation.id, prepared.target.phase).find(
+          (check) => check.checkID === prepared.target.checkID,
+        ),
+      )
+      if (
+        !currentOperation ||
+        fingerprint(currentOperation) !== fingerprint(retained.operation) ||
+        !currentCheck ||
+        fingerprint(currentCheck) !== fingerprint(retained.check)
+      )
+        throw new Error("The retained settled check changed before timing continuation")
+      const outstandingResources = this.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              `SELECT COUNT(*) AS count FROM runner_retained_verification_resources
+             WHERE operation_id=? AND state<>'removed'`,
+            )
+            .get(retained.operation.id)?.count ?? 0,
+      )
+      if (outstandingResources !== 0)
+        throw new Error("A retained resource obligation changed before timing continuation")
+    } else if (prepared.sourceEffect) {
+      const current = this.store
+        .effects(plan.id)
+        .find((effect) => effect.id === prepared.sourceEffect!.id)
+      if (
+        !current ||
+        current.state !== "completed" ||
+        fingerprint(current.payload) !== prepared.sourceEffect.payloadFingerprint ||
+        fingerprint(current.receipt) !== prepared.sourceEffect.receiptFingerprint
+      )
+        throw new Error("The settled timeout receipt changed before deadline extension")
+    }
     const deadline = this.verificationDeadline(prepared.target)
     if (
-      deadline.effectiveTimeoutMs !== prepared.deadline.effectiveTimeoutMs ||
+      deadline.effectiveInactivityTimeoutMs !== prepared.deadline.effectiveInactivityTimeoutMs ||
+      deadline.effectiveHardTimeoutMs !== prepared.deadline.effectiveHardTimeoutMs ||
       deadline.policyRevision !== prepared.deadline.policyRevision
     )
       throw new Error("Verification deadline amendment history changed before admission")
@@ -4017,6 +4439,7 @@ export class TaskRuntime {
   private acceptedCombinedArtifacts(
     plan: PlanRow,
     input: ReturnType<typeof PlanInput.parse>,
+    retained?: RetainedVerification,
   ): CombinedVerificationContinuation["acceptedArtifacts"] {
     const nodes = this.store.nodes(plan.id)
     const attempts = this.store.attempts(plan.id)
@@ -4025,6 +4448,16 @@ export class TaskRuntime {
       const node = nodes.find((candidate) => candidate.task_id === taskID)
       const task = this.store.repository.get(taskID)
       const attempt = attempts.filter((candidate) => candidate.task_id === taskID).at(-1)
+      const retainedCandidateAccepted = Boolean(
+        retained &&
+        retained.taskID === taskID &&
+        retained.taskRevision === task?.revision &&
+        retained.attemptID === attempt?.id &&
+        retained.artifact === node?.artifact &&
+        this.retainedVerificationExecution.retainedTaskCandidateAccepted(retained) &&
+        attempt?.artifact === retained.artifact &&
+        attempt.state === (retained.sourceQuarantine ? "verifying" : "accepted"),
+      )
       if (
         !specification ||
         !node ||
@@ -4037,8 +4470,8 @@ export class TaskRuntime {
         task.provenance.projectDirectory !== this.directory ||
         this.store.repository.taskDisposition(taskID) !== undefined ||
         !attempt ||
-        attempt.state !== "accepted" ||
-        attempt.artifact !== node.artifact ||
+        (!retainedCandidateAccepted &&
+          (attempt.state !== "accepted" || attempt.artifact !== node.artifact)) ||
         git(this.directory, ["rev-parse", `${node.artifact}^{commit}`]) !== node.artifact
       )
         throw new Error(
@@ -4919,10 +5352,13 @@ export class TaskRuntime {
         this.assertVerificationDeadlineExtensionCurrent(plan, command, caller, prepared)
         if (
           this.store.activeAdoptions(plan.id).length ||
-          activeRetainedVerifications(db, this.directory, plan.id).length > 0 ||
-          this.store
-            .effects(plan.id)
-            .some((effect) => ["intended", "uncertain"].includes(effect.state)) ||
+          activeRetainedVerifications(db, this.directory, plan.id).some(
+            (operation) => operation.id !== prepared.retained?.operation.id,
+          ) ||
+          (!prepared.retained &&
+            this.store
+              .effects(plan.id)
+              .some((effect) => ["intended", "uncertain"].includes(effect.state))) ||
           verificationActivitiesForDatabase(this.store.repository.path).some(
             (activity) => activity.metadata.planID === plan.id && activity.state === "running",
           )
@@ -4932,7 +5368,7 @@ export class TaskRuntime {
           .query(
             `UPDATE runner_plans SET version=version+1
              WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
-               AND state='blocked' AND artifact IS NULL`,
+               AND state=? AND artifact IS ?`,
           )
           .run(
             plan.id,
@@ -4940,13 +5376,16 @@ export class TaskRuntime {
             caller,
             command.expectedVersion,
             prepared.target.planRevision,
+            plan.state,
+            plan.artifact,
           ).changes
         if (changed !== 1)
           throw new Error("Verification deadline plan changed during owner authorization")
         const nextPlan = this.store.plan(plan.id)!
+        const amendmentID = crypto.randomUUID()
         const amendment = VerificationTimeoutAmendmentSchema.parse({
           schemaVersion: 1,
-          amendmentID: crypto.randomUUID(),
+          amendmentID,
           policyRevision: prepared.deadline.policyRevision + 1,
           requestID: command.requestID,
           projectID: this.projectID,
@@ -4965,13 +5404,90 @@ export class TaskRuntime {
           commandFingerprint: verificationCommandFingerprint(prepared.target.command),
           authoredTimeoutMs: prepared.deadline.authoredTimeoutMs,
           previousTimeoutMs: prepared.deadline.effectiveTimeoutMs,
-          effectiveTimeoutMs: command.timeoutMs,
+          effectiveTimeoutMs: prepared.effectiveHardTimeoutMs,
+          timingPolicyVersion: 2,
+          authoredInactivityTimeoutMs: prepared.deadline.authoredInactivityTimeoutMs,
+          authoredHardTimeoutMs: prepared.deadline.authoredHardTimeoutMs,
+          defaultInactivityTimeoutMs: prepared.deadline.defaultInactivityTimeoutMs,
+          defaultHardTimeoutMs: prepared.deadline.defaultHardTimeoutMs,
+          previousInactivityTimeoutMs: prepared.deadline.effectiveInactivityTimeoutMs,
+          effectiveInactivityTimeoutMs: prepared.effectiveInactivityTimeoutMs,
+          previousHardTimeoutMs: prepared.deadline.effectiveHardTimeoutMs,
+          effectiveHardTimeoutMs: prepared.effectiveHardTimeoutMs,
+          ...(prepared.retained
+            ? {
+                retainedVerificationID: prepared.retained.operation.id,
+                retainedGeneration: prepared.retained.operation.generation,
+                retainedTaskID: prepared.retained.operation.taskID,
+                retainedTaskRevision: prepared.retained.operation.taskRevision,
+                retainedAttemptID: prepared.retained.operation.attemptID,
+              }
+            : {}),
           reason: command.reason!.trim(),
           createdAt: this.now(),
         }) satisfies VerificationTimeoutAmendment
         this.store.record(plan.id, amendment.taskID, "VERIFICATION_DEADLINE_EXTENDED", amendment)
+        if (prepared.retained) {
+          const { operation, check, receipt, resources } = prepared.retained
+          const current = retainedVerification(db, operation.id)
+          if (
+            !current ||
+            current.generation !== operation.generation ||
+            !["held", "cancelled"].includes(current.state) ||
+            current.planVersion !== operation.planVersion
+          )
+            throw new Error("Held retained verification changed before explicit continuation")
+          this.store.record(
+            plan.id,
+            operation.taskID,
+            "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
+            {
+              requestID: command.requestID,
+              owner: caller,
+              ownerEpoch: prepared.ownerEpoch,
+              priorOwner: operation.owner,
+              priorOwnerEpoch: operation.ownerEpoch,
+              planRevision: operation.planRevision,
+              operationID: operation.id,
+              generation: operation.generation,
+              taskID: operation.taskID,
+              taskRevision: operation.taskRevision,
+              attemptID: operation.attemptID,
+              phase: prepared.target.phase,
+              checkID: prepared.target.checkID,
+              candidateArtifact: prepared.target.artifact,
+              commandFingerprint: verificationCommandFingerprint(prepared.target.command),
+              amendmentID: amendment.amendmentID,
+              priorReceipt: receipt,
+              priorReceiptFingerprint: fingerprint(check.receipt),
+              priorCheckFingerprint: fingerprint(check.checkJSON),
+              priorCheck: JSON.parse(check.checkJSON) as unknown,
+              priorReceiptPath: check.receiptPath,
+              priorResources: resources,
+              reason: amendment.reason,
+            },
+          )
+          const reactivated: RetainedVerification = {
+            ...current,
+            planVersion: nextPlan.version,
+            owner: caller,
+            ownerEpoch: prepared.ownerEpoch,
+            state: prepared.target.phase === "task" ? "task-checks" : "combined-checks",
+            holdReason: null,
+            updatedAt: this.now(),
+          }
+          saveRetainedVerification(db, reactivated)
+          authorizeRetainedVerificationCheckRetry(db, {
+            operationID: operation.id,
+            phase: prepared.target.phase,
+            checkID: prepared.target.checkID,
+            receiptFingerprint: fingerprint(check.receipt),
+          })
+        }
         return {
-          status: "verification-deadline-extended",
+          status: prepared.retained
+            ? "retained-verification-check-continued"
+            : "verification-deadline-extended",
           planID: plan.id,
           phase: amendment.phase,
           taskID: amendment.taskID,
@@ -4981,6 +5497,10 @@ export class TaskRuntime {
           authoredTimeoutMs: amendment.authoredTimeoutMs,
           previousTimeoutMs: amendment.previousTimeoutMs,
           effectiveTimeoutMs: amendment.effectiveTimeoutMs,
+          previousInactivityTimeoutMs: amendment.previousInactivityTimeoutMs,
+          effectiveInactivityTimeoutMs: amendment.effectiveInactivityTimeoutMs,
+          previousHardTimeoutMs: amendment.previousHardTimeoutMs,
+          effectiveHardTimeoutMs: amendment.effectiveHardTimeoutMs,
           amendmentID: amendment.amendmentID,
           policyRevision: amendment.policyRevision,
           reason: amendment.reason,
@@ -5319,6 +5839,9 @@ export class TaskRuntime {
         this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
           operationID: operation.id,
           generation: operation.generation,
+          source: "owner-command",
+          previousState: operation.state,
+          previousHoldReason: operation.holdReason,
           reason: cancelled.holdReason,
           oldExecutionAndResourceHoldsPreserved: true,
         })
@@ -5558,6 +6081,9 @@ export class TaskRuntime {
           this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
             operationID: operation.id,
             generation: operation.generation,
+            source: "plan-cancellation",
+            previousState: operation.state,
+            previousHoldReason: operation.holdReason,
             reason: "Plan cancellation requested",
             oldExecutionAndResourceHoldsPreserved: true,
           })
@@ -6490,6 +7016,8 @@ export class TaskRuntime {
     if (
       command.action === "verify-retained" ||
       command.action === "cancel-retained-verification" ||
+      (command.action === "extend-verification-deadline" &&
+        result?.status === "retained-verification-check-continued") ||
       command.action === "recover-cleanup" ||
       command.action === "pause" ||
       command.action === "unpause" ||
@@ -6498,6 +7026,10 @@ export class TaskRuntime {
       await this.requestTick()
     if (command.action === "reassign" || continuedOwner) this.refreshArchitectSourceOwners()
     return result
+  }
+
+  submitPlan(input: unknown, owner: string) {
+    return this.store.submit(input, owner, this.verificationTimeoutDefaults)
   }
 
   async startTask(input: StartTaskInput): Promise<StartTaskResult> {
@@ -6554,6 +7086,7 @@ export class TaskRuntime {
           dispositions: [],
         },
         task.provenance.sessionID,
+        this.verificationTimeoutDefaults,
       )
       plan = this.store.plan(receipt.planID)!
       created = true
@@ -8692,6 +9225,9 @@ export class TaskRuntime {
       this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
         operationID: operation.id,
         generation: operation.generation,
+        source: "worker-continuation",
+        previousState: saved.state,
+        previousHoldReason: saved.holdReason,
         reason,
         oldExecutionAndResourceHoldsPreserved: true,
       })
@@ -11668,11 +12204,10 @@ export class TaskRuntime {
         : []),
     ]
     const command = commands.join(" && ")
-    const check = {
-      id: "mechanical-preparation",
-      command,
-      timeoutMs: Math.max(...proposal.verification.map((entry) => entry.timeoutMs)),
-    }
+    const check = verificationCheckWithDefaults(
+      { id: "mechanical-preparation", command },
+      this.verificationTimeoutDefaults,
+    )
     const inputFingerprint = workingTreeIdentity(attempt.workspace, attempt.base_commit)
     const shared = attempt.workspace === this.directory
     const sharedDirty = shared && changedPaths(attempt.workspace).length > 0

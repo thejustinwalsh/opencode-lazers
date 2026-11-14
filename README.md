@@ -135,6 +135,22 @@ draft → ready → running → verifying → accepted
 
 Retain check results with the code, command, timestamps and observed environment. Architect decides whether subsequent changes require another check; metadata drift does not automatically revoke a pass. Repair receives the specific failure.
 
+Verification uses a **15-minute inactivity allowance** (reset by real stdout/stderr
+progress) and **60-minute total hard backstop** by default for task, combined and
+isolated retained checks. Project options `verificationInactivityTimeoutMs` and
+`verificationHardTimeoutMs`, or per-check `inactivityTimeoutMs` and
+`hardTimeoutMs`, can override the defaults; inactivity must not exceed the hard
+limit. Legacy `timeoutMs` remains readable as historical metadata, not an
+execution cutoff. Receipts retain the effective policy and whether a check stopped
+for inactivity, the hard backstop or cancellation.
+
+The current Architect can amend an exact settled timeout. Ordinary checks require
+a separate explicit resume; an exact held/cancelled-held retained check can instead
+be continued by the same owner command when operation, generation, candidate,
+phase, check, command, receipt and resource bindings still match. Continuation
+reuses the candidate and acceptance, preserves earlier evidence and resource
+obligations, and never restarts the implementation worker.
+
 Completion/failure delivery and Architect decisions are separate from lifecycle transitions. Persist the outcome and evidence before notification, and prevent duplicate or stale notifications/commands from dispatching work twice. Apply configured repair or retry rules without a model call when the response is already defined. Re-enter Architect when the failure requires a new approach, changed dependencies or scope, or a user decision. A reschedule or revised plan must pass admission and retain prior attempts and usage; it does not silently restart a loop.
 
 Serial tasks default to native child sessions in the shared checkout; parallel work uses OpenCode-managed worktrees. Review and integrate accepted commits, then reconcile and remove only owned, idle, clean, merged worktrees through native APIs. Cleanup failures remain visible and retryable. Preserve unmerged work and attempt history. See [workspace policy](.agents/docs/workspace-policy.md).

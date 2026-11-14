@@ -138,19 +138,31 @@ separately authorizes a reviewed cleanup.
 
 ## Extend a settled verification deadline
 
-Inspect the exact task or combined check receipt first. Only the current plan
-owner may use `extend-verification-deadline`, and only after the plan is stopped,
-the candidate is unchanged, the timeout receipt is conclusive, and every check
-process and owned resource has settled. Bind `projectID`, `planRevision`, the
-current `expectedVersion`, `verificationPhase`, `checkID`, and exact `artifact`;
-task checks additionally require `taskID`, `taskRevision`, and latest `attemptID`.
-Choose a strictly larger `timeoutMs` than the current effective allowance.
+Checks default to 15 minutes without real stdout/stderr progress and a 60-minute
+total hard backstop, shared across recognized command phases. Project options
+`verificationInactivityTimeoutMs` and `verificationHardTimeoutMs`, or per-check
+`inactivityTimeoutMs` and `hardTimeoutMs`, override the defaults. Legacy
+`timeoutMs` remains readable as authored history but never controls current
+execution. Receipts and inspection distinguish authored timing, resolved limits,
+amendment provenance and the actual timeout cause without exposing check output.
 
-Extension appends a deadline amendment; it does not change the authored plan or
-task, acceptance/evidence requirements, candidate, or original check receipt. It
-does not start work or grant acceptance. After the amendment is recorded, the
-owner must issue a separate `resume` bound to the same task attempt, or a
-plan-level resume for the same combined candidate. The runtime preserves passing
-receipts, reruns only checks that need the amended policy, and never restarts or
-prompts the implementation worker. If any binding, receipt, process or resource
-is uncertain, leave the candidate stopped for reconciliation instead.
+Inspect the exact task, combined or retained check receipt first. Only the current
+plan owner may use `extend-verification-deadline`, and only after the candidate is
+unchanged, the timeout receipt is conclusive, and every relevant process and
+resource obligation has settled. Bind `projectID`, `planRevision`, current
+`expectedVersion`, `verificationPhase`, `checkID` and exact `artifact`. Task
+checks also require `taskID`, `taskRevision` and latest `attemptID`; retained
+continuation additionally requires exact `retainedVerificationID` and
+`retainedGeneration`. Choose strictly larger effective inactivity and/or hard
+limits, with inactivity no greater than the hard backstop.
+
+For ordinary task and combined checks, the amendment does not change the authored
+plan/task, acceptance evidence, candidate or original receipt and does not itself
+start work; separately `resume` the same task attempt or combined candidate. For
+an exact held or cancelled-held retained timeout, the same owner command is also
+explicit authorization to continue only that isolated check. The runtime retains
+passing and prior failed/interrupted receipts, the accepted task gate, original
+quarantine and cleanup/resource obligations. It does not change the candidate,
+command or acceptance, or prompt/replay the implementation worker. If any owner,
+operation, generation, phase, check, command, receipt, process or resource binding
+is stale or uncertain, leave the operation held for reconciliation.
