@@ -34,3 +34,14 @@ passes the comma-separated verified SPKIs only to its isolated Chromium process
 as `--ignore-certificate-errors-spki-list=<verified SPKIs>`. These are
 certificate-key-scoped allowances for the verified local Portless certificates;
 they do not disable certificate validation generally.
+
+Before corrected packed Chromium reference run 20 on 2026-11-14, the
+qualification server was registered at
+`https://lazers-lfm3-liquid-qualification.localhost:1355`. The existing CA
+verified the chain and exact hostname; HTTPS returned HTTP 200. Its certificate
+SAN was `DNS:lazers-lfm3-liquid-qualification.localhost`, SHA-256 fingerprint
+`46FAAF8890AFA55F4E1C7A355A965140CF42B012E3AAD4B18650260D6A8FDAEB`, and SPKI
+`E6gQI1I90sg5O2EwNyfRJquaPMWnfYJcDYbENIOOV9w=`. Chromium received only this
+verified SPKI together with the freshly rechecked fixture and asset SPKIs.
+The qualification route used the existing Portless proxy/CA; no trust-store,
+login-keychain, or global TLS setting was changed.

@@ -31,9 +31,14 @@ speech at depth 1 and depth 3, recovered transcription after queued cancellation
 and disposed with no remaining storage buffers. It failed the retained speech
 recovery assertion: the native depth-3 WAV transcribes through pinned Liquid as
 “The quick brown seas is the sannies.” The pinned Liquid reference itself also
-fails to recover either of its own generated utterances. See
-`evidence/speech-quality-deviation.md`; no weights, clips or assertions were
-changed and no playback claim is made.
+fails to recover either of its own generated utterances after the reference
+harness was corrected to resample 24 kHz generated audio to its 16 kHz ASR input
+rate. The correction is in sibling ruNNtime commit `4d081aa`; run 20 records the
+valid same-file attempt and still fails requested-word recovery. Run 21 repeated
+the corrected path for both Liquid-generated audio and the retained native WAV;
+both remain nonmatching. See
+`evidence/speech-quality-deviation.md`; no weights, clips or recovery assertions
+were changed and no playback claim is made.
 
 The full pair measured 1,819,152,568 peak GPU bytes (~1.82 GB), above the 1 GB
 optimization target; load plus warm-up was 26,542.7 ms. After disposal no
@@ -41,9 +46,9 @@ storage buffers remained, while 519,028 bytes remained in the TypeGPU root
 cache. See `evidence/native-speech-diagnostic.md` for the observations and
 limitations.
 
-The current ruNNtime source commit and all six ordered patches are recorded in
+The current ruNNtime source commit and all seven ordered patches are recorded in
 `partial-manifest.json`. Applying the series to the recorded `b824c95` base
-reconstructed the exact `e0c96c3` tip tree; see
+reconstructed the exact `cf360ee` tip tree; see
 `evidence/reconstruction-final.log`. The contribution remains a partial receipt:
 the full parity and speech-quality requirements are not met.
 

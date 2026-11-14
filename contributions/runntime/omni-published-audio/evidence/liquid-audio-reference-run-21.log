@@ -1,0 +1,131 @@
+
+portless
+
+-- Proxy is running
+-- lazers-lfm3-liquid-qualification.localhost (auto-resolves to 127.0.0.1)
+-- Name "lazers-lfm3-liquid-qualification" (from --name flag)
+-- Using port 4962
+
+  -> https://lazers-lfm3-liquid-qualification.localhost:1355
+
+Running: PORT=4962 HOST=127.0.0.1 PORTLESS_URL=https://lazers-lfm3-liquid-qualification.localhost:1355 NODE_EXTRA_CA_CERTS="/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/desktop/.portless/ca.pem" pnpm --filter runntime exec node test/zoo/lfm3/packed-consumer.mjs
+
+$ node ../../scripts/sync-readme.mjs && pnpm run build
+$ tsdown
+ℹ tsdown v0.23.0 powered by rolldown v1.2.8
+ℹ config file: /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/tsdown.config.ts
+ℹ entry: src/zoo/index.ts, src/zoo/transformers/index.ts
+ℹ tsconfig: tsconfig.json
+
+ WARN  `external` is deprecated. Use `deps.neverBundle` instead.
+
+ℹ Build start
+ℹ Cleaning 8 files
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/transformers/init.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/gpu.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/detector.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:30)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/depthEstimation.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/imageClassification.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:36)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:15)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/nlp/lfm3.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:29)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/lfm3/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:20)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/mapToTexture.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:34)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/common.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:30)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/detect/decodeDetections.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/buffers.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:29)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/reduce/softmaxTopK.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/imageToChw.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:23)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/replayCache.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:33)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/eval.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/loadStateDict.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/context.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:31)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/elem.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:20)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/module.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/matmul/matmul.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/activations.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/layers.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/attention/attn.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:23)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/ssm.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:24)
+ℹ dist/zoo/index.mjs                 305.04 kB │ gzip: 85.65 kB
+ℹ dist/zoo/transformers/index.mjs     27.61 kB │ gzip:  7.93 kB
+ℹ dist/classifier-DYiiQa4u.mjs         1.37 MB
+ℹ dist/zoo/index.d.mts                52.74 kB │ gzip: 12.76 kB
+ℹ dist/zoo/transformers/index.d.mts    3.25 kB │ gzip:  1.00 kB
+ℹ dist/config-D2m8zfTp.d.mts          11.17 kB │ gzip:  4.05 kB
+ℹ 6 files, total: 1.77 MB
+✔ Build complete in 1873ms
+package: runntime@0.2.0
+Tarball Contents
+dist/classifier-DYiiQa4u.mjs
+dist/config-D2m8zfTp.d.mts
+dist/zoo/index.d.mts
+dist/zoo/index.mjs
+dist/zoo/transformers/index.d.mts
+dist/zoo/transformers/index.mjs
+LICENSE.md
+package.json
+README.md
+Tarball Details
+/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-FaYU0o/pack/runntime-0.2.0.tgz
+LFM3_LIQUID_ENGINE_SHA256 77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb
+LFM3_LIQUID_ENGINE_INSTRUMENTATION_SHA256 8dbbedffbe2558579ec2577b47b57acfe9af1b01983dcbe5d548544c6086dcfe
+
+ RUN  v5.0.4 /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-FaYU0o/consumer
+
+stdout | test/zoo/lfm3/liquid-reference.gpu.test.ts > records pinned Liquid Q4_K_M teacher-forced vectors and deterministic chat answers
+LFM3_LIQUID_NATIVE_SPEECH_REFERENCE {"sampleRate":24000,"samples":132480,"bytes":265004,"sha256":"f07d75887f14bef29d817a6b152bc55260ce2bce2548a2cd835f97ab64ac3d74","transcriptionSampleRate":16000,"transcriptionSamples":88320,"requestedText":"The quick brown fox jumps over the lazy dog.","liquidTranscription":{"text":"The quick brown seas is the sannies.","normalizedText":"the quick brown seas is the sannies","matchesRequestedText":false,"promptTokens":86,"generatedTokens":10}}
+stdout | test/zoo/lfm3/liquid-reference.gpu.test.ts > records pinned Liquid Q4_K_M teacher-forced vectors and deterministic chat answers
+LFM3_LIQUID_AUDIO_REFERENCE [{"id":"quick-brown-fox","input":{"file":"quick-brown-fox.wav","transcript":"The quick brown fox jumps over the lazy dog.","sampleRate":16000,"samples":42732,"bytes":89560,"sha256":"0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880"},"liquidTranscription":{"text":"The quick brown fox jumps over the lazy dog.","normalizedText":"the quick brown fox jumps over the lazy dog","promptTokens":51,"generatedTokens":10,"matchesExpected":true},"liquidSpeech":{"file":"liquid-speech-quick-brown-fox.wav","sampleRate":24000,"samples":107520,"seconds":4.48,"bytes":430124,"sha256":"4f9d6f596c0da1ce3e6ccf30ecf9ff05a7517c3583082b7a831844abf534da12","seed":1234,"depthDecoderTemperature":0.4,"speechFrames":57,"streamChunks":7,"generatedTokens":58,"finiteNonempty":true},"speechTranscription":{"text":"The recording is completely silent.","normalizedText":"the recording is completely silent","sampleRate":16000,"samples":71680,"promptTokens":73,"generatedTokens":6,"recoversRequestedText":false}},{"id":"turn-left-next-street","input":{"file":"turn-left-next-street.wav","transcript":"Please turn left at the next street.","sampleRate":16000,"samples":33034,"bytes":70164,"sha256":"f9ce57f4e548e339e944ba87860cd35a545db46e5eafd69f3692ede19f6cb054"},"liquidTranscription":{"text":"Please turn left at the next street.","normalizedText":"please turn left at the next street","promptTokens":43,"generatedTokens":8,"matchesExpected":true},"liquidSpeech":{"file":"liquid-speech-turn-left-next-street.wav","sampleRate":24000,"samples":216960,"seconds":9.04,"bytes":867884,"sha256":"ec4b0c812bce03d599b739ed058b68e0f6e2a47e4c7045608852477dbb852515","seed":1234,"depthDecoderTemperature":0.4,"speechFrames":114,"streamChunks":13,"generatedTokens":115,"finiteNonempty":true},"speechTranscription":{"text":"The electric buzzing of a machine is constant in the background.","normalizedText":"the electric buzzing of a machine is constant in the background","sampleRate":16000,"samples":144640,"promptTokens":130,"generatedTokens":13,"recoversRequestedText":false}}]
+ × |chromium| test/zoo/lfm3/liquid-reference.gpu.test.ts > records pinned Liquid Q4_K_M teacher-forced vectors and deterministic chat answers 12812ms
+   → pinned Liquid speech should recover the requested words through same-file transcription: expected false to be true // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |chromium| test/zoo/lfm3/liquid-reference.gpu.test.ts > records pinned Liquid Q4_K_M teacher-forced vectors and deterministic chat answers
+AssertionError: pinned Liquid speech should recover the requested words through same-file transcription: expected false to be true // Object.is equality
+
+Failure screenshot:
+  - .vitest/attachments/failure-screenshots/liquid-reference.gpu.test.ts/records-pinned-Liquid-Q4_K_M-teacher-forced-vectors-and-deterministic-chat-answers.png
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+ ❯ test/zoo/lfm3/liquid-reference.gpu.test.ts:652:9
+    650|         audioFixtures.every((fixture) => fixture.speechTranscription.r…
+    651|         'pinned Liquid speech should recover the requested words throu…
+    652|       ).toBe(true);
+       |         ^
+    653|     }
+    654|     if (nativeSpeech) {
+ ❯ node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/deps/plugins.DPQHVT0p-C6222eMo.js?v=b3165d8c:5235:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  01:53:55
+   Duration  15.55s (tests 98%, import 1%, worker 1%)
+
+JSON report written to /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-lfm3-native-audio-capture/run-21/vitest-report.json
+LFM3_PACKED_TEMP /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-FaYU0o
+file:///private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/test/zoo/lfm3/packed-consumer.mjs:49
+    throw new Error(`${command} ${args.join(' ')} failed (${result.status})`);
+          ^
+
+Error: /Users/tjw/.hermes/node/bin/node /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-FaYU0o/consumer/node_modules/vitest/vitest.mjs run --config /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-FaYU0o/consumer/vitest.config.ts --reporter=verbose --reporter=json --outputFile.json=/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-lfm3-native-audio-capture/run-21/vitest-report.json test/zoo/lfm3/liquid-reference.gpu.test.ts failed (1)
+    at run (file:///private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/test/zoo/lfm3/packed-consumer.mjs:49:11)
+    at file:///private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/test/zoo/lfm3/packed-consumer.mjs:342:3
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:650:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v26.9.0
+undefined
+/private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: node test/zoo/lfm3/packed-consumer.mjs
+
+observedExitCode=1

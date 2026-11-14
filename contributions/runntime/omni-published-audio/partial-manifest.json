@@ -26,12 +26,12 @@
     "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
   },
   "tip": {
-    "commit": "35117b90aa866c8abab4bf4a6574e122334594de",
-    "tree": "e0c96c34714dd80d39981f060a1acbce2f185680"
+    "commit": "4d081aa7820b95064eae8bf45e0ae37cd26e7e75",
+    "tree": "cf360ee40130e9aa640a1e1e49b822ea06f3c9d0"
   },
   "patchReconstruction": {
     "baseCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
-    "observedTree": "e0c96c34714dd80d39981f060a1acbce2f185680",
+    "observedTree": "cf360ee40130e9aa640a1e1e49b822ea06f3c9d0",
     "evidence": "evidence/reconstruction-final.log"
   },
   "patches": [
@@ -76,6 +76,13 @@
       "tree": "e0c96c34714dd80d39981f060a1acbce2f185680",
       "path": "patches/0006-public-omni-audio-api-and-speech.patch",
       "sha256": "307d28259f8cbedbf4ea15e190cc761c812ff9bcb51b8ba81f7d38005aba418e"
+    },
+    {
+      "commit": "4d081aa7820b95064eae8bf45e0ae37cd26e7e75",
+      "parent": "35117b90aa866c8abab4bf4a6574e122334594de",
+      "tree": "cf360ee40130e9aa640a1e1e49b822ea06f3c9d0",
+      "path": "patches/0007-liquid-reference-input-resampling.patch",
+      "sha256": "8857cf3eda60d575aece6db87322cb95963897579a0ec98ed71c97b61982a524"
     }
   ],
   "passingChecks": [
@@ -132,7 +139,7 @@
       "command": "bun run verify",
       "exitCode": 0,
       "path": "evidence/lazers-final-verify.log",
-      "sha256": "e06c06a9e39c72b883bd1be6c8af781718c3dd72fb5f67a303d5f633990190f0",
+      "sha256": "f4cb3ba7d2674ddaad2d64c595586b1029427d4476f9a6d59da1c37a2b844bd2",
       "observed": "Formatter, lint --fix, formatter and typecheck passed"
     },
     {
@@ -140,7 +147,7 @@
       "command": "bun test scripts/verify-runntime-contribution.test.ts",
       "exitCode": 0,
       "path": "evidence/lazers-final-retention-tests.log",
-      "sha256": "e96d2d38c77ecc03df2a0d44f34d8384b8de8ebc1224de997815694c158ed88a",
+      "sha256": "abf89015fc24342128914fb9de076950b53269e909c2e4c8a8f0d9b9abebe93f",
       "observed": "18 tests and 92 assertions passed"
     },
     {
@@ -369,17 +376,25 @@
     },
     {
       "kind": "conversion",
-      "command": "apply all six ordered audio patches from the recorded base and compare each reconstructed tree with its sibling commit",
+      "command": "apply all seven ordered audio patches from the recorded base and compare each reconstructed tree with its sibling commit",
       "exitCode": 0,
       "path": "evidence/reconstruction-final.log",
-      "sha256": "c30f18b6f947c86ba2a38d87aa329ea1d1be1e3ba4d466c86cc9d96d77cf396b",
-      "observed": "All six patches reconstruct final tree e0c96c34714dd80d39981f060a1acbce2f185680"
+      "sha256": "ca0b5504a14d44f062be03e955a2fc828a6be05b3671fd4e38621cc1b1559b4d",
+      "observed": "All seven patches reconstruct final tree cf360ee40130e9aa640a1e1e49b822ea06f3c9d0"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm exec prettier --write <Liquid reference test>; pnpm exec eslint --fix <Liquid reference test>; pnpm exec prettier --check <Liquid reference test>; pnpm exec eslint <Liquid reference test>; pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/liquid-reference-harness-quality.log",
+      "sha256": "11a9656e5ee383ded5613c5f33d54c18c84a21b773337ea4cb037c1020704393",
+      "observed": "Formatter and lint auto-fixes completed before verification; targeted format, lint, and package typecheck passed"
     }
   ],
   "pendingChecks": [
     "Independent same-file Liquid logits and full-vocabulary probability differences versus native cached/full-forward probability parity",
     "Model-specific independent audio attention, convolution and depth-decoder vectors/logits against pinned Liquid; direct frontend, projector-schema and codec-synthesis unit references passed",
-    "Pinned Liquid transcription of generated speech does not recover requested words for either native or pinned-Liquid speech; preserve this assertion and return the unexplained quality deviation for review",
+    "Corrected run 21 resampled both the pinned-Liquid 24 kHz output and retained native 24 kHz WAV to the 16 kHz ASR input rate; same-file recovery still fails for both paths. Causal source and matched audio-module parity remain unresolved",
     "Controlled-seed/depth comparative audio quality beyond recorded stream lengths, latency, waveform metrics and transcription; no perceptual or Desktop playback claim"
   ],
   "observedFailures": [
@@ -393,13 +408,25 @@
       "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference pnpm packed-consumer real-WebGPU run 13",
       "exitCode": 1,
       "path": "evidence/speech-quality-deviation.md",
-      "observed": "The pinned Liquid reference correctly transcribed both clean clips and emitted finite nonempty speech, but its own transcriber returned unrelated text for both generated utterances; the same run returned the same nonmatching transcript for captured native speech."
+      "observed": "The pinned Liquid reference transcribed both clean clips; this run passed generated 24 kHz speech directly into its 16 kHz ASR path, so those generated-speech transcripts are invalid and superseded by corrected run 20. The native-speech branch resampled its captured WAV before ASR."
     },
     {
       "command": "LFM3_BASE_QUALIFICATION_MODE=audio packed installed-package real-WebGPU run 14",
       "exitCode": 1,
       "path": "evidence/speech-quality-deviation.md",
       "observed": "Both frozen clips transcribed exactly; finite streamed 24 kHz speech at depths 1 and 3, cancellation recovery and disposal checks ran, but pinned Liquid transcribed the requested depth-3 utterance as 'The quick brown seas is the sannies.'"
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference packed-consumer run 20 with same-file speech resampled to 16 kHz",
+      "exitCode": 1,
+      "path": "evidence/liquid-audio-reference-run-20.log",
+      "observed": "Both unchanged clean clips still transcribed exactly; Liquid emitted the same finite 24 kHz waveforms and ASR received their 16 kHz resamples, but returned 'The recording is completely silent.' and 'The electric buzzing of a machine is constant in the background.' The requested-word assertion remains failing."
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference packed-consumer run 21 with retained native capture and corrected same-file rates",
+      "exitCode": 1,
+      "path": "evidence/liquid-audio-reference-run-21.log",
+      "observed": "The pinned Liquid transcriber received the unchanged native depth-3 WAV resampled to 88,320 samples at 16 kHz and returned 'The quick brown seas is the sannies.' Liquid-generated speech likewise received 16 kHz resamples and returned 'The recording is completely silent.' and 'The electric buzzing of a machine is constant in the background.' Clean frozen-clip transcriptions remained exact."
     }
   ]
 }
