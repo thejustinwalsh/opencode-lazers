@@ -1,0 +1,33 @@
+From 1a20e805efa783f169da3ebaa1399bfaaa40bbd2 Mon Sep 17 00:00:00 2001
+From: lazers-worker <lazers-worker@local>
+Date: Sat, 14 Nov 2026 06:38:58 -0500
+Subject: [PATCH 1/7] fix(zoo): own audio speech result rejection for
+ stream-only consumers
+
+Mirror the chat session's internal result observer so early-break or
+stream-only speech consumers never surface an unhandled rejection.
+Awaiting result still observes the original outcome; cancellation,
+device loss and failure cleanup paths are unchanged.
+---
+ packages/runntime/src/zoo/tasks/audio/lfm3.ts | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/packages/runntime/src/zoo/tasks/audio/lfm3.ts b/packages/runntime/src/zoo/tasks/audio/lfm3.ts
+index 984d84a..fca0e77 100644
+--- a/packages/runntime/src/zoo/tasks/audio/lfm3.ts
++++ b/packages/runntime/src/zoo/tasks/audio/lfm3.ts
+@@ -617,6 +617,11 @@ export async function createLfm3Audio(
+             },
+           )
+           .finally(linked.dispose);
++        // Stream-only and early-break consumers may never await `result`;
++        // hold an internal observer so a late rejection never surfaces as an
++        // unhandled rejection, mirroring the chat session. Awaiting `result`
++        // still observes the original outcome.
++        result.catch(() => undefined);
+         return { result, cancel: () => linked.abort(), [Symbol.asyncIterator]: () => stream };
+       },
+       async dispose() {
+-- 
+2.54.0
+

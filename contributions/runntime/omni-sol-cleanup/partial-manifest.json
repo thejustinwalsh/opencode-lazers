@@ -1,0 +1,182 @@
+{
+  "base": {
+    "commit": "abee81448bae6b616664b53d01ab68993f713ad3",
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "tree": "221c485c5dc1645a2080917ade3de6732ff09689"
+  },
+  "observedFailures": [],
+  "passingChecks": [
+    {
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "kind": "unit",
+      "observed": "60 test files, 1,187 tests passed",
+      "path": "evidence/unit.log",
+      "sha256": "1c9ca8240ecd63f04981c45a225d6bae5233ff770ea22e69f7121d8323b26375"
+    },
+    {
+      "command": "pnpm --filter runntime exec vitest run --project unit test/zoo/lfm3/stateDictHooks.test.ts test/zoo/lfm3/session.test.ts test/zoo/tasks/audio/speak.test.ts test/core/graph/ops/conv/depthwiseConv1d.test.ts",
+      "exitCode": 0,
+      "kind": "unit",
+      "observed": "4 test files, 17 tests passed, including packed-MLP layout, session failure-then-success, direct audio speak early-break and depthwise op tests",
+      "path": "evidence/focused-unit.log",
+      "sha256": "96498c74e9f99acb6b607b14cb35770baf7d46abfcdd1bbc0d4adbf4a415bc23"
+    },
+    {
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "kind": "typecheck",
+      "observed": "ruNNtime package typecheck passed",
+      "path": "evidence/typecheck.log",
+      "sha256": "d318868863d485d2e56d27a308a51707e9a89df1f93891e266052da2fa7c1899"
+    },
+    {
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "kind": "lint",
+      "observed": "Repository ESLint passed with max warnings set to zero",
+      "path": "evidence/lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8"
+    },
+    {
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "kind": "unit",
+      "observed": "Prettier check passed",
+      "path": "evidence/format.log",
+      "sha256": "1d66faad74f5e8709353f7288592866bd3a9095da1174a916e7aa632949971e2"
+    },
+    {
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "kind": "build",
+      "observed": "Package build completed; existing TypeGPU ambient-declaration parse warnings remain",
+      "path": "evidence/build.log",
+      "sha256": "e9de96812198f9e77c979d423e892ba318d8e1e15257fe42105e8ab9006ab6e1"
+    },
+    {
+      "command": "pnpm --filter runntime exec vitest run --project gpu test/zoo/lfm3/fused-readback-recovery.gpu.test.ts test/zoo/lfm3/model-lifecycle.gpu.test.ts test/core/kernels/conv/depthwiseConv1d.gpu.test.ts test/core/kernels/reduce/rmsNorm.gpu.test.ts test/core/kernels/elementwise/swigluChunk.gpu.test.ts",
+      "exitCode": 0,
+      "kind": "gpu",
+      "observed": "5 test files, 124 tests passed with 1 expected failure; successor readback is genuinely pending through the fused queue; depthwise padLeft, grouped/residual RMSNorm, swigluChunk and lifecycle upload ownership verified",
+      "path": "evidence/focused-operator-gpu.log",
+      "sha256": "9f1e4f007393287bef579fdd434552c0c1651b4cc32e7cc6c4674e6a4c012bb5"
+    },
+    {
+      "command": "pnpm --filter runntime exec vitest run --project gpu test/core/kernels/matmul/",
+      "exitCode": 0,
+      "kind": "gpu",
+      "observed": "7 test files, 366 tests passed with 3 expected failures; small-M and tiled quantized routes unchanged",
+      "path": "evidence/matmul-quant-gpu.log",
+      "sha256": "3efce75de31234768386c4662d69aa0db1d33734de977052549d251ff9c3412c"
+    },
+    {
+      "command": "apply all seven ordered Sol patches from the recorded base and compare each reconstructed tree with its sibling commit",
+      "exitCode": 0,
+      "kind": "conversion",
+      "observed": "All seven patches reconstruct exactly; tip tree 9090b0e0295b5320f5ffc3530326a8936149a2fc",
+      "path": "evidence/reconstruction-final.log",
+      "sha256": "54b581bb54c3c2086a673896d9fff834c07e2203a3615d794750aa8ef7cb3f91"
+    },
+    {
+      "command": "bun run verify",
+      "exitCode": 0,
+      "kind": "unit",
+      "observed": "Formatter, lint --fix, formatter and typecheck passed",
+      "path": "evidence/lazers-verify.log",
+      "sha256": "4feab1ca7dba9df4789ee313003afbe2adecf08755589fa66e148517ba800f91"
+    },
+    {
+      "command": "bun test scripts/verify-runntime-contribution.test.ts",
+      "exitCode": 0,
+      "kind": "unit",
+      "observed": "18 tests and 92 assertions passed",
+      "path": "evidence/lazers-retention-tests.log",
+      "sha256": "eadfa49f9f5510682e1312e0541f44a21474ccba504f13c610d64ae4f9392a3a"
+    }
+  ],
+  "patchReconstruction": {
+    "baseCommit": "abee81448bae6b616664b53d01ab68993f713ad3",
+    "evidence": "evidence/reconstruction-final.log",
+    "observedTree": "9090b0e0295b5320f5ffc3530326a8936149a2fc"
+  },
+  "patches": [
+    {
+      "commit": "1a20e805efa783f169da3ebaa1399bfaaa40bbd2",
+      "parent": "abee81448bae6b616664b53d01ab68993f713ad3",
+      "path": "patches/0001-fix-zoo-own-audio-speech-result-rejection-for-stream.patch",
+      "sha256": "fc286911c1feb06242c42a9712abc1dc7cfaef1952e19bd41c61803ddc4d61da",
+      "tree": "6495b45dc9ba203f3d9997a930583b3a72f376fb"
+    },
+    {
+      "commit": "4741edad7b996e17e239ed1bfe06f9e7cf9e8633",
+      "parent": "1a20e805efa783f169da3ebaa1399bfaaa40bbd2",
+      "path": "patches/0002-refactor-zoo-use-grouped-rmsNorm-residual-post-norms.patch",
+      "sha256": "64c4a5c51cee13c71dcd303a73c3dc36abf33f14963ea994100f35e18b17ac5a",
+      "tree": "1c0c546cfa2e0874eb014b6710c274e7b8a052df"
+    },
+    {
+      "commit": "51a86bff608d0d98d80eea3d2ac72795d28cf337",
+      "parent": "4741edad7b996e17e239ed1bfe06f9e7cf9e8633",
+      "path": "patches/0003-refactor-core-move-depthwise-padLeft-to-the-dimensio.patch",
+      "sha256": "63bf9656a175d1745064e8d6882eef8e2c46f76f8b66c75805383b1012ab5ea7",
+      "tree": "ed9bb460e872af224c513b57c2cf32ec16883c1a"
+    },
+    {
+      "commit": "c5f288c17b23b295615e87919d8caaa709e12037",
+      "parent": "51a86bff608d0d98d80eea3d2ac72795d28cf337",
+      "path": "patches/0004-refactor-zoo-fuse-LFM3-logits-readback-into-the-eval.patch",
+      "sha256": "175a2f1c1494c2fe47d053d41884bc41848d814722ad3803a59898465d0219f6",
+      "tree": "304619707bc540f24096d0cc6f18983a5086a14b"
+    },
+    {
+      "commit": "fa0aad9ba7d18ee52654fe9c645ddd2c445ac199",
+      "parent": "c5f288c17b23b295615e87919d8caaa709e12037",
+      "path": "patches/0005-fix-zoo-drop-pre-submit-fused-logits-readback.patch",
+      "sha256": "d9bdac36db2e439e76391a7c19826b9eaa7f519041a26f6aca24cbf3c92970a9",
+      "tree": "8b2320ef2136343346c91f59de6978c9ee943794"
+    },
+    {
+      "commit": "52bfe741cb1036d39206150aa198c8ed3cb6d605",
+      "parent": "fa0aad9ba7d18ee52654fe9c645ddd2c445ac199",
+      "path": "patches/0006-test-zoo-regress-fused-readback-recovery-and-stream-.patch",
+      "sha256": "b390dfdc748d8406de3f0c0554eb2223625b7d5b5d8fc808eb26858cb0f31743",
+      "tree": "1261366044c2d059f6384a7df5c7a1de66e7d158"
+    },
+    {
+      "commit": "6aa6bbd5a0dae14204e9853c34c911fedd430659",
+      "parent": "52bfe741cb1036d39206150aa198c8ed3cb6d605",
+      "path": "patches/0007-test-zoo-cover-public-audio-speak-early-break-and-pe.patch",
+      "sha256": "6c6ae3e62af6bd1a91ec07e46c5c9d08b55f79c30b298f59f3c4f90306ac38fb",
+      "tree": "9090b0e0295b5320f5ffc3530326a8936149a2fc"
+    }
+  ],
+  "pendingChecks": [
+    "MODE-gated native-reference hidden/cosine parity and cache-parity on real WebGPU",
+    "MODE-gated installed packed Q4 chat, LFM3 audio transcription/speech and device-loss recovery on real WebGPU",
+    "Independent same-file Liquid full-vocabulary logits/probabilities and learned attention/convolution/depth-logit vectors",
+    "Multi-seed/natural-speech generalization, comparative quality, lifecycle/OOM/shared-session and Desktop playback evidence",
+    "Cold-load time, transient/residual host memory and dispatch/pipeline counts with the exact Q4_K_M/Q8_0 pair on real WebGPU"
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "language": {
+      "bytes": 1099630080,
+      "file": "LFM3-Omni-2B-Q4_K_M.gguf",
+      "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2"
+    },
+    "projector": {
+      "bytes": 506842528,
+      "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+      "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
+    },
+    "referenceEngine": {
+      "revision": "9c2fb176f4c222da394e8037d3c0d0837f70b978",
+      "sha256": "77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb"
+    },
+    "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
+    "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc"
+  },
+  "stage": "omni-sol-cleanup",
+  "status": "refactor-complete-operator-gpu-checked-model-runs-pending"
+}

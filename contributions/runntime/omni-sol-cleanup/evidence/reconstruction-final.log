@@ -1,0 +1,17 @@
+base tree 221c485c5dc1645a2080917ade3de6732ff09689 (expect 221c485c5dc1645a2080917ade3de6732ff09689)
+applying 0001-fix-zoo-own-audio-speech-result-rejection-for-stream.patch
+6495b45dc9ba203f3d9997a930583b3a72f376fb
+applying 0002-refactor-zoo-use-grouped-rmsNorm-residual-post-norms.patch
+1c0c546cfa2e0874eb014b6710c274e7b8a052df
+applying 0003-refactor-core-move-depthwise-padLeft-to-the-dimensio.patch
+ed9bb460e872af224c513b57c2cf32ec16883c1a
+applying 0004-refactor-zoo-fuse-LFM3-logits-readback-into-the-eval.patch
+304619707bc540f24096d0cc6f18983a5086a14b
+applying 0005-fix-zoo-drop-pre-submit-fused-logits-readback.patch
+8b2320ef2136343346c91f59de6978c9ee943794
+applying 0006-test-zoo-regress-fused-readback-recovery-and-stream-.patch
+1261366044c2d059f6384a7df5c7a1de66e7d158
+applying 0007-test-zoo-cover-public-audio-speak-early-break-and-pe.patch
+9090b0e0295b5320f5ffc3530326a8936149a2fc
+final 9090b0e0295b5320f5ffc3530326a8936149a2fc
+expected tip tree 9090b0e0295b5320f5ffc3530326a8936149a2fc
