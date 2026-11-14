@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import { createRequire } from "node:module"
 import { ExclusiveModels, retryLoad } from "../src/webgpu/lifecycle.ts"
 import { ModelLease } from "../src/webgpu/lease.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 import type { DecisionRuntime } from "../src/webgpu/decision-runtime.ts"
 import type { SystemOneInput } from "../src/webgpu/system-one.ts"
 
@@ -334,6 +334,7 @@ const failedRuntimeLoadRetainsTheMainOwnershipLease = async () => {
     decisionStatus: async () => ({ phase: "cached" }),
   }
   const worker = {
+    contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
     attach: async () => {},
     detach: async () => {},
     poll: async () => ({}),

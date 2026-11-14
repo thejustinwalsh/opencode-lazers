@@ -7,7 +7,7 @@ import { ModelLease } from "../src/webgpu/lease.ts"
 import { defaultFeatures } from "../src/webgpu/features.ts"
 import type { Plugin } from "@opencode/plugin/gui"
 import type { InferenceTraceEvent } from "../src/webgpu/inference-trace.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 
 const solid: typeof import("solid-js") = await import(
   createRequire(import.meta.url).resolve("solid-js/dist/solid.js")
@@ -119,6 +119,7 @@ const broker = new InferenceBroker()
 const lease = new ModelLease(async () => {})
 const controller = new AbortController()
 const worker = {
+  contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
   attach: async ({ owner }: { owner: string }) => {
     attachCalls++
     if (attachFailures-- > 0) throw { type: "rpc.unavailable", message: "Service is reconnecting" }

@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { createRequire } from "node:module"
 import { InferenceBroker } from "../src/webgpu/broker.ts"
 import { ModelLease } from "../src/webgpu/lease.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 import { isOrtWebGpuDeviceLoss } from "../src/webgpu/decision-loss.ts"
 import type { SystemOneInput } from "../src/webgpu/system-one.ts"
 import type { Plugin } from "@opencode/plugin/gui"
@@ -321,6 +321,7 @@ const broker = new InferenceBroker()
 const lease = new ModelLease(async () => {})
 const hostController = new AbortController()
 const worker = {
+  contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
   attach: async ({ owner }: { owner: string }) => broker.attach(owner),
   detach: async ({ owner, error }: { owner: string; error?: string }) =>
     broker.detach(owner, error),

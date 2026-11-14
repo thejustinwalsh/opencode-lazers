@@ -11,7 +11,7 @@ import { defaultFeatures } from "../src/webgpu/features.ts"
 import { ModelFiles } from "../src/webgpu/ipc.ts"
 import type { ModelLeaseGrant } from "../src/webgpu/ipc.ts"
 import { setupMain } from "../src/webgpu/main.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 
 const solid: typeof import("solid-js") = await import(
   createRequire(import.meta.url).resolve("solid-js/dist/solid.js")
@@ -182,6 +182,7 @@ let brokerOwner: string | undefined
 let attachCalls = 0
 let detachCalls = 0
 const worker = {
+  contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
   attach: async ({ owner }: { owner: string }) => {
     attachCalls++
     broker.attach(owner)

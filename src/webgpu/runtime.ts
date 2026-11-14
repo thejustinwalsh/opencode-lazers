@@ -18,7 +18,12 @@ import {
   RUNNTIME_REVISION,
 } from "./manifest.ts"
 import { cachedModelFetch } from "./files-fetch.ts"
-import { LocalInference, RendererInference, isRendererOwnershipLost } from "./rpc.ts"
+import {
+  GENERATION_RESULT_CONTRACT_REVISION,
+  LocalInference,
+  RendererInference,
+  isRendererOwnershipLost,
+} from "./rpc.ts"
 import type { InferenceJob } from "./rpc.ts"
 import type { DecisionInput } from "./decisions.ts"
 import { failed } from "./broker.ts"
@@ -179,8 +184,17 @@ export function createInferenceRuntime(
   const [detail, setDetail] = createSignal("Preparing local intelligence")
   const [gpu, setGPU] = createSignal("")
   const [phase, setPhase] = createSignal("unloaded")
-  const [resident, setResident] = createSignal<ModelKind | undefined>()
+  const [resident, setResidentValue] = createSignal<ModelKind | undefined>()
+  const [residentChatRoute, setResidentChatRoute] = createSignal<ChatRoute | undefined>()
+  const setResident = (kind: ModelKind | undefined) => {
+    setResidentValue(kind)
+    setResidentChatRoute(kind === "chat" ? models.get("chat")?.route : undefined)
+  }
   const [target, setTarget] = createSignal<ModelKind | undefined>()
+  const [contractStatus, setContractStatus] = createSignal<
+    "unverified" | "checking" | "compatible" | "incompatible"
+  >("unverified")
+  const [contractError, setContractError] = createSignal("")
   const fallbackHandoff: HandoffMemory = { sequence: 0, generations: {} }
   let handoff: HandoffMemory
   let setHandoff: (update: (draft: HandoffMemory) => void) => void
@@ -262,8 +276,33 @@ export function createInferenceRuntime(
     AbortSignal.any([ctx.signal, AbortSignal.timeout(timing.serviceTimeoutMs ?? 5_000)])
   const rpc = () => ctx.client.rpc(LocalInference)
   const worker = () => ctx.client.rpc(RendererInference)
-  const ready = () => {
+  const verifyCompletionContract = async (signal: AbortSignal) => {
+    setContractStatus("checking")
+    try {
+      const contract = await worker().contract({}, { signal })
+      if (contract.revision !== GENERATION_RESULT_CONTRACT_REVISION) {
+        setContractStatus("incompatible")
+        throw new Error(
+          `Service reports ${contract.revision}; expected ${GENERATION_RESULT_CONTRACT_REVISION}`,
+        )
+      }
+      setContractStatus("compatible")
+      setContractError("")
+    } catch (cause) {
+      if (contractStatus() !== "incompatible") setContractStatus("unverified")
+      const message =
+        `Local inference completion contract could not be verified (expected ${GENERATION_RESULT_CONTRACT_REVISION}). ` +
+        `The service/renderer pair may be incompatible or unavailable. Reload the OpenCode service and reopen Desktop before probing. ` +
+        `Cause: ${errorDetail(cause)}`
+      setContractError(message)
+      throw new Error(message, { cause })
+    }
+  }
+  const refreshResident = () => {
     setResident(models.current())
+  }
+  const ready = () => {
+    refreshResident()
     if (models.isTainted()) {
       setState("error")
       setPhase("error")
@@ -279,6 +318,15 @@ export function createInferenceRuntime(
         features().enabled
           ? "All local inference features are turned off"
           : "Local inference is turned off; downloaded models are kept",
+      )
+      return
+    }
+    if (contractStatus() !== "compatible") {
+      setState("error")
+      setPhase("error")
+      setDetail(
+        contractError() ||
+          "Local inference completion contract is not verified; reload the OpenCode service and reopen Desktop before probing.",
       )
       return
     }
@@ -646,6 +694,22 @@ export function createInferenceRuntime(
     }
   }
 
+  const reportCompletionDeliveryFailure = async (token: string, cause: unknown) => {
+    setContractStatus("unverified")
+    const message =
+      `Local inference completion delivery failed: ${errorDetail(cause)}. ` +
+      `The renderer/service pairing is not ready for qualification; reload the OpenCode service and reopen Desktop before probing.`
+    setContractError(message)
+    fail(message)
+    try {
+      await worker().detach({ owner: token, error: message }, { signal: serviceSignal() })
+      attachPending = false
+    } catch (detachError) {
+      setDetail(`${message} Mailbox failure notification also failed: ${errorDetail(detachError)}`)
+    }
+    return message
+  }
+
   const cancelLease = () => {
     if (!owner) return
     const cancel = supportsLeaseHandoff
@@ -902,6 +966,8 @@ export function createInferenceRuntime(
   const recover = (kind: ModelKind) => {
     if (recovery || disposed || unloading) return
     const waitForDemand = kind === "decision" && decisionExecuting
+    setState("loading")
+    setPhase("loading")
     losses = losses.filter((time) => wallNow() - time < 60_000)
     losses.push(wallNow())
     recoveryController = new AbortController()
@@ -954,7 +1020,7 @@ export function createInferenceRuntime(
     const backend = systemOne ? "d1" : route === "runntime" ? "runntime" : "liquid"
     const modelFiles = systemOne
       ? DECISION_FILES
-      : inferenceKind === "audio"
+      : inferenceKind === "audio" || route === "liquid"
         ? MODEL_FILES
         : MODEL_FILES.slice(0, 1)
     const modelArtifacts = artifactIdentity(
@@ -976,7 +1042,11 @@ export function createInferenceRuntime(
       backend,
       modelRepository: systemOne ? DECISION_REPOSITORY : MODEL_REPOSITORY,
       modelRevision: systemOne ? DECISION_REVISION : MODEL_REVISION,
-      modelPrecision: systemOne ? "Q4f16" : inferenceKind === "audio" ? "Q4_K_M + Q8_0" : "Q4_K_M",
+      modelPrecision: systemOne
+        ? "Q4f16"
+        : modelFiles.length > 1
+          ? "language Q4_K_M + projector Q8_0"
+          : "language Q4_K_M",
       modelArtifacts,
       runtimeRevision: systemOne
         ? "onnxruntime-web@1.31.1"
@@ -1118,7 +1188,7 @@ export function createInferenceRuntime(
                 ]
               : [{ role: "user", content: job.prompt }]
         await traceStage("generate", heap())
-        const generation = session.generate(messages, {
+        const generation = session!.generate(messages, {
           generation_mode: job.mode === "speak" ? "audio" : "text",
           ...(job.mode === "speak"
             ? { depth_decoder_temperature: 0.4, depth_decoder_repetition_penalty: 1.2 }
@@ -1167,7 +1237,18 @@ export function createInferenceRuntime(
         result = failed(`GPU session cleanup failed: ${String(error)}`)
         recover("chat")
       }
-      if (result.ok) {
+      await traceWrites
+      let completionFailed = false
+      let completionFailure: unknown
+      try {
+        await worker().complete({ owner: token, id: job.id, result }, { signal: serviceSignal() })
+      } catch (error) {
+        completionFailed = true
+        completionFailure = error
+        await reportCompletionDeliveryFailure(token, error)
+      }
+      if (completionFailed) trace.fail(completionFailure, { active: false, ...heap() })
+      else if (result.ok) {
         const inputTokens = activeInputTokens ?? result.promptTokens
         trace.finish({
           ...(typeof inputTokens === "number" ? { actualInputTokens: inputTokens } : {}),
@@ -1177,14 +1258,12 @@ export function createInferenceRuntime(
           active: false,
           ...heap(),
         })
-      } else trace.fail(failure, { active: false, ...heap() })
+      } else trace.fail(failure ?? result.error, { active: false, ...heap() })
       await traceWrites
-      await worker()
-        .complete({ owner: token, id: job.id, result }, { signal: serviceSignal() })
-        .catch(() => {})
       active = undefined
       lastUsed = Date.now()
-      if (!unloading && !disposed && !recovery && state() !== "error") ready()
+      if (completionFailed) void unload()
+      else if (!unloading && !disposed && !recovery && state() !== "error") ready()
     }
   }
 
@@ -1192,6 +1271,8 @@ export function createInferenceRuntime(
     autoload = false
     recoveryRetry = undefined
     if (unloading) return unloading
+    setState("loading")
+    setPhase("loading")
     const operation = Promise.resolve().then(async () => {
       try {
         loadController?.abort(new Error("Model loading cancelled"))
@@ -1238,10 +1319,14 @@ export function createInferenceRuntime(
     const cacheOperations: Promise<void>[] = []
     initializing = (async () => {
       try {
+        await verifyCompletionContract(signal)
         if (!navigator.gpu) throw new Error("WebGPU is unavailable in this Desktop renderer")
         const lease = await acquireLease(signal)
         attachPending = true
-        await worker().attach({ owner: lease.owner }, { signal })
+        await worker().attach(
+          { owner: lease.owner, contractRevision: GENERATION_RESULT_CONTRACT_REVISION },
+          { signal },
+        )
         attachPending = false
         if (needsChat(features()))
           cacheOperations.push(
@@ -1289,7 +1374,11 @@ export function createInferenceRuntime(
         autoload = false
         ready()
       } catch (error) {
-        autoload = !controller.signal.aborted && !disposed && usesGPU(features())
+        autoload =
+          !controller.signal.aborted &&
+          !disposed &&
+          usesGPU(features()) &&
+          contractStatus() !== "incompatible"
         controller.abort()
         await Promise.allSettled(cacheOperations)
         try {
@@ -1358,15 +1447,20 @@ export function createInferenceRuntime(
           }
           if (response.cancelID && active?.id === response.cancelID)
             active.controller.abort(new Error("Local inference cancelled"))
-          else if (response.cancelID && !active)
-            await worker().complete(
-              {
-                owner: token,
-                id: response.cancelID,
-                result: failed("Cancelled before execution"),
-              },
-              { signal: serviceSignal() },
-            )
+          else if (response.cancelID && !active) {
+            try {
+              await worker().complete(
+                {
+                  owner: token,
+                  id: response.cancelID,
+                  result: failed("Cancelled before execution"),
+                },
+                { signal: serviceSignal() },
+              )
+            } catch (error) {
+              await reportCompletionDeliveryFailure(token, error)
+            }
+          }
           if (response.job && !active && !unloading) {
             const controller = new AbortController()
             active = {
@@ -1393,7 +1487,8 @@ export function createInferenceRuntime(
             (!owner || attachPending) &&
             !models.isTainted() &&
             !disposed &&
-            usesGPU(features())
+            usesGPU(features()) &&
+            contractStatus() !== "incompatible"
           ) {
             autoload = true
             loadFailures = 1
@@ -1568,7 +1663,7 @@ export function createInferenceRuntime(
   })
 
   const modelIdentity = () => {
-    const kind = models.current() ?? target()
+    const kind = resident()
     if (kind === "decision")
       return {
         backend: "d1" as const,
@@ -1583,18 +1678,19 @@ export function createInferenceRuntime(
         backend: "runntime" as const,
         repository: MODEL_REPOSITORY,
         revision: MODEL_REVISION,
-        precision: "Q4_K_M + Q8_0",
+        precision: "language Q4_K_M + projector Q8_0",
         artifacts: artifactIdentity(MODEL_FILES, [tokenizerIdentity]),
         runtimeRevision: RUNNTIME_REVISION,
       }
     if (kind === "chat") {
-      const selectedRoute = models.get("chat")?.route ?? chatRoute()
-      const files = MODEL_FILES.slice(0, 1)
+      const selectedRoute = residentChatRoute()
+      if (!selectedRoute) return undefined
+      const files = selectedRoute === "liquid" ? MODEL_FILES : MODEL_FILES.slice(0, 1)
       return {
         backend: selectedRoute,
         repository: MODEL_REPOSITORY,
         revision: MODEL_REVISION,
-        precision: "Q4_K_M",
+        precision: files.length > 1 ? "language Q4_K_M + projector Q8_0" : "language Q4_K_M",
         artifacts: artifactIdentity(
           files,
           selectedRoute === "runntime"
@@ -1614,9 +1710,9 @@ export function createInferenceRuntime(
     phase,
     resident,
     modelIdentity,
+    contractStatus,
     modelName: () => {
-      void resident()
-      const kind = models.current() ?? target()
+      const kind = resident()
       const identity = modelIdentity()
       if (kind === "decision") return "d1"
       if (kind === "audio") return "ruNNtime Omni audio"
@@ -1632,8 +1728,14 @@ export function createInferenceRuntime(
       active?.controller.abort(new Error("Local inference cancelled"))
       cancelLease()
     },
-    canSimulateDeviceLoss: () =>
-      Boolean(models.get("decision") || models.get("audio") || models.get("chat")?.loseDevice),
+    canSimulateDeviceLoss: () => {
+      const current = resident()
+      return Boolean(
+        current &&
+        state() === "ready" &&
+        (models.get("decision") || models.get("audio") || models.get("chat")?.loseDevice),
+      )
+    },
     simulateDeviceLoss: () => {
       const chat = models.get("chat")
       const audio = models.get("audio")

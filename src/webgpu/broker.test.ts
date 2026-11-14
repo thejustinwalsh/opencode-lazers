@@ -1,10 +1,15 @@
 import { expect, test } from "bun:test"
 import type { RpcHandlers } from "@opencode/plugin/effect/rpc"
 import type { RpcClient } from "@opencode/client"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { InferenceBroker } from "./broker.ts"
 import { registerLocalInference } from "./server.ts"
-import { LocalInference, RendererInference } from "./rpc.ts"
+import {
+  GENERATION_RESULT_CONTRACT_REVISION,
+  GenerationResult,
+  LocalInference,
+  RendererInference,
+} from "./rpc.ts"
 import type { InferenceJob, InferenceResult } from "./rpc.ts"
 import { defaultFeatures } from "./features.ts"
 import { SystemOneRequest } from "./system-one.ts"
@@ -261,7 +266,12 @@ test("typed LocalInference.review forwards a measured request through the render
       Effect.gen(function* () {
         yield* registerLocalInference(ctx, async () => client)
         yield* Effect.promise(async () => {
-          await Effect.runPromise(renderer.attach({ owner: "renderer" }, {} as never))
+          await Effect.runPromise(
+            renderer.attach(
+              { owner: "renderer", contractRevision: GENERATION_RESULT_CONTRACT_REVISION },
+              {} as never,
+            ),
+          )
           const review = Effect.runPromise(local.review(input, {} as never))
           const stalePoll = await Effect.runPromise(
             renderer
@@ -320,6 +330,176 @@ test("typed LocalInference.review forwards a measured request through the render
             ),
           )
           expect(await review).toEqual(output)
+        })
+      }),
+    ),
+  )
+})
+
+test("public chat and audio RPC settle measured and unknown-usage results through the mailbox", async () => {
+  const stored = new Map<string, unknown>([["webgpu.features", defaultFeatures(true)]])
+  let local!: RpcHandlers<typeof LocalInference>
+  let renderer!: RpcHandlers<typeof RendererInference>
+  const ctx = {
+    options: {},
+    location: { project: { canonical: "/synthetic" } },
+    storage: {
+      get: (key: string) => Effect.succeed(stored.get(key)),
+      set: (key: string, value: unknown) =>
+        Effect.sync(() => {
+          stored.set(key, value)
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    tool: { transform: () => Effect.succeed({ dispose: Effect.void }), reload: () => Effect.void },
+    agent: { transform: () => Effect.succeed({ dispose: Effect.void }), reload: () => Effect.void },
+    rpc: {
+      register: (definition: { id: string }, handlers: unknown) =>
+        Effect.sync(() => {
+          if (definition.id === RendererInference.id) renderer = handlers as typeof renderer
+          else local = handlers as typeof local
+          return { dispose: Effect.void, events: { emit: () => Effect.void } }
+        }),
+    },
+  } as unknown as Parameters<typeof registerLocalInference>[0]
+  const client = new Proxy(
+    {},
+    {
+      get: (_, key) =>
+        key === "then"
+          ? undefined
+          : (input: unknown, options?: { signal?: AbortSignal }) => {
+              const handler = renderer[key as keyof typeof renderer] as (
+                input: unknown,
+                context: never,
+              ) => Effect.Effect<unknown>
+              return Effect.runPromise(handler(input, {} as never), { signal: options?.signal })
+            },
+    },
+  ) as RpcClient<typeof RendererInference>
+  const decodeResult = Schema.decodeUnknownSync(GenerationResult)
+  const legacySuccess = {
+    ok: true,
+    text: "measured chat",
+    error: "",
+    promptTokens: 7,
+    completionTokens: 3,
+  }
+  const legacyFailure = {
+    ok: false,
+    text: "",
+    error: "legacy failure",
+    promptTokens: 0,
+    completionTokens: 0,
+  }
+  const unknownUsage = {
+    ok: true,
+    text: "audio result",
+    error: "",
+    promptTokens: null,
+    completionTokens: null,
+    audioBase64: "UklGRg==",
+  }
+  const unknownTranscript = {
+    ok: true,
+    text: "transcribed",
+    error: "",
+    promptTokens: null,
+    completionTokens: null,
+  }
+  const unknownFailure = {
+    ok: false,
+    text: "",
+    error: "audio operation failed",
+    promptTokens: null,
+    completionTokens: null,
+  }
+  expect(decodeResult(legacySuccess)).toEqual(legacySuccess)
+  expect(decodeResult(legacyFailure)).toEqual(legacyFailure)
+  expect(decodeResult(unknownUsage)).toEqual(unknownUsage)
+  expect(decodeResult(unknownFailure)).toEqual(unknownFailure)
+  expect(() => decodeResult({ ...unknownUsage, promptTokens: undefined })).toThrow()
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerLocalInference(ctx, async () => client)
+        yield* Effect.promise(async () => {
+          expect(await Effect.runPromise(renderer.contract({}, {} as never))).toEqual({
+            revision: GENERATION_RESULT_CONTRACT_REVISION,
+          })
+          await Effect.runPromise(
+            renderer.attach(
+              { owner: "renderer", contractRevision: GENERATION_RESULT_CONTRACT_REVISION },
+              {} as never,
+            ),
+          )
+          await expect(
+            Effect.runPromise(
+              renderer.attach({ owner: "legacy", contractRevision: "old-contract" }, {} as never),
+            ),
+          ).rejects.toThrow("Incompatible renderer completion contract")
+
+          const nextJob = async () => {
+            for (let attempt = 0; attempt < 20; attempt++) {
+              const job = (
+                await Effect.runPromise(
+                  renderer.poll({ owner: "renderer", available: true }, {} as never),
+                )
+              ).job
+              if (job) return job
+              await Promise.resolve()
+            }
+            throw new Error("Public inference request did not reach the renderer mailbox")
+          }
+          const settles = async (
+            request: Promise<InferenceResult>,
+            result: InferenceResult,
+            mode: InferenceJob["mode"],
+          ) => {
+            const job = await nextJob()
+            expect(job.mode).toBe(mode)
+            await Effect.runPromise(
+              renderer.complete({ owner: "renderer", id: job.id, result }, {} as never),
+            )
+            expect(await request).toEqual(result)
+          }
+
+          await settles(
+            Effect.runPromise(local.ask(request("chat success"), {} as never)),
+            legacySuccess,
+            "text",
+          )
+          await settles(
+            Effect.runPromise(local.ask(request("chat failure"), {} as never)),
+            legacyFailure,
+            "text",
+          )
+          await settles(
+            Effect.runPromise(local.speak(request("speech success"), {} as never)),
+            unknownUsage,
+            "speak",
+          )
+          await settles(
+            Effect.runPromise(local.speak(request("speech failure"), {} as never)),
+            unknownFailure,
+            "speak",
+          )
+          const transcription = {
+            audioBase64: "AAAAAA==",
+            requestID: "transcript",
+            timeoutMs: 1_000,
+          }
+          await settles(
+            Effect.runPromise(local.transcribe(transcription, {} as never)),
+            unknownTranscript,
+            "transcribe",
+          )
+          await settles(
+            Effect.runPromise(local.transcribe(transcription, {} as never)),
+            unknownFailure,
+            "transcribe",
+          )
         })
       }),
     ),

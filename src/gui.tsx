@@ -26,7 +26,7 @@ import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
 import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
-import { LocalInference } from "./webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rpc.ts"
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
@@ -467,6 +467,10 @@ export default Plugin.define({
                 </div>
                 <span class="lazers-local-state">{runtime.state()}</span>
               </div>
+              <p class="lazers-local-meta">
+                Service completion contract: {runtime.contractStatus()} · required{" "}
+                <code>{GENERATION_RESULT_CONTRACT_REVISION}</code>
+              </p>
               <Show when={runtime.gpu()}>
                 <p class="lazers-local-meta">{runtime.gpu()}</p>
               </Show>

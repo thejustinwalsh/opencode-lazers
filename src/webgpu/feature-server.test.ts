@@ -5,7 +5,7 @@ import type { AgentEditor } from "@opencode/plugin/effect/agent"
 import type { RpcClient } from "@opencode/client"
 import { Effect } from "effect"
 import { registerLocalInference } from "./server.ts"
-import { LocalInference, RendererInference } from "./rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference, RendererInference } from "./rpc.ts"
 import { defaultFeatures } from "./features.ts"
 
 test("saved switches enforce public RPC, cancel only disabled work, and remove native tools and review guidance", async () => {
@@ -132,7 +132,12 @@ test("saved switches enforce public RPC, cancel only disabled work, and remove n
           expect(architect.system).toContain("This one tool owns structural validation")
           expect(architect.system).toContain("fixed System One questions")
           const oldReview = tools.get("lz-verify-task")!
-          await Effect.runPromise(worker.attach({ owner: "renderer" }, {} as never))
+          await Effect.runPromise(
+            worker.attach(
+              { owner: "renderer", contractRevision: GENERATION_RESULT_CONTRACT_REVISION },
+              {} as never,
+            ),
+          )
           const first = Effect.runPromise(publicApi.ask(request, {} as never))
           await Promise.resolve()
           const current = (

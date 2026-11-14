@@ -7,7 +7,16 @@ import { FeatureSettings, FeaturePatch } from "./features.ts"
 
 const portable = Schema.toStandardSchemaV1
 const ownerToken = Schema.String.check(Schema.isBetweenLength(1, 100))
-const owner = portable(Schema.Struct({ owner: ownerToken }))
+export const GENERATION_RESULT_CONTRACT_REVISION = "webgpu-generation-result-nullable-usage-v1"
+const generationContract = portable(
+  Schema.Struct({ revision: Schema.String.check(Schema.isBetweenLength(1, 100)) }),
+)
+const rendererAttachment = portable(
+  Schema.Struct({
+    owner: ownerToken,
+    contractRevision: Schema.String.check(Schema.isBetweenLength(1, 100)),
+  }),
+)
 export const Request = Schema.Struct({
   prompt: Schema.String.check(Schema.isBetweenLength(1, 8_000)),
   maxTokens: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 512 })),
@@ -85,7 +94,8 @@ export const RendererInference = Rpc.define({
   methods: {
     ...sharedInferenceMethods,
     demand: { input: nothing, output: portable(Schema.Struct({ requested: Schema.Boolean })) },
-    attach: { input: owner, output: nothing },
+    contract: { input: nothing, output: generationContract },
+    attach: { input: rendererAttachment, output: nothing },
     detach: {
       input: portable(
         Schema.Struct({

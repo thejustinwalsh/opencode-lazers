@@ -1,7 +1,12 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { InferenceBroker, RendererOwnershipLost, failed } from "./broker.ts"
-import { LocalInference, RendererInference, rendererOwnershipLostType } from "./rpc.ts"
+import {
+  GENERATION_RESULT_CONTRACT_REVISION,
+  LocalInference,
+  RendererInference,
+  rendererOwnershipLostType,
+} from "./rpc.ts"
 import { OpenCode } from "@opencode/client"
 import type { RpcClient } from "@opencode/client"
 import { Service } from "@opencode/client/service"
@@ -176,6 +181,7 @@ export function registerLocalInference(
       systemOne: (input) => Effect.promise((signal) => systemOne(input, signal)),
       review: (input) => Effect.promise((signal) => systemOne(input, signal, "review")),
       demand: () => Effect.sync(() => broker.demand()),
+      contract: () => Effect.succeed({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
       transcribe: (input) =>
         Effect.promise(async (signal) => {
           const error = disabled("dictation")
@@ -191,8 +197,12 @@ export function registerLocalInference(
           }
         }),
       decide: (input) => Effect.promise((signal) => decide(input, signal)),
-      attach: ({ owner }) =>
+      attach: ({ owner, contractRevision }) =>
         Effect.sync(() => {
+          if (contractRevision !== GENERATION_RESULT_CONTRACT_REVISION)
+            throw Error(
+              `Incompatible renderer completion contract ${contractRevision}; expected ${GENERATION_RESULT_CONTRACT_REVISION}`,
+            )
           if (!policy.read().enabled) throw Error("Local WebGPU inference is turned off")
           broker.attach(owner)
           return {}
