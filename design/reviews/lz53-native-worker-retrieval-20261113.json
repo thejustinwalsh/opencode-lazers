@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "observedAt": 1794614634000,
+  "task": {
+    "reference": "LZ-209",
+    "taskID": "b125ba2e-da66-4754-9a15-eff7c66a82e0",
+    "revision": 1,
+    "planID": "ee5cd266-6316-476c-b84a-b4fa5eb508a3",
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+  },
+  "runtimeWorker": {
+    "attemptID": "806d31b0-72bc-48ce-82fb-89adade6cfbd",
+    "attemptNumber": 1,
+    "sessionID": "ses_2e6e0e64c4ed4349b1a97675f7f4b00f",
+    "persona": "small-refactoring",
+    "effectiveAgentID": null,
+    "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/806d31b0-72bc-48ce-82fb-89adade6cfbd",
+    "workspaceBasis": "Observed current working directory and git rev-parse --show-toplevel; the directory leaf equals the runtime attempt ID.",
+    "baseCommit": "77d95831fe8bf6fa7e3af37485d02807d5f2c0ad",
+    "trajectory": {
+      "source": "lz-inspect-trajectory(taskID=b125ba2e-da66-4754-9a15-eff7c66a82e0)",
+      "observedState": "Task, plan, and attempt were reported running; this observation does not imply acceptance.",
+      "earlyWorkerGap": {
+        "eventID": "progress:18799081",
+        "kind": "worker-gap",
+        "reason": "Assigned session identity, project, agent, or workspace no longer matches its runner attempt."
+      }
+    },
+    "identityLimitations": "The public trajectory identifies the assigned task, attempt, and session but does not return the current native parent session ID, effective Agent.ID, or assigned workspace path. The workspace above is independently observed from this checkout. The early worker-gap reason does not identify which identity field differed; it is retained rather than treated as resolved."
+  },
+  "publication": {
+    "snapshotID": "7ce6b1f6-3f18-4112-a800-1b34a96691c4",
+    "freshness": "as-of-refresh",
+    "refreshedAt": 1794332147882,
+    "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "repomix": "1.18.1",
+    "encoding": "o200k_base",
+    "matchesTaskBundle": true,
+    "taskBundleSnapshotID": "7ce6b1f6-3f18-4112-a800-1b34a96691c4",
+    "taskBundleWorkspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "taskBundleRefreshedAt": 1794332147882,
+    "refreshCalled": false,
+    "routingReconciliation": "Both registered read tools returned this same snapshot ID, workspace, and refresh time as the one-shot lz-get-task source bundle. That workspace differs from the active attempt checkout. In src/context/index.ts, publicationFor selects an owned worker's verified Architect-parent workspace and snapshotFor loads it before falling back to the worker-local snapshot; the observed identity is consistent with that route. The tool results do not expose ownerSessionID or the native parent session record, so the exact parent binding cannot be independently named here."
+  },
+  "toolResults": [
+    {
+      "ordinal": 1,
+      "tool": "lz-project-index",
+      "nativeCallID": null,
+      "nativeCallIDAvailability": "The Code Mode direct-tool response did not expose a request or call ID.",
+      "arguments": {
+        "paths": ["src/context/index.ts", "src/context/tools.ts"]
+      },
+      "elapsedWallClockMs": null,
+      "durationNote": "Initial call was not timed; it is retained here as an original live result. A timed identical index call follows.",
+      "result": {
+        "snapshotID": "7ce6b1f6-3f18-4112-a800-1b34a96691c4",
+        "freshness": "as-of-refresh",
+        "refreshedAt": 1794332147882,
+        "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "totalFiles": 2,
+        "packedTokens": 218845,
+        "truncated": false,
+        "files": [
+          {
+            "path": "src/context/index.ts",
+            "bytes": 28391
+          },
+          {
+            "path": "src/context/tools.ts",
+            "bytes": 7192
+          }
+        ]
+      }
+    },
+    {
+      "ordinal": 2,
+      "tool": "lz-project-read",
+      "nativeCallID": null,
+      "nativeCallIDAvailability": "The Code Mode direct-tool response did not expose a request or call ID.",
+      "arguments": {
+        "paths": ["src/context/index.ts", "src/context/tools.ts"],
+        "level": "full",
+        "startLine": 1,
+        "endLine": 80
+      },
+      "elapsedWallClockMs": 91,
+      "durationNote": "Measured with Date.now() around the awaited Code Mode call; includes bridge overhead, not server-internal time.",
+      "result": {
+        "snapshotID": "7ce6b1f6-3f18-4112-a800-1b34a96691c4",
+        "freshness": "as-of-refresh",
+        "refreshedAt": 1794332147882,
+        "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "truncated": false,
+        "sources": [
+          {
+            "path": "src/context/index.ts",
+            "revision": null,
+            "startLine": 1,
+            "endLine": 80,
+            "level": "full"
+          },
+          {
+            "path": "src/context/tools.ts",
+            "revision": null,
+            "startLine": 1,
+            "endLine": 80,
+            "level": "full"
+          }
+        ]
+      }
+    },
+    {
+      "ordinal": 3,
+      "tool": "lz-project-index",
+      "nativeCallID": null,
+      "nativeCallIDAvailability": "The Code Mode direct-tool response did not expose a request or call ID.",
+      "arguments": {
+        "paths": ["src/context/index.ts", "src/context/tools.ts"]
+      },
+      "elapsedWallClockMs": 41,
+      "durationNote": "Measured with Date.now() around the awaited Code Mode call; includes bridge overhead, not server-internal time.",
+      "result": {
+        "snapshotID": "7ce6b1f6-3f18-4112-a800-1b34a96691c4",
+        "freshness": "as-of-refresh",
+        "refreshedAt": 1794332147882,
+        "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "totalFiles": 2,
+        "packedTokens": 218845,
+        "truncated": false,
+        "files": [
+          {
+            "path": "src/context/index.ts",
+            "bytes": 28391
+          },
+          {
+            "path": "src/context/tools.ts",
+            "bytes": 7192
+          }
+        ]
+      }
+    },
+    {
+      "ordinal": 4,
+      "tool": "lz-project-read",
+      "nativeCallID": null,
+      "nativeCallIDAvailability": "The Code Mode direct-tool response did not expose a request or call ID.",
+      "arguments": {
+        "paths": ["src/context/index.ts"],
+        "level": "full",
+        "startLine": 570,
+        "endLine": 678
+      },
+      "elapsedWallClockMs": 38,
+      "durationNote": "Measured with Date.now() around the awaited Code Mode call; includes bridge overhead, not server-internal time.",
+      "result": {
+        "snapshotID": "7ce6b1f6-3f18-4112-a800-1b34a96691c4",
+        "freshness": "as-of-refresh",
+        "refreshedAt": 1794332147882,
+        "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "truncated": false,
+        "sources": [
+          {
+            "path": "src/context/index.ts",
+            "revision": null,
+            "startLine": 570,
+            "endLine": 678,
+            "level": "full"
+          }
+        ]
+      }
+    }
+  ],
+  "resultDiscovery": {
+    "nativeCallIDsExposed": false,
+    "workerLocator": "lz-inspect-trajectory independently identifies task b125ba2e-da66-4754-9a15-eff7c66a82e0, attempt 806d31b0-72bc-48ce-82fb-89adade6cfbd, and session ses_2e6e0e64c4ed4349b1a97675f7f4b00f.",
+    "payloadLocator": "This record preserves the registered tool names, exact arguments, returned metadata, and shared snapshot ID for each direct return. The Code Mode API exposed no separate invocation or result IDs, so an independent server-side lookup of an individual original call was unavailable.",
+    "resultMetadataPreserved": true,
+    "fullSourceTextIncluded": false
+  },
+  "permissionObservations": {
+    "toolCallsReturnedSuccessfully": 4,
+    "explicitPromptsSurfaced": 0,
+    "perPathDecisionEventCount": null,
+    "perPathDecisionEventsAvailable": false,
+    "observedIndexOutcome": {
+      "authorizedMatchingTotal": 2,
+      "returnedPaths": ["src/context/index.ts", "src/context/tools.ts"],
+      "truncated": false
+    },
+    "observedReadOutcome": {
+      "returnedSources": 2,
+      "onlyRequestedPathsReturned": true
+    },
+    "interpretation": "No explicit prompt surfaced to this worker, but that does not mean no authorization call occurred. The native tool response does not expose per-path assert events or decisions. The implementation inspected at src/context/tools.ts uses native permission assertions for the registered tool and read action; src/context/index.ts checks selected candidates before returning content. Live decision count and full permission-event coverage remain unavailable, and no fixture transcript is substituted."
+  },
+  "verification": [
+    {
+      "id": "quality",
+      "command": "bun run verify",
+      "status": "passed",
+      "result": "Formatter and linter completed; no problems in 482 files. Typecheck reported no errors in 470 files."
+    },
+    {
+      "id": "context",
+      "command": "bun test src/context/index.test.ts src/context/tools.test.ts test/context/isolated-reuse.test.ts",
+      "status": "passed",
+      "passingTests": 31,
+      "failingTests": 0,
+      "expectCalls": 212
+    }
+  ]
+}
