@@ -1,0 +1,97 @@
+From 51a86bff608d0d98d80eea3d2ac72795d28cf337 Mon Sep 17 00:00:00 2001
+From: lazers-worker <lazers-worker@local>
+Date: Sat, 14 Nov 2026 06:39:12 -0500
+Subject: [PATCH 3/4] refactor(core): move depthwise padLeft to the dimensions
+ uniform
+
+Keep the depthwise pipeline keyed only on channels and kernel size so
+the decode cache fill no longer creates a pipeline variant per padLeft.
+padLeft rides the per-dispatch dimensions uniform with identical values
+and boundaries; D1 asymmetric handling is untouched.
+---
+ .../runntime/src/core/gpu/dispatch/conv.ts    |  5 ++---
+ .../src/core/kernels/conv/depthwiseConv1d.ts  | 20 +++++++++++--------
+ 2 files changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/packages/runntime/src/core/gpu/dispatch/conv.ts b/packages/runntime/src/core/gpu/dispatch/conv.ts
+index 1838b53..f4ac383 100644
+--- a/packages/runntime/src/core/gpu/dispatch/conv.ts
++++ b/packages/runntime/src/core/gpu/dispatch/conv.ts
+@@ -143,17 +143,16 @@ export const depthwiseConv1dSpec = defineSpec({
+   cfg: (node, attrs) => ({
+     channels: node.pending!.inputs[0]!.shape.dims![1]!,
+     kernel: attrs.kernel,
+-    padLeft: attrs.padLeft,
+   }),
+   pipeline: (root, dtype, cfg) => createDepthwiseConv1dPipeline(root, cfg, elemFor(dtype)),
+-  encode: ({ node, pipeline, inputs, out, ctx }) => {
++  encode: ({ node, attrs, pipeline, inputs, out, ctx }) => {
+     const [rowsIn] = node.pending!.inputs[0]!.shape.dims as [number, number];
+     const [rowsOut, channels] = node.shape.dims as [number, number];
+     return [
+       depthwiseConv1dHandle(
+         ctx.root,
+         pipeline,
+-        { rowsIn, rowsOut, channels },
++        { rowsIn, rowsOut, channels, padLeft: attrs.padLeft },
+         {
+           x: narrowFloat(inputs[0]!, node.shape.dtype),
+           w: narrowFloat(inputs[1]!, node.shape.dtype),
+diff --git a/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts b/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts
+index dec4ad3..aca7790 100644
+--- a/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts
++++ b/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts
+@@ -11,9 +11,9 @@ import {
+ import { type Elem, F32_ELEM } from '../elem.ts';
+ 
+ /** One output per time/channel pair, accumulating depthwise taps in f32. */
+-const Dims = d.struct({ rowsIn: d.u32, rowsOut: d.u32 });
+-const Config = d.struct({ channels: d.u32, kernel: d.u32, padLeft: d.u32 });
+-const config = tgpu.accessor(Config, { channels: 1, kernel: 1, padLeft: 0 });
++const Dims = d.struct({ rowsIn: d.u32, rowsOut: d.u32, padLeft: d.u32 });
++const Config = d.struct({ channels: d.u32, kernel: d.u32 });
++const config = tgpu.accessor(Config, { channels: 1, kernel: 1 });
+ 
+ function makeVariant(elem: Elem) {
+   const layout = tgpu.bindGroupLayout({
+@@ -36,8 +36,8 @@ function makeVariant(elem: Elem) {
+     const channel = idx % C.channels;
+     let acc = d.f32(0);
+     for (let tap = d.u32(0); tap < C.kernel; tap++) {
+-      if (row + tap >= C.padLeft) {
+-        const sourceRow = row + tap - C.padLeft;
++      if (row + tap >= D.padLeft) {
++        const sourceRow = row + tap - D.padLeft;
+         if (sourceRow < D.rowsIn) {
+           acc +=
+             d.f32(layout.$.x[sourceRow * C.channels + channel]!) *
+@@ -62,7 +62,7 @@ function variantFor(elem: Elem): ReturnType<typeof makeVariant> {
+ 
+ export function createDepthwiseConv1dPipeline(
+   root: TgpuRoot,
+-  cfg: { channels: number; kernel: number; padLeft: number },
++  cfg: { channels: number; kernel: number },
+   elem: Elem = F32_ELEM,
+ ) {
+   return root.with(config, cfg).createComputePipeline({ compute: variantFor(elem).kernel });
+@@ -71,11 +71,15 @@ export function createDepthwiseConv1dPipeline(
+ export function depthwiseConv1dHandle(
+   root: TgpuRoot,
+   pipeline: ReturnType<typeof createDepthwiseConv1dPipeline>,
+-  args: { rowsIn: number; rowsOut: number; channels: number },
++  args: { rowsIn: number; rowsOut: number; channels: number; padLeft: number },
+   buffers: { x: FloatBuffer; w: FloatBuffer; out: FloatBuffer },
+   elem: Elem = F32_ELEM,
+ ): KernelHandle {
+-  const dims = cachedUniform(root, Dims, { rowsIn: args.rowsIn, rowsOut: args.rowsOut });
++  const dims = cachedUniform(root, Dims, {
++    rowsIn: args.rowsIn,
++    rowsOut: args.rowsOut,
++    padLeft: args.padLeft,
++  });
+   const bindGroup = cachedBindGroup(root, variantFor(elem).layout, { ...buffers, dims });
+   return makeHandle(
+     pipeline,
+-- 
+2.54.0
+

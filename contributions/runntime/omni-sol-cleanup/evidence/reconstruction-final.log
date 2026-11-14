@@ -1,0 +1,11 @@
+applying patches/0001-fix-zoo-own-audio-speech-result-rejection-for-stream.patch
+6495b45dc9ba203f3d9997a930583b3a72f376fb
+applying patches/0002-refactor-zoo-use-grouped-rmsNorm-residual-post-norms.patch
+1c0c546cfa2e0874eb014b6710c274e7b8a052df
+applying patches/0003-refactor-core-move-depthwise-padLeft-to-the-dimensio.patch
+ed9bb460e872af224c513b57c2cf32ec16883c1a
+applying patches/0004-refactor-zoo-fuse-LFM3-logits-readback-into-the-eval.patch
+304619707bc540f24096d0cc6f18983a5086a14b
+final 304619707bc540f24096d0cc6f18983a5086a14b
+expected tip tree 304619707bc540f24096d0cc6f18983a5086a14b
+reconstruction: exact match
