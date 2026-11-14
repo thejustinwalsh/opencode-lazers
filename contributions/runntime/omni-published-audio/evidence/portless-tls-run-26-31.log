@@ -1,0 +1,38 @@
+Portless routes used for packed runs 26, 27, 30 and 31; existing CA only.
+$ curl --cacert "$HOME/.portless/ca.pem" --resolve lazers-lfm3-assets.localhost:1355:127.0.0.1 -I -H "Range: bytes=0-63" https://lazers-lfm3-assets.localhost:1355/LFM3-Omni-2B-Q4_K_M.gguf
+HTTP/2 206
+x-portless: 1
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+access-control-allow-headers: Range
+access-control-expose-headers: Accept-Ranges, Content-Length, Content-Range
+accept-ranges: bytes
+content-type: application/octet-stream
+content-range: bytes 0-63/1099630080
+content-length: 64
+date: Sat, 14 Nov 2026 09:58:39 GMT
+
+status=206 tls_verify=0
+asset_spki=MvqQIcLjQpdkbIB7QRc2v5PVxibKAD1rk1Pe+Gv8m0o=
+$ curl --cacert "$HOME/.portless/ca.pem" --resolve lazers-lfm3-reference.localhost:1355:127.0.0.1 -I -H "Range: bytes=0-63" https://lazers-lfm3-reference.localhost:1355/quick-brown-fox.wav
+HTTP/2 206
+x-portless: 1
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+access-control-allow-headers: Range
+access-control-expose-headers: Accept-Ranges, Content-Length, Content-Range
+accept-ranges: bytes
+content-type: audio/wav
+content-range: bytes 0-63/89560
+content-length: 64
+date: Sat, 14 Nov 2026 09:58:39 GMT
+
+status=206 tls_verify=0
+reference_spki=oIYn7RVilEbqziniP2R1NdRLRW2fwE+ylWNcWq9TnT4=
+$ openssl s_client -connect 127.0.0.1:1355 -servername lazers-lfm3-liquid-qualification.localhost -CAfile "$HOME/.portless/ca.pem" -verify_hostname lazers-lfm3-liquid-qualification.localhost -verify_return_error
+Verify return code: 0 (ok)
+sha256 Fingerprint=46:FA:AF:88:90:AF:A5:5F:4E:1C:7A:35:5A:96:51:40:CF:42:B0:12:E3:AA:D4:B1:86:50:26:0D:6A:8F:DA:EB
+X509v3 Subject Alternative Name:
+    DNS:lazers-lfm3-liquid-qualification.localhost
+qualification_spki=E6gQI1I90sg5O2EwNyfRJquaPMWnfYJcDYbENIOOV9w=
+Browser received only these verified SPKIs via --ignore-certificate-errors-spki-list; TLS validation was not disabled globally.

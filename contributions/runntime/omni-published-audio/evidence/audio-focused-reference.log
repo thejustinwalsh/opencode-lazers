@@ -1,0 +1,8 @@
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+
+ Test Files  3 passed (3)
+      Tests  20 passed (20)
+   Start at  00:31:07
+   Duration  540ms (tests 41%, import 36%, transform 22%, worker 1%)

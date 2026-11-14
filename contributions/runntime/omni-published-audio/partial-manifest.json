@@ -26,13 +26,13 @@
     "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
   },
   "tip": {
-    "commit": "b0f8f2750c80bb962ffb58e277724487eabbabe4",
-    "tree": "6b5641ae4765ee2f50134e694252cd1fecca6cad"
+    "commit": "abee81448bae6b616664b53d01ab68993f713ad3",
+    "tree": "221c485c5dc1645a2080917ade3de6732ff09689"
   },
   "patchReconstruction": {
     "baseCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
-    "observedTree": "6b5641ae4765ee2f50134e694252cd1fecca6cad",
-    "evidence": "evidence/reconstruction-liquid-capture.log"
+    "observedTree": "221c485c5dc1645a2080917ade3de6732ff09689",
+    "evidence": "evidence/reconstruction-final.log"
   },
   "patches": [
     {
@@ -69,6 +69,34 @@
       "tree": "6b5641ae4765ee2f50134e694252cd1fecca6cad",
       "path": "patches/0005-omni-liquid-audio-capture-harness.patch",
       "sha256": "02ef09681c384c742ed40c8a7ce596b9490f46d3dd826d329efad6cb8010fbe6"
+    },
+    {
+      "commit": "35117b90aa866c8abab4bf4a6574e122334594de",
+      "parent": "b0f8f2750c80bb962ffb58e277724487eabbabe4",
+      "tree": "e0c96c34714dd80d39981f060a1acbce2f185680",
+      "path": "patches/0006-public-omni-audio-api-and-speech.patch",
+      "sha256": "307d28259f8cbedbf4ea15e190cc761c812ff9bcb51b8ba81f7d38005aba418e"
+    },
+    {
+      "commit": "4d081aa7820b95064eae8bf45e0ae37cd26e7e75",
+      "parent": "35117b90aa866c8abab4bf4a6574e122334594de",
+      "tree": "cf360ee40130e9aa640a1e1e49b822ea06f3c9d0",
+      "path": "patches/0007-liquid-reference-input-resampling.patch",
+      "sha256": "8857cf3eda60d575aece6db87322cb95963897579a0ec98ed71c97b61982a524"
+    },
+    {
+      "commit": "a9d4bb7bf29597f3963cbc491b4c279d587d8836",
+      "parent": "4d081aa7820b95064eae8bf45e0ae37cd26e7e75",
+      "tree": "3a6912f424d989f22d8f67fdee08ac8ed39c281a",
+      "path": "patches/0008-liquid-speech-level-diagnostic.patch",
+      "sha256": "8b99c48117c41b1bbed16e089c9eb5eab1d539d70d48b85c08551d4ec7d8859c"
+    },
+    {
+      "commit": "abee81448bae6b616664b53d01ab68993f713ad3",
+      "parent": "a9d4bb7bf29597f3963cbc491b4c279d587d8836",
+      "tree": "221c485c5dc1645a2080917ade3de6732ff09689",
+      "path": "patches/0009-omni-audio-prompt-sampling.patch",
+      "sha256": "451a548f04258bdeca4067dd3d19a6c9671a73c166c18bd1d1d7b72a1a0b1043"
     }
   ],
   "passingChecks": [
@@ -125,7 +153,7 @@
       "command": "bun run verify",
       "exitCode": 0,
       "path": "evidence/lazers-final-verify.log",
-      "sha256": "bf0c0ceb77642bbe14733e819380703e000449b2dbb61a01dabfa7a94fe2780b",
+      "sha256": "2d1f01a74451d5e5de825c819cc4304f3d069bf6cdeeda4f526fc8d9d03c091d",
       "observed": "Formatter, lint --fix, formatter and typecheck passed"
     },
     {
@@ -133,7 +161,7 @@
       "command": "bun test scripts/verify-runntime-contribution.test.ts",
       "exitCode": 0,
       "path": "evidence/lazers-final-retention-tests.log",
-      "sha256": "b09a5d77729307e453cc193e314ce4a51d9799d9848c70087ead786661472bb6",
+      "sha256": "80f983ace23878a4197aa093ae6cf3aebe92ce916aed0eb6f8cb4a7c85d891eb",
       "observed": "18 tests and 92 assertions passed"
     },
     {
@@ -286,7 +314,7 @@
       "exitCode": 0,
       "path": "evidence/reconstruction-liquid-capture.log",
       "sha256": "1dd56e646adb9dc64eb011f1927010bc8878eab8add8a1c11c091bc990bcb8b5",
-      "observed": "All five patches reconstruct tree 6b5641ae4765ee2f50134e694252cd1fecca6cad"
+      "observed": "At the five-patch checkpoint the series reconstructed tree 6b5641ae4765ee2f50134e694252cd1fecca6cad; superseded by the final six-patch reconstruction below"
     },
     {
       "kind": "unit",
@@ -303,19 +331,194 @@
       "path": "evidence/lazers-receipt-final-retention.log",
       "sha256": "eeeb7ba68feaa4ad18d79e807b5f993e3bd7102b62b4c4019335185db133b944",
       "observed": "18 tests and 92 assertions passed"
+    },
+    {
+      "kind": "parity",
+      "command": "pnpm --filter runntime exec vitest run --project unit test/zoo/lfm3/audio/frontend.test.ts test/zoo/lfm3/audio/codec.test.ts test/zoo/lfm3/audio/projector.test.ts",
+      "exitCode": 0,
+      "path": "evidence/audio-focused-reference.log",
+      "sha256": "12e7b63456c89d35fb8183e8c00c6e585671955809bf816cd63046d22bde289d",
+      "observed": "20 focused frontend, codec direct inverse-DFT/overlap-add, and projector schema tests passed; audio attention/convolution/depth decoder model parity remains outstanding"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "path": "evidence/runntime-final-quality.log",
+      "sha256": "20a21435a60443c97b56cc4317c8282892eee84b68a9555803ca7253af8b98cb",
+      "observed": "ruNNtime package typecheck passed after public audio composition"
+    },
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/runntime-final-quality.log",
+      "sha256": "20a21435a60443c97b56cc4317c8282892eee84b68a9555803ca7253af8b98cb",
+      "observed": "57 test files and 1,173 tests passed"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/runntime-final-quality.log",
+      "sha256": "20a21435a60443c97b56cc4317c8282892eee84b68a9555803ca7253af8b98cb",
+      "observed": "Repository ESLint passed with zero warnings"
+    },
+    {
+      "kind": "format",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/runntime-final-quality.log",
+      "sha256": "20a21435a60443c97b56cc4317c8282892eee84b68a9555803ca7253af8b98cb",
+      "observed": "Prettier check passed after automatic formatting and lint fixes"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/runntime-final-quality.log",
+      "sha256": "20a21435a60443c97b56cc4317c8282892eee84b68a9555803ca7253af8b98cb",
+      "observed": "Package build completed; existing TypeGPU ambient-declaration parse warnings remain"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter docs build",
+      "exitCode": 0,
+      "path": "evidence/runntime-final-quality.log",
+      "sha256": "20a21435a60443c97b56cc4317c8282892eee84b68a9555803ca7253af8b98cb",
+      "observed": "Docs build completed with the audio page registered under the Zoo topic"
+    },
+    {
+      "kind": "conversion",
+      "command": "apply all nine ordered audio patches from the recorded base and compare each reconstructed tree with its sibling commit",
+      "exitCode": 0,
+      "path": "evidence/reconstruction-final.log",
+      "sha256": "41aa660085d9044dec517d22b468aa8b82514f025e16acd2322a4a949cfd4fa0",
+      "observed": "All nine patches reconstruct exact tip abee81448bae6b616664b53d01ab68993f713ad3 and tree 221c485c5dc1645a2080917ade3de6732ff09689"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm exec prettier --write <Liquid reference test and packed-consumer harness>; pnpm exec eslint --fix <same>; pnpm exec prettier --check <same>; pnpm exec eslint <same>; pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/liquid-reference-harness-quality.log",
+      "sha256": "2ec28e31008085129bf3e1aa02b56905b147a424b83d8b695c443a61e667029c",
+      "observed": "Formatter and lint auto-fixes completed before verification; targeted format, lint, and package typecheck passed"
+    },
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "59 test files and 1,182 tests passed on the prompt/sampling tip"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "ruNNtime package typecheck passed"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "Repository ESLint passed with maximum warnings set to zero"
+    },
+    {
+      "kind": "format",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "Repository Prettier check passed"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "Package build passed; existing TypeGPU ambient-declaration parser warnings remain"
+    },
+    {
+      "kind": "parity",
+      "command": "packed installed-package same-file Liquid audio reference run 26 on real Chromium WebGPU",
+      "exitCode": 0,
+      "path": "evidence/run-26-results.json",
+      "sha256": "1e1cc6da47e359c3b36b53c24a6acd7ce43b22e5d12336bdc6f56c0a04d72a0e",
+      "observed": "Both frozen clips and both Liquid-generated 24 kHz requests transcribed to exact expected words after required 16 kHz resampling"
+    },
+    {
+      "kind": "package",
+      "command": "packed installed public audio consumer run 27 on real Chromium WebGPU",
+      "exitCode": 0,
+      "path": "evidence/run-27-results.json",
+      "sha256": "cb04756a73349dd93af56c362c2063dba125e3b4634f2930dfca13fbd4b44ce7",
+      "observed": "Exact pair transcribed the two fixed clips and generated finite nonempty streamed 24 kHz speech whose requested text was recovered by same-file Liquid ASR; cancellation recovery passed"
+    },
+    {
+      "kind": "resource",
+      "command": "packed public audio load, inference, latency, GPU peak, cumulative reads and disposal measurements run 27",
+      "exitCode": 0,
+      "path": "evidence/run-27-results.json",
+      "sha256": "cb04756a73349dd93af56c362c2063dba125e3b4634f2930dfca13fbd4b44ce7",
+      "observed": "Load/warm-up 27,011.4 ms; sampled peak GPU 1,825,200,572 B; cumulative source reads 3,456,883,176 B; no live storage buffers after disposal, with 518,496 B root cache retained"
+    },
+    {
+      "kind": "parity",
+      "command": "packed pinned-Liquid audio encoder, deterministic depth-code and LiquidCodec reference run 30 on real Chromium WebGPU",
+      "exitCode": 0,
+      "path": "evidence/audio-operator-reference-run-30.json",
+      "sha256": "8cf98cc28afc244804494dce1098d807341aee3d1075bd2204fc8c5ea12b31f8",
+      "observed": "Encoder 69,632-value comparison, exact 12 depth-code IDs, and 1,920 codec PCM samples passed"
     }
   ],
   "pendingChecks": [
-    "public-entry warm-up abort and partial-load cleanup",
-    "public scoped-generation stream/result failure and shared-executor survival run",
-    "independent same-file Liquid logits/probability comparison",
-    "independent audio attention, convolution, depth-decoder and codec references",
-    "pinned same-file Liquid audio parity and clean transcription clips",
-    "real-WebGPU public transcription and 24 kHz speech",
-    "installed-package audio consumer",
-    "complete-pair load/inference/unload and temporary-memory measurements",
-    "controlled-seed/depth speech quality and requested-word recovery",
-    "public examples, license and attribution for the audio consumers",
-    "Liquid audio inference was not run because the existing Portless proxy is HTTP-only; see evidence/liquid-audio-reference-capture-blocker.md"
+    "Independent same-file Liquid full-vocabulary logits/probability differences remain unmeasured; report them separately from the existing native cached/full-forward probability parity",
+    "Independent learned audio attention/convolution and full-vocabulary depth logits at fixed hidden states remain outstanding; run 30 compares one encoder vector, exact depth-code IDs and one complete codec PCM frame",
+    "Generated speech recovery is demonstrated for a controlled seed and selected utterances, not broad multi-seed or natural-speech generalization; no perceptual-equivalence or Desktop-playback claim",
+    "Audio resource report contains complete GPU-buffer load/peak and post-disposal accounting but not a browser-process heap or operating-system physical-resident-memory measurement"
+  ],
+  "observedFailures": [
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=audio pnpm packed-consumer real-WebGPU run 9",
+      "exitCode": 1,
+      "path": "evidence/speech-quality-deviation.md",
+      "observed": "Both frozen input transcriptions passed and public speech produced finite nonempty 24 kHz PCM, but the retained same-file Liquid transcriber returned 'The quick brown seas is the sannies.' instead of the request."
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference pnpm packed-consumer real-WebGPU run 13",
+      "exitCode": 1,
+      "path": "evidence/speech-quality-deviation.md",
+      "observed": "The pinned Liquid reference transcribed both clean clips; this run passed generated 24 kHz speech directly into its 16 kHz ASR path, so those generated-speech transcripts are invalid and superseded by corrected run 20. The native-speech branch resampled its captured WAV before ASR."
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=audio packed installed-package real-WebGPU run 14",
+      "exitCode": 1,
+      "path": "evidence/speech-quality-deviation.md",
+      "observed": "Both frozen clips transcribed exactly; finite streamed 24 kHz speech at depths 1 and 3, cancellation recovery and disposal checks ran, but pinned Liquid transcribed the requested depth-3 utterance as 'The quick brown seas is the sannies.'"
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference packed-consumer run 20 with same-file speech resampled to 16 kHz",
+      "exitCode": 1,
+      "path": "evidence/liquid-audio-reference-run-20.log",
+      "observed": "Both unchanged clean clips still transcribed exactly; Liquid emitted the same finite 24 kHz waveforms and ASR received their 16 kHz resamples, but returned 'The recording is completely silent.' and 'The electric buzzing of a machine is constant in the background.' The requested-word assertion remains failing."
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference packed-consumer run 21 with retained native capture and corrected same-file rates",
+      "exitCode": 1,
+      "path": "evidence/liquid-audio-reference-run-21.log",
+      "observed": "The pinned Liquid transcriber received the unchanged native depth-3 WAV resampled to 88,320 samples at 16 kHz and returned 'The quick brown seas is the sannies.' Liquid-generated speech likewise received 16 kHz resamples and returned 'The recording is completely silent.' and 'The electric buzzing of a machine is constant in the background.' Clean frozen-clip transcriptions remained exact."
+    },
+    {
+      "command": "LFM3_BASE_QUALIFICATION_MODE=liquid-reference LFM3_LIQUID_LEVEL_DIAGNOSTIC=1 packed-consumer run 23 with fixed 0.1 RMS diagnostic gain",
+      "exitCode": 1,
+      "path": "evidence/liquid-audio-reference-run-23.log",
+      "observed": "Unmodified speech still failed same-file transcription. The fixed 0.1 RMS, non-clipping gain diagnostic produced 'The silence is broken by a single, very quiet, low-frequency hum.' and 'An engine is running with a steady hum in the background.' Neither recovered the requested text; the adjustment is opt-in and does not modify retained waveforms or the raw-PCM recovery assertion."
+    }
   ]
 }

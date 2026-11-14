@@ -138,6 +138,27 @@
       "exitCode": 0,
       "path": "evidence/recovery-packed.log",
       "sha256": "b2f6a355a655d2675456def3e9ebca67c9d09a327356b5a79bc140d5b3bb0512"
+    },
+    {
+      "kind": "package",
+      "command": "packed public Q4 chat consumer on the composed audio tip; warm-up/partial-load abort, streaming, cancellation recovery and shared-executor survival",
+      "exitCode": 0,
+      "path": "evidence/composed-after-audio-run-31.json",
+      "sha256": "80b01263228064255577c03b217fcb0ac8dfe18a352524f01697e818a1028aee"
+    },
+    {
+      "kind": "parity",
+      "command": "public generated chat answers compared with pinned same-file Liquid fixtures after audio composition",
+      "exitCode": 0,
+      "path": "evidence/composed-after-audio-run-31.json",
+      "sha256": "80b01263228064255577c03b217fcb0ac8dfe18a352524f01697e818a1028aee"
+    },
+    {
+      "kind": "resource",
+      "command": "packed public Q4 chat load, inference, peak and post-disposal measurements after audio composition",
+      "exitCode": 0,
+      "path": "evidence/composed-after-audio-run-31.json",
+      "sha256": "80b01263228064255577c03b217fcb0ac8dfe18a352524f01697e818a1028aee"
     }
   ]
 }

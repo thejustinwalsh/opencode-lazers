@@ -1,0 +1,37 @@
+{
+  "success": true,
+  "testFiles": 1,
+  "passed": 1,
+  "failed": 0,
+  "test": "matches native audio encoder, depth codes and codec PCM against pinned Liquid",
+  "durationMs": 13891.5,
+  "operatorMetrics": {
+    "audioEncoder": {
+      "values": 69632,
+      "rmsError": 0.000055079655367679354,
+      "maxAbsoluteError": 0.0007898807525634766,
+      "cosineSimilarity": 0.9999996282715079
+    },
+    "depthDecoder": {
+      "order": [2, 3, 5, 7, 6, 4, 1, 11, 0, 10, 9, 8],
+      "codes": [927, 603, 1912, 689, 1200, 399, 91, 1621, 736, 1100, 1467, 1745],
+      "matches": true
+    },
+    "codec": {
+      "values": 1920,
+      "rmsError": 0.000023194202667954754,
+      "maxAbsoluteError": 0.00009446777403354645,
+      "cosineSimilarity": 0.9999889872961298
+    }
+  },
+  "source": {
+    "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
+    "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+    "language": "LFM3-Omni-2B-Q4_K_M.gguf",
+    "languageSha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2",
+    "projector": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+    "projectorSha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1",
+    "liquidEngineRevision": "9c2fb176f4c222da394e8037d3c0d0837f70b978",
+    "liquidEngineSha256": "77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb"
+  }
+}
