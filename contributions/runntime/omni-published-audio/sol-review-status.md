@@ -36,7 +36,11 @@ harness was corrected to resample 24 kHz generated audio to its 16 kHz ASR input
 rate. The correction is in sibling ruNNtime commit `4d081aa`; run 20 records the
 valid same-file attempt and still fails requested-word recovery. Run 21 repeated
 the corrected path for both Liquid-generated audio and the retained native WAV;
-both remain nonmatching. See
+both remain nonmatching. Run 23 applied a fixed, non-clipping -20 dBFS RMS
+diagnostic gain before same-file transcription; neither adjusted Liquid output
+recovered its requested words, so low level alone is insufficient to explain
+the failure. Independent audio attention, convolution and depth-decoder parity
+remain outstanding. See
 `evidence/speech-quality-deviation.md`; no weights, clips or recovery assertions
 were changed and no playback claim is made.
 
@@ -46,7 +50,7 @@ storage buffers remained, while 519,028 bytes remained in the TypeGPU root
 cache. See `evidence/native-speech-diagnostic.md` for the observations and
 limitations.
 
-The current ruNNtime source commit and all seven ordered patches are recorded in
+The current ruNNtime source commit and all eight ordered patches are recorded in
 `partial-manifest.json`. Applying the series to the recorded `b824c95` base
 reconstructed the exact `cf360ee` tip tree; see
 `evidence/reconstruction-final.log`. The contribution remains a partial receipt:

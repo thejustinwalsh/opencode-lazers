@@ -45,3 +45,10 @@ SAN was `DNS:lazers-lfm3-liquid-qualification.localhost`, SHA-256 fingerprint
 verified SPKI together with the freshly rechecked fixture and asset SPKIs.
 The qualification route used the existing Portless proxy/CA; no trust-store,
 login-keychain, or global TLS setting was changed.
+
+Before the run 23 level diagnostic, the existing CA and exact hostnames were
+reverified for the fixture and both ranged model assets. Their certificate
+fingerprints and SPKIs remained identical to the values above. The isolated
+Chromium process trusted only those three reverified SPKIs plus the already
+verified qualification-route SPKI. The command results are retained in
+`liquid-audio-reference-run-23-tls.log`.

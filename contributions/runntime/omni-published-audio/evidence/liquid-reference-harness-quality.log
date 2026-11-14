@@ -1,13 +1,14 @@
-$ pnpm exec prettier --write packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
-packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts 73ms (unchanged)
+$ pnpm exec prettier --write packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts packages/runntime/test/zoo/lfm3/packed-consumer.mjs
+packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts 70ms (unchanged)
+packages/runntime/test/zoo/lfm3/packed-consumer.mjs 37ms (unchanged)
 PASS
-$ pnpm exec eslint --fix packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+$ pnpm exec eslint --fix packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts packages/runntime/test/zoo/lfm3/packed-consumer.mjs
 PASS
-$ pnpm exec prettier --check packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+$ pnpm exec prettier --check packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts packages/runntime/test/zoo/lfm3/packed-consumer.mjs
 Checking formatting...
 All matched files use Prettier code style!
 PASS
-$ pnpm exec eslint packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+$ pnpm exec eslint packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts packages/runntime/test/zoo/lfm3/packed-consumer.mjs
 PASS
 $ pnpm --filter runntime typecheck
 $ tsc --noEmit

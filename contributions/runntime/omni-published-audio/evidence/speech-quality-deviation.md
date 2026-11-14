@@ -48,6 +48,18 @@ nonmatching same-file transcripts were identical to run 20. This single run
 confirms that both generated-speech paths fail under the properly rate-matched
 reference input path; see `liquid-audio-reference-run-21.log`.
 
+Run 23 tested whether low level alone explained the failures, without changing
+the retained WAVs or the acceptance input. The opt-in diagnostic scaled each
+Liquid output to a fixed RMS of `0.1` (about -20 dBFS), resampled it to 16 kHz,
+and ran the same pinned Liquid ASR. The adjusted peaks were `0.3839` and
+`0.5279`, so neither diagnostic input clipped. The resulting transcripts were
+“The silence is broken by a single, very quiet, low-frequency hum.” and “An
+engine is running with a steady hum in the background.” Neither recovered the
+requested words. This rules out simple low RMS as a sufficient explanation;
+it does not identify the codec/depth-decoder cause. The diagnostic is disabled
+by default and the raw-PCM recovery assertion remains unchanged. See
+`liquid-audio-reference-run-23.log`.
+
 The native public WebGPU run generated 132,480 samples (5.52 s) at 24 kHz for
 the first request, using seed `1234` and three depth passes. Its PCM16 capture
 has SHA-256
