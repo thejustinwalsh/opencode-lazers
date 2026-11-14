@@ -1,0 +1,267 @@
+
+## Typecheck
+$ pnpm typecheck
+$ pnpm -r run typecheck
+Scope: 2 of 3 workspace projects
+packages/runntime typecheck$ tsc --noEmit
+packages/runntime typecheck: Done
+
+## Unit suite
+$ pnpm --filter runntime test:unit
+$ vitest run --project unit
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+
+ Test Files  57 passed (57)
+      Tests  1173 passed (1173)
+   Start at  00:26:09
+   Duration  1.83s (import 60%, transform 19%, tests 19%, worker 2%)
+
+
+## Lint
+$ pnpm lint
+$ eslint . --max-warnings=0
+
+## Format check
+$ pnpm format:check
+$ prettier --check .
+Checking formatting...
+All matched files use Prettier code style!
+
+## Package build
+$ pnpm --filter runntime build
+$ tsdown
+ℹ tsdown v0.23.0 powered by rolldown v1.2.8
+ℹ config file: /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/tsdown.config.ts
+ℹ entry: src/zoo/index.ts, src/zoo/transformers/index.ts
+ℹ tsconfig: tsconfig.json
+
+ WARN  `external` is deprecated. Use `deps.neverBundle` instead.
+
+ℹ Build start
+ℹ Cleaning 8 files
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/transformers/init.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/gpu.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/detector.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:30)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/imageClassification.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:36)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/depthEstimation.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:15)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/nlp/lfm3.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:29)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/lfm3/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:20)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/buffers.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:29)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/imageToChw.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:23)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/common.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:30)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/detect/decodeDetections.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/reduce/softmaxTopK.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/replayCache.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:33)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/mapToTexture.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:34)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/eval.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/loadStateDict.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/context.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:31)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/elem.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:20)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/module.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/matmul/matmul.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/activations.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/layers.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/ssm.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/attention/attn.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:23)
+ℹ dist/zoo/index.mjs                 305.04 kB │ gzip: 85.65 kB
+ℹ dist/zoo/transformers/index.mjs     27.61 kB │ gzip:  7.93 kB
+ℹ dist/classifier-DYiiQa4u.mjs         1.37 MB
+ℹ dist/zoo/index.d.mts                52.74 kB │ gzip: 12.76 kB
+ℹ dist/zoo/transformers/index.d.mts    3.25 kB │ gzip:  1.00 kB
+ℹ dist/config-D2m8zfTp.d.mts          11.17 kB │ gzip:  4.05 kB
+ℹ 6 files, total: 1.77 MB
+✔ Build complete in 1405ms
+
+## Docs build
+$ pnpm --filter docs build
+$ astro build
+[astro] `markdown.remarkPlugins`, `markdown.rehypePlugins`, and `markdown.remarkRehype` are deprecated. Pass them to `unified({...})` from `@astrojs/markdown-remark` directly instead.
+[96m[info][0m Loaded plugin typedoc-plugin-markdown
+00:26:25 [starlight-typedoc-plugin] markdown generated at ./src/content/docs/api/zoo
+[96m[info][0m Loaded plugin typedoc-plugin-markdown
+00:26:25 [build] Waiting for integration "@astrojs/starlight", hook "astro:config:setup"...
+00:26:27 [starlight-typedoc-plugin] markdown generated at ./src/content/docs/api/transformers
+00:26:28 [content] Syncing content
+00:26:28 [content] Synced content
+00:26:28 [types] Generated 309ms
+00:26:28 [build] output: "static"
+00:26:28 [build] mode: "static"
+00:26:28 [build] directory: /private/tmp/lazers-runntime-handoff.GSDeio/runntime/apps/docs/dist/
+00:26:28 [build] Collecting build info...
+00:26:28 [build] ✓ Completed in 6.54s.
+00:26:28 [build] Building static entrypoints...
+(node:52158) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+00:26:42 [vite] ✓ built in 13.58s
+00:26:42 [WARN] [vite] [plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+00:26:42 [vite] ✓ built in 716ms
+00:26:42 [build] Rearranging server assets...
+
+ generating static routes
+00:26:42 [WARN] [content] The collection "i18n" does not exist or is empty. Please check your content config file for errors.
+00:26:42   ├─ /404.html00:26:42 [WARN] [content] Entry docs → 404 was not found.
+ (+12ms)
+00:26:42   ├─ /zoo/text-embedding/index.html (+1ms)
+00:26:42   ├─ /zoo/index.html (+0ms)
+00:26:42   ├─ /index.html (+0ms)
+00:26:42   ├─ /api/transformers/index.html (+5ms)
+00:26:42   ├─ /api/transformers/functions/depthartloader/index.html (+3ms)
+00:26:42   ├─ /api/transformers/functions/initrunntimebackend/index.html (+3ms)
+00:26:42   ├─ /api/transformers/functions/isrunntimemodel/index.html (+2ms)
+00:26:42   ├─ /api/transformers/functions/minilmloader/index.html (+2ms)
+00:26:42   ├─ /api/transformers/functions/mobilenetv4loader/index.html (+2ms)
+00:26:42   ├─ /api/transformers/functions/moonshineloader/index.html (+5ms)
+00:26:42   ├─ /api/transformers/functions/privacyfilterloader/index.html (+2ms)
+00:26:42   ├─ /api/transformers/functions/registerrunntimebackend/index.html (+2ms)
+00:26:42   ├─ /api/transformers/functions/unregisterrunntimebackend/index.html (+2ms)
+00:26:42   ├─ /api/transformers/functions/yolo26loader/index.html (+2ms)
+00:26:42   ├─ /api/transformers/interfaces/registerrunntimebackendopts/index.html (+2ms)
+00:26:42   ├─ /api/transformers/interfaces/runntimemodelloader/index.html (+2ms)
+00:26:42   ├─ /api/zoo/index.html (+2ms)
+00:26:42   ├─ /api/zoo/classes/runntimeerror/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/buffersource/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/created1decider/index.html (+4ms)
+00:26:42   ├─ /api/zoo/functions/createdepthestimator/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createembedder/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createimageclassifier/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createinstancesegmenter/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createkeypointdetector/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createlfm3audio/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createlfm3chat/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createobjectdetector/index.html (+1ms)
+00:26:42   ├─ /api/zoo/functions/createopfscache/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createprivacyfilter/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/createspeechtotext/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/decodeaudio/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/imagebuffer/index.html (+4ms)
+00:26:42   ├─ /api/zoo/functions/imagebufferfromimagedata/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/initrunntime/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/isrunntimeerror/index.html (+1ms)
+00:26:42   ├─ /api/zoo/functions/resampleaudio/index.html (+2ms)
+00:26:42   ├─ /api/zoo/functions/similarity/index.html (+1ms)
+00:26:42   ├─ /api/zoo/interfaces/classification/index.html (+2ms)
+00:26:42   ├─ /api/zoo/interfaces/classifyoptions/index.html (+1ms)
+00:26:42   ├─ /api/zoo/interfaces/d1decider/index.html (+1ms)
+00:26:42   ├─ /api/zoo/interfaces/d1decidermodel/index.html (+1ms)
+00:26:42   ├─ /api/zoo/interfaces/depthestimator/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/depthestimatormodel/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/depthmap/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/detectkeypointsoptions/index.html (+4ms)
+00:26:43   ├─ /api/zoo/interfaces/detectobjectsoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/embedder/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/embeddermodel/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/embedoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/encodeclassifyoptions/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/encodedetectkeypointsoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/encodedetectobjectsoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/encodeestimatedepthoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/encodeoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/encodesegmentinstancesoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/imagebuffer/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/imageclassifier/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/imageclassifiermodel/index.html (+4ms)
+00:26:43   ├─ /api/zoo/interfaces/instancesegmentation/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/instancesegmenter/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/instancesegmentermodel/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/keypointdetection/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/keypointdetector/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/keypointdetectormodel/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/landmark/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3audio/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3audiomodel/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3chatmodel/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3chatoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3chatsession/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3generation/index.html (+3ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3generationresult/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3message/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3speechgeneration/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3speechoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3speechresult/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/lfm3transcriptionoptions/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/loadoptions/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/objectdetection/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/objectdetector/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/objectdetectormodel/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/point/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/privacyfilter/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/privacyfiltermodel/index.html (+3ms)
+00:26:43   ├─ /api/zoo/interfaces/privacyspan/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/rangesource/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/segmentinstancesoptions/index.html (+2ms)
+00:26:43   ├─ /api/zoo/interfaces/size/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/speechstreamupdate/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/speechtotext/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/speechtotextmodel/index.html (+1ms)
+00:26:43   ├─ /api/zoo/interfaces/weightcache/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/answer/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/boundingbox/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/boxformat/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/boxmap/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/classificationlist/index.html (+3ms)
+00:26:43   ├─ /api/zoo/type-aliases/classifyinput/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/cocolandmark/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/depthartvariant/index.html (+2ms)
+00:26:43   ├─ /api/zoo/type-aliases/depthinput/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/depthmapdata/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/embeddingtask/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/embedinput/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/embedpart/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/gpuencoder/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/gpuimage/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/gpuimagetarget/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/gputensor/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/imageformat/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/imagetokenbudget/index.html (+4ms)
+00:26:43   ├─ /api/zoo/type-aliases/instancesegmentationdata/index.html (+2ms)
+00:26:43   ├─ /api/zoo/type-aliases/instancesegmentationlist/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/keypointdetectiondata/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/keypointdetectionlist/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/modelpath/index.html (+2ms)
+00:26:43   ├─ /api/zoo/type-aliases/objectdetectiondata/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/objectdetectionlist/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/question/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/questiontype/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/resizemode/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/runntimeerrorcode/index.html (+2ms)
+00:26:43   ├─ /api/zoo/type-aliases/speechtotextarch/index.html (+1ms)
+00:26:43   ├─ /api/zoo/type-aliases/yolo26input/index.html (+4ms)
+00:26:43   ├─ /api/zoo/type-aliases/yolo26variant/index.html (+2ms)
+00:26:43   ├─ /api/zoo/variables/coco_landmarks/index.html (+1ms)
+00:26:43   ├─ /api/zoo/variables/gpu_mask_size/index.html (+1ms)
+00:26:43   ├─ /api/zoo/variables/models/index.html (+2ms)
+00:26:43   ├─ /api/zoo/variables/runntime_error_codes/index.html (+2ms)
+00:26:43   ├─ /api/zoo/variables/speech_sample_rate/index.html (+1ms)
+00:26:43   ├─ /zoo/benchmarks/index.html (+11ms)
+00:26:43   ├─ /zoo/d1/index.html (+3ms)
+00:26:43   ├─ /zoo/depth-estimation/index.html (+66ms)
+00:26:43   ├─ /zoo/embedding/index.html (+4ms)
+00:26:43   ├─ /zoo/error-handling/index.html (+3ms)
+00:26:43   ├─ /zoo/getting-started/index.html (+17ms)
+00:26:43   ├─ /zoo/image-classification/index.html (+4ms)
+00:26:43   ├─ /zoo/instance-segmentation/index.html (+7ms)
+00:26:43   ├─ /zoo/lfm3-audio/index.html (+2ms)
+00:26:43   ├─ /zoo/lfm3-chat/index.html (+3ms)
+00:26:43   ├─ /zoo/migrating-from-transformers-js/index.html (+22ms)
+00:26:43   ├─ /zoo/object-detection/index.html (+5ms)
+00:26:43   ├─ /zoo/pose-and-keypoints/index.html (+4ms)
+00:26:43   ├─ /zoo/privacy-filter/index.html (+3ms)
+00:26:43   ├─ /zoo/speech-to-text/index.html (+5ms)
+00:26:43 ✓ Completed in 436ms.
+
+00:26:43 [build] ✓ Completed in 14.76s.
+00:26:43 [starlight:pagefind] Building search index with Pagefind...
+00:26:43 [starlight:pagefind] Found 147 HTML files.
+00:26:43 [starlight:pagefind] Finished building search index in 144ms.
+00:26:43 [@astrojs/sitemap] `sitemap-index.xml` created at `dist`
+00:26:43 [build] 144 page(s) built in 21.50s
+00:26:43 [build] Complete!
+
+All final quality commands passed.

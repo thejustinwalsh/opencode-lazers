@@ -1,24 +1,17 @@
-# Pinned Liquid audio capture blocker
+# Initial Portless audio-capture blocker (resolved)
 
-This is environment evidence, not model qualification. The two synthetic 16 kHz
-mono PCM16 clips remain frozen and local as recorded in
-`audio-reference-inputs.md`. The pinned engine and exact language/projector
-files are present in the approved local cache, but no Liquid transcription,
-speech output, or same-file audio comparison was produced.
+This records the original environment blocker only. At the time of the initial
+attempt, Portless exposed the local fixture route as HTTP-only. That route was
+not used for model downloads or inference, and no TLS bypass or login-keychain
+change was made by this worker.
 
-The reference cache server was launched through the existing Portless proxy
-without restarting it. `portless list` registered
-`lazers-lfm3-reference.localhost` as an HTTP route on proxy port 1355;
-`portless doctor` reported `Mode: HTTP` and explicitly reported that HTTPS is
-disabled. Requests to the named route over HTTPS returned HTTP 404 from
-Portless, and the default HTTPS endpoint failed its TLS handshake. The server's
-HTTP route was not used for model downloads or inference because the required
-HTTPS route is unavailable. Restarting or replacing the proxy was not
-authorized.
-
-The retained capture harness passed `pnpm --filter runntime exec tsc --noEmit`
-and the packed-consumer syntax check with its Liquid test skipped. A direct
-focused Vitest run also skipped the Liquid test. These checks do not execute the
-reference engine. Audio reference capture, public native audio inference,
-same-file parity, speech quality, and complete-pair resource measurements remain
-pending.
+The blocker was later resolved by registering the existing asset and fixture
+servers through the existing Portless HTTPS proxy. CA-verified TLS and exact
+hostname SANs were checked immediately before the real-WebGPU capture; see
+`browser-tls-verification.md`. The pinned Liquid same-file run then loaded both
+frozen clips and produced both 24 kHz speech outputs. Input transcription
+matched both requested texts, but Liquid transcription of its own generated
+speech did not recover either request. A separate same-file pass also
+transcribed the captured native speech and returned a nonmatching transcript.
+These are model/output-quality failures, not a current route or TLS blocker;
+see `speech-quality-deviation.md`.

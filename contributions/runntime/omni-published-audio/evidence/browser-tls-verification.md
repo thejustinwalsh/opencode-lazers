@@ -1,0 +1,36 @@
+# Frozen audio route TLS verification
+
+The frozen WAV fixtures and exact pinned model files were served through the
+existing Portless HTTPS proxy on port 1355. The routes used the existing
+Portless CA; they were not downgraded to HTTP, and no login-keychain or global
+TLS settings were changed.
+
+Verified immediately before the packed Chromium audio and Liquid-reference
+runs on 2026-11-13 (including runs 12–14):
+
+- CA-verified TLS with `curl --cacert "$HOME/.portless/ca.pem"` and an explicit
+  loopback `--resolve` for `lazers-lfm3-reference.localhost:1355`.
+- The served certificate has SAN `DNS:lazers-lfm3-reference.localhost` and
+  SHA-256 fingerprint
+  `FED85694A6D896865ABFFFEC00D63B7B9EF01458540CD3B01A57298C64BE99DF`.
+- The verified certificate SPKI is
+  `oIYn7RVilEbqziniP2R1NdRLRW2fwE+ylWNcWq9TnT4=`.
+- HTTPS GET returned HTTP 200 for each fixture. Downloaded byte counts and
+  SHA-256 values matched `audio-reference-inputs.md`:
+  - `quick-brown-fox.wav`: 89,560 bytes,
+    `0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880`.
+  - `turn-left-next-street.wav`: 70,164 bytes,
+    `f9ce57f4e548e339e944ba87860cd35a545db46e5eafd69f3692ede19f6cb054`.
+- The model assets were served from
+  `https://lazers-lfm3-assets.localhost:1355`. CA-verified TLS reported
+  `DNS:lazers-lfm3-assets.localhost`, SHA-256 certificate fingerprint
+  `6993D332E69DCCE8A364CD24802CD6831F368D2AFE1CEF3F9B9A531A63B13251`, and
+  SPKI `MvqQIcLjQpdkbIB7QRc2v5PVxibKAD1rk1Pe+Gv8m0o=`. HTTP range requests for
+  both pinned GGUFs returned 206 with TLS verification result 0; the first 64
+  bytes of the served language GGUF matched the locally hash-verified source.
+
+The packed test harness accepts an optional `LFM3_BROWSER_TRUSTED_SPKI` and
+passes the comma-separated verified SPKIs only to its isolated Chromium process
+as `--ignore-certificate-errors-spki-list=<verified SPKIs>`. These are
+certificate-key-scoped allowances for the verified local Portless certificates;
+they do not disable certificate validation generally.
