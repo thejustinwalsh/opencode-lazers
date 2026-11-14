@@ -1,7 +1,7 @@
 From 51a86bff608d0d98d80eea3d2ac72795d28cf337 Mon Sep 17 00:00:00 2001
 From: lazers-worker <lazers-worker@local>
 Date: Sat, 14 Nov 2026 06:39:12 -0500
-Subject: [PATCH 3/6] refactor(core): move depthwise padLeft to the dimensions
+Subject: [PATCH 3/7] refactor(core): move depthwise padLeft to the dimensions
  uniform
 
 Keep the depthwise pipeline keyed only on channels and kernel size so

@@ -1,7 +1,7 @@
 From 52bfe741cb1036d39206150aa198c8ed3cb6d605 Mon Sep 17 00:00:00 2001
 From: lazers-worker <lazers-worker@local>
 Date: Sat, 14 Nov 2026 07:30:20 -0500
-Subject: [PATCH 6/6] test(zoo): regress fused-readback recovery and
+Subject: [PATCH 6/7] test(zoo): regress fused-readback recovery and
  stream-only rejection
 
 Give the lifecycle upload-ownership test a valid [1, 2048] embedding so

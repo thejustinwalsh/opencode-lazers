@@ -11,28 +11,28 @@ $ tsdown
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/transformers/init.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:35)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/gpu.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/detector.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:30)
-[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/imageClassification.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:36)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/depthEstimation.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/imageClassification.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:36)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:15)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/nlp/lfm3.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:29)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/lfm3/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:20)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/buffers.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:29)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/common.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:30)
-[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/mapToTexture.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:34)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/imageToChw.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:23)
-[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/reduce/softmaxTopK.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:26)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/detect/decodeDetections.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/reduce/softmaxTopK.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/mapToTexture.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:34)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/context.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:31)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/replayCache.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:33)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/eval.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:26)
-[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/context.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:31)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/loadStateDict.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:24)
-[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/buffers.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:29)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/elem.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:20)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/module.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/matmul/matmul.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:25)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/activations.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/layers.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
-[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/attention/attn.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:23)
 [unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/ssm.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/attention/attn.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:23)
 ℹ dist/zoo/index.mjs                 308.75 kB │ gzip: 86.64 kB
 ℹ dist/zoo/transformers/index.mjs     27.61 kB │ gzip:  7.93 kB
 ℹ dist/classifier-C3pXWB5q.mjs         1.37 MB
@@ -40,4 +40,4 @@ $ tsdown
 ℹ dist/zoo/transformers/index.d.mts    3.25 kB │ gzip:  1.00 kB
 ℹ dist/config-D2m8zfTp.d.mts          11.17 kB │ gzip:  4.05 kB
 ℹ 6 files, total: 1.77 MB
-✔ Build complete in 1397ms
+✔ Build complete in 1417ms

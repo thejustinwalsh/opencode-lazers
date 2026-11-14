@@ -11,17 +11,22 @@
 
 ## Retained baseline (audio series, real Chromium WebGPU)
 
-- Run 27 packed installed-package consumer: both frozen clips exact, finite
-  nonempty streamed 24 kHz speech, cancellation recovery passed, disposal with
-  no live storage buffers (518,496 B root-cache retained in that run; 519,028 B
-  in the projector-qualification run — normal TypeGPU root-cache retention).
+- Run 27 packed installed-package consumer (native self-ASR checks): both
+  frozen clips exact, finite nonempty streamed 24 kHz speech, cancellation
+  recovery passed, disposal with no live storage buffers (518,496 B root-cache
+  retained in that run; 519,028 B in the projector-qualification run — normal
+  TypeGPU root-cache retention). The generated-speech leg ran native self-ASR:
+  there is no pinned-Liquid recovery assertion on run 27 (absent, not failed).
+  Same-file pinned-Liquid failures of generated speech are retained separately
+  as runs 9 and 14 (public pair) and runs 20, 21 and 23 (Liquid's own speech)
+  in the audio receipt.
 - Load/warm-up 27,011.4 ms; sampled peak GPU 1,825,200,572 B (~1.82 GB, above the
   1 GB optimization target); cumulative source reads 3,456,883,176 B (full-file
   hash plus one payload read per chunk, plus the tiny pre-validation header read
   in `openAudioProjector`).
-- Run 26 (pinned same-file Liquid): both frozen clips and both Liquid-generated
-  24 kHz requests transcribed to exact expected words after required 16 kHz
-  resampling.
+- Run 26 is the only Liquid-to-Liquid same-file speech evidence: both frozen
+  clips and both Liquid-generated 24 kHz requests transcribed to exact expected
+  words after required 16 kHz resampling.
 - Run 30 (pinned Liquid operator reference): 69,632-value encoder comparison,
   exact 12 depth-code IDs, 1,920 codec PCM samples — all passed.
 - Pending from the audio receipt (unchanged here): independent same-file Liquid
@@ -33,8 +38,9 @@
 
 No loader byte change in this series. `sharedTensorParts` (introduced in
 `f31f725`) shares one `source.read(begin, end)` across Q4_K's 3 parts
-(ints/scales/offsets) and Q6_K/Q8_0's 2 parts (ints/scales). Focused tests assert
-one payload read per chunk besides the full-file hash pass. File verification
+(ints/scales/offsets) and Q6_K/Q8_0's 2 parts (ints/scales). The retained
+audio-series `gguf.test.ts` (unit, passing) asserts one payload read per chunk
+besides the full-file hash pass. File verification
 (full-file SHA-256 before any tensor decode), `onBytes`/`onProgress` reporting,
 `throwIfAborted` at hash chunks and before/after decode, and short-read errors
 are untouched. After all parts consume the shared decode, `pending` is cleared
@@ -80,9 +86,13 @@ materialized; uploads and step values keep their release paths; no
 existing callers.
 
 Regression evidence: `fused-readback-recovery.gpu.test.ts` forces a pre-submit
-eval failure and proves the next fused readback proceeds;
-`model-lifecycle.gpu.test.ts` proves a synchronous graph failure still exposes
-and destroys all 5 uploads; `session.test.ts` proves same-session
-failure-then-success and stream-only early-break settlement. No fused-readback
-timing is claimed; any future fusion attempt must first demonstrate pre-submit
-failure recovery with dispatch/pipeline counts on the exact pair.
+eval failure through the fused queue and proves a genuinely pending successor
+readback proceeds (without the core rejection the successor would fail as
+already queued); `model-lifecycle.gpu.test.ts` proves a synchronous graph
+failure still exposes and destroys all 5 uploads; `test/zoo/tasks/audio/speak.test.ts`
+drives the real `speak` wiring (faked IO boundaries) through stream-only
+early-break cancellation with no unhandled rejection and a successful reuse;
+`session.test.ts` covers same-session failure-then-success at the chat session
+level. No fused-readback timing is claimed; any future fusion attempt must
+first demonstrate pre-submit failure recovery with dispatch/pipeline counts on
+the exact pair.

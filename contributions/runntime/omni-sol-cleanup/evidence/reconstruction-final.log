@@ -11,5 +11,7 @@ applying 0005-fix-zoo-drop-pre-submit-fused-logits-readback.patch
 8b2320ef2136343346c91f59de6978c9ee943794
 applying 0006-test-zoo-regress-fused-readback-recovery-and-stream-.patch
 1261366044c2d059f6384a7df5c7a1de66e7d158
-final 1261366044c2d059f6384a7df5c7a1de66e7d158
-expected tip tree 1261366044c2d059f6384a7df5c7a1de66e7d158
+applying 0007-test-zoo-cover-public-audio-speak-early-break-and-pe.patch
+9090b0e0295b5320f5ffc3530326a8936149a2fc
+final 9090b0e0295b5320f5ffc3530326a8936149a2fc
+expected tip tree 9090b0e0295b5320f5ffc3530326a8936149a2fc
