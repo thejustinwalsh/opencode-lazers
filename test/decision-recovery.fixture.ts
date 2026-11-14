@@ -21,11 +21,18 @@ const decisionFiles = [...contents].map(([id, bytes]) => ({ id, bytes: bytes.len
 mock.module("../src/webgpu/manifest.ts", () => ({
   DECISION_FILES: decisionFiles,
   DECISION_BYTES: decisionFiles.reduce((sum, file) => sum + file.bytes, 0),
+  DECISION_REPOSITORY: "test/decision-model",
+  DECISION_REVISION: "test-decision",
+  ENGINE_SHA256: "0".repeat(64),
+  ENGINE_REVISION: "test-engine",
   MAX_READ_BYTES: 1,
   MODEL_FILES: [],
   MODEL_BYTES: 0,
   MODEL_REPOSITORY: "test/model",
   MODEL_REVISION: "test",
+  LFM3_TOKENIZER_REVISION: "test-tokenizer",
+  LFM3_TOKENIZER_URL: "https://example.test/tokenizer.json",
+  RUNNTIME_REVISION: "test-runntime",
   MODEL_SHORT_NAMES: { chat: "LFM3", decision: "d1" },
   modelURL: () => "",
 }))

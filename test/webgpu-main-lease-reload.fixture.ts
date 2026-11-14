@@ -382,7 +382,18 @@ try {
   assert.equal(brokerOwner, oldOwner)
 
   successor = makeRuntime(main)
-  await until(() => successor!.runtime.state() === "ready", "fresh renderer after window reload")
+  await until(
+    () =>
+      successor!.runtime.contractStatus() === "compatible" &&
+      brokerOwner === oldOwner &&
+      attachCalls === 2,
+    "fresh renderer after window reload",
+  )
+  assert.equal(
+    successor.runtime.state(),
+    "unloaded",
+    "A preserved queued request defers model allocation until the renderer polls it",
+  )
   const freshMemory = memoryFor(successor)
   const freshEntry = freshMemory.generations[freshMemory.current!]!
   assert.equal(freshMemory.sequence, 1)

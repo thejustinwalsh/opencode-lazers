@@ -39,6 +39,7 @@ let cleanupGate: Promise<void> | undefined
 let failDecisionEnsure = false
 let failDecisionLoad = false
 let chatLoadGate: Promise<void> | undefined
+const chatLoadStarted = Promise.withResolvers<void>()
 let decisionLoadGate: Promise<void> | undefined
 const allocate = () => {
   assert.equal(allocations, 0, "A second GPU model must never allocate")
@@ -58,6 +59,7 @@ const allocate = () => {
 mock.module("../.cache/lfm3-engine.js", () => ({
   Lfm3OmniForConditionalGeneration: {
     from_pretrained: async () => {
+      chatLoadStarted.resolve()
       await chatLoadGate
       return {
         dispose: allocate(),
@@ -247,8 +249,10 @@ const until = async (condition: () => boolean) => {
   }
 }
 try {
-  await until(() => runtime.modelName() === "LFM3" && runtime.phase() === "loading")
-  assert.equal(runtime.resident(), undefined, "A cold chat load is named from its selected target")
+  await chatLoadStarted.promise
+  assert.equal(runtime.modelName(), undefined, "A cold load has no resident identity")
+  assert.equal(runtime.resident(), undefined)
+  assert.equal(runtime.phase(), "loading")
   initialChatLoad.resolve()
   chatLoadGate = undefined
   await until(() => runtime.state() === "ready")
@@ -598,9 +602,9 @@ try {
   assert.equal(runtime.resident(), "chat", "A resident remains authoritative during its disposal")
   oldDisposal.resolve()
   cleanupGate = undefined
-  await until(() => runtime.modelName() === "d1" && runtime.resident() === undefined)
+  await until(() => runtime.modelName() === undefined && runtime.resident() === undefined)
   assert.equal(runtime.phase(), "loading")
-  assert.equal(runtime.state(), "loading", "After disposal the selected target is named")
+  assert.equal(runtime.state(), "loading", "After disposal no previous model identity remains")
   decisionLoad.resolve()
   decisionLoadGate = undefined
   assert.equal((await toDecision).ok, true)
@@ -612,7 +616,7 @@ try {
   const toChat = chat()
   await until(
     () =>
-      runtime.modelName() === "LFM3" &&
+      runtime.modelName() === undefined &&
       runtime.resident() === undefined &&
       runtime.phase() === "loading",
   )
@@ -625,7 +629,7 @@ try {
   assert.equal((await decision()).ok, false, "Load failure occurs after disposing the old model")
   failDecisionLoad = false
   assert.equal(runtime.resident(), undefined)
-  assert.equal(runtime.modelName(), "d1", "The failed target is named without claiming residency")
+  assert.equal(runtime.modelName(), undefined, "A failed target has no resident identity")
   assert.equal(runtime.state(), "error")
   await Bun.sleep(600)
   assert.equal(
@@ -633,7 +637,7 @@ try {
     undefined,
     "A failed switch is not retargeted from feature settings",
   )
-  assert.equal(runtime.modelName(), "d1")
+  assert.equal(runtime.modelName(), undefined)
   assert.equal((await decision()).ok, true)
   assert.equal(runtime.modelName(), "d1")
 
@@ -645,7 +649,7 @@ try {
     if (recoveryLoad) {
       await until(
         () =>
-          runtime.modelName() === "d1" &&
+          runtime.modelName() === undefined &&
           runtime.resident() === undefined &&
           runtime.phase() === "loading",
       )
@@ -655,11 +659,15 @@ try {
     await until(
       () => releases > before && (runtime.state() === "ready" || runtime.state() === "error"),
     )
-    assert.equal(runtime.modelName(), "d1", "Device loss recovery retains the known identity")
+    assert.equal(
+      runtime.modelName(),
+      runtime.state() === "ready" ? "d1" : undefined,
+      "Only a resident model has a displayed identity after recovery",
+    )
   }
   assert.equal(runtime.state(), "error")
   assert.equal(runtime.resident(), undefined, "Circuit breaker does not leave a model resident")
-  assert.equal(runtime.modelName(), "d1", "The failed recovery target remains explicitly named")
+  assert.equal(runtime.modelName(), undefined, "A failed recovery has no resident identity")
   assert.match(runtime.detail(), /cooling down/)
   const afterCircuit = releases
   await Bun.sleep(700)
@@ -739,7 +747,7 @@ try {
   assert.equal(runtime.modelName(), undefined)
   setFeatures({ ...defaultFeatures(true), questions: false, dictation: false, readAloud: false })
   const coldDecisionLoad = runtime.load()
-  assert.equal(runtime.modelName(), "d1", "A cold decision load is named from its selected target")
+  assert.equal(runtime.modelName(), undefined, "A cold decision load has no resident identity yet")
   await coldDecisionLoad
   assert.equal(runtime.modelName(), "d1")
   assert.equal(runtime.resident(), "decision")

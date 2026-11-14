@@ -1432,7 +1432,7 @@ export function createInferenceRuntime(
         void load()
         return
       }
-      if (owner && !polling) {
+      if (owner && contractStatus() === "compatible" && !polling) {
         polling = true
         try {
           const lease = owner
@@ -1459,6 +1459,7 @@ export function createInferenceRuntime(
               )
             } catch (error) {
               await reportCompletionDeliveryFailure(token, error)
+              await unload()
             }
           }
           if (response.job && !active && !unloading) {

@@ -21,6 +21,7 @@ let failCompletion = false
 let failNextAudioLoad = false
 let heldAudioLoad: PromiseWithResolvers<void> | undefined
 let loseLastDevice: (() => void) | undefined
+let attachedOwner: string | undefined
 const traces: InferenceTraceEvent[] = []
 
 const allocate = () => {
@@ -156,9 +157,12 @@ const worker = {
     if (contractRevision !== GENERATION_RESULT_CONTRACT_REVISION)
       throw new Error("Incompatible renderer completion contract")
     broker.attach(owner)
+    attachedOwner = owner
   },
-  detach: async ({ owner, error }: { owner: string; error?: string }) =>
-    broker.detach(owner, error),
+  detach: async ({ owner, error }: { owner: string; error?: string }) => {
+    broker.detach(owner, error)
+    if (attachedOwner === owner) attachedOwner = undefined
+  },
   poll: async ({ owner, available }: { owner: string; available: boolean }) =>
     broker.poll(owner, available),
   complete: async ({
@@ -432,6 +436,34 @@ try {
   assert.equal(displayedName, undefined)
   assert.equal(recoveryEnabled, false)
   assert.match(runtime.detail(), /not ready for qualification/)
+  await runtime.unload()
+
+  serverContractRevision = GENERATION_RESULT_CONTRACT_REVISION
+  now += 2_000
+  await runtime.load()
+  await until(
+    () => runtime.state() === "ready",
+    "revalidation before cancellation transport failure",
+  )
+  const cancellation = new AbortController()
+  const cancelled = broker.generate(
+    { prompt: "cancelled before renderer handles it", maxTokens: 8, timeoutMs: 4_000 },
+    cancellation.signal,
+  )
+  assert.ok(attachedOwner)
+  const cancelledJob = broker.poll(attachedOwner).job!
+  cancellation.abort()
+  assert.match((await cancelled).error, /cancelled/i)
+  failCompletion = true
+  await tick()
+  await until(
+    () => runtime.contractStatus() === "unverified" && runtime.resident() === undefined,
+    "cancelled completion delivery failure cleanup",
+  )
+  assert.equal(runtime.state(), "error")
+  assert.equal(runtime.modelIdentity(), undefined)
+  assert.equal(recoveryEnabled, false)
+  assert.equal(cancelledJob.prompt, "cancelled before renderer handles it")
 
   serverContractRevision = "old-contract"
   now += 2_000
