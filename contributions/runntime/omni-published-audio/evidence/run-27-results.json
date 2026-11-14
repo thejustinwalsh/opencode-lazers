@@ -1,0 +1,118 @@
+{
+  "speechDiagnostic": {
+    "seed": 1234,
+    "depthPasses": 3,
+    "requested": "The quick brown fox jumps over the lazy dog.",
+    "sampleRate": 24000,
+    "samples": 84480,
+    "frames": 44,
+    "finishReason": "stop",
+    "streamChunks": 45,
+    "metrics": {
+      "samples": 84480,
+      "seconds": 3.52,
+      "peak": 0.45830389857292175,
+      "rms": 0.06323981290267405,
+      "clippedSamples": 0
+    },
+    "recoveredTranscript": "The quick brown fox jumps over the lazy dog."
+  },
+  "publicAudioQualification": {
+    "sourcePair": {
+      "language": {
+        "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
+        "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+        "file": "LFM3-Omni-2B-Q4_K_M.gguf",
+        "bytes": 1099630080,
+        "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2",
+        "url": "https://lazers-lfm3-assets.localhost:1355/LFM3-Omni-2B-Q4_K_M.gguf"
+      },
+      "projector": {
+        "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
+        "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+        "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+        "bytes": 506842528,
+        "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1",
+        "url": "https://lazers-lfm3-assets.localhost:1355/mmproj-LFM3-Omni-2B-Q8_0.gguf"
+      }
+    },
+    "bytesRead": 3456883176,
+    "progressDone": 303091720,
+    "progressTotal": 303091720,
+    "loadAndWarmUpMs": 27011.4,
+    "loadedGpuBytes": 1825200572,
+    "peakGpuBytes": 1825200572,
+    "fixedClipTranscriptions": [
+      {
+        "id": "quick-brown-fox",
+        "file": "quick-brown-fox.wav",
+        "transcript": "The quick brown fox jumps over the lazy dog.",
+        "bytes": 89560,
+        "sha256": "0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880",
+        "sampleRate": 16000,
+        "samples": 42732,
+        "transcriptionMs": 430.1
+      },
+      {
+        "id": "turn-left-next-street",
+        "file": "turn-left-next-street.wav",
+        "transcript": "Please turn left at the next street.",
+        "bytes": 70164,
+        "sha256": "f9ce57f4e548e339e944ba87860cd35a545db46e5eafd69f3692ede19f6cb054",
+        "sampleRate": 16000,
+        "samples": 33034,
+        "transcriptionMs": 341.7
+      }
+    ],
+    "speech": {
+      "seed": 1234,
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "deep": {
+        "depthPasses": 3,
+        "frames": 44,
+        "finishReason": "stop",
+        "latencyMs": 2192.4,
+        "streamChunks": 45,
+        "metrics": {
+          "samples": 84480,
+          "seconds": 3.52,
+          "peak": 0.45830389857292175,
+          "rms": 0.06323981290267405,
+          "clippedSamples": 0
+        },
+        "recoveredTranscript": "The quick brown fox jumps over the lazy dog."
+      },
+      "shallow": {
+        "depthPasses": 1,
+        "frames": 42,
+        "finishReason": "stop",
+        "latencyMs": 1645.8,
+        "streamChunks": 43,
+        "metrics": {
+          "samples": 80640,
+          "seconds": 3.36,
+          "peak": 0.5108968615531921,
+          "rms": 0.06848771384548599,
+          "clippedSamples": 0
+        }
+      }
+    },
+    "recoveredAfterAbort": "Please turn left at the next street.",
+    "gpuStorageBuffersAfterDispose": [],
+    "gpuRootCacheBufferBytesAfterDispose": 518496,
+    "device": ""
+  },
+  "testReport": {
+    "success": true,
+    "totalTests": 1,
+    "passedTests": 1,
+    "failedTests": 0,
+    "tests": [
+      {
+        "name": "loads the exact published pair and transcribes and streams speech through the public zoo entry",
+        "status": "passed",
+        "durationMs": 32502.400000035763
+      }
+    ]
+  }
+}

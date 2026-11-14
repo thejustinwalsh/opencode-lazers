@@ -70,10 +70,55 @@ retained pinned Liquid model, given this captured WAV resampled by the public
 sannies.” rather than the requested sentence. Run metadata and the capture
 path are recorded in `native-speech-diagnostic.md`.
 
-This is a confirmed, unresolved reference-quality failure, not evidence that
-the native output is equivalent to Liquid. No weights, clips, precision,
-codec, or recognition model were substituted. The current public audio GPU
-test deliberately keeps the requested-word recovery assertion and reports the
-seed/depth, waveform metrics, and stream accounting before failing that
-assertion. Return the unexplained difference to Architect; do not claim speech
-qualification or Desktop playback qualification.
+At that checkpoint, generated-speech recovery was unresolved. Corrected runs
+26 and 27 below supersede that result: the corrected prompt framing and matched
+depth-sampling controls recover the requested words through the retained Liquid
+transcriber and public packed consumer. The earlier failure logs remain
+historical and were not altered.
+
+## Superseding prompt/sampling runs 26 and 27
+
+The pinned reference run 26 used the unchanged source pair and same-file Liquid
+engine above. ASR used the documented `Perform ASR in English.` system message
+and audio-only user content. TTS used the documented `Perform TTS in American
+English using a female voice.` system message and the unmodified requested text
+as user content. The assistant audio-start marker occurred once. Depth controls
+were seed `1234`, temperature `0.4`, repetition penalty `1.2`, repetition
+window `64`, and the default `[4, 4, 4]` reveal schedule.
+
+Both frozen input clips again transcribed to their exact expected words after
+case/punctuation normalization. Liquid-generated 24 kHz speech was resampled to
+16 kHz before same-file ASR; both requests were recovered:
+
+| Request                                        |                      Liquid 24 kHz output | Liquid same-file transcription                 | Output SHA-256                                                     |
+| ---------------------------------------------- | ----------------------------------------: | ---------------------------------------------- | ------------------------------------------------------------------ |
+| “The quick brown fox jumps over the lazy dog.” | 76,800 samples / 3.20 s; 41 speech frames | “The quick brown fox jumps over the lazy dog.” | `9d2656622e96daf1a68a36405d6f4ca1ec83c1cbb5d4ec446630c5e969ceb5ad` |
+| “Please turn left at the next street.”         | 55,680 samples / 2.32 s; 30 speech frames | “Please turn left at the next street.”         | `751feb32d16b26e1b3abd21ff1cb89bc1df7a9811ed4c24fd146aed9943476a6` |
+
+Run 27 exercised the installed package's public `createLfm3Audio` consumer on
+real Chromium WebGPU with the same pair. The two unchanged clips transcribed
+exactly. With seed `1234`, the depth-3 stream generated 84,480 finite samples
+(3.52 s) at 24 kHz in 45 chunks over 44 frames, with peak `0.4583`, RMS
+`0.06324`, and no clipped samples. Its 16 kHz same-file transcription recovered
+“The quick brown fox jumps over the lazy dog.” The depth-1 comparison generated
+80,640 samples (3.36 s) in 43 chunks over 42 frames; its peak was `0.5109` and
+RMS `0.06849`. The depth-3 PCM16 capture SHA-256 is
+`78a653baeb471a729f93525b9c0fc1182ddcdbd95fc996dafeb58284fe411511`; depth-1
+is `f0ad978cd0d526d615dffe812f1e9ed191a49259fd534348f3f0aa6ccc713a0b`.
+Abort recovery then transcribed “Please turn left at the next street.”
+
+The public run measured 27,011.4 ms to load and warm up; cumulative source reads
+were 3,456,883,176 bytes, loaded and sampled peak GPU memory were both
+1,825,200,572 bytes, and unload left no live storage buffers (518,496 bytes
+remained in the TypeGPU root cache). The `<1 GB` model-size target was therefore
+not met; the exact published pair was retained.
+
+These runs supersede the prior word-recovery failures but do not establish
+perceptual equivalence, natural-speech generalization, Desktop playback, or
+broad seed/depth audio quality. Raw WAVs remain in the approved local capture
+cache and are not included here. Detailed prompts, source identities and
+per-run results are retained in `run-26-results.json` and `run-27-results.json`;
+operator metrics are in `audio-operator-reference-run-30.json` and
+`audio-operator-reference-run-30.md`. `partial-manifest.json` links the results
+and keeps the separate language-logit and audio-attention/convolution checks
+explicitly pending.

@@ -1,0 +1,115 @@
+{
+  "liquidAudioReference": [
+    {
+      "id": "quick-brown-fox",
+      "input": {
+        "file": "quick-brown-fox.wav",
+        "transcript": "The quick brown fox jumps over the lazy dog.",
+        "sampleRate": 16000,
+        "samples": 42732,
+        "bytes": 89560,
+        "sha256": "0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880"
+      },
+      "liquidTranscription": {
+        "text": "The quick brown fox jumps over the lazy dog.",
+        "normalizedText": "the quick brown fox jumps over the lazy dog",
+        "promptTokens": 56,
+        "generatedTokens": 10,
+        "matchesExpected": true
+      },
+      "liquidSpeech": {
+        "file": "liquid-speech-quick-brown-fox.wav",
+        "sampleRate": 24000,
+        "samples": 76800,
+        "seconds": 3.2,
+        "bytes": 307244,
+        "sha256": "9d2656622e96daf1a68a36405d6f4ca1ec83c1cbb5d4ec446630c5e969ceb5ad",
+        "seed": 1234,
+        "promptTokenIds": [
+          124894, 124899, 23630, 207, 116068, 336, 9754, 296, 1972, 3478, 1492, 267, 6672, 7902, 22,
+          124900, 207, 124899, 5922, 207, 597, 4104, 10299, 35886, 56085, 890, 278, 45698, 4448, 22,
+          124900, 207, 124899, 63514, 207, 124901, 124902, 125012
+        ],
+        "depthDecoderTemperature": 0.4,
+        "depthDecoderRepetitionPenalty": 1.2,
+        "depthDecoderRepetitionWindow": 64,
+        "maskgitRevealSchedule": [4, 4, 4],
+        "speechFrames": 41,
+        "streamChunks": 5,
+        "generatedTokens": 41,
+        "finiteNonempty": true
+      },
+      "speechTranscription": {
+        "text": "The quick brown fox jumps over the lazy dog.",
+        "normalizedText": "the quick brown fox jumps over the lazy dog",
+        "sampleRate": 16000,
+        "samples": 51200,
+        "promptTokens": 62,
+        "generatedTokens": 10,
+        "recoversRequestedText": true
+      }
+    },
+    {
+      "id": "turn-left-next-street",
+      "input": {
+        "file": "turn-left-next-street.wav",
+        "transcript": "Please turn left at the next street.",
+        "sampleRate": 16000,
+        "samples": 33034,
+        "bytes": 70164,
+        "sha256": "f9ce57f4e548e339e944ba87860cd35a545db46e5eafd69f3692ede19f6cb054"
+      },
+      "liquidTranscription": {
+        "text": "Please turn left at the next street.",
+        "normalizedText": "please turn left at the next street",
+        "promptTokens": 48,
+        "generatedTokens": 8,
+        "matchesExpected": true
+      },
+      "liquidSpeech": {
+        "file": "liquid-speech-turn-left-next-street.wav",
+        "sampleRate": 24000,
+        "samples": 55680,
+        "seconds": 2.32,
+        "bytes": 222764,
+        "sha256": "751feb32d16b26e1b3abd21ff1cb89bc1df7a9811ed4c24fd146aed9943476a6",
+        "seed": 1234,
+        "promptTokenIds": [
+          124894, 124899, 23630, 207, 116068, 336, 9754, 296, 1972, 3478, 1492, 267, 6672, 7902, 22,
+          124900, 207, 124899, 5922, 207, 16308, 2371, 2690, 462, 278, 2779, 11012, 22, 124900, 207,
+          124899, 63514, 207, 124901, 124902, 125012
+        ],
+        "depthDecoderTemperature": 0.4,
+        "depthDecoderRepetitionPenalty": 1.2,
+        "depthDecoderRepetitionWindow": 64,
+        "maskgitRevealSchedule": [4, 4, 4],
+        "speechFrames": 30,
+        "streamChunks": 4,
+        "generatedTokens": 30,
+        "finiteNonempty": true
+      },
+      "speechTranscription": {
+        "text": "Please turn left at the next street.",
+        "normalizedText": "please turn left at the next street",
+        "sampleRate": 16000,
+        "samples": 37120,
+        "promptTokens": 51,
+        "generatedTokens": 8,
+        "recoversRequestedText": true
+      }
+    }
+  ],
+  "testReport": {
+    "success": true,
+    "totalTests": 1,
+    "passedTests": 1,
+    "failedTests": 0,
+    "tests": [
+      {
+        "name": "records pinned Liquid Q4_K_M teacher-forced vectors and deterministic chat answers",
+        "status": "passed",
+        "durationMs": 10984.800000011921
+      }
+    ]
+  }
+}

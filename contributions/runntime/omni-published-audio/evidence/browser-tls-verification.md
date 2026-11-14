@@ -52,3 +52,33 @@ fingerprints and SPKIs remained identical to the values above. The isolated
 Chromium process trusted only those three reverified SPKIs plus the already
 verified qualification-route SPKI. The command results are retained in
 `liquid-audio-reference-run-23-tls.log`.
+
+## Reverification before corrected packed runs 26–31
+
+On 2026-11-14, the existing shared Portless CA was reused. No HTTP downgrade,
+login-keychain edit, trust-store mutation, or global TLS bypass was performed.
+
+- `curl --cacert "$HOME/.portless/ca.pem"` with an explicit loopback
+  `--resolve` verified byte-range requests to
+  `https://lazers-lfm3-assets.localhost:1355`: HTTP 206 and TLS verification
+  result 0. The asset certificate SPKI was
+  `MvqQIcLjQpdkbIB7QRc2v5PVxibKAD1rk1Pe+Gv8m0o=`.
+- The same CA-verified request to
+  `https://lazers-lfm3-reference.localhost:1355/quick-brown-fox.wav` returned
+  HTTP 206 with TLS verification result 0. The fixture certificate SPKI was
+  `oIYn7RVilEbqziniP2R1NdRLRW2fwE+ylWNcWq9TnT4=`.
+- Immediately before run 30, `openssl s_client` verified the exact packed-test
+  hostname `lazers-lfm3-liquid-qualification.localhost` against the existing
+  CA with `-verify_hostname` and `-verify_return_error`: verification code 0,
+  SAN `DNS:lazers-lfm3-liquid-qualification.localhost`, SHA-256 fingerprint
+  `46FAAF8890AFA55F4E1C7A355A965140CF42B012E3AAD4B18650260D6A8FDAEB`, SPKI
+  `E6gQI1I90sg5O2EwNyfRJquaPMWnfYJcDYbENIOOV9w=`. Immediately before run 31,
+  the same CA/hostname verification again returned code 0 and the same exact
+  fingerprint and SPKI. The route served the packed Chromium public-chat run.
+
+Runs 26, 27, 30, and 31 used HTTPS through Portless. Chromium received only
+the asset, fixture (where used), and packed qualification SPKIs just listed via
+`--ignore-certificate-errors-spki-list`; certificate validation was not
+disabled globally. The model and fixture range requests returned 206. Exact
+current curl/OpenSSL commands and observed responses are retained in
+`portless-tls-run-26-31.log`.

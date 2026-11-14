@@ -26,12 +26,12 @@
     "tree": "2b45cba19bc5ce2142744c9e21d86c356fecb916"
   },
   "tip": {
-    "commit": "a9d4bb7bf29597f3963cbc491b4c279d587d8836",
-    "tree": "3a6912f424d989f22d8f67fdee08ac8ed39c281a"
+    "commit": "abee81448bae6b616664b53d01ab68993f713ad3",
+    "tree": "221c485c5dc1645a2080917ade3de6732ff09689"
   },
   "patchReconstruction": {
     "baseCommit": "b824c956ad79a9273876d27c2ac1b09fc8fa19cc",
-    "observedTree": "3a6912f424d989f22d8f67fdee08ac8ed39c281a",
+    "observedTree": "221c485c5dc1645a2080917ade3de6732ff09689",
     "evidence": "evidence/reconstruction-final.log"
   },
   "patches": [
@@ -90,6 +90,13 @@
       "tree": "3a6912f424d989f22d8f67fdee08ac8ed39c281a",
       "path": "patches/0008-liquid-speech-level-diagnostic.patch",
       "sha256": "8b99c48117c41b1bbed16e089c9eb5eab1d539d70d48b85c08551d4ec7d8859c"
+    },
+    {
+      "commit": "abee81448bae6b616664b53d01ab68993f713ad3",
+      "parent": "a9d4bb7bf29597f3963cbc491b4c279d587d8836",
+      "tree": "221c485c5dc1645a2080917ade3de6732ff09689",
+      "path": "patches/0009-omni-audio-prompt-sampling.patch",
+      "sha256": "451a548f04258bdeca4067dd3d19a6c9671a73c166c18bd1d1d7b72a1a0b1043"
     }
   ],
   "passingChecks": [
@@ -383,11 +390,11 @@
     },
     {
       "kind": "conversion",
-      "command": "apply all eight ordered audio patches from the recorded base and compare each reconstructed tree with its sibling commit",
+      "command": "apply all nine ordered audio patches from the recorded base and compare each reconstructed tree with its sibling commit",
       "exitCode": 0,
       "path": "evidence/reconstruction-final.log",
-      "sha256": "dad36285e6d213535aac996b462723f100a6a8d40a604379b91b9f8709f1f948",
-      "observed": "All eight patches reconstruct final tree 3a6912f424d989f22d8f67fdee08ac8ed39c281a"
+      "sha256": "41aa660085d9044dec517d22b468aa8b82514f025e16acd2322a4a949cfd4fa0",
+      "observed": "All nine patches reconstruct exact tip abee81448bae6b616664b53d01ab68993f713ad3 and tree 221c485c5dc1645a2080917ade3de6732ff09689"
     },
     {
       "kind": "typecheck",
@@ -396,13 +403,85 @@
       "path": "evidence/liquid-reference-harness-quality.log",
       "sha256": "2ec28e31008085129bf3e1aa02b56905b147a424b83d8b695c443a61e667029c",
       "observed": "Formatter and lint auto-fixes completed before verification; targeted format, lint, and package typecheck passed"
+    },
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "59 test files and 1,182 tests passed on the prompt/sampling tip"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "ruNNtime package typecheck passed"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "Repository ESLint passed with maximum warnings set to zero"
+    },
+    {
+      "kind": "format",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "Repository Prettier check passed"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/audio-prompt-sampling-quality.log",
+      "sha256": "eba5fec6190fadf16387508e7130b09f0516ef5328f67d1f67bc88bb200649c1",
+      "observed": "Package build passed; existing TypeGPU ambient-declaration parser warnings remain"
+    },
+    {
+      "kind": "parity",
+      "command": "packed installed-package same-file Liquid audio reference run 26 on real Chromium WebGPU",
+      "exitCode": 0,
+      "path": "evidence/run-26-results.json",
+      "sha256": "1e1cc6da47e359c3b36b53c24a6acd7ce43b22e5d12336bdc6f56c0a04d72a0e",
+      "observed": "Both frozen clips and both Liquid-generated 24 kHz requests transcribed to exact expected words after required 16 kHz resampling"
+    },
+    {
+      "kind": "package",
+      "command": "packed installed public audio consumer run 27 on real Chromium WebGPU",
+      "exitCode": 0,
+      "path": "evidence/run-27-results.json",
+      "sha256": "cb04756a73349dd93af56c362c2063dba125e3b4634f2930dfca13fbd4b44ce7",
+      "observed": "Exact pair transcribed the two fixed clips and generated finite nonempty streamed 24 kHz speech whose requested text was recovered by same-file Liquid ASR; cancellation recovery passed"
+    },
+    {
+      "kind": "resource",
+      "command": "packed public audio load, inference, latency, GPU peak, cumulative reads and disposal measurements run 27",
+      "exitCode": 0,
+      "path": "evidence/run-27-results.json",
+      "sha256": "cb04756a73349dd93af56c362c2063dba125e3b4634f2930dfca13fbd4b44ce7",
+      "observed": "Load/warm-up 27,011.4 ms; sampled peak GPU 1,825,200,572 B; cumulative source reads 3,456,883,176 B; no live storage buffers after disposal, with 518,496 B root cache retained"
+    },
+    {
+      "kind": "parity",
+      "command": "packed pinned-Liquid audio encoder, deterministic depth-code and LiquidCodec reference run 30 on real Chromium WebGPU",
+      "exitCode": 0,
+      "path": "evidence/audio-operator-reference-run-30.json",
+      "sha256": "8cf98cc28afc244804494dce1098d807341aee3d1075bd2204fc8c5ea12b31f8",
+      "observed": "Encoder 69,632-value comparison, exact 12 depth-code IDs, and 1,920 codec PCM samples passed"
     }
   ],
   "pendingChecks": [
-    "Independent same-file Liquid logits and full-vocabulary probability differences versus native cached/full-forward probability parity",
-    "Model-specific independent audio attention, convolution and depth-decoder vectors/logits against pinned Liquid; direct frontend, projector-schema and codec-synthesis unit references passed",
-    "Corrected runs 21 and 23 resampled the pinned-Liquid and native 24 kHz speech to the 16 kHz ASR input; requested-word recovery still failed. A fixed non-clipping -20 dBFS RMS diagnostic also failed to recover the Liquid requests. Causal source and matched audio-module parity remain unresolved",
-    "Controlled-seed/depth comparative audio quality beyond recorded stream lengths, latency, waveform metrics and transcription; no perceptual or Desktop playback claim"
+    "Independent same-file Liquid full-vocabulary logits/probability differences remain unmeasured; report them separately from the existing native cached/full-forward probability parity",
+    "Independent learned audio attention/convolution and full-vocabulary depth logits at fixed hidden states remain outstanding; run 30 compares one encoder vector, exact depth-code IDs and one complete codec PCM frame",
+    "Generated speech recovery is demonstrated for a controlled seed and selected utterances, not broad multi-seed or natural-speech generalization; no perceptual-equivalence or Desktop-playback claim",
+    "Audio resource report contains complete GPU-buffer load/peak and post-disposal accounting but not a browser-process heap or operating-system physical-resident-memory measurement"
   ],
   "observedFailures": [
     {
