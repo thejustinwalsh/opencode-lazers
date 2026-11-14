@@ -14,9 +14,15 @@ Follow-up (with `omni-sol-cleanup` contribution files):
 - Delta is within noise for an additive docs/patches/evidence directory; no new
   LAZERS concerns introduced by this contribution. No finding suppressions were
   recorded to improve a score; the runntime simplification itself (fewer graph
-  dispatches, stable pipeline key, shared reads, fused readback) lives in the
-  sibling ruNNtime checkout and is documented in `sol-review-status.md` and
+  dispatches, stable pipeline key, shared reads) lives in the sibling ruNNtime
+  checkout and is documented in `sol-review-status.md` and
   `evidence/measurements.md`, not in Fallow's LAZERS scope.
+
+Repair (retained review): fixed three corrupted pinned identities in this
+receipt against the retained audio manifest and `src/webgpu/manifest.ts`;
+dropped the unsafe fused readback (finding 7, evaluated and rejected with
+reason); added failure recovery and stream-only regression tests. No LAZERS
+source changes were needed for the repair beyond this receipt.
 
 Decision log (task-linked):
 
@@ -24,8 +30,10 @@ Decision log (task-linked):
   duplicated range reads, pipeline-key churn on cache fill, separate readback
   submits.
 - Chosen repair: one structural fix per cause (observer + ownership, grouped +
-  residual norms, packed MLP, shared reads preserved, uniform-carried padLeft,
-  fused readback) rather than per-symptom workarounds.
+  residual norms, packed MLP, shared reads preserved, uniform-carried padLeft)
+  rather than per-symptom workarounds. Fused readback was evaluated and rejected
+  (pre-submit failures poison the shared queue); the safe separate-submit path
+  is kept with regression tests.
 - Tradeoffs: GPU wall-time, pipeline/dispatch counts and full-vocabulary parity
   still require real WebGPU runs with the exact pair; retained here as pending
   with baselines preserved, not as assumed benefits.

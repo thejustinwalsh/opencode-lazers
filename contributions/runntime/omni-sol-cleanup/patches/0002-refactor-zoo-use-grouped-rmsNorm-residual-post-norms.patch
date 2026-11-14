@@ -1,7 +1,7 @@
 From 4741edad7b996e17e239ed1bfe06f9e7cf9e8633 Mon Sep 17 00:00:00 2001
 From: lazers-worker <lazers-worker@local>
 Date: Sat, 14 Nov 2026 06:39:05 -0500
-Subject: [PATCH 2/4] refactor(zoo): use grouped rmsNorm, residual post-norms
+Subject: [PATCH 2/6] refactor(zoo): use grouped rmsNorm, residual post-norms
  and packed MLP
 
 Remove four reshape copies per attention layer by normalizing the

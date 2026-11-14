@@ -1,0 +1,64 @@
+From fa0aad9ba7d18ee52654fe9c645ddd2c445ac199 Mon Sep 17 00:00:00 2001
+From: lazers-worker <lazers-worker@local>
+Date: Sat, 14 Nov 2026 07:30:16 -0500
+Subject: [PATCH 5/6] fix(zoo): drop pre-submit fused logits readback
+
+Queuing readbackManyOnSubmit before evalValues leaves the shared
+ReadbackQueue occupied when graph collection, allocation or dispatch
+throws pre-submit, and the next request then fails with 'a readback is
+already queued'. Only toArrayFused clears its own pending entry on eval
+failure. Restore the separate-submit path (eval, then toArray) so a
+failed eval recovers without poisoning the queue; cache targets and
+existing upload/release paths are unchanged. The fused evaluation is
+rejected as unsafe and unmeasured; see the cleanup receipt.
+---
+ packages/runntime/src/zoo/tasks/nlp/lfm3.ts | 22 ++++++++++-----------
+ 1 file changed, 10 insertions(+), 12 deletions(-)
+
+diff --git a/packages/runntime/src/zoo/tasks/nlp/lfm3.ts b/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+index 02fd1c5..c95bb44 100644
+--- a/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
++++ b/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+@@ -9,6 +9,7 @@ import {
+   inGpuErrorScopes,
+   isRunntimeError,
+   RunntimeError,
++  toArray,
+   warmUp,
+   type RangeSource,
+   type RunntimeExecutor,
+@@ -114,22 +115,19 @@ export async function loadLfm3Backbone(
+       const result = await inGpuErrorScopes(root.device, 'LFM3 generation', async () => {
+         const current = create(uploads);
+         step = current;
+-        // Fuse the logits (and hidden, when requested) readback into the eval's
+-        // own submit: one submit and one batched map round-trip instead of one
+-        // submit plus separate readbacks. Cache targets ride the same eval so
+-        // they stay materialized; a submit failure rejects the pending copy
+-        // through the shared ReadbackQueue.
+-        const pending = executor.readbackManyOnSubmit(
+-          readHidden ? [current.logits, current.hidden] : [current.logits],
+-        );
+-        pending.catch(() => undefined);
++        // Readbacks stay unfused: the logits (and hidden) copy runs after the
++        // eval's own submit. Queuing a fused readback before evalValues leaves
++        // the shared ReadbackQueue occupied when graph collection, allocation
++        // or dispatch throws pre-submit, and the next request then fails with
++        // 'a readback is already queued'. toArray rejects a pending readback
++        // when its own eval fails, so this separate-submit path recovers.
+         evalValues(
+           [current.logits, ...(readHidden ? [current.hidden] : []), ...cacheValues(current.cache)],
+           executor,
+         );
+-        const outs = await pending;
+-        const logits = outs[0]!;
+-        const hidden = outs[1];
++        const logitsPromise = toArray(current.logits, executor);
++        const hiddenPromise = readHidden ? toArray(current.hidden, executor) : undefined;
++        const [logits, hidden] = await Promise.all([logitsPromise, hiddenPromise]);
+         await releaseAfterWork();
+         if (signal.aborted) {
+           throw new RunntimeError('EXECUTION_FAILED', 'LFM3 generation aborted', {
+-- 
+2.54.0
+

@@ -3,10 +3,10 @@
 ## Source identities (unchanged, pinned)
 
 - Language: `LFM3-Omni-2B-Q4_K_M.gguf`, 1,099,630,080 B,
-  SHA-256 `9f8d30e9d4fd7a9349d586077988229b3ca0a0e4ad730897563d1eccc9893e2`
+  SHA-256 `9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2`
 - Projector: `mmproj-LFM3-Omni-2B-Q8_0.gguf`, 506,842,528 B,
   SHA-256 `8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1`
-- Reference engine revision `9c2fb176f4c222da394e8037d3c0aa4d3dfbeca560` retained from
+- Reference engine revision `9c2fb176f4c222da394e8037d3c0d0837f70b978` retained from
   `omni-published-audio/partial-manifest.json`.
 
 ## Retained baseline (audio series, real Chromium WebGPU)
@@ -64,18 +64,25 @@ Small-M and tiled quantized matmul routes, affine-f16 rounding, mixed-format V
 handling and D1 asymmetric convolution are unchanged (no edits to
 `matmul*.ts`, `quantCommon.ts`, D1 trunk or Higgs/Moonshine paths).
 
-## Fused readback (finding 7)
+## Fused readback (finding 7): evaluated and rejected
 
-Before: `evalValues([logits, hidden?, ...cache])` (1 submit) then
-`toArray(logits)` + `toArray(hidden?)` (separate maps).
-After: `readbackManyOnSubmit([logits, hidden?])` before the same `evalValues`,
-then one awaited batched map. Cache values ride the same eval. Submit failures
-reject the pending copy through `ReadbackQueue.submit`; dispatch-time throws
-before submit surface as a queued-readback error on the next request (fail-fast,
-same as existing `mobilenet`/`depthart` fused callers) rather than silent
-corruption. `pending.catch(() => undefined)` mirrors `toArrayFused` so the
-eval-failure path never emits an unhandled rejection; awaiting the pending still
-observes the outcome. No change to `core/gpu/eval.ts` or `readbackQueue.ts` was
-required, preserving all existing callers. Independent GPU timing with and
-without fusion, with dispatch/pipeline counts, is pending and must use the same
-pair and harness; this series retains the safe path regardless of that timing.
+An earlier revision of this series fused the logits (+hidden) readback into the
+eval's own submit (`readbackManyOnSubmit` before `evalValues`: 1 submit + 1
+batched map instead of 1 submit + separate maps). Review showed this is unsafe:
+when graph collection, allocation or dispatch throws pre-submit, the shared
+`ReadbackQueue` entry is never consumed or rejected, and the next request fails
+with `a readback is already queued`. Only `toArrayFused` rejects its own
+pending entry when its own eval fails. The fused patch is therefore dropped and
+the separate-submit path restored (eval, then `toArray`): a failed eval
+recovers without poisoning the queue. Cache targets ride the same eval and stay
+materialized; uploads and step values keep their release paths; no
+`core/gpu/eval.ts` or `readbackQueue.ts` change was needed, preserving all
+existing callers.
+
+Regression evidence: `fused-readback-recovery.gpu.test.ts` forces a pre-submit
+eval failure and proves the next fused readback proceeds;
+`model-lifecycle.gpu.test.ts` proves a synchronous graph failure still exposes
+and destroys all 5 uploads; `session.test.ts` proves same-session
+failure-then-success and stream-only early-break settlement. No fused-readback
+timing is claimed; any future fusion attempt must first demonstrate pre-submit
+failure recovery with dispatch/pipeline counts on the exact pair.

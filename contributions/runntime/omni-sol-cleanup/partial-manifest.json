@@ -10,17 +10,17 @@
       "command": "pnpm --filter runntime test:unit",
       "exitCode": 0,
       "kind": "unit",
-      "observed": "59 test files, 1,184 tests passed",
+      "observed": "59 test files, 1,186 tests passed",
       "path": "evidence/unit.log",
-      "sha256": "c7b9a88d9f379650d44ba778c5bd3b0d94d70ae689f7ca37b8ccaf137dd9408e"
+      "sha256": "b9df7582e77a63d66ba86f00500f9b4381d77ebcca34bd00b7a87ddea0b70cd2"
     },
     {
       "command": "pnpm --filter runntime exec vitest run --project unit test/zoo/lfm3/stateDictHooks.test.ts test/zoo/lfm3/session.test.ts test/core/graph/ops/conv/depthwiseConv1d.test.ts",
       "exitCode": 0,
       "kind": "unit",
-      "observed": "3 test files, 14 tests passed, including 2 new packed-MLP layout tests",
+      "observed": "3 test files, 16 tests passed, including packed-MLP layout, failure-then-success and early-break regressions",
       "path": "evidence/focused-unit.log",
-      "sha256": "3fceb2dc5e0f2d4b2a4bdbcc23c9863fb1aa8761b4c2683505339d860f474980"
+      "sha256": "bb42f5a28643fcc0bc68dd8349f0da62f64e98ded0d751c2536ce88c85def98b"
     },
     {
       "command": "pnpm typecheck",
@@ -52,15 +52,31 @@
       "kind": "build",
       "observed": "Package build completed; existing TypeGPU ambient-declaration parse warnings remain",
       "path": "evidence/build.log",
-      "sha256": "3747ba975215aeb0891b74c0238bc3b52873cf236d395d069d3ed7df91b7d2a1"
+      "sha256": "8a3879edd11473fc5ecc8d667ba0c904f8c769bcd6b071368e0e0e8e52807188"
     },
     {
-      "command": "apply all four ordered Sol patches from the recorded base and compare each reconstructed tree with its sibling commit",
+      "command": "pnpm --filter runntime exec vitest run --project gpu test/zoo/lfm3/fused-readback-recovery.gpu.test.ts test/zoo/lfm3/model-lifecycle.gpu.test.ts test/core/kernels/conv/depthwiseConv1d.gpu.test.ts test/core/kernels/reduce/rmsNorm.gpu.test.ts test/core/kernels/elementwise/swigluChunk.gpu.test.ts",
+      "exitCode": 0,
+      "kind": "gpu",
+      "observed": "5 test files, 124 tests passed with 1 expected failure; covers depthwise padLeft, grouped/residual RMSNorm, swigluChunk, lifecycle upload ownership and fused-readback recovery",
+      "path": "evidence/focused-operator-gpu.log",
+      "sha256": "b725604467d4abb1739df6ed2cceae7de1c4d23d85f0818ea96aa57295274541"
+    },
+    {
+      "command": "pnpm --filter runntime exec vitest run --project gpu test/core/kernels/matmul/",
+      "exitCode": 0,
+      "kind": "gpu",
+      "observed": "7 test files, 366 tests passed with 3 expected failures; small-M and tiled quantized routes unchanged",
+      "path": "evidence/matmul-quant-gpu.log",
+      "sha256": "cee627a1d78ad795cbb7e1bc13855305736fab9b02bab137d671740bf06d659a"
+    },
+    {
+      "command": "apply all six ordered Sol patches from the recorded base and compare each reconstructed tree with its sibling commit",
       "exitCode": 0,
       "kind": "conversion",
-      "observed": "All four patches reconstruct exactly; tip tree 304619707bc540f24096d0cc6f18983a5086a14b",
+      "observed": "All six patches reconstruct exactly; tip tree 1261366044c2d059f6384a7df5c7a1de66e7d158",
       "path": "evidence/reconstruction-final.log",
-      "sha256": "2bbe21ed96596575562f6841757501ff93f7205f7c398ecff8c63579112a94ba"
+      "sha256": "f360e2367508d6dba2dee9dca30c3ad113a4b4af07503921a816c8bb7f4af70e"
     },
     {
       "command": "bun run verify",
@@ -68,7 +84,7 @@
       "kind": "unit",
       "observed": "Formatter, lint --fix, formatter and typecheck passed",
       "path": "evidence/lazers-verify.log",
-      "sha256": "23f730b4f66ad245a78d11c6eecd65258821946b7938f690cfba539aca525687"
+      "sha256": "ca35d537ff16a9d906084e3534582b2fa40960b968fdb7129280863d7297c672"
     },
     {
       "command": "bun test scripts/verify-runntime-contribution.test.ts",
@@ -76,58 +92,71 @@
       "kind": "unit",
       "observed": "18 tests and 92 assertions passed",
       "path": "evidence/lazers-retention-tests.log",
-      "sha256": "bd1ec94f9a7cc40718f153a74d7ab84d9e57cbceeb56d639b1cdc30db070cb54"
+      "sha256": "b1a99983f1e50d0bea38bb64f708e1f3512bb56db21fe3d8398a4230c077f47d"
     }
   ],
   "patchReconstruction": {
     "baseCommit": "abee81448bae6b616664b53d01ab68993f713ad3",
     "evidence": "evidence/reconstruction-final.log",
-    "observedTree": "304619707bc540f24096d0cc6f18983a5086a14b"
+    "observedTree": "1261366044c2d059f6384a7df5c7a1de66e7d158"
   },
   "patches": [
     {
       "commit": "1a20e805efa783f169da3ebaa1399bfaaa40bbd2",
       "parent": "abee81448bae6b616664b53d01ab68993f713ad3",
       "path": "patches/0001-fix-zoo-own-audio-speech-result-rejection-for-stream.patch",
-      "sha256": "f96607560e9cb497f33f436383750283a4200ac46cf21e7dfb26fcee741ba35b",
+      "sha256": "2ae3a995991f2dfa799c0dffabe4abfe77f5c9a2288e7d6696e9c0476d4cfaa3",
       "tree": "6495b45dc9ba203f3d9997a930583b3a72f376fb"
     },
     {
       "commit": "4741edad7b996e17e239ed1bfe06f9e7cf9e8633",
       "parent": "1a20e805efa783f169da3ebaa1399bfaaa40bbd2",
       "path": "patches/0002-refactor-zoo-use-grouped-rmsNorm-residual-post-norms.patch",
-      "sha256": "e36964ea47f51db9dbd2c377b677b652d7b7222d4ea3efd033a359ff9a3e7ed1",
+      "sha256": "da3be593951c3e16db1fc6f1214e50e4ef612e6aec91f0d664143d1701471a5d",
       "tree": "1c0c546cfa2e0874eb014b6710c274e7b8a052df"
     },
     {
       "commit": "51a86bff608d0d98d80eea3d2ac72795d28cf337",
       "parent": "4741edad7b996e17e239ed1bfe06f9e7cf9e8633",
       "path": "patches/0003-refactor-core-move-depthwise-padLeft-to-the-dimensio.patch",
-      "sha256": "efcfe6a5e225f797a2cea84d60d535bb910ce376b5b0167928dbe82029020501",
+      "sha256": "b0f3a6bf8993fc6d4fca0e4cb5f82341f145a7338ed31aa9a60471cf4ab55629",
       "tree": "ed9bb460e872af224c513b57c2cf32ec16883c1a"
     },
     {
       "commit": "c5f288c17b23b295615e87919d8caaa709e12037",
       "parent": "51a86bff608d0d98d80eea3d2ac72795d28cf337",
       "path": "patches/0004-refactor-zoo-fuse-LFM3-logits-readback-into-the-eval.patch",
-      "sha256": "5be098c30062dc9468bd120424bc9b9c4242aa3c082f21a073762896a870c0e2",
+      "sha256": "fa57972886e4a7560bbfaffac39c7c0d063cef170acd88a7c56a3342e379fda1",
       "tree": "304619707bc540f24096d0cc6f18983a5086a14b"
+    },
+    {
+      "commit": "fa0aad9ba7d18ee52654fe9c645ddd2c445ac199",
+      "parent": "c5f288c17b23b295615e87919d8caaa709e12037",
+      "path": "patches/0005-fix-zoo-drop-pre-submit-fused-logits-readback.patch",
+      "sha256": "a318c735febd916a7f2c06c1c820c1780772099597d8970ac57c45503b4c50b7",
+      "tree": "8b2320ef2136343346c91f59de6978c9ee943794"
+    },
+    {
+      "commit": "52bfe741cb1036d39206150aa198c8ed3cb6d605",
+      "parent": "fa0aad9ba7d18ee52654fe9c645ddd2c445ac199",
+      "path": "patches/0006-test-zoo-regress-fused-readback-recovery-and-stream-.patch",
+      "sha256": "999152ce7080361ebd500ae6cfbe2609784d8ddc5515be5f5ddec7312f110b7f",
+      "tree": "1261366044c2d059f6384a7df5c7a1de66e7d158"
     }
   ],
   "pendingChecks": [
-    "Focused depthwise/packed-MLP/grouped-RMSNorm operator GPU tests and pipeline/dispatch counts",
-    "LFM3 native-reference and packed Q4/recovery GPU tests on the fused graph",
-    "Packed installed-package public audio consumer (transcription/speech, cancellation, disposal) on real WebGPU",
+    "MODE-gated native-reference hidden/cosine parity and cache-parity on real WebGPU",
+    "MODE-gated installed packed Q4 chat, LFM3 audio transcription/speech and device-loss recovery on real WebGPU",
     "Independent same-file Liquid full-vocabulary logits/probabilities and learned attention/convolution/depth-logit vectors",
-    "Multi-seed/natural-speech generation, comparative quality, lifecycle/OOM/shared-session and Desktop playback evidence",
-    "Cold-load time, transient/residual host memory and fused-readback timing with the exact Q4_K_M/Q8_0 pair"
+    "Multi-seed/natural-speech generalization, comparative quality, lifecycle/OOM/shared-session and Desktop playback evidence",
+    "Cold-load time and transient/residual host memory with the exact Q4_K_M/Q8_0 pair"
   ],
   "schemaVersion": 1,
   "source": {
     "language": {
       "bytes": 1099630080,
       "file": "LFM3-Omni-2B-Q4_K_M.gguf",
-      "sha256": "9f8d30e9d4fd7a9349d586077988229b3ca0a0e4ad730897563d1eccc9893e2"
+      "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2"
     },
     "projector": {
       "bytes": 506842528,
@@ -135,12 +164,12 @@
       "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
     },
     "referenceEngine": {
-      "revision": "9c2fb176f4c222da394e8037d3c0aa4d3dfbeca560",
-      "sha256": "77821949412f5dd6c0e207e2245f0e7145e65f6c6f8b12c0f2cfc2b6"
+      "revision": "9c2fb176f4c222da394e8037d3c0d0837f70b978",
+      "sha256": "77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb"
     },
     "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
     "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc"
   },
   "stage": "omni-sol-cleanup",
-  "status": "refactor-complete-cpu-qualified-gpu-pending"
+  "status": "refactor-complete-cpu-and-operator-gpu-qualified-model-runs-pending"
 }

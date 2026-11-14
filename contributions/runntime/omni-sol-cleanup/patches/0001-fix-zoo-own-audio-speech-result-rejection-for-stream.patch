@@ -1,7 +1,7 @@
 From 1a20e805efa783f169da3ebaa1399bfaaa40bbd2 Mon Sep 17 00:00:00 2001
 From: lazers-worker <lazers-worker@local>
 Date: Sat, 14 Nov 2026 06:38:58 -0500
-Subject: [PATCH 1/4] fix(zoo): own audio speech result rejection for
+Subject: [PATCH 1/6] fix(zoo): own audio speech result rejection for
  stream-only consumers
 
 Mirror the chat session's internal result observer so early-break or

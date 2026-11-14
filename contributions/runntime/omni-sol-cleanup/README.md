@@ -11,11 +11,12 @@ Q4_K_M language / Q8_0 projector parity and safe resource ownership.
   MLP via `swigluChunk` (`w13` order `[w3; w1]`).
 - Loader: no byte change; Q4_K/Q6_K/Q8_0 already share one in-flight range read;
   file identity, progress, abort and temp-byte release preserved.
-- GPU submission: `padLeft` rides the dimensions uniform (stable pipeline key);
-  logits (+hidden) read back fused into the eval submit via the existing
-  `ReadbackQueue`, with failure cleanup preserved and no core eval change.
+- GPU submission: `padLeft` rides the dimensions uniform (stable pipeline key).
+  Logits-readback fusion was evaluated and rejected (pre-submit failures would
+  poison the shared queue); the separate-submit path is kept with no core eval
+  change.
 
-`patches/` reconstructs `abee814 → c5f288c` exactly. `evidence/` holds passing
+`patches/` reconstructs `abee814 → 52bfe74` exactly. `evidence/` holds passing
 focused build/unit/type checks, reconstruction, before/after Auditor reports and
 measurement notes with honest pending GPU limitations. `partial-manifest.json`
 is the machine-readable receipt; `sol-review-status.md` is the finding-by-finding

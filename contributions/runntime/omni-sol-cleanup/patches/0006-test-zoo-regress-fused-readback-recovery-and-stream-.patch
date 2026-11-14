@@ -1,0 +1,162 @@
+From 52bfe741cb1036d39206150aa198c8ed3cb6d605 Mon Sep 17 00:00:00 2001
+From: lazers-worker <lazers-worker@local>
+Date: Sat, 14 Nov 2026 07:30:20 -0500
+Subject: [PATCH 6/6] test(zoo): regress fused-readback recovery and
+ stream-only rejection
+
+Give the lifecycle upload-ownership test a valid [1, 2048] embedding so
+the injected synchronous graph failure is actually reached. Add a
+same-session failure-then-success generation, a stream-only early-break
+case proving the internal result observer holds a late rejection, and a
+toArrayFused failure-then-success case proving a rejected pending
+readback does not poison the next request.
+---
+ .../lfm3/fused-readback-recovery.gpu.test.ts  | 31 ++++++++
+ .../test/zoo/lfm3/model-lifecycle.gpu.test.ts |  4 +-
+ .../runntime/test/zoo/lfm3/session.test.ts    | 73 +++++++++++++++++++
+ 3 files changed, 106 insertions(+), 2 deletions(-)
+ create mode 100644 packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts
+
+diff --git a/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts b/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts
+new file mode 100644
+index 0000000..a695ad0
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts
+@@ -0,0 +1,31 @@
++/** The retained separate-submit readback path recovers after an eval failure.
++ *
++ *  runStep queues no fused readback before its eval: when graph collection,
++ *  allocation or dispatch throws pre-submit, no shared ReadbackQueue entry is
++ *  left behind to poison the next request with 'a readback is already
++ *  queued'. toArrayFused is the only fused entry point kept, and it rejects
++ *  its own pending readback when its eval fails. This locks both halves. */
++
++import { expect, it } from 'vitest';
++import { tensor } from '../../../src/core/gpu/buffers.ts';
++import { matrix } from '../../../src/core/graph/value.ts';
++import { toArray } from '../../../src/core/gpu/eval.ts';
++import { gpu } from '../../gpu.ts';
++
++it('toArrayFused rejects its pending readback and the next readback proceeds', async () => {
++  const { root, ex } = await gpu();
++  const good = tensor(root, new Float32Array([1, 2, 3, 4]), matrix(2, 2));
++  try {
++    // A released target makes the fused eval throw before any submit.
++    const released = tensor(root, new Float32Array([5, 6, 7, 8]), matrix(2, 2));
++    ex.releaseValues([released]);
++    await expect(toArray(released, ex)).rejects.toThrow(/evalValues/);
++    // The queue is clean: the next fused readback is not poisoned.
++    await expect(toArray(good, ex)).resolves.toEqual(new Float32Array([1, 2, 3, 4]));
++  } finally {
++    if (good.state === 'materialized') good.buffer.destroy();
++  }
++  // The shared staging lease and memoized dims uniform persist per root by
++  // design; the assertion above (second readback resolves) proves the queue
++  // itself was cleared.
++});
+diff --git a/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts b/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts
+index 6d630c5..5bbd392 100644
+--- a/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts
+@@ -3,14 +3,14 @@
+ import { expect, it } from 'vitest';
+ import { tensor } from '../../../src/core/gpu/buffers.ts';
+ import { matrix, type Value } from '../../../src/core/graph/value.ts';
+-import { Lfm3CausalLM } from '../../../src/zoo/lfm3/model.ts';
++import { Lfm3CausalLM, LFM3 } from '../../../src/zoo/lfm3/model.ts';
+ import { buffersSince, gpu, liveBuffers } from '../../gpu.ts';
+ 
+ it('exposes every upload to its caller when graph construction throws', async () => {
+   const { root } = await gpu();
+   const before = liveBuffers();
+   const model = new Lfm3CausalLM();
+-  const embedding = tensor(root, Float32Array.of(1), matrix(1, 1));
++  const embedding = tensor(root, new Float32Array(LFM3.hidden), matrix(1, LFM3.hidden));
+   model.model.embed_tokens.forward = () => embedding;
+   model.model.layers.items[0]!.forward = () => {
+     throw new Error('injected synchronous graph failure');
+diff --git a/packages/runntime/test/zoo/lfm3/session.test.ts b/packages/runntime/test/zoo/lfm3/session.test.ts
+index 876276b..898483b 100644
+--- a/packages/runntime/test/zoo/lfm3/session.test.ts
++++ b/packages/runntime/test/zoo/lfm3/session.test.ts
+@@ -256,4 +256,77 @@ describe('LFM3 streaming session', () => {
+       await independent.session.dispose();
+     },
+   );
++
++  it('recovers the same session after a failed generation', async () => {
++    let calls = 0;
++    const runtime: Lfm3SessionRuntime<{ id: number }> = {
++      async forward(_ids, _cache, signal) {
++        calls++;
++        if (signal.aborted) throw new Error('unexpected call after abort');
++        if (calls === 1) throw new RunntimeError('EXECUTION_FAILED', 'injected pre-submit failure');
++        const logits = new Float32Array(LFM3.vocab).fill(-1);
++        logits[7] = 1;
++        return { logits, cache: { id: calls } };
++      },
++      release() {},
++      trim() {},
++      dispose() {},
++    };
++    const session = createLfm3Session(
++      {
++        bosId: 1,
++        audioId: 2,
++        audioOutId: 3,
++        audioStartId: 4,
++        textEndId: 125_014,
++        stopIds: new Set([124_900]),
++        encodeChat: () => [1],
++        decode: (ids) => (ids.includes(7) ? 'A' : ''),
++      },
++      runtime,
++    );
++    const failed = session.generate([{ role: 'user', content: 'first' }], { maxNewTokens: 1 });
++    await expect(failed.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    await expect(failed[Symbol.asyncIterator]().next()).rejects.toMatchObject({
++      code: 'EXECUTION_FAILED',
++    });
++    const next = session.generate([{ role: 'user', content: 'second' }], { maxNewTokens: 1 });
++    await expect(next.result).resolves.toMatchObject({ text: 'A', completionTokens: 1 });
++    for await (const _update of next) {
++      // Drain the stream; the generation already resolved above.
++    }
++    await session.dispose();
++  });
++
++  it('settles a stream-only early break without an unhandled rejection', async () => {
++    const runtime = {
++      async forward() {
++        throw new RunntimeError('EXECUTION_FAILED', 'injected readback failure');
++      },
++      release: () => {},
++      trim: () => {},
++      dispose: () => {},
++    } satisfies Lfm3SessionRuntime<never>;
++    const session = createLfm3Session(
++      {
++        bosId: 1,
++        audioId: 2,
++        audioOutId: 3,
++        audioStartId: 4,
++        textEndId: 125_014,
++        stopIds: new Set([124_900]),
++        encodeChat: () => [1],
++        decode: () => '',
++      },
++      runtime,
++    );
++    // A stream-only consumer abandons the iterator without awaiting result.
++    // The internal observer must hold the rejection so it never surfaces as
++    // an unhandled rejection; awaiting result later still observes it.
++    const generation = session.generate([{ role: 'user', content: 'hello' }]);
++    generation[Symbol.asyncIterator]();
++    await new Promise((resolve) => setTimeout(resolve, 20));
++    await expect(generation.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    await session.dispose();
++  });
+ });
+-- 
+2.54.0
+
