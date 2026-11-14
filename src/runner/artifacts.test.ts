@@ -349,7 +349,7 @@ test("continuous recognized phases share the total hard backstop and cancellatio
       {
         id: "shared-hard-timeout",
         command: "bun run first && bun run second",
-        inactivityTimeoutMs: 100,
+        inactivityTimeoutMs: 300,
         hardTimeoutMs: 800,
       },
       join(root, "noisy.json"),

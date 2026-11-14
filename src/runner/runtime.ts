@@ -207,6 +207,15 @@ const isCommitID = (value: unknown): value is string =>
   typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+const verificationTimingFields = new Set(["timeoutMs", "inactivityTimeoutMs", "hardTimeoutMs"])
+const verificationCheckIdentity = (check: unknown): unknown =>
+  isRecord(check)
+    ? Object.fromEntries(
+        Object.entries(check).filter(([key]) => !verificationTimingFields.has(key)),
+      )
+    : check
+const sameVerificationCheckIdentity = (left: unknown, right: unknown): boolean =>
+  fingerprint(verificationCheckIdentity(left)) === fingerprint(verificationCheckIdentity(right))
 
 type CleanupRecoveryAuthorization = {
   schemaVersion: 1
@@ -1827,7 +1836,7 @@ export class TaskRuntime {
         return (
           payload.artifact === artifact &&
           (payload.repairID ?? undefined) === repairID &&
-          fingerprint(payload.check) === fingerprint(check)
+          sameVerificationCheckIdentity(payload.check, check)
         )
       })
       const receipt: CheckReceipt | undefined =
@@ -12233,8 +12242,8 @@ export class TaskRuntime {
         return (
           payload.artifact === head &&
           payload.workspace === attempt.workspace &&
-          proposal.verification.some(
-            (check) => fingerprint(check) === fingerprint(recordedCheck),
+          proposal.verification.some((check) =>
+            sameVerificationCheckIdentity(check, recordedCheck),
           ) &&
           (payload.repairID ?? undefined) === repairID
         )
@@ -12344,7 +12353,7 @@ export class TaskRuntime {
             (payload.repairID ?? undefined) === repairID &&
             ((payload.verificationEpoch ?? 0) === verificationEpoch ||
               (passed && checkSucceeded(passed))) &&
-            fingerprint(payload.check) === fingerprint(effectiveCheck)
+            sameVerificationCheckIdentity(payload.check, effectiveCheck)
           )
         })
       if (
@@ -13448,7 +13457,7 @@ export class TaskRuntime {
         if (
           existing.artifact !== artifact ||
           existing.workspace !== workspace ||
-          fingerprint(JSON.parse(existing.checkJSON)) !== fingerprint(effectiveCheck)
+          !sameVerificationCheckIdentity(JSON.parse(existing.checkJSON), effectiveCheck)
         ) {
           await this.holdRetainedVerification(
             initial,
@@ -15834,30 +15843,13 @@ export class TaskRuntime {
             adoption.id,
             `${phase}-${check.id}.json`,
           )
-          const effectiveCheck = verificationCheckWithDefaults(
-            check,
-            this.verificationTimeoutDefaults,
-          )
-          const expectedInputFingerprint = fingerprint({
-            adoptionID: adoption.id,
-            adoptionInputFingerprint: adoption.input_fingerprint,
-            phase,
-            authoredCheck: check,
-            check: effectiveCheck,
-            workspace,
-            artifact: base,
-            environmentIdentity: row.environment_identity,
-          })
           if (
-            row.workspace !== workspace ||
-            row.artifact !== base ||
+            !this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, base) ||
             row.receipt_path !== receiptPath ||
-            row.input_fingerprint !== expectedInputFingerprint
+            row.check_id !== check.id
           )
             return false
           try {
-            if (fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck))
-              return false
             const receipt =
               row.state === "completed" && row.receipt
                 ? (JSON.parse(row.receipt) as CheckReceipt)
@@ -15975,6 +15967,39 @@ export class TaskRuntime {
     )
   }
 
+  private adoptionCheckInputMatches(
+    adoption: AdoptionRow,
+    phase: "task" | "combined",
+    check: TaskProposal["verification"][number],
+    row: AdoptionCheckRow,
+    workspace: string,
+    artifact: string,
+  ): boolean {
+    try {
+      const recordedCheck = JSON.parse(row.check_json) as unknown
+      return (
+        row.workspace === workspace &&
+        row.artifact === artifact &&
+        sameVerificationCheckIdentity(recordedCheck, check) &&
+        row.input_fingerprint ===
+          fingerprint({
+            adoptionID: adoption.id,
+            adoptionInputFingerprint: adoption.input_fingerprint,
+            phase,
+            authoredCheck: check,
+            // Reconstruct the persisted identity using its recorded timing fields.
+            // These are provenance, not a reason to invalidate a settled pass.
+            check: recordedCheck,
+            workspace,
+            artifact,
+            environmentIdentity: row.environment_identity,
+          })
+      )
+    } catch {
+      return false
+    }
+  }
+
   private async runAdoptionChecks(
     plan: PlanRow,
     adoption: AdoptionRow,
@@ -16023,7 +16048,7 @@ export class TaskRuntime {
         if (
           row.workspace !== workspace ||
           row.artifact !== artifact ||
-          fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck) ||
+          !this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, artifact) ||
           row.receipt_path !== receiptPath
         ) {
           this.holdAdoption(
@@ -16795,7 +16820,7 @@ export class TaskRuntime {
               : payload.combinedContinuationFingerprint === undefined) &&
             ((payload.verificationEpoch ?? 0) === verificationEpoch ||
               (previous !== undefined && checkSucceeded(previous))) &&
-            fingerprint(payload.check) === fingerprint(effectiveCheck)
+            sameVerificationCheckIdentity(payload.check, effectiveCheck)
           )
         } catch {
           return false
@@ -16940,7 +16965,6 @@ export class TaskRuntime {
       throw new Error("Adoption worktree has no complete receipt for every check; preserve it")
     const artifact = phase === "task" ? adoption.descendant_commit : adoption.combined_artifact
     for (const check of checks) {
-      const effectiveCheck = verificationCheckWithDefaults(check, this.verificationTimeoutDefaults)
       const row = rows.find((item) => item.check_id === check.id)
       let receipt: CheckReceipt | undefined
       try {
@@ -16951,9 +16975,7 @@ export class TaskRuntime {
       if (
         !row ||
         row.state !== "completed" ||
-        row.workspace !== workspace ||
-        row.artifact !== artifact ||
-        fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck) ||
+        !this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, artifact) ||
         !receipt ||
         !this.adoptionCheckReceiptMatches(receipt, row, check)
       )
@@ -17008,7 +17030,7 @@ export class TaskRuntime {
       if (
         !effect ||
         effect.state !== "completed" ||
-        fingerprint(payload?.check) !== fingerprint(check) ||
+        !sameVerificationCheckIdentity(payload?.check, check) ||
         !receipt ||
         receipt.id !== check.id ||
         receipt.command !== check.command ||

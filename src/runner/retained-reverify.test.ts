@@ -67,8 +67,8 @@ afterEach(async () => {
 
 function fixture(
   options: {
-    taskCheckCommand?: string
-    combinedCheckCommand?: string
+    taskCheckCommand?: string | ((paths: { root: string; state: string }) => string)
+    combinedCheckCommand?: string | ((paths: { root: string; state: string }) => string)
     taskCheckInactivityTimeoutMs?: number
     taskCheckHardTimeoutMs?: number
     combinedCheckInactivityTimeoutMs?: number
@@ -203,11 +203,15 @@ function fixture(
   const proposal = validProposal()
   proposal.objective = "Write and verify an exact retained candidate"
   proposal.writeScope = ["result.txt"]
+  const taskCheckCommand =
+    typeof options.taskCheckCommand === "function"
+      ? options.taskCheckCommand({ root, state })
+      : options.taskCheckCommand
   proposal.verification = [
     {
       id: "isolated-task-check",
       command:
-        options.taskCheckCommand ??
+        taskCheckCommand ??
         "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
       timeoutMs: 10_000,
       ...(options.taskCheckInactivityTimeoutMs === undefined
@@ -296,7 +300,9 @@ function fixture(
         {
           id: "isolated-combined-check",
           command:
-            options.combinedCheckCommand ??
+            (typeof options.combinedCheckCommand === "function"
+              ? options.combinedCheckCommand({ root, state })
+              : options.combinedCheckCommand) ??
             "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
           timeoutMs: 10_000,
           ...(options.combinedCheckInactivityTimeoutMs === undefined
@@ -1697,10 +1703,22 @@ function retainedVerifyCommand(f: Awaited<ReturnType<typeof failedFixture>>, req
 
 test("registered verify-retained checks a sealed quarantined candidate without settling its source", async () => {
   const check = "bun test src/runner/retained-check.test.ts"
+  let retainedCheckStarts = 0
+  const observeRetainedCheckStarts = (runtime: TaskRuntime) => {
+    const internals = runtime as unknown as {
+      startCheckActivity(input: { id: string }): unknown
+    }
+    const start = internals.startCheckActivity.bind(runtime)
+    internals.startCheckActivity = (input) => {
+      if (input.id.startsWith("retained:")) retainedCheckStarts++
+      return start(input)
+    }
+  }
   const f = await sourceQuarantinedVerifyingFixture({
     combinedHumanEvidence: true,
     verificationTimeoutDefaults: { inactivityTimeoutMs: 20_000, hardTimeoutMs: 40_000 },
   })
+  observeRetainedCheckStarts(f.runtime)
   const request = retainedVerifyCommand(f, "verify-sealed-source-candidate")
   const prompts = structuredClone(f.prompts)
   const created = [...f.created]
@@ -1790,6 +1808,27 @@ test("registered verify-retained checks a sealed quarantined candidate without s
     })
   }
 
+  f.store.atomic((db) => {
+    for (const row of retainedVerificationChecks(db, operationID)) {
+      db.query(
+        "UPDATE runner_retained_verification_checks SET check_json=? WHERE operation_id=? AND phase=? AND check_id=?",
+      ).run(
+        JSON.stringify({
+          id: row.checkID,
+          command: (JSON.parse(row.checkJSON) as { command: string }).command,
+          timeoutMs: 10_000,
+        }),
+        operationID,
+        row.phase,
+        row.checkID,
+      )
+    }
+  })
+  const legacyCheckJSON = f.store.atomic((db) =>
+    retainedVerificationChecks(db, operationID).map((row) => row.checkJSON),
+  )
+  expect(legacyCheckJSON.every((check) => !JSON.parse(check).inactivityTimeoutMs)).toBe(true)
+
   expect(await f.control.execute(request)).toEqual(requested)
   expect(
     f.store.atomic((db) =>
@@ -1828,8 +1867,9 @@ test("registered verify-retained checks a sealed quarantined candidate without s
   const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
   const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
-    verificationTimeoutDefaults: { inactivityTimeoutMs: 20_000, hardTimeoutMs: 40_000 },
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 25_000, hardTimeoutMs: 50_000 },
   })
+  observeRetainedCheckStarts(reopenedRuntime)
   cleanups.push(async () => {
     await reopenedRuntime.stop()
     reopenedRepository.close()
@@ -1867,6 +1907,11 @@ test("registered verify-retained checks a sealed quarantined candidate without s
       .all(operationID),
   )
   expect(reopenedChecks).toEqual(checks)
+  expect(
+    reopenedStore.atomic((db) =>
+      retainedVerificationChecks(db, operationID).map((row) => row.checkJSON),
+    ),
+  ).toEqual(legacyCheckJSON)
   const reopenedControl = await registeredPlanCommand(reopenedRuntime)
   expect(await reopenedControl.execute(request)).toEqual(requested)
   expect(
@@ -1878,6 +1923,7 @@ test("registered verify-retained checks a sealed quarantined candidate without s
   expect(reopenedStore.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
     f.originalAttempt,
   )
+  expect(retainedCheckStarts).toBe(2)
 }, 120_000)
 
 test("registered verify-retained accepts a reassigned owner after reopen without changing quarantine provenance", async () => {

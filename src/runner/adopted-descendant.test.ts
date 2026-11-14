@@ -12,6 +12,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import { fingerprint } from "../identity.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { TaskRuntime } from "./runtime.ts"
@@ -33,6 +34,7 @@ function fixture(
   options: {
     manualTicks?: boolean
     taskTiming?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+    verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-adopt-descendant-"))
@@ -322,7 +324,10 @@ function fixture(
     acceptance: taskAcceptance,
   }
   const submitted = store.submit(planInput, "owner") as { planID: string }
-  const runtimeOptions = options.manualTicks ? { requestTick: () => Promise.resolve() } : {}
+  const runtimeOptions = (verificationTimeoutDefaults = options.verificationTimeoutDefaults) => ({
+    ...(options.manualTicks ? { requestTick: () => Promise.resolve() } : {}),
+    ...(verificationTimeoutDefaults ? { verificationTimeoutDefaults } : {}),
+  })
   const f = {
     root,
     data,
@@ -348,7 +353,7 @@ function fixture(
     host,
     planID: submitted.planID,
     planInput,
-    runtime: new TaskRuntime(store, host, "project", undefined, runtimeOptions),
+    runtime: new TaskRuntime(store, host, "project", undefined, runtimeOptions()),
     get loseNextWorktreeResponse() {
       return loseNextWorktreeResponse
     },
@@ -369,13 +374,19 @@ function fixture(
     setWorkerSessionHook(calls: number, action: () => void) {
       workerSessionHook = { remaining: calls, action }
     },
-    async reopen() {
+    async reopen(verificationTimeoutDefaults = options.verificationTimeoutDefaults) {
       await f.runtime.stop()
       f.repository.close()
       f.repository = new TaskRepository(repositoryPath, root)
       f.store = new RunnerStore(f.repository)
       f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-      f.runtime = new TaskRuntime(f.store, host, "project", undefined, runtimeOptions)
+      f.runtime = new TaskRuntime(
+        f.store,
+        host,
+        "project",
+        undefined,
+        runtimeOptions(verificationTimeoutDefaults),
+      )
     },
   }
   cleanups.push(async () => {
@@ -822,7 +833,9 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
 }, 15_000)
 
 test("restart after completed adoption checks does not replay either phase", async () => {
-  const f = fixture("failed-task")
+  const f = fixture("failed-task", undefined, {
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 20_000, hardTimeoutMs: 40_000 },
+  })
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
   const requested = (await f.runtime.command(
@@ -836,12 +849,69 @@ test("restart after completed adoption checks does not replay either phase", asy
     f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
   ).toBe(true)
 
-  await f.reopen()
+  const adoption = f.store.adoption(requested.adoptionID)!
+  const authoredChecks = {
+    task: f.task.proposal.verification,
+    combined: f.planInput.verification,
+  }
+  for (const row of f.store.adoptionChecks(requested.adoptionID)) {
+    const check = authoredChecks[row.phase as "task" | "combined"]?.find(
+      (candidate) => candidate.id === row.check_id,
+    )
+    if (!check) throw new Error(`Missing authored ${row.phase} check ${row.check_id}`)
+    const legacyFingerprint = fingerprint({
+      adoptionID: adoption.id,
+      adoptionInputFingerprint: adoption.input_fingerprint,
+      phase: row.phase,
+      authoredCheck: check,
+      check,
+      workspace: row.workspace,
+      artifact: row.artifact,
+      environmentIdentity: row.environment_identity,
+    })
+    f.store.atomic((db) =>
+      db
+        .query(
+          `UPDATE runner_adoption_checks SET check_json=?,input_fingerprint=?
+           WHERE adoption_id=? AND phase=? AND check_id=?`,
+        )
+        .run(
+          JSON.stringify(check),
+          legacyFingerprint,
+          requested.adoptionID,
+          row.phase,
+          row.check_id,
+        ),
+    )
+  }
+  const legacyRows = f.store.adoptionChecks(requested.adoptionID).map((row) => ({
+    phase: row.phase,
+    checkID: row.check_id,
+    checkJSON: row.check_json,
+    inputFingerprint: row.input_fingerprint,
+    receipt: row.receipt,
+    state: row.state,
+  }))
+  expect(legacyRows.every((row) => !JSON.parse(row.checkJSON).inactivityTimeoutMs)).toBe(true)
+
+  // Reopen with a different project policy while the persisted checks retain
+  // their original authored-only legacy shapes and timing-bound fingerprints.
+  await f.reopen({ inactivityTimeoutMs: 25_000, hardTimeoutMs: 50_000 })
   await f.runtime.tick()
 
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
   expect(readFileSync(f.taskLog, "utf8").length).toBe(taskChecks)
   expect(readFileSync(f.graphLog, "utf8").length).toBe(combinedChecks)
+  expect(
+    f.store.adoptionChecks(requested.adoptionID).map((row) => ({
+      phase: row.phase,
+      checkID: row.check_id,
+      checkJSON: row.check_json,
+      inputFingerprint: row.input_fingerprint,
+      receipt: row.receipt,
+      state: row.state,
+    })),
+  ).toEqual(legacyRows)
   expect(
     f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
   ).toBe(true)

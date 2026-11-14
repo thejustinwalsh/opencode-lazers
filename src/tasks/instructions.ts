@@ -91,9 +91,19 @@ export function taskInstructions(detail: TaskDetail): string {
       : "") +
     section(
       "Verification",
-      proposal.verification.map(
-        (check) => `${check.id}: ${check.command} (timeout ${check.timeoutMs}ms)`,
-      ),
+      proposal.verification.map((check) => {
+        const timing = (value: number | undefined) =>
+          value === undefined
+            ? "project default (resolved by runtime at execution)"
+            : `${value}ms (authored)`
+        const values = [
+          `inactivity allowance: ${timing(check.inactivityTimeoutMs)}`,
+          `hard backstop: ${timing(check.hardTimeoutMs)}`,
+        ]
+        if (check.timeoutMs !== undefined)
+          values.push(`legacy timeout: ${check.timeoutMs}ms (historical; not used for execution)`)
+        return `${check.id}: ${check.command} (${values.join("; ")})`
+      }),
     ) +
     "\n\nRun project formatter and linter automatic fixes before these checks, then commit the fixes. In LAZERS use `bun run verify`. Report only failures that remain after automatic fixes." +
     section(
