@@ -10,10 +10,12 @@ The retained LAZERS candidate baseline is commit
 `cde3941d4555970cc3086df50573b907350eee67`. The exact LAZERS implementation
 tree for this receipt is commit `17848b7fe71f2228072b295a5ded087626684148`,
 built on commit `4b8701de59de858072eb70656e0a9effb03c965f`, which introduced the
-contract and provenance increment. It requires
-`webgpu-generation-result-nullable-usage-v1`. Rebuild the GUI from that candidate
-source revision (or a checkout retaining those sources), not from the
-baseline-only bundle; use the verification and `bun run build:gui` commands below.
+contract and provenance increment. That earlier tree requires
+`webgpu-generation-result-nullable-usage-v1`. The native conversation changes
+from LZ-28 require the v2 contract documented below. Rebuild the GUI from the
+LZ-28 task commit for native conversation qualification. The earlier candidate
+bundle does not support the v2 stream mailbox; use the verification and
+`bun run build:gui` commands below.
 The exact sibling package source is `runntime/packages/runntime` at commit
 `4bec7104f2e70290982864963f6b194e6d5439fe` (package revision), based on
 `6aa6bbd5a0dae14204e9853c34c911fedd430659`. Liquid remains the selected default
@@ -45,9 +47,10 @@ bun run verify
 bun run build:gui
 ```
 
-Check that `git -C "$LAZERS" rev-parse HEAD` reports
-`17848b7fe71f2228072b295a5ded087626684148` and
-`git -C "$RUNNTIME" rev-parse HEAD` reports the sibling package revision above.
+For the historical v1 candidate, `git -C "$LAZERS" rev-parse HEAD` reports
+`17848b7fe71f2228072b295a5ded087626684148`. Native conversation qualification
+must instead use the LZ-28 task commit named below. In both cases,
+`git -C "$RUNNTIME" rev-parse HEAD` must report the sibling package revision above.
 `bun add --no-save` is a workstation-only override; do not retain it in either
 LAZERS manifest or lockfile. The built GUI bundle is self-contained for the
 isolated candidate. This procedure is not evidence of a portable published
@@ -60,7 +63,7 @@ LAZERS candidate implementation above and the sibling package revision here.
 ## Required activation order
 
 The rebuilt GUI and service must both report/accept
-`webgpu-generation-result-nullable-usage-v1` before any candidate probe. The
+`webgpu-generation-result-nullable-usage-v2` before any candidate probe. The
 renderer checks the service contract before attaching; the service rejects a
 renderer that does not declare that contract. A missing, mismatched, or
 unverified contract is a hard stop, not qualification evidence. At the quiet
@@ -98,3 +101,23 @@ and worker sessions remain untouched. Architect will inspect supported
 candidate activation/Desktop-only reopen while preserving that service and its
 sessions. Actual rendered chat, clean-clip dictation, audible playback, and
 recovery therefore remain pending, not passed.
+
+## Native conversation qualification
+
+The native model picker exposes **LAZERS Local WebGPU** with independent Liquid
+and ruNNtime LFM3 Omni text models. Qualify the ruNNtime model from an actual
+native conversation, not the Settings diagnostic controls: select the ruNNtime
+model, confirm ordered incremental text appears in the conversation, then send a
+follow-up whose system/user/assistant history depends on the prior turn. Select
+the Liquid native model afterward and confirm it remains Liquid without changing
+the Settings route. Exercise interruption and a renderer/service disconnect as
+well as normal completion; verify each request ends once and that no stale text
+appears after cancellation. Native conversation remains unqualified until these
+Desktop observations are recorded alongside the exact candidate/package
+revisions above. No native picker or conversation interaction was performed by
+this worker.
+
+The implementation tree cited above predates the native conversation provider.
+For native conversation qualification, rebuild from the LZ-28 task commit in
+this checkout; the former candidate build is not compatible with the v2 stream
+mailbox contract and must not be used as evidence.

@@ -42,6 +42,48 @@ test("FIFO requests run serially, and a polling busy renderer cannot consume the
   broker.close()
 })
 
+test("native conversations bind route and ordered history while accepting only owner-matched stream deltas", async () => {
+  const broker = new InferenceBroker()
+  broker.attach("window")
+  const deltas: string[] = []
+  const messages = [
+    { role: "system" as const, content: "Follow the system rule." },
+    { role: "user" as const, content: "First question." },
+    { role: "assistant" as const, content: "Previous answer." },
+    { role: "user" as const, content: "Continue." },
+  ]
+  const waiting = broker.generate(
+    {
+      ...request(messages.map((message) => message.content).join("\n")),
+      messages,
+      route: "runntime",
+      streaming: true,
+    },
+    new AbortController().signal,
+    (text) => deltas.push(text),
+  )
+  const job = broker.poll("window").job!
+  expect(job.route).toBe("runntime")
+  expect(job.messages).toEqual(messages)
+  expect(broker.delta("window", "stale-job", "stale")).toEqual({ accepted: false })
+  expect(() => broker.delta("different-owner", job.id, "stale")).toThrow(
+    "Renderer ownership was lost",
+  )
+  expect(broker.delta("window", job.id, "one ")).toEqual({ accepted: true })
+  expect(broker.delta("window", job.id, "two")).toEqual({ accepted: true })
+  broker.complete("window", job.id, {
+    ok: true,
+    text: "one two",
+    error: "",
+    promptTokens: null,
+    completionTokens: null,
+  })
+  expect(deltas).toEqual(["one ", "two"])
+  expect(await waiting).toMatchObject({ promptTokens: null, completionTokens: null })
+  expect(broker.delta("window", job.id, "late")).toEqual({ accepted: false })
+  broker.close()
+})
+
 test("queued cancellation removes only that request; active cancellation waits for renderer acknowledgement", async () => {
   const broker = new InferenceBroker()
   broker.attach("window")
@@ -210,6 +252,8 @@ test("typed LocalInference.review forwards a measured request through the render
         }),
     },
     permission: { assert: () => Effect.void },
+    provider: { transform: () => Effect.succeed({ dispose: Effect.void }) },
+    aisdk: { hook: () => Effect.succeed({ dispose: Effect.void }) },
     tool: {
       transform: () => Effect.succeed({ dispose: Effect.void }),
       reload: () => Effect.void,
@@ -351,6 +395,8 @@ test("public chat and audio RPC settle measured and unknown-usage results throug
         }),
     },
     permission: { assert: () => Effect.void },
+    provider: { transform: () => Effect.succeed({ dispose: Effect.void }) },
+    aisdk: { hook: () => Effect.succeed({ dispose: Effect.void }) },
     tool: { transform: () => Effect.succeed({ dispose: Effect.void }), reload: () => Effect.void },
     agent: { transform: () => Effect.succeed({ dispose: Effect.void }), reload: () => Effect.void },
     rpc: {

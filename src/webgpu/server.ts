@@ -22,16 +22,42 @@ import { defaultFeatures, FeaturePolicy, FeatureSettings, featureEnabled } from 
 import type { LocalFeature } from "./features.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { defaultSettingsAuthority, readFeatureSettings } from "./settings-read.ts"
+import { registerNativeConversationProvider } from "./native-conversation.ts"
 
 export function registerLocalInference(
   ctx: Pick<
     Plugin.Context,
-    "rpc" | "tool" | "permission" | "agent" | "storage" | "location" | "options"
+    | "rpc"
+    | "tool"
+    | "permission"
+    | "agent"
+    | "storage"
+    | "location"
+    | "options"
+    | "provider"
+    | "aisdk"
   >,
   resolveWorker?: () => Promise<RpcClient<typeof RendererInference>>,
 ) {
   return Effect.gen(function* () {
     const broker = new InferenceBroker()
+    yield* registerNativeConversationProvider(ctx, (call) =>
+      broker.generate(
+        {
+          prompt: call.messages.map((message) => message.content).join("\n"),
+          messages: [...call.messages],
+          route: call.route,
+          streaming: Boolean(call.onText),
+          maxTokens: call.maxTokens,
+          timeoutMs: 60_000,
+          requestID: crypto.randomUUID(),
+          mode: "text",
+          feature: "questions",
+        },
+        call.signal,
+        call.onText,
+      ),
+    )
     const stored = yield* ctx.storage.get("webgpu.features")
     const saved = FeatureSettings.safeParse(stored)
     let features = defaultFeatures(false)
@@ -231,6 +257,7 @@ export function registerLocalInference(
           broker.complete(owner, id, result)
           return {}
         }),
+      delta: ({ owner, id, text }) => Effect.sync(() => broker.delta(owner, id, text)),
     })
     yield* registerInferenceTools(ctx, allowed)
     const reviewer = new TaskReviewer(
