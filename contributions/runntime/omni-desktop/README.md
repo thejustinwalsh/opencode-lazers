@@ -7,9 +7,13 @@ fall back automatically.
 ## Exact candidate identity
 
 The retained LAZERS candidate baseline is commit
-`cde3941d4555970cc3086df50573b907350eee67`. This service/renderer contract
-increment requires `webgpu-generation-result-nullable-usage-v1`; rebuild the GUI
-from the checkout containing this increment, not from the baseline-only bundle.
+`cde3941d4555970cc3086df50573b907350eee67`. The exact LAZERS implementation
+tree for this receipt is commit `17848b7fe71f2228072b295a5ded087626684148`,
+built on commit `4b8701de59de858072eb70656e0a9effb03c965f`, which introduced the
+contract and provenance increment. It requires
+`webgpu-generation-result-nullable-usage-v1`. Rebuild the GUI from that candidate
+source revision (or a checkout retaining those sources), not from the
+baseline-only bundle; use the verification and `bun run build:gui` commands below.
 The exact sibling package source is `runntime/packages/runntime` at commit
 `4bec7104f2e70290982864963f6b194e6d5439fe` (package revision), based on
 `6aa6bbd5a0dae14204e9853c34c911fedd430659`. Liquid remains the selected default
@@ -32,6 +36,7 @@ override:
 ```sh
 RUNNTIME=/path/to/runntime
 LAZERS=/path/to/lazers
+git -C "$LAZERS" rev-parse HEAD
 git -C "$RUNNTIME" rev-parse HEAD
 (cd "$RUNNTIME" && pnpm --filter runntime build)
 cd "$LAZERS"
@@ -40,11 +45,17 @@ bun run verify
 bun run build:gui
 ```
 
-Check that `git -C "$RUNNTIME" rev-parse HEAD` reports the revision above.
+Check that `git -C "$LAZERS" rev-parse HEAD` reports
+`17848b7fe71f2228072b295a5ded087626684148` and
+`git -C "$RUNNTIME" rev-parse HEAD` reports the sibling package revision above.
 `bun add --no-save` is a workstation-only override; do not retain it in either
 LAZERS manifest or lockfile. The built GUI bundle is self-contained for the
 isolated candidate. This procedure is not evidence of a portable published
 ruNNtime dependency or distribution readiness.
+
+The rebuild order is `bun run verify` followed by `bun run build:gui` after the
+no-save override. Keep both revision checks visible in the probe record: the
+LAZERS candidate implementation above and the sibling package revision here.
 
 ## Required activation order
 
@@ -77,9 +88,9 @@ producer receipt does not qualify the package or the candidate route.
 
 ## Desktop status
 
-The candidate GUI from the retained baseline was built, but the matching
-completion-contract service reload and Desktop-only reopen have not been
-performed by this worker and no Desktop interaction occurred.
+The matching candidate GUI was built from LAZERS code revision
+`17848b7fe71f2228072b295a5ded087626684148` with the pinned sibling package. The completion-contract service reload and Desktop-only
+reopen have not been performed by this worker, and no Desktop interaction occurred.
 The supported launcher found the existing ready isolated root
 `lazers-full-instance-qk2Laa` for the canonical workspace and refused a competing
 trial. Per Architect direction, the prior root, reservation, Desktop, service,
