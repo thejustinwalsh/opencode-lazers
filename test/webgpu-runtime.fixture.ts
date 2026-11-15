@@ -249,12 +249,14 @@ const until = async (condition: () => boolean) => {
   }
 }
 try {
+  const initialWarm = runtime.load()
   await chatLoadStarted.promise
   assert.equal(runtime.modelName(), undefined, "A cold load has no resident identity")
   assert.equal(runtime.resident(), undefined)
   assert.equal(runtime.phase(), "loading")
   initialChatLoad.resolve()
   chatLoadGate = undefined
+  await initialWarm
   await until(() => runtime.state() === "ready")
   assert.equal(runtime.modelName(), "LFM3")
   assert.equal(runtime.resident(), "chat")
@@ -521,9 +523,9 @@ try {
   assert.equal(attachCalls, beforeReconnect + 1, "A failed reattach does not spin")
   wallNow += 2_000
   timerTick()
-  await until(() => runtime.state() === "ready")
+  await until(() => runtime.state() === "unloaded")
   assert.equal(attachCalls, beforeReconnect + 2)
-  assert.equal(allocations, 1)
+  assert.equal(allocations, 0)
   assert.equal(broker.demand().requested, false)
   // F-S13-1: only confirmed ownership loss enters detach/reload recovery.
   pollFailure = { type: "renderer_ownership_lost", message: "Mailbox rejected this owner" }
@@ -537,9 +539,9 @@ try {
   pollFailure = undefined
   wallNow += 1_000
   timerTick()
-  await until(() => runtime.state() === "ready")
+  await until(() => runtime.state() === "unloaded")
   assert.equal(attachCalls, beforeDetachReconnect + 1)
-  assert.equal(allocations, 1)
+  assert.equal(allocations, 0)
   assert.equal(maximum, 1, "Reconnection reuses ownership without overlapping GPU models")
   assert.equal(broker.demand().requested, false, "Detach recovery needs no new user request")
   pollFailure = new Error("Temporary transport loss before disable")
@@ -553,7 +555,7 @@ try {
   await Bun.sleep(20)
   assert.equal(allocations, 0, "Disabling inference cancels a scheduled reconnect")
   setFeatures(defaultFeatures(true))
-  await until(() => runtime.state() === "ready")
+  await until(() => runtime.state() === "unloaded")
   automaticTicks = true
   failTracing = true
   const withoutLogs = await broker.generate(
