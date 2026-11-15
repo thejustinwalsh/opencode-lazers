@@ -1,7 +1,6 @@
-import { Ipc } from "@opencode/plugin/gui"
 import { Schema } from "effect"
 
-const shortText = Schema.String.check(Schema.isBetweenLength(1, 160))
+export const shortText = Schema.String.check(Schema.isBetweenLength(1, 160))
 const sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 const fixtureID = Schema.Literals(["quick-brown-fox", "turn-left-next-street"])
 const audioDuration = Schema.Number.check(
@@ -96,33 +95,6 @@ export const PlaybackPlan = Schema.Struct({
   segmentHashes: Schema.Array(sha256).check(Schema.isBetweenLength(1, 32)),
 })
 export type PlaybackPlan = typeof PlaybackPlan.Type
-
-const AudioFixtureStatus = Schema.Struct({
-  requestID: Schema.optional(shortText),
-  sessionID: Schema.optional(shortText),
-})
-
-export const NativeAudioFixture = Ipc.define({
-  id: "lazers.verification.audio-fixture",
-  methods: {
-    enabled: { input: AudioFixtureStatus, output: Schema.Boolean },
-    takeDictation: {
-      input: Schema.Struct({ sessionID: shortText }),
-      output: Schema.NullOr(AudioFixtureDelivery),
-    },
-    takePlaybackPlan: {
-      input: Schema.Struct({ sessionID: shortText }),
-      output: Schema.NullOr(PlaybackPlan),
-    },
-    observe: {
-      input: Schema.Struct({
-        requestID: shortText,
-        sessionID: shortText,
-        event: AudioObservationEvent,
-      }),
-    },
-  },
-})
 
 export function normalizeASR(value: string): string {
   return value

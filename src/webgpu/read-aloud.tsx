@@ -5,7 +5,8 @@ import type { InferenceRuntime } from "./runtime.ts"
 import { createSpeechEventCoordinator, type SpeechEvent } from "./speech-events.ts"
 import { latestCompletedResponse, speechSegments } from "./speech.ts"
 import { playSpeech } from "./speech-playback.ts"
-import { NativeAudioFixture, sha256Text } from "../verification/opencode/audio-fixture-contract.ts"
+import { sha256Text } from "../verification/opencode/audio-fixture-contract.ts"
+import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 import type {
   AudioObservationEvent,
   PlaybackPlan,

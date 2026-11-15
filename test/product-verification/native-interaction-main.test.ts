@@ -9,7 +9,7 @@ import {
   redactVisibleText,
   setupNativeInteractionMain,
 } from "../../src/verification/opencode/native-interaction-main.ts"
-import { NativeAudioFixture } from "../../src/verification/opencode/audio-fixture-contract.ts"
+import { NativeAudioFixture } from "../../src/verification/opencode/audio-fixture-ipc.ts"
 import type {
   NativeWebContents,
   NativeWindow,

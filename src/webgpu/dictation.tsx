@@ -4,10 +4,8 @@ import { createEffect, createSignal } from "solid-js"
 import { audioFilePCM16, MAX_AUDIO_SECONDS } from "./audio.ts"
 import type { InferenceRuntime } from "./runtime.ts"
 import { CaptureResources } from "./capture.ts"
-import {
-  normalizeASR,
-  NativeAudioFixture,
-} from "../verification/opencode/audio-fixture-contract.ts"
+import { normalizeASR } from "../verification/opencode/audio-fixture-contract.ts"
+import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 
 export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: InferenceRuntime) {
   const audioFixture = ctx.main(NativeAudioFixture)
