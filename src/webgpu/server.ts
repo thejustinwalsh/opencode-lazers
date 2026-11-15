@@ -26,9 +26,36 @@ import { registerNativeConversationProvider } from "./native-conversation.ts"
 import type { NativeConversationCall } from "./native-conversation.ts"
 import type { InferenceResult } from "./rpc.ts"
 
+export type RendererInferenceClient = RpcClient<typeof RendererInference> & {
+  waitForEventStreamConnected?: (signal: AbortSignal) => Promise<void>
+}
+
+export function createRendererInferenceClient(
+  client: ReturnType<typeof OpenCode.make>,
+): RendererInferenceClient & {
+  waitForEventStreamConnected: (signal: AbortSignal) => Promise<void>
+} {
+  return Object.assign(client.rpc(RendererInference), {
+    waitForEventStreamConnected: async (signal: AbortSignal) => {
+      const iterator = client.event.subscribe({ signal })[Symbol.asyncIterator]()
+      try {
+        while (true) {
+          signal.throwIfAborted()
+          const next = await iterator.next()
+          signal.throwIfAborted()
+          if (next.done) throw new Error("OpenCode event stream ended before connecting")
+          if (next.value.type === "server.connected") return
+        }
+      } finally {
+        await iterator.return?.()
+      }
+    },
+  })
+}
+
 /** Streams one request from a location-scoped provider through the default renderer authority. */
 export async function forwardNativeConversation(
-  client: RpcClient<typeof RendererInference>,
+  client: RendererInferenceClient,
   call: NativeConversationCall,
 ): Promise<InferenceResult> {
   const requestID = crypto.randomUUID()
@@ -78,6 +105,9 @@ export async function forwardNativeConversation(
   let generation: Promise<InferenceResult> | undefined
   try {
     signal.throwIfAborted()
+    if (!client.waitForEventStreamConnected)
+      throw new Error("Native conversation event stream readiness is unavailable")
+    await waitFor(client.waitForEventStreamConnected(signal))
     await waitFor(client.nativeConversationReady({ requestID }, { signal }))
     await waitFor(ready.promise)
     generation = client.nativeConversation(
@@ -119,7 +149,7 @@ export function registerLocalInference(
     | "provider"
     | "aisdk"
   >,
-  resolveWorker?: () => Promise<RpcClient<typeof RendererInference>>,
+  resolveWorker?: () => Promise<RendererInferenceClient>,
 ) {
   return Effect.gen(function* () {
     const broker = new InferenceBroker()
@@ -129,8 +159,8 @@ export function registerLocalInference(
       (async () => {
         const endpoint = await Service.discover()
         if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
-        return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(
-          RendererInference,
+        return createRendererInferenceClient(
+          OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }),
         )
       })
     yield* registerNativeConversationProvider(ctx, async (call) =>

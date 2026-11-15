@@ -175,6 +175,7 @@ function remoteClient(
     {
       get: (_, key) => {
         if (key === "then") return undefined
+        if (key === "waitForEventStreamConnected") return async () => {}
         if (key === "events")
           return {
             subscribe: (_name: string, options: { signal?: AbortSignal }) =>
