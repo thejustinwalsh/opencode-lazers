@@ -71,6 +71,7 @@ function same(left: unknown, right: unknown): boolean {
 
 export class NativeInteractionBroker {
   private host?: HostRecord
+  private readonly retiredAdapters = new Set<string>()
   private readonly requests = new Map<string, RequestRecord>()
   private readonly audio = new Map<string, AudioRecord>()
   private activeRequest?: string
@@ -96,6 +97,9 @@ export class NativeInteractionBroker {
     const windows = this.validateWindows(input.windows)
     const now = this.now()
     const current = this.host
+    if (this.retiredAdapters.has(input.adapterID)) {
+      throw new Error("Native adapter generation is stale")
+    }
     if (current !== undefined && !same(current.binding, input.binding)) {
       throw new Error("Native adapter binding changed during this trial")
     }
@@ -105,6 +109,7 @@ export class NativeInteractionBroker {
       }
     } else if (current !== undefined) {
       this.settleStaleRequest()
+      if (current.adapterID !== input.adapterID) this.retiredAdapters.add(current.adapterID)
     }
     this.host = {
       binding: input.binding,
@@ -362,6 +367,7 @@ export class NativeInteractionBroker {
       this.activeRequest = undefined
       this.ambiguous = true
     }
+    this.retiredAdapters.add(adapterID)
     this.host = undefined
   }
 

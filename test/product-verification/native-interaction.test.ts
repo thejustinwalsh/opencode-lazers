@@ -244,7 +244,7 @@ describe("owned native interaction broker", () => {
       result: deliveredResult,
     })
     expect(() => value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })).toThrow(
-      "different native adapter generation",
+      "generation is stale",
     )
     expect(() => value.detach(binding, "adapter-1")).toThrow("generation is stale")
     expect(value.status(binding)).toMatchObject({ ready: true, adapterID: "adapter-2" })
@@ -340,13 +340,35 @@ describe("owned native interaction broker", () => {
       appCompleted: false,
       events: [],
     })
-    expect(() => value.detach(binding, "adapter-1")).toThrow("generation is stale")
+    advance(2_001)
+    expect(value.status(binding)).toMatchObject({ ready: false, windows: [] })
+    expect(() => value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })).toThrow(
+      "generation is stale",
+    )
+    expect(() => value.detach(binding, "adapter-1")).toThrow("not freshly attached")
+    expect(value.result(binding, requestID)).toMatchObject({
+      state: "completed",
+      result: { delivery: "ambiguous" },
+    })
+    value.attach({ binding, adapterID: "adapter-3", windows: [windowRef] })
     expect(value.status(binding)).toMatchObject({
       ready: true,
       blocked: true,
-      adapterID: "adapter-2",
+      adapterID: "adapter-3",
     })
-    value.detach(binding, "adapter-2")
+    expect(() => value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })).toThrow(
+      "generation is stale",
+    )
+    expect(() => value.detach(binding, "adapter-1")).toThrow("generation is stale")
+    expect(() => value.observeAudio({ binding, adapterID: "adapter-1", observation })).toThrow(
+      "Audio observation adapter is stale",
+    )
+    expect(value.status(binding)).toMatchObject({
+      ready: true,
+      blocked: true,
+      adapterID: "adapter-3",
+    })
+    value.detach(binding, "adapter-3")
     expect(value.status(binding)).toMatchObject({ ready: false, blocked: true })
   })
 
@@ -488,6 +510,22 @@ describe("owned native interaction broker", () => {
         }),
       ).toEqual({ state: "queued" })
       currentTime += 2_001
+      expect(await call("status", { binding: registeredBinding })).toMatchObject({
+        ready: false,
+        windows: [],
+      })
+      await expect(
+        call("poll", {
+          binding: registeredBinding,
+          adapterID: "rpc-adapter-1",
+          windows: [windowRef],
+        }),
+      ).rejects.toThrow("generation is stale")
+      expect(
+        await call("result", { binding: registeredBinding, requestID: staleQueuedID }),
+      ).toEqual({
+        state: "queued",
+      })
       await call("attach", {
         binding: registeredBinding,
         adapterID: "rpc-adapter-3",
@@ -522,7 +560,7 @@ describe("owned native interaction broker", () => {
           adapterID: "rpc-adapter-2",
           windows: [replacementWindow],
         }),
-      ).rejects.toThrow("different native adapter generation")
+      ).rejects.toThrow("generation is stale")
       await expect(
         call("complete", {
           binding: registeredBinding,
@@ -533,6 +571,13 @@ describe("owned native interaction broker", () => {
       ).rejects.toThrow("stale adapter generation")
       await expect(
         call("detach", { binding: registeredBinding, adapterID: "rpc-adapter-2" }),
+      ).rejects.toThrow("generation is stale")
+      await expect(
+        call("attach", {
+          binding: registeredBinding,
+          adapterID: "rpc-adapter-1",
+          windows: [windowRef],
+        }),
       ).rejects.toThrow("generation is stale")
       expect(await call("status", { binding: registeredBinding })).toMatchObject({
         ready: true,

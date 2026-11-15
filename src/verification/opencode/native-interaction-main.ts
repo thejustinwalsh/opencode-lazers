@@ -65,6 +65,8 @@ export const BOUNDED_DOM_SNAPSHOT_SCRIPT = `(() => {
 })()`
 
 const ADAPTER_STARTUP_TIMEOUT_MS = 30_000
+const ADAPTER_HEARTBEAT_INTERVAL_MS = 500
+const ADAPTER_HEARTBEAT_TIMEOUT_MS = 1_000
 const AUDIO_TARGET_TTL_MS = 150_000
 
 export type NativeInputEvent =
@@ -184,9 +186,12 @@ export function nativeSnapshotMatches(
 export function nativeAdapterFailureCategory(error: unknown): string {
   const messages: string[] = []
   let current: unknown = error
-  for (let depth = 0; depth < 6 && current instanceof Error; depth++) {
-    messages.push(current.message)
-    current = current.cause
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
+    const record = current as { message?: unknown; cause?: unknown }
+    if (typeof record.message === "string") messages.push(record.message)
+    const cause = current instanceof Error ? current.cause : record.cause
+    if (cause === undefined || cause === current) break
+    current = cause
   }
   const patterns: Array<[RegExp, string]> = [
     [/candidate source or built gui identity/i, "candidate-identity-mismatch"],
@@ -326,6 +331,7 @@ export class NativeInteractionMainAdapter {
   private readonly snapshots = new Map<number, SnapshotRecord>()
   private binding?: NativeBinding
   private stopped = false
+  private activeHeartbeat?: { stop(): Promise<void> }
   private unwatchOpen?: () => void
   private unwatchClose?: () => void
   private readonly audioTargets = new Map<
@@ -380,15 +386,40 @@ export class NativeInteractionMainAdapter {
       this.track(window as unknown as NativeWindow),
     )
     this.unwatchClose = this.ctx.windows.on("close", (window) => this.forget(window.id))
-    try {
-      await this.rpc().attach({
-        binding,
-        adapterID: this.adapterID,
-        windows: this.windowReferences(),
-        capabilities: { modifiedKeys: true },
-      })
-    } catch (error) {
-      throw new Error("Native adapter RPC attachment failed", { cause: error })
+    let attached = false
+    while (!this.stopped && !this.ctx.signal.aborted && Date.now() < deadline) {
+      try {
+        await this.rpc().attach(
+          {
+            binding,
+            adapterID: this.adapterID,
+            windows: this.windowReferences(),
+            capabilities: { modifiedKeys: true },
+          },
+          { signal: AbortSignal.any([this.ctx.signal, AbortSignal.timeout(2_000)]) },
+        )
+        attached = true
+        break
+      } catch (error) {
+        lastError = error
+        if (nativeAdapterFailureCategory(error) !== "adapter-generation-conflict") {
+          throw new Error("Native adapter RPC attachment failed", { cause: error })
+        }
+      }
+      await this.delay(250)
+      if (this.stopped || this.ctx.signal.aborted || Date.now() >= deadline) break
+      try {
+        const currentBinding = await this.verifyRuntime(true)
+        if (stableValue(currentBinding) !== stableValue(binding)) {
+          throw new Error("Owned native binding changed before adapter attachment")
+        }
+      } catch (error) {
+        throw new Error("Native adapter RPC attachment failed", { cause: error })
+      }
+    }
+    if (!attached) {
+      if (this.stopped || this.ctx.signal.aborted) return
+      throw new Error("Native adapter RPC attachment failed", { cause: lastError })
     }
     void this.poll()
   }
@@ -483,9 +514,8 @@ export class NativeInteractionMainAdapter {
     for (const id of this.windows.keys()) this.forget(id)
     const binding = this.binding
     if (binding !== undefined) {
-      void this.rpc()
-        .detach({ binding, adapterID: this.adapterID })
-        .catch(() => undefined)
+      const detach = () => this.rpc().detach({ binding, adapterID: this.adapterID })
+      void (this.activeHeartbeat?.stop() ?? Promise.resolve()).then(detach).catch(() => undefined)
     }
   }
 
@@ -559,6 +589,7 @@ export class NativeInteractionMainAdapter {
       }
       if (command !== null) {
         let result: NativeActionResult
+        const heartbeat = this.startHeartbeat(binding)
         try {
           const currentBinding = await this.verifyRuntime(true)
           if (stableValue(currentBinding) !== stableValue(binding)) {
@@ -567,6 +598,8 @@ export class NativeInteractionMainAdapter {
           result = await this.execute(command.operation, command.requestID)
         } catch {
           result = { delivery: "not-delivered", message: "Owned native preflight failed" }
+        } finally {
+          await heartbeat.stop()
         }
         try {
           await this.rpc().complete({
@@ -581,6 +614,48 @@ export class NativeInteractionMainAdapter {
       }
       await this.delay(100)
     }
+  }
+
+  private startHeartbeat(binding: NativeBinding): { stop(): Promise<void> } {
+    let stopped = false
+    let stopPromise: Promise<void> | undefined
+    const controller = new AbortController()
+    const task = (async () => {
+      while (!stopped && !this.stopped && !this.ctx.signal.aborted) {
+        await this.delay(ADAPTER_HEARTBEAT_INTERVAL_MS, controller.signal)
+        if (stopped || this.stopped || this.ctx.signal.aborted) return
+        try {
+          await this.rpc().attach(
+            {
+              binding,
+              adapterID: this.adapterID,
+              windows: this.windowReferences(),
+              capabilities: { modifiedKeys: true },
+            },
+            {
+              signal: AbortSignal.any([
+                this.ctx.signal,
+                AbortSignal.timeout(ADAPTER_HEARTBEAT_TIMEOUT_MS),
+              ]),
+            },
+          )
+        } catch {
+          // Keep trying while the operation is active; completion is still fenced by the broker.
+        }
+      }
+    })()
+    const heartbeat = {
+      stop: () => {
+        stopped = true
+        controller.abort()
+        stopPromise ??= task.finally(() => {
+          if (this.activeHeartbeat === heartbeat) this.activeHeartbeat = undefined
+        })
+        return stopPromise
+      },
+    }
+    this.activeHeartbeat = heartbeat
+    return heartbeat
   }
 
   private async execute(
@@ -1041,18 +1116,28 @@ export class NativeInteractionMainAdapter {
     return references.slice(0, 32)
   }
 
-  private delay(ms: number): Promise<void> {
+  private delay(ms: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolvePromise) => {
+      const signals = signal === undefined ? [this.ctx.signal] : [this.ctx.signal, signal]
+      let finished = false
       const finish = () => {
-        this.ctx.signal.removeEventListener("abort", onAbort)
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        for (const current of signals) current.removeEventListener("abort", onAbort)
         resolvePromise()
       }
       const timer = setTimeout(finish, ms)
       const onAbort = () => {
-        clearTimeout(timer)
         finish()
       }
-      this.ctx.signal.addEventListener("abort", onAbort, { once: true })
+      for (const current of signals) {
+        if (current.aborted) {
+          finish()
+          return
+        }
+        current.addEventListener("abort", onAbort, { once: true })
+      }
     })
   }
 }

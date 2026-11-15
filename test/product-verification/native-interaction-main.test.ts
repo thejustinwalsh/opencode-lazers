@@ -224,6 +224,11 @@ describe("owned native Desktop adapter", () => {
     expect(nativeAdapterFailureCategory(new Error("Native adapter RPC attachment failed"))).toBe(
       "sidecar-rpc-attach-failed",
     )
+    expect(
+      nativeAdapterFailureCategory({
+        cause: { message: "A different native adapter generation still owns this trial" },
+      }),
+    ).toBe("adapter-generation-conflict")
   })
 
   test("keeps startup failure hints bounded and redacts secrets, URLs, and local paths", () => {

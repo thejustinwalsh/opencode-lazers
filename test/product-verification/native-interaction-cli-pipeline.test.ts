@@ -9,6 +9,7 @@ import {
 } from "../../src/verification/opencode/native-interaction-main.ts"
 import {
   NativeInteraction,
+  type NativeActionResult,
   type NativeBinding,
   type NativeOperation,
 } from "../../src/verification/opencode/native-interaction-contract.ts"
@@ -155,13 +156,25 @@ async function pipeline(options: PipelineOptions = {}) {
     },
     () => brokerTime,
   )
+  let attachCount = 0
+  let completeCount = 0
+  let rejectHeartbeatAttachments = false
+  const failedAttachmentStatuses: Array<ReturnType<typeof broker.status>> = []
   const desktopRPC = {
     attach: async (input: Parameters<NativeInteractionBroker["attach"]>[0]) => {
-      broker.attach(input)
+      attachCount++
+      if (rejectHeartbeatAttachments) throw new Error("fixture lost native owner heartbeat")
+      try {
+        broker.attach(input)
+      } catch (error) {
+        failedAttachmentStatuses.push(broker.status(input.binding))
+        throw error
+      }
       return {}
     },
     poll: async (input: Parameters<NativeInteractionBroker["poll"]>[0]) => broker.poll(input),
     complete: async (input: Parameters<NativeInteractionBroker["complete"]>[0]) => {
+      completeCount++
       broker.complete(input)
       return {}
     },
@@ -191,12 +204,14 @@ async function pipeline(options: PipelineOptions = {}) {
     options.loadFixture,
   )
   const runtimeAllowPending: boolean[] = []
-  Object.defineProperty(adapter, "verifyRuntime", {
-    value: async (allowPending: boolean) => {
-      runtimeAllowPending.push(allowPending)
-      return binding
-    },
-  })
+  const installRuntimeVerification = (target: NativeInteractionMainAdapter) =>
+    Object.defineProperty(target, "verifyRuntime", {
+      value: async (allowPending: boolean) => {
+        runtimeAllowPending.push(allowPending)
+        return binding
+      },
+    })
+  installRuntimeVerification(adapter)
   adapter.trackWindow(window)
   const windowReference = adapter.currentWindowReferences()[0]!
   if (options.legacyAdapter) {
@@ -289,10 +304,27 @@ async function pipeline(options: PipelineOptions = {}) {
     requestIDs,
     acceptedOperations,
     runtimeAllowPending: () => runtimeAllowPending,
+    attachCount: () => attachCount,
+    completeCount: () => completeCount,
+    failedAttachmentStatuses,
     enqueueCount: () => enqueueCount,
     leaseState: () => leaseState,
     leaseFinishes: () => leaseFinishes,
     advanceBrokerClock: (milliseconds: number) => (brokerTime += milliseconds),
+    setHeartbeatAttachmentFailure: (value: boolean) => (rejectHeartbeatAttachments = value),
+    setExecute: (
+      execute: (operation: NativeOperation, requestID?: string) => Promise<NativeActionResult>,
+    ) => Reflect.set(adapter, "execute", execute),
+    makeAdapter: () => {
+      const replacement = new NativeInteractionMainAdapter(
+        context,
+        root,
+        () => 123,
+        () => undefined,
+      )
+      installRuntimeVerification(replacement)
+      return replacement
+    },
     seedPendingRequest: (requestID: string, operation: NativeOperation) => {
       leaseRequestID = requestID
       leaseState = "pending"
@@ -339,6 +371,14 @@ async function freshSnapshot(value: Awaited<ReturnType<typeof pipeline>>): Promi
   const result = await value.adapter.perform({ kind: "snapshot", window: value.windowReference })
   if (result.snapshot === undefined) throw new Error("Fixture snapshot was not returned")
   return result.snapshot.snapshotID
+}
+
+async function waitFor(condition: () => boolean, message: string): Promise<void> {
+  for (let attempt = 0; attempt < 300; attempt++) {
+    if (condition()) return
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5))
+  }
+  throw new Error(`Timed out waiting for ${message}`)
 }
 
 describe("owned native interaction CLI-to-Main pipeline", () => {
@@ -679,6 +719,131 @@ describe("owned native interaction CLI-to-Main pipeline", () => {
       await nextRequest
       expect(value.enqueueCount()).toBe(requestCountBefore + 1)
       expect(value.leaseState()).toBe("idle")
+    } finally {
+      value.close()
+    }
+  })
+
+  test("retries replacement attachment until the prior fresh owner expires", async () => {
+    const value = await pipeline()
+    let replacement: NativeInteractionMainAdapter | undefined
+    try {
+      const priorOwner = value.broker.status(binding).adapterID
+      expect(priorOwner).toBeDefined()
+      const attachCount = value.attachCount()
+      value.abandonAdapter()
+      replacement = value.makeAdapter()
+      Reflect.set(replacement, "delay", async (milliseconds: number) => {
+        value.advanceBrokerClock(milliseconds)
+      })
+      Reflect.set(replacement, "poll", async () => undefined)
+
+      await replacement.start()
+
+      expect(value.attachCount()).toBeGreaterThan(attachCount + 1)
+      expect(value.failedAttachmentStatuses.length).toBeGreaterThan(0)
+      expect(
+        value.failedAttachmentStatuses.every(
+          (status) => status.ready && status.adapterID === priorOwner,
+        ),
+      ).toBe(true)
+      expect(value.broker.status(binding)).toMatchObject({ ready: true })
+      expect(value.broker.status(binding).adapterID).not.toBe(priorOwner)
+      replacement.stop()
+      await waitFor(() => !value.broker.status(binding).ready, "normal replacement detach")
+      replacement = undefined
+    } finally {
+      replacement?.stop()
+      value.close()
+    }
+  })
+
+  test("keeps the active lease fresh during a slow healthy execution without redispatch", async () => {
+    const value = await pipeline()
+    try {
+      const snapshotID = await freshSnapshot(value)
+      let executionCount = 0
+      let finishExecution!: (result: NativeActionResult) => void
+      const execution = new Promise<NativeActionResult>((resolvePromise) => {
+        finishExecution = resolvePromise
+      })
+      value.setExecute(async () => {
+        executionCount++
+        return execution
+      })
+      const request = runCLI(nativeArgs("Enter", snapshotID), value.dependencies)
+      await waitFor(() => executionCount === 1, "the native operation to start")
+
+      let lastHeartbeat = value.attachCount()
+      for (let index = 0; index < 4; index++) {
+        await waitFor(() => value.attachCount() > lastHeartbeat, "a native adapter heartbeat")
+        lastHeartbeat = value.attachCount()
+        value.advanceBrokerClock(750)
+      }
+      finishExecution({ delivery: "delivered" })
+      await request
+
+      expect(executionCount).toBe(1)
+      expect(value.attachCount()).toBeGreaterThanOrEqual(5)
+      expect(value.completeCount()).toBe(1)
+      expect(value.broker.result(binding, value.requestIDs[0]!)).toMatchObject({
+        state: "completed",
+        result: { delivery: "delivered" },
+      })
+      expect(value.broker.status(binding)).toMatchObject({ ready: true, blocked: false })
+    } finally {
+      value.close()
+    }
+  })
+
+  test("turns real owner loss during execution ambiguous without replay or stale completion", async () => {
+    const value = await pipeline()
+    try {
+      const snapshotID = await freshSnapshot(value)
+      let executionCount = 0
+      let finishExecution!: (result: NativeActionResult) => void
+      const execution = new Promise<NativeActionResult>((resolvePromise) => {
+        finishExecution = resolvePromise
+      })
+      value.setExecute(async () => {
+        executionCount++
+        return execution
+      })
+      const request = runCLI(nativeArgs("Enter", snapshotID), value.dependencies)
+      await waitFor(() => executionCount === 1, "the native operation to start")
+      value.setHeartbeatAttachmentFailure(true)
+      const previousAttachCount = value.attachCount()
+      await waitFor(() => value.attachCount() > previousAttachCount, "the failing owner heartbeat")
+
+      value.advanceBrokerClock(2_001)
+      expect(value.broker.status(binding)).toMatchObject({ ready: false, windows: [] })
+      value.broker.attach({
+        binding,
+        adapterID: "replacement-after-owner-loss",
+        windows: [value.windowReference],
+        capabilities: { modifiedKeys: true },
+      })
+      expect(value.broker.status(binding)).toMatchObject({
+        ready: true,
+        blocked: true,
+        adapterID: "replacement-after-owner-loss",
+      })
+      finishExecution({ delivery: "delivered" })
+
+      await expect(request).rejects.toThrow("Native delivery is ambiguous; do not replay")
+      expect(executionCount).toBe(1)
+      expect(value.enqueueCount()).toBe(1)
+      expect(value.completeCount()).toBe(1)
+      expect(value.broker.result(binding, value.requestIDs[0]!)).toMatchObject({
+        state: "completed",
+        result: { delivery: "ambiguous" },
+      })
+      await expect(
+        runCLI(nativeArgs("Enter", "snapshot-after-owner-loss"), value.dependencies),
+      ).rejects.toThrow("previous native interaction is unresolved")
+      expect(value.enqueueCount()).toBe(1)
+      value.broker.detach(binding, "replacement-after-owner-loss")
+      expect(value.broker.status(binding)).toMatchObject({ ready: false, blocked: true })
     } finally {
       value.close()
     }

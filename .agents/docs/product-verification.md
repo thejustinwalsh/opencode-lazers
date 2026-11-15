@@ -156,6 +156,13 @@ current windows and capabilities. There is no force-reset or manual-RPC recovery
 command. Do not detach a live owner, change the profile/service binding, or use a
 second Desktop profile to try to take ownership. If status is not ready, let the
 normal owned adapter lifecycle recover and recheck it before interacting.
+Startup retries only the fresh-generation conflict, within its bounded readiness
+window; binding and profile failures are not retried as takeover attempts. A
+displaced or normally detached generation is retired for the life of the sidecar,
+even if its replacement later expires. The Main adapter refreshes its binding
+with attach-only heartbeats while a native operation is in progress; those
+heartbeats do not poll or redispatch work. A lost owner or prolonged heartbeat
+failure still leaves dispatched work ambiguous.
 
 Recovery preserves the request ledger rather than restarting it. Work still
 queued when the heartbeat expires becomes a completed `not-delivered` receipt
