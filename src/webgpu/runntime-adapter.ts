@@ -25,21 +25,15 @@ export function cachedModelRangeSource(
         throw new Error("Invalid ruNNtime model byte range")
       signal.throwIfAborted()
       const expected = end - begin
-      const chunks: Uint8Array[] = []
-      let received = 0
-      for await (const chunk of cachedRange(read, id, begin, end - 1, signal)) {
-        received += chunk.byteLength
-        chunks.push(chunk)
-      }
-      signal.throwIfAborted()
-      if (received !== expected)
-        throw new Error(`Verified model cache returned ${received} of ${expected} requested bytes`)
       const bytes = new Uint8Array(expected)
       let offset = 0
-      for (const chunk of chunks) {
+      for await (const chunk of cachedRange(read, id, begin, end - 1, signal)) {
         bytes.set(chunk, offset)
         offset += chunk.byteLength
       }
+      signal.throwIfAborted()
+      if (offset !== expected)
+        throw new Error(`Verified model cache returned ${offset} of ${expected} requested bytes`)
       return bytes
     },
   }
