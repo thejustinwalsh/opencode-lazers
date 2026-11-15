@@ -71,6 +71,7 @@ import {
 import type { TaskRuntime } from "./runtime.ts"
 import { errorText } from "./runtime-helpers.ts"
 import { isRecord } from "./runtime-helpers.ts"
+import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 import { WORKTREE_CLEANUP_FALLBACK_MS } from "./runtime-helpers.ts"
 import { pathEntryExists } from "./runtime-helpers.ts"
 
@@ -937,7 +938,7 @@ export class RetainedVerificationExecution {
         if (
           existing.artifact !== artifact ||
           existing.workspace !== workspace ||
-          fingerprint(JSON.parse(existing.checkJSON)) !== fingerprint(effectiveCheck)
+          !sameVerificationCheckIdentity(JSON.parse(existing.checkJSON), effectiveCheck)
         ) {
           await this.holdRetainedVerification(
             initial,

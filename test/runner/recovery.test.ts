@@ -256,30 +256,56 @@ test("durable outbox survives process death before/after host delivery without d
     expect(new Set(notices.map((c) => c.id)).size).toBe(notices.length)
     const latest = f.store.atomic((db) =>
       db
-        .query<{ state: string; payload: string }, [string]>(
-          "SELECT state,payload FROM runner_outbox WHERE plan_id=? ORDER BY rowid DESC LIMIT 1",
+        .query<{ state: string; payload: string; receipt: string | null }, [string]>(
+          "SELECT state,payload,receipt FROM runner_outbox WHERE plan_id=? ORDER BY rowid DESC LIMIT 1",
         )
         .get(f.plan.planID),
     )
     expect(JSON.parse(latest!.payload).status).toBe("accepted")
-    expect(latest?.state).toBe(fault === "before-notify" ? "admitted" : "consumed")
+    // Same-owner admission is not polled into consumption by ordinary delivery ticks.
+    expect(latest?.state).toBe("admitted")
+    expect(JSON.parse(latest!.receipt!).history.at(-1)).toMatchObject({
+      kind: "host-admitted",
+      consumption: "unknown",
+    })
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
 }, 20000)
 
-test("legacy unowned transcript remains unknown rather than proving post-crash consumption", async () => {
+test("legacy unowned transcript does not prove post-crash consumption of an admitted notice", async () => {
   const f = fixture()
   writeFileSync(
     join(f.root, "fixture.json"),
     JSON.stringify({ planID: f.plan.planID, unownedTranscript: true }),
   )
   expect((await run(f.root, "after-notify")).code).not.toBe(0)
+  const interruptedState = JSON.parse(readFileSync(join(f.root, "host.json"), "utf8")) as {
+    calls: { kind: string; id: string }[]
+  }
+  const interruptedNotice = interruptedState.calls.find((call) => call.kind === "notify")!
+  expect(interruptedNotice).toBeDefined()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const resumed = await run(f.root, "none")
   expect(resumed.code, resumed.stderr).toBe(0)
-  expect(f.store.outboxForDelivery().at(-1)!.state).toBe("unknown")
+  const latest = f.store.outboxForDelivery().at(-1)!
+  expect(latest.state).toBe("admitted")
+  expect(JSON.parse(latest.receipt!).history.at(-1)).toMatchObject({
+    kind: "host-admitted",
+    consumption: "unknown",
+  })
   const state = JSON.parse(readFileSync(join(f.root, "host.json"), "utf8")) as {
-    calls: { kind: string }[]
+    calls: { kind: string; id: string }[]
   }
-  expect(state.calls.filter((call) => call.kind === "notify")).toHaveLength(1)
+  const notices = state.calls.filter((call) => call.kind === "notify")
+  // Task and combined acceptance may each notify; recovery must not duplicate either identity.
+  expect(new Set(notices.map((call) => call.id)).size).toBe(notices.length)
+  expect(notices.filter((call) => call.id === interruptedNotice.id)).toHaveLength(1)
+  expect(notices.filter((call) => call.id === latest.message_id)).toHaveLength(1)
+  const interruptedDelivery = f.store.atomic((db) =>
+    db
+      .query<{ state: string }, [string]>("SELECT state FROM runner_outbox WHERE message_id=?")
+      .get(interruptedNotice.id),
+  )
+  expect(interruptedDelivery?.state).toBeDefined()
+  expect(interruptedDelivery?.state).not.toBe("consumed")
 }, 20000)

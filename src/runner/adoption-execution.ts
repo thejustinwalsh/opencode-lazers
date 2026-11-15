@@ -24,6 +24,7 @@ import { forgetVerificationActivity, verificationActivityKey } from "./verificat
 
 import type { TaskRuntime } from "./runtime.ts"
 import { errorText } from "./runtime-helpers.ts"
+import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 
 export class AdoptionExecution {
   constructor(
@@ -309,30 +310,13 @@ export class AdoptionExecution {
             adoption.id,
             `${phase}-${check.id}.json`,
           )
-          const effectiveCheck = verificationCheckWithDefaults(
-            check,
-            this.runtime.verificationTimeoutDefaults,
-          )
-          const expectedInputFingerprint = fingerprint({
-            adoptionID: adoption.id,
-            adoptionInputFingerprint: adoption.input_fingerprint,
-            phase,
-            authoredCheck: check,
-            check: effectiveCheck,
-            workspace,
-            artifact: base,
-            environmentIdentity: row.environment_identity,
-          })
           if (
-            row.workspace !== workspace ||
-            row.artifact !== base ||
+            !this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, base) ||
             row.receipt_path !== receiptPath ||
-            row.input_fingerprint !== expectedInputFingerprint
+            row.check_id !== check.id
           )
             return false
           try {
-            if (fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck))
-              return false
             const receipt =
               row.state === "completed" && row.receipt
                 ? (JSON.parse(row.receipt) as CheckReceipt)
@@ -452,6 +436,39 @@ export class AdoptionExecution {
     )
   }
 
+  adoptionCheckInputMatches(
+    adoption: AdoptionRow,
+    phase: "task" | "combined",
+    check: TaskProposal["verification"][number],
+    row: AdoptionCheckRow,
+    workspace: string,
+    artifact: string,
+  ): boolean {
+    try {
+      const recordedCheck = JSON.parse(row.check_json) as unknown
+      return (
+        row.workspace === workspace &&
+        row.artifact === artifact &&
+        sameVerificationCheckIdentity(recordedCheck, check) &&
+        row.input_fingerprint ===
+          fingerprint({
+            adoptionID: adoption.id,
+            adoptionInputFingerprint: adoption.input_fingerprint,
+            phase,
+            authoredCheck: check,
+            // Reconstruct the persisted identity using its recorded timing fields.
+            // These are provenance, not a reason to invalidate a settled pass.
+            check: recordedCheck,
+            workspace,
+            artifact,
+            environmentIdentity: row.environment_identity,
+          })
+      )
+    } catch {
+      return false
+    }
+  }
+
   private async runAdoptionChecks(
     plan: PlanRow,
     adoption: AdoptionRow,
@@ -503,7 +520,7 @@ export class AdoptionExecution {
         if (
           row.workspace !== workspace ||
           row.artifact !== artifact ||
-          fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck) ||
+          !this.adoptionCheckInputMatches(adoption, phase, check, row, workspace, artifact) ||
           row.receipt_path !== receiptPath
         ) {
           this.holdAdoption(

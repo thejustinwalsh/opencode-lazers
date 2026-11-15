@@ -59,6 +59,27 @@ const detail = GetOutput.parse({
   },
 })
 
+function instructionsForVerification(
+  verification: Array<{
+    id: string
+    command: string
+    timeoutMs?: number
+    inactivityTimeoutMs?: number
+    hardTimeoutMs?: number
+  }>,
+) {
+  if (detail.status !== "found") throw new Error("Test task fixture is not found")
+  return taskInstructions(
+    GetOutput.parse({
+      ...detail,
+      task: {
+        ...detail.task,
+        proposal: { ...detail.task.proposal, verification },
+      },
+    }),
+  )
+}
+
 test("task instructions preserve goal, acceptance, boundaries, guidance, verification, and sources", () => {
   const instructions = taskInstructions(detail)
 
@@ -75,7 +96,9 @@ test("task instructions preserve goal, acceptance, boundaries, guidance, verific
   )
   expect(instructions).toContain("## Implementation guidance (advisory)")
   expect(instructions).toContain("keep advice advisory")
-  expect(instructions).toContain("## Verification\n- tests: bun test")
+  expect(instructions).toContain(
+    "## Verification\n- tests: bun test (inactivity allowance: project default (resolved by runtime at execution); hard backstop: project default (resolved by runtime at execution); legacy timeout: 60000ms (historical; not used for execution))",
+  )
   expect(instructions).toContain("## Context references\n- README.md (revision abc123)")
   expect(instructions).toContain("## Optional skill suggestions")
   expect(instructions).toContain(
@@ -103,6 +126,44 @@ test("task instructions retain readable missing-task and unavailable-revision ou
   expect(taskInstructions({ status: "revision_unavailable", revision: 1 })).toBe(
     "Task revision_unavailable.",
   )
+})
+
+test("worker instructions describe authored timing and unresolved project defaults truthfully", () => {
+  const omitted = instructionsForVerification([{ id: "tests", command: "bun test" }])
+  expect(omitted).toContain(
+    "tests: bun test (inactivity allowance: project default (resolved by runtime at execution); hard backstop: project default (resolved by runtime at execution))",
+  )
+  expect(omitted).not.toMatch(/undefinedms|NaN/)
+  expect(omitted).not.toContain("legacy timeout")
+
+  const legacyOnly = instructionsForVerification([
+    { id: "tests", command: "bun test", timeoutMs: 12_345 },
+  ])
+  expect(legacyOnly).toContain(
+    "inactivity allowance: project default (resolved by runtime at execution)",
+  )
+  expect(legacyOnly).toContain("hard backstop: project default (resolved by runtime at execution)")
+  expect(legacyOnly).toContain("legacy timeout: 12345ms (historical; not used for execution)")
+
+  const dual = instructionsForVerification([
+    {
+      id: "tests",
+      command: "bun test",
+      timeoutMs: 60_000,
+      inactivityTimeoutMs: 15_000,
+      hardTimeoutMs: 90_000,
+    },
+  ])
+  expect(dual).toContain("inactivity allowance: 15000ms (authored)")
+  expect(dual).toContain("hard backstop: 90000ms (authored)")
+  expect(dual).toContain("legacy timeout: 60000ms (historical; not used for execution)")
+
+  const partial = instructionsForVerification([
+    { id: "tests", command: "bun test", inactivityTimeoutMs: 30_000 },
+  ])
+  expect(partial).toContain("inactivity allowance: 30000ms (authored)")
+  expect(partial).toContain("hard backstop: project default (resolved by runtime at execution)")
+  expect(partial).not.toMatch(/undefinedms|NaN/)
 })
 
 test("superseded task instructions retrieve the sole replacement without presenting retired obligations", () => {

@@ -9,6 +9,7 @@ import {
   messageID,
   isCommitID,
   isRecord,
+  sameVerificationCheckIdentity,
   type CleanupRecoveryAuthorization,
   actualCheckResultFromEffect,
   checkSettlementProblem,
@@ -597,6 +598,8 @@ export class TaskRuntime {
     this.worktreeCleanup = new WorktreeCleanup({
       adoptionCheckReceiptMatches: (...args) =>
         this.adoptionExecution.adoptionCheckReceiptMatches(...args),
+      adoptionCheckInputMatches: (...args) =>
+        this.adoptionExecution.adoptionCheckInputMatches(...args),
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
       directory: this.directory,
       effect: (...args) => this.effect(...args),
@@ -609,7 +612,6 @@ export class TaskRuntime {
       progress: this.progress,
       projectID: this.projectID,
       store: this.store,
-      verificationTimeoutDefaults: this.verificationTimeoutDefaults,
     })
     this.adoptionExecution = new AdoptionExecution({
       adoptionArtifactScopeViolations: (...args) => this.adoptionArtifactScopeViolations(...args),
@@ -1840,7 +1842,7 @@ export class TaskRuntime {
         return (
           payload.artifact === artifact &&
           (payload.repairID ?? undefined) === repairID &&
-          fingerprint(payload.check) === fingerprint(check)
+          sameVerificationCheckIdentity(payload.check, check)
         )
       })
       const receipt: CheckReceipt | undefined =
@@ -12440,8 +12442,8 @@ export class TaskRuntime {
         return (
           payload.artifact === head &&
           payload.workspace === attempt.workspace &&
-          proposal.verification.some(
-            (check) => fingerprint(check) === fingerprint(recordedCheck),
+          proposal.verification.some((check) =>
+            sameVerificationCheckIdentity(check, recordedCheck),
           ) &&
           (payload.repairID ?? undefined) === repairID
         )
@@ -12551,7 +12553,7 @@ export class TaskRuntime {
             (payload.repairID ?? undefined) === repairID &&
             ((payload.verificationEpoch ?? 0) === verificationEpoch ||
               (passed && checkSucceeded(passed))) &&
-            fingerprint(payload.check) === fingerprint(effectiveCheck)
+            sameVerificationCheckIdentity(payload.check, effectiveCheck)
           )
         })
       if (
@@ -13136,7 +13138,7 @@ export class TaskRuntime {
               : payload.combinedContinuationFingerprint === undefined) &&
             ((payload.verificationEpoch ?? 0) === verificationEpoch ||
               (previous !== undefined && checkSucceeded(previous))) &&
-            fingerprint(payload.check) === fingerprint(effectiveCheck)
+            sameVerificationCheckIdentity(payload.check, effectiveCheck)
           )
         } catch {
           return false

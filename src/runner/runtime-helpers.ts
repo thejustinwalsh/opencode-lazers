@@ -1,4 +1,5 @@
 import { lstatSync } from "node:fs"
+import { fingerprint } from "../identity.ts"
 import { checkResourcesSettled, type CheckReceipt } from "./artifacts.ts"
 import type { EffectRow } from "./store.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
@@ -10,6 +11,16 @@ export const isCommitID = (value: unknown): value is string =>
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+
+const verificationTimingFields = new Set(["timeoutMs", "inactivityTimeoutMs", "hardTimeoutMs"])
+const verificationCheckIdentity = (check: unknown): unknown =>
+  isRecord(check)
+    ? Object.fromEntries(
+        Object.entries(check).filter(([key]) => !verificationTimingFields.has(key)),
+      )
+    : check
+export const sameVerificationCheckIdentity = (left: unknown, right: unknown): boolean =>
+  fingerprint(verificationCheckIdentity(left)) === fingerprint(verificationCheckIdentity(right))
 
 export type CleanupRecoveryAuthorization = {
   schemaVersion: 1

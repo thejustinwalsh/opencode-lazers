@@ -16,13 +16,13 @@ import { isRecord } from "./runtime-helpers.ts"
 import { WORKTREE_CLEANUP_FALLBACK_MS } from "./runtime-helpers.ts"
 import { type CleanupRecoveryAuthorization } from "./runtime-helpers.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
-import { verificationCheckWithDefaults } from "./verification-timeout.ts"
-import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
+import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 
 export class WorktreeCleanup {
   constructor(
     private readonly runtime: {
       adoptionCheckReceiptMatches: AdoptionExecution["adoptionCheckReceiptMatches"]
+      adoptionCheckInputMatches: AdoptionExecution["adoptionCheckInputMatches"]
       backgroundBlockReason: TaskRuntime["backgroundBlockReason"]
       directory: TaskRuntime["directory"]
       effect: TaskRuntime["effect"]
@@ -35,7 +35,6 @@ export class WorktreeCleanup {
       progress: TaskRuntime["progress"]
       projectID: TaskRuntime["projectID"]
       store: TaskRuntime["store"]
-      verificationTimeoutDefaults: VerificationTimeoutDefaults
     },
   ) {}
 
@@ -70,10 +69,6 @@ export class WorktreeCleanup {
       throw new Error("Adoption worktree has no complete receipt for every check; preserve it")
     const artifact = phase === "task" ? adoption.descendant_commit : adoption.combined_artifact
     for (const check of checks) {
-      const effectiveCheck = verificationCheckWithDefaults(
-        check,
-        this.runtime.verificationTimeoutDefaults,
-      )
       const row = rows.find((item) => item.check_id === check.id)
       let receipt: CheckReceipt | undefined
       try {
@@ -84,9 +79,7 @@ export class WorktreeCleanup {
       if (
         !row ||
         row.state !== "completed" ||
-        row.workspace !== workspace ||
-        row.artifact !== artifact ||
-        fingerprint(JSON.parse(row.check_json)) !== fingerprint(effectiveCheck) ||
+        !this.runtime.adoptionCheckInputMatches(adoption, phase, check, row, workspace, artifact) ||
         !receipt ||
         !this.runtime.adoptionCheckReceiptMatches(receipt, row, check)
       )
@@ -141,7 +134,7 @@ export class WorktreeCleanup {
       if (
         !effect ||
         effect.state !== "completed" ||
-        fingerprint(payload?.check) !== fingerprint(check) ||
+        !sameVerificationCheckIdentity(payload?.check, check) ||
         !receipt ||
         receipt.id !== check.id ||
         receipt.command !== check.command ||

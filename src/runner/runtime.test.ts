@@ -97,6 +97,7 @@ function fixture(
     checkCommand?: string | ((name: string, path: string, root: string) => string)
     beforeCheck?: string
     combinedCheckCommand?: string
+    additionalCombinedCheckCommand?: string
     verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     useProjectVerificationDefaults?: boolean
   } = {},
@@ -516,6 +517,18 @@ function fixture(
             ? {}
             : { inactivityTimeoutMs: 1000, hardTimeoutMs: 1000 }),
         },
+        ...(options.additionalCombinedCheckCommand
+          ? [
+              {
+                id: "combined-second",
+                command: options.additionalCombinedCheckCommand,
+                timeoutMs: 1000,
+                ...(options.useProjectVerificationDefaults
+                  ? {}
+                  : { inactivityTimeoutMs: 1000, hardTimeoutMs: 1000 }),
+              },
+            ]
+          : []),
       ],
       acceptance: [
         {
@@ -1146,6 +1159,8 @@ test("a settled human evidence hold releases its isolated scope for a waiting pl
     human: true,
     delayed: true,
     commit: true,
+    useProjectVerificationDefaults: true,
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 10_000, hardTimeoutMs: 20_000 },
     taskFiles: [{ name: "a", path: "shared.txt" }],
   })
   await runPlan(f)
@@ -1157,6 +1172,22 @@ test("a settled human evidence hold releases its isolated scope for a waiting pl
   Object.assign(worker, { pendingInput: false, pendingPermissions: 0, pendingForms: 0 })
   await drive(f.runtime, 5)
   expect(f.store.plan(planID)?.reason).toContain("Required evidence missing:")
+  const completedCheck = f.store.effects(planID).find((effect) => effect.kind === "verify:content")!
+  const legacyPayload = JSON.parse(completedCheck.payload) as Record<string, unknown>
+  delete legacyPayload.authoredCheck
+  delete legacyPayload.verificationDeadline
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET payload=? WHERE id=?")
+      .run(JSON.stringify(legacyPayload), completedCheck.id),
+  )
+  await f.runtime.stop()
+  const reopened = reopenRuntime(f, {
+    inactivityTimeoutMs: 15_000,
+    hardTimeoutMs: 30_000,
+  })
+  f.runtime = reopened.runtime
+  f.store = reopened.store
   const retained = f.store.attempts(planID)[0]!
   const guard = registerSourceGuard(f.store, retained.workspace)
   cleanup.push(guard)
@@ -4414,22 +4445,50 @@ async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: stri
   }
 }
 
-function reopenRuntime(f: ReturnType<typeof fixture>) {
+function reopenRuntime(
+  f: ReturnType<typeof fixture>,
+  verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number },
+) {
   const repository = new TaskRepository(f.repository.path, f.root)
   const store = new RunnerStore(repository)
   store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const runtime = new TaskRuntime(store, f.host, "project")
+  const runtime = new TaskRuntime(
+    store,
+    f.host,
+    "project",
+    undefined,
+    verificationTimeoutDefaults ? { verificationTimeoutDefaults } : {},
+  )
   cleanup.unshift(async () => {
     await runtime.stop()
     repository.close()
   })
   return { store, runtime }
 }
-async function prepareInterruptedCombinedCheck() {
+async function prepareInterruptedCombinedCheck(
+  options: {
+    combinedCheckCommand?: string
+    additionalCombinedCheckCommand?: string
+    verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+    reopenTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+    interruptedCheckID?: string
+    legacyCompletedCheckID?: string
+  } = {},
+) {
   const f = fixture({
     taskFiles: [{ name: "a", path: "a.txt" }],
     combinedCheckCommand:
+      options.combinedCheckCommand ??
       "printf started > .lazers-combined-started; while [ ! -f .lazers-combined-release ]; do sleep 0.02; done; exit 0",
+    ...(options.additionalCombinedCheckCommand
+      ? { additionalCombinedCheckCommand: options.additionalCombinedCheckCommand }
+      : {}),
+    ...(options.verificationTimeoutDefaults
+      ? {
+          useProjectVerificationDefaults: true,
+          verificationTimeoutDefaults: options.verificationTimeoutDefaults,
+        }
+      : {}),
   })
   await runPlan(f)
   let interruptedEffect: ReturnType<RunnerStore["effects"]>[number] | undefined
@@ -4437,7 +4496,10 @@ async function prepareInterruptedCombinedCheck() {
     await f.runtime.tick()
     const effect = f.store
       .effects(f.receipt.planID)
-      .find((candidate) => candidate.kind === "graph-verify:combined")
+      .find(
+        (candidate) =>
+          candidate.kind === `graph-verify:${options.interruptedCheckID ?? "combined"}`,
+      )
     const activity = effect
       ? verificationActivitiesForDatabase(f.repository.path).find(
           (candidate) => candidate.metadata.effectID === effect.id,
@@ -4447,13 +4509,11 @@ async function prepareInterruptedCombinedCheck() {
       interruptedEffect = effect
       break
     }
-    const taskChecks = verificationActivitiesForDatabase(f.repository.path).filter(
+    const activeChecks = verificationActivitiesForDatabase(f.repository.path).filter(
       (candidate) =>
-        candidate.metadata.planID === f.receipt.planID &&
-        typeof candidate.metadata.taskID === "string" &&
-        candidate.state === "running",
+        candidate.metadata.planID === f.receipt.planID && candidate.state === "running",
     )
-    await Promise.all(taskChecks.map((candidate) => candidate.settled))
+    await Promise.all(activeChecks.map((candidate) => candidate.settled))
   }
   if (!interruptedEffect) throw new Error("Combined verification did not start")
   const payload = JSON.parse(interruptedEffect.payload) as {
@@ -4461,11 +4521,27 @@ async function prepareInterruptedCombinedCheck() {
     receiptPath: string
   }
   await waitForPath(join(payload.workspace, ".lazers-combined-started"))
+  let legacyReceipt: string | null = null
+  if (options.legacyCompletedCheckID) {
+    const legacyEffect = f.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.kind === `graph-verify:${options.legacyCompletedCheckID}`)
+    if (!legacyEffect?.receipt) throw new Error("Completed combined check receipt is missing")
+    const legacyPayload = JSON.parse(legacyEffect.payload) as Record<string, unknown>
+    delete legacyPayload.authoredCheck
+    delete legacyPayload.verificationDeadline
+    f.store.atomic((db) =>
+      db
+        .query("UPDATE runner_effects SET payload=? WHERE id=?")
+        .run(JSON.stringify(legacyPayload), legacyEffect.id),
+    )
+    legacyReceipt = legacyEffect.receipt
+  }
   await f.runtime.stop()
   rmSync(join(payload.workspace, ".lazers-combined-started"), { force: true })
   rmSync(join(payload.workspace, ".lazers-combined-release"), { force: true })
 
-  const reopened = reopenRuntime(f)
+  const reopened = reopenRuntime(f, options.reopenTimeoutDefaults)
   await drive(reopened.runtime, 4)
   const interrupted = reopened.store
     .effects(f.receipt.planID)
@@ -4478,6 +4554,7 @@ async function prepareInterruptedCombinedCheck() {
     interrupted,
     receiptPath: payload.receiptPath,
     planID: f.receipt.planID,
+    legacyReceipt,
   }
 }
 async function acceptPlan(
@@ -4596,6 +4673,7 @@ async function prepareAfterPlanDependency(
   f: ReturnType<typeof fixture>,
   requestID: string,
   priority = 10,
+  holdCleanup = false,
 ) {
   const parentID = f.receipt.planID
   const childTask = f.createTask("b", "b.txt")
@@ -4610,6 +4688,8 @@ async function prepareAfterPlanDependency(
   await runPlan(f, child.planID, `${requestID}-run`)
   const accepted = await acceptPlan(f, parentID)
   includeArtifact(f, accepted.plan.artifact!)
+  if (holdCleanup)
+    writeFileSync(join(accepted.attempt.workspace, "keep-owned-worktree.txt"), "still owned")
   await recordPlanIntegration(f, parentID)
   return { parentID, child, accepted }
 }
@@ -5016,12 +5096,19 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
 })
 
 test("reopening verification reruns only the interrupted check", async () => {
+  const invocationDirectory = mkdtempSync(join(tmpdir(), "lazers-check-reuse-"))
+  const beforeInvocations = join(invocationDirectory, "before.log")
+  const contentInvocations = join(invocationDirectory, "content.log")
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
   const f = fixture({
     taskFiles: [{ name: "a", path: "a.txt" }],
-    beforeCheck: "true",
+    beforeCheck: `printf x >> ${quote(beforeInvocations)}; true`,
     checkCommand: (_name, _path, root) =>
-      `touch '${root}/check-started'; while [ ! -f '${root}/check-release' ]; do sleep 0.02; done`,
+      `printf x >> ${quote(contentInvocations)}; touch '${root}/check-started'; while [ ! -f '${root}/check-release' ]; do sleep 0.02; done`,
+    useProjectVerificationDefaults: true,
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 10_000, hardTimeoutMs: 20_000 },
   })
+  cleanup.push(() => rmSync(invocationDirectory, { recursive: true, force: true }))
   await runPlan(f)
   await f.runtime.tick()
   const attempt = f.store.attempts(f.receipt.planID)[0]!
@@ -5032,16 +5119,107 @@ test("reopening verification reruns only the interrupted check", async () => {
   )!
   await first.settled
   await f.runtime.tick()
+  const legacyBefore = f.store
+    .effects(f.receipt.planID)
+    .find((effect) => effect.kind === "verify:before")!
+  if (legacyBefore.state !== "completed" || !legacyBefore.receipt)
+    throw new Error("The first task check did not complete before interruption")
+  const beforeReceipt = legacyBefore.receipt
+  const legacyPayload = JSON.parse(legacyBefore.payload) as Record<string, unknown>
+  delete legacyPayload.authoredCheck
+  delete legacyPayload.verificationDeadline
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET payload=? WHERE id=?")
+      .run(JSON.stringify(legacyPayload), legacyBefore.id),
+  )
   await waitForPath(join(f.root, "check-started"), 3_000)
   await f.runtime.stop()
 
-  const reopened = reopenRuntime(f)
+  const reopened = reopenRuntime(f, {
+    inactivityTimeoutMs: 15_000,
+    hardTimeoutMs: 30_000,
+  })
   writeFileSync(join(f.root, "check-release"), "release\n")
   await drive(reopened.runtime, 8)
   const effects = reopened.store.effects(f.receipt.planID)
   expect(effects.filter((effect) => effect.kind === "verify:before")).toHaveLength(1)
   expect(effects.filter((effect) => effect.kind === "verify:content")).toHaveLength(2)
+  const reusedBefore = effects.find((effect) => effect.kind === "verify:before")!
+  expect(reusedBefore.receipt).toBe(beforeReceipt)
+  expect(readFileSync(beforeInvocations, "utf8")).toBe("x")
+  expect(readFileSync(contentInvocations, "utf8")).toBe("xx")
   expect(reopened.store.plan(f.receipt.planID)?.state).toBe("accepted")
+})
+
+test("completed legacy combined checks survive changed defaults across reopen without rerunning", async () => {
+  const invocationDirectory = mkdtempSync(join(tmpdir(), "lazers-combined-reuse-"))
+  const firstInvocations = join(invocationDirectory, "first.log")
+  const secondInvocations = join(invocationDirectory, "second.log")
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+  const state = await prepareInterruptedCombinedCheck({
+    combinedCheckCommand: `printf x >> ${quote(firstInvocations)}; true`,
+    additionalCombinedCheckCommand:
+      `printf x >> ${quote(secondInvocations)}; touch .lazers-combined-started; ` +
+      "while [ ! -f .lazers-combined-release ]; do sleep 0.02; done; exit 0",
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 10_000, hardTimeoutMs: 20_000 },
+    reopenTimeoutDefaults: { inactivityTimeoutMs: 15_000, hardTimeoutMs: 30_000 },
+    interruptedCheckID: "combined-second",
+    legacyCompletedCheckID: "combined",
+  })
+  cleanup.push(() => rmSync(invocationDirectory, { recursive: true, force: true }))
+
+  expect(state.legacyReceipt).toBeString()
+  const first = state.reopened.store
+    .effects(state.planID)
+    .find((effect) => effect.kind === "graph-verify:combined")!
+  expect(first.state).toBe("completed")
+  expect(first.receipt).toBe(state.legacyReceipt)
+  expect(JSON.parse(first.payload).authoredCheck).toBeUndefined()
+  expect(JSON.parse(first.payload).check.inactivityTimeoutMs).toBe(10_000)
+  expect(readFileSync(firstInvocations, "utf8")).toBe("x")
+  expect(state.interrupted.state).toBe("uncertain")
+  expect(readFileSync(secondInvocations, "utf8")).toBe("x")
+  expect(
+    state.reopened.store
+      .effects(state.planID)
+      .filter((effect) => effect.kind === "graph-verify:combined"),
+  ).toHaveLength(1)
+})
+
+test("integrated combined cleanup accepts a completed legacy check after defaults change", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    useProjectVerificationDefaults: true,
+    verificationTimeoutDefaults: { inactivityTimeoutMs: 10_000, hardTimeoutMs: 20_000 },
+  })
+  const { plan } = await acceptPlan(f, f.receipt.planID)
+  const completedCheck = f.store
+    .effects(plan.id)
+    .find((effect) => effect.kind === "graph-verify:combined")!
+  const graphWorkspace = JSON.parse(completedCheck.payload).workspace as string
+  const legacyPayload = JSON.parse(completedCheck.payload) as Record<string, unknown>
+  delete legacyPayload.authoredCheck
+  delete legacyPayload.verificationDeadline
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_effects SET payload=? WHERE id=?")
+      .run(JSON.stringify(legacyPayload), completedCheck.id),
+  )
+
+  await f.runtime.stop()
+  const reopened = reopenRuntime(f, {
+    inactivityTimeoutMs: 15_000,
+    hardTimeoutMs: 30_000,
+  })
+  f.runtime = reopened.runtime
+  f.store = reopened.store
+  includeArtifact(f, plan.artifact!)
+  await recordPlanIntegration(f, f.receipt.planID)
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)?.state).toBe("integrated")
+  expect(existsSync(graphWorkspace)).toBe(false)
 })
 
 test("registered plan command resumes settled combined verification without replaying accepted workers", async () => {
@@ -9021,7 +9199,12 @@ test("afterPlans cleanup cannot publish over cancellation or reuse the historica
     commit: true,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
-  const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-cleanup", -10)
+  const { parentID, child, accepted } = await prepareAfterPlanDependency(
+    f,
+    "cancel-cleanup",
+    -10,
+    true,
+  )
   const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
   writeFileSync(sentinel, "still owned")
   const originalWorktrees = f.host.worktrees
@@ -9082,7 +9265,12 @@ test("afterPlans invalidation during child worktree creation keeps the owned wor
     commit: true,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
-  const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-worktree")
+  const { parentID, child, accepted } = await prepareAfterPlanDependency(
+    f,
+    "cancel-worktree",
+    10,
+    true,
+  )
   const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
   writeFileSync(sentinel, "still owned")
   const originalWorktree = f.host.worktree
@@ -9102,19 +9290,37 @@ test("afterPlans invalidation during child worktree creation keeps the owned wor
     return originalWorktree(input)
   }
 
+  // Arrange this specific admission race before cleanup-first scheduling ends the parent.
+  const runnablePlans = f.store.runnablePlans.bind(f.store)
+  const dispatchOrder = spyOn(f.store, "runnablePlans").mockImplementation(function* (terminal) {
+    yield* [...runnablePlans(terminal)].sort(
+      (left, right) => Number(right.id === child.planID) - Number(left.id === child.planID),
+    )
+  })
   const dispatch = f.runtime.tick()
-  await entered
-  await f.runtime.command(
-    {
-      requestID: "cancel-parent-during-child-worktree",
-      planID: parentID,
-      expectedVersion: f.store.plan(parentID)!.version,
-      action: "cancel",
-    },
-    "owner",
-  )
-  release()
-  await dispatch
+  try {
+    await Promise.race([
+      entered,
+      dispatch.then(() => {
+        throw new Error("Dispatch ended before child worktree admission")
+      }),
+    ])
+    dispatchOrder.mockRestore()
+    expect(f.store.plan(parentID)?.state).toBe("cleaning")
+    await f.runtime.command(
+      {
+        requestID: "cancel-parent-during-child-worktree",
+        planID: parentID,
+        expectedVersion: f.store.plan(parentID)!.version,
+        action: "cancel",
+      },
+      "owner",
+    )
+  } finally {
+    dispatchOrder.mockRestore()
+    release()
+    await dispatch
+  }
 
   const attempt = f.store.attempts(child.planID)[0]!
   expect(f.store.attempts(child.planID)).toHaveLength(1)
@@ -9201,7 +9407,12 @@ test("afterPlans invalidation during retained preparation reconciliation blocks 
     commit: true,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
-  const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-reconcile")
+  const { parentID, child, accepted } = await prepareAfterPlanDependency(
+    f,
+    "cancel-reconcile",
+    10,
+    true,
+  )
   const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
   writeFileSync(sentinel, "still owned")
   const originalCreate = f.host.create
@@ -14387,37 +14598,42 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
   await prepareIdleArchitect(f, now, 1_000)
-  const beforeCreatePlan = f.store.plan(f.receipt.planID)!
-  f.store.atomic((db) =>
-    db
-      .query(
-        "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES(?,?,?,?,?,'pending',1,?,NULL)",
-      )
-      .run(
-        "task-outcome-before-create",
-        beforeCreatePlan.id,
-        "owner",
-        "task-outcome-before-create-message",
-        JSON.stringify({
-          planID: beforeCreatePlan.id,
-          version: beforeCreatePlan.version,
-          status: "task-accepted",
-          taskID: f.tasks[0]!.id,
-          artifact: "worker-artifact",
-        }),
-        JSON.stringify({
-          lazersKind: "runner-outcome",
-          lazersProjectID: "project",
-          lazersProjectDirectory: f.root,
-          lazersPlanID: beforeCreatePlan.id,
-          lazersOutboxID: "task-outcome-before-create",
-          lazersMessageID: "task-outcome-before-create-message",
-          lazersSessionID: "owner",
-          lazersStatus: "task-accepted",
-          lazersVersion: beforeCreatePlan.version,
-        }),
-      ),
-  )
+  const createArchitect = f.host.createArchitect!
+  f.host.createArchitect = async (input) => {
+    // Inject after closeout delivery, but before successor creation starts.
+    const beforeCreatePlan = f.store.plan(f.receipt.planID)!
+    f.store.atomic((db) =>
+      db
+        .query(
+          "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES(?,?,?,?,?,'pending',1,?,NULL)",
+        )
+        .run(
+          "task-outcome-before-create",
+          beforeCreatePlan.id,
+          "owner",
+          "task-outcome-before-create-message",
+          JSON.stringify({
+            planID: beforeCreatePlan.id,
+            version: beforeCreatePlan.version,
+            status: "task-accepted",
+            taskID: f.tasks[0]!.id,
+            artifact: "worker-artifact",
+          }),
+          JSON.stringify({
+            lazersKind: "runner-outcome",
+            lazersProjectID: "project",
+            lazersProjectDirectory: f.root,
+            lazersPlanID: beforeCreatePlan.id,
+            lazersOutboxID: "task-outcome-before-create",
+            lazersMessageID: "task-outcome-before-create-message",
+            lazersSessionID: "owner",
+            lazersStatus: "task-accepted",
+            lazersVersion: beforeCreatePlan.version,
+          }),
+        ),
+    )
+    return createArchitect(input)
+  }
   const update = f.host.updateSession!
   let startArchive!: () => void
   let releaseArchive!: () => void
@@ -14474,10 +14690,18 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
   }
 
   const tick = f.runtime.tick()
-  await started
-  expect(f.notifications).toHaveLength(0)
-  releaseArchive()
-  await tick
+  try {
+    await Promise.race([
+      started,
+      tick.then(() => {
+        throw new Error("Renewal ended before archival admission")
+      }),
+    ])
+    expect(f.notifications).toHaveLength(0)
+  } finally {
+    releaseArchive()
+    await tick
+  }
 
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
   const successor = renewal.successor_session_id
