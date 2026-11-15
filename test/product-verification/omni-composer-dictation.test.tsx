@@ -94,11 +94,18 @@ test("composer-click fixture dictation preserves a draft, inserts streamed words
     sha256: "0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880",
     audioBase64: fixtureWavBase64(),
   }
+  let fixtureDurationMs = fixture.durationMs
   const audioIPC = {
     enabled: async () => true,
     takeDictation: async ({ sessionID }: { sessionID: string }) => {
       expect(sessionID).toBe("owned-session")
-      return fixtureArmed ? { ...fixture, requestID: `dictation-request-${++fixtureCount}` } : null
+      return fixtureArmed
+        ? {
+            ...fixture,
+            durationMs: fixtureDurationMs,
+            requestID: `dictation-request-${++fixtureCount}`,
+          }
+        : null
     },
     observe: async ({ event }: { event: AudioObservationEvent }) => {
       observations.push(event)
@@ -215,10 +222,9 @@ test("composer-click fixture dictation preserves a draft, inserts streamed words
     expect(draft).toBe(`Keep this existing draft: ${transcript}`)
 
     transcriptionMode = "immediate"
+    fixtureDurationMs = 1
     draft = "Fresh retry draft: "
     inserted.length = 0
-    control()?.run?.()
-    await waitFor(() => control()?.title.includes("recording") === true)
     control()?.run?.()
     await waitFor(
       () => observations.filter((event) => event.kind === "dictation-complete").length === 2,

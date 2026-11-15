@@ -21,6 +21,10 @@ type PillView = {
 }
 type NativePill = { show(input: unknown): PillView | undefined }
 type NativeCommand = { run?: () => void }
+type ReadAloudHarnessOptions = {
+  takePlaybackPlan?: () => Promise<PlaybackPlan | null>
+  observe?: (event: AudioObservationEvent, signal?: AbortSignal) => Promise<void>
+}
 
 class EventChannel {
   private events: OpenCodeEvent[] = []
@@ -140,7 +144,11 @@ function event(type: string, data: Record<string, unknown>): OpenCodeEvent {
   } as unknown as OpenCodeEvent
 }
 
-function setup(audioPlan?: PlaybackPlan, audioRoute: "liquid" | "runntime" = "liquid") {
+function setup(
+  audioPlan?: PlaybackPlan,
+  audioRoute: "liquid" | "runntime" = "liquid",
+  options: ReadAloudHarnessOptions = {},
+) {
   audioStarted = Promise.withResolvers<void>()
   sourceStops = 0
   naturalEnd = false
@@ -165,7 +173,7 @@ function setup(audioPlan?: PlaybackPlan, audioRoute: "liquid" | "runntime" = "li
       client: { event: { subscribe: channel.subscribe } },
     },
   }
-  const [currentSession] = createSignal(session)
+  const [currentSession, setCurrentSession] = createSignal(session)
   const abort = new AbortController()
   const pills = new Map<string, NativePill>()
   let autoCommand: NativeCommand | undefined
@@ -176,9 +184,14 @@ function setup(audioPlan?: PlaybackPlan, audioRoute: "liquid" | "runntime" = "li
     keybinds: { keybind: () => ["ctrl", "shift", "alt", "s"] },
     toast: { show() {} },
     main: () => ({
-      enabled: async () => audioPlan !== undefined,
-      takePlaybackPlan: async () => audioPlan ?? null,
-      observe: async ({ event }: { event: AudioObservationEvent }) => {
+      enabled: async () => audioPlan !== undefined || options.takePlaybackPlan !== undefined,
+      takePlaybackPlan: async () =>
+        options.takePlaybackPlan ? options.takePlaybackPlan() : (audioPlan ?? null),
+      observe: async (
+        { event }: { event: AudioObservationEvent },
+        { signal }: { signal?: AbortSignal },
+      ) => {
+        await options.observe?.(event, signal)
         audioObservations.push(event)
       },
     }),
@@ -216,6 +229,7 @@ function setup(audioPlan?: PlaybackPlan, audioRoute: "liquid" | "runntime" = "li
     channel,
     dispose,
     messages,
+    navigate: () => setCurrentSession({ ...session, visit: {} }),
     pills,
     session,
   }
@@ -225,6 +239,16 @@ function required<T>(value: T | undefined): T {
   expect(value).toBeDefined()
   if (value === undefined) throw new Error("Expected registered control")
   return value
+}
+
+async function planFor(requestID: string): Promise<PlaybackPlan> {
+  const segments = speechSegments("The last completed answer.")
+  return {
+    requestID,
+    sessionID: "session",
+    expectedTextHash: await sha256Text(segments.join("\n")),
+    segmentHashes: await Promise.all(segments.map(sha256Text)),
+  }
 }
 
 test("registered speaker replays the last completed reply during new work and Stop cancels it", async () => {
@@ -350,6 +374,159 @@ test("owned playback cancellation stops active output without reporting completi
     expect(sourceStops).toBe(1)
     expect(harness.calls[0]?.signal.aborted).toBe(true)
   } finally {
+    harness.abort.abort()
+    harness.dispose()
+    globalThis.AudioContext = original
+  }
+})
+
+test("manual playback preflight cannot start speech after session navigation", async () => {
+  const plan = await planFor("playback-navigation-request")
+  const pendingPlan = Promise.withResolvers<PlaybackPlan | null>()
+  const planRequested = Promise.withResolvers<void>()
+  const harness = setup(undefined, "runntime", {
+    takePlaybackPlan: () => {
+      planRequested.resolve()
+      return pendingPlan.promise
+    },
+  })
+  try {
+    const speaker = required(harness.pills.get("read-aloud"))
+    const input = { session: harness.session, screen: {} }
+    speaker.show(input)?.run?.()
+    await planRequested.promise
+    expect(speaker.show(input)?.title).toContain("preparing speech; click to stop")
+    harness.navigate()
+    pendingPlan.resolve(plan)
+    await waitFor(() =>
+      harness.audioObservations.some((item) => item.kind === "playback-cancelled"),
+    )
+    expect(harness.calls).toEqual([])
+    expect(harness.audioObservations).toEqual([{ kind: "playback-cancelled" }])
+  } finally {
+    harness.abort.abort()
+    harness.dispose()
+  }
+})
+
+test("manual playback preflight settles its armed plan when the plugin aborts", async () => {
+  const plan = await planFor("playback-abort-request")
+  const pendingPlan = Promise.withResolvers<PlaybackPlan | null>()
+  const planRequested = Promise.withResolvers<void>()
+  const harness = setup(undefined, "runntime", {
+    takePlaybackPlan: () => {
+      planRequested.resolve()
+      return pendingPlan.promise
+    },
+  })
+  try {
+    const speaker = required(harness.pills.get("read-aloud"))
+    speaker.show({ session: harness.session, screen: {} })?.run?.()
+    await planRequested.promise
+    harness.abort.abort()
+    pendingPlan.resolve(plan)
+    await waitFor(() =>
+      harness.audioObservations.some((item) => item.kind === "playback-cancelled"),
+    )
+    expect(harness.calls).toEqual([])
+    expect(harness.audioObservations).toEqual([{ kind: "playback-cancelled" }])
+  } finally {
+    harness.abort.abort()
+    harness.dispose()
+  }
+})
+
+test("cancellation during a pending playback observation handles the ended rejection", async () => {
+  const original = globalThis.AudioContext
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const plan = await planFor("playback-observe-cancel-request")
+  const waitingObservation = Promise.withResolvers<void>()
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown) => unhandled.push(reason)
+  process.on("unhandledRejection", onUnhandled)
+  const harness = setup(plan, "runntime", {
+    observe: async (event, signal) => {
+      if (event.kind !== "playback-segment-start") return
+      waitingObservation.resolve()
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"))
+        if (!signal || signal.aborted) abort()
+        else {
+          signal.addEventListener("abort", abort, { once: true })
+        }
+      })
+    },
+  })
+  try {
+    const speaker = required(harness.pills.get("read-aloud"))
+    speaker.show({ session: harness.session, screen: {} })?.run?.()
+    await audioStarted.promise
+    await waitingObservation.promise
+    speaker.show({ session: harness.session, screen: {} })?.run?.()
+    await waitFor(() =>
+      harness.audioObservations.some((item) => item.kind === "playback-cancelled"),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.audioObservations.map((item) => item.kind)).toEqual([
+      "playback-start",
+      "playback-cancelled",
+    ])
+    expect(sourceStops).toBe(1)
+    expect(unhandled).toEqual([])
+  } finally {
+    process.off("unhandledRejection", onUnhandled)
+    harness.abort.abort()
+    harness.dispose()
+    globalThis.AudioContext = original
+  }
+})
+
+test("a rejected playback observation aborts output and a fresh request succeeds", async () => {
+  const original = globalThis.AudioContext
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const firstPlan = await planFor("playback-observe-failure-request")
+  const retryPlan = await planFor("playback-retry-request")
+  let activePlan = firstPlan
+  let rejectSegmentObservation = true
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown) => unhandled.push(reason)
+  process.on("unhandledRejection", onUnhandled)
+  const harness = setup(undefined, "runntime", {
+    takePlaybackPlan: async () => activePlan,
+    observe: async (event) => {
+      if (event.kind === "playback-segment-start" && rejectSegmentObservation) {
+        rejectSegmentObservation = false
+        throw new Error("Fixture observation failed")
+      }
+    },
+  })
+  try {
+    const speaker = required(harness.pills.get("read-aloud"))
+    const input = { session: harness.session, screen: {} }
+    speaker.show(input)?.run?.()
+    await audioStarted.promise
+    await waitFor(() => harness.audioObservations.some((item) => item.kind === "playback-failed"))
+    await waitFor(
+      () => speaker.show(input)?.title.includes("read latest completed response") === true,
+    )
+    expect(sourceStops).toBe(1)
+    activePlan = retryPlan
+    naturalEnd = true
+    speaker.show(input)?.run?.()
+    await waitFor(() => harness.audioObservations.some((item) => item.kind === "playback-complete"))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.audioObservations.map((item) => item.kind)).toEqual([
+      "playback-start",
+      "playback-failed",
+      "playback-start",
+      "playback-segment-start",
+      "playback-segment-end",
+      "playback-complete",
+    ])
+    expect(harness.calls).toHaveLength(2)
+    expect(unhandled).toEqual([])
+  } finally {
+    process.off("unhandledRejection", onUnhandled)
     harness.abort.abort()
     harness.dispose()
     globalThis.AudioContext = original

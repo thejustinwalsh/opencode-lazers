@@ -147,9 +147,15 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
               resolve(new Blob([bytes], { type: "audio/wav" }))
             }
             resources.timer = setInterval(() => {
-              const elapsed = Math.min(performance.now() - start, fixture!.durationMs)
-              setSeconds(Math.floor(elapsed / 1_000))
-              if (elapsed >= MAX_AUDIO_SECONDS * 1_000 || !current()) resources.stop()
+              const captureElapsed = performance.now() - start
+              const displayElapsed = Math.min(captureElapsed, fixture!.durationMs)
+              setSeconds(Math.floor(displayElapsed / 1_000))
+              if (
+                captureElapsed >= fixture!.durationMs ||
+                captureElapsed >= MAX_AUDIO_SECONDS * 1_000 ||
+                !current()
+              )
+                resources.stop()
             }, 80)
             setState("recording")
             if (!current()) resources.stop()
