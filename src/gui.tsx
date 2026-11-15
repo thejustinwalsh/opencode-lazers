@@ -217,8 +217,13 @@ export default Plugin.define({
         },
       },
     )
-    const currentAudioRoute = () => {
+    const [speechSettingsSession, setSpeechSettingsSession] = createSignal(ctx.sessions.current())
+    createEffect(() => {
       const session = ctx.sessions.current()
+      if (session) setSpeechSettingsSession(session)
+    })
+    const currentAudioRoute = () => {
+      const session = speechSettingsSession()
       return session ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected) : "liquid"
     }
     registerDictation(ctx, runtime)
@@ -563,7 +568,7 @@ export default Plugin.define({
                     : "Liquid (default)"
                 }`}
                 trigger="button"
-                disabled={!ctx.sessions.current()}
+                disabled={!speechSettingsSession()}
                 items={[
                   { label: "Liquid (default)", value: "liquid" as const },
                   {
@@ -573,7 +578,7 @@ export default Plugin.define({
                 ].map((item) => ({
                   label: item.label,
                   onSelect: () => {
-                    const session = ctx.sessions.current()
+                    const session = speechSettingsSession()
                     if (session) ctx.stores.audioRoute(session).set({ selected: item.value })
                   },
                 }))}
