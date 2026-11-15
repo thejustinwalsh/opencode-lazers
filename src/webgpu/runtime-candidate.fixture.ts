@@ -173,6 +173,7 @@ const files = {
   decisionStatus: async () => ({ phase: "cached", downloadedBytes: 0, cachedBytes: 1 }),
   trace: async (event: InferenceTraceEvent) => traces.push(event),
 }
+let pollUnavailable = false
 const worker = {
   contract: async () => ({ revision: serverContractRevision }),
   attach: async ({ owner, contractRevision }: { owner: string; contractRevision: string }) => {
@@ -185,8 +186,10 @@ const worker = {
     broker.detach(owner, error)
     if (attachedOwner === owner) attachedOwner = undefined
   },
-  poll: async ({ owner, available }: { owner: string; available: boolean }) =>
-    broker.poll(owner, available),
+  poll: async ({ owner, available }: { owner: string; available: boolean }) => {
+    if (pollUnavailable) throw new Error("Transport: Failed to fetch")
+    return broker.poll(owner, available)
+  },
   complete: async ({
     owner,
     id,
@@ -216,7 +219,7 @@ let timer: (() => void) | undefined
 let stopRuntime: (() => void) | undefined
 const runtime = solid.createRoot((dispose) => {
   stopRuntime = dispose
-  return createInferenceRuntime(ctx, () => -1, undefined, features, {
+  return createInferenceRuntime(ctx, undefined, undefined, features, {
     wallNow: () => now,
     schedule: (callback, delayMs) => {
       assert.equal(delayMs, 500)
@@ -354,9 +357,11 @@ try {
   assert.equal(nativeTrace.modelRepository, "LiquidAI/LFM3-Omni-2B-GGUF")
   assert.equal(nativeTrace.modelRevision, "3d29af2ad166f8299c2d820937e47dc0add20ffc")
   assert.equal(nativeTrace.modelPrecision, "language Q4_K_M")
-  await tickUntil(
-    () => runtime.state() === "ready" && runtime.modelIdentity()?.backend === "liquid",
-    "global Liquid route restoration after native Omni call",
+  await tick()
+  assert.equal(
+    runtime.modelIdentity()?.backend,
+    "runntime",
+    "Polling must not allocate an idle fallback",
   )
   const selectedLiquid = await submit({ prompt: "Liquid remains selected", route: "liquid" })
   assert.equal(selectedLiquid.text, "Liquid reply")
@@ -375,17 +380,14 @@ try {
   setRoute("runntime")
   assert.equal(runtime.state(), "loading")
   assert.equal(recoveryEnabled, false)
-  await until(
-    () => runtime.state() === "ready" && runtime.modelIdentity()?.backend === "runntime",
-    "ruNNtime route switch",
-  )
+  await until(() => runtime.state() === "unloaded", "ruNNtime route switch releases weights")
+  const runntimeText = await submit({ prompt: "ruNNtime text" })
   assert.equal(displayedBackend, "runntime")
   assert.equal(displayedName, "ruNNtime LFM3")
   assert.equal(recoveryEnabled, true)
   assert.equal(runtime.modelIdentity()?.precision, "language Q4_K_M")
   assert.match(runtime.modelIdentity()?.artifacts ?? "", /LFM3-Omni-2B-Q4_K_M\.gguf sha256:/)
   assert.doesNotMatch(runtime.modelIdentity()?.artifacts ?? "", /mmproj-/)
-  const runntimeText = await submit({ prompt: "ruNNtime text" })
   assert.equal(runntimeText.text, "ruNNtime reply")
   assert.equal(runntimeText.promptTokens, 8)
   const runntimeTextTrace = traces.find(
@@ -466,14 +468,11 @@ try {
   setRoute("liquid")
   assert.equal(runtime.state(), "loading")
   assert.equal(recoveryEnabled, false)
-  await until(
-    () => runtime.state() === "ready" && runtime.modelIdentity()?.backend === "liquid",
-    "route switch back to Liquid",
-  )
+  await until(() => runtime.state() === "unloaded", "route switch back to Liquid releases weights")
+  const liquidSpeech = await submit({ prompt: "Liquid audio", mode: "speak", feature: "readAloud" })
   assert.equal(displayedBackend, "liquid")
   assert.equal(displayedName, "LFM3")
   assert.equal(recoveryEnabled, false)
-  const liquidSpeech = await submit({ prompt: "Liquid audio", mode: "speak", feature: "readAloud" })
   assert.equal(liquidSpeech.ok, true)
   assert.equal(liquidSpeech.promptTokens, 6)
   const liquidAudioTrace = traces.find(
@@ -502,6 +501,17 @@ try {
   assert.equal(decisionTrace.modelRevision, DECISION_REVISION)
   assert.match(decisionTrace.modelArtifacts ?? "", /decoder_q4f16\.onnx sha256:/)
   assert.doesNotMatch(decisionTrace.modelArtifacts ?? "", /LFM3-Omni/)
+
+  now += 60_001
+  pollUnavailable = true
+  await tickUntil(() => runtime.state() === "error", "disconnected idle eviction")
+  assert.equal(runtime.modelIdentity(), undefined, "Transport failure must not keep idle weights")
+  pollUnavailable = false
+  await tickUntil(() => runtime.state() === "unloaded", "default idle eviction")
+  const allocationsAfterEviction = allocations
+  await tick()
+  assert.equal(runtime.modelIdentity(), undefined)
+  assert.equal(allocations, allocationsAfterEviction, "An idle tick must not reload weights")
 
   failCompletion = true
   const undelivered = await submit({ prompt: "delivery failure" })

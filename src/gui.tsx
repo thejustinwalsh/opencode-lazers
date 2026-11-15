@@ -4,7 +4,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { ModelFiles } from "./webgpu/ipc.ts"
 import { setupMain } from "./webgpu/main.ts"
 import { setupNativeInteractionMain } from "./verification/opencode/native-interaction-main.ts"
-import { createInferenceRuntime } from "./webgpu/runtime.ts"
+import { createInferenceRuntime, DEFAULT_MODEL_KEEP_ALIVE_MS } from "./webgpu/runtime.ts"
 import { LocalModel } from "./webgpu/contract.ts"
 import {
   DECISION_BYTES,
@@ -61,7 +61,7 @@ export default Plugin.define({
           Schema.isBetween({ minimum: -1, maximum: 86_400_000 }),
         ),
       }),
-      { keepAliveMs: -1 },
+      { keepAliveMs: DEFAULT_MODEL_KEEP_ALIVE_MS },
     ),
   },
   async main(ctx) {
@@ -204,7 +204,7 @@ export default Plugin.define({
     onCleanup(() => clearInterval(settingsTimer))
     const runtime = createInferenceRuntime(
       ctx,
-      () => ctx.stores.runtime.value?.keepAliveMs ?? -1,
+      () => ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS,
       () => ctx.stores.voice.value?.selected ?? DEFAULT_VOICE,
       features,
       {
@@ -502,7 +502,7 @@ export default Plugin.define({
                   </p>
                 )}
               </Show>
-              <p>Enabled local features load their model automatically and share GPU memory.</p>
+              <p>Local features load models on demand and share GPU memory.</p>
               <Ui.Menu
                 label={`Chat route: ${ctx.stores.modelRoute.value?.selected === "runntime" ? "ruNNtime Omni (unqualified)" : "Liquid WebGPU (default)"}`}
                 trigger="button"
@@ -519,16 +519,16 @@ export default Plugin.define({
                 ]}
               />
               <p class="lazers-local-meta">
-                Chat route changes unload the active chat model before loading the selected route.
-                ruNNtime failures remain visible and never fall back automatically. System One
-                decisions remain on d1. Speech has a separate session-scoped route below.
+                Chat route changes unload the current model. The next request loads the selected
+                route. ruNNtime failures remain visible and never fall back automatically. System
+                One decisions remain on d1. Speech has a separate session-scoped route below.
               </p>
               <Ui.Menu
-                label={`Unload when idle: ${ctx.stores.runtime.value?.keepAliveMs === 60_000 ? "1 minute" : ctx.stores.runtime.value?.keepAliveMs === 300_000 ? "5 minutes" : ctx.stores.runtime.value?.keepAliveMs === 900_000 ? "15 minutes" : "Never"}`}
+                label={`Unload when idle: ${(ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 60_000 ? "1 minute" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 300_000 ? "5 minutes" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 900_000 ? "15 minutes" : "Never"}`}
                 trigger="button"
                 items={[
-                  { label: "Never (default)", value: -1 },
-                  { label: "After 1 minute", value: 60_000 },
+                  { label: "Never", value: -1 },
+                  { label: "After 1 minute", value: DEFAULT_MODEL_KEEP_ALIVE_MS },
                   { label: "After 5 minutes", value: 300_000 },
                   { label: "After 15 minutes", value: 900_000 },
                 ].map((item) => ({

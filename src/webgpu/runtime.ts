@@ -149,9 +149,11 @@ const artifactIdentity = (
 
 const tokenizerIdentity = `LiquidAI/LFM3-Omni-2B tokenizer.json revision:${LFM3_TOKENIZER_REVISION}`
 
+export const DEFAULT_MODEL_KEEP_ALIVE_MS = 60_000
+
 export function createInferenceRuntime(
   ctx: Parameters<Plugin.Setup>[0],
-  keepAliveMs: () => number = () => -1,
+  keepAliveMs: () => number = () => DEFAULT_MODEL_KEEP_ALIVE_MS,
   voice: () => SpeechVoice = () => DEFAULT_VOICE,
   features: () => Features,
   timing: {
@@ -281,7 +283,7 @@ export function createInferenceRuntime(
   let recovery: Promise<void> | undefined
   let recoveryController: AbortController | undefined
   let recoveryKind: ModelKind | undefined
-  let lastUsed = Date.now()
+  let lastUsed = wallNow()
   let autoload = false
   let losses: number[] = []
   let recoveryRetry: { kind: ModelKind; at: number } | undefined
@@ -971,7 +973,7 @@ export function createInferenceRuntime(
       signal.throwIfAborted()
       setResident(models.current())
       setTarget(undefined)
-      lastUsed = Date.now()
+      lastUsed = wallNow()
     } catch (error) {
       setResident(models.current())
       if (requestedSignal.aborted) {
@@ -984,7 +986,6 @@ export function createInferenceRuntime(
     }
   }
 
-  let deferModelUntilDemand = false
   let decisionExecuting = false
   const recover = (kind: ModelKind) => {
     if (recovery || disposed || unloading) return
@@ -1011,7 +1012,6 @@ export function createInferenceRuntime(
         if (waitForDemand) {
           // A failed decision may have exhausted GPU memory. Release its device
           // now and let the next queued job choose and load its model.
-          deferModelUntilDemand = true
           setTarget(undefined)
           setGPU("")
           ready()
@@ -1114,7 +1114,6 @@ export function createInferenceRuntime(
     try {
       if (!featureEnabled(features(), job.feature))
         throw Error("This local inference feature is turned off")
-      deferModelUntilDemand = false
       recoveryRetry = undefined
       await traceStage("loading")
       await ensureModel(inferenceKind, controller.signal, job.mode === "text" ? route : undefined)
@@ -1315,7 +1314,7 @@ export function createInferenceRuntime(
       } else trace.fail(failure ?? result.error, { active: false, ...heap() })
       await traceWrites
       active = undefined
-      lastUsed = Date.now()
+      lastUsed = wallNow()
       if (completionFailed) void unload()
       else if (!unloading && !disposed && !recovery && state() !== "error") ready()
     }
@@ -1357,11 +1356,28 @@ export function createInferenceRuntime(
     return operation
   }
 
-  const load = async () => {
+  const load = async (warm = false) => {
     if (disposed || unloading || models.current() || !usesGPU(features())) return
-    if (initializing) return initializing
+    if (initializing) {
+      await initializing
+      if (
+        warm &&
+        !disposed &&
+        !unloading &&
+        owner &&
+        !active &&
+        !models.current() &&
+        contractStatus() === "compatible" &&
+        usesGPU(features()) &&
+        !(await worker().demand({}, { signal: ctx.signal })).requested &&
+        !active
+      ) {
+        await ensureModel(needsChat(features()) ? "chat" : "decision", ctx.signal)
+        ready()
+      }
+      return
+    }
     if (wallNow() < nextLoadAttempt) return
-    deferModelUntilDemand = false
     nextLoadAttempt = wallNow() + Math.min(30_000, 1_000 * 2 ** Math.min(loadFailures++, 5))
     loadController = new AbortController()
     const controller = loadController
@@ -1421,7 +1437,7 @@ export function createInferenceRuntime(
         await Promise.all(cacheOperations)
         // Let the mailbox select the model if an inference request is already waiting.
         // Warming chat first would allocate it only to immediately switch to decisions.
-        if (!(await worker().demand({}, { signal })).requested)
+        if (warm && !(await worker().demand({}, { signal })).requested)
           await ensureModel(needsChat(features()) ? "chat" : "decision", signal)
         nextLoadAttempt = 0
         loadFailures = 0
@@ -1467,6 +1483,28 @@ export function createInferenceRuntime(
       loadController = undefined
     }
   }
+
+  const releaseResident = async () => {
+    try {
+      await models.release()
+      setResident(undefined)
+      setTarget(undefined)
+      setGPU("")
+      ready()
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  const idleExpired = () =>
+    !active &&
+    !initializing &&
+    !switching &&
+    !recovery &&
+    !models.isTainted() &&
+    models.current() !== undefined &&
+    keepAliveMs() >= 0 &&
+    wallNow() - lastUsed >= keepAliveMs()
 
   let checking = false
   const tick = async () => {
@@ -1529,6 +1567,7 @@ export function createInferenceRuntime(
           if (!isRendererOwnershipLost(error)) {
             // Transport latency does not establish loss of the broker or GPU lease.
             pollDisconnected = true
+            if (idleExpired()) await releaseResident()
             fail(
               `Local model connection interrupted: ${errorDetail(error)}. Retrying automatically.`,
             )
@@ -1577,14 +1616,11 @@ export function createInferenceRuntime(
         !recoveryRetry &&
         state() !== "error" &&
         !models.isTainted() &&
-        ((!models.current() && !deferModelUntilDemand) ||
-          ((models.current() === "chat" || models.current() === "audio") &&
-            !needsChat(features())) ||
-          (models.current() === "chat" && models.get("chat")?.route !== chatRoute()) ||
+        (((models.current() === "chat" || models.current() === "audio") &&
+          !needsChat(features())) ||
           (models.current() === "decision" && !featureEnabled(features(), "decisions")))
       ) {
-        await ensureModel(needsChat(features()) ? "chat" : "decision", ctx.signal)
-        ready()
+        await releaseResident()
       }
       if (state() === "loading") {
         const [a, b] = await Promise.all([
@@ -1603,15 +1639,7 @@ export function createInferenceRuntime(
         (await worker().demand({}, { signal: serviceSignal() })).requested
       )
         void load()
-      else if (
-        !active &&
-        models.current() &&
-        state() === "ready" &&
-        keepAliveMs() >= 0 &&
-        Date.now() - lastUsed >= keepAliveMs() &&
-        !(await worker().demand({}, { signal: serviceSignal() })).requested
-      )
-        await unload()
+      else if (idleExpired()) await releaseResident()
     } catch {
       /* The next tick retries a disconnected service; bounded model loading has its own policy. */
     } finally {
@@ -1775,7 +1803,7 @@ export function createInferenceRuntime(
       return undefined
     },
     audioRoute,
-    load,
+    load: () => load(true),
     unload,
     dispose,
     cancel: () => {
