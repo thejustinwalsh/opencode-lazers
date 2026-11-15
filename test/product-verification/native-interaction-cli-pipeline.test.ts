@@ -145,7 +145,7 @@ async function pipeline(options: PipelineOptions = {}) {
     removeListener: (name) => windowListeners.delete(name),
   }
 
-  const now = () => Date.now()
+  let brokerTime = Date.now()
   const broker = new NativeInteractionBroker(
     {
       root,
@@ -153,7 +153,7 @@ async function pipeline(options: PipelineOptions = {}) {
       servicePID: registration.pid,
       version: registration.version,
     },
-    now,
+    () => brokerTime,
   )
   const desktopRPC = {
     attach: async (input: Parameters<NativeInteractionBroker["attach"]>[0]) => {
@@ -269,7 +269,7 @@ async function pipeline(options: PipelineOptions = {}) {
     makeClient: () => client,
     verifyOwnedSidecar: async () => proof as never,
     resolveNativeInteraction: async (_root, requestID) => {
-      if (leaseRequestID !== requestID || leaseState !== "ambiguous")
+      if (leaseRequestID !== requestID || (leaseState !== "pending" && leaseState !== "ambiguous"))
         throw new Error("Native interaction resolution does not match the pending request")
       leaseState = "idle"
       manifest.status = "ready"
@@ -292,6 +292,17 @@ async function pipeline(options: PipelineOptions = {}) {
     enqueueCount: () => enqueueCount,
     leaseState: () => leaseState,
     leaseFinishes: () => leaseFinishes,
+    advanceBrokerClock: (milliseconds: number) => (brokerTime += milliseconds),
+    seedPendingRequest: (requestID: string, operation: NativeOperation) => {
+      leaseRequestID = requestID
+      leaseState = "pending"
+      manifest.nativeInteraction = { state: "pending", requestID, kind: "key" }
+      return broker.enqueue({ binding, requestID, operation })
+    },
+    abandonAdapter: () => {
+      // Simulate a process exit: do not invoke detach, which would settle the lease itself.
+      Reflect.set(adapter, "stopped", true)
+    },
     close: () => adapter.stop(),
   }
 }
@@ -589,6 +600,84 @@ describe("owned native interaction CLI-to-Main pipeline", () => {
         { type: "keyDown", keyCode: "Enter" },
         { type: "keyUp", keyCode: "Enter" },
       ])
+      expect(value.leaseState()).toBe("idle")
+    } finally {
+      value.close()
+    }
+  })
+
+  test("recovers a stale pending request only after explicit resolution, then dispatches once", async () => {
+    const value = await pipeline()
+    try {
+      value.abandonAdapter()
+      const staleRequestID = "8fc30312-7715-4a1a-a12f-2bb8e53f17c2"
+      const staleOperation: NativeOperation = {
+        kind: "key",
+        window: value.windowReference,
+        snapshotID: "snapshot-before-crash",
+        key: "Enter",
+      }
+      expect(value.seedPendingRequest(staleRequestID, staleOperation)).toEqual({ state: "queued" })
+      value.advanceBrokerClock(2_001)
+
+      const replacementID = "replacement-adapter"
+      value.broker.attach({
+        binding,
+        adapterID: replacementID,
+        windows: [value.windowReference],
+        capabilities: { modifiedKeys: true },
+      })
+      expect(value.broker.status(binding)).toMatchObject({ ready: true, adapterID: replacementID })
+      expect(value.broker.result(binding, staleRequestID)).toEqual({
+        state: "completed",
+        result: {
+          delivery: "not-delivered",
+          message: "Desktop adapter heartbeat expired before dispatch",
+        },
+      })
+      expect(
+        value.broker.poll({
+          binding,
+          adapterID: replacementID,
+          windows: [value.windowReference],
+        }),
+      ).toBeNull()
+      await expect(
+        runCLI(nativeArgs("Enter", "snapshot-before-resolution"), value.dependencies),
+      ).rejects.toThrow("previous native interaction is unresolved")
+      expect(value.enqueueCount()).toBe(0)
+
+      await runCLI(
+        ["native-resolve", "--root", root, "--request", staleRequestID],
+        value.dependencies,
+      )
+      expect(value.leaseState()).toBe("idle")
+
+      const requestCountBefore = value.enqueueCount()
+      const nextRequest = runCLI(nativeArgs("Enter", "fresh-snapshot"), value.dependencies)
+      for (
+        let attempt = 0;
+        attempt < 100 && value.enqueueCount() === requestCountBefore;
+        attempt++
+      ) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1))
+      }
+      expect(value.enqueueCount()).toBe(requestCountBefore + 1)
+      const command = value.broker.poll({
+        binding,
+        adapterID: replacementID,
+        windows: [value.windowReference],
+      })
+      expect(command).toMatchObject({ operation: { kind: "key", key: "Enter" } })
+      if (command === null) throw new Error("Fresh request was not dispatched")
+      value.broker.complete({
+        binding,
+        adapterID: replacementID,
+        requestID: command.requestID,
+        result: { delivery: "delivered" },
+      })
+      await nextRequest
+      expect(value.enqueueCount()).toBe(requestCountBefore + 1)
       expect(value.leaseState()).toBe("idle")
     } finally {
       value.close()

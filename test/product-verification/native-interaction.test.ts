@@ -414,6 +414,16 @@ describe("owned native interaction broker", () => {
           },
         }),
       ).rejects.toThrow("does not match the owned sidecar")
+      await expect(
+        call("attach", {
+          ...firstAttach,
+          adapterID: "rpc-wrong-profile",
+          binding: {
+            ...registeredBinding,
+            root: "/private/tmp/another-profile",
+          },
+        }),
+      ).rejects.toThrow("does not match the owned sidecar")
       await expect(call("attach", { ...firstAttach, adapterID: "rpc-competitor" })).rejects.toThrow(
         "different native adapter generation",
       )
@@ -465,6 +475,18 @@ describe("owned native interaction broker", () => {
         call("detach", { binding: registeredBinding, adapterID: "rpc-adapter-1" }),
       ).rejects.toThrow("generation is stale")
 
+      const staleQueuedID = "afc30312-7715-4a1a-a12f-2bb8e53f17c4"
+      const staleQueuedOperation: NativeOperation = {
+        kind: "snapshot",
+        window: replacementWindow,
+      }
+      expect(
+        await call("enqueue", {
+          binding: registeredBinding,
+          requestID: staleQueuedID,
+          operation: staleQueuedOperation,
+        }),
+      ).toEqual({ state: "queued" })
       currentTime += 2_001
       await call("attach", {
         binding: registeredBinding,
@@ -478,7 +500,81 @@ describe("owned native interaction broker", () => {
         windows: [windowRef],
         capabilities: { modifiedKeys: false },
       })
-      await call("detach", { binding: registeredBinding, adapterID: "rpc-adapter-3" })
+      expect(
+        await call("result", { binding: registeredBinding, requestID: staleQueuedID }),
+      ).toEqual({
+        state: "completed",
+        result: {
+          delivery: "not-delivered",
+          message: "Desktop adapter heartbeat expired before dispatch",
+        },
+      })
+      expect(
+        await call("poll", {
+          binding: registeredBinding,
+          adapterID: "rpc-adapter-3",
+          windows: [windowRef],
+        }),
+      ).toBeNull()
+      await expect(
+        call("poll", {
+          binding: registeredBinding,
+          adapterID: "rpc-adapter-2",
+          windows: [replacementWindow],
+        }),
+      ).rejects.toThrow("different native adapter generation")
+      await expect(
+        call("complete", {
+          binding: registeredBinding,
+          adapterID: "rpc-adapter-2",
+          requestID: staleQueuedID,
+          result: deliveredResult,
+        }),
+      ).rejects.toThrow("stale adapter generation")
+      await expect(
+        call("detach", { binding: registeredBinding, adapterID: "rpc-adapter-2" }),
+      ).rejects.toThrow("generation is stale")
+      expect(await call("status", { binding: registeredBinding })).toMatchObject({
+        ready: true,
+        adapterID: "rpc-adapter-3",
+      })
+
+      const completedID = "bfc30312-7715-4a1a-a12f-2bb8e53f17c5"
+      const completedOperation: NativeOperation = { kind: "snapshot", window: windowRef }
+      expect(
+        await call("enqueue", {
+          binding: registeredBinding,
+          requestID: completedID,
+          operation: completedOperation,
+        }),
+      ).toEqual({ state: "queued" })
+      expect(
+        await call("poll", {
+          binding: registeredBinding,
+          adapterID: "rpc-adapter-3",
+          windows: [windowRef],
+        }),
+      ).toEqual({ requestID: completedID, operation: completedOperation })
+      await call("complete", {
+        binding: registeredBinding,
+        adapterID: "rpc-adapter-3",
+        requestID: completedID,
+        result: deliveredResult,
+      })
+      currentTime += 2_001
+      await call("attach", {
+        binding: registeredBinding,
+        adapterID: "rpc-adapter-4",
+        windows: [replacementWindow],
+      })
+      expect(await call("result", { binding: registeredBinding, requestID: completedID })).toEqual({
+        state: "completed",
+        result: deliveredResult,
+      })
+      await expect(
+        call("detach", { binding: registeredBinding, adapterID: "rpc-adapter-3" }),
+      ).rejects.toThrow("generation is stale")
+      await call("detach", { binding: registeredBinding, adapterID: "rpc-adapter-4" })
       expect(await call("status", { binding: registeredBinding })).toMatchObject({
         ready: false,
         blocked: false,
