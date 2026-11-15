@@ -491,24 +491,6 @@ export default Plugin.define({
                 </div>
                 <span class="lazers-local-state">{runtime.state()}</span>
               </div>
-              <p class="lazers-local-meta">
-                Service completion contract: {runtime.contractStatus()} · required{" "}
-                <code>{GENERATION_RESULT_CONTRACT_REVISION}</code>
-              </p>
-              <Show when={runtime.gpu()}>
-                <p class="lazers-local-meta">{runtime.gpu()}</p>
-              </Show>
-              <Show when={runtime.modelIdentity()}>
-                {(identity) => (
-                  <p class="lazers-local-meta">
-                    {identity().backend} · {identity().repository} · {identity().precision} · model{" "}
-                    <code>{identity().revision}</code> · runtime{" "}
-                    <code>{identity().runtimeRevision}</code>
-                    <br />
-                    Artifacts: <code>{identity().artifacts}</code>
-                  </p>
-                )}
-              </Show>
               <p>Local features load models on demand and share GPU memory.</p>
               <Ui.Menu
                 label={`Chat route: ${(ctx.stores.modelRoute.value?.selected ?? DEFAULT_OMNI_ROUTE) === "runntime" ? "ruNNtime Omni (default)" : "Liquid WebGPU"}`}
@@ -616,7 +598,25 @@ export default Plugin.define({
             </Ui.Button>
           </section>
           <details class="lazers-local-diagnostics">
-            <summary>Diagnostics &amp; model tests</summary>
+            <summary>Advanced diagnostics</summary>
+            <p class="lazers-local-meta">
+              Service completion contract: {runtime.contractStatus()} · required{" "}
+              <code>{GENERATION_RESULT_CONTRACT_REVISION}</code>
+            </p>
+            <Show when={runtime.gpu()}>
+              <p class="lazers-local-meta">{runtime.gpu()}</p>
+            </Show>
+            <Show when={runtime.modelIdentity()}>
+              {(identity) => (
+                <p class="lazers-local-meta">
+                  {identity().backend} · {identity().repository} · {identity().precision} · model{" "}
+                  <code>{identity().revision}</code> · runtime{" "}
+                  <code>{identity().runtimeRevision}</code>
+                  <br />
+                  Artifacts: <code>{identity().artifacts}</code>
+                </p>
+              )}
+            </Show>
             <section aria-labelledby="lazers-renderer-capture-title">
               <h2 id="lazers-renderer-capture-title">Renderer CPU capture</h2>
               <p>
