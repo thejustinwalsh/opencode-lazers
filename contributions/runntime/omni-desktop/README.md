@@ -7,15 +7,16 @@ fall back automatically.
 ## Exact candidate identity
 
 The retained LAZERS candidate baseline is commit
-`cde3941d4555970cc3086df50573b907350eee67`. The exact LAZERS implementation
+`cde3941d4555970cc3086df50573b907350eee67`. The historical LAZERS implementation
 tree for this receipt is commit `17848b7fe71f2228072b295a5ded087626684148`,
 built on commit `4b8701de59de858072eb70656e0a9effb03c965f`, which introduced the
 contract and provenance increment. That earlier tree requires
 `webgpu-generation-result-nullable-usage-v1`. The native conversation changes
-from LZ-28 require the v2 contract documented below. Rebuild the GUI from the
-LZ-28 task commit for native conversation qualification. The earlier candidate
-bundle does not support the v2 stream mailbox; use the verification and
-`bun run build:gui` commands below.
+from LZ-28 and the resolver/location/history repairs from LZ-30 require the v2
+contract documented below. Rebuild the GUI from the current LAZERS source state
+containing both increments for native conversation qualification. The earlier
+candidate bundle does not support the v2 stream mailbox; use the verification
+and `bun run build:gui` commands below.
 The exact sibling package source is `runntime/packages/runntime` at commit
 `4bec7104f2e70290982864963f6b194e6d5439fe` (package revision), based on
 `6aa6bbd5a0dae14204e9853c34c911fedd430659`. Liquid remains the selected default
@@ -49,7 +50,8 @@ bun run build:gui
 
 For the historical v1 candidate, `git -C "$LAZERS" rev-parse HEAD` reports
 `17848b7fe71f2228072b295a5ded087626684148`. Native conversation qualification
-must instead use the LZ-28 task commit named below. In both cases,
+must instead use the current LAZERS tree containing the LZ-28 and LZ-30 changes;
+record its `git -C "$LAZERS" rev-parse HEAD` before building. In both cases,
 `git -C "$RUNNTIME" rev-parse HEAD` must report the sibling package revision above.
 `bun add --no-save` is a workstation-only override; do not retain it in either
 LAZERS manifest or lockfile. The built GUI bundle is self-contained for the
@@ -91,9 +93,10 @@ producer receipt does not qualify the package or the candidate route.
 
 ## Desktop status
 
-The matching candidate GUI was built from LAZERS code revision
-`17848b7fe71f2228072b295a5ded087626684148` with the pinned sibling package. The completion-contract service reload and Desktop-only
-reopen have not been performed by this worker, and no Desktop interaction occurred.
+The historical pre-native candidate GUI was built from LAZERS code revision
+`17848b7fe71f2228072b295a5ded087626684148` with the pinned sibling package. The
+completion-contract service reload and Desktop-only reopen have not been
+performed by this worker, and no Desktop interaction occurred.
 The supported launcher found the existing ready isolated root
 `lazers-full-instance-qk2Laa` for the canonical workspace and refused a competing
 trial. Per Architect direction, the prior root, reservation, Desktop, service,
@@ -117,10 +120,11 @@ Desktop observations are recorded alongside the exact candidate/package
 revisions above. No native picker or conversation interaction was performed by
 this worker.
 
-The implementation tree cited above predates the native conversation provider.
-For native conversation qualification, rebuild from the LZ-28 task commit in
-this checkout; the former candidate build is not compatible with the v2 stream
-mailbox contract and must not be used as evidence.
+The historical implementation tree cited above predates the native conversation
+provider. For native conversation qualification, rebuild from the current LAZERS
+tree containing the LZ-28 provider and LZ-30 resolver/location/history repairs;
+the former candidate build is not compatible with the v2 stream mailbox contract
+and must not be used as evidence.
 
 The native-conversation regression suite also verifies the host `aisdk:` package
 gate and SDK/language hook construction, project-to-default-location streaming,
@@ -131,3 +135,10 @@ legacy single-prompt diagnostic still supplies one user message. These are
 automated fakes/fixtures, not Desktop or GPU observations; native model selection,
 real service interruption, and rendered conversation qualification remain
 pending.
+
+For this task, `bun run verify`, `bun test src/webgpu test/product-verification`
+(214 tests passed), and `bun run build:gui` passed with the pinned sibling
+package revision above. The bundle build emitted non-fatal `inlineDynamicImports`
+and ONNX `EMPTY_IMPORT_META` warnings; its bundle evaluation passed. This is
+automated verification only: no Desktop/service lifecycle or real GPU/native
+conversation qualification was performed.
