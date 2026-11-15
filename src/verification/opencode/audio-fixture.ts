@@ -62,35 +62,46 @@ export function validateFrozenAudioFixture(
   const hash = createHash("sha256").update(bytes).digest("hex")
   if (hash !== definition.sha256)
     throw new Error("Approved frozen clip failed its pinned SHA-256 check")
-  validateFrozenWav(bytes, definition.sampleRate)
+  const dataLength = validateFrozenWav(bytes, definition.sampleRate)
   return {
-    durationMs: Math.round(((bytes.byteLength - 44) / (definition.sampleRate * 2)) * 1_000),
+    durationMs: Math.round((dataLength / (definition.sampleRate * 2)) * 1_000),
     sha256: definition.sha256,
   }
 }
 
-export function validateFrozenWav(bytes: Uint8Array, sampleRate: number): void {
+export function validateFrozenWav(bytes: Uint8Array, sampleRate: number): number {
   if (
     bytes.byteLength < 44 ||
     bytes.byteLength > 100_000 ||
     ascii(bytes, 0, 4) !== "RIFF" ||
     ascii(bytes, 8, 4) !== "WAVE" ||
-    ascii(bytes, 12, 4) !== "fmt " ||
-    ascii(bytes, 36, 4) !== "data"
+    ascii(bytes, 12, 4) !== "fmt "
   ) {
     throw new Error("Frozen clip is not a bounded PCM WAV")
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   if (
+    view.getUint32(4, true) !== bytes.byteLength - 8 ||
+    view.getUint32(16, true) !== 16 ||
     view.getUint16(20, true) !== 1 ||
     view.getUint16(22, true) !== 1 ||
     view.getUint32(24, true) !== sampleRate ||
-    view.getUint16(34, true) !== 16 ||
-    view.getUint32(40, true) !== bytes.byteLength - 44 ||
-    (bytes.byteLength - 44) % 2 !== 0
+    view.getUint16(34, true) !== 16
   ) {
     throw new Error("Frozen clip format or sample rate does not match its approved identity")
   }
+  for (let offset = 36; offset + 8 <= bytes.byteLength;) {
+    const length = view.getUint32(offset + 4, true)
+    const end = offset + 8 + length + (length % 2)
+    if (end > bytes.byteLength) break
+    if (ascii(bytes, offset, 4) === "data") {
+      if (length === 0 || length % 2 !== 0)
+        throw new Error("Frozen clip has an invalid PCM16 data size")
+      return length
+    }
+    offset = end
+  }
+  throw new Error("Frozen clip has no complete WAV data chunk")
 }
 
 function ascii(bytes: Uint8Array, offset: number, length: number): string {
