@@ -64,7 +64,7 @@ test("agent tools enforce permissions before RPC and apply bounded defaults", as
     tools.get("lz-local-ask")!.execute({ prompt: "q" }, context),
   )
   expect(JSON.parse(String(answer.content)).text).toBe("local answer")
-  expect(calls[0]).toEqual({ prompt: "q", timeoutMs: 60_000, maxTokens: 256 })
+  expect(calls[0]).toEqual({ prompt: "q", timeoutMs: 120_000, maxTokens: 256 })
   const decision = await Effect.runPromise(
     tools
       .get("lz-local-decide")!

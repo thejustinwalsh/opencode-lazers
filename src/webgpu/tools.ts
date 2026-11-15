@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { z } from "zod"
-import { LocalInference } from "./rpc.ts"
+import { LocalInference, OMNI_REQUEST_TIMEOUT_MS } from "./rpc.ts"
 import { SystemOneRequest } from "./system-one.ts"
 import type { LocalFeature } from "./features.ts"
 
@@ -10,7 +10,7 @@ const timeoutMs = z.int().min(1_000).max(120_000).default(60_000)
 const ask = z.strictObject({
   prompt: z.string().min(1).max(8_000),
   maxTokens: z.int().min(1).max(512).default(256),
-  timeoutMs,
+  timeoutMs: timeoutMs.default(OMNI_REQUEST_TIMEOUT_MS),
 })
 const decide = z.strictObject({
   question: z.string().min(1).max(1_000),
@@ -82,7 +82,7 @@ export function registerInferenceTools(
       editor.add({
         name: "lz-local-ask",
         description:
-          "Ask the optional local WebGPU model a general question. Autoloads. Bounded FIFO queue; default 60-second total deadline including loading and waiting. Returns measured text/usage or an explicit error.",
+          "Ask Omni a local question. Downloads the model on first use. The default 120-second deadline includes waiting and loading. Returns text and measured token usage.",
         input: ask,
         options: { codemode: true, permission: "lz-local-ask" },
         execute: (input, context) =>

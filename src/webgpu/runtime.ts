@@ -15,6 +15,7 @@ import {
 } from "./manifest.ts"
 import {
   GENERATION_RESULT_CONTRACT_REVISION,
+  OMNI_REQUEST_TIMEOUT_MS,
   LocalInference,
   RendererInference,
   isRendererOwnershipLost,
@@ -1504,12 +1505,18 @@ export function createInferenceRuntime(
       else models.get("decision")?.engine.loseDevice()
     },
     generate: (prompt: string, signal?: AbortSignal) =>
-      rpc().ask({ prompt, maxTokens: 128, timeoutMs: 60_000 }, { signal }),
+      rpc().ask({ prompt, maxTokens: 128, timeoutMs: OMNI_REQUEST_TIMEOUT_MS }, { signal }),
     decide: (input: DecisionInput, signal?: AbortSignal) => rpc().decide(input, { signal }),
     systemOne: (input: SystemOneInput, signal?: AbortSignal) => rpc().systemOne(input, { signal }),
     speak: (prompt: string, signal?: AbortSignal, route?: ChatRoute) =>
       rpc().speak(
-        { prompt, voice: voice(), route: route ?? audioRoute(), maxTokens: 512, timeoutMs: 60_000 },
+        {
+          prompt,
+          voice: voice(),
+          route: route ?? audioRoute(),
+          maxTokens: 512,
+          timeoutMs: OMNI_REQUEST_TIMEOUT_MS,
+        },
         { signal },
       ),
     transcribe: async (
@@ -1522,7 +1529,12 @@ export function createInferenceRuntime(
       transcripts.set(requestID, onText)
       try {
         return await rpc().transcribe(
-          { audioBase64, requestID, route: route ?? audioRoute(), timeoutMs: 60_000 },
+          {
+            audioBase64,
+            requestID,
+            route: route ?? audioRoute(),
+            timeoutMs: OMNI_REQUEST_TIMEOUT_MS,
+          },
           { signal },
         )
       } finally {

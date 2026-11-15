@@ -70,3 +70,13 @@ checkpoint and the 4,733,371-byte tokenizer and returned the same score in
 downloaded. The checkpoint is a
 [separate release asset](https://github.com/thejustinwalsh/runntime/releases/tag/lazers-d1-q8-02b55d7)
 with the original license and conversion notice.
+
+A fresh local package install resolved both OpenCode plugin entrypoints. In a
+single isolated Desktop run, both model caches started empty and stayed empty
+after enabling local inference. Omni's first question downloaded and verified
+the 1,606,472,608-byte GGUF pair and returned “Hello” in 74.3 s. The next
+question returned in 332 ms. D1's cache stayed empty through Omni chat,
+transcription and speech generation. The first System One request then
+downloaded its own files and returned the expected answer in 18.7 s. The Omni
+tool and Desktop actions now use the 120-second request budget exercised by
+that cold start.

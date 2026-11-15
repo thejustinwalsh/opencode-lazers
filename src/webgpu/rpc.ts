@@ -8,6 +8,7 @@ import { FeatureSettings, FeaturePatch } from "./features.ts"
 const portable = Schema.toStandardSchemaV1
 const ownerToken = Schema.String.check(Schema.isBetweenLength(1, 100))
 export const GENERATION_RESULT_CONTRACT_REVISION = "webgpu-generation-result-nullable-usage-v2"
+export const OMNI_REQUEST_TIMEOUT_MS = 120_000
 const generationContract = portable(
   Schema.Struct({ revision: Schema.String.check(Schema.isBetweenLength(1, 100)) }),
 )
@@ -22,7 +23,7 @@ export const Request = Schema.Struct({
   maxTokens: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 512 })),
   timeoutMs: Schema.Number.check(
     Schema.isInt(),
-    Schema.isBetween({ minimum: 1_000, maximum: 120_000 }),
+    Schema.isBetween({ minimum: 1_000, maximum: OMNI_REQUEST_TIMEOUT_MS }),
   ),
 })
 export type InferenceRequest = typeof Request.Type
