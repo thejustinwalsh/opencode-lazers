@@ -1,0 +1,170 @@
+
+ RUN  v5.0.4 /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/opencode/runntime-lz17-baseline/packages/runntime
+
+ ❯ |gpu (chromium)| test/zoo/leaks.gpu.test.ts (8 tests | 2 failed) 648ms
+   ❯ MiniLM, a batch (2)
+     × frees every buffer on dispose 171ms
+     × stops allocating once warm 147ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |gpu (chromium)| test/zoo/leaks.gpu.test.ts > MiniLM, a batch > frees every buffer on dispose
+AssertionError: expected [ '40 B, usage 140', …(2) ] to deeply equal [ '40 B, usage 140', …(4) ]
+
+Failure screenshot:
+  - .vitest/attachments/failure-screenshots/leaks.gpu.test.ts/MiniLM--a-batch---frees-every-buffer-on-dispose.png
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m  ][22m
+
+ ❯ test/zoo/leaks.gpu.test.ts:200:34
+    198|     await runner.call();
+    199|     runner.dispose();
+    200|     expect(buffersSince(before)).toEqual(leftOnDispose);
+       |                                  ^
+    201|   });
+    202|
+ ❯ node_modules/.vite/vitest/7786424beaf68478f7f2ac35272168ac88ccf09f/deps/plugins.DPQHVT0p-DRUulJcC.js?v=efc6d593:5235:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |gpu (chromium)| test/zoo/leaks.gpu.test.ts > MiniLM, a batch > stops allocating once warm
+AssertionError: expected [ '40 B, usage 140', …(59) ] to deeply equal [ '40 B, usage 140', …(99) ]
+
+Failure screenshot:
+  - .vitest/attachments/failure-screenshots/leaks.gpu.test.ts/MiniLM--a-batch---stops-allocating-once-warm.png
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[2m    "40 B, usage 140",[22m
+[32m-   "20 B, usage 140",[39m
+[32m-   "20 B, usage 140",[39m
+[2m    "3072 B, usage 140",[22m
+[2m  ][22m
+
+ ❯ test/zoo/leaks.gpu.test.ts:211:36
+    209|       const before = liveBuffers();
+    210|       for (let i = 0; i < STEADY_CALLS; i++) await runner.call();
+    211|       expect(buffersSince(before)).toEqual(repeated(leftPerCall, STEAD…
+       |                                    ^
+    212|     } finally {
+    213|       runner.dispose();
+ ❯ node_modules/.vite/vitest/7786424beaf68478f7f2ac35272168ac88ccf09f/deps/plugins.DPQHVT0p-DRUulJcC.js?v=efc6d593:5235:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 6 passed (8)
+   Start at  21:24:33
+   Duration  2.77s (tests 67%, import 19%, worker 14%)
+
+undefined
+/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/opencode/runntime-lz17-baseline/packages/runntime:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project gpu test/zoo/leaks.gpu.test.ts

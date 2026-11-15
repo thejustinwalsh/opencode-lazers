@@ -1,0 +1,372 @@
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stdout | test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid
+LFM3_NATIVE_REFERENCE {"modelRevision":"3d29af2ad166f8299c2d820937e47dc0add20ffc","modelSha256":"9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2","vectors":12,"maxCacheProbabilityError":1.043210406947992e-9,"maxRmsError":0.000002279113543001851,"minCosineSimilarity":0.9999999999998085,"maxAbsoluteError":0.00002288818359375,"storageBuffersAfterDispose":0,"measurements":[{"id":"arithmetic","tokenId":207,"predictedTokenId":124901,"fullForwardPredictedTokenId":124901,"cacheProbabilityError":2.388456099566838e-11,"rmsError":0.0000011936660041575958,"maxAbsoluteError":0.0000057220458984375,"cosineSimilarity":0.9999999999999462},{"id":"arithmetic","tokenId":124901,"predictedTokenId":124902,"fullForwardPredictedTokenId":124902,"cacheProbabilityError":4.8723913792514395e-11,"rmsError":0.0000020426316192688874,"maxAbsoluteError":0.000012516975402832031,"cosineSimilarity":0.9999999999998529},{"id":"arithmetic","tokenId":124902,"predictedTokenId":3843,"fullForwardPredictedTokenId":3843,"cacheProbabilityError":1.043210406947992e-9,"rmsError":0.0000015698328945979291,"maxAbsoluteError":0.0000152587890625,"cosineSimilarity":0.9999999999999031},{"id":"arithmetic","tokenId":3843,"predictedTokenId":124900,"fullForwardPredictedTokenId":124900,"cacheProbabilityError":1.943112337698949e-12,"rmsError":0.0000011009783980082038,"maxAbsoluteError":0.0000152587890625,"cosineSimilarity":0.9999999999999544},{"id":"capital","tokenId":207,"predictedTokenId":124901,"fullForwardPredictedTokenId":124901,"cacheProbabilityError":5.6886606536465933e-11,"rmsError":0.0000012928395045212917,"maxAbsoluteError":0.00000762939453125,"cosineSimilarity":0.9999999999999364},{"id":"capital","tokenId":124901,"predictedTokenId":124902,"fullForwardPredictedTokenId":124902,"cacheProbabilityError":4.015680010738265e-10,"rmsError":0.0000018356766344786617,"maxAbsoluteError":0.00000762939453125,"cosineSimilarity":0.9999999999998748},{"id":"capital","tokenId":124902,"predictedTokenId":41176,"fullForwardPredictedTokenId":41176,"cacheProbabilityError":1.1038170377730694e-11,"rmsError":0.000001694451422026659,"maxAbsoluteError":0.000011444091796875,"cosineSimilarity":0.9999999999998619},{"id":"capital","tokenId":41176,"predictedTokenId":124900,"fullForwardPredictedTokenId":124900,"cacheProbabilityError":1.193212195715887e-11,"rmsError":0.000001179724783348918,"maxAbsoluteError":0.0000152587890625,"cosineSimilarity":0.9999999999999498},{"id":"color","tokenId":207,"predictedTokenId":124901,"fullForwardPredictedTokenId":124901,"cacheProbabilityError":1.3362755346690847e-11,"rmsError":0.0000014483769483566403,"maxAbsoluteError":0.0000152587890625,"cosineSimilarity":0.999999999999925},{"id":"color","tokenId":124901,"predictedTokenId":124902,"fullForwardPredictedTokenId":124902,"cacheProbabilityError":7.608580432361123e-11,"rmsError":0.000002279113543001851,"maxAbsoluteError":0.000010251998901367188,"cosineSimilarity":0.9999999999998085},{"id":"color","tokenId":124902,"predictedTokenId":30965,"fullForwardPredictedTokenId":30965,"cacheProbabilityError":3.871201273496043e-10,"rmsError":0.000001611466376570578,"maxAbsoluteError":0.000011444091796875,"cosineSimilarity":0.9999999999998792},{"id":"color","tokenId":30965,"predictedTokenId":124900,"fullForwardPredictedTokenId":124900,"cacheProbabilityError":1.9613199953028015e-12,"rmsError":0.0000010949885620049961,"maxAbsoluteError":0.00002288818359375,"cosineSimilarity":0.9999999999999538}]}
+ ✓ |gpu (chromium)| test/zoo/lfm3/native-reference.gpu.test.ts > matches native Q4_K_M teacher-forced vectors and next-token ids against Liquid 255618ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  18:20:31
+   Duration  257.99s (tests 100%)
+

@@ -1,0 +1,1045 @@
+From f31f72549dc74d2f01d60c9ce55dd705216879db Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Fri, 13 Nov 2026 06:31:01 -0500
+Subject: [PATCH] feat(zoo): add Omni audio frontend and GGUF support
+
+---
+ packages/runntime/src/core/weights/gguf.ts    | 277 +++++++++++-------
+ .../runntime/src/zoo/lfm3/audio/frontend.ts   | 215 ++++++++++++++
+ packages/runntime/src/zoo/lfm3/gguf.ts        |  10 +
+ packages/runntime/src/zoo/lfm3/model.ts       |   9 +-
+ packages/runntime/src/zoo/tasks/nlp/lfm3.ts   |   5 +-
+ .../runntime/test/core/weights/gguf.test.ts   |  90 +++++-
+ .../test/zoo/lfm3/audio/frontend.test.ts      | 114 +++++++
+ .../test/zoo/lfm3/model-lifecycle.gpu.test.ts |  34 +++
+ .../runntime/test/zoo/lfm3/public.gpu.test.ts |  15 +-
+ .../runntime/test/zoo/lfm3/session.test.ts    |  37 +++
+ 10 files changed, 691 insertions(+), 115 deletions(-)
+ create mode 100644 packages/runntime/src/zoo/lfm3/audio/frontend.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/audio/frontend.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts
+
+diff --git a/packages/runntime/src/core/weights/gguf.ts b/packages/runntime/src/core/weights/gguf.ts
+index 0fb8c5f4e7de471268a2c8b663bf0f4217743951..0a80d207f21f4049b54b675626ec898fc77219d8 100644
+--- a/packages/runntime/src/core/weights/gguf.ts
++++ b/packages/runntime/src/core/weights/gguf.ts
+@@ -1,4 +1,4 @@
+-/** GGUF v3 header parsing and lazy F32/Q4_K/Q6_K tensor access. */
++/** GGUF v3 header parsing and lazy F16/F32/Q4_K/Q6_K/Q8_0 tensor access. */
+ 
+ import { RunntimeError } from '../error.ts';
+ import { f16ToF32 } from './convert.ts';
+@@ -18,8 +18,10 @@ const CHUNK_BYTES = 2 * 1024 * 1024;
+ const QK_BLOCK = 256;
+ const Q4_K_BYTES = 144;
+ const Q6_K_BYTES = 210;
++const Q8_0_BLOCK = 32;
++const Q8_0_BYTES = 34;
+ 
+-export type GgufTensorType = 'F32' | 'Q4_K' | 'Q6_K';
++export type GgufTensorType = 'F16' | 'F32' | 'Q4_K' | 'Q6_K' | 'Q8_0';
+ 
+ export interface GgufTensorInfo {
+   readonly name: string;
+@@ -185,7 +187,17 @@ function tensorBytes(type: GgufTensorType, shape: readonly number[]): number {
+     }
+     return next;
+   }, 1);
++  if (type === 'F16') return elements * 2;
+   if (type === 'F32') return elements * 4;
++  if (type === 'Q8_0') {
++    if (elements % Q8_0_BLOCK !== 0) {
++      throw new RunntimeError(
++        'CHECKPOINT_MISMATCH',
++        `GGUF ${type} tensor has ${elements} elements, not a multiple of ${Q8_0_BLOCK}`,
++      );
++    }
++    return (elements / Q8_0_BLOCK) * Q8_0_BYTES;
++  }
+   if (elements % QK_BLOCK !== 0) {
+     throw new RunntimeError(
+       'CHECKPOINT_MISMATCH',
+@@ -287,7 +299,17 @@ export async function parseGgufHeader(source: RangeSource, fileBytes: number): P
+     }
+     const rawType = reader.u32();
+     const type: GgufTensorType | undefined =
+-      rawType === 0 ? 'F32' : rawType === 12 ? 'Q4_K' : rawType === 14 ? 'Q6_K' : undefined;
++      rawType === 0
++        ? 'F32'
++        : rawType === 1
++          ? 'F16'
++          : rawType === 8
++            ? 'Q8_0'
++            : rawType === 12
++              ? 'Q4_K'
++              : rawType === 14
++                ? 'Q6_K'
++                : undefined;
+     if (!type) {
+       throw new RunntimeError(
+         'CHECKPOINT_MISMATCH',
+@@ -330,46 +352,80 @@ function fp16(view: DataView, offset: number): number {
+   return f16ToF32(bits)[0]!;
+ }
+ 
++function sharedTensorParts<T>(
++  info: GgufTensorInfo,
++  source: RangeSource,
++  count: number,
++  decode: (bytes: Uint8Array) => T,
++): (part: number) => Promise<T> {
++  let pending: Promise<T> | undefined;
++  const consumed = new Set<number>();
++  return async (part) => {
++    let current = pending;
++    if (!current) {
++      current = source.read(info.begin, info.end).then((bytes) => {
++        if (bytes.byteLength !== info.end - info.begin) {
++          throw new RunntimeError(
++            'LOAD_FAILED',
++            `GGUF tensor '${info.name}' returned a short read`,
++          );
++        }
++        return decode(bytes);
++      });
++      pending = current;
++      current.catch(() => {
++        if (pending === current) pending = undefined;
++      });
++    }
++    const result = await current;
++    consumed.add(part);
++    if (consumed.size === count) {
++      pending = undefined;
++      consumed.clear();
++    }
++    return result;
++  };
++}
++
+ function q4Tensor(info: GgufTensorInfo, source: RangeSource): ReturnType<typeof quantTensor> {
+   const elements = info.shape.reduce((product, dimension) => product * dimension, 1);
+   const blocks = elements / QK_BLOCK;
+-  const groups = elements / 32;
+-  const scales = new Float32Array(groups);
+-  const offsets = new Float32Array(groups);
+-  let affineRead: Promise<void> | undefined;
+-  const readAffines = async (): Promise<void> => {
+-    if (affineRead) return affineRead;
+-    affineRead = (async () => {
+-      const data = await source.read(info.begin, info.end);
+-      if (data.byteLength !== info.end - info.begin) {
+-        throw new RunntimeError('LOAD_FAILED', `GGUF tensor '${info.name}' returned a short read`);
+-      }
+-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+-      for (let block = 0; block < blocks; block++) {
+-        const base = block * Q4_K_BYTES;
+-        const scaleOffset = base + 4;
+-        const d = fp16(view, base);
+-        const dmin = fp16(view, base + 2);
+-        for (let group = 0; group < 8; group++) {
+-          let scale: number;
+-          let minimum: number;
+-          if (group < 4) {
+-            scale = data[scaleOffset + group]! & 63;
+-            minimum = data[scaleOffset + group + 4]! & 63;
+-          } else {
+-            scale =
+-              (data[scaleOffset + group + 4]! & 15) | ((data[scaleOffset + group - 4]! >> 6) << 4);
+-            minimum =
+-              (data[scaleOffset + group + 4]! >> 4) | ((data[scaleOffset + group]! >> 6) << 4);
+-          }
+-          const index = block * 8 + group;
+-          scales[index] = d * scale;
+-          offsets[index] = d * scale * 8 - dmin * minimum;
++  const readPart = sharedTensorParts(info, source, 3, (data) => {
++    const groups = elements / 32;
++    const scales = new Float32Array(groups);
++    const offsets = new Float32Array(groups);
++    const ints = new Int8Array(elements);
++    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
++    for (let block = 0; block < blocks; block++) {
++      const base = block * Q4_K_BYTES;
++      const scaleOffset = base + 4;
++      const d = fp16(view, base);
++      const dmin = fp16(view, base + 2);
++      for (let group = 0; group < 8; group++) {
++        let scale: number;
++        let minimum: number;
++        if (group < 4) {
++          scale = data[scaleOffset + group]! & 63;
++          minimum = data[scaleOffset + group + 4]! & 63;
++        } else {
++          scale =
++            (data[scaleOffset + group + 4]! & 15) | ((data[scaleOffset + group - 4]! >> 6) << 4);
++          minimum =
++            (data[scaleOffset + group + 4]! >> 4) | ((data[scaleOffset + group]! >> 6) << 4);
++        }
++        const index = block * 8 + group;
++        scales[index] = d * scale;
++        offsets[index] = d * scale * 8 - dmin * minimum;
++        const qOffset = base + 16 + (group >> 1) * 32;
++        const high = group % 2 === 1;
++        for (let value = 0; value < 32; value++) {
++          const byte = data[qOffset + value]!;
++          ints[block * QK_BLOCK + group * 32 + value] = (high ? byte >> 4 : byte & 15) - 8;
+         }
+       }
+-    })();
+-    return affineRead;
+-  };
++    }
++    return { ints, scales, offsets };
++  });
+   return quantTensor({
+     name: info.name,
+     shape: info.shape,
+@@ -377,33 +433,13 @@ function q4Tensor(info: GgufTensorInfo, source: RangeSource): ReturnType<typeof
+     groupSize: 32,
+     byteLength: info.end - info.begin,
+     async ints() {
+-      const data = await source.read(info.begin, info.end);
+-      if (data.byteLength !== info.end - info.begin) {
+-        throw new RunntimeError('LOAD_FAILED', `GGUF tensor '${info.name}' returned a short read`);
+-      }
+-      const out = new Int8Array(elements);
+-      for (let block = 0; block < blocks; block++) {
+-        const base = block * Q4_K_BYTES;
+-        const quant = base + 16;
+-        for (let group = 0; group < 8; group++) {
+-          const qOffset = quant + (group >> 1) * 32;
+-          const high = group % 2 === 1;
+-          for (let index = 0; index < 32; index++) {
+-            const byte = data[qOffset + index]!;
+-            const quantized = high ? byte >> 4 : byte & 15;
+-            out[block * QK_BLOCK + group * 32 + index] = quantized - 8;
+-          }
+-        }
+-      }
+-      return out;
++      return (await readPart(0)).ints;
+     },
+     async scales() {
+-      await readAffines();
+-      return scales;
++      return (await readPart(1)).scales;
+     },
+     async offsets() {
+-      await readAffines();
+-      return offsets;
++      return (await readPart(2)).offsets;
+     },
+   });
+ }
+@@ -412,26 +448,37 @@ function q6Tensor(info: GgufTensorInfo, source: RangeSource): ReturnType<typeof
+   const elements = info.shape.reduce((product, dimension) => product * dimension, 1);
+   const blocks = elements / QK_BLOCK;
+   const groupSize = 16;
+-  const groups = new Float32Array(elements / groupSize);
+-  let scaleRead: Promise<void> | undefined;
+-  const readScales = async (): Promise<void> => {
+-    if (scaleRead) return scaleRead;
+-    scaleRead = (async () => {
+-      const data = await source.read(info.begin, info.end);
+-      if (data.byteLength !== info.end - info.begin) {
+-        throw new RunntimeError('LOAD_FAILED', `GGUF tensor '${info.name}' returned a short read`);
++  const readPart = sharedTensorParts(info, source, 2, (data) => {
++    const groups = new Float32Array(elements / groupSize);
++    const ints = new Int8Array(elements);
++    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
++    for (let block = 0; block < blocks; block++) {
++      const base = block * Q6_K_BYTES;
++      const ql = base;
++      const qh = base + 128;
++      const d = fp16(view, base + 208);
++      for (let group = 0; group < 16; group++) {
++        groups[block * 16 + group] = d * view.getInt8(base + 192 + group);
+       }
+-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+-      for (let block = 0; block < blocks; block++) {
+-        const base = block * Q6_K_BYTES;
+-        const d = fp16(view, base + 208);
+-        for (let group = 0; group < 16; group++) {
+-          groups[block * 16 + group] = d * view.getInt8(base + 192 + group);
++      for (let half = 0; half < 2; half++) {
++        for (let sub = 0; sub < 4; sub++) {
++          const lowOffset = ql + half * 64 + (sub % 2) * 32;
++          const highOffset = qh + half * 32;
++          const highNibble = sub >= 2;
++          const highShift = sub * 2;
++          for (let index = 0; index < 32; index++) {
++            const low = data[lowOffset + index]!;
++            const high = data[highOffset + index]!;
++            const nibble = highNibble ? low >> 4 : low & 15;
++            const value = nibble | (((high >> highShift) & 3) << 4);
++            const output = block * QK_BLOCK + half * 128 + sub * 32 + index;
++            ints[output] = value - 32;
++          }
+         }
+       }
+-    })();
+-    return scaleRead;
+-  };
++    }
++    return { ints, scales: groups };
++  });
+   return quantTensor({
+     name: info.name,
+     shape: info.shape,
+@@ -439,37 +486,41 @@ function q6Tensor(info: GgufTensorInfo, source: RangeSource): ReturnType<typeof
+     groupSize,
+     byteLength: info.end - info.begin,
+     async ints() {
+-      const data = await source.read(info.begin, info.end);
+-      if (data.byteLength !== info.end - info.begin) {
+-        throw new RunntimeError('LOAD_FAILED', `GGUF tensor '${info.name}' returned a short read`);
+-      }
+-      const out = new Int8Array(elements);
+-      for (let block = 0; block < blocks; block++) {
+-        const base = block * Q6_K_BYTES;
+-        const ql = base;
+-        const qh = base + 128;
+-        for (let half = 0; half < 2; half++) {
+-          for (let sub = 0; sub < 4; sub++) {
+-            const lowOffset = ql + half * 64 + (sub % 2) * 32;
+-            const highOffset = qh + half * 32;
+-            const highNibble = sub >= 2;
+-            const highShift = sub * 2;
+-            for (let index = 0; index < 32; index++) {
+-              const low = data[lowOffset + index]!;
+-              const high = data[highOffset + index]!;
+-              const nibble = highNibble ? low >> 4 : low & 15;
+-              const value = nibble | (((high >> highShift) & 3) << 4);
+-              const output = block * QK_BLOCK + half * 128 + sub * 32 + index;
+-              out[output] = value - 32;
+-            }
+-          }
+-        }
++      return (await readPart(0)).ints;
++    },
++    async scales() {
++      return (await readPart(1)).scales;
++    },
++  });
++}
++
++function q8_0Tensor(info: GgufTensorInfo, source: RangeSource): ReturnType<typeof quantTensor> {
++  const elements = info.shape.reduce((product, dimension) => product * dimension, 1);
++  const blocks = elements / Q8_0_BLOCK;
++  const readPart = sharedTensorParts(info, source, 2, (data) => {
++    const scales = new Float32Array(blocks);
++    const ints = new Int8Array(elements);
++    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
++    for (let block = 0; block < blocks; block++) {
++      const base = block * Q8_0_BYTES;
++      scales[block] = fp16(view, base);
++      for (let index = 0; index < Q8_0_BLOCK; index++) {
++        ints[block * Q8_0_BLOCK + index] = view.getInt8(base + 2 + index);
+       }
+-      return out;
++    }
++    return { ints, scales };
++  });
++  return quantTensor({
++    name: info.name,
++    shape: info.shape,
++    bits: 8,
++    groupSize: Q8_0_BLOCK,
++    byteLength: info.end - info.begin,
++    async ints() {
++      return (await readPart(0)).ints;
+     },
+     async scales() {
+-      await readScales();
+-      return groups;
++      return (await readPart(1)).scales;
+     },
+   });
+ }
+@@ -477,15 +528,23 @@ function q6Tensor(info: GgufTensorInfo, source: RangeSource): ReturnType<typeof
+ function ggufTensor(info: GgufTensorInfo, source: RangeSource) {
+   if (info.type === 'Q4_K') return q4Tensor(info, source);
+   if (info.type === 'Q6_K') return q6Tensor(info, source);
+-  const elements = info.shape.reduce((product, dimension) => product * dimension, 1);
++  if (info.type === 'Q8_0') return q8_0Tensor(info, source);
+   return derivedTensor(
+     info.shape,
+     async () => {
+       const bytes = await source.read(info.begin, info.end);
++      if (bytes.byteLength !== info.end - info.begin) {
++        throw new RunntimeError('LOAD_FAILED', `GGUF tensor '${info.name}' returned a short read`);
++      }
++      if (info.type === 'F16') {
++        return f16ToF32(
++          new Uint16Array(
++            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
++          ),
++        );
++      }
+       return new Float32Array(
+         bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+-        0,
+-        elements,
+       );
+     },
+     info.end - info.begin,
+diff --git a/packages/runntime/src/zoo/lfm3/audio/frontend.ts b/packages/runntime/src/zoo/lfm3/audio/frontend.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3a38a0a4464110babec0eaae17e395a1914c431c
+--- /dev/null
++++ b/packages/runntime/src/zoo/lfm3/audio/frontend.ts
+@@ -0,0 +1,215 @@
++/** LFM3-Omni's 16 kHz log-mel frontend and audio token dimensions. */
++
++import { RunntimeError } from '../../../core/error.ts';
++
++export const LFM3_AUDIO_SAMPLE_RATE = 16_000;
++export const LFM3_AUDIO_FFT_SIZE = 400;
++export const LFM3_AUDIO_HOP_SIZE = 160;
++export const LFM3_AUDIO_MEL_BINS = 128;
++export const LFM3_AUDIO_MAX_SECONDS = 32;
++
++const MIN_PADDED_SAMPLES = 2 * LFM3_AUDIO_SAMPLE_RATE;
++const MAX_AUDIO_SAMPLES = LFM3_AUDIO_MAX_SECONDS * LFM3_AUDIO_SAMPLE_RATE;
++const LOG_FLOOR = 1e-12;
++const LOG_POST_ADD = 4;
++const LOG_POST_SCALE = 1 / 8;
++const LOG10_E = 0.43429448190325176;
++const FFT_BINS = LFM3_AUDIO_FFT_SIZE / 2 + 1;
++
++interface FftPlan {
++  readonly size: number;
++  readonly radix: number;
++  readonly subSize: number;
++  readonly child?: FftPlan;
++  readonly twiddleReal: Float64Array;
++  readonly twiddleImag: Float64Array;
++}
++
++interface ComplexArray {
++  readonly real: Float64Array;
++  readonly imag: Float64Array;
++}
++
++const FFT_PLAN = makeFftPlan(LFM3_AUDIO_FFT_SIZE);
++const WINDOW = periodicHannWindow(LFM3_AUDIO_FFT_SIZE);
++const MEL_FILTERS = slaneyMelFilterbank(
++  LFM3_AUDIO_MEL_BINS,
++  LFM3_AUDIO_FFT_SIZE,
++  LFM3_AUDIO_SAMPLE_RATE,
++);
++
++function makeFftPlan(size: number): FftPlan {
++  if (size === 1) {
++    return {
++      size,
++      radix: 1,
++      subSize: 1,
++      twiddleReal: Float64Array.of(1),
++      twiddleImag: Float64Array.of(0),
++    };
++  }
++  const radix = size % 2 === 0 ? 2 : size % 5 === 0 ? 5 : size;
++  const subSize = size / radix;
++  const child = radix === size ? undefined : makeFftPlan(subSize);
++  const twiddleReal = new Float64Array(size * radix);
++  const twiddleImag = new Float64Array(size * radix);
++  for (let k = 0; k < size; k++) {
++    for (let r = 0; r < radix; r++) {
++      const angle = (2 * Math.PI * k * r) / size;
++      twiddleReal[k * radix + r] = Math.cos(angle);
++      twiddleImag[k * radix + r] = -Math.sin(angle);
++    }
++  }
++  return { size, radix, subSize, child, twiddleReal, twiddleImag };
++}
++
++function fft(real: Float64Array, imag: Float64Array, plan: FftPlan): ComplexArray {
++  if (plan.size === 1) return { real, imag };
++  if (!plan.child) return directDft(real, imag, plan);
++  const parts: ComplexArray[] = [];
++  for (let r = 0; r < plan.radix; r++) {
++    const partReal = new Float64Array(plan.subSize);
++    const partImag = new Float64Array(plan.subSize);
++    for (let index = 0; index < plan.subSize; index++) {
++      partReal[index] = real[r + plan.radix * index]!;
++      partImag[index] = imag[r + plan.radix * index]!;
++    }
++    parts.push(fft(partReal, partImag, plan.child));
++  }
++
++  const outputReal = new Float64Array(plan.size);
++  const outputImag = new Float64Array(plan.size);
++  for (let k = 0; k < plan.size; k++) {
++    const subIndex = k % plan.subSize;
++    for (let r = 0; r < plan.radix; r++) {
++      const source = parts[r]!;
++      const sourceReal = source.real[subIndex]!;
++      const sourceImag = source.imag[subIndex]!;
++      const twiddle = k * plan.radix + r;
++      const twiddleReal = plan.twiddleReal[twiddle]!;
++      const twiddleImag = plan.twiddleImag[twiddle]!;
++      outputReal[k] = outputReal[k]! + sourceReal * twiddleReal - sourceImag * twiddleImag;
++      outputImag[k] = outputImag[k]! + sourceReal * twiddleImag + sourceImag * twiddleReal;
++    }
++  }
++  return { real: outputReal, imag: outputImag };
++}
++
++function directDft(real: Float64Array, imag: Float64Array, plan: FftPlan): ComplexArray {
++  const outputReal = new Float64Array(plan.size);
++  const outputImag = new Float64Array(plan.size);
++  for (let k = 0; k < plan.size; k++) {
++    for (let n = 0; n < plan.size; n++) {
++      const angle = (2 * Math.PI * k * n) / plan.size;
++      const cosine = Math.cos(angle);
++      const sine = -Math.sin(angle);
++      outputReal[k] = outputReal[k]! + real[n]! * cosine - imag[n]! * sine;
++      outputImag[k] = outputImag[k]! + real[n]! * sine + imag[n]! * cosine;
++    }
++  }
++  return { real: outputReal, imag: outputImag };
++}
++
++function periodicHannWindow(size: number): Float64Array {
++  return Float64Array.from(
++    { length: size },
++    (_, index) => 0.5 - 0.5 * Math.cos((2 * Math.PI * index) / size),
++  );
++}
++
++function hzToMel(frequency: number): number {
++  return frequency >= 1_000
++    ? 15 + (Math.log(frequency / 1_000) * 27) / Math.log(6.4)
++    : (3 * frequency) / 200;
++}
++
++function melToHz(mel: number): number {
++  return mel >= 15 ? 1_000 * Math.exp((Math.log(6.4) * (mel - 15)) / 27) : (200 * mel) / 3;
++}
++
++function slaneyMelFilterbank(mels: number, fftSize: number, sampleRate: number): Float32Array[] {
++  const frequencies = fftSize / 2 + 1;
++  const maxFrequency = sampleRate / 2;
++  const firstMel = hzToMel(0);
++  const lastMel = hzToMel(maxFrequency);
++  const edges = Array.from({ length: mels + 2 }, (_, index) =>
++    melToHz(firstMel + ((lastMel - firstMel) * index) / (mels + 1)),
++  );
++  const filters: Float32Array[] = [];
++  for (let mel = 0; mel < mels; mel++) {
++    const lower = edges[mel]!;
++    const center = edges[mel + 1]!;
++    const upper = edges[mel + 2]!;
++    const scale = 2 / (upper - lower);
++    const weights = new Float32Array(frequencies);
++    for (let bin = 0; bin < frequencies; bin++) {
++      const frequency = (bin * maxFrequency) / (frequencies - 1);
++      const rising = (frequency - lower) / (center - lower);
++      const falling = (upper - frequency) / (upper - center);
++      weights[bin] = Math.max(0, Math.min(rising, falling)) * scale;
++    }
++    filters.push(weights);
++  }
++  return filters;
++}
++
++/** Number of 400-sample log-mel frames after right-padding to the 160-sample hop. */
++export function lfm3AudioFrameCount(samples: number): number {
++  if (!Number.isInteger(samples) || samples < 0) {
++    throw new RunntimeError(
++      'INVALID_ARGUMENT',
++      'audio sample count must be a non-negative integer',
++    );
++  }
++  if (samples <= LFM3_AUDIO_FFT_SIZE) return 1;
++  return 1 + Math.ceil((samples - LFM3_AUDIO_FFT_SIZE) / LFM3_AUDIO_HOP_SIZE);
++}
++
++/** Number of audio placeholder tokens produced by the 3×2 convolutional stride. */
++export function lfm3AudioTokenCount(samples: number): number {
++  return Math.ceil(lfm3AudioFrameCount(samples) / 8);
++}
++
++/** Padded waveform length required by Liquid's 2–32 second graph variants. */
++export function lfm3AudioPaddedLength(samples: number): number {
++  if (!Number.isInteger(samples) || samples <= 0) {
++    throw new RunntimeError('INVALID_ARGUMENT', 'audio must contain at least one sample');
++  }
++  if (samples > MAX_AUDIO_SAMPLES) {
++    throw new RunntimeError(
++      'INVALID_ARGUMENT',
++      `LFM3 audio is limited to ${LFM3_AUDIO_MAX_SECONDS} seconds`,
++    );
++  }
++  let padded = MIN_PADDED_SAMPLES;
++  while (padded < samples) padded *= 2;
++  return padded;
++}
++
++/** Computes the reference 128-band Slaney log-mel spectrogram in [mel, frame] order. */
++export function lfm3LogMelSpectrogram(audio: Float32Array): Float32Array {
++  const frames = lfm3AudioFrameCount(audio.length);
++  const output = new Float32Array(LFM3_AUDIO_MEL_BINS * frames);
++  const real = new Float64Array(LFM3_AUDIO_FFT_SIZE);
++  const imag = new Float64Array(LFM3_AUDIO_FFT_SIZE);
++  for (let frame = 0; frame < frames; frame++) {
++    const begin = frame * LFM3_AUDIO_HOP_SIZE;
++    for (let sample = 0; sample < LFM3_AUDIO_FFT_SIZE; sample++) {
++      real[sample] = (audio[begin + sample] ?? 0) * WINDOW[sample]!;
++      imag[sample] = 0;
++    }
++    const spectrum = fft(real, imag, FFT_PLAN);
++    const powers = new Float64Array(FFT_BINS);
++    for (let bin = 0; bin < FFT_BINS; bin++) {
++      powers[bin] = spectrum.real[bin]! ** 2 + spectrum.imag[bin]! ** 2;
++    }
++    for (let mel = 0; mel < LFM3_AUDIO_MEL_BINS; mel++) {
++      const filter = MEL_FILTERS[mel]!;
++      let energy = 0;
++      for (let bin = 0; bin < FFT_BINS; bin++) energy += powers[bin]! * filter[bin]!;
++      output[mel * frames + frame] =
++        (Math.log(Math.max(energy, LOG_FLOOR)) * LOG10_E + LOG_POST_ADD) * LOG_POST_SCALE;
++    }
++  }
++  return output;
++}
+diff --git a/packages/runntime/src/zoo/lfm3/gguf.ts b/packages/runntime/src/zoo/lfm3/gguf.ts
+index 6d5329590494550173e6817cc934fb212e1236a6..c8c428dc691553e99cab383cd4521c9c0f885b69 100644
+--- a/packages/runntime/src/zoo/lfm3/gguf.ts
++++ b/packages/runntime/src/zoo/lfm3/gguf.ts
+@@ -12,3 +12,13 @@ export const LFM3_Q4_K_M_SOURCE = {
+   sha256: '9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2',
+   url: `https://huggingface.co/${repository}/resolve/${revision}/${file}`,
+ } as const;
++
++/** Identity of Liquid AI's published Q8_0 LFM3-Omni projector file. */
++export const LFM3_Q8_0_PROJECTOR_SOURCE = {
++  repository,
++  revision,
++  file: 'mmproj-LFM3-Omni-2B-Q8_0.gguf',
++  bytes: 506_842_528,
++  sha256: '8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1',
++  url: `https://huggingface.co/${repository}/resolve/${revision}/mmproj-LFM3-Omni-2B-Q8_0.gguf`,
++} as const;
+diff --git a/packages/runntime/src/zoo/lfm3/model.ts b/packages/runntime/src/zoo/lfm3/model.ts
+index 0662ff0eaeffb9680a62fcfc2515d5d4011c2529..4c9344b009121ec35a2c959d75924b49f9a108de 100644
+--- a/packages/runntime/src/zoo/lfm3/model.ts
++++ b/packages/runntime/src/zoo/lfm3/model.ts
+@@ -572,7 +572,12 @@ export class Lfm3CausalLM extends nn.Module<
+     sd.tensors.set('lm_head.weight', embedding);
+   }
+ 
+-  forward(ids: readonly number[], root: TgpuRoot, previous?: Lfm3Cache): Lfm3ModelStep {
++  forward(
++    ids: readonly number[],
++    root: TgpuRoot,
++    previous?: Lfm3Cache,
++    ownedUploads: Value[] = [],
++  ): Lfm3ModelStep {
+     if (ids.length === 0) {
+       throw new RunntimeError('INVALID_ARGUMENT', 'LFM3 forward needs at least one input token');
+     }
+@@ -583,7 +588,7 @@ export class Lfm3CausalLM extends nn.Module<
+         `LFM3 context exhausted: ${position + ids.length} > ${LFM3.maxContext}`,
+       );
+     }
+-    const uploads: Value[] = [];
++    const uploads = ownedUploads;
+     const embedding = track(this.model.embed_tokens.forward(ids, root), uploads);
+     const result = this.model.forward(embedding, ids.length, position, previous, root, uploads);
+     const final = slice(result.hidden, 0, ids.length - 1, ids.length);
+diff --git a/packages/runntime/src/zoo/tasks/nlp/lfm3.ts b/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+index 9a04642f59bfa0eab41e5780f3e5522f11da6776..3845297d5b8167ac8f92d9a3cf2968aa5331ba55 100644
+--- a/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
++++ b/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+@@ -73,6 +73,7 @@ export async function createLfm3Chat(
+   const runtime: Lfm3SessionRuntime<Lfm3Cache> = {
+     async forward(ids: readonly number[], previous: Lfm3Cache | undefined, signal: AbortSignal) {
+       let step: ReturnType<Lfm3CausalLM['forward']> | undefined;
++      const uploads: Value[] = [];
+       try {
+         if (signal.aborted) {
+           throw new RunntimeError('EXECUTION_FAILED', 'LFM3 generation aborted', {
+@@ -80,7 +81,7 @@ export async function createLfm3Chat(
+           });
+         }
+         const result = await inGpuErrorScopes(root.device, 'LFM3 generation', async () => {
+-          const current = model.forward(ids, root, previous);
++          const current = model.forward(ids, root, previous, uploads);
+           step = current;
+           evalValues([current.logits, ...cacheValues(current.cache)], executor);
+           const logits = await toArray(current.logits, executor);
+@@ -106,7 +107,7 @@ export async function createLfm3Chat(
+         if (step) executor.releaseValues([step.logits, ...cacheValues(step.cache)]);
+         throw rethrowRunError(error);
+       } finally {
+-        if (step) destroyUploads(step.uploads);
++        destroyUploads(uploads);
+       }
+     },
+     async release(cache: Lfm3Cache) {
+diff --git a/packages/runntime/test/core/weights/gguf.test.ts b/packages/runntime/test/core/weights/gguf.test.ts
+index a559d8268a18ad1c4335555c84768b0e97f4a702..2f179801d5f8e05161539ab9af9e51a3eca37316 100644
+--- a/packages/runntime/test/core/weights/gguf.test.ts
++++ b/packages/runntime/test/core/weights/gguf.test.ts
+@@ -6,7 +6,7 @@ import { Sha256 } from '../../../src/core/weights/sha256.ts';
+ interface TensorFixture {
+   name: string;
+   dimensions: number[];
+-  type: 0 | 12 | 14;
++  type: 0 | 1 | 8 | 12 | 14;
+   payload: Uint8Array;
+ }
+ 
+@@ -146,6 +146,22 @@ describe('GGUF v3 weights', () => {
+     });
+   });
+ 
++  it('decodes GGUF F16 tensors to f32 values', async () => {
++    const payload = new Uint8Array(4);
++    half(payload, 0, 0x3c00);
++    half(payload, 2, 0xc000);
++    const bytes = fixture([{ name: 'f16', dimensions: [2], type: 1, payload }]);
++    const index = await parseGgufHeader(source(bytes), bytes.byteLength);
++    expect(index.tensors.get('f16')).toMatchObject({ shape: [2], type: 'F16' });
++    const state = await fromGguf(source(bytes), {
++      fileBytes: bytes.byteLength,
++      sha256: sha256(bytes),
++    });
++    const tensor = state.tensors.get('f16');
++    if (!tensor || tensor.kind !== 'derived') throw new Error('expected derived F16 tensor');
++    expect(await tensor.f32()).toEqual(new Float32Array([1, -2]));
++  });
++
+   it('decodes all Q4_K groups and preserves their affine minima', async () => {
+     const block = q4Block();
+     const bytes = fixture([{ name: 'q4', dimensions: [256], type: 12, payload: block.payload }]);
+@@ -185,6 +201,78 @@ describe('GGUF v3 weights', () => {
+     expect(tensor.offsets).toBeUndefined();
+   });
+ 
++  it('unpacks Q8_0 codes and one F16 scale per 32-value block', async () => {
++    const payload = new Uint8Array(34);
++    half(payload, 0, 0x3800); // d = 0.5
++    const expected = Array.from({ length: 32 }, (_, index) => index - 16);
++    payload.set(
++      expected.map((value) => value & 0xff),
++      2,
++    );
++    const bytes = fixture([{ name: 'q8_0', dimensions: [32], type: 8, payload }]);
++    const state = await fromGguf(source(bytes), {
++      fileBytes: bytes.byteLength,
++      sha256: sha256(bytes),
++    });
++    const tensor = state.tensors.get('q8_0');
++    if (tensor?.kind !== 'quant') throw new Error('expected Q8_0 quantized tensor');
++    expect(tensor.bits).toBe(8);
++    expect(tensor.groupSize).toBe(32);
++    expect(await tensor.ints()).toEqual(new Int8Array(expected));
++    expect(await tensor.scales()).toEqual(new Float32Array([0.5]));
++    expect(tensor.offsets).toBeUndefined();
++  });
++
++  it.each([
++    { name: 'Q4_K', type: 12 as const, dimensions: [256 * 59_000], bytesPerBlock: 144 },
++    { name: 'Q6_K', type: 14 as const, dimensions: [256 * 40_000], bytesPerBlock: 210 },
++    { name: 'Q8_0', type: 8 as const, dimensions: [32 * 247_000], bytesPerBlock: 34 },
++  ])(
++    'reads each $name tensor range once for codes and scales',
++    async ({ name, type, dimensions, bytesPerBlock }) => {
++      const blocks = dimensions[0]! / (type === 8 ? 32 : 256);
++      const bytes = fixture([
++        {
++          name,
++          dimensions,
++          type,
++          payload: new Uint8Array(blocks * bytesPerBlock),
++        },
++      ]);
++      const reads: { begin: number; end: number }[] = [];
++      const countedSource: RangeSource = {
++        async read(begin, end) {
++          reads.push({ begin, end });
++          return bytes.slice(begin, end);
++        },
++      };
++      const state = await fromGguf(countedSource, {
++        fileBytes: bytes.byteLength,
++        sha256: sha256(bytes),
++      });
++      const tensor = state.tensors.get(name);
++      if (tensor?.kind !== 'quant') throw new Error(`expected ${name} quantized tensor`);
++      await tensor.ints();
++      await tensor.scales();
++      if (tensor.offsets) await tensor.offsets();
++
++      const chunkBytes = 2 * 1024 * 1024;
++      const payloadChunks = reads.filter(
++        ({ begin, end }) =>
++          begin % chunkBytes === 0 &&
++          (end - begin === chunkBytes || (begin > 0 && end - begin < chunkBytes)),
++      );
++      const chunkCount = Math.ceil(bytes.byteLength / chunkBytes);
++      const readsPerChunk = new Map<number, number>();
++      for (const { begin } of payloadChunks) {
++        readsPerChunk.set(begin, (readsPerChunk.get(begin) ?? 0) + 1);
++      }
++      expect([...readsPerChunk]).toEqual(
++        Array.from({ length: chunkCount }, (_, index) => [index * chunkBytes, 2]),
++      );
++    },
++  );
++
+   it('rejects a mismatched source digest before exposing tensors', async () => {
+     const bytes = fixture([
+       { name: 'first', dimensions: [1], type: 0, payload: new Uint8Array(4) },
+diff --git a/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts b/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..04c90190d1d840d6c75bb2dd910f25da7eec2499
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts
+@@ -0,0 +1,114 @@
++/** Unit tests for the LFM3-Omni audio frontend dimensions and spectrum. */
++
++import { describe, expect, it } from 'vitest';
++import {
++  LFM3_AUDIO_FFT_SIZE,
++  LFM3_AUDIO_HOP_SIZE,
++  LFM3_AUDIO_MEL_BINS,
++  lfm3AudioFrameCount,
++  lfm3AudioPaddedLength,
++  lfm3AudioTokenCount,
++  lfm3LogMelSpectrogram,
++} from '../../../../src/zoo/lfm3/audio/frontend.ts';
++
++function directLogMel(audio: Float32Array): Float32Array {
++  const fftSize = 400;
++  const sampleRate = 16_000;
++  const bins = fftSize / 2 + 1;
++  const powers = new Float64Array(bins);
++  for (let bin = 0; bin < bins; bin++) {
++    let real = 0;
++    let imaginary = 0;
++    for (let sample = 0; sample < fftSize; sample++) {
++      const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * sample) / fftSize);
++      const value = (audio[sample] ?? 0) * window;
++      const phase = (2 * Math.PI * bin * sample) / fftSize;
++      real += value * Math.cos(phase);
++      imaginary -= value * Math.sin(phase);
++    }
++    powers[bin] = real * real + imaginary * imaginary;
++  }
++
++  const toMel = (frequency: number) =>
++    frequency >= 1_000
++      ? 15 + (Math.log(frequency / 1_000) * 27) / Math.log(6.4)
++      : (3 * frequency) / 200;
++  const fromMel = (mel: number) =>
++    mel >= 15 ? 1_000 * Math.exp((Math.log(6.4) * (mel - 15)) / 27) : (200 * mel) / 3;
++  const lastMel = toMel(sampleRate / 2);
++  const edges = Array.from({ length: LFM3_AUDIO_MEL_BINS + 2 }, (_, index) =>
++    fromMel((lastMel * index) / (LFM3_AUDIO_MEL_BINS + 1)),
++  );
++  return Float32Array.from({ length: LFM3_AUDIO_MEL_BINS }, (_, mel) => {
++    const lower = edges[mel]!;
++    const center = edges[mel + 1]!;
++    const upper = edges[mel + 2]!;
++    let energy = 0;
++    for (let bin = 0; bin < bins; bin++) {
++      const frequency = (bin * (sampleRate / 2)) / (bins - 1);
++      const triangle = Math.max(
++        0,
++        Math.min((frequency - lower) / (center - lower), (upper - frequency) / (upper - center)),
++      );
++      energy += powers[bin]! * triangle * (2 / (upper - lower));
++    }
++    return (Math.log10(Math.max(energy, 1e-12)) + 4) / 8;
++  });
++}
++
++describe('LFM3-Omni audio frontend', () => {
++  it.each([
++    { samples: 0, frames: 1 },
++    { samples: LFM3_AUDIO_FFT_SIZE, frames: 1 },
++    { samples: LFM3_AUDIO_FFT_SIZE + 1, frames: 2 },
++    { samples: LFM3_AUDIO_FFT_SIZE + LFM3_AUDIO_HOP_SIZE, frames: 2 },
++    { samples: LFM3_AUDIO_FFT_SIZE + LFM3_AUDIO_HOP_SIZE + 1, frames: 3 },
++  ])('pads $samples samples to $frames analysis frames', ({ samples, frames }) => {
++    expect(lfm3AudioFrameCount(samples)).toBe(frames);
++  });
++
++  it('uses Liquid’s 2–32 second graph sizes and three convolutional strides', () => {
++    expect(lfm3AudioPaddedLength(1)).toBe(32_000);
++    expect(lfm3AudioPaddedLength(32_000)).toBe(32_000);
++    expect(lfm3AudioPaddedLength(32_001)).toBe(64_000);
++    expect(lfm3AudioPaddedLength(512_000)).toBe(512_000);
++    expect(lfm3AudioTokenCount(32_000)).toBe(25);
++    expect(lfm3AudioTokenCount(512_000)).toBe(400);
++    expect(() => lfm3AudioPaddedLength(512_001)).toThrow(/limited to 32 seconds/);
++  });
++
++  it('returns a finite 128-band Slaney log-mel matrix in mel-major order', () => {
++    const frames = lfm3AudioFrameCount(401);
++    const mel = lfm3LogMelSpectrogram(new Float32Array(401));
++    expect(mel).toHaveLength(LFM3_AUDIO_MEL_BINS * frames);
++    expect(mel.every(Number.isFinite)).toBe(true);
++    expect(mel).toEqual(
++      Float32Array.from({ length: mel.length }, () => (Math.log10(1e-12) + 4) / 8),
++    );
++  });
++
++  it('keeps a tonal input finite and distinct from silence', () => {
++    const tone = Float32Array.from({ length: LFM3_AUDIO_FFT_SIZE }, (_, index) =>
++      Math.sin((2 * Math.PI * 440 * index) / 16_000),
++    );
++    const silence = lfm3LogMelSpectrogram(new Float32Array(LFM3_AUDIO_FFT_SIZE));
++    const speech = lfm3LogMelSpectrogram(tone);
++    expect(speech.every(Number.isFinite)).toBe(true);
++    expect(speech.some((value, index) => value !== silence[index])).toBe(true);
++  });
++
++  it('matches a direct-DFT reference for the published Slaney power frontend', () => {
++    const audio = Float32Array.from(
++      { length: LFM3_AUDIO_FFT_SIZE },
++      (_, index) =>
++        0.2 * Math.sin((2 * Math.PI * 440 * index) / 16_000) +
++        0.07 * Math.cos((2 * Math.PI * 1_120 * index) / 16_000),
++    );
++    const actual = lfm3LogMelSpectrogram(audio);
++    const expected = directLogMel(audio);
++    expect(actual).toHaveLength(expected.length);
++    for (let mel = 0; mel < expected.length; mel++) {
++      expect(actual[mel]).toBeCloseTo(expected[mel]!, 4);
++    }
++  });
++});
+diff --git a/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts b/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6d630c5aded8943fc1e440224b5212b1c9cefdd5
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/model-lifecycle.gpu.test.ts
+@@ -0,0 +1,34 @@
++/** Checks upload ownership when public-model graph construction fails. */
++
++import { expect, it } from 'vitest';
++import { tensor } from '../../../src/core/gpu/buffers.ts';
++import { matrix, type Value } from '../../../src/core/graph/value.ts';
++import { Lfm3CausalLM } from '../../../src/zoo/lfm3/model.ts';
++import { buffersSince, gpu, liveBuffers } from '../../gpu.ts';
++
++it('exposes every upload to its caller when graph construction throws', async () => {
++  const { root } = await gpu();
++  const before = liveBuffers();
++  const model = new Lfm3CausalLM();
++  const embedding = tensor(root, Float32Array.of(1), matrix(1, 1));
++  model.model.embed_tokens.forward = () => embedding;
++  model.model.layers.items[0]!.forward = () => {
++    throw new Error('injected synchronous graph failure');
++  };
++  const uploads: Value[] = [];
++
++  try {
++    expect(() => model.forward([1], root, undefined, uploads)).toThrow(
++      'injected synchronous graph failure',
++    );
++    expect(uploads).toHaveLength(5);
++    expect(uploads).toContain(embedding);
++  } finally {
++    for (const value of uploads) {
++      if (value.state === 'materialized') value.buffer.destroy();
++    }
++    model.dispose();
++  }
++
++  expect(buffersSince(before)).toEqual([]);
++});
+diff --git a/packages/runntime/test/zoo/lfm3/public.gpu.test.ts b/packages/runntime/test/zoo/lfm3/public.gpu.test.ts
+index 4afe3bebe4e5214960bd27ac19146543a8e07fd5..90dbeb8e5e5c0f5e17f1e3434e00c180b0701e21 100644
+--- a/packages/runntime/test/zoo/lfm3/public.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/public.gpu.test.ts
+@@ -1,6 +1,10 @@
+ /** Opt-in real-WebGPU loading and streaming through the public zoo entry. */
+ 
+ import { expect, it } from 'vitest';
++import { tensor } from '../../../src/core/gpu/buffers.ts';
++import { evalValues, toArray } from '../../../src/core/gpu/eval.ts';
++import { add } from '../../../src/core/graph/ops.ts';
++import { matrix } from '../../../src/core/graph/value.ts';
+ import {
+   createLfm3Chat,
+   models,
+@@ -60,7 +64,7 @@ function hostHeapBytes(): number | null {
+ it.skipIf(MODE !== 'base' && MODE !== 'q4')(
+   `loads the ${MODE === 'q4' ? 'published Q4_K_M GGUF' : 'original checkpoint'} and streams text through a packed public consumer`,
+   async (ctx) => {
+-    await gpu();
++    const { root, ex: sharedExecutor } = await gpu();
+     const before = liveBuffers();
+     const invalidSource: RangeSource = { read: async () => new Uint8Array(8) };
+     const loadController = new AbortController();
+@@ -172,6 +176,15 @@ it.skipIf(MODE !== 'base' && MODE !== 'q4')(
+     const recovered = await request('Say hello again briefly.');
+     expect(recovered.text.trim().length).toBeGreaterThan(0);
+     await session.dispose();
++
++    const sharedInput = tensor(root, Float32Array.of(2, 4), matrix(1, 2));
++    const sharedOutput = add(sharedInput, 1);
++    evalValues([sharedOutput], sharedExecutor);
++    expect(await toArray(sharedOutput, sharedExecutor)).toEqual(Float32Array.of(3, 5));
++    sharedExecutor.releaseValues([sharedOutput]);
++    sharedExecutor.trim();
++    sharedInput.buffer.destroy();
++
+     const remainingBuffers = [...liveBuffers()].filter((buffer) => !before.has(buffer));
+     const report = {
+       checkpointRevision:
+diff --git a/packages/runntime/test/zoo/lfm3/session.test.ts b/packages/runntime/test/zoo/lfm3/session.test.ts
+index e903cd659cbabed9383ceb30d872075de9c3f4d8..6e491eadf50069e0b8f389dfd6126b28c9b6a247 100644
+--- a/packages/runntime/test/zoo/lfm3/session.test.ts
++++ b/packages/runntime/test/zoo/lfm3/session.test.ts
+@@ -203,4 +203,41 @@ describe('LFM3 streaming session', () => {
+     await expect(generation[Symbol.asyncIterator]().next()).rejects.toThrow('GPU readback failed');
+     await session.dispose();
+   });
++
++  it.each(['invalid logits', 'GPU out-of-memory'] as const)(
++    'propagates %s to the stream and result without poisoning an independent session',
++    async (failure) => {
++      const runtime = {
++        async forward() {
++          if (failure === 'invalid logits') {
++            return { logits: new Float32Array(1), cache: { id: 1 } };
++          }
++          throw new RunntimeError('EXECUTION_FAILED', 'GPU out-of-memory');
++        },
++        release() {},
++        trim() {},
++        dispose() {},
++      } satisfies Lfm3SessionRuntime<{ id: number }>;
++      const session = createLfm3Session(
++        {
++          bosId: 1,
++          stopIds: new Set([124_900]),
++          encodeChat: () => [1],
++          decode: () => '',
++        },
++        runtime,
++      );
++      const failed = session.generate([{ role: 'user', content: 'fail' }]);
++      await expect(failed.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++      await expect(failed[Symbol.asyncIterator]().next()).rejects.toMatchObject({
++        code: 'EXECUTION_FAILED',
++      });
++      await session.dispose();
++
++      const independent = fixture({ tokens: [7, 124_900] });
++      const fresh = independent.session.generate([{ role: 'user', content: 'remain usable' }]);
++      await expect(fresh.result).resolves.toMatchObject({ text: 'A', finishReason: 'stop' });
++      await independent.session.dispose();
++    },
++  );
+ });
+-- 
+2.54.0
+

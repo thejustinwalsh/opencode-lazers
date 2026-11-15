@@ -1,0 +1,48 @@
+From bf3b7c0ae66439144a04c3b524a12a338525ce62 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Fri, 13 Nov 2026 08:19:28 -0500
+Subject: [PATCH] fix(zoo): match Liquid Omni audio frontend scaling
+
+---
+ packages/runntime/src/zoo/lfm3/audio/frontend.ts       | 2 +-
+ packages/runntime/test/zoo/lfm3/audio/frontend.test.ts | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/runntime/src/zoo/lfm3/audio/frontend.ts b/packages/runntime/src/zoo/lfm3/audio/frontend.ts
+index 3a38a0a..a0a1ae1 100644
+--- a/packages/runntime/src/zoo/lfm3/audio/frontend.ts
++++ b/packages/runntime/src/zoo/lfm3/audio/frontend.ts
+@@ -12,7 +12,7 @@ const MIN_PADDED_SAMPLES = 2 * LFM3_AUDIO_SAMPLE_RATE;
+ const MAX_AUDIO_SAMPLES = LFM3_AUDIO_MAX_SECONDS * LFM3_AUDIO_SAMPLE_RATE;
+ const LOG_FLOOR = 1e-12;
+ const LOG_POST_ADD = 4;
+-const LOG_POST_SCALE = 1 / 8;
++const LOG_POST_SCALE = 1 / 4;
+ const LOG10_E = 0.43429448190325176;
+ const FFT_BINS = LFM3_AUDIO_FFT_SIZE / 2 + 1;
+ 
+diff --git a/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts b/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts
+index 04c9019..ab70438 100644
+--- a/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts
++++ b/packages/runntime/test/zoo/lfm3/audio/frontend.test.ts
+@@ -52,7 +52,7 @@ function directLogMel(audio: Float32Array): Float32Array {
+       );
+       energy += powers[bin]! * triangle * (2 / (upper - lower));
+     }
+-    return (Math.log10(Math.max(energy, 1e-12)) + 4) / 8;
++    return (Math.log10(Math.max(energy, 1e-12)) + 4) / 4;
+   });
+ }
+ 
+@@ -83,7 +83,7 @@ describe('LFM3-Omni audio frontend', () => {
+     expect(mel).toHaveLength(LFM3_AUDIO_MEL_BINS * frames);
+     expect(mel.every(Number.isFinite)).toBe(true);
+     expect(mel).toEqual(
+-      Float32Array.from({ length: mel.length }, () => (Math.log10(1e-12) + 4) / 8),
++      Float32Array.from({ length: mel.length }, () => (Math.log10(1e-12) + 4) / 4),
+     );
+   });
+ 
+-- 
+2.54.0
+

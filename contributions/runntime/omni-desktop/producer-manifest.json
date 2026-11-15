@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "status": "partial-not-acceptance",
+  "repository": "https://github.com/thejustinwalsh/runntime.git",
+  "package": "packages/runntime",
+  "implementationBase": {
+    "commit": "6aa6bbd5a0dae14204e9853c34c911fedd430659",
+    "tree": "9090b0e0295b5320f5ffc3530326a8936149a2fc"
+  },
+  "qualificationTip": {
+    "commit": "4bec7104f2e70290982864963f6b194e6d5439fe",
+    "tree": "e297775282981fb507c3e22c8c983f41c8139042",
+    "parent": "6aa6bbd5a0dae14204e9853c34c911fedd430659",
+    "changedPaths": ["packages/runntime/test/zoo/tasks/audio/speak.test.ts"]
+  },
+  "patchSeries": [
+    {
+      "sequence": 1,
+      "commit": "4bec7104f2e70290982864963f6b194e6d5439fe",
+      "file": "patches/0001-queued-speech-failure-recovery.patch",
+      "sha256": "272d4373158ae5c03e137f66ce10ec2e78245ceba1b805aeb9e46708633070bd"
+    }
+  ],
+  "reconstruction": {
+    "method": "Initialize a temporary index from the recorded base, apply the ordered zero-context format patch with git apply --cached --unidiff-zero, and write the resulting tree.",
+    "resultTree": "e297775282981fb507c3e22c8c983f41c8139042",
+    "matchesTipTree": true
+  },
+  "checks": [
+    {
+      "command": "pnpm --filter runntime exec vitest run --project unit test/zoo/tasks/audio/speak.test.ts",
+      "result": "passed",
+      "files": 1,
+      "tests": 2
+    },
+    {
+      "command": "pnpm --filter runntime test:unit",
+      "result": "passed",
+      "files": 60,
+      "tests": 1188
+    },
+    {
+      "command": "pnpm --filter runntime typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm exec eslint packages/runntime/test/zoo/tasks/audio/speak.test.ts",
+      "result": "passed"
+    },
+    {
+      "command": "pre-commit hooks: format, lint, typecheck; commit-msg hook: commitlint",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "The new test injects an operation error before a GPU forward completes; it does not qualify OOM, GPU submission, or real device-loss recovery.",
+    "The retained native self-ASR result is not pinned-Liquid cross-engine speech recovery.",
+    "Independent audio attention, convolution, depth-decoder distributions, and the unexplained cross-engine speech deviation remain unresolved.",
+    "No actual Desktop interaction was performed in this attempt because an existing owned isolated Desktop root blocked a competing launch; see README.md."
+  ]
+}

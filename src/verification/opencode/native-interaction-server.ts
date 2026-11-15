@@ -11,6 +11,7 @@ import {
   type NativeInteractionCapabilities,
   type NativeWindowReference,
 } from "./native-interaction-contract.ts"
+import type { AudioObservationEvent } from "./audio-fixture-contract.ts"
 
 const HOST_FRESH_MS = 2_000
 const MAX_REQUESTS = 256
@@ -37,6 +38,23 @@ type HostRecord = {
   lastSeen: number
 }
 
+type AudioRecord = {
+  requestID: string
+  adapterID?: string
+  sessionID: string
+  window: NativeWindowReference
+  kind: "dictation" | "playback"
+  fixtureID?: "quick-brown-fox" | "turn-left-next-street"
+  route?: "runntime"
+  expectedTextHash?: string
+  segmentHashes?: string[]
+  events: Array<{ at: number; event: AudioObservationEvent }>
+  appCompleted: boolean
+  activeSegment?: number
+  intelligibility?: "pass" | "fail" | "unknown"
+  terminal: boolean
+}
+
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`
   if (typeof value !== "object" || value === null) return JSON.stringify(value) ?? "undefined"
@@ -53,7 +71,9 @@ function same(left: unknown, right: unknown): boolean {
 
 export class NativeInteractionBroker {
   private host?: HostRecord
+  private readonly retiredAdapters = new Set<string>()
   private readonly requests = new Map<string, RequestRecord>()
+  private readonly audio = new Map<string, AudioRecord>()
   private activeRequest?: string
   private ambiguous = false
 
@@ -74,19 +94,29 @@ export class NativeInteractionBroker {
     capabilities?: NativeInteractionCapabilities
   }): void {
     this.assertBinding(input.binding)
+    const windows = this.validateWindows(input.windows)
+    const now = this.now()
     const current = this.host
-    if (current !== undefined && current.adapterID !== input.adapterID) {
-      throw new Error("A different native adapter generation still owns this trial")
+    if (this.retiredAdapters.has(input.adapterID)) {
+      throw new Error("Native adapter generation is stale")
     }
     if (current !== undefined && !same(current.binding, input.binding)) {
       throw new Error("Native adapter binding changed during this trial")
     }
+    if (current !== undefined && now - current.lastSeen <= HOST_FRESH_MS) {
+      if (current.adapterID !== input.adapterID) {
+        throw new Error("A different native adapter generation still owns this trial")
+      }
+    } else if (current !== undefined) {
+      this.settleStaleRequest()
+      if (current.adapterID !== input.adapterID) this.retiredAdapters.add(current.adapterID)
+    }
     this.host = {
       binding: input.binding,
       adapterID: input.adapterID,
-      windows: this.validateWindows(input.windows),
+      windows,
       capabilities: { modifiedKeys: input.capabilities?.modifiedKeys === true },
-      lastSeen: this.now(),
+      lastSeen: now,
     }
   }
 
@@ -176,6 +206,30 @@ export class NativeInteractionBroker {
       request: { requestID: input.requestID, operation: input.operation },
       state: "queued",
     })
+    if (input.operation.kind === "dictation-fixture") {
+      this.audio.set(input.requestID, {
+        requestID: input.requestID,
+        sessionID: input.operation.sessionID,
+        window: { ...input.operation.window },
+        kind: "dictation",
+        fixtureID: input.operation.fixtureID,
+        events: [],
+        appCompleted: false,
+        terminal: false,
+      })
+    } else if (input.operation.kind === "playback-plan") {
+      this.audio.set(input.requestID, {
+        requestID: input.requestID,
+        sessionID: input.operation.sessionID,
+        window: { ...input.operation.window },
+        kind: "playback",
+        expectedTextHash: input.operation.expectedTextHash,
+        segmentHashes: [...input.operation.segmentHashes],
+        events: [],
+        appCompleted: false,
+        terminal: false,
+      })
+    }
     this.activeRequest = input.requestID
     return { state: "queued" as const }
   }
@@ -206,6 +260,8 @@ export class NativeInteractionBroker {
       return null
     }
     record.state = "delivered"
+    const audioRecord = this.audio.get(record.request.requestID)
+    if (audioRecord !== undefined) audioRecord.adapterID = input.adapterID
     return record.request
   }
 
@@ -216,14 +272,9 @@ export class NativeInteractionBroker {
     result: NativeActionResult
   }): void {
     this.assertBinding(input.binding)
-    const host = this.host
-    if (
-      host === undefined ||
-      !same(host.binding, input.binding) ||
-      host.adapterID !== input.adapterID
-    ) {
+    const host = this.requireFreshHost(input.binding)
+    if (host.adapterID !== input.adapterID)
       throw new Error("Native completion came from a stale adapter generation")
-    }
     const record = this.requests.get(input.requestID)
     if (
       record === undefined ||
@@ -251,6 +302,53 @@ export class NativeInteractionBroker {
     }
   }
 
+  observeAudio(input: {
+    binding: NativeBinding
+    adapterID: string
+    observation: {
+      requestID: string
+      sessionID: string
+      window: NativeWindowReference
+      event: AudioObservationEvent
+    }
+  }): void {
+    this.assertBinding(input.binding)
+    const host = this.requireFreshHost(input.binding)
+    if (host.adapterID !== input.adapterID) throw new Error("Audio observation adapter is stale")
+    const record = this.audio.get(input.observation.requestID)
+    const request = this.requests.get(input.observation.requestID)
+    if (
+      !record ||
+      record.adapterID !== input.adapterID ||
+      request?.state !== "completed" ||
+      request.result?.delivery !== "delivered" ||
+      (record.terminal && input.observation.event.kind !== "intelligibility") ||
+      record.sessionID !== input.observation.sessionID ||
+      !same(record.window, input.observation.window)
+    ) {
+      throw new Error("Audio observation has an unknown or stale request target")
+    }
+    const current = host.windows.find((window) => window.windowID === record.window.windowID)
+    if (!current || !same(current, record.window))
+      throw new Error("Audio observation window generation is stale")
+    if (record.events.length >= 100) throw new Error("Audio observation history is full")
+    this.validateAudioEvent(record, input.observation.event)
+    record.events.push({ at: this.now(), event: input.observation.event })
+  }
+
+  audioResult(binding: NativeBinding, requestID: string) {
+    this.assertBinding(binding)
+    const record = this.audio.get(requestID)
+    if (!record) return null
+    const {
+      activeSegment: _activeSegment,
+      terminal: _terminal,
+      adapterID: _adapterID,
+      ...result
+    } = record
+    return structuredClone(result)
+  }
+
   detach(binding: NativeBinding, adapterID: string): void {
     const host = this.requireFreshHost(binding)
     if (host.adapterID !== adapterID) throw new Error("Native adapter generation is stale")
@@ -269,6 +367,7 @@ export class NativeInteractionBroker {
       this.activeRequest = undefined
       this.ambiguous = true
     }
+    this.retiredAdapters.add(adapterID)
     this.host = undefined
   }
 
@@ -338,6 +437,26 @@ export class NativeInteractionBroker {
     return host
   }
 
+  private settleStaleRequest(): void {
+    if (this.activeRequest === undefined) return
+    const record = this.requests.get(this.activeRequest)
+    if (record?.state === "queued") {
+      record.state = "completed"
+      record.result = {
+        delivery: "not-delivered",
+        message: "Desktop adapter heartbeat expired before dispatch",
+      }
+    } else if (record?.state === "delivered") {
+      record.state = "completed"
+      record.result = {
+        delivery: "ambiguous",
+        message: "Desktop adapter heartbeat expired after dispatch",
+      }
+      this.ambiguous = true
+    }
+    this.activeRequest = undefined
+  }
+
   private validateWindows(windows: ReadonlyArray<NativeWindowReference>): NativeWindowReference[] {
     if (
       windows.length > 32 ||
@@ -346,6 +465,108 @@ export class NativeInteractionBroker {
       throw new Error("Owned Desktop window inventory is malformed")
     }
     return windows.map((window) => ({ ...window }))
+  }
+
+  private validateAudioEvent(record: AudioRecord, event: AudioObservationEvent): void {
+    if (record.kind === "dictation") {
+      if (event.kind === "dictation-start") {
+        if (record.events.length !== 0 || event.fixtureID !== record.fixtureID)
+          throw new Error("Dictation fixture start does not match its armed request")
+        record.route = event.route
+        return
+      }
+      if (
+        event.kind === "dictation-complete" &&
+        record.events.length === 1 &&
+        record.events[0]?.event.kind === "dictation-start" &&
+        event.fixtureID === record.fixtureID
+      ) {
+        record.appCompleted = event.matchesExpected && event.insertedExactlyOnce && !event.submitted
+        record.terminal = true
+        return
+      }
+      if (
+        (event.kind === "dictation-cancelled" || event.kind === "dictation-failed") &&
+        (record.events.length === 0 || record.events[0]?.event.kind === "dictation-start") &&
+        event.fixtureID === record.fixtureID
+      ) {
+        record.terminal = true
+        return
+      }
+      throw new Error("Dictation observation is out of order or belongs to another clip")
+    }
+
+    if (event.kind === "playback-start") {
+      if (
+        record.events.length !== 0 ||
+        event.route !== "runntime" ||
+        event.expectedTextHash !== record.expectedTextHash ||
+        !same(event.segmentHashes, record.segmentHashes)
+      )
+        throw new Error("Playback start does not match its armed content plan")
+      record.route = event.route
+      return
+    }
+    if (event.kind === "playback-segment-start") {
+      const started = record.events.filter(
+        (item) => item.event.kind === "playback-segment-end",
+      ).length
+      if (
+        record.events.length === 0 ||
+        record.events[0]?.event.kind !== "playback-start" ||
+        record.activeSegment !== undefined ||
+        event.segmentIndex !== started ||
+        event.textHash !== record.segmentHashes?.[started] ||
+        event.sampleRate !== 24_000
+      )
+        throw new Error("Playback segment start is missing, repeated, or out of order")
+      record.activeSegment = event.segmentIndex
+      return
+    }
+    if (event.kind === "playback-segment-end") {
+      const prior = record.events.at(-1)?.event
+      if (
+        record.activeSegment !== event.segmentIndex ||
+        prior?.kind !== "playback-segment-start" ||
+        prior.segmentIndex !== event.segmentIndex ||
+        prior.textHash !== event.textHash ||
+        prior.frames !== event.frames ||
+        prior.sampleRate !== event.sampleRate ||
+        prior.durationMs !== event.durationMs
+      )
+        throw new Error("Playback segment did not end naturally after its matching start")
+      record.activeSegment = undefined
+      return
+    }
+    if (event.kind === "playback-complete") {
+      const completed = record.events.filter(
+        (item) => item.event.kind === "playback-segment-end",
+      ).length
+      if (
+        record.events[0]?.event.kind !== "playback-start" ||
+        record.activeSegment !== undefined ||
+        completed !== record.segmentHashes?.length
+      )
+        throw new Error("Playback completion arrived before every expected segment ended")
+      record.appCompleted = true
+      record.terminal = true
+      return
+    }
+    if (event.kind === "playback-cancelled" || event.kind === "playback-failed") {
+      record.terminal = true
+      return
+    }
+    if (event.kind === "intelligibility") {
+      if (
+        record.kind !== "playback" ||
+        !record.appCompleted ||
+        record.intelligibility !== undefined
+      )
+        throw new Error("Intelligibility must be recorded once, separately after app completion")
+      record.intelligibility = event.value
+      return
+    }
+    throw new Error("Audio observation event does not match a playback request")
   }
 }
 
@@ -378,6 +599,12 @@ export function registerNativeInteraction(ctx: Pick<Plugin.Context, "rpc" | "app
           return {}
         }),
       result: (input) => Effect.sync(() => broker.result(input.binding, input.requestID)),
+      audioObserve: (input) =>
+        Effect.sync(() => {
+          broker.observeAudio(input)
+          return {}
+        }),
+      audioResult: (input) => Effect.sync(() => broker.audioResult(input.binding, input.requestID)),
       detach: (input) =>
         Effect.sync(() => {
           broker.detach(input.binding, input.adapterID)

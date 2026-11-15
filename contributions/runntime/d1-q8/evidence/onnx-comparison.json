@@ -1,0 +1,76 @@
+{
+  "nativeArtifactSha256": "a5f94915d38627f0755df90372f1cda3d30e4d489066aaff44d2eeb98d2793e5",
+  "nativeQuantization": "runntime.quant v1, symmetric int8, groupSize 32",
+  "onnxReference": "onnx-community/d1-omni-600M-ONNX",
+  "onnxRevision": "4ebc1b97bf1477485371c79d1cf8d5e4e8eebfa0",
+  "onnxModelFileSha256": "e7b2d045b2efcdc38b9595aa5f00ec2c08098f997f136837c97ecad129834d74",
+  "onnxExternalDataSha256": "9b84acb248daac2299df481240f5e6d2cd2f763aa1b8ccf73e7200848fab60da",
+  "onnxRuntime": "onnxruntime CPUExecutionProvider",
+  "comparison": "native Q8 and ONNX Q8 probabilities in Liquid answer order on the same six pinned D1 cases; errors versus the F32 reference are reported separately",
+  "maxAbsErrorNativeQ8VsLiquidF32": 0.007052843893842697,
+  "maxAbsErrorOnnxQ8VsLiquidF32": 0.013111417232856526,
+  "maxAbsDifferenceNativeQ8VsOnnxQ8": 0.01161249956699828,
+  "cases": [
+    {
+      "id": "choice-forward",
+      "nativeAnswer": "technical",
+      "onnxReferenceAnswer": "technical",
+      "nativeMaxAbsErrorVsLiquidF32": 0.00029561939764400236,
+      "onnxMaxAbsErrorVsLiquidF32": 0.000962262477591902,
+      "maxAbsDifferenceNativeVsOnnxQ8": 0.0011974850533627507,
+      "probabilityDifferencesNativeMinusOnnx": [
+        -0.0011974850533627507, 0.0010133480033568398, 0.00018413705000580854
+      ]
+    },
+    {
+      "id": "choice-reversed",
+      "nativeAnswer": "technical",
+      "onnxReferenceAnswer": "technical",
+      "nativeMaxAbsErrorVsLiquidF32": 0.0003605958147435695,
+      "onnxMaxAbsErrorVsLiquidF32": 0.0016628447202288177,
+      "maxAbsDifferenceNativeVsOnnxQ8": 0.002023440534972387,
+      "probabilityDifferencesNativeMinusOnnx": [
+        -0.0005878076979102236, 0.002023440534972387, -0.001435632837062122
+      ]
+    },
+    {
+      "id": "incident-rubric",
+      "nativeAnswer": "4",
+      "onnxReferenceAnswer": "4",
+      "nativeMaxAbsErrorVsLiquidF32": 0.007052843893842697,
+      "onnxMaxAbsErrorVsLiquidF32": 0.013111417232856526,
+      "maxAbsDifferenceNativeVsOnnxQ8": 0.01161249956699828,
+      "probabilityDifferencesNativeMinusOnnx": [
+        -0.0033020110953316806, -0.0012543126486612918, -0.0030686527944086828,
+        -0.003987523028596729, 0.01161249956699828
+      ]
+    },
+    {
+      "id": "refund-negative",
+      "nativeAnswer": "no",
+      "onnxReferenceAnswer": "no",
+      "nativeMaxAbsErrorVsLiquidF32": 0.0002472114390217328,
+      "onnxMaxAbsErrorVsLiquidF32": 0.0008371419870631946,
+      "maxAbsDifferenceNativeVsOnnxQ8": 0.0005899305480414618,
+      "probabilityDifferencesNativeMinusOnnx": [-0.0005899305480414471, 0.0005899305480414618]
+    },
+    {
+      "id": "refund-positive",
+      "nativeAnswer": "yes",
+      "onnxReferenceAnswer": "yes",
+      "nativeMaxAbsErrorVsLiquidF32": 5.311919086559147e-5,
+      "onnxMaxAbsErrorVsLiquidF32": 0.00010374716053729305,
+      "maxAbsDifferenceNativeVsOnnxQ8": 0.00015686635140288452,
+      "probabilityDifferencesNativeMinusOnnx": [0.00015686635140288452, -0.0001568663514027657]
+    },
+    {
+      "id": "task-review",
+      "nativeAnswer": "no",
+      "onnxReferenceAnswer": "no",
+      "nativeMaxAbsErrorVsLiquidF32": 0.0023523502963729848,
+      "onnxMaxAbsErrorVsLiquidF32": 0.008910471431819555,
+      "maxAbsDifferenceNativeVsOnnxQ8": 0.011262821728192526,
+      "probabilityDifferencesNativeMinusOnnx": [-0.011262821728192526, 0.011262821728192485]
+    }
+  ]
+}

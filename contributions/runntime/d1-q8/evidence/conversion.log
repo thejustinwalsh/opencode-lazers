@@ -1,0 +1,1084 @@
+dropped    audio.encoder.layers.0.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.1.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.10.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.11.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.12.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.13.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.14.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.15.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.16.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.2.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.3.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.4.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.5.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.6.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.7.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.8.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.encoder.layers.9.conv.batch_norm.num_batches_tracked []: matched by audio.*
+dropped    audio.adapter.linear_1.bias [1024]: matched by audio.*
+dropped    audio.adapter.linear_1.weight [1024, 512]: matched by audio.*
+dropped    audio.adapter.linear_2.bias [1024]: matched by audio.*
+dropped    audio.adapter.linear_2.weight [1024, 1024]: matched by audio.*
+dropped    audio.adapter.norm.bias [512]: matched by audio.*
+dropped    audio.adapter.norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.0.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.1.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.10.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.11.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.12.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.13.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.14.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.15.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.16.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.2.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.3.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.4.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.5.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.6.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.7.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.8.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.batch_norm.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.batch_norm.running_mean [512]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.batch_norm.running_var [512]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.batch_norm.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.depthwise_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.depthwise_conv.weight [512, 1, 9]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.pointwise_conv1.bias [1024]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.pointwise_conv1.weight [1024, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.pointwise_conv2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.conv.pointwise_conv2.weight [512, 512, 1]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward1.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward1.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward1.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward1.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward2.linear1.bias [2048]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward2.linear1.weight [2048, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward2.linear2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.feed_forward2.linear2.weight [512, 2048]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_conv.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_conv.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_feed_forward1.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_feed_forward1.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_feed_forward2.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_feed_forward2.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_out.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_self_att.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.norm_self_att.weight [512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_k.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_k.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_out.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_out.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_pos.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_q.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_q.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_v.bias [512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.linear_v.weight [512, 512]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.pos_bias_u [8, 64]: matched by audio.*
+dropped    audio.encoder.layers.9.self_attn.pos_bias_v [8, 64]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.0.bias [256]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.0.weight [256, 1, 3, 3]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.2.bias [256]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.2.weight [256, 1, 3, 3]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.3.bias [256]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.3.weight [256, 256, 1, 1]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.5.bias [256]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.5.weight [256, 1, 3, 3]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.6.bias [256]: matched by audio.*
+dropped    audio.encoder.pre_encode.conv.6.weight [256, 256, 1, 1]: matched by audio.*
+dropped    audio.encoder.pre_encode.out.bias [512]: matched by audio.*
+dropped    audio.encoder.pre_encode.out.weight [512, 4096]: matched by audio.*
+dropped    audio.residual.down.bias [512]: matched by audio.*
+dropped    audio.residual.down.weight [512, 1024]: matched by audio.*
+dropped    audio.residual.ln.bias [1024]: matched by audio.*
+dropped    audio.residual.ln.weight [1024]: matched by audio.*
+dropped    audio.residual.up.bias [1024]: matched by audio.*
+dropped    audio.residual.up.weight [1024, 512]: matched by audio.*
+skipped    encoder.embed_tokens.weight [65536, 1024]: excluded by *embed*
+skipped    encoder.embedding_norm.weight [1024]: excluded by *embed*
+skipped    encoder.layers.0.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.0.conv.in_proj.weight [3072, 1024]: max error 0.00478, mean 0.000533
+quantized  encoder.layers.0.conv.out_proj.weight [1024, 1024]: max error 0.0135, mean 0.000538
+quantized  encoder.layers.0.feed_forward.w1.weight [4608, 1024]: max error 0.00626, mean 0.000508
+quantized  encoder.layers.0.feed_forward.w2.weight [1024, 4608]: max error 0.0111, mean 0.000532
+quantized  encoder.layers.0.feed_forward.w3.weight [4608, 1024]: max error 0.00373, mean 0.000516
+skipped    encoder.layers.0.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.0.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.1.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.1.conv.in_proj.weight [3072, 1024]: max error 0.00352, mean 0.000529
+quantized  encoder.layers.1.conv.out_proj.weight [1024, 1024]: max error 0.0129, mean 0.000551
+quantized  encoder.layers.1.feed_forward.w1.weight [4608, 1024]: max error 0.00687, mean 0.000522
+quantized  encoder.layers.1.feed_forward.w2.weight [1024, 4608]: max error 0.0118, mean 0.000521
+quantized  encoder.layers.1.feed_forward.w3.weight [4608, 1024]: max error 0.00628, mean 0.000518
+skipped    encoder.layers.1.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.1.operator_norm.weight [1024]: 1D, needs [out, in]
+quantized  encoder.layers.10.feed_forward.w1.weight [4608, 1024]: max error 0.00583, mean 0.000523
+quantized  encoder.layers.10.feed_forward.w2.weight [1024, 4608]: max error 0.00808, mean 0.000529
+quantized  encoder.layers.10.feed_forward.w3.weight [4608, 1024]: max error 0.00789, mean 0.000541
+skipped    encoder.layers.10.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.10.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.10.self_attn.k_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.10.self_attn.k_proj.weight [512, 1024]: max error 0.00397, mean 0.000513
+quantized  encoder.layers.10.self_attn.out_proj.weight [1024, 1024]: max error 0.00608, mean 0.00051
+skipped    encoder.layers.10.self_attn.q_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.10.self_attn.q_proj.weight [1024, 1024]: max error 0.00407, mean 0.000521
+quantized  encoder.layers.10.self_attn.v_proj.weight [512, 1024]: max error 0.00316, mean 0.000583
+skipped    encoder.layers.11.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.11.conv.in_proj.weight [3072, 1024]: max error 0.00655, mean 0.000531
+quantized  encoder.layers.11.conv.out_proj.weight [1024, 1024]: max error 0.0103, mean 0.000531
+quantized  encoder.layers.11.feed_forward.w1.weight [4608, 1024]: max error 0.00634, mean 0.000509
+quantized  encoder.layers.11.feed_forward.w2.weight [1024, 4608]: max error 0.0124, mean 0.000537
+quantized  encoder.layers.11.feed_forward.w3.weight [4608, 1024]: max error 0.00933, mean 0.000541
+skipped    encoder.layers.11.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.11.operator_norm.weight [1024]: 1D, needs [out, in]
+quantized  encoder.layers.12.feed_forward.w1.weight [4608, 1024]: max error 0.00504, mean 0.000503
+quantized  encoder.layers.12.feed_forward.w2.weight [1024, 4608]: max error 0.0107, mean 0.00055
+quantized  encoder.layers.12.feed_forward.w3.weight [4608, 1024]: max error 0.00446, mean 0.000553
+skipped    encoder.layers.12.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.12.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.12.self_attn.k_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.12.self_attn.k_proj.weight [512, 1024]: max error 0.00317, mean 0.000513
+quantized  encoder.layers.12.self_attn.out_proj.weight [1024, 1024]: max error 0.00633, mean 0.000525
+skipped    encoder.layers.12.self_attn.q_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.12.self_attn.q_proj.weight [1024, 1024]: max error 0.00792, mean 0.000514
+quantized  encoder.layers.12.self_attn.v_proj.weight [512, 1024]: max error 0.00548, mean 0.000603
+skipped    encoder.layers.13.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.13.conv.in_proj.weight [3072, 1024]: max error 0.00638, mean 0.000525
+quantized  encoder.layers.13.conv.out_proj.weight [1024, 1024]: max error 0.0109, mean 0.000532
+quantized  encoder.layers.13.feed_forward.w1.weight [4608, 1024]: max error 0.00593, mean 0.000492
+quantized  encoder.layers.13.feed_forward.w2.weight [1024, 4608]: max error 0.0126, mean 0.000565
+quantized  encoder.layers.13.feed_forward.w3.weight [4608, 1024]: max error 0.00719, mean 0.000559
+skipped    encoder.layers.13.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.13.operator_norm.weight [1024]: 1D, needs [out, in]
+quantized  encoder.layers.14.feed_forward.w1.weight [4608, 1024]: max error 0.00479, mean 0.000479
+quantized  encoder.layers.14.feed_forward.w2.weight [1024, 4608]: max error 0.0175, mean 0.000591
+quantized  encoder.layers.14.feed_forward.w3.weight [4608, 1024]: max error 0.00942, mean 0.000583
+skipped    encoder.layers.14.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.14.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.14.self_attn.k_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.14.self_attn.k_proj.weight [512, 1024]: max error 0.00865, mean 0.000516
+quantized  encoder.layers.14.self_attn.out_proj.weight [1024, 1024]: max error 0.00835, mean 0.000578
+skipped    encoder.layers.14.self_attn.q_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.14.self_attn.q_proj.weight [1024, 1024]: max error 0.00527, mean 0.000501
+quantized  encoder.layers.14.self_attn.v_proj.weight [512, 1024]: max error 0.00574, mean 0.000707
+skipped    encoder.layers.15.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.15.conv.in_proj.weight [3072, 1024]: max error 0.00312, mean 0.000526
+quantized  encoder.layers.15.conv.out_proj.weight [1024, 1024]: max error 0.0114, mean 0.000534
+quantized  encoder.layers.15.feed_forward.w1.weight [4608, 1024]: max error 0.00418, mean 0.000492
+quantized  encoder.layers.15.feed_forward.w2.weight [1024, 4608]: max error 0.0118, mean 0.000561
+quantized  encoder.layers.15.feed_forward.w3.weight [4608, 1024]: max error 0.0074, mean 0.000574
+skipped    encoder.layers.15.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.15.operator_norm.weight [1024]: 1D, needs [out, in]
+quantized  encoder.layers.2.feed_forward.w1.weight [4608, 1024]: max error 0.0066, mean 0.000538
+quantized  encoder.layers.2.feed_forward.w2.weight [1024, 4608]: max error 0.0105, mean 0.000512
+quantized  encoder.layers.2.feed_forward.w3.weight [4608, 1024]: max error 0.00645, mean 0.00052
+skipped    encoder.layers.2.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.2.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.2.self_attn.k_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.2.self_attn.k_proj.weight [512, 1024]: max error 0.00392, mean 0.000542
+quantized  encoder.layers.2.self_attn.out_proj.weight [1024, 1024]: max error 0.00637, mean 0.00046
+skipped    encoder.layers.2.self_attn.q_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.2.self_attn.q_proj.weight [1024, 1024]: max error 0.00489, mean 0.000523
+quantized  encoder.layers.2.self_attn.v_proj.weight [512, 1024]: max error 0.00302, mean 0.000546
+skipped    encoder.layers.3.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.3.conv.in_proj.weight [3072, 1024]: max error 0.00529, mean 0.000536
+quantized  encoder.layers.3.conv.out_proj.weight [1024, 1024]: max error 0.0134, mean 0.000549
+quantized  encoder.layers.3.feed_forward.w1.weight [4608, 1024]: max error 0.00552, mean 0.000542
+quantized  encoder.layers.3.feed_forward.w2.weight [1024, 4608]: max error 0.0118, mean 0.000504
+quantized  encoder.layers.3.feed_forward.w3.weight [4608, 1024]: max error 0.00554, mean 0.000514
+skipped    encoder.layers.3.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.3.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.4.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.4.conv.in_proj.weight [3072, 1024]: max error 0.00596, mean 0.000532
+quantized  encoder.layers.4.conv.out_proj.weight [1024, 1024]: max error 0.0125, mean 0.000533
+quantized  encoder.layers.4.feed_forward.w1.weight [4608, 1024]: max error 0.00891, mean 0.000535
+quantized  encoder.layers.4.feed_forward.w2.weight [1024, 4608]: max error 0.0129, mean 0.000537
+quantized  encoder.layers.4.feed_forward.w3.weight [4608, 1024]: max error 0.00726, mean 0.000519
+skipped    encoder.layers.4.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.4.operator_norm.weight [1024]: 1D, needs [out, in]
+quantized  encoder.layers.5.feed_forward.w1.weight [4608, 1024]: max error 0.00731, mean 0.00055
+quantized  encoder.layers.5.feed_forward.w2.weight [1024, 4608]: max error 0.00985, mean 0.000506
+quantized  encoder.layers.5.feed_forward.w3.weight [4608, 1024]: max error 0.00655, mean 0.000521
+skipped    encoder.layers.5.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.5.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.5.self_attn.k_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.5.self_attn.k_proj.weight [512, 1024]: max error 0.00604, mean 0.000536
+quantized  encoder.layers.5.self_attn.out_proj.weight [1024, 1024]: max error 0.00633, mean 0.000509
+skipped    encoder.layers.5.self_attn.q_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.5.self_attn.q_proj.weight [1024, 1024]: max error 0.00602, mean 0.000523
+quantized  encoder.layers.5.self_attn.v_proj.weight [512, 1024]: max error 0.00316, mean 0.000568
+skipped    encoder.layers.6.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.6.conv.in_proj.weight [3072, 1024]: max error 0.00686, mean 0.000541
+quantized  encoder.layers.6.conv.out_proj.weight [1024, 1024]: max error 0.0126, mean 0.000534
+quantized  encoder.layers.6.feed_forward.w1.weight [4608, 1024]: max error 0.00559, mean 0.000548
+quantized  encoder.layers.6.feed_forward.w2.weight [1024, 4608]: max error 0.00988, mean 0.000498
+quantized  encoder.layers.6.feed_forward.w3.weight [4608, 1024]: max error 0.006, mean 0.000518
+skipped    encoder.layers.6.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.6.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.7.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.7.conv.in_proj.weight [3072, 1024]: max error 0.00618, mean 0.000538
+quantized  encoder.layers.7.conv.out_proj.weight [1024, 1024]: max error 0.0114, mean 0.000534
+quantized  encoder.layers.7.feed_forward.w1.weight [4608, 1024]: max error 0.00697, mean 0.000532
+quantized  encoder.layers.7.feed_forward.w2.weight [1024, 4608]: max error 0.0124, mean 0.000517
+quantized  encoder.layers.7.feed_forward.w3.weight [4608, 1024]: max error 0.00696, mean 0.000523
+skipped    encoder.layers.7.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.7.operator_norm.weight [1024]: 1D, needs [out, in]
+quantized  encoder.layers.8.feed_forward.w1.weight [4608, 1024]: max error 0.00615, mean 0.000534
+quantized  encoder.layers.8.feed_forward.w2.weight [1024, 4608]: max error 0.00887, mean 0.000494
+quantized  encoder.layers.8.feed_forward.w3.weight [4608, 1024]: max error 0.00537, mean 0.00052
+skipped    encoder.layers.8.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.8.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.8.self_attn.k_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.8.self_attn.k_proj.weight [512, 1024]: max error 0.00336, mean 0.000508
+quantized  encoder.layers.8.self_attn.out_proj.weight [1024, 1024]: max error 0.00542, mean 0.000502
+skipped    encoder.layers.8.self_attn.q_layernorm.weight [64]: 1D, needs [out, in]
+quantized  encoder.layers.8.self_attn.q_proj.weight [1024, 1024]: max error 0.00415, mean 0.000511
+quantized  encoder.layers.8.self_attn.v_proj.weight [512, 1024]: max error 0.00259, mean 0.000567
+skipped    encoder.layers.9.conv.conv.weight [1024, 1, 3]: 3D, needs [out, in]
+quantized  encoder.layers.9.conv.in_proj.weight [3072, 1024]: max error 0.00557, mean 0.000531
+quantized  encoder.layers.9.conv.out_proj.weight [1024, 1024]: max error 0.0104, mean 0.000514
+quantized  encoder.layers.9.feed_forward.w1.weight [4608, 1024]: max error 0.00741, mean 0.000518
+quantized  encoder.layers.9.feed_forward.w2.weight [1024, 4608]: max error 0.0249, mean 0.000524
+quantized  encoder.layers.9.feed_forward.w3.weight [4608, 1024]: max error 0.00746, mean 0.000524
+skipped    encoder.layers.9.ffn_norm.weight [1024]: 1D, needs [out, in]
+skipped    encoder.layers.9.operator_norm.weight [1024]: 1D, needs [out, in]
+skipped    head.head.layers.0.linear1.bias [4096]: not matched by --include
+quantized  head.head.layers.0.linear1.weight [4096, 1024]: max error 0.000304, mean 7.16e-05
+skipped    head.head.layers.0.linear2.bias [1024]: not matched by --include
+quantized  head.head.layers.0.linear2.weight [1024, 4096]: max error 0.000208, mean 4.68e-05
+skipped    head.head.layers.0.norm1.bias [1024]: not matched by --include
+skipped    head.head.layers.0.norm1.weight [1024]: 1D, needs [out, in]
+skipped    head.head.layers.0.norm2.bias [1024]: not matched by --include
+skipped    head.head.layers.0.norm2.weight [1024]: 1D, needs [out, in]
+skipped    head.head.layers.0.self_attn.in_proj_bias [3072]: not matched by --include
+skipped    head.head.layers.0.self_attn.in_proj_weight [3072, 1024]: not matched by --include
+skipped    head.head.layers.0.self_attn.out_proj.bias [1024]: not matched by --include
+quantized  head.head.layers.0.self_attn.out_proj.weight [1024, 1024]: max error 0.000236, mean 6.99e-05
+skipped    head.head.layers.1.linear1.bias [4096]: not matched by --include
+quantized  head.head.layers.1.linear1.weight [4096, 1024]: max error 0.000235, mean 6.5e-05
+skipped    head.head.layers.1.linear2.bias [1024]: not matched by --include
+quantized  head.head.layers.1.linear2.weight [1024, 4096]: max error 0.000192, mean 4.04e-05
+skipped    head.head.layers.1.norm1.bias [1024]: not matched by --include
+skipped    head.head.layers.1.norm1.weight [1024]: 1D, needs [out, in]
+skipped    head.head.layers.1.norm2.bias [1024]: not matched by --include
+skipped    head.head.layers.1.norm2.weight [1024]: 1D, needs [out, in]
+skipped    head.head.layers.1.self_attn.in_proj_bias [3072]: not matched by --include
+skipped    head.head.layers.1.self_attn.in_proj_weight [3072, 1024]: not matched by --include
+skipped    head.head.layers.1.self_attn.out_proj.bias [1024]: not matched by --include
+quantized  head.head.layers.1.self_attn.out_proj.weight [1024, 1024]: max error 0.00022, mean 6.85e-05
+skipped    head.scorer.0.bias [1024]: not matched by --include
+skipped    head.scorer.0.weight [1024]: 1D, needs [out, in]
+skipped    head.scorer.1.bias [1024]: not matched by --include
+quantized  head.scorer.1.weight [1024, 1024]: max error 0.000227, mean 6.96e-05
+skipped    head.scorer.3.bias [1]: not matched by --include
+skipped    head.scorer.3.weight [1, 1024]: out features 1 not a multiple of 4
+skipped    head.type_emb.weight [3, 1024]: out features 3 not a multiple of 4
+dropped    vision.projector.linear_1.bias [2048]: matched by vision.*
+dropped    vision.projector.linear_1.weight [2048, 3072]: matched by vision.*
+dropped    vision.projector.linear_2.bias [1024]: matched by vision.*
+dropped    vision.projector.linear_2.weight [1024, 2048]: matched by vision.*
+dropped    vision.tower.vision_model.embeddings.patch_embedding.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.embeddings.patch_embedding.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.embeddings.position_embedding.weight [256, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.0.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.1.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.10.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.11.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.2.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.3.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.4.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.5.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.6.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.7.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.8.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.layer_norm1.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.layer_norm1.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.layer_norm2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.layer_norm2.weight [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.mlp.fc1.bias [3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.mlp.fc1.weight [3072, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.mlp.fc2.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.mlp.fc2.weight [768, 3072]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.k_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.k_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.out_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.out_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.q_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.q_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.v_proj.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.encoder.layers.9.self_attn.v_proj.weight [768, 768]: matched by vision.*
+dropped    vision.tower.vision_model.post_layernorm.bias [768]: matched by vision.*
+dropped    vision.tower.vision_model.post_layernorm.weight [768]: matched by vision.*

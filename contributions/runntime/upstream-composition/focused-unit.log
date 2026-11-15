@@ -1,0 +1,428 @@
+$ pnpm --filter runntime exec vitest run --project unit test/core/nn/layers.test.ts test/core/nn/loadStateDict.test.ts test/core/nn/module.test.ts test/core/graph/ops/shape.test.ts test/core/weights/quantPack.test.ts test/core/weights/safetensors.test.ts test/core/weights/transforms.test.ts test/zoo/d1/prompt.test.ts --reporter=verbose
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+ ✓ |unit| test/zoo/d1/prompt.test.ts > D1 prompt packing > keeps complete state, instruction, and option text when it fits 2ms
+ ✓ |unit| test/zoo/d1/prompt.test.ts > D1 prompt packing > rejects an overlong state instead of truncating it 0ms
+ ✓ |unit| test/zoo/d1/prompt.test.ts > D1 prompt packing > rejects overlong instructions and options instead of truncating them 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > stacks F32 parts along dim 0 1ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > stacks F16 parts along dim 0 1ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > stacks BF16 parts along dim 0 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > reads a part listed several times once 1ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > gives f32 when f16 and f32 parts mix 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > throws CHECKPOINT_MISMATCH for no parts 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > throws CHECKPOINT_MISMATCH for different widths 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > throws CHECKPOINT_MISMATCH for different ranks 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > concatRows > throws CHECKPOINT_MISMATCH for a scalar 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitRows > splits F32 along dim 0 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitRows > splits F16 along dim 0 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitRows > splits BF16 along dim 0 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitRows > splits dim 0 of a 3D tensor, keeping the rest 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitRows > throws CHECKPOINT_MISMATCH when the sizes do not cover dim 0 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitCols > splits F32 along the last dim 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitCols > splits F16 along the last dim 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitCols > splits BF16 along the last dim 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > splitCols > throws CHECKPOINT_MISMATCH when the sizes do not cover the last dim 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > reorders the rows of F32 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > reorders the rows of F16 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > reorders the rows of BF16 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > moves whole blocks of a 3D tensor and single elements of a 1D one 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for too few rows 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for too many rows 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for a repeated row 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for a row past the end 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for a negative row 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for a fractional row 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > permuteRows > throws CHECKPOINT_MISMATCH for a scalar 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales F32 by 0.5 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales F16 by 0.5 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales BF16 by 0.5 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales F32 by [ 2, -1 ] 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales F16 by [ 2, -1 ] 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales F32 by 0.1 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > scales F16 by 0.1 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > scaleWeight > throws CHECKPOINT_MISMATCH for one row scale too many 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > transposeWeight > transposes a 2D F32 tensor 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > transposeWeight > transposes a 2D F16 tensor 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > transposeWeight > transposes a 2D BF16 tensor 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > transposeWeight > throws CHECKPOINT_MISMATCH for a 3D tensor 1ms
+ ✓ |unit| test/core/weights/transforms.test.ts > reshapeWeight > reshapes F32, keeping the source dtype 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > reshapeWeight > reshapes F16, keeping the source dtype 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > reshapeWeight > reshapes BF16, keeping the source dtype 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > reshapeWeight > keeps the f16 halfwords of a derived source 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > reshapeWeight > throws CHECKPOINT_MISMATCH when the element counts differ 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > fetch nothing until an output is read, and split sources read once 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > chain: f16 halfwords from one helper stay f16 through the next 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > chain: a scaled F16 part makes the fused result f32 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > concatRows rejects packed u32 words with CHECKPOINT_MISMATCH 1ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > splitRows rejects packed u32 words with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > permuteRows rejects packed u32 words with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > scaleWeight rejects packed u32 words with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > concatRows rejects a derived source whose data does not fill its shape 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > splitRows rejects a derived source whose data does not fill its shape 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > splitCols rejects a derived source whose data does not fill its shape 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > scaleWeight rejects a derived source whose data does not fill its shape 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > weight helpers > transposeWeight rejects a derived source whose data does not fill its shape 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > concatRows stacks ints and scales, keeping f16 scales 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > concatRows throws CHECKPOINT_MISMATCH for mixed parts 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > splitRows splits ints and scales rows 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > splitCols splits on the group grid 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > splitCols throws CHECKPOINT_MISMATCH off the group grid 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > permuteRows reorders ints and scales rows 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > scaleWeight by 3 multiplies the scales into f32 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > scaleWeight by [ 2, -10 ] multiplies the scales into f32 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > reshapeWeight keeps the last dim and the groups 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > transposeWeight throws CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int8 quantized sources > readFloats and the float accessors of an output reject it 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > concatRows stacks ints and scales, keeping f16 scales 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > concatRows throws CHECKPOINT_MISMATCH for mixed parts 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > splitRows splits ints and scales rows 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > splitCols splits on the group grid 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > splitCols throws CHECKPOINT_MISMATCH off the group grid 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > permuteRows reorders ints and scales rows 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > scaleWeight by 3 multiplies the scales into f32 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > scaleWeight by [ 2, -10 ] multiplies the scales into f32 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > reshapeWeight keeps the last dim and the groups 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > transposeWeight throws CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > int4 quantized sources > readFloats and the float accessors of an output reject it 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > quantized helpers > concatRows reads a part listed several times once 0ms
+ ✓ |unit| test/core/weights/transforms.test.ts > quantized helpers > splits read the source once for all their outputs 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > reads dtype, shape and absolute offsets 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > returns the metadata, or {} when there is none 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > orders tensors by where they sit in the file, not by header order 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > accepts an empty header 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > accepts a scalar (shape []) 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > accepts a zero-size tensor 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects an entry that is not an object 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects an unsupported dtype 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a missing dtype 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a negative dim 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a fractional dim 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a shape that is not an array 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects one data offset 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a negative data offset 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects data offsets running backwards 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a span too short for the shape 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a span too long for the shape 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a zero header length 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header length over the 100 MB cap 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header length past 2^53 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects an HTML page instead of a file 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a file shorter than 8 bytes 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header longer than the file 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header that is not JSON 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header that is null instead of an object 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header that is a number instead of an object 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > parseSafetensorsHeader > rejects a header that is an array instead of an object 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > decodes F32, F16 and BF16 to f32 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > gives F16 and BF16 bits unconverted 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > packs F16 into u32 words, zero-padding an odd count 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > reads U32 words 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > rejects f32() on BOOL with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > rejects u16() on F32 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > rejects halfWords() on BF16 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > rejects words() on F16 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > reports shape, dtype and byte sizes 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > reads a scalar and a zero-size tensor 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > opens a file with no tensors 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > fails the read, not the open, when the payload is cut short 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > reads tensors that span several chunks 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > opens a file with a valid setting 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects text that is not JSON with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects a JSON array with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects version 2 with CHECKPOINT_MISMATCH 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects no version with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects bits 2 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects bits '8' with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects groupSize 0 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects groupSize 1.5 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects groupSize '2' with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects an asymmetric scheme with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects a I8 tensor in a file with no setting 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantization metadata > rejects a U8 tensor in a file with no setting 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > pairs an int8 weight with its scales into one tensor 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > unpacks int4 low nibble first, sign-extending each nibble 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > pairs a weight whose scales come first in the file 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects f32() on a quantized tensor with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects u16() on a quantized tensor with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects halfWords() on a quantized tensor with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects words() on a quantized tensor with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects a U8 weight in an int8 file with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects a 1D weight with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects columns that are not a multiple of the … with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects a weight with no scales with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects F32 scales with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects one scale per row instead of per group with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with quantized weights > rejects an I8 weight in an int4 file 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with files from the Python quantizer > reads int4 weights within half a step of the float source 8ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with files from the Python quantizer > reads int8 weights within half a step of the float source 4ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with a cache > loads a second time without touching the source 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with a cache > keeps files with different cache IDs apart 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > with a cache > needs a cache ID when the source is not a URL 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > from a URL > drops a cached HTML page and downloads the file again 15ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > fromSafetensors > from a URL > uses the file name as the default cache ID 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > httpRangeSource > asks for the exact byte range 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > httpRangeSource > downloads the whole file once when the server ignores Range 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > httpRangeSource > retries a short body 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > httpRangeSource > gives up after 3 tries on a body that stays short 1ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > httpRangeSource > gives up after 3 tries on a 404 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > httpRangeSource > gives up after 3 tries on an HTML fallback page 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > reads inside one chunk 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > reads across two chunks 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > reads across three chunks, the last one short 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > reads exactly one chunk 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > reads a single byte 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > returns a standalone copy 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > fetches a chunk once for several reads 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > keeps the 4 most recent chunks 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > does not keep a failed fetch 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > chunkedSource > rejects a read past the end 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > bufferSource > returns a standalone copy 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > bufferSource > reads from a view with an offset 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > bufferSource > takes an ArrayBuffer 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > bufferSource > reads an empty range 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > bufferSource > rejects a read past the end 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > memoryStateDict > gives bare arrays a flat shape 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > memoryStateDict > keeps the shape of the object form 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > memoryStateDict > treats a Uint16Array as bf16 bits 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > memoryStateDict > sums byte sizes 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > memoryStateDict > handles an empty dict 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > derivedTensor > computes on every read and holds nothing between reads 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > derivedTensor > decodes f16 halfwords for f32() 0ms
+ ✓ |unit| test/core/weights/safetensors.test.ts > derivedTensor > rejects an accessor that does not match what compute made 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > packs one int8 tile column by column 1ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > packs one int4 tile, two columns per word 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > keeps negative int8 values as two’s complement bits 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > keeps negative int4 values as two’s complement bits 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > orders tiles by column unit, then row chunk 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > reads back as the kernels read it: int8 [8, 12] 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > reads back as the kernels read it: int4 [12, 8] 0ms
+ ✓ |unit| test/core/weights/quantPack.test.ts > packQuantW > reads back as the kernels read it: int4 [16, 16] 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > reshape > [2, 3] to [ 3, 2 ] 1ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > reshape > [2, 3] to [ 6 ] 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > reshape > [2, 3] to [ 1, 6, 1 ] 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > reshape > rejects a different element count 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > reshape > rejects hwc4 storage 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > astype > converts f32 to f16 and keeps the dims 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > astype > returns the same value when the dtype already matches 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > astype > rejects a quantized weight 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > astype > rejects hwc4 storage 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > transpose > swaps the two dims 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > transpose > rejects anything but 2D 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > joins rows (dim 0) 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > joins cols (dim 1) 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > joins cols (dim -1) 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > joins channels (3D, dim 0) 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > folds three tensors left to right 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > returns a single tensor as it is 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > joins hwc4 maps whose channel counts are multiples of 4 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects an empty list 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects 1D tensors 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects mismatched cols on a row join 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects mismatched rows on a col join 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects mixed dtypes 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects a 3D join along dim 1 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects mismatched spatial sizes 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects a dim out of range 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > cat > rejects hwc4 channel counts not multiples of 4 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > cuts [1, 4) from rows 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > cuts [1, 4) from cols 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > cuts [1, 4) from cols by dim -1 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > cuts [1, 4) from channels 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > takes a single row 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects an empty range 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a backwards range 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a range past the end 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a negative start 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a fractional bound 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a 3D slice along dim 1 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a 1D input 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a dim out of range 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > rejects a fractional dim 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > slice > slices hwc4 channels only at multiples of 4 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > chunk > splits into equal parts 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > chunk > gives the whole range for one part 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > chunk > rejects a size that does not divide 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > chunk > rejects zero parts 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > split > splits into the given sizes 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > split > rejects sizes that do not cover the dim 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > split > rejects a zero-size part 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > returns a view up to the last written row 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > fills the cache to the last row 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > rejects a pending destination 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > rejects rows past the capacity 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > rejects a negative start 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > rejects mismatched cols 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > writeRows > rejects mixed dtypes 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRows > picks rows, repeats allowed 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRows > keeps its own copy of the indices 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRows > rejects no indices 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRows > rejects an index past the end 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRows > rejects a negative index 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRows > rejects a fractional index 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRowsFrom > gives one row per index 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRowsFrom > needs f32 indices 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRowsFrom > gives one row per group of indices 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRowsFrom > rejects a group that does not divide the indices 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRowsFrom > rejects a group of zero 0ms
+ ✓ |unit| test/core/graph/ops/shape.test.ts > gatherRowsFrom > rejects a group that is fractional 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module registration > registers fields declared as class fields 1ms
+ ✓ |unit| test/core/nn/module.test.ts > Module registration > registers fields assigned in the constructor 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module registration > skips fields starting with _ and anything that is not a slot or module 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > names parameters by their dotted path, own ones before children 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > writes the path into each parameter 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > puts a prefix in front of every name 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > names buffers the same way 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > lists submodules depth first, without the root 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > lists only direct children in declaration order 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Module walks > walks an empty module 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Parameter > throws on .value until bound, naming itself 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Parameter > returns the bound value 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Parameter > frees its GPU buffer on dispose, and every later use of the value throws 0ms
+ ✓ |unit| test/core/nn/module.test.ts > CpuParameter > has no GPU value, and its data throws until bound 0ms
+ ✓ |unit| test/core/nn/module.test.ts > Buffer > keeps its CPU data after dispose, so it can upload again 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > half() turns float slots to f16, except pinned ones 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > float() undoes it, still skipping pinned ones 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > keeps dims and element count 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > refuses once weights are loaded 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > retypes a loaded CPU table, which uploads at its dtype later 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > keeps quantized weights and pinned scales as they are 0ms
+ ✓ |unit| test/core/nn/module.test.ts > half() and float() > refuses a device without shader-f16 0ms
+ ✓ |unit| test/core/nn/module.test.ts > dispose > frees every parameter and buffer below, and is safe to call twice 0ms
+ ✓ |unit| test/core/nn/module.test.ts > forward > throws on a module that does not implement it 0ms
+ ✓ |unit| test/core/nn/module.test.ts > forward > ModuleList chains its items in order 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > transform hooks > runs the root with an empty prefix, then every child with its path and parent 1ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > transform hooks > lets a hook add the keys a parameter is bound from 1ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > transform hooks > reads a derived tensor once and leaves it holding nothing 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > strict key check > reports missing keys before uploading anything 1ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > strict key check > reports unexpected keys before uploading anything 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > strict key check > reports both keys before uploading anything 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > strict key check > lists eight names and counts the rest 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > strict key check > rejects a tensor whose element count differs from the slot 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > binding > uploads each parameter at its slot shape and binds the result 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > binding > binds in state-dict order, derived keys last 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > binding > reports cumulative file bytes, with derived keys adding none 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > binding > applies preprocess before upload 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > binding > keeps a CpuParameter off the GPU: bf16 as raw bits, anything else as f32 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > binding > uploads buffers after the parameters, narrowing to f16 after half() 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantized tensor > is refused by an f32 parameter with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantized tensor > is refused by an f16 parameter with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantized tensor > is refused by a CpuParameter with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantized tensor > is refused by a quantW parameter with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantized Linear > uploads the words, the scales and the bias in file order 1ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantized Linear > loads a float checkpoint into the same layer as before 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantW slot > takes pre-packed U32 words from a file, counted in words 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantW slot > takes derived words counted in logical values 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantW slot > refuses U32 words of another count with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > a quantW slot > refuses derived words of another logical size with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > materializing an f16 slot > narrows f32 from a file 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > materializing an f16 slot > converts bf16 bits 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > materializing an f16 slot > takes a derived tensor with halfwords straight through 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > materializing an f16 slot > takes a derived tensor with f32 narrowed 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > materializing an f16 slot > refuses packed u32 words 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > materializing an f16 slot > warns once per tensor about values clamped to the f16 range 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > gpuUpload > refuses halfwords into a f32 slot 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > gpuUpload > refuses words into a f32 slot 0ms
+ ✓ |unit| test/core/nn/loadStateDict.test.ts > gpuUpload > refuses f32 into a quantW slot 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > stores the weight as [in, out] and the bias as [out] 1ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > can go without a bias 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > maps [T, in] to [T, out] 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > transposes a torch [out, in] weight at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > rejects a weight already in [in, out] layout 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > leaves a missing weight for the strict key check to report 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > uses the bare name at the root 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > F16 into an f16 layer uploads the halfw… 1ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > F16 into an f32 layer decodes the trans… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > F32 into an f32 layer uploads f32 trans… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > F32 into an f16 layer narrows the trans… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > BF16 into an f32 layer decodes, then tr… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > BF16 into an f16 layer decodes, transpo… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > derived halfwords into an f16 layer upl… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > derived halfwords into an f32 layer dec… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > rejects derived packed words 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > transposes F16 halfwords without decoding them to f32 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > loads every F16 value into an f16 layer with the same bits as the f32 round trip 21ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear > loads every F16 value into an f32 layer with the same bits as the f32 round trip 16ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > retypes the weight to int8 quantW and adds f32 scales 1ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > retypes the weight to int4 quantW and adds f32 scales 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > packs the torch [out, in] int8 ints as kernel [in, out] tiles 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > packs int4 ints two columns to a word 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > transposes the scales to [in / groupSize, out] 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > takes f32 scales from scaleWeight as they are 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > puts the scales right after the weight, so binding keeps file order 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > gives the words the bytes of the ints and scales, and the scales none 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > keeps the bias of a half() layer f16 and the scales f32 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > refuses in features off the 8-row tiles with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > refuses int4 out features off 8 per word with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > refuses a group size off 4 with CHECKPOINT_MISMATCH 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > runs the f32 forward as a quantized matmul with bias and activation in the epilogue 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > runs the f16 forward as a quantized matmul with bias and activation in the epilogue 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Linear with a quantized weight > refuses a weight in [in, out] layout 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > stores the weight tap-major as [kernelSize·in, out] 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > maps [T, in] to [T_out, out] 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > reorders a torch [out, in, k] weight at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > rejects a weight in another layout 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > F16 into an f16 layer uploads the halfw… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > F16 into an f32 layer decodes the reord… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > F32 into an f32 layer uploads f32 reord… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > BF16 into an f32 layer decodes, then re… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > BF16 into an f16 layer decodes, reorder… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > derived halfwords into an f16 layer upl… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > derived halfwords into an f32 layer dec… 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > rejects derived packed words 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > reorders F16 halfwords without decoding them to f32 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > loads every F16 value into an f16 layer with the same bits as the f32 round trip 16ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > loads every F16 value into an f32 layer with the same bits as the f32 round trip 14ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv1d > widens the window by the dilation 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose1d > stores the weight as [taps·in, stride·out] and the bias once per frame 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose1d > maps [T, in] to [(T − 1)·stride − 2·padding + kernel + outputPadding, out] 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose1d > reorders a torch [in, out, k] weight and repeats the bias at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose1d > rejects a weight in another layout 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose1d > rejects a kernel that is not a multiple of the … 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose1d > rejects an outputPadding above the padding 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Snake > declares a pinned f32 [2, channels] weight 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Snake > turns a torch alpha [1, C, 1] into alpha and 1 / (alpha + 1e-9) at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > declares an f16 hwc4 weight that half() and float() leave alone 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > sizes a depthwise weight per channel 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > takes a non-square kernel 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > rejects groups that are neither 1 nor depthwise 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > packs f16 weights into 4×4 tiles at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > packs depthwise weights by groups of 4 channels 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > refuses f32 weights at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Conv2d > maps an hwc4 map to an hwc4 map 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose2d > declares an f16 [out·k·k, in] weight and an f32 bias 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose2d > reorders f16 weights at load 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > ConvTranspose2d > scales each side by k 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > folds into the conv declared right before it and loads only conv weights 1ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > finds its conv inside a nested block 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > folds into a named conv with foldInto 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > refuses to guess when right before it is something other than a conv 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > refuses to guess when right before it is a conv with another channel count 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > refuses to guess when right before it is a non-conv after a matching conv 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > refuses to guess when right before it is nothing 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > BatchNorm2d > has no parameters and passes activations through 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > LayerNorm has a weight, and a bias only when asked 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > GroupNorm has a weight and bias per channel, and groups that divide the channels 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > RMSNorm has one scale per feature 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > LayerNorm keeps the [T, N] shape 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > GroupNorm keeps the [T, N] shape 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > GroupNorm per channel keeps the [T, N] shape 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > normalization layers > RMSNorm keeps the [T, N] shape 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > stores a [vocab, dim] table on the GPU by default 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > looks up rows by token id 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > on the CPU > gathers rows from an f32 table 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > on the CPU > expands rows from a bf16 table to f32 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > on the CPU > rejects token id 3 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > on the CPU > rejects token id -1 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > on the CPU > rejects token id 0.5 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > on the CPU > cannot take token ids that live on the GPU 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > Embedding > gather() refuses a GPU table 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > MultiHeadAttention > has no parameters without sinks 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > MultiHeadAttention > declares one f32 sink per query head, pinned 0ms
+ ✓ |unit| test/core/nn/layers.test.ts > MultiHeadAttention > attends from q, k, v or from one packed qkv 0ms
+
+ Test Files  8 passed (8)
+      Tests  418 passed (418)
+   Start at  21:14:22
+   Duration  388ms (import 61%, transform 20%, tests 17%, worker 2%)
+

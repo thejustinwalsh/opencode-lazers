@@ -1,0 +1,18 @@
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+ ↓ |gpu (chromium)| test/zoo/d1/qualification.gpu.test.ts > records the original D1 branch against the pinned Liquid text corpus
+stdout | test/zoo/d1/qualification.gpu.test.ts > qualifies D1 references, resource cleanup, serialization, abort, disposal, and device recovery
+D1_QUALIFICATION {"mode":"repaired","branchBase":"68f3a12506bada2c9ac6cb3629426f3e06a56349","model":"LiquidAI/d1-omni-600M","revision":"02b55d7076f15129e59ab3f94783f32c4b088674","elapsedMs":268418,"loadMs":129700.2,"loadedWeightBytes":1899868164,"bytesReceived":5796515176,"progressDoneBytes":1899868164,"progressTotalBytes":1899868164,"decisions":[{"id":"refund-positive","inputTokens":47,"answer":"yes","probabilities":[0.997874871177824,0.00212512882217597],"maxAbsError":1.518264580724349e-8,"latencyMs":565.3},{"id":"refund-negative","inputTokens":51,"answer":"no","probabilities":[0.005074966749142484,0.9949250332508575],"maxAbsError":1.9795630468166792e-7,"latencyMs":42.6},{"id":"choice-forward","inputTokens":56,"answer":"technical","probabilities":[0.006900143790023428,0.9878022037407178,0.005297652469258756],"maxAbsError":2.559177766404963e-8,"latencyMs":42.7},{"id":"choice-reversed","inputTokens":56,"answer":"technical","probabilities":[0.0072952651823491475,0.9853704990751164,0.007334235742534527],"maxAbsError":1.0150736740044408e-7,"latencyMs":40.9},{"id":"incident-rubric","inputTokens":111,"answer":"4","probabilities":[0.17572019777912387,0.062211411920616744,0.09098936980368344,0.1728346383879818,0.4982443821085941],"maxAbsError":0.0000017654551517365391,"latencyMs":62.4},{"id":"task-review","inputTokens":93,"answer":"no","probabilities":[0.0901228496475712,0.9098771503524288],"maxAbsError":6.02598617921446e-7,"latencyMs":52.2}],"serializationMs":83.7,"peakJsHeapBytes":2736314070,"peakAgentBytes":null,"peakGpuBufferBytes":1630639556,"gpuBufferBytesAfterDeviceLoss":0,"gpuBufferCountAfterDeviceLoss":0,"releaseMs":37.6,"deviceLossMs":41.6,"recoveryLoadMs":127587.4,"recoveryDecisionMs":503.7,"recoveryInputTokens":47,"recoveryAnswer":"yes","recoveryReleaseMs":34.2,"recoveryGpuBytesAfterDispose":0,"recoveryGpuBufferCountAfterDispose":0,"measurements":{"hostPeak":"sampled browser memory; not a process-wide peak","gpuPeak":"sum of live GPUBuffer.size snapshots; driver-private allocations are unknown","gpuAfterDeviceLoss":"device.destroy releases the old device allocations; this count is not decider-specific","release":"recovery decider disposed with zero new tracked buffers; persistent per-root readback staging predates disposal"}}
+ ✓ |gpu (chromium)| test/zoo/d1/qualification.gpu.test.ts > qualifies D1 references, resource cleanup, serialization, abort, disposal, and device recovery 268425ms
+
+   ❯ test/zoo/d1/qualification.gpu.test.ts:538:15 notice
+     ↳ D1_QUALIFICATION
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  18:05:55
+   Duration  269.80s (tests 100%)
+
+JSON report written to /private/tmp/lazers-runntime-handoff.GSDeio/workspace/design/reviews/runntime/d1-reference/repaired-vitest.json

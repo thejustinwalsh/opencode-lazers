@@ -1,0 +1,10 @@
+$ pnpm --filter runntime exec vitest run --project gpu test/zoo/lfm3/model-lifecycle.gpu.test.ts
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  06:45:41
+   Duration  1.89s (import 64%, worker 29%, tests 7%)
+

@@ -1,0 +1,33 @@
+{
+  "checkpoint": {
+    "repository": "LiquidAI/LFM3-Omni-2B",
+    "revision": "21d75123f86c1f7ffb4bef1ea202710c4e7ebe67",
+    "fileBytes": 4333941640,
+    "sourceTensorCount": 665,
+    "sourceTensorBytes": 4333856768,
+    "lfsSha256": "76c0ec2c3e27832fb19f886d5eb0afe37f03c5c32c4a796a7ce08cef119d2763"
+  },
+  "tokenizer": {
+    "revision": "21d75123f86c1f7ffb4bef1ea202710c4e7ebe67",
+    "fileBytes": 17908634,
+    "lfsSha256": "41927bd314d17d7d7fadb44e10cd0919f7b71528d7741596d8cbd15c6945ec44"
+  },
+  "conversion": {
+    "retainedTextTensorCount": 302,
+    "retainedTextTensorBytes": 3981891072,
+    "parameterCount": 302,
+    "parameterBytesAsF32": 7963782144,
+    "missing": [],
+    "unexpected": [],
+    "tensorDescriptorSha256": "07aa44d62744036e6b515a5d7bfa8c0b7b1a97667cf404f243804b8b8c16df09",
+    "parameterSchemaSha256": "92a6e61e3b1a6d74c9f382227bdc75ab5b82ef56915de16223d296a8129b2cd1",
+    "transformations": [
+      "filter LFM3 text backbone",
+      "rename normalization weights",
+      "interleave Q/K RoPE rows",
+      "reshape depthwise convolution weights",
+      "split tied LM head into 16 row shards"
+    ],
+    "dataRead": false
+  }
+}

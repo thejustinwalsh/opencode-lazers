@@ -1,0 +1,254 @@
+From 6aa6bbd5a0dae14204e9853c34c911fedd430659 Mon Sep 17 00:00:00 2001
+From: lazers-worker <lazers-worker@local>
+Date: Sat, 14 Nov 2026 07:50:01 -0500
+Subject: [PATCH 7/7] test(zoo): cover public audio speak early-break and
+ pending-queue recovery
+
+Drive the real createLfm3Audio wiring with faked IO boundaries: a
+stream-only consumer takes one chunk and breaks, cancellation rejects the
+result with no unhandled rejection, and the next speak succeeds. The
+fused-queue recovery successor is genuinely pending so both legs exercise
+queue rejection and requeue.
+---
+ .../lfm3/fused-readback-recovery.gpu.test.ts  |  25 ++-
+ .../test/zoo/tasks/audio/speak.test.ts        | 179 ++++++++++++++++++
+ 2 files changed, 195 insertions(+), 9 deletions(-)
+ create mode 100644 packages/runntime/test/zoo/tasks/audio/speak.test.ts
+
+diff --git a/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts b/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts
+index a695ad0..28eaa22 100644
+--- a/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/fused-readback-recovery.gpu.test.ts
+@@ -4,28 +4,35 @@
+  *  allocation or dispatch throws pre-submit, no shared ReadbackQueue entry is
+  *  left behind to poison the next request with 'a readback is already
+  *  queued'. toArrayFused is the only fused entry point kept, and it rejects
+- *  its own pending readback when its eval fails. This locks both halves. */
++ *  its own pending readback when its eval fails. This locks both halves: the
++ *  failing leg goes through the fused queue, and so does the recovering leg. */
+ 
+ import { expect, it } from 'vitest';
++import { add } from '../../../src/core/graph/ops.ts';
+ import { tensor } from '../../../src/core/gpu/buffers.ts';
+ import { matrix } from '../../../src/core/graph/value.ts';
+ import { toArray } from '../../../src/core/gpu/eval.ts';
+ import { gpu } from '../../gpu.ts';
+ 
+-it('toArrayFused rejects its pending readback and the next readback proceeds', async () => {
++it('toArrayFused rejects its pending readback and a pending successor proceeds', async () => {
+   const { root, ex } = await gpu();
+-  const good = tensor(root, new Float32Array([1, 2, 3, 4]), matrix(2, 2));
++  const left = tensor(root, new Float32Array([1, 2, 3, 4]), matrix(2, 2));
++  const right = tensor(root, new Float32Array([10, 20, 30, 40]), matrix(2, 2));
+   try {
+-    // A released target makes the fused eval throw before any submit.
++    // A released target makes the fused eval throw before any submit, while
++    // the pending readback is queued: rejectPending must fire.
+     const released = tensor(root, new Float32Array([5, 6, 7, 8]), matrix(2, 2));
+     ex.releaseValues([released]);
+     await expect(toArray(released, ex)).rejects.toThrow(/evalValues/);
+-    // The queue is clean: the next fused readback is not poisoned.
+-    await expect(toArray(good, ex)).resolves.toEqual(new Float32Array([1, 2, 3, 4]));
++    // The queue is clean, and the successor is genuinely pending, so this
++    // second readback exercises queue rejection followed by a fused requeue.
++    const pendingSum = add(left, right);
++    await expect(toArray(pendingSum, ex)).resolves.toEqual(new Float32Array([11, 22, 33, 44]));
+   } finally {
+-    if (good.state === 'materialized') good.buffer.destroy();
++    for (const value of [left, right]) {
++      if (value.state === 'materialized') value.buffer.destroy();
++    }
+   }
+   // The shared staging lease and memoized dims uniform persist per root by
+-  // design; the assertion above (second readback resolves) proves the queue
+-  // itself was cleared.
++  // design; the resolving successor above proves the queue itself was cleared.
+ });
+diff --git a/packages/runntime/test/zoo/tasks/audio/speak.test.ts b/packages/runntime/test/zoo/tasks/audio/speak.test.ts
+new file mode 100644
+index 0000000..273c396
+--- /dev/null
++++ b/packages/runntime/test/zoo/tasks/audio/speak.test.ts
+@@ -0,0 +1,179 @@
++/** Public audio speech wiring: stream-only early break, cancellation and reuse.
++ *
++ *  The speech `result` carries an internal rejection observer mirroring the
++ *  chat session, so abandoning the sample stream still settles `result`
++ *  without an unhandled rejection. Removing that observer must fail this
++ *  test: the early break leaves the abort rejection unobserved until the
++ *  test awaits it.
++ *
++ *  Heavy IO boundaries (GGUF parsing/loading, the language backbone, audio
++ *  weights, codec synthesis) are faked; the real `createLfm3Audio`
++ *  scheduling, queueing, cancellation and stream/result wiring runs
++ *  unmodified. */
++
++import { describe, expect, it, vi } from 'vitest';
++
++vi.mock('../../../../src/core/index.ts', async (importOriginal) => {
++  const actual = await importOriginal<typeof import('../../../../src/core/index.ts')>();
++  return {
++    ...actual,
++    supportsF16: () => true,
++    inGpuErrorScopes: async (_device: unknown, _name: string, fn: () => Promise<unknown>) => fn(),
++    tensor: () => ({}),
++    astype: (value: unknown) => value,
++    cat: () => ({}),
++    evalValues: () => {},
++    toArray: async () => {
++      const logits = new Float32Array(2017);
++      logits[5] = 10;
++      return logits;
++    },
++    parseGgufHeader: () => ({}),
++    fromGguf: async () => ({ metadata: {}, tensors: new Map(), totalBytes: () => 0 }),
++  };
++});
++
++vi.mock('../../../../src/zoo/tasks/nlp/lfm3.ts', () => ({
++  loadLfm3Backbone: async () => ({
++    root: { device: { queue: { onSubmittedWorkDone: async () => {} } } },
++    executor: { releaseValues() {}, trim() {} },
++    model: {},
++    tokenizer: {
++      bosId: 1,
++      audioId: 2,
++      audioOutId: 3,
++      audioStartId: 4,
++      textEndId: 5,
++      stopIds: new Set([5]),
++      encodeChat: () => [10, 11],
++      decode: () => '',
++    },
++    runtime: {
++      release() {},
++      trim() {},
++      dispose: async () => {},
++    },
++    embedTokens: () => ({}),
++    forwardEmbeddings: async () => ({
++      logits: new Float32Array(4),
++      hidden: new Float32Array(2048).fill(0.1),
++      cache: {},
++    }),
++    forwardTokens: async () => ({
++      logits: new Float32Array(4),
++      hidden: new Float32Array(2048).fill(0.1),
++      cache: {},
++    }),
++  }),
++}));
++
++vi.mock('../../../../src/zoo/lfm3/audio/model.ts', () => ({
++  LFM3_AUDIO_EOS_CODE: 2016,
++  LFM3_AUDIO_CODEBOOKS: 12,
++  LFM3_AUDIO_CODEBOOK_SIZE: 2017,
++  lfm3AudioTokensForSamples: (samples: number) => Math.ceil(samples / 1280),
++  Lfm3AudioModel: class {
++    half() {}
++    async loadStateDict() {}
++    encodeAudio() {
++      return {};
++    }
++    forwardDepthFrame() {
++      return Array.from({ length: 12 }, () => ({}));
++    }
++    decodeSpeechCodes() {
++      return { spectrum: {}, cache: { layers: [] } };
++    }
++    audioOutEmbedding() {
++      return {};
++    }
++    dispose() {}
++  },
++}));
++
++vi.mock('../../../../src/zoo/lfm3/audio/codec.ts', async (importOriginal) => {
++  const actual = await importOriginal<typeof import('../../../../src/zoo/lfm3/audio/codec.ts')>();
++  return {
++    ...actual,
++    LiquidCodecStream: class {
++      decode() {
++        return new Float32Array(480).fill(0.01);
++      }
++      finish() {
++        return new Float32Array(240).fill(0.01);
++      }
++    },
++  };
++});
++
++vi.mock('../../../../src/zoo/lfm3/audio/projector.ts', async (importOriginal) => {
++  const actual =
++    await importOriginal<typeof import('../../../../src/zoo/lfm3/audio/projector.ts')>();
++  return {
++    ...actual,
++    validateLfm3AudioProjector: () => ({
++      encoder: {
++        sampleRate: 16_000,
++        fftSize: 400,
++        hopSize: 160,
++        melBins: 128,
++        hiddenSize: 768,
++        feedForwardSize: 1792,
++        layers: 17,
++        attentionHeads: 8,
++        keyValueHeads: 4,
++        attentionWindow: 32,
++        outputSize: 2048,
++      },
++      depthDecoder: {
++        hiddenSize: 1024,
++        feedForwardSize: 2816,
++        layers: 3,
++        attentionHeads: 32,
++        keyValueHeads: 8,
++        codebooks: 12,
++        codebookSize: 2017,
++        sampling: { temperature: 0.4, repetitionPenalty: 1.2, repetitionWindow: 64 },
++      },
++      codec: { sampleRate: 24_000, hiddenSize: 512, layers: 8 },
++    }),
++  };
++});
++
++import { createLfm3Audio } from '../../../../src/zoo/tasks/audio/lfm3.ts';
++
++describe('public audio speech stream', () => {
++  it('early break cancels without an unhandled result rejection, then speaks again', async () => {
++    const audio = await createLfm3Audio(
++      { projectorPath: { read: async () => new Uint8Array() } },
++      { warmUp: false },
++    );
++    try {
++      const generation = audio.speak('hello world', {
++        maxAudioFrames: 10,
++        temperature: 0,
++        seed: 7,
++      });
++      const received: Float32Array[] = [];
++      for await (const chunk of generation) {
++        received.push(chunk);
++        break;
++      }
++      expect(received.length).toBe(1);
++      // Let the abort rejection fire while the test is not awaiting result.
++      // Without the internal observer this is an unhandled rejection.
++      await new Promise((resolve) => setTimeout(resolve, 20));
++      await expect(generation.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++
++      const next = audio.speak('second run', { maxAudioFrames: 2, temperature: 0, seed: 7 });
++      const chunks: Float32Array[] = [];
++      for await (const chunk of next) chunks.push(chunk);
++      const result = await next.result;
++      expect(result.audioFrames).toBe(2);
++      expect(result.samples.length).toBeGreaterThan(0);
++      expect([...result.samples].every(Number.isFinite)).toBe(true);
++    } finally {
++      await audio.dispose();
++    }
++  });
++});
+-- 
+2.54.0
+

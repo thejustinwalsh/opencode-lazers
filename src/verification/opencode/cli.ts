@@ -8,6 +8,7 @@ import {
   startOwnedDesktop,
 } from "./owned-launch.ts"
 import {
+  nativeAudioObservations,
   nativeInteractionStatus,
   resolveNativeInteractionResult,
   runNativeInteraction,
@@ -138,11 +139,61 @@ export async function main(
     await resolveNativeInteractionResult(
       resolve(required(args, "--root")),
       required(args, "--request"),
+      nativeDependencies,
+    )
+    return
+  }
+  if (operation === "audio-fixture") {
+    assertAllowed(args, ["--root", "--window", "--session", "--clip"])
+    const fixtureID = required(args, "--clip")
+    if (fixtureID !== "quick-brown-fox" && fixtureID !== "turn-left-next-street")
+      throw new Error("--clip must be quick-brown-fox or turn-left-next-street")
+    await runNativeInteraction(
+      {
+        root: resolve(required(args, "--root")),
+        kind: "dictation-fixture",
+        windowID: positiveInteger(required(args, "--window"), "--window"),
+        sessionID: required(args, "--session"),
+        fixtureID,
+      },
+      nativeDependencies,
+    )
+    return
+  }
+  if (operation === "audio-playback") {
+    assertAllowed(args, ["--root", "--window", "--session", "--expected"])
+    await runNativeInteraction(
+      {
+        root: resolve(required(args, "--root")),
+        kind: "playback-plan",
+        windowID: positiveInteger(required(args, "--window"), "--window"),
+        sessionID: required(args, "--session"),
+        expected: required(args, "--expected"),
+      },
+      nativeDependencies,
+    )
+    return
+  }
+  if (operation === "audio-observe") {
+    assertAllowed(args, ["--root", "--request", "--intelligibility"])
+    const intelligibility = args.get("--intelligibility")
+    if (
+      intelligibility !== undefined &&
+      intelligibility !== "pass" &&
+      intelligibility !== "fail" &&
+      intelligibility !== "unknown"
+    ) {
+      throw new Error("--intelligibility must be pass, fail, or unknown")
+    }
+    await nativeAudioObservations(
+      resolve(required(args, "--root")),
+      required(args, "--request"),
+      intelligibility,
     )
     return
   }
   throw new Error(
-    "Usage: bun src/verification/opencode/cli.ts <launch|reopen|inspect|cleanup|native-status|native|native-resolve> [options]",
+    "Usage: bun src/verification/opencode/cli.ts <launch|reopen|inspect|cleanup|native-status|native|native-resolve|audio-fixture|audio-playback|audio-observe> [options]",
   )
 }
 

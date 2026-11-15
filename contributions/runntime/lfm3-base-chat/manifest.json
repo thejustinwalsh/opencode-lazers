@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "stage": "lfm3-base-chat",
+  "base": {
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "commit": "f394a74fdaf1b78625039ee8a39bfe95ba5548ac",
+    "tree": "1d75d0658c199ae93f7d9a549020f8db053cce08"
+  },
+  "tip": {
+    "commit": "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+    "tree": "eb321ec29ac1a7550c3fd3c26cd813f1cea9bcd1"
+  },
+  "patches": [
+    {
+      "commit": "e8a4604d5d2603b20447c334ca0a6d6c5edc1374",
+      "parent": "f394a74fdaf1b78625039ee8a39bfe95ba5548ac",
+      "tree": "eb321ec29ac1a7550c3fd3c26cd813f1cea9bcd1",
+      "path": "patches/0001-lfm3-base-chat.patch",
+      "sha256": "1584f6b5cccf1cb62ac6db48e1b5e398bfde96b17bd32afbcaf8de0bab73e7cf"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime exec vitest run --project unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "dadda5ba5cdedc7b1ba502cfa3d7db4819988160023001a90ea78d45f80ba209"
+    },
+    {
+      "kind": "gpu",
+      "command": "pnpm --filter runntime exec vitest run --project gpu --maxWorkers=1 test/core/kernels/conv/depthwiseConv1d.gpu.test.ts test/core/kernels/elementwise/elementwiseF32.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/operator-gpu.log",
+      "sha256": "d99e8be60c31b6d6f2f61194d9bdb2c130ef9ef022c0408782238915ac84356e"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/typecheck.log",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/package-build.log",
+      "sha256": "97341a71455be369b44b3c55d6ef993f08e673eb761f62d7f1b3a653ab4087f9"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm build:docs",
+      "exitCode": 0,
+      "path": "evidence/docs-build.log",
+      "sha256": "f2377fb5be6cf5bce1af828c4cdfeabb8ac96622808ffca4615056cd6cc59795"
+    },
+    {
+      "kind": "conversion",
+      "command": "Header-only Safetensors-to-model schema walk; public packed load separately exercised payload conversion",
+      "exitCode": 0,
+      "path": "evidence/checkpoint-header-conversion.json",
+      "sha256": "b1b6af3c897daab54b9be68758742fbc7efb1d1b6904b8fd0dc6104b0bd91377"
+    },
+    {
+      "kind": "parity",
+      "command": "VITE_LFM3_QUALIFICATION_MODE=parity pnpm --filter runntime exec vitest run --project gpu --maxWorkers=1 test/zoo/lfm3/cache-parity.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/cache-parity.log",
+      "sha256": "ae8b7fc60b0138d83febc1cc37585e7fd6fce7238fb07715b3d398b065d7bead"
+    },
+    {
+      "kind": "package",
+      "command": "node packages/runntime/test/zoo/lfm3/packed-consumer.mjs (public mode; installed tarball on real WebGPU)",
+      "exitCode": 0,
+      "path": "evidence/public-packed-vitest.json",
+      "sha256": "614b9f1b6d9fb7fce1d7b2dd68d3f2d61fe37b104ba27d7bf07b1eac333c17c8"
+    },
+    {
+      "kind": "package",
+      "command": "node packages/runntime/test/zoo/lfm3/packed-consumer.mjs (recovery mode; installed tarball on real WebGPU)",
+      "exitCode": 0,
+      "path": "evidence/recovery-packed-vitest.json",
+      "sha256": "96845e9ad0091f4cd72c1898b6eb2f049af18581a955f9676f47b7ee821c25f9"
+    },
+    {
+      "kind": "resource",
+      "command": "Public packed LFM3 WebGPU resource and latency measurements",
+      "exitCode": 0,
+      "path": "evidence/public-packed.log",
+      "sha256": "486740d0bbb5c526046b5ec46ef74070824aa56dd93de5e10872a9a7476e66d6"
+    },
+    {
+      "kind": "resource",
+      "command": "Packed device-loss and fresh-session resource measurements",
+      "exitCode": 0,
+      "path": "evidence/recovery-packed.log",
+      "sha256": "7d74f5305be350c9c215586fecfcb4ca3dfdbd6cb9757448403a53285b702cb0"
+    },
+    {
+      "kind": "unit",
+      "command": "bun test scripts/verify-runntime-contribution.test.ts",
+      "exitCode": 0,
+      "path": "evidence/contribution-verifier-tests.log",
+      "sha256": "bb6f1c4cb78f4fd4b6230b9fe224ba6f823bd0351aadef171e73effd66ed980a"
+    },
+    {
+      "kind": "typecheck",
+      "command": "bun run verify",
+      "exitCode": 0,
+      "path": "evidence/lazers-verify.log",
+      "sha256": "41fea03b7f9969371f18369ce8b06baba3ac3c15b5588bce914703bbf7f01122"
+    }
+  ]
+}

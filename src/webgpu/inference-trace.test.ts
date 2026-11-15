@@ -37,6 +37,56 @@ test("records bounded stage timing and execution metadata without inference cont
   expect(JSON.stringify(events)).not.toContain("secret")
 })
 
+test("retains the selected runtime and exact model identity without inventing audio token usage", () => {
+  const events: ReturnType<InferenceTraceBuffer["snapshot"]>[number][] = []
+  const trace = startInferenceTrace(
+    {
+      requestID: "audio-request",
+      mode: "speak",
+      feature: "readAloud",
+      configuredEP: "webgpu",
+      observedEP: "webgpu",
+      backend: "runntime",
+      modelRepository: "LiquidAI/LFM3-Omni-2B-GGUF",
+      modelRevision: "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+      modelPrecision: "Q4_K_M + Q8_0",
+      modelArtifacts:
+        "LFM3-Omni-2B-Q4_K_M.gguf sha256:9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2; mmproj-LFM3-Omni-2B-Q8_0.gguf sha256:8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1",
+      runtimeRevision: "4bec7104f2e70290982864963f6b194e6d5439fe",
+    },
+    (event) => events.push(event),
+    () => 0,
+  )
+  trace.finish({ active: false })
+
+  expect(events.at(-1)).toMatchObject({
+    backend: "runntime",
+    modelRepository: "LiquidAI/LFM3-Omni-2B-GGUF",
+    modelRevision: "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+    modelPrecision: "Q4_K_M + Q8_0",
+    modelArtifacts: expect.stringContaining("mmproj-LFM3-Omni-2B-Q8_0.gguf sha256:"),
+    runtimeRevision: "4bec7104f2e70290982864963f6b194e6d5439fe",
+  })
+  expect(events.at(-1)).not.toHaveProperty("actualInputTokens")
+  expect(events.at(-1)).not.toHaveProperty("outputGeneratedTokens")
+})
+
+test("bounds source artifact metadata before it enters the diagnostic buffer", () => {
+  const events: ReturnType<InferenceTraceBuffer["snapshot"]>[number][] = []
+  const trace = startInferenceTrace(
+    {
+      requestID: "bounded-artifacts",
+      configuredEP: "webgpu",
+      modelArtifacts: "x".repeat(2_000),
+    },
+    (event) => events.push(event),
+    () => 0,
+  )
+  trace.finish()
+
+  expect(events[0]?.modelArtifacts).toHaveLength(1_024)
+})
+
 test("classifies context overflow while retaining only numeric capacity metadata", () => {
   const error = Object.assign(new Error("prompt text must never be retained"), {
     name: "ContextOverflowError",

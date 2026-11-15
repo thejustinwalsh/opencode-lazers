@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "stage": "d1-q8",
+  "base": {
+    "repository": "../runntime (thejustinwalsh/runntime)",
+    "commit": "fd28773ca30facdaf6e56d8e9fba06e242ff623d",
+    "tree": "1c98121e4200cc8f76ab126e68987e244032d3e5"
+  },
+  "tip": {
+    "commit": "f394a74fdaf1b78625039ee8a39bfe95ba5548ac",
+    "tree": "1d75d0658c199ae93f7d9a549020f8db053cce08"
+  },
+  "patches": [
+    {
+      "commit": "f394a74fdaf1b78625039ee8a39bfe95ba5548ac",
+      "parent": "fd28773ca30facdaf6e56d8e9fba06e242ff623d",
+      "tree": "1d75d0658c199ae93f7d9a549020f8db053cce08",
+      "path": "patches/0001-d1-q8-public-loader.patch",
+      "sha256": "d7d61957fd7d7368019f1fa6ae5e45fa73c78c08ba1c7da1752d843051d6afca"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "ae1c610c59952062f500ada7eeedf3cd99ad12a36f6a04cc2fba9a12f76467fe"
+    },
+    {
+      "kind": "gpu",
+      "command": "Focused real-Chromium quantized operator suite (five files)",
+      "exitCode": 0,
+      "path": "evidence/operator-gpu.log",
+      "sha256": "85d679d8fb7c6eb46c5cb1ba657a9de42841812e7ecf10375fcfa1d0d4c4b044"
+    },
+    {
+      "kind": "gpu",
+      "command": "node packages/runntime/test/zoo/d1/packed-consumer.mjs (public Q8 WebGPU consumer)",
+      "exitCode": 0,
+      "path": "evidence/q8-packed-vitest.json",
+      "sha256": "368f08eb6dc31ffb73c2844cd7fec07542c7a8f5a10afc8ca4609fe8a1585343"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "path": "evidence/typecheck.log",
+      "sha256": "d318868863d485d2e56d27a308a51707e9a89df1f93891e266052da2fa7c1899"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/build.log",
+      "sha256": "76cd82ac91814fb676632a08ca3b0ecbb14192a725a7f1943451d283c53e6594"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm build:docs",
+      "exitCode": 0,
+      "path": "evidence/docs-build.log",
+      "sha256": "518788c860212897f2f1b7a832e06fcf5c8c7ff6e2f9297cd8da40e125be16a7"
+    },
+    {
+      "kind": "conversion",
+      "command": "uv run runntime quantize model.safetensors d1-omni-600m-text-q8.safetensors --bits 8 --group-size 32 --drop 'audio.*' --drop 'vision.*'",
+      "exitCode": 0,
+      "path": "evidence/conversion.log",
+      "sha256": "3471cfd934b7c2b7067192ef0ce5c3bafdb67f038bb8213b5dad896cf77b8651"
+    },
+    {
+      "kind": "conversion",
+      "command": "uv run pytest (Python conversion tests)",
+      "exitCode": 0,
+      "path": "evidence/conversion-tests.log",
+      "sha256": "bfe6709787965009bd1bd56de3cc61ca1dc870adcbdd7a719a151940821a4583"
+    },
+    {
+      "kind": "conversion",
+      "command": "Repeated conversion source, tokenizer and Q8 artifact hash receipt",
+      "exitCode": 0,
+      "path": "evidence/conversion-hashes.txt",
+      "sha256": "4e95b14af01ad3a7a08a77f9b19c7f6f491887fdfd75cf63ce5ba58c7917e737"
+    },
+    {
+      "kind": "conversion",
+      "command": "Pinned source checkpoint, tokenizer, license and converter provenance receipt",
+      "exitCode": 0,
+      "path": "evidence/provenance.json",
+      "sha256": "426a507a459cd9ae775aa37c024c873c35b11222de3065fccc35c709fd23cedc"
+    },
+    {
+      "kind": "conversion",
+      "command": "uv run ruff format --check .",
+      "exitCode": 0,
+      "path": "evidence/conversion-format.log",
+      "sha256": "8e93d18ae56550d4eef2feac77e6630617c7e169246e56e39c75d58b46167985"
+    },
+    {
+      "kind": "conversion",
+      "command": "uv run ruff check .",
+      "exitCode": 0,
+      "path": "evidence/conversion-ruff.log",
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "kind": "conversion",
+      "command": "uv run pyright",
+      "exitCode": 0,
+      "path": "evidence/conversion-pyright.log",
+      "sha256": "6d88a1b220adb7a3d62092b6e38431f0b3fe8babe9864fab90e5849766260332"
+    },
+    {
+      "kind": "parity",
+      "command": "VITE_D1_QUALIFICATION_MODE=baseline pinned F32 Liquid GPU corpus",
+      "exitCode": 0,
+      "path": "evidence/f32-current-webgpu.log",
+      "sha256": "c3266a9932e410d3616d651e83c1423df08eb27b8393b4ecfbbfbdd4a0c0eafd"
+    },
+    {
+      "kind": "parity",
+      "command": "Pinned F32 Liquid WebGPU Vitest receipt",
+      "exitCode": 0,
+      "path": "evidence/f32-current-vitest.json",
+      "sha256": "94b5c500a4d0f3f21d3f3b506fa6e61550342e5b306d89dd32511748bc90e799"
+    },
+    {
+      "kind": "parity",
+      "command": "Pinned Liquid versus native Q8 public-loader WebGPU corpus",
+      "exitCode": 0,
+      "path": "evidence/q8-packed-vitest.json",
+      "sha256": "368f08eb6dc31ffb73c2844cd7fec07542c7a8f5a10afc8ca4609fe8a1585343"
+    },
+    {
+      "kind": "parity",
+      "command": "Native Q8 versus community ONNX Q8 probability comparison",
+      "exitCode": 0,
+      "path": "evidence/onnx-comparison.json",
+      "sha256": "63372fe345db00a4e4c6a8af48190800ac5582ffd60424adf8c755b2c8e46f68"
+    },
+    {
+      "kind": "package",
+      "command": "node packages/runntime/test/zoo/d1/packed-consumer.mjs",
+      "exitCode": 0,
+      "path": "evidence/package.log",
+      "sha256": "46ec67f311d0db58a1a3afb4bc617f844613c83efbf8669d1011d7deb13d794c"
+    },
+    {
+      "kind": "resource",
+      "command": "Public Q8 RangeSource, loaded-weight, transient GPU and sampled host memory report",
+      "exitCode": 0,
+      "path": "evidence/q8-measurements.json",
+      "sha256": "753f5ef071ba04ffbab8e8d088999ad1b5bf3ed28d16d8148b878f0c3d3cf2c0"
+    },
+    {
+      "kind": "resource",
+      "command": "F32 post-composition resource and release measurements",
+      "exitCode": 0,
+      "path": "evidence/f32-current-measurements.json",
+      "sha256": "877f9974ea73b3acf956c37c0af4d631e7a493958672dbe3cda0993d33b4de98"
+    }
+  ]
+}

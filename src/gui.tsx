@@ -11,6 +11,8 @@ import {
   DECISION_REVISION,
   MODEL_BYTES,
   MODEL_REVISION,
+  LFM3_TOKENIZER_REVISION,
+  RUNNTIME_REVISION,
 } from "./webgpu/manifest.ts"
 import type { Decision } from "./webgpu/decisions.ts"
 import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
@@ -24,10 +26,11 @@ import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
 import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
-import { LocalInference } from "./webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rpc.ts"
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
+import { DEFAULT_OMNI_ROUTE, sessionAudioRoute } from "./webgpu/inference-route.ts"
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
@@ -44,6 +47,13 @@ export default Plugin.define({
     voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
       selected: DEFAULT_VOICE,
     }),
+    modelRoute: Store.global(Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }), {
+      selected: DEFAULT_OMNI_ROUTE,
+    }),
+    audioRoute: Store.session(
+      Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }),
+      { selected: DEFAULT_OMNI_ROUTE },
+    ),
     runtime: Store.global(
       Schema.Struct({
         keepAliveMs: Schema.Number.check(
@@ -197,7 +207,27 @@ export default Plugin.define({
       () => ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS,
       () => ctx.stores.voice.value?.selected ?? DEFAULT_VOICE,
       features,
+      {
+        chatRoute: () => ctx.stores.modelRoute.value?.selected ?? DEFAULT_OMNI_ROUTE,
+        audioRoute: () => {
+          const session = ctx.sessions.current()
+          return session
+            ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected)
+            : DEFAULT_OMNI_ROUTE
+        },
+      },
     )
+    const [speechSettingsSession, setSpeechSettingsSession] = createSignal(ctx.sessions.current())
+    createEffect(() => {
+      const session = ctx.sessions.current()
+      if (session) setSpeechSettingsSession(session)
+    })
+    const currentAudioRoute = () => {
+      const session = speechSettingsSession()
+      return session
+        ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected)
+        : DEFAULT_OMNI_ROUTE
+    }
     registerDictation(ctx, runtime)
     registerReadAloud(ctx, runtime)
     ctx.provide(LocalModel, runtime)
@@ -303,7 +333,7 @@ export default Plugin.define({
           const result = await runtime.generate(prompt(), test.signal)
           if (!result.ok) throw new Error(result.error)
           setReply(
-            `${result.text}\n\n${result.promptTokens} input tokens · ${result.completionTokens} output tokens`,
+            `${result.text}\n\n${result.promptTokens ?? "unknown"} input tokens · ${result.completionTokens ?? "unknown"} output tokens`,
           )
         })
       const clear = async () => {
@@ -461,10 +491,45 @@ export default Plugin.define({
                 </div>
                 <span class="lazers-local-state">{runtime.state()}</span>
               </div>
+              <p class="lazers-local-meta">
+                Service completion contract: {runtime.contractStatus()} · required{" "}
+                <code>{GENERATION_RESULT_CONTRACT_REVISION}</code>
+              </p>
               <Show when={runtime.gpu()}>
                 <p class="lazers-local-meta">{runtime.gpu()}</p>
               </Show>
-              <p>Enabled local features load their model automatically and share GPU memory.</p>
+              <Show when={runtime.modelIdentity()}>
+                {(identity) => (
+                  <p class="lazers-local-meta">
+                    {identity().backend} · {identity().repository} · {identity().precision} · model{" "}
+                    <code>{identity().revision}</code> · runtime{" "}
+                    <code>{identity().runtimeRevision}</code>
+                    <br />
+                    Artifacts: <code>{identity().artifacts}</code>
+                  </p>
+                )}
+              </Show>
+              <p>Local features load models on demand and share GPU memory.</p>
+              <Ui.Menu
+                label={`Chat route: ${(ctx.stores.modelRoute.value?.selected ?? DEFAULT_OMNI_ROUTE) === "runntime" ? "ruNNtime Omni (default)" : "Liquid WebGPU"}`}
+                trigger="button"
+                disabled={!settingsReady()}
+                items={[
+                  {
+                    label: "Liquid WebGPU",
+                    onSelect: () => ctx.stores.modelRoute.set({ selected: "liquid" }),
+                  },
+                  {
+                    label: "ruNNtime Omni (default)",
+                    onSelect: () => ctx.stores.modelRoute.set({ selected: "runntime" }),
+                  },
+                ]}
+              />
+              <p class="lazers-local-meta">
+                Chat route changes unload the current model. The next request loads the selected
+                route. ruNNtime failures remain visible and never fall back automatically. System
+                One decisions remain on d1. Speech has a separate session-scoped route below.
+              </p>
               <Ui.Menu
                 label={`Unload when idle: ${(ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 60_000 ? "1 minute" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 300_000 ? "5 minutes" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 900_000 ? "15 minutes" : "Never"}`}
                 trigger="button"
@@ -481,7 +546,10 @@ export default Plugin.define({
             </section>
             <section aria-labelledby="lazers-voice-title">
               <h2 id="lazers-voice-title">Voice</h2>
-              <p>Local read aloud and speech tests use this voice.</p>
+              <p>
+                Liquid read aloud uses this voice. ruNNtime Omni currently uses its public API
+                default, American English female.
+              </p>
               <Ui.Menu
                 label={`Voice: ${VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label}`}
                 trigger="button"
@@ -489,6 +557,27 @@ export default Plugin.define({
                 items={voiceKeys.map((key) => ({
                   label: `${VOICES[key].label}${key === DEFAULT_VOICE ? " (default)" : ""}`,
                   onSelect: () => ctx.stores.voice.set({ selected: key }),
+                }))}
+              />
+              <p>Select a speech route for the current session.</p>
+              <Ui.Menu
+                label={`Speech route for this session: ${
+                  currentAudioRoute() === "runntime" ? "ruNNtime Omni (default)" : "Liquid"
+                }`}
+                trigger="button"
+                disabled={!speechSettingsSession()}
+                items={[
+                  { label: "Liquid", value: "liquid" as const },
+                  {
+                    label: "ruNNtime Omni (default)",
+                    value: "runntime" as const,
+                  },
+                ].map((item) => ({
+                  label: item.label,
+                  onSelect: () => {
+                    const session = speechSettingsSession()
+                    if (session) ctx.stores.audioRoute(session).set({ selected: item.value })
+                  },
                 }))}
               />
             </section>
@@ -646,7 +735,7 @@ export default Plugin.define({
                     Unload from GPU
                   </Ui.Button>
                   <Ui.Button
-                    disabled={runtime.resident() !== "decision" || runtime.state() !== "ready"}
+                    disabled={!runtime.canSimulateDeviceLoss() || runtime.state() !== "ready"}
                     onClick={runtime.simulateDeviceLoss}
                   >
                     Test GPU recovery
@@ -702,6 +791,11 @@ export default Plugin.define({
                 <p class="lazers-local-meta">
                   Q4_K_M model + Q8 projector · verified immutable revision{" "}
                   <code>{MODEL_REVISION.slice(0, 8)}</code>
+                </p>
+                <p class="lazers-local-meta">
+                  ruNNtime public API: exact Q4_K_M language and Q8_0 projector pair · code revision{" "}
+                  <code>{RUNNTIME_REVISION.slice(0, 8)}</code> · tokenizer revision{" "}
+                  <code>{LFM3_TOKENIZER_REVISION.slice(0, 8)}</code>
                 </p>
                 <p class="lazers-local-meta">
                   d1-Omni-2B Q4f16 decoder · text decisions · revision{" "}

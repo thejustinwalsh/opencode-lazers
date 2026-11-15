@@ -1,0 +1,3001 @@
+From e8a4604d5d2603b20447c334ca0a6d6c5edc1374 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Thu, 12 Nov 2026 12:24:43 -0500
+Subject: [PATCH] feat(zoo): add original LFM3 streaming chat
+
+---
+ README.md                                     |  21 +-
+ apps/docs/astro.config.mjs                    |   1 +
+ apps/docs/src/content/docs/zoo/lfm3-chat.mdx  |  57 +++
+ packages/runntime/playground/lfm3/index.html  |  58 +++
+ packages/runntime/playground/lfm3/main.ts     |  93 ++++
+ .../runntime/playground/lfm3/vite.config.mjs  |   3 +
+ .../runntime/src/core/gpu/dispatch/conv.ts    |  34 ++
+ .../src/core/gpu/dispatch/elementwise.ts      |   3 +-
+ .../src/core/gpu/dispatch/registry.ts         |   2 +
+ packages/runntime/src/core/graph/ops.ts       |   2 +-
+ .../src/core/graph/ops/conv/conv1d.ts         |  46 ++
+ .../src/core/graph/ops/elementwise.ts         |  40 +-
+ packages/runntime/src/core/graph/value.ts     |   1 +
+ packages/runntime/src/core/index.ts           |   1 +
+ .../src/core/kernels/conv/depthwiseConv1d.ts  |  86 ++++
+ .../kernels/elementwise/elementwiseF32.ts     |  10 +-
+ packages/runntime/src/zoo/index.ts            |   9 +
+ packages/runntime/src/zoo/lfm3/model.ts       | 483 ++++++++++++++++++
+ packages/runntime/src/zoo/lfm3/session.ts     | 262 ++++++++++
+ packages/runntime/src/zoo/lfm3/tokenizer.ts   | 108 ++++
+ packages/runntime/src/zoo/models.ts           |  13 +
+ packages/runntime/src/zoo/tasks/nlp/lfm3.ts   | 165 ++++++
+ .../graph/ops/conv/depthwiseConv1d.test.ts    |  17 +
+ .../test/core/graph/ops/elementwise.test.ts   |   7 +
+ .../kernels/conv/depthwiseConv1d.gpu.test.ts  |  71 +++
+ .../elementwise/elementwiseF32.gpu.test.ts    |  21 +
+ .../test/zoo/lfm3/cache-parity.gpu.test.ts    | 169 ++++++
+ .../test/zoo/lfm3/packed-consumer.mjs         | 191 +++++++
+ .../runntime/test/zoo/lfm3/public.gpu.test.ts | 166 ++++++
+ .../test/zoo/lfm3/recovery.gpu.test.ts        |  98 ++++
+ .../runntime/test/zoo/lfm3/session.test.ts    | 206 ++++++++
+ .../test/zoo/lfm3/stateDictHooks.test.ts      |  70 +++
+ .../runntime/test/zoo/lfm3/tokenizer.test.ts  |  62 +++
+ 33 files changed, 2553 insertions(+), 23 deletions(-)
+ create mode 100644 apps/docs/src/content/docs/zoo/lfm3-chat.mdx
+ create mode 100644 packages/runntime/playground/lfm3/index.html
+ create mode 100644 packages/runntime/playground/lfm3/main.ts
+ create mode 100644 packages/runntime/playground/lfm3/vite.config.mjs
+ create mode 100644 packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts
+ create mode 100644 packages/runntime/src/zoo/lfm3/model.ts
+ create mode 100644 packages/runntime/src/zoo/lfm3/session.ts
+ create mode 100644 packages/runntime/src/zoo/lfm3/tokenizer.ts
+ create mode 100644 packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+ create mode 100644 packages/runntime/test/core/graph/ops/conv/depthwiseConv1d.test.ts
+ create mode 100644 packages/runntime/test/core/kernels/conv/depthwiseConv1d.gpu.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/cache-parity.gpu.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/packed-consumer.mjs
+ create mode 100644 packages/runntime/test/zoo/lfm3/public.gpu.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/recovery.gpu.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/session.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/stateDictHooks.test.ts
+ create mode 100644 packages/runntime/test/zoo/lfm3/tokenizer.test.ts
+
+diff --git a/README.md b/README.md
+index da4e4d0855c87415c71924f24ae067dc562141ce..46e069526b127913d9d775d1210a730691424878 100644
+--- a/README.md
++++ b/README.md
+@@ -131,16 +131,17 @@ call `detectObjects` again. The detector is loaded once.
+ Every task has its own factory function and its own methods. Pass it an entry
+ from `models`, or spread one and change a field.
+ 
+-| Task                  | Factory                   | Models                                |
+-| --------------------- | ------------------------- | ------------------------------------- |
+-| Embedding             | `createEmbedder`          | EmbeddingGemma 2, all-MiniLM-L6-v2    |
+-| Privacy filter        | `createPrivacyFilter`     | OpenAI privacy-filter (int8)          |
+-| Speech to text        | `createSpeechToText`      | Moonshine tiny / base, streaming tiny |
+-| Object detection      | `createObjectDetector`    | YOLO26 n / m                          |
+-| Instance segmentation | `createInstanceSegmenter` | YOLO26-seg n / m                      |
+-| Pose & keypoints      | `createKeypointDetector`  | YOLO26-pose n / m                     |
+-| Depth estimation      | `createDepthEstimator`    | DepthART s / b                        |
+-| Image classification  | `createImageClassifier`   | MobileNetV4 small                     |
++| Task                  | Factory                   | Models                                   |
++| --------------------- | ------------------------- | ---------------------------------------- |
++| Chat                  | `createLfm3Chat`          | Liquid LFM3-Omni 2B (original BF16 base) |
++| Embedding             | `createEmbedder`          | EmbeddingGemma 2, all-MiniLM-L6-v2       |
++| Privacy filter        | `createPrivacyFilter`     | OpenAI privacy-filter (int8)             |
++| Speech to text        | `createSpeechToText`      | Moonshine tiny / base, streaming tiny    |
++| Object detection      | `createObjectDetector`    | YOLO26 n / m                             |
++| Instance segmentation | `createInstanceSegmenter` | YOLO26-seg n / m                         |
++| Pose & keypoints      | `createKeypointDetector`  | YOLO26-pose n / m                        |
++| Depth estimation      | `createDepthEstimator`    | DepthART s / b                           |
++| Image classification  | `createImageClassifier`   | MobileNetV4 small                        |
+ 
+ ## Coming from transformers.js
+ 
+diff --git a/apps/docs/astro.config.mjs b/apps/docs/astro.config.mjs
+index b3f3e48cb26519036603bc59fdb17fc05de56d7c..8991b642670aa424c74481428df838c8f10dbead 100644
+--- a/apps/docs/astro.config.mjs
++++ b/apps/docs/astro.config.mjs
+@@ -148,6 +148,7 @@ export default defineConfig({
+                     { label: 'Speech to text', slug: 'zoo/speech-to-text' },
+                     { label: 'Privacy filter', slug: 'zoo/privacy-filter' },
+                     { label: 'D1 decision model', slug: 'zoo/d1' },
++                    { label: 'LFM3 chat', slug: 'zoo/lfm3-chat' },
+                     { label: 'Object detection', slug: 'zoo/object-detection' },
+                     { label: 'Instance segmentation', slug: 'zoo/instance-segmentation' },
+                     { label: 'Pose & keypoints', slug: 'zoo/pose-and-keypoints' },
+diff --git a/apps/docs/src/content/docs/zoo/lfm3-chat.mdx b/apps/docs/src/content/docs/zoo/lfm3-chat.mdx
+new file mode 100644
+index 0000000000000000000000000000000000000000..130e30a950c61d5b93500777c79c6f85ca278416
+--- /dev/null
++++ b/apps/docs/src/content/docs/zoo/lfm3-chat.mdx
+@@ -0,0 +1,57 @@
++---
++title: LFM3 chat
++description: Stream text from Liquid's original LFM3-Omni-2B base checkpoint on WebGPU.
++---
++
++`createLfm3Chat` loads Liquid's original floating LFM3-Omni-2B text model from
++its pinned Hugging Face revision and returns a serialized streaming session.
++Initialize ruNNtime with TypeGPU before loading the model.
++
++```ts twoslash
++import tgpu from 'typegpu';
++import { createLfm3Chat, initRunntime, models } from 'runntime/zoo';
++
++initRunntime(await tgpu.init({ device: { optionalFeatures: ['subgroups'] } }));
++// ---cut---
++const chat = await createLfm3Chat(models.lfm3.LFM3_OMNI_2B.DEFAULT);
++const messages = [{ role: 'user' as const, content: 'Explain WebGPU in one sentence.' }];
++const generation = chat.generate(messages, { maxNewTokens: 64 });
++
++for await (const text of generation) console.log(text);
++const result = await generation.result;
++console.log(result.finishReason, result.completionTokens);
++
++await chat.dispose();
++```
++
++Each update is newly decoded text. Pass the conversation history on each call;
++the session does not retain message text. `generation.result` resolves to the
++complete response and token counts. Call `generation.cancel()` or pass an
++`AbortSignal` to stop a request. `reset()` cancels queued and active requests;
++`dispose()` waits for them to finish and releases the model's GPU resources.
++
++The shared zoo load options support byte and tensor progress, abort, caching and
++warm-up. Warm-up runs by default. A custom `RangeSource` can replace the model
++URL; when a `WeightCache` is used with a `RangeSource`, pass a stable `cacheId`.
++
++This entry currently handles text messages only. It does not load the audio or
++vision towers and does not accept image, audio or video content.
++
++## Checkpoint and license
++
++The model and tokenizer are pinned to Liquid's original
++[LFM3-Omni-2B checkpoint](https://huggingface.co/LiquidAI/LFM3-Omni-2B/tree/21d75123f86c1f7ffb4bef1ea202710c4e7ebe67),
++revision `21d75123f86c1f7ffb4bef1ea202710c4e7ebe67`. The checkpoint is BF16;
++ruNNtime decodes those weights to F32 and applies lossless layout transforms
++for its native operators. It does not use the quantized GGUF or ONNX model.
++
++The tokenizer asset's SHA-256 is
++`41927bd314d17d7d7fadb44e10cd0919f7b71528d7741596d8cbd15c6945ec44`.
++The model weights are © Liquid AI, Inc. and licensed under the
++[LFM Open License v1.0](https://huggingface.co/LiquidAI/LFM3-Omni-2B/blob/21d75123f86c1f7ffb4bef1ea202710c4e7ebe67/LICENSE).
++Commercial use by a legal entity is licensed only while its annual revenue is
++below the license's $10 million threshold. The threshold exception for qualified
++non-profit organizations applies to non-commercial or research use. Review the
++full license for its terms. The ruNNtime package license covers runtime code, not
++the model. Weights are fetched from Hugging Face and are not redistributed by
++ruNNtime.
+diff --git a/packages/runntime/playground/lfm3/index.html b/packages/runntime/playground/lfm3/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..4daeb48c53cba5b861556977a7463061fdaf7d4e
+--- /dev/null
++++ b/packages/runntime/playground/lfm3/index.html
+@@ -0,0 +1,58 @@
++<!doctype html>
++<html lang="en">
++  <head>
++    <meta charset="utf-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <title>LFM3 chat on ruNNtime</title>
++    <style>
++      body {
++        margin: 2rem auto;
++        max-width: 48rem;
++        padding: 0 1rem;
++        color: #eee;
++        background: #17171b;
++        font:
++          16px system-ui,
++          sans-serif;
++      }
++      button,
++      textarea {
++        color: inherit;
++        background: #24242b;
++        border: 1px solid #595965;
++        border-radius: 0.35rem;
++        padding: 0.65rem;
++      }
++      button {
++        cursor: pointer;
++      }
++      textarea {
++        box-sizing: border-box;
++        width: 100%;
++        min-height: 6rem;
++      }
++      pre {
++        white-space: pre-wrap;
++        overflow-wrap: anywhere;
++      }
++      #status {
++        color: #aaa;
++      }
++    </style>
++  </head>
++  <body>
++    <h1>LFM3 chat on WebGPU</h1>
++    <p>This loads the original BF16 checkpoint. Its text weights are several gigabytes.</p>
++    <button id="load">Load model</button>
++    <progress id="progress" max="1" value="0"></progress>
++    <p id="status">Model not loaded</p>
++    <pre id="chat"></pre>
++    <textarea id="prompt" aria-label="Message" placeholder="Write a message"></textarea>
++    <p>
++      <button id="send" disabled>Send</button>
++      <button id="cancel" disabled>Cancel generation</button>
++      <button id="reset" disabled>Reset conversation</button>
++    </p>
++    <script type="module" src="./main.ts"></script>
++  </body>
++</html>
+diff --git a/packages/runntime/playground/lfm3/main.ts b/packages/runntime/playground/lfm3/main.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8205b747eb861b7493f5a5b36ff07fb4b759a22f
+--- /dev/null
++++ b/packages/runntime/playground/lfm3/main.ts
+@@ -0,0 +1,93 @@
++/** Text-only streaming chat against Liquid's pinned LFM3-Omni-2B base model. */
++
++import tgpu from 'typegpu';
++import {
++  createLfm3Chat,
++  initRunntime,
++  models,
++  type Lfm3ChatSession,
++  type Lfm3Generation,
++  type Lfm3Message,
++} from '../../src/zoo/index.ts';
++
++const loadButton = document.querySelector<HTMLButtonElement>('#load')!;
++const sendButton = document.querySelector<HTMLButtonElement>('#send')!;
++const cancelButton = document.querySelector<HTMLButtonElement>('#cancel')!;
++const resetButton = document.querySelector<HTMLButtonElement>('#reset')!;
++const prompt = document.querySelector<HTMLTextAreaElement>('#prompt')!;
++const progress = document.querySelector<HTMLProgressElement>('#progress')!;
++const status = document.querySelector<HTMLParagraphElement>('#status')!;
++const output = document.querySelector<HTMLPreElement>('#chat')!;
++
++let session: Lfm3ChatSession | undefined;
++let generation: Lfm3Generation | undefined;
++let history: Lfm3Message[] = [];
++
++loadButton.addEventListener('click', () => void loadModel());
++sendButton.addEventListener('click', () => void sendMessage());
++cancelButton.addEventListener('click', () => generation?.cancel());
++resetButton.addEventListener('click', () => void resetConversation());
++window.addEventListener('pagehide', () => void session?.dispose().catch(() => undefined));
++
++async function loadModel(): Promise<void> {
++  loadButton.disabled = true;
++  status.textContent = 'Requesting WebGPU and loading weights…';
++  const started = performance.now();
++  try {
++    initRunntime(await tgpu.init({ device: { optionalFeatures: ['subgroups'] } }));
++    session = await createLfm3Chat(models.lfm3.LFM3_OMNI_2B.DEFAULT, {
++      onProgress: (name, done, total) => {
++        progress.value = total === 0 ? 0 : done / total;
++        status.textContent = `Loading ${name}: ${Math.floor(progress.value * 100)}%`;
++      },
++    });
++    status.textContent = `Ready in ${((performance.now() - started) / 1000).toFixed(1)} s`;
++    sendButton.disabled = false;
++    resetButton.disabled = false;
++  } catch (error) {
++    status.textContent = error instanceof Error ? error.message : String(error);
++    loadButton.disabled = false;
++  }
++}
++
++async function sendMessage(): Promise<void> {
++  if (!session || generation || !prompt.value.trim()) return;
++  const content = prompt.value.trim();
++  prompt.value = '';
++  history = [...history, { role: 'user', content }];
++  const prior = output.textContent ?? '';
++  const promptText = `${prior}You: ${content}\nLFM3: `;
++  output.textContent = promptText;
++  generation = session.generate(history, { maxNewTokens: 128 });
++  sendButton.disabled = true;
++  cancelButton.disabled = false;
++  let answer = '';
++  try {
++    for await (const delta of generation) {
++      answer += delta;
++      output.textContent = `${promptText}${answer}`;
++    }
++    const result = await generation.result;
++    history = [...history, { role: 'assistant', content: result.text }];
++    output.textContent += `\n[${result.finishReason}, ${result.completionTokens} tokens]\n\n`;
++    status.textContent = 'Ready';
++  } catch (error) {
++    status.textContent = error instanceof Error ? error.message : String(error);
++  } finally {
++    generation = undefined;
++    sendButton.disabled = false;
++    cancelButton.disabled = true;
++  }
++}
++
++async function resetConversation(): Promise<void> {
++  if (!session) return;
++  generation?.cancel();
++  await session.reset();
++  generation = undefined;
++  history = [];
++  output.textContent = '';
++  status.textContent = 'Conversation reset';
++  sendButton.disabled = false;
++  cancelButton.disabled = true;
++}
+diff --git a/packages/runntime/playground/lfm3/vite.config.mjs b/packages/runntime/playground/lfm3/vite.config.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..e24e9bea3f11363b3cd79ce19ccd19168405cfd5
+--- /dev/null
++++ b/packages/runntime/playground/lfm3/vite.config.mjs
+@@ -0,0 +1,3 @@
++import typegpu from 'unplugin-typegpu/vite';
++
++export default { plugins: [typegpu()] };
+diff --git a/packages/runntime/src/core/gpu/dispatch/conv.ts b/packages/runntime/src/core/gpu/dispatch/conv.ts
+index facfacb024c6327d978e6b5cff9183e0e48cc7c7..1838b53693e0dd93c76a4e25924090d360e3b940 100644
+--- a/packages/runntime/src/core/gpu/dispatch/conv.ts
++++ b/packages/runntime/src/core/gpu/dispatch/conv.ts
+@@ -2,6 +2,10 @@
+ 
+ import { elemFor } from '../../kernels/elem.ts';
+ import { conv1dHandle, conv1dLoadA, createConv1dPipeline } from '../../kernels/conv/conv1d.ts';
++import {
++  createDepthwiseConv1dPipeline,
++  depthwiseConv1dHandle,
++} from '../../kernels/conv/depthwiseConv1d.ts';
+ import { createGluConv1dPipeline, gluConv1dHandle } from '../../kernels/conv/gluConv1d.ts';
+ import {
+   createMatmulTiledVec4Pipeline,
+@@ -131,6 +135,36 @@ export const conv1dSpec = defineSpec({
+   },
+ });
+ 
++export const depthwiseConv1dSpec = defineSpec({
++  attrs: (p) => {
++    const [kernel, padLeft] = p.attrs as [number, number];
++    return { kernel, padLeft };
++  },
++  cfg: (node, attrs) => ({
++    channels: node.pending!.inputs[0]!.shape.dims![1]!,
++    kernel: attrs.kernel,
++    padLeft: attrs.padLeft,
++  }),
++  pipeline: (root, dtype, cfg) => createDepthwiseConv1dPipeline(root, cfg, elemFor(dtype)),
++  encode: ({ node, pipeline, inputs, out, ctx }) => {
++    const [rowsIn] = node.pending!.inputs[0]!.shape.dims as [number, number];
++    const [rowsOut, channels] = node.shape.dims as [number, number];
++    return [
++      depthwiseConv1dHandle(
++        ctx.root,
++        pipeline,
++        { rowsIn, rowsOut, channels },
++        {
++          x: narrowFloat(inputs[0]!, node.shape.dtype),
++          w: narrowFloat(inputs[1]!, node.shape.dtype),
++          out: narrowFloat(out, node.shape.dtype),
++        },
++        elemFor(node.shape.dtype),
++      ),
++    ];
++  },
++});
++
+ export const gluConv1dSpec = defineSpec({
+   attrs: (p) => {
+     const [kernel, lo, hi] = p.attrs as [number, number, number];
+diff --git a/packages/runntime/src/core/gpu/dispatch/elementwise.ts b/packages/runntime/src/core/gpu/dispatch/elementwise.ts
+index 067678cb277036488f8cbafbbb1e305e317e4432..b2f71de1a6be8ea428daec175ba581c300d967b9 100644
+--- a/packages/runntime/src/core/gpu/dispatch/elementwise.ts
++++ b/packages/runntime/src/core/gpu/dispatch/elementwise.ts
+@@ -35,7 +35,7 @@ function binarySpec(
+   factory: (root: TgpuRoot, elem: Elem) => ReturnType<typeof createAddF32Pipeline>,
+ ) {
+   return defineSpec({
+-    attrs: (p) => ({ mode: p.attrs![0]! }),
++    attrs: (p) => ({ mode: p.attrs![0]!, repeat: p.attrs![1] ?? 0 }),
+     cfg: () => undefined,
+     pipeline: (root, dtype) => factory(root, elemFor(dtype)),
+     encode: ({ node, attrs, pipeline, inputs, out, ctx }) => {
+@@ -49,6 +49,7 @@ function binarySpec(
+           node.shape.elems,
+           cols,
+           attrs.mode,
++          attrs.repeat,
+           {
+             a: narrowFloat(inputs[0]!, dtype),
+             b: narrowFloat(inputs[1]!, dtype),
+diff --git a/packages/runntime/src/core/gpu/dispatch/registry.ts b/packages/runntime/src/core/gpu/dispatch/registry.ts
+index 4403c8891d4092c7a83256d67e27e1ead6adef3d..4e270d377b671d7fd8cedbdf213f8b8cb8cf2462 100644
+--- a/packages/runntime/src/core/gpu/dispatch/registry.ts
++++ b/packages/runntime/src/core/gpu/dispatch/registry.ts
+@@ -38,6 +38,7 @@ import {
+   conv1dSpec,
+   conv2dHwc4Spec,
+   convTranspose2dSpec,
++  depthwiseConv1dSpec,
+   gluConv1dSpec,
+   maxPool2dHwc4Spec,
+   pad2dHwc4Spec,
+@@ -102,6 +103,7 @@ export const specs = {
+   rope: ropeSpec,
+   // conv
+   conv1d: conv1dSpec,
++  depthwiseConv1d: depthwiseConv1dSpec,
+   gluConv1d: gluConv1dSpec,
+   convTranspose2d: convTranspose2dSpec,
+   conv2dHwc4: conv2dHwc4Spec,
+diff --git a/packages/runntime/src/core/graph/ops.ts b/packages/runntime/src/core/graph/ops.ts
+index 3663f1e04739c4a0d4cd9e894c0c9d8a4c92d149..0f2942066b9e873eef95797c63eeee1e8a348d3a 100644
+--- a/packages/runntime/src/core/graph/ops.ts
++++ b/packages/runntime/src/core/graph/ops.ts
+@@ -43,7 +43,7 @@ export {
+ } from './ops/shape.ts';
+ export { layerNorm, logitStats, mean, rmsNorm, softmax, topk } from './ops/reduce.ts';
+ export { channelAffine, toChw, toHwc4 } from './ops/hwc4.ts';
+-export { conv1d, gluConv1d } from './ops/conv/conv1d.ts';
++export { conv1d, depthwiseConv1d, gluConv1d } from './ops/conv/conv1d.ts';
+ export { SSM_DIRS, SSM_STATE, ssmScanMerge, ssmScanProject, ssmSelectiveScan } from './ops/ssm.ts';
+ export { type ConvAct, conv2d } from './ops/conv/conv2d.ts';
+ export { ACT_CODE, type ActName, type SlotAct } from './ops/shared.ts';
+diff --git a/packages/runntime/src/core/graph/ops/conv/conv1d.ts b/packages/runntime/src/core/graph/ops/conv/conv1d.ts
+index 8244fe4ee6c56fd7c393c2f9151fe4a963177d29..3e8ddd53d56811ebd9485acd7b0cd43a0c71e512 100644
+--- a/packages/runntime/src/core/graph/ops/conv/conv1d.ts
++++ b/packages/runntime/src/core/graph/ops/conv/conv1d.ts
+@@ -92,6 +92,52 @@ export function conv1d(
+   );
+ }
+ 
++/** Depthwise 1-D convolution over time-major [T, C], with channel-major
++ *  weights [C, K]. Padding is zero-filled on either side. */
++export function depthwiseConv1d(
++  x: Value,
++  w: Value,
++  opts: { kernelSize: number; padLeft?: number; padRight?: number },
++): Value {
++  const { kernelSize } = opts;
++  const padLeft = opts.padLeft ?? 0;
++  const padRight = opts.padRight ?? 0;
++  const [tIn, channels, dtype] = want2d('depthwiseConv1d', x, FLOAT_DTYPES);
++  const [weightChannels, weightKernel, weightDtype] = want2d('depthwiseConv1d.w', w, FLOAT_DTYPES);
++  if (weightDtype !== dtype) {
++    throw new Error(`depthwiseConv1d: weight dtype ${weightDtype} must match the input's ${dtype}`);
++  }
++  if (!Number.isInteger(kernelSize) || kernelSize < 1) {
++    throw new Error(`depthwiseConv1d: kernelSize ${kernelSize} must be a positive integer`);
++  }
++  for (const [name, pad] of [
++    ['padLeft', padLeft],
++    ['padRight', padRight],
++  ] as const) {
++    if (!Number.isInteger(pad) || pad < 0 || pad >= kernelSize) {
++      throw new Error(`depthwiseConv1d: ${name} ${pad} must be in [0, ${kernelSize})`);
++    }
++  }
++  if (weightChannels !== channels || weightKernel !== kernelSize) {
++    throw new Error(
++      `depthwiseConv1d: weight shape [${weightChannels}, ${weightKernel}] must be [${channels}, ${kernelSize}]`,
++    );
++  }
++  if (tIn + padLeft + padRight < kernelSize) {
++    throw new Error(
++      `depthwiseConv1d: padded frames ${tIn + padLeft + padRight} < kernelSize ${kernelSize}`,
++    );
++  }
++  const tOut = tIn + padLeft + padRight - kernelSize + 1;
++  return pending(
++    { elems: tOut * channels, dtype, dims: [tOut, channels] },
++    'depthwiseConv1d',
++    [x, w],
++    undefined,
++    [kernelSize, padLeft],
++  );
++}
++
+ /** GLU then a causal depthwise conv over time, in one dispatch. x [T, 2C] is
+  *  clamped to [lo, hi] and gated, first half by σ of the second; w tap-major
+  *  [kernelSize, C] then mixes each channel's last kernelSize frames.
+diff --git a/packages/runntime/src/core/graph/ops/elementwise.ts b/packages/runntime/src/core/graph/ops/elementwise.ts
+index b63f7a32e68ec78c30de33c31d0d600590996a36..b7b004d3eca92cff72a0f8db7b18278025ff1aa5 100644
+--- a/packages/runntime/src/core/graph/ops/elementwise.ts
++++ b/packages/runntime/src/core/graph/ops/elementwise.ts
+@@ -10,14 +10,21 @@ function dimsMatch(a?: readonly number[], b?: readonly number[]): boolean {
+ }
+ 
+ /** Describes how `a op b` broadcasts, or null if the pair is incompatible.
+- *  `mode` is 0 elementwise, 1 row, 2 column, 3 scalar.
++ *  `mode` is 0 elementwise, 1 row, 2 column, 3 scalar, 4 repeated column
++ *  groups (one value scales each consecutive block of columns).
+  *
+  *  Decided from dims where available: element counts alone cannot tell [M,1]
+  *  from [N] on a square matrix. */
+ function broadcastPlan(
+   x: Value,
+   y: Value,
+-): { full: Value; other: Value; shape: ValueMeta; mode: 0 | 1 | 2 | 3 } | null {
++): {
++  full: Value;
++  other: Value;
++  shape: ValueMeta;
++  mode: 0 | 1 | 2 | 3 | 4;
++  repeat: number;
++} | null {
+   if (x.shape.dtype !== y.shape.dtype) return null;
+   // hwc4 and chw can share an element count with different byte order, and
+   // pairing them would silently mix pixels.
+@@ -30,29 +37,38 @@ function broadcastPlan(
+     // PyTorch, so [N] pairs with [1,N] but not with [N,1].
+     const squeeze = (d: readonly number[]) => d.slice(d.findIndex((v) => v !== 1));
+     if (xd && yd && !dimsMatch(squeeze(xd), squeeze(yd))) return null;
+-    return { full: x, other: y, shape: { ...x.shape }, mode: 0 };
++    return { full: x, other: y, shape: { ...x.shape }, mode: 0, repeat: 0 };
+   }
+   // Broadcasting is row-major arithmetic, so it never applies to hwc4.
+   if (x.shape.layout !== undefined) return null;
+   const full = x.shape.elems > y.shape.elems ? x : y;
+   const other = full === x ? y : x;
+-  if (other.shape.elems === 1) return { full, other, shape: { ...full.shape }, mode: 3 };
++  if (other.shape.elems === 1) return { full, other, shape: { ...full.shape }, mode: 3, repeat: 0 };
+   const fd = full.shape.dims;
+   if (!fd || fd.length !== 2) return null;
+   const [m, n] = [fd[0]!, fd[1]!];
+   const od = other.shape.dims;
+   if (od) {
+     if (od.length === 2 && od[0] === m && od[1] === 1) {
+-      return { full, other, shape: { ...full.shape }, mode: 2 }; // col [M,1]
++      return { full, other, shape: { ...full.shape }, mode: 2, repeat: 0 }; // col [M,1]
+     }
+     if ((od.length === 1 && od[0] === n) || (od.length === 2 && od[0] === 1 && od[1] === n)) {
+-      return { full, other, shape: { ...full.shape }, mode: 1 }; // row [N]/[1,N]
++      return { full, other, shape: { ...full.shape }, mode: 1, repeat: 0 }; // row [N]/[1,N]
++    }
++    if (od.length === 2 && od[0] === m && od[1]! > 1 && od[1]! < n && n % od[1]! === 0) {
++      return {
++        full,
++        other,
++        shape: { ...full.shape },
++        mode: 4,
++        repeat: n / od[1]!,
++      };
+     }
+     return null;
+   }
+   // Fallback for values without dims: infer from element counts.
+-  if (other.shape.elems === n) return { full, other, shape: { ...full.shape }, mode: 1 }; // row [N]
+-  if (other.shape.elems === m) return { full, other, shape: { ...full.shape }, mode: 2 }; // col [M]/[M,1]
++  if (other.shape.elems === n) return { full, other, shape: { ...full.shape }, mode: 1, repeat: 0 }; // row [N]
++  if (other.shape.elems === m) return { full, other, shape: { ...full.shape }, mode: 2, repeat: 0 }; // col [M]/[M,1]
+   return null;
+ }
+ 
+@@ -71,7 +87,13 @@ function elementwise(name: 'add' | 'sub' | 'mul' | 'swiglu', a: Value, b: Value)
+       `${name}: incompatible shapes — a=(${a.shape.elems},${a.shape.dtype}) b=(${b.shape.elems},${b.shape.dtype})`,
+     );
+   }
+-  return pending(plan.shape, name, [plan.full, plan.other], undefined, [plan.mode]);
++  return pending(
++    plan.shape,
++    name,
++    [plan.full, plan.other],
++    undefined,
++    plan.mode === 4 ? [plan.mode, plan.repeat] : [plan.mode],
++  );
+ }
+ 
+ /** Elementwise add. A number `b` folds into the dispatch with no upload. */
+diff --git a/packages/runntime/src/core/graph/value.ts b/packages/runntime/src/core/graph/value.ts
+index f0eea92728adc0c5a2927d34c8efd90d746f3c27..c07c5ffa57e1e21baf42038a9488d8e33651eef5 100644
+--- a/packages/runntime/src/core/graph/value.ts
++++ b/packages/runntime/src/core/graph/value.ts
+@@ -81,6 +81,7 @@ export type OpName =
+   | 'rope'
+   // conv
+   | 'conv1d'
++  | 'depthwiseConv1d'
+   | 'gluConv1d'
+   | 'convTranspose2d'
+   | 'conv2dHwc4'
+diff --git a/packages/runntime/src/core/index.ts b/packages/runntime/src/core/index.ts
+index 0cffc66341a1b06c19d25f7e9c9e22246ec89ec9..a14382e576354db0b7ad0c7cd51b3a0568fb5a79 100644
+--- a/packages/runntime/src/core/index.ts
++++ b/packages/runntime/src/core/index.ts
+@@ -50,6 +50,7 @@ export {
+   chunk,
+   clamp,
+   conv1d,
++  depthwiseConv1d,
+   conv2d,
+   convTranspose2d,
+   elu,
+diff --git a/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts b/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..dec4ad3b45bc4a9ed112537cbcfe5bb0bb4a50ce
+--- /dev/null
++++ b/packages/runntime/src/core/kernels/conv/depthwiseConv1d.ts
+@@ -0,0 +1,86 @@
++import tgpu, { d } from 'typegpu';
++import type { TgpuRoot } from 'typegpu';
++import { cachedBindGroup, cachedUniform } from '../../gpu/dispatchCache.ts';
++import {
++  type FloatBuffer,
++  flatIndex,
++  type KernelHandle,
++  makeHandle,
++  WORKGROUP_SIZE,
++} from '../common.ts';
++import { type Elem, F32_ELEM } from '../elem.ts';
++
++/** One output per time/channel pair, accumulating depthwise taps in f32. */
++const Dims = d.struct({ rowsIn: d.u32, rowsOut: d.u32 });
++const Config = d.struct({ channels: d.u32, kernel: d.u32, padLeft: d.u32 });
++const config = tgpu.accessor(Config, { channels: 1, kernel: 1, padLeft: 0 });
++
++function makeVariant(elem: Elem) {
++  const layout = tgpu.bindGroupLayout({
++    x: { storage: d.arrayOf(elem.scalar), access: 'readonly' },
++    w: { storage: d.arrayOf(elem.scalar), access: 'readonly' },
++    out: { storage: d.arrayOf(elem.scalar), access: 'mutable' },
++    dims: { uniform: Dims },
++  });
++  const store = elem.scalar;
++  const kernel = tgpu.computeFn({
++    in: { gid: d.builtin.globalInvocationId },
++    workgroupSize: [WORKGROUP_SIZE],
++  })(({ gid }) => {
++    'use gpu';
++    const C = config.$;
++    const D = layout.$.dims;
++    const idx = flatIndex(gid);
++    if (idx >= D.rowsOut * C.channels) return;
++    const row = d.u32(idx / C.channels);
++    const channel = idx % C.channels;
++    let acc = d.f32(0);
++    for (let tap = d.u32(0); tap < C.kernel; tap++) {
++      if (row + tap >= C.padLeft) {
++        const sourceRow = row + tap - C.padLeft;
++        if (sourceRow < D.rowsIn) {
++          acc +=
++            d.f32(layout.$.x[sourceRow * C.channels + channel]!) *
++            d.f32(layout.$.w[channel * C.kernel + tap]!);
++        }
++      }
++    }
++    layout.$.out[idx] = store(acc);
++  });
++  return { layout, kernel };
++}
++
++const variants = new Map<string, ReturnType<typeof makeVariant>>();
++function variantFor(elem: Elem): ReturnType<typeof makeVariant> {
++  let variant = variants.get(elem.key);
++  if (!variant) {
++    variant = makeVariant(elem);
++    variants.set(elem.key, variant);
++  }
++  return variant;
++}
++
++export function createDepthwiseConv1dPipeline(
++  root: TgpuRoot,
++  cfg: { channels: number; kernel: number; padLeft: number },
++  elem: Elem = F32_ELEM,
++) {
++  return root.with(config, cfg).createComputePipeline({ compute: variantFor(elem).kernel });
++}
++
++export function depthwiseConv1dHandle(
++  root: TgpuRoot,
++  pipeline: ReturnType<typeof createDepthwiseConv1dPipeline>,
++  args: { rowsIn: number; rowsOut: number; channels: number },
++  buffers: { x: FloatBuffer; w: FloatBuffer; out: FloatBuffer },
++  elem: Elem = F32_ELEM,
++): KernelHandle {
++  const dims = cachedUniform(root, Dims, { rowsIn: args.rowsIn, rowsOut: args.rowsOut });
++  const bindGroup = cachedBindGroup(root, variantFor(elem).layout, { ...buffers, dims });
++  return makeHandle(
++    pipeline,
++    'depthwiseConv1d',
++    bindGroup,
++    Math.ceil((args.rowsOut * args.channels) / WORKGROUP_SIZE),
++  );
++}
+diff --git a/packages/runntime/src/core/kernels/elementwise/elementwiseF32.ts b/packages/runntime/src/core/kernels/elementwise/elementwiseF32.ts
+index dcfa1161e4e94e19c42d35cd6fc872410452a967..172e43ef21cbf86a2fd33be9150f77c52747ca59 100644
+--- a/packages/runntime/src/core/kernels/elementwise/elementwiseF32.ts
++++ b/packages/runntime/src/core/kernels/elementwise/elementwiseF32.ts
+@@ -11,7 +11,7 @@ import { cachedBindGroup, cachedUniform } from '../../gpu/dispatchCache.ts';
+ import { clampedSwiglu } from '../activations.ts';
+ import { type Elem, F32_ELEM } from '../elem.ts';
+ 
+-const Meta = d.struct({ total: d.u32, cols: d.u32, mode: d.u32 });
++const Meta = d.struct({ total: d.u32, cols: d.u32, mode: d.u32, repeat: d.u32 });
+ 
+ function makeVariant(elem: Elem) {
+   const f16 = elem.key === 'f16';
+@@ -30,6 +30,11 @@ function makeVariant(elem: Elem) {
+     if (m === 1) return i % cols; // row broadcast
+     if (m === 2) return std.intdiv(i, cols); // col broadcast, u32 division: f32 / rounds past 2^24
+     if (m === 3) return 0; // scalar broadcast (GPU-computed [1,1])
++    if (m === 4) {
++      const row = std.intdiv(i, cols);
++      const col = i % cols;
++      return row * std.intdiv(cols, layout.$.meta.repeat) + std.intdiv(col, layout.$.meta.repeat);
++    }
+     return i; // elementwise
+   };
+ 
+@@ -122,10 +127,11 @@ export function elementwiseF32Handle(
+   total: number,
+   cols: number,
+   mode: number,
++  repeat: number,
+   buffers: { a: FloatBuffer; b: FloatBuffer; out: FloatBuffer },
+   elem: Elem = F32_ELEM,
+ ): KernelHandle {
+-  const meta = cachedUniform(root, Meta, { total, cols, mode });
++  const meta = cachedUniform(root, Meta, { total, cols, mode, repeat });
+   const bindGroup = cachedBindGroup(root, elementwiseVariant(elem).layout, { ...buffers, meta });
+   return makeHandle(pipeline, name, bindGroup, Math.ceil(total / WORKGROUP_SIZE));
+ }
+diff --git a/packages/runntime/src/zoo/index.ts b/packages/runntime/src/zoo/index.ts
+index ccba41a5e5c824bb1837804f90e7c45089c8a37e..fc3dac057b754272d5f3269db91bf1e03e33aae6 100644
+--- a/packages/runntime/src/zoo/index.ts
++++ b/packages/runntime/src/zoo/index.ts
+@@ -45,6 +45,15 @@ export {
+ } from './tasks/nlp/privacyFilter.ts';
+ export { createD1Decider, type D1Decider, type D1DeciderModel } from './tasks/nlp/d1.ts';
+ export type { Answer, Question, QuestionType } from './d1/prompt.ts';
++export {
++  createLfm3Chat,
++  type Lfm3ChatModel,
++  type Lfm3ChatOptions,
++  type Lfm3ChatSession,
++  type Lfm3Generation,
++  type Lfm3GenerationResult,
++  type Lfm3Message,
++} from './tasks/nlp/lfm3.ts';
+ 
+ export {
+   createSpeechToText,
+diff --git a/packages/runntime/src/zoo/lfm3/model.ts b/packages/runntime/src/zoo/lfm3/model.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b9db3937d5c91231a84e179426af4c8ff21cd11
+--- /dev/null
++++ b/packages/runntime/src/zoo/lfm3/model.ts
+@@ -0,0 +1,483 @@
++/** LFM3-Omni's causal text backbone. The audio and vision towers in the
++ *  original checkpoint are intentionally ignored by this text-only loader. */
++
++import type { TgpuRoot } from 'typegpu';
++import {
++  add,
++  cat,
++  chunk,
++  depthwiseConv1d,
++  mul,
++  nn,
++  reshape,
++  RunntimeError,
++  rope,
++  sdpa,
++  sigmoid,
++  silu,
++  slice,
++  tensor,
++  type LazyStateDict,
++  type LazyTensor,
++  type Value,
++} from '../../core/index.ts';
++import { permuteRows, reshapeWeight, splitRows } from '../../core/weights/transforms.ts';
++import { checkpointMismatch } from '../errors.ts';
++
++/** Pinned architecture constants for Liquid's original text checkpoint. */
++export const LFM3 = {
++  vocab: 128_000,
++  hidden: 2_048,
++  ffn: 7_680,
++  heads: 16,
++  kvHeads: 4,
++  headDim: 128,
++  layers: 24,
++  convKernel: 7,
++  slidingWindow: 256,
++  maxContext: 128_000,
++  eps: 1e-5,
++  fullRopeTheta: 1_000_000,
++  slidingRopeTheta: 10_000,
++  layerTypes: [
++    'conv',
++    'conv',
++    'full_attention',
++    'conv',
++    'sliding_attention',
++    'conv',
++    'full_attention',
++    'conv',
++    'sliding_attention',
++    'conv',
++    'full_attention',
++    'conv',
++    'sliding_attention',
++    'conv',
++    'full_attention',
++    'conv',
++    'sliding_attention',
++    'conv',
++    'full_attention',
++    'conv',
++    'sliding_attention',
++    'conv',
++    'full_attention',
++    'conv',
++  ],
++} as const;
++
++/** One attention layer's retained key and value rows. */
++export interface Lfm3AttentionCache {
++  readonly key: Value;
++  readonly value: Value;
++}
++
++/** Per-layer causal attention and short-convolution state. */
++export interface Lfm3Cache {
++  readonly attention: readonly (Lfm3AttentionCache | undefined)[];
++  readonly convolution: readonly (Value | undefined)[];
++  /** Number of token positions already evaluated. */
++  readonly position: number;
++}
++
++/** Logits, next-token cache and caller-owned transient uploads for one forward. */
++export interface Lfm3ModelStep {
++  readonly logits: Value;
++  readonly cache: Lfm3Cache;
++  /** Caller-owned embeddings and rotary tables, released after evaluation. */
++  readonly uploads: readonly Value[];
++}
++
++const projectionOrder = (heads: number): number[] => {
++  const order: number[] = [];
++  for (let head = 0; head < heads; head++) {
++    const base = head * LFM3.headDim;
++    for (let i = 0; i < LFM3.headDim / 2; i++) {
++      order.push(base + i, base + i + LFM3.headDim / 2);
++    }
++  }
++  return order;
++};
++
++const Q_ORDER = projectionOrder(LFM3.heads);
++const K_ORDER = projectionOrder(LFM3.kvHeads);
++const NORM_ORDER = projectionOrder(1);
++
++function ropeTables(
++  position: number,
++  rows: number,
++  theta: number,
++  partial: number,
++): {
++  cos: Float32Array;
++  sin: Float32Array;
++} {
++  const cos = new Float32Array(rows * LFM3.headDim);
++  const sin = new Float32Array(rows * LFM3.headDim);
++  const rotatedPairs = Math.floor((partial * LFM3.headDim) / 2);
++  for (let row = 0; row < rows; row++) {
++    for (let pair = 0; pair < LFM3.headDim / 2; pair++) {
++      const angle =
++        pair < rotatedPairs ? (position + row) * theta ** (-(2 * pair) / LFM3.headDim) : 0;
++      const c = Math.cos(angle);
++      const s = Math.sin(angle);
++      cos[row * LFM3.headDim + pair * 2] = c;
++      cos[row * LFM3.headDim + pair * 2 + 1] = c;
++      sin[row * LFM3.headDim + pair * 2] = s;
++      sin[row * LFM3.headDim + pair * 2 + 1] = s;
++    }
++  }
++  return { cos, sin };
++}
++
++function lastRows(x: Value, rows: number): Value {
++  const current = x.shape.dims![0]!;
++  return current > rows ? slice(x, 0, current - rows, current) : x;
++}
++
++function appendRows(previous: Value | undefined, current: Value): Value {
++  return previous ? cat([previous, current], 0) : current;
++}
++
++class Lfm3Mlp extends nn.Module<[Value], Value> {
++  readonly w1 = new nn.Linear(LFM3.hidden, LFM3.ffn, { bias: false });
++  readonly w3 = new nn.Linear(LFM3.hidden, LFM3.ffn, { bias: false });
++  readonly w2 = new nn.Linear(LFM3.ffn, LFM3.hidden, { bias: false });
++
++  override forward(x: Value): Value {
++    return this.w2.forward(mul(silu(this.w1.forward(x)), this.w3.forward(x)));
++  }
++}
++
++class Lfm3Attention extends nn.Module<
++  [
++    Value,
++    number,
++    Lfm3AttentionCache | undefined,
++    { cos: Value; sin: Value },
++    { cos: Value; sin: Value },
++  ],
++  { output: Value; cache: Lfm3AttentionCache }
++> {
++  readonly q_proj = new nn.Linear(LFM3.hidden, LFM3.heads * LFM3.headDim, { bias: false });
++  readonly k_proj = new nn.Linear(LFM3.hidden, LFM3.kvHeads * LFM3.headDim, { bias: false });
++  readonly v_proj = new nn.Linear(LFM3.hidden, LFM3.kvHeads * LFM3.headDim, { bias: false });
++  readonly o_proj = new nn.Linear(LFM3.heads * LFM3.headDim, LFM3.hidden, { bias: false });
++  readonly gate_proj = new nn.Linear(LFM3.hidden, LFM3.heads, { bias: false });
++  readonly q_norm = new nn.RMSNorm(LFM3.headDim, LFM3.eps);
++  readonly k_norm = new nn.RMSNorm(LFM3.headDim, LFM3.eps);
++
++  forward(
++    x: Value,
++    layer: number,
++    previous: Lfm3AttentionCache | undefined,
++    fullRope: { cos: Value; sin: Value },
++    slidingRope: { cos: Value; sin: Value },
++  ): { output: Value; cache: Lfm3AttentionCache } {
++    const rows = x.shape.dims![0]!;
++    const layerType = LFM3.layerTypes[layer]!;
++    const q = reshape(
++      this.q_norm.forward(reshape(this.q_proj.forward(x), [rows * LFM3.heads, LFM3.headDim])),
++      [rows, LFM3.heads * LFM3.headDim],
++    );
++    const k = reshape(
++      this.k_norm.forward(reshape(this.k_proj.forward(x), [rows * LFM3.kvHeads, LFM3.headDim])),
++      [rows, LFM3.kvHeads * LFM3.headDim],
++    );
++    const tables = layerType === 'full_attention' ? fullRope : slidingRope;
++    const rotatedQ = rope(q, tables.cos, tables.sin, { headDim: LFM3.headDim });
++    const rotatedK = rope(k, tables.cos, tables.sin, { headDim: LFM3.headDim });
++    const scaledQ = mul(rotatedQ, 1 / Math.sqrt(LFM3.headDim));
++    const value = this.v_proj.forward(x);
++    const keys = appendRows(previous?.key, rotatedK);
++    const values = appendRows(previous?.value, value);
++    const keyOffset = previous?.key.shape.dims![0] ?? 0;
++    const sliding = layerType === 'sliding_attention';
++    const attended = sdpa(scaledQ, keys, values, {
++      qHeads: LFM3.heads,
++      kvHeads: LFM3.kvHeads,
++      headDim: LFM3.headDim,
++      windowLeft: sliding ? LFM3.slidingWindow - 1 : Infinity,
++      windowRight: 0,
++      qPosOffset: keyOffset,
++    });
++    const gated = mul(attended, sigmoid(this.gate_proj.forward(x)));
++    const output = this.o_proj.forward(gated);
++    return {
++      output,
++      cache: {
++        key: sliding ? lastRows(keys, LFM3.slidingWindow) : keys,
++        value: sliding ? lastRows(values, LFM3.slidingWindow) : values,
++      },
++    };
++  }
++}
++
++class Lfm3DepthwiseConv extends nn.Module<[Value, number], Value> {
++  readonly weight = new nn.Parameter({
++    elems: LFM3.hidden * LFM3.convKernel,
++    dtype: 'f32',
++    dims: [LFM3.hidden, LFM3.convKernel],
++  });
++
++  override transformStateDict(sd: LazyStateDict, prefix: string): void {
++    const name = `${prefix}.weight`;
++    const tensor = sd.tensors.get(name);
++    if (!tensor) return;
++    const expected = [LFM3.hidden, 1, LFM3.convKernel];
++    if (tensor.shape.join() !== expected.join()) {
++      throw checkpointMismatch(
++        'LFM3 depthwise conv',
++        `${name} has shape [${tensor.shape.join(', ')}], expected [${expected.join(', ')}]`,
++      );
++    }
++    sd.tensors.set(name, reshapeWeight(tensor, [LFM3.hidden, LFM3.convKernel]));
++  }
++
++  forward(x: Value, padLeft: number): Value {
++    return depthwiseConv1d(x, this.weight.value, {
++      kernelSize: LFM3.convKernel,
++      padLeft,
++    });
++  }
++}
++
++class Lfm3ShortConv extends nn.Module<[Value, Value | undefined], { output: Value; cache: Value }> {
++  readonly in_proj = new nn.Linear(LFM3.hidden, 3 * LFM3.hidden, { bias: false });
++  readonly out_proj = new nn.Linear(LFM3.hidden, LFM3.hidden, { bias: false });
++  readonly conv = new Lfm3DepthwiseConv();
++
++  forward(x: Value, previous: Value | undefined): { output: Value; cache: Value } {
++    const [b, c, gate] = chunk(this.in_proj.forward(x), 3, 1);
++    const gated = mul(b!, gate!);
++    const combined = appendRows(previous, gated);
++    const padLeft = Math.max(0, LFM3.convKernel - 1 - (previous?.shape.dims![0] ?? 0));
++    const convolved = this.conv.forward(combined, padLeft);
++    const output = this.out_proj.forward(mul(c!, convolved));
++    return { output, cache: lastRows(combined, LFM3.convKernel - 1) };
++  }
++}
++
++class Lfm3Layer extends nn.Module<
++  [Value, number, Lfm3Cache | undefined, { cos: Value; sin: Value }, { cos: Value; sin: Value }],
++  { hidden: Value; attention?: Lfm3AttentionCache; convolution?: Value }
++> {
++  readonly operator_norm = new nn.RMSNorm(LFM3.hidden, LFM3.eps);
++  readonly ffn_norm = new nn.RMSNorm(LFM3.hidden, LFM3.eps);
++  readonly post_operator_norm = new nn.RMSNorm(LFM3.hidden, LFM3.eps);
++  readonly post_ffn_norm = new nn.RMSNorm(LFM3.hidden, LFM3.eps);
++  readonly feed_forward = new Lfm3Mlp();
++  readonly self_attn?: Lfm3Attention;
++  readonly conv?: Lfm3ShortConv;
++
++  constructor(layer: number) {
++    super();
++    if (LFM3.layerTypes[layer] === 'conv') this.conv = new Lfm3ShortConv();
++    else this.self_attn = new Lfm3Attention();
++  }
++
++  forward(
++    hidden: Value,
++    layer: number,
++    cache: Lfm3Cache | undefined,
++    fullRope: { cos: Value; sin: Value },
++    slidingRope: { cos: Value; sin: Value },
++  ): { hidden: Value; attention?: Lfm3AttentionCache; convolution?: Value } {
++    const residual = hidden;
++    const normalized = this.operator_norm.forward(hidden);
++    let op: Value;
++    let attention: Lfm3AttentionCache | undefined;
++    let convolution: Value | undefined;
++    if (this.self_attn) {
++      const result = this.self_attn.forward(
++        normalized,
++        layer,
++        cache?.attention[layer],
++        fullRope,
++        slidingRope,
++      );
++      op = result.output;
++      attention = result.cache;
++    } else {
++      const result = this.conv!.forward(normalized, cache?.convolution[layer]);
++      op = result.output;
++      convolution = result.cache;
++    }
++    hidden = add(this.post_operator_norm.forward(op), residual);
++    const feedForward = this.post_ffn_norm.forward(
++      this.feed_forward.forward(this.ffn_norm.forward(hidden)),
++    );
++    return {
++      hidden: add(hidden, feedForward),
++      attention,
++      convolution,
++    };
++  }
++}
++
++class Lfm3LanguageModel extends nn.Module<
++  [Value, number, number, Lfm3Cache | undefined, TgpuRoot, Value[]],
++  { hidden: Value; cache: Lfm3Cache }
++> {
++  readonly embed_tokens = new nn.Embedding(LFM3.vocab, LFM3.hidden, { device: 'cpu' });
++  readonly layers = new nn.ModuleList(
++    Array.from({ length: LFM3.layers }, (_, layer) => new Lfm3Layer(layer)),
++  );
++  readonly embedding_norm = new nn.RMSNorm(LFM3.hidden, LFM3.eps);
++
++  forward(
++    input: Value,
++    idsLength: number,
++    position: number,
++    previous: Lfm3Cache | undefined,
++    root: TgpuRoot,
++    uploads: Value[],
++  ): { hidden: Value; cache: Lfm3Cache } {
++    const full = ropeTables(position, idsLength, LFM3.fullRopeTheta, 0.5);
++    const sliding = ropeTables(position, idsLength, LFM3.slidingRopeTheta, 1);
++    const fullRope = {
++      cos: track(tensor(root, full.cos, [idsLength, LFM3.headDim]), uploads),
++      sin: track(tensor(root, full.sin, [idsLength, LFM3.headDim]), uploads),
++    };
++    const slidingRope = {
++      cos: track(tensor(root, sliding.cos, [idsLength, LFM3.headDim]), uploads),
++      sin: track(tensor(root, sliding.sin, [idsLength, LFM3.headDim]), uploads),
++    };
++    const attention: (Lfm3AttentionCache | undefined)[] = [];
++    const convolution: (Value | undefined)[] = [];
++    let hidden = input;
++    for (let layer = 0; layer < LFM3.layers; layer++) {
++      const result = this.layers.items[layer]!.forward(
++        hidden,
++        layer,
++        previous,
++        fullRope,
++        slidingRope,
++      );
++      hidden = result.hidden;
++      attention[layer] = result.attention;
++      convolution[layer] = result.convolution;
++    }
++    return {
++      hidden: this.embedding_norm.forward(hidden),
++      cache: {
++        attention,
++        convolution,
++        position: position + idsLength,
++      },
++    };
++  }
++}
++
++const LM_HEAD_SHARDS = 16;
++const LM_HEAD_SHARD_ROWS = LFM3.vocab / LM_HEAD_SHARDS;
++
++class Lfm3LmHead extends nn.Module<[Value], Value> {
++  readonly projections = new nn.ModuleList(
++    Array.from(
++      { length: LM_HEAD_SHARDS },
++      () => new nn.Linear(LFM3.hidden, LM_HEAD_SHARD_ROWS, { bias: false }),
++    ),
++  );
++
++  override transformStateDict(sd: LazyStateDict, prefix: string): void {
++    const name = `${prefix}.weight`;
++    const weight = sd.tensors.get(name);
++    if (!weight) throw checkpointMismatch('LFM3 checkpoint', `has no ${name} tied output weight`);
++    if (weight.shape.join() !== [LFM3.vocab, LFM3.hidden].join()) {
++      throw checkpointMismatch(
++        'LFM3 output weight',
++        `has shape [${weight.shape.join(', ')}], expected [${LFM3.vocab}, ${LFM3.hidden}]`,
++      );
++    }
++    const shards = splitRows(weight, Array(LM_HEAD_SHARDS).fill(LM_HEAD_SHARD_ROWS));
++    sd.tensors.delete(name);
++    shards.forEach((shard, index) => {
++      sd.tensors.set(`${prefix}.projections.${index}.weight`, shard);
++    });
++  }
++
++  override forward(x: Value): Value {
++    return cat(
++      this.projections.items.map((projection) => projection.forward(x)),
++      1,
++    );
++  }
++}
++
++function track(value: Value, uploads: Value[]): Value {
++  uploads.push(value);
++  return value;
++}
++
++/** Returns all retained GPU values in an LFM3 cache. */
++export function cacheValues(cache: Lfm3Cache): Value[] {
++  return [
++    ...cache.attention.flatMap((entry) => (entry ? [entry.key, entry.value] : [])),
++    ...cache.convolution.filter((entry): entry is Value => entry !== undefined),
++  ];
++}
++
++/** Causal text model using Liquid's original tied-embedding LFM3 checkpoint. */
++export class Lfm3CausalLM extends nn.Module<
++  [readonly number[], TgpuRoot, Lfm3Cache?],
++  Lfm3ModelStep
++> {
++  readonly model = new Lfm3LanguageModel();
++  readonly lm_head = new Lfm3LmHead();
++
++  override transformStateDict(sd: LazyStateDict): void {
++    const prefix = 'model.language_model.';
++    const original = [...sd.tensors.entries()];
++    const language = original.filter(([name]) => name.startsWith(prefix));
++    sd.tensors.clear();
++    let embedding: LazyTensor | undefined;
++    for (const [sourceName, sourceTensor] of language) {
++      const name = sourceName.slice(prefix.length);
++      const targetName = /(?:^|\.)[a-z_]*norm\.weight$/.test(name)
++        ? name.replace(/\.weight$/, '.scale')
++        : name;
++      let tensor = sourceTensor;
++      if (name === 'embed_tokens.weight') embedding = tensor;
++      if (name.endsWith('.self_attn.q_proj.weight')) tensor = permuteRows(tensor, Q_ORDER);
++      else if (name.endsWith('.self_attn.k_proj.weight')) tensor = permuteRows(tensor, K_ORDER);
++      else if (
++        name.endsWith('.self_attn.q_norm.weight') ||
++        name.endsWith('.self_attn.k_norm.weight')
++      ) {
++        tensor = permuteRows(tensor, NORM_ORDER);
++      }
++      sd.tensors.set(`model.${targetName}`, tensor);
++    }
++    if (!embedding) {
++      throw checkpointMismatch(
++        'LFM3 checkpoint',
++        'has no model.language_model.embed_tokens.weight',
++      );
++    }
++    sd.tensors.set('lm_head.weight', embedding);
++  }
++
++  forward(ids: readonly number[], root: TgpuRoot, previous?: Lfm3Cache): Lfm3ModelStep {
++    if (ids.length === 0) {
++      throw new RunntimeError('INVALID_ARGUMENT', 'LFM3 forward needs at least one input token');
++    }
++    const position = previous?.position ?? 0;
++    if (position + ids.length > LFM3.maxContext) {
++      throw new RunntimeError(
++        'INVALID_ARGUMENT',
++        `LFM3 context exhausted: ${position + ids.length} > ${LFM3.maxContext}`,
++      );
++    }
++    const uploads: Value[] = [];
++    const embedding = track(this.model.embed_tokens.forward(ids, root), uploads);
++    const result = this.model.forward(embedding, ids.length, position, previous, root, uploads);
++    const final = slice(result.hidden, 0, ids.length - 1, ids.length);
++    return {
++      logits: this.lm_head.forward(final),
++      cache: result.cache,
++      uploads,
++    };
++  }
++}
+diff --git a/packages/runntime/src/zoo/lfm3/session.ts b/packages/runntime/src/zoo/lfm3/session.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..929c93fd3528ba1db352507d5365b4757a106b1b
+--- /dev/null
++++ b/packages/runntime/src/zoo/lfm3/session.ts
+@@ -0,0 +1,262 @@
++/** Streaming text-generation session and its cache/disposal lifecycle. */
++
++import { RunntimeError } from '../../core/index.ts';
++import { LFM3 } from './model.ts';
++import type { Lfm3Message, Lfm3Tokenizer } from './tokenizer.ts';
++
++/** Generation options for a text chat request. */
++export interface Lfm3ChatOptions {
++  readonly maxNewTokens?: number;
++  readonly signal?: AbortSignal;
++}
++
++/** Final text and token counts for one generation. */
++export interface Lfm3GenerationResult {
++  readonly text: string;
++  readonly inputTokens: number;
++  readonly completionTokens: number;
++  readonly finishReason: 'stop' | 'length';
++}
++
++/** Stream of stable text deltas and its final generation result. */
++export interface Lfm3Generation extends AsyncIterable<string> {
++  readonly result: Promise<Lfm3GenerationResult>;
++  cancel(): void;
++}
++
++/** Stateful, serialized text generation over the original LFM3 base model. */
++export interface Lfm3ChatSession {
++  generate(messages: readonly Lfm3Message[], options?: Lfm3ChatOptions): Lfm3Generation;
++  /** Cancels in-flight work and drops its prompt-specific KV/convolution cache. */
++  reset(): Promise<void>;
++  /** Stops accepting calls, cancels queued/in-flight generation and releases weights. */
++  dispose(): Promise<void>;
++}
++
++export interface Lfm3Step<Cache = unknown> {
++  readonly logits: Float32Array;
++  readonly cache: Cache;
++}
++
++export interface Lfm3SessionRuntime<Cache = unknown> {
++  forward(
++    ids: readonly number[],
++    cache: Cache | undefined,
++    signal: AbortSignal,
++  ): Promise<Lfm3Step<Cache>>;
++  release(cache: Cache): void | Promise<void>;
++  trim(): void;
++  dispose(): void | Promise<void>;
++}
++
++class AsyncQueue<T> implements AsyncIterableIterator<T> {
++  private readonly values: T[] = [];
++  private readonly waiters: {
++    resolve: (result: IteratorResult<T>) => void;
++    reject: (error: unknown) => void;
++  }[] = [];
++  private ended = false;
++  private failure: unknown;
++
++  [Symbol.asyncIterator](): AsyncIterableIterator<T> {
++    return this;
++  }
++
++  next(): Promise<IteratorResult<T>> {
++    const value = this.values.shift();
++    if (value !== undefined) return Promise.resolve({ done: false, value });
++    if (this.failure !== undefined) return Promise.reject(this.failure);
++    if (this.ended) return Promise.resolve({ done: true, value: undefined });
++    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
++  }
++
++  push(value: T): void {
++    if (this.ended || this.failure !== undefined) return;
++    const waiter = this.waiters.shift();
++    if (waiter) waiter.resolve({ done: false, value });
++    else this.values.push(value);
++  }
++
++  close(): void {
++    if (this.ended || this.failure !== undefined) return;
++    this.ended = true;
++    for (const waiter of this.waiters.splice(0)) waiter.resolve({ done: true, value: undefined });
++  }
++
++  fail(error: unknown): void {
++    if (this.ended || this.failure !== undefined) return;
++    this.failure = error;
++    this.values.length = 0;
++    for (const waiter of this.waiters.splice(0)) waiter.reject(error);
++  }
++}
++
++function aborted(signal: AbortSignal): void {
++  if (signal.aborted) {
++    throw new RunntimeError('EXECUTION_FAILED', 'LFM3 generation aborted', {
++      cause: signal.reason,
++    });
++  }
++}
++
++function greedy(logits: Float32Array): number {
++  if (logits.length !== LFM3.vocab) {
++    throw new RunntimeError(
++      'EXECUTION_FAILED',
++      `LFM3 returned ${logits.length} logits; expected ${LFM3.vocab}`,
++    );
++  }
++  let best = -Infinity;
++  let token = 0;
++  for (let i = 0; i < logits.length; i++) {
++    const value = logits[i]!;
++    if (!Number.isFinite(value)) {
++      throw new RunntimeError('EXECUTION_FAILED', `LFM3 produced a non-finite logit at ${i}`);
++    }
++    if (value > best) {
++      best = value;
++      token = i;
++    }
++  }
++  return token;
++}
++
++function validateMaxNewTokens(value: number | undefined): number {
++  const maxNewTokens = value ?? 128;
++  if (!Number.isInteger(maxNewTokens) || maxNewTokens < 0) {
++    throw new RunntimeError('INVALID_ARGUMENT', 'maxNewTokens must be a non-negative integer');
++  }
++  return maxNewTokens;
++}
++
++/** Creates a serialized chat session over the supplied model runtime. */
++export function createLfm3Session<Cache>(
++  tokenizer: Lfm3Tokenizer,
++  runtime: Lfm3SessionRuntime<Cache>,
++): Lfm3ChatSession {
++  let disposed = false;
++  let queue: Promise<void> = Promise.resolve();
++  let disposePromise: Promise<void> | undefined;
++  const controllers = new Set<AbortController>();
++
++  const runGeneration = async (
++    prompt: number[],
++    maxNewTokens: number,
++    signal: AbortSignal,
++    emit: (text: string) => void,
++  ): Promise<Lfm3GenerationResult> => {
++    const availableTokens = LFM3.maxContext - prompt.length;
++    const limit = Math.min(maxNewTokens, availableTokens);
++    let cache: Cache | undefined;
++    let logits: Float32Array | undefined;
++    const generated: number[] = [];
++    let emitted = '';
++    let finishReason: Lfm3GenerationResult['finishReason'] = 'length';
++    try {
++      aborted(signal);
++      if (limit > 0) {
++        let step = await runtime.forward(prompt, undefined, signal);
++        cache = step.cache;
++        logits = step.logits;
++        for (let index = 0; index < limit; index++) {
++          aborted(signal);
++          const token = greedy(logits);
++          generated.push(token);
++          if (tokenizer.stopIds.has(token)) {
++            finishReason = 'stop';
++            break;
++          }
++          const text = tokenizer.decode(generated);
++          const stableText = Array.from(text).slice(0, -1).join('');
++          const delta = stableText.slice(emitted.length);
++          emitted = stableText;
++          if (delta) emit(delta);
++          if (index + 1 === limit) break;
++          aborted(signal);
++          const previous = cache;
++          step = await runtime.forward([token], previous, signal);
++          cache = step.cache;
++          logits = step.logits;
++          if (previous !== undefined) await runtime.release(previous);
++        }
++      }
++      const text = tokenizer.decode(generated);
++      const finalDelta = text.slice(emitted.length);
++      if (finalDelta) emit(finalDelta);
++      return {
++        text,
++        inputTokens: prompt.length,
++        completionTokens: generated.length,
++        finishReason,
++      };
++    } finally {
++      if (cache !== undefined) await runtime.release(cache);
++      runtime.trim();
++    }
++  };
++
++  const generate: Lfm3ChatSession['generate'] = (messages, options = {}) => {
++    if (disposed) throw new RunntimeError('RESOURCE_DISPOSED', 'LFM3 chat session is disposed');
++    const prompt = tokenizer.encodeChat(messages);
++    if (prompt.length > LFM3.maxContext) {
++      throw new RunntimeError(
++        'INVALID_ARGUMENT',
++        `LFM3 prompt has ${prompt.length} tokens; context limit is ${LFM3.maxContext}`,
++      );
++    }
++    const maxNewTokens = validateMaxNewTokens(options.maxNewTokens);
++    const controller = new AbortController();
++    controllers.add(controller);
++    const forwardSignal = controller.signal;
++    const abort = () => controller.abort(options.signal?.reason);
++    if (options.signal?.aborted) abort();
++    else options.signal?.addEventListener('abort', abort, { once: true });
++
++    const updates = new AsyncQueue<string>();
++    const job = queue.then(async () => {
++      if (disposed) throw new RunntimeError('RESOURCE_DISPOSED', 'LFM3 chat session is disposed');
++      return runGeneration(prompt, maxNewTokens, forwardSignal, (text) => updates.push(text));
++    });
++    queue = job.then(
++      () => undefined,
++      () => undefined,
++    );
++    const result = job
++      .then(
++        (value) => {
++          updates.close();
++          return value;
++        },
++        (error: unknown) => {
++          updates.fail(error);
++          throw error;
++        },
++      )
++      .finally(() => {
++        controllers.delete(controller);
++        options.signal?.removeEventListener('abort', abort);
++      });
++    result.catch(() => undefined);
++    return {
++      result,
++      cancel: abort,
++      [Symbol.asyncIterator]: () => updates,
++    };
++  };
++
++  const reset = async (): Promise<void> => {
++    if (disposed) throw new RunntimeError('RESOURCE_DISPOSED', 'LFM3 chat session is disposed');
++    for (const controller of controllers) controller.abort('session reset');
++    await queue;
++  };
++
++  const dispose = (): Promise<void> => {
++    if (disposePromise) return disposePromise;
++    disposed = true;
++    for (const controller of controllers) controller.abort('session disposed');
++    disposePromise = queue.then(() => runtime.dispose());
++    return disposePromise;
++  };
++
++  return { generate, reset, dispose };
++}
+diff --git a/packages/runntime/src/zoo/lfm3/tokenizer.ts b/packages/runntime/src/zoo/lfm3/tokenizer.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..433c8e3acfb4b5ba2cf9a054869513bd1b869d15
+--- /dev/null
++++ b/packages/runntime/src/zoo/lfm3/tokenizer.ts
+@@ -0,0 +1,108 @@
++/** Pinned LFM3-Omni BPE tokenizer and text-only rendering of its chat template. */
++
++import { Tokenizer } from '@huggingface/tokenizers';
++import { checkpointMismatch } from '../errors.ts';
++
++/** Original Liquid LFM3-Omni-2B checkpoint revision. */
++export const LFM3_REVISION = '21d75123f86c1f7ffb4bef1ea202710c4e7ebe67';
++/** Pinned tokenizer asset from the original checkpoint. */
++export const LFM3_TOKENIZER_URL = `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/${LFM3_REVISION}/tokenizer.json`;
++
++const EXPECTED_TOKENS = {
++  '<|startoftext|>': 124_894,
++  '<|im_start|>': 124_899,
++  '<|im_end|>': 124_900,
++  '<|text_end|>': 125_014,
++} as const;
++
++/** Text-only chat message supported by the public LFM3 generator. */
++export interface Lfm3Message {
++  readonly role: 'system' | 'user' | 'assistant';
++  readonly content: string;
++}
++
++/** Tokenization and text chat-template operations used by LFM3 generation. */
++export interface Lfm3Tokenizer {
++  readonly bosId: number;
++  readonly stopIds: ReadonlySet<number>;
++  encodeChat(messages: readonly Lfm3Message[]): number[];
++  decode(ids: readonly number[]): string;
++}
++
++const isBpeTokenizerJson = (json: unknown): json is object & { model: { type: string } } =>
++  typeof json === 'object' &&
++  json !== null &&
++  'model' in json &&
++  typeof json.model === 'object' &&
++  json.model !== null &&
++  'type' in json.model &&
++  json.model.type === 'BPE';
++
++/** Validates pinned special-token ids and creates LFM3 text chat tokenization. */
++export function createLfm3Tokenizer(json: unknown): Lfm3Tokenizer {
++  const bad = (why: string) => checkpointMismatch('LFM3 tokenizer', why);
++  if (!isBpeTokenizerJson(json)) throw bad('expected the pinned BPE tokenizer.json');
++  const tokenizer = new Tokenizer(json, {});
++  const ids = new Map<string, number>();
++  for (const [token, expected] of Object.entries(EXPECTED_TOKENS)) {
++    const id = tokenizer.token_to_id(token);
++    if (id === undefined) throw bad(`vocabulary has no ${token}`);
++    if (id !== expected) throw bad(`${token} has id ${id}, expected ${expected}`);
++    ids.set(token, id);
++  }
++
++  const encode = (text: string): number[] =>
++    tokenizer.encode(text, { add_special_tokens: false }).ids;
++  const stopIds = new Set([ids.get('<|im_end|>')!, ids.get('<|text_end|>')!]);
++
++  return {
++    bosId: ids.get('<|startoftext|>')!,
++    stopIds,
++    encodeChat(messages) {
++      if (messages.length === 0) throw bad('a chat prompt needs at least one message');
++      for (const message of messages) {
++        if (!['system', 'user', 'assistant'].includes(message.role)) {
++          throw bad(`unsupported message role '${message.role}'`);
++        }
++        if (typeof message.content !== 'string') throw bad('chat message content must be text');
++      }
++      let conversation = '<|startoftext|>';
++      let remaining = [...messages];
++      const first = remaining[0];
++      if (first?.role === 'system') {
++        if (first.content) {
++          conversation += `<|im_start|>system\n${first.content}<|im_end|>\n`;
++        }
++        remaining = remaining.slice(1);
++      }
++      let lastUser = -1;
++      remaining.forEach((message, index) => {
++        if (message.role === 'user') lastUser = index;
++      });
++      for (const [index, message] of remaining.entries()) {
++        conversation += `<|im_start|>${message.role}\n`;
++        if (message.role === 'assistant') {
++          let content = message.content;
++          const keepThinking = index > lastUser;
++          if (!keepThinking) {
++            const close = content.lastIndexOf('</think>');
++            if (close !== -1) content = content.slice(close + '</think>'.length).trim();
++          }
++          if (!content.includes('</think>')) content = `<think></think>${content}`;
++          conversation += content;
++        } else {
++          conversation += message.content;
++        }
++        conversation += '<|im_end|>\n';
++      }
++      conversation += '<|im_start|>assistant\n<think></think>';
++      return encode(conversation);
++    },
++    decode(ids) {
++      return tokenizer.decode([...ids], {
++        skip_special_tokens: true,
++        clean_up_tokenization_spaces: false,
++      });
++    },
++  };
++}
+diff --git a/packages/runntime/src/zoo/models.ts b/packages/runntime/src/zoo/models.ts
+index 3bacbff69f4f1595b83875ffc2bbea9967a684f8..64df0d087c2d08062eda93ee773142b5641cb3d6 100644
+--- a/packages/runntime/src/zoo/models.ts
++++ b/packages/runntime/src/zoo/models.ts
+@@ -17,6 +17,7 @@ import type { KeypointDetectorModel } from './tasks/cv/keypointDetection.ts';
+ import type { EmbedderModel } from './tasks/multimodal/embedding.ts';
+ import type { PrivacyFilterModel } from './tasks/nlp/privacyFilter.ts';
+ import type { D1DeciderModel } from './tasks/nlp/d1.ts';
++import type { Lfm3ChatModel } from './tasks/nlp/lfm3.ts';
+ 
+ const HUB = 'https://huggingface.co/software-mansion';
+ 
+@@ -126,7 +127,19 @@ const D1_F32 = {
+   modelPath: `https://huggingface.co/LiquidAI/d1-omni-600M/resolve/${D1_REVISION}/model.safetensors`,
+ } satisfies D1DeciderModel;
+ 
++const LFM3_REVISION = '21d75123f86c1f7ffb4bef1ea202710c4e7ebe67';
++const LFM3_OMNI_2B = {
++  modelPath: `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/${LFM3_REVISION}/model.safetensors`,
++  tokenizerPath: `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/${LFM3_REVISION}/tokenizer.json`,
++} satisfies Lfm3ChatModel;
++
+ export const models = {
++  lfm3: {
++    /** Liquid LFM3-Omni 2B original BF16 text backbone. */
++    LFM3_OMNI_2B: {
++      DEFAULT: LFM3_OMNI_2B,
++    },
++  },
+   d1: {
+     /** Liquid's D1 Omni 600M text decision model. Q8 weights are generated locally. */
+     D1_OMNI_600M: {
+diff --git a/packages/runntime/src/zoo/tasks/nlp/lfm3.ts b/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..db77b265b98cea19e5a7b7be7e38560b260478ee
+--- /dev/null
++++ b/packages/runntime/src/zoo/tasks/nlp/lfm3.ts
+@@ -0,0 +1,165 @@
++/** Public text-only LFM3-Omni chat session on the initialized WebGPU device. */
++
++import {
++  defaultRoot,
++  evalValues,
++  gpuExecutor,
++  isRunntimeError,
++  RunntimeError,
++  toArray,
++  warmUp,
++  type Value,
++} from '../../../core/index.ts';
++import { asLoadError, rethrowRunError } from '../../errors.ts';
++import {
++  fetchJson,
++  openWeights,
++  throwIfAborted,
++  type LoadOptions,
++  type ModelPath,
++} from '../../load.ts';
++import { models } from '../../models.ts';
++import { cacheValues, Lfm3CausalLM, type Lfm3Cache } from '../../lfm3/model.ts';
++import {
++  createLfm3Session,
++  type Lfm3ChatSession,
++  type Lfm3SessionRuntime,
++} from '../../lfm3/session.ts';
++import { createLfm3Tokenizer, LFM3_REVISION, LFM3_TOKENIZER_URL } from '../../lfm3/tokenizer.ts';
++
++const MODEL_URL = `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/${LFM3_REVISION}/model.safetensors`;
++
++export interface Lfm3ChatModel {
++  /** Original BF16 safetensors checkpoint, or caller-owned RangeSource. */
++  readonly modelPath?: ModelPath;
++  /** Pinned Liquid tokenizer.json. */
++  readonly tokenizerPath?: string;
++}
++
++export type {
++  Lfm3ChatOptions,
++  Lfm3ChatSession,
++  Lfm3Generation,
++  Lfm3GenerationResult,
++} from '../../lfm3/session.ts';
++export type { Lfm3Message } from '../../lfm3/tokenizer.ts';
++
++/** Loads the pinned original floating checkpoint and returns a streaming chat session. */
++export async function createLfm3Chat(
++  config: Lfm3ChatModel = models.lfm3.LFM3_OMNI_2B.DEFAULT,
++  opts: LoadOptions = {},
++): Promise<Lfm3ChatSession> {
++  const modelPath = config.modelPath ?? MODEL_URL;
++  const tokenizerPath = config.tokenizerPath ?? LFM3_TOKENIZER_URL;
++  const root = defaultRoot();
++  const executor = gpuExecutor(root);
++  const model = new Lfm3CausalLM();
++  const releaseAfterWork = async (): Promise<void> => {
++    try {
++      await root.device.queue.onSubmittedWorkDone();
++    } catch {
++      // Device loss rejects the wait; owned GPU buffers still need teardown.
++    }
++  };
++  const runtime: Lfm3SessionRuntime<Lfm3Cache> = {
++    async forward(ids: readonly number[], previous: Lfm3Cache | undefined, signal: AbortSignal) {
++      let step: ReturnType<Lfm3CausalLM['forward']> | undefined;
++      try {
++        if (signal.aborted) {
++          throw new RunntimeError('EXECUTION_FAILED', 'LFM3 generation aborted', {
++            cause: signal.reason,
++          });
++        }
++        step = model.forward(ids, root, previous);
++        evalValues([step.logits, ...cacheValues(step.cache)], executor);
++        const logits = await toArray(step.logits, executor);
++        await releaseAfterWork();
++        if (signal.aborted) {
++          throw new RunntimeError('EXECUTION_FAILED', 'LFM3 generation aborted', {
++            cause: signal.reason,
++          });
++        }
++        executor.releaseValues([step.logits]);
++        return { logits, cache: step.cache };
++      } catch (error) {
++        await releaseAfterWork();
++        if (step) executor.releaseValues([step.logits, ...cacheValues(step.cache)]);
++        throw rethrowRunError(error);
++      } finally {
++        if (step) destroyUploads(step.uploads);
++      }
++    },
++    async release(cache: Lfm3Cache) {
++      executor.releaseValues(cacheValues(cache));
++    },
++    trim() {
++      executor.trim();
++    },
++    async dispose() {
++      await releaseAfterWork();
++      try {
++        model.dispose();
++      } finally {
++        executor.dispose();
++      }
++    },
++  };
++
++  let tokenizer: ReturnType<typeof createLfm3Tokenizer> | undefined;
++  try {
++    throwIfAborted(opts.signal);
++    const weights = await openWeights(modelPath, {
++      ...opts,
++      cacheId: opts.cacheId ?? cacheKey(modelPath),
++    });
++    const tokenizerJson = await fetchJson<unknown>(tokenizerPath, {
++      cache: opts.cache,
++      cacheId: cacheKey(tokenizerPath),
++      signal: opts.signal,
++    });
++    tokenizer = createLfm3Tokenizer(tokenizerJson);
++    throwIfAborted(opts.signal);
++
++    await model.loadStateDict(weights, {
++      root,
++      onProgress: (name, done, total) => {
++        opts.onProgress?.(name, done, total);
++        throwIfAborted(opts.signal);
++      },
++    });
++    throwIfAborted(opts.signal);
++
++    if (opts.warmUp !== false) {
++      await warmUp(
++        root.device,
++        async () => {
++          const prompt = tokenizer!.encodeChat([{ role: 'user', content: 'Hello.' }]);
++          const result = await runtime.forward(prompt, undefined, new AbortController().signal);
++          await runtime.release(result.cache);
++          return result.logits;
++        },
++        'LFM3 model warm-up',
++      );
++      runtime.trim();
++    }
++
++    return createLfm3Session(tokenizer, runtime);
++  } catch (error) {
++    try {
++      await runtime.dispose();
++    } catch {
++      // Preserve the actual load, tokenizer, abort or warm-up failure.
++    }
++    if (isRunntimeError(error)) throw error;
++    throw asLoadError(error, opts.signal);
++  }
++}
++
++function destroyUploads(values: readonly Value[]): void {
++  for (const value of values) {
++    if (value.state === 'materialized') value.buffer.destroy();
++  }
++}
++
++const cacheKey = (path: ModelPath): string | undefined =>
++  typeof path === 'string' ? `lfm3-base-v1/${path.replace(/^https?:\/\//, '')}` : undefined;
+diff --git a/packages/runntime/test/core/graph/ops/conv/depthwiseConv1d.test.ts b/packages/runntime/test/core/graph/ops/conv/depthwiseConv1d.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8dfcb99e656875bdeeb32b1d4ff635fc4f94f10b
+--- /dev/null
++++ b/packages/runntime/test/core/graph/ops/conv/depthwiseConv1d.test.ts
+@@ -0,0 +1,17 @@
++import { describe, expect, it } from 'vitest';
++import { depthwiseConv1d } from '../../../../../src/core/graph/ops/conv/conv1d.ts';
++import { input, meta } from '../../values.ts';
++
++const x = input([9, 3]);
++const weight = input([3, 3]);
++
++describe('depthwiseConv1d shape checks', () => {
++  it('keeps the valid output width and rejects mismatched kernels and padding', () => {
++    expect(depthwiseConv1d(x, weight, { kernelSize: 3, padLeft: 2 }).shape).toEqual(meta([9, 3]));
++    expect(() => depthwiseConv1d(x, input([3, 4]), { kernelSize: 3 })).toThrow('weight shape');
++    expect(() => depthwiseConv1d(x, weight, { kernelSize: 3, padLeft: 3 })).toThrow('padLeft');
++    expect(() => depthwiseConv1d(input([2, 3]), weight, { kernelSize: 3 })).toThrow(
++      'padded frames',
++    );
++  });
++});
+diff --git a/packages/runntime/test/core/graph/ops/elementwise.test.ts b/packages/runntime/test/core/graph/ops/elementwise.test.ts
+index 04e4c9ba0d631b92c07df16e70106252b09aee2b..f97ab5931e789bf1a97242ce2a48b86b5df52f71 100644
+--- a/packages/runntime/test/core/graph/ops/elementwise.test.ts
++++ b/packages/runntime/test/core/graph/ops/elementwise.test.ts
+@@ -22,6 +22,7 @@ const ELEMENTWISE = 0;
+ const ROW = 1;
+ const COLUMN = 2;
+ const SCALAR = 3;
++const REPEATED_COLUMNS = 4;
+ 
+ describe('add / mul broadcasting', () => {
+   describe.each([
+@@ -47,6 +48,12 @@ describe('add / mul broadcasting', () => {
+     expect(add(input([3, 3]), input([3, 1])).pending?.attrs).toEqual([COLUMN]);
+   });
+ 
++  it('repeats each [M, groups] value across an equal-width column block', () => {
++    const c = mul(input([2, 12]), input([2, 3]));
++    expect(c.shape).toEqual(meta([2, 12]));
++    expect(c.pending).toMatchObject({ op: 'mul', attrs: [REPEATED_COLUMNS, 4] });
++  });
++
+   it('puts the full operand first whichever side it is on', () => {
+     const full = input([2, 3]);
+     const row = input([3]);
+diff --git a/packages/runntime/test/core/kernels/conv/depthwiseConv1d.gpu.test.ts b/packages/runntime/test/core/kernels/conv/depthwiseConv1d.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a8034db6f88ef72b80d3942eb5337948784066e0
+--- /dev/null
++++ b/packages/runntime/test/core/kernels/conv/depthwiseConv1d.gpu.test.ts
+@@ -0,0 +1,71 @@
++import { describe, it } from 'vitest';
++import { toArray } from '../../../../src/core/gpu/eval.ts';
++import { depthwiseConv1d } from '../../../../src/core/graph/ops.ts';
++import { matrix } from '../../../../src/core/graph/value.ts';
++import { expectClose, gpu, randomF32, requireFeature, roundF16, upload } from '../../../gpu.ts';
++
++const { root, ex } = await gpu();
++
++interface Case {
++  rows: number;
++  channels: number;
++  kernel: number;
++  padLeft?: number;
++  padRight?: number;
++  dtype: 'f32' | 'f16';
++}
++
++function reference(x: Float32Array, w: Float32Array, c: Case): Float64Array {
++  const left = c.padLeft ?? 0;
++  const right = c.padRight ?? 0;
++  const rows = c.rows + left + right - c.kernel + 1;
++  const out = new Float64Array(rows * c.channels);
++  for (let t = 0; t < rows; t++) {
++    for (let channel = 0; channel < c.channels; channel++) {
++      let sum = 0;
++      for (let tap = 0; tap < c.kernel; tap++) {
++        const source = t + tap - left;
++        if (source >= 0 && source < c.rows) {
++          sum += x[source * c.channels + channel]! * w[channel * c.kernel + tap]!;
++        }
++      }
++      out[t * c.channels + channel] = sum;
++    }
++  }
++  return out;
++}
++
++async function check(c: Case): Promise<void> {
++  const round = c.dtype === 'f16' ? roundF16 : (v: Float32Array) => v;
++  const x = round(randomF32(c.rows * c.channels, 31));
++  const w = round(randomF32(c.channels * c.kernel, 47));
++  const meta = (rows: number, cols: number) => ({ ...matrix(rows, cols), dtype: c.dtype });
++  const got = await toArray(
++    depthwiseConv1d(
++      upload(root, x, meta(c.rows, c.channels)),
++      upload(root, w, meta(c.channels, c.kernel)),
++      { kernelSize: c.kernel, padLeft: c.padLeft, padRight: c.padRight },
++    ),
++    ex,
++  );
++  expectClose(
++    got,
++    reference(x, w, c),
++    c.dtype === 'f16' ? { atol: 1e-3, rtol: 2e-3 } : { atol: 1e-6, rtol: 1e-5 },
++  );
++}
++
++describe('depthwiseConv1d kernel', () => {
++  it.for<Case>([
++    { rows: 9, channels: 5, kernel: 3, padLeft: 2, dtype: 'f32' },
++    { rows: 7, channels: 4, kernel: 5, padRight: 4, dtype: 'f32' },
++    { rows: 1, channels: 1, kernel: 1, dtype: 'f32' },
++    { rows: 12, channels: 8, kernel: 7, dtype: 'f16' },
++  ])(
++    'matches the channel-wise convolution definition: $dtype $rows×$channels K=$kernel',
++    async (c, ctx) => {
++      if (c.dtype === 'f16') requireFeature(ctx, root, 'shader-f16');
++      await check(c);
++    },
++  );
++});
+diff --git a/packages/runntime/test/core/kernels/elementwise/elementwiseF32.gpu.test.ts b/packages/runntime/test/core/kernels/elementwise/elementwiseF32.gpu.test.ts
+index e0ed6775b63c046bd7dffdaa0f9ceaa2fc401d78..ae9423282f459e8dbd36c6366ebcfbdd5aa27824 100644
+--- a/packages/runntime/test/core/kernels/elementwise/elementwiseF32.gpu.test.ts
++++ b/packages/runntime/test/core/kernels/elementwise/elementwiseF32.gpu.test.ts
+@@ -123,6 +123,27 @@ describe('elementwiseF32 kernel', () => {
+     expectClose(got, swigluRef(glu, lin), { atol: 1e-3, rtol: 1e-3 });
+   });
+ 
++  it('repeats attention gates over contiguous head dimensions', async () => {
++    const rows = 2;
++    const heads = 3;
++    const headDim = 4;
++    const x = Float32Array.from({ length: rows * heads * headDim }, (_, i) => i + 1);
++    const gate = new Float32Array([2, -1, 0.5, -2, 3, 4]);
++    const expected = Float32Array.from(
++      x,
++      (value, i) =>
++        value *
++        gate[
++          Math.floor(i / (heads * headDim)) * heads + Math.floor((i % (heads * headDim)) / headDim)
++        ]!,
++    );
++    const got = await toArray(
++      mul(upload(root, x, [rows, heads * headDim]), upload(root, gate, [rows, heads])),
++      ex,
++    );
++    expectClose(got, expected, { atol: 0, rtol: 0 });
++  });
++
+   it('adds past 2^24 elements, which takes the second grid dimension', async () => {
+     const n = 2 ** 24 + 3;
+     expect(n).toBeGreaterThan(GRID_Y_STRIDE);
+diff --git a/packages/runntime/test/zoo/lfm3/cache-parity.gpu.test.ts b/packages/runntime/test/zoo/lfm3/cache-parity.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4d10f516fb8ce1b2cf4c9a0e7f31905bc6c7895f
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/cache-parity.gpu.test.ts
+@@ -0,0 +1,169 @@
++/** Opt-in comparison of cached decode with a full forward on original weights. */
++
++import { expect, it } from 'vitest';
++import { evalValues, gpuExecutor, toArray, type Value } from '../../../src/core/index.ts';
++import { openWeights, fetchJson } from '../../../src/zoo/load.ts';
++import {
++  cacheValues,
++  LFM3,
++  Lfm3CausalLM,
++  type Lfm3ModelStep,
++} from '../../../src/zoo/lfm3/model.ts';
++import { createLfm3Tokenizer, LFM3_TOKENIZER_URL } from '../../../src/zoo/lfm3/tokenizer.ts';
++import { gpu, liveBuffers } from '../../gpu.ts';
++
++declare global {
++  interface ImportMetaEnv {
++    readonly VITE_LFM3_QUALIFICATION_MODE?: string;
++    readonly VITE_LFM3_MODEL_URL?: string;
++    readonly VITE_LFM3_TOKENIZER_URL?: string;
++  }
++  interface ImportMeta {
++    readonly env: ImportMetaEnv;
++  }
++}
++
++const MODE = import.meta.env.VITE_LFM3_QUALIFICATION_MODE;
++const MODEL_URL =
++  import.meta.env.VITE_LFM3_MODEL_URL ??
++  `https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/21d75123f86c1f7ffb4bef1ea202710c4e7ebe67/model.safetensors`;
++const TOKENIZER_URL = import.meta.env.VITE_LFM3_TOKENIZER_URL ?? LFM3_TOKENIZER_URL;
++const PROBABILITY_TOLERANCE = 0.001;
++
++function greedy(logits: Float32Array): number {
++  let token = 0;
++  for (let index = 1; index < logits.length; index++) {
++    if (logits[index]! > logits[token]!) token = index;
++  }
++  return token;
++}
++
++function maxProbabilityError(left: Float32Array, right: Float32Array): number {
++  const softmax = (logits: Float32Array): Float64Array => {
++    let max = -Infinity;
++    for (const value of logits) max = Math.max(max, value);
++    const probabilities = new Float64Array(logits.length);
++    let total = 0;
++    for (let index = 0; index < logits.length; index++) {
++      const value = Math.exp(logits[index]! - max);
++      probabilities[index] = value;
++      total += value;
++    }
++    for (let index = 0; index < probabilities.length; index++) {
++      probabilities[index] = probabilities[index]! / total;
++    }
++    return probabilities;
++  };
++  const a = softmax(left);
++  const b = softmax(right);
++  let error = 0;
++  for (let index = 0; index < a.length; index++) {
++    error = Math.max(error, Math.abs(a[index]! - b[index]!));
++  }
++  return error;
++}
++
++function destroyUploads(values: readonly Value[]): void {
++  for (const value of values) {
++    if (value.state === 'materialized') value.buffer.destroy();
++  }
++}
++
++it.skipIf(MODE !== 'parity')(
++  'matches cached decode with full-forward LFM3 tokens and probabilities',
++  async () => {
++    const { root } = await gpu();
++    const before = liveBuffers();
++    const executor = gpuExecutor(root);
++    const model = new Lfm3CausalLM();
++    const retained: Value[][] = [];
++
++    const evaluate = async (step: Lfm3ModelStep): Promise<Float32Array> => {
++      const cache = cacheValues(step.cache);
++      retained.push(cache);
++      evalValues([step.logits, ...cache], executor);
++      const logits = await toArray(step.logits, executor);
++      await root.device.queue.onSubmittedWorkDone();
++      executor.releaseValues([step.logits]);
++      destroyUploads(step.uploads);
++      return logits;
++    };
++
++    try {
++      const weights = await openWeights(MODEL_URL);
++      const tokenizerJson = await fetchJson<unknown>(TOKENIZER_URL);
++      const tokenizer = createLfm3Tokenizer(tokenizerJson);
++      const loadStarted = performance.now();
++      await model.loadStateDict(weights, { root });
++      const loadMs = performance.now() - loadStarted;
++      const prompt = tokenizer.encodeChat([{ role: 'user', content: 'Hello.' }]);
++      const prefillStarted = performance.now();
++      const prefill = model.forward(prompt, root);
++      const prefillLogits = await evaluate(prefill);
++      const prefillMs = performance.now() - prefillStarted;
++      let cache = prefill.cache;
++      let nextToken = greedy(prefillLogits);
++      let cachedMs = 0;
++      let fullMs = 0;
++      let maxError = 0;
++      const traceTokens: number[] = [];
++      for (let stepIndex = 0; stepIndex < 3; stepIndex++) {
++        traceTokens.push(nextToken);
++        const prefix = [...prompt, ...traceTokens];
++        const cachedStarted = performance.now();
++        const cachedStep = model.forward([nextToken], root, cache);
++        const cachedLogits = await evaluate(cachedStep);
++        cachedMs += performance.now() - cachedStarted;
++        expect(cachedLogits).toHaveLength(LFM3.vocab);
++
++        const fullStarted = performance.now();
++        const fullStep = model.forward(prefix, root);
++        const fullLogits = await evaluate(fullStep);
++        fullMs += performance.now() - fullStarted;
++        expect(fullLogits).toHaveLength(LFM3.vocab);
++
++        const error = maxProbabilityError(cachedLogits, fullLogits);
++        maxError = Math.max(maxError, error);
++        expect(greedy(cachedLogits)).toBe(greedy(fullLogits));
++        expect(error).toBeLessThanOrEqual(PROBABILITY_TOLERANCE);
++        cache = cachedStep.cache;
++        nextToken = greedy(cachedLogits);
++      }
++      const report = {
++        checkpointRevision: '21d75123f86c1f7ffb4bef1ea202710c4e7ebe67',
++        loadedCheckpointBytes: weights.totalBytes(),
++        promptTokens: prompt.length,
++        nativeGreedyPrefixTokens: traceTokens,
++        cachedFinalGreedyToken: nextToken,
++        maxProbabilityError: maxError,
++        tolerance: PROBABILITY_TOLERANCE,
++        loadMs: +loadMs.toFixed(2),
++        prefillMs: +prefillMs.toFixed(2),
++        cachedDecodeMs: +cachedMs.toFixed(2),
++        fullForwardMs: +fullMs.toFixed(2),
++      };
++      console.info(`LFM3_CACHE_PARITY ${JSON.stringify(report)}`);
++    } finally {
++      await root.device.queue.onSubmittedWorkDone().catch(() => undefined);
++      for (const values of retained) {
++        try {
++          executor.releaseValues(values);
++        } catch {
++          // A failed device dispatch may already have invalidated pooled targets.
++        }
++      }
++      model.dispose();
++      executor.dispose();
++    }
++    const remaining = [...liveBuffers()].filter((buffer) => !before.has(buffer));
++    const storage = remaining.filter((buffer) => (buffer.usage & GPUBufferUsage.STORAGE) !== 0);
++    console.info(
++      `LFM3_CACHE_PARITY_CLEANUP ${JSON.stringify({
++        storageBufferCount: storage.length,
++        rootCacheBufferCount: remaining.length - storage.length,
++      })}`,
++    );
++    expect(storage).toEqual([]);
++  },
++  1_200_000,
++);
+diff --git a/packages/runntime/test/zoo/lfm3/packed-consumer.mjs b/packages/runntime/test/zoo/lfm3/packed-consumer.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..dbb6bdc1bdbdfc1224355d4ce29f69d115a52b0d
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/packed-consumer.mjs
+@@ -0,0 +1,191 @@
++/** Builds the package tarball and runs its public LFM3 loader on real WebGPU. */
++
++import {
++  lstatSync,
++  mkdirSync,
++  mkdtempSync,
++  readFileSync,
++  readdirSync,
++  renameSync,
++  rmSync,
++  symlinkSync,
++  writeFileSync,
++} from 'node:fs';
++import { tmpdir } from 'node:os';
++import { dirname, join, resolve } from 'node:path';
++import { fileURLToPath } from 'node:url';
++import { spawnSync } from 'node:child_process';
++
++const scriptDirectory = dirname(fileURLToPath(import.meta.url));
++const packageDirectory = resolve(scriptDirectory, '../../..');
++const repositoryDirectory = resolve(packageDirectory, '../..');
++const modelUrl = process.env.LFM3_BASE_MODEL_URL;
++const tokenizerUrl = process.env.LFM3_BASE_TOKENIZER_URL;
++const reportPath = process.env.LFM3_BASE_VITEST_REPORT;
++const qualificationMode = process.env.LFM3_BASE_QUALIFICATION_MODE ?? 'base';
++
++if (!modelUrl) {
++  throw new Error('set LFM3_BASE_MODEL_URL to the pinned original model.safetensors URL');
++}
++
++const temporaryDirectory = mkdtempSync(join(tmpdir(), 'runntime-packed-lfm3-'));
++
++function run(command, args, cwd, env = process.env) {
++  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
++  if (result.status !== 0)
++    throw new Error(`${command} ${args.join(' ')} failed (${result.status})`);
++}
++
++function linkDependencies(source, destination) {
++  for (const name of readdirSync(source)) {
++    if (name.startsWith('.')) continue;
++    const from = join(source, name);
++    const to = join(destination, name);
++    if (name.startsWith('@') && lstatSync(from).isDirectory()) {
++      mkdirSync(to);
++      for (const scopedName of readdirSync(from)) {
++        symlinkSync(resolve(from, scopedName), join(to, scopedName), 'dir');
++      }
++    } else {
++      symlinkSync(resolve(from), to, 'dir');
++    }
++  }
++}
++
++try {
++  const packDirectory = join(temporaryDirectory, 'pack');
++  const consumerDirectory = join(temporaryDirectory, 'consumer');
++  mkdirSync(packDirectory);
++  mkdirSync(consumerDirectory);
++  run('pnpm', ['pack', '--pack-destination', packDirectory], packageDirectory);
++
++  const tarballs = readdirSync(packDirectory).filter((name) => name.endsWith('.tgz'));
++  if (tarballs.length !== 1)
++    throw new Error(`expected one package tarball, found ${tarballs.length}`);
++  run(
++    'tar',
++    ['-xzf', join(packDirectory, tarballs[0]), '-C', consumerDirectory],
++    consumerDirectory,
++  );
++
++  const nodeModules = join(consumerDirectory, 'node_modules');
++  mkdirSync(nodeModules);
++  renameSync(join(consumerDirectory, 'package'), join(nodeModules, 'runntime'));
++  linkDependencies(join(packageDirectory, 'node_modules'), nodeModules);
++
++  const testDirectory = join(consumerDirectory, 'test', 'zoo', 'lfm3');
++  mkdirSync(testDirectory, { recursive: true });
++  const qualificationSource = readFileSync(
++    join(packageDirectory, 'test/zoo/lfm3/public.gpu.test.ts'),
++    'utf8',
++  ).replace("from '../../../src/zoo/index.ts'", "from 'runntime/zoo'");
++  if (!qualificationSource.includes("from 'runntime/zoo'")) {
++    throw new Error('LFM3 consumer did not switch to the packed public entry point');
++  }
++  writeFileSync(join(testDirectory, 'public.gpu.test.ts'), qualificationSource);
++  const recoverySource = readFileSync(
++    join(packageDirectory, 'test/zoo/lfm3/recovery.gpu.test.ts'),
++    'utf8',
++  ).replace("from '../../../src/zoo/index.ts'", "from 'runntime/zoo'");
++  writeFileSync(join(testDirectory, 'recovery.gpu.test.ts'), recoverySource);
++  writeFileSync(
++    join(consumerDirectory, 'test/gpu.ts'),
++    `/** Real WebGPU setup and buffer-lifetime observation for the packed consumer. */
++import tgpu from 'typegpu';
++import { initRunntime } from 'runntime/zoo';
++
++const live = new Set<GPUBuffer>();
++const buffersPerDevice = new WeakMap<GPUDevice, Set<GPUBuffer>>();
++const devicePerBuffer = new WeakMap<GPUBuffer, GPUDevice>();
++const createBuffer = GPUDevice.prototype.createBuffer;
++const destroyDevice = GPUDevice.prototype.destroy;
++const destroyBuffer = GPUBuffer.prototype.destroy;
++GPUDevice.prototype.createBuffer = function (descriptor) {
++  const buffer = createBuffer.call(this, descriptor);
++  live.add(buffer);
++  let buffers = buffersPerDevice.get(this);
++  if (buffers === undefined) {
++    buffers = new Set();
++    buffersPerDevice.set(this, buffers);
++  }
++  buffers.add(buffer);
++  devicePerBuffer.set(buffer, this);
++  return buffer;
++};
++GPUBuffer.prototype.destroy = function () {
++  live.delete(this);
++  const device = devicePerBuffer.get(this);
++  if (device !== undefined) buffersPerDevice.get(device)?.delete(this);
++  destroyBuffer.call(this);
++};
++GPUDevice.prototype.destroy = function () {
++  for (const buffer of buffersPerDevice.get(this) ?? []) live.delete(buffer);
++  buffersPerDevice.delete(this);
++  destroyDevice.call(this);
++};
++
++export function liveBuffers() { return new Set(live); }
++export function buffersSince(before) {
++  return [...live].filter((buffer) => !before.has(buffer)).map((buffer) => buffer.size + ' B');
++}
++
++let rootPromise;
++export function gpu() {
++  rootPromise ??= tgpu.init({ device: { optionalFeatures: ['subgroups'] } }).then((root) => {
++    initRunntime(root);
++    return { root };
++  });
++  return rootPromise;
++}
++`,
++  );
++
++  writeFileSync(
++    join(consumerDirectory, 'vitest.config.ts'),
++    `import { playwright } from '@vitest/browser-playwright';
++import typegpu from 'unplugin-typegpu/vite';
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  plugins: [typegpu()],
++  optimizeDeps: { include: ['typegpu'] },
++  server: { fs: { allow: [${JSON.stringify(repositoryDirectory)}, ${JSON.stringify(temporaryDirectory)}] } },
++  test: {
++    include: ['test/**/*.gpu.test.ts'],
++    browser: {
++      enabled: true,
++      headless: true,
++      provider: playwright({ launchOptions: { channel: 'chromium', args: ['--enable-unsafe-webgpu'] } }),
++      instances: [{ browser: 'chromium' }],
++    },
++  },
++});
++`,
++  );
++  writeFileSync(join(consumerDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
++
++  const env = {
++    ...process.env,
++    VITE_LFM3_QUALIFICATION_MODE: qualificationMode,
++    VITE_LFM3_MODEL_URL: modelUrl,
++    VITE_LFM3_TOKENIZER_URL:
++      tokenizerUrl ??
++      'https://huggingface.co/LiquidAI/LFM3-Omni-2B/resolve/21d75123f86c1f7ffb4bef1ea202710c4e7ebe67/tokenizer.json',
++  };
++  const vitestArgs = [
++    join(nodeModules, 'vitest/vitest.mjs'),
++    'run',
++    '--config',
++    join(consumerDirectory, 'vitest.config.ts'),
++  ];
++  if (reportPath) {
++    vitestArgs.push(
++      '--reporter=verbose',
++      '--reporter=json',
++      `--outputFile.json=${resolve(reportPath)}`,
++    );
++  }
++  run(process.execPath, vitestArgs, consumerDirectory, env);
++} finally {
++  rmSync(temporaryDirectory, { recursive: true, force: true });
++}
+diff --git a/packages/runntime/test/zoo/lfm3/public.gpu.test.ts b/packages/runntime/test/zoo/lfm3/public.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..31766524b43cf51916fdc67eb28d4a7f582c579c
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/public.gpu.test.ts
+@@ -0,0 +1,166 @@
++/** Opt-in real-WebGPU loading and streaming through the public zoo entry. */
++
++import { expect, it } from 'vitest';
++import { createLfm3Chat, models, type RangeSource } from '../../../src/zoo/index.ts';
++import { gpu, liveBuffers } from '../../gpu.ts';
++
++declare global {
++  interface ImportMetaEnv {
++    readonly VITE_LFM3_QUALIFICATION_MODE?: string;
++    readonly VITE_LFM3_MODEL_URL?: string;
++    readonly VITE_LFM3_TOKENIZER_URL?: string;
++  }
++  interface ImportMeta {
++    readonly env: ImportMetaEnv;
++  }
++}
++
++const MODE = import.meta.env.VITE_LFM3_QUALIFICATION_MODE;
++const MODEL_URL = import.meta.env.VITE_LFM3_MODEL_URL ?? models.lfm3.LFM3_OMNI_2B.DEFAULT.modelPath;
++const TOKENIZER_URL =
++  import.meta.env.VITE_LFM3_TOKENIZER_URL ?? models.lfm3.LFM3_OMNI_2B.DEFAULT.tokenizerPath;
++
++const gpuBufferBytes = (): number =>
++  [...liveBuffers()].reduce((sum, buffer) => sum + buffer.size, 0);
++
++function hostHeapBytes(): number | null {
++  const memory = Reflect.get(performance, 'memory');
++  const bytes =
++    typeof memory === 'object' && memory !== null
++      ? Reflect.get(memory, 'usedJSHeapSize')
++      : undefined;
++  return typeof bytes === 'number' ? bytes : null;
++}
++
++it.skipIf(MODE !== 'base')(
++  'loads the original checkpoint and streams text through a packed public consumer',
++  async (ctx) => {
++    await gpu();
++    const before = liveBuffers();
++    const invalidSource: RangeSource = { read: async () => new Uint8Array(8) };
++    const loadController = new AbortController();
++    loadController.abort('qualification checks pre-abort');
++    await expect(
++      createLfm3Chat(
++        { ...models.lfm3.LFM3_OMNI_2B.DEFAULT, modelPath: invalidSource },
++        { signal: loadController.signal },
++      ),
++    ).rejects.toMatchObject({ code: 'LOAD_ABORTED' });
++
++    await expect(
++      createLfm3Chat(
++        { modelPath: invalidSource, tokenizerPath: TOKENIZER_URL },
++        { cacheId: 'lfm3-invalid' },
++      ),
++    ).rejects.toMatchObject({ code: 'LOAD_FAILED' });
++
++    if (typeof MODEL_URL !== 'string' || typeof TOKENIZER_URL !== 'string') {
++      throw new Error('LFM3 model and tokenizer URLs must be strings');
++    }
++    let sourceBytes = 0;
++    const source: RangeSource = {
++      async read(begin, end) {
++        const response = await fetch(MODEL_URL, {
++          headers: { Range: `bytes=${begin}-${end - 1}` },
++        });
++        if (response.status !== 206) {
++          throw new Error(`LFM3 RangeSource expected HTTP 206, got ${response.status}`);
++        }
++        const data = new Uint8Array(await response.arrayBuffer());
++        if (data.byteLength !== end - begin) {
++          throw new Error(`LFM3 RangeSource returned ${data.byteLength} bytes for ${end - begin}`);
++        }
++        sourceBytes += data.byteLength;
++        return data;
++      },
++    };
++
++    let progressDone = 0;
++    let progressTotal = 0;
++    let peakGpuBytes = gpuBufferBytes();
++    let peakJsHeapBytes = hostHeapBytes();
++    const loadStarted = performance.now();
++    const session = await createLfm3Chat(
++      { ...models.lfm3.LFM3_OMNI_2B.DEFAULT, modelPath: source, tokenizerPath: TOKENIZER_URL },
++      {
++        cacheId: 'lfm3-original-base-21d75123',
++        onProgress(_name, done, total) {
++          progressDone = done;
++          progressTotal = total;
++          peakGpuBytes = Math.max(peakGpuBytes, gpuBufferBytes());
++          const heap = hostHeapBytes();
++          if (heap !== null) peakJsHeapBytes = Math.max(peakJsHeapBytes ?? 0, heap);
++        },
++      },
++    );
++    ctx.onTestFinished(() => session.dispose());
++    const loadMs = performance.now() - loadStarted;
++    const loadedGpuBytes = gpuBufferBytes();
++    const hostBytes = hostHeapBytes();
++    peakGpuBytes = Math.max(peakGpuBytes, loadedGpuBytes);
++    if (hostBytes !== null) peakJsHeapBytes = Math.max(peakJsHeapBytes ?? 0, hostBytes);
++
++    const request = async (content: string): Promise<{ text: string; latencyMs: number }> => {
++      const started = performance.now();
++      const generation = session.generate([{ role: 'user', content }], { maxNewTokens: 24 });
++      let streamed = '';
++      for await (const delta of generation) streamed += delta;
++      const result = await generation.result;
++      expect(streamed).toBe(result.text);
++      expect(result.inputTokens).toBeGreaterThan(0);
++      peakGpuBytes = Math.max(peakGpuBytes, gpuBufferBytes());
++      const heap = hostHeapBytes();
++      if (heap !== null) peakJsHeapBytes = Math.max(peakJsHeapBytes ?? 0, heap);
++      return { text: result.text, latencyMs: performance.now() - started };
++    };
++
++    const first = await request('Say hello in one short sentence.');
++    const second = await request('Say goodbye in one short sentence.');
++    expect(first.text.trim().length).toBeGreaterThan(0);
++    expect(second.text.trim().length).toBeGreaterThan(0);
++    const abortController = new AbortController();
++    const cancelled = session.generate([{ role: 'user', content: 'Write a short greeting.' }], {
++      maxNewTokens: 24,
++      signal: abortController.signal,
++    });
++    const firstUpdate = await cancelled[Symbol.asyncIterator]().next();
++    expect(firstUpdate.done).toBe(false);
++    abortController.abort('qualification cancellation');
++    await expect(cancelled.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    await session.reset();
++    const recovered = await request('Say hello again briefly.');
++    expect(recovered.text.trim().length).toBeGreaterThan(0);
++    await session.dispose();
++    const remainingBuffers = [...liveBuffers()].filter((buffer) => !before.has(buffer));
++    const report = {
++      checkpointRevision: '21d75123f86c1f7ffb4bef1ea202710c4e7ebe67',
++      rangeSource: true,
++      bytesRead: sourceBytes,
++      progressDone,
++      progressTotal,
++      loadAndWarmUpMs: +loadMs.toFixed(2),
++      firstGenerationMs: +first.latencyMs.toFixed(2),
++      secondGenerationMs: +second.latencyMs.toFixed(2),
++      firstText: first.text,
++      secondText: second.text,
++      recoveredTextAfterCancellation: recovered.text,
++      gpuBuffersAfterLoadBytes: loadedGpuBytes,
++      peakGpuBuffersBytes: peakGpuBytes,
++      peakJsHeapBytes,
++      hostJsHeapBytesAfterLoad: hostBytes,
++      gpuStorageBuffersAfterDispose: remainingBuffers
++        .filter((buffer) => (buffer.usage & GPUBufferUsage.STORAGE) !== 0)
++        .map((buffer) => ({ bytes: buffer.size, usage: buffer.usage })),
++      gpuRootCacheBufferCountAfterDispose: remainingBuffers.length,
++      gpuRootCacheBufferBytesAfterDispose: remainingBuffers.reduce(
++        (sum, buffer) => sum + buffer.size,
++        0,
++      ),
++    };
++    console.info(`LFM3_PUBLIC_QUALIFICATION ${JSON.stringify(report)}`);
++    expect(progressDone).toBe(progressTotal);
++    expect(peakGpuBytes).toBeGreaterThan(0);
++    expect(report.gpuStorageBuffersAfterDispose).toEqual([]);
++  },
++  1_200_000,
++);
+diff --git a/packages/runntime/test/zoo/lfm3/recovery.gpu.test.ts b/packages/runntime/test/zoo/lfm3/recovery.gpu.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..60111a4b3a7d282d606dd9354b465c3156fdfdb0
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/recovery.gpu.test.ts
+@@ -0,0 +1,98 @@
++/** Opt-in full-checkpoint device-loss and fresh-session recovery on WebGPU. */
++
++import tgpu from 'typegpu';
++import { expect, it } from 'vitest';
++import { createLfm3Chat, initRunntime, models } from '../../../src/zoo/index.ts';
++import { gpu, liveBuffers } from '../../gpu.ts';
++
++declare global {
++  interface ImportMetaEnv {
++    readonly VITE_LFM3_QUALIFICATION_MODE?: string;
++    readonly VITE_LFM3_MODEL_URL?: string;
++    readonly VITE_LFM3_TOKENIZER_URL?: string;
++  }
++  interface ImportMeta {
++    readonly env: ImportMetaEnv;
++  }
++}
++
++const MODE = import.meta.env.VITE_LFM3_QUALIFICATION_MODE;
++const CONFIG = {
++  ...models.lfm3.LFM3_OMNI_2B.DEFAULT,
++  ...(import.meta.env.VITE_LFM3_MODEL_URL
++    ? { modelPath: import.meta.env.VITE_LFM3_MODEL_URL }
++    : {}),
++  ...(import.meta.env.VITE_LFM3_TOKENIZER_URL
++    ? { tokenizerPath: import.meta.env.VITE_LFM3_TOKENIZER_URL }
++    : {}),
++};
++
++it.skipIf(MODE !== 'recovery')(
++  'recovers with a new public LFM3 session after real WebGPU device loss',
++  async (ctx) => {
++    const { root: lostRoot } = await gpu();
++    const before = liveBuffers();
++    const firstLoadStarted = performance.now();
++    const session = await createLfm3Chat(CONFIG);
++    const firstLoadMs = performance.now() - firstLoadStarted;
++    ctx.onTestFinished(() => session.dispose());
++
++    const lost = lostRoot.device.lost;
++    lostRoot.device.destroy();
++    const lostInfo = await lost;
++    expect(lostInfo.reason).toBe('destroyed');
++
++    const failed = session.generate([{ role: 'user', content: 'Continue after device loss.' }], {
++      maxNewTokens: 1,
++    });
++    await expect(failed.result).rejects.toBeDefined();
++    await session.dispose();
++    const afterLoss = [...liveBuffers()].filter((buffer) => !before.has(buffer));
++    const lostStorage = afterLoss.filter((buffer) => (buffer.usage & GPUBufferUsage.STORAGE) !== 0);
++    expect(lostStorage).toEqual([]);
++
++    const freshRoot = await tgpu.init({
++      device: { optionalFeatures: ['subgroups', 'shader-f16'] },
++    });
++    ctx.onTestFinished(() => freshRoot.device.destroy());
++    initRunntime(freshRoot);
++    const freshBefore = liveBuffers();
++    const freshLoadStarted = performance.now();
++    const freshSession = await createLfm3Chat(CONFIG, { warmUp: false });
++    const freshLoadMs = performance.now() - freshLoadStarted;
++    const generationStarted = performance.now();
++    const generation = freshSession.generate([{ role: 'user', content: 'Say hello briefly.' }], {
++      maxNewTokens: 4,
++    });
++    let streamed = '';
++    for await (const delta of generation) streamed += delta;
++    const result = await generation.result;
++    const generationMs = performance.now() - generationStarted;
++    expect(result.text.trim()).toBeTruthy();
++    expect(streamed).toBe(result.text);
++    await freshSession.dispose();
++    const freshRemaining = [...liveBuffers()].filter((buffer) => !freshBefore.has(buffer));
++    const freshStorage = freshRemaining.filter(
++      (buffer) => (buffer.usage & GPUBufferUsage.STORAGE) !== 0,
++    );
++    expect(freshStorage).toEqual([]);
++    freshRoot.device.destroy();
++
++    console.info(
++      `LFM3_DEVICE_RECOVERY ${JSON.stringify({
++        checkpointRevision: '21d75123f86c1f7ffb4bef1ea202710c4e7ebe67',
++        deviceLossReason: lostInfo.reason,
++        firstLoadMs: +firstLoadMs.toFixed(2),
++        failedSessionError: 'generation rejected after GPUDevice.destroy()',
++        storageBuffersAfterLostSessionDispose: lostStorage.length,
++        rootCacheBuffersAfterLostSessionDispose: afterLoss.length - lostStorage.length,
++        freshLoadMs: +freshLoadMs.toFixed(2),
++        freshGenerationMs: +generationMs.toFixed(2),
++        freshText: result.text,
++        freshStorageBuffersAfterDispose: freshStorage.length,
++        freshRootCacheBuffersAfterDispose: freshRemaining.length - freshStorage.length,
++      })}`,
++    );
++  },
++  1_200_000,
++);
+diff --git a/packages/runntime/test/zoo/lfm3/session.test.ts b/packages/runntime/test/zoo/lfm3/session.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e903cd659cbabed9383ceb30d872075de9c3f4d8
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/session.test.ts
+@@ -0,0 +1,206 @@
++import { describe, expect, it } from 'vitest';
++import { RunntimeError } from '../../../src/core/index.ts';
++import { LFM3 } from '../../../src/zoo/lfm3/model.ts';
++import { createLfm3Session, type Lfm3SessionRuntime } from '../../../src/zoo/lfm3/session.ts';
++import type { Lfm3Message, Lfm3Tokenizer } from '../../../src/zoo/lfm3/tokenizer.ts';
++
++function fixture(
++  options: {
++    promptLength?: number;
++    tokens?: number[];
++    decode?: (ids: readonly number[]) => string;
++  } = {},
++) {
++  const tokens = options.tokens ?? [7, 8, 124_900];
++  let calls = 0;
++  const released: number[] = [];
++  let disposed = false;
++  const tokenizer: Lfm3Tokenizer = {
++    bosId: 1,
++    stopIds: new Set([124_900, 125_014]),
++    encodeChat(_messages: readonly Lfm3Message[]) {
++      return Array.from({ length: options.promptLength ?? 2 }, (_, i) => i + 1);
++    },
++    decode(ids) {
++      return (
++        options.decode?.(ids) ??
++        ids
++          .filter((id) => ![124_900, 125_014].includes(id))
++          .map((id) => (id === 7 ? 'A' : 'B'))
++          .join('')
++      );
++    },
++  };
++  const runtime: Lfm3SessionRuntime<{ id: number }> = {
++    async forward(_ids, _cache, signal) {
++      if (signal.aborted) throw new Error('unexpected call after abort');
++      const target = tokens[calls++] ?? 0;
++      const logits = new Float32Array(LFM3.vocab).fill(-1);
++      logits[target] = 1;
++      return { logits, cache: { id: calls } };
++    },
++    release(cache) {
++      released.push(cache.id);
++    },
++    trim() {},
++    dispose() {
++      disposed = true;
++    },
++  };
++  return {
++    session: createLfm3Session(tokenizer, runtime),
++    released,
++    get calls() {
++      return calls;
++    },
++    get disposed() {
++      return disposed;
++    },
++  };
++}
++
++describe('LFM3 streaming session', () => {
++  it('streams decoded text in order, stops on EOS and releases replaced cache state', async () => {
++    const f = fixture();
++    const generation = f.session.generate([{ role: 'user', content: 'hello' }]);
++    const updates: string[] = [];
++    for await (const update of generation) updates.push(update);
++    await expect(generation.result).resolves.toEqual({
++      text: 'AB',
++      inputTokens: 2,
++      completionTokens: 3,
++      finishReason: 'stop',
++    });
++    expect(updates).toEqual(['A', 'B']);
++    expect(f.calls).toBe(3);
++    expect(f.released).toEqual([1, 2, 3]);
++  });
++
++  it('reports an explicit length finish at the generation and context bounds', async () => {
++    const limited = fixture({ tokens: [7, 8] });
++    const result = limited.session.generate([{ role: 'user', content: 'hi' }], {
++      maxNewTokens: 1,
++    });
++    await expect(result.result).resolves.toMatchObject({
++      text: 'A',
++      completionTokens: 1,
++      finishReason: 'length',
++    });
++    await limited.session.dispose();
++
++    const exhausted = fixture({ promptLength: LFM3.maxContext });
++    const atLimit = exhausted.session.generate([{ role: 'user', content: 'long' }]);
++    await expect(atLimit.result).resolves.toMatchObject({
++      inputTokens: LFM3.maxContext,
++      completionTokens: 0,
++      finishReason: 'length',
++    });
++    expect(exhausted.calls).toBe(0);
++    const oversized = fixture({ promptLength: LFM3.maxContext + 1 });
++    expect(() => oversized.session.generate([{ role: 'user', content: 'too long' }])).toThrow(
++      expect.objectContaining({ code: 'INVALID_ARGUMENT' }),
++    );
++    await exhausted.session.dispose();
++    await oversized.session.dispose();
++  });
++
++  it('holds an incomplete trailing character until decoding makes it stable', async () => {
++    const f = fixture({
++      tokens: [10, 11, 124_900],
++      decode(ids) {
++        return ids.length === 1 ? 'A�' : 'Aø';
++      },
++    });
++    const generation = f.session.generate([{ role: 'user', content: 'utf8' }]);
++    const updates: string[] = [];
++    for await (const update of generation) updates.push(update);
++    await expect(generation.result).resolves.toMatchObject({ text: 'Aø' });
++    expect(updates.join('')).toBe('Aø');
++    await f.session.dispose();
++  });
++
++  it('cancels and resets queued work before it starts, then remains usable', async () => {
++    const f = fixture();
++    const cancelled = f.session.generate([{ role: 'user', content: 'first' }]);
++    cancelled.cancel();
++    await expect(cancelled.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    await f.session.reset();
++    expect(f.calls).toBe(0);
++    const fresh = f.session.generate([{ role: 'user', content: 'second' }], { maxNewTokens: 1 });
++    await expect(fresh.result).resolves.toMatchObject({ text: 'A' });
++    await f.session.dispose();
++    expect(f.disposed).toBe(true);
++    expect(() => f.session.generate([{ role: 'user', content: 'after disposal' }])).toThrow(
++      expect.objectContaining({ code: 'RESOURCE_DISPOSED' }),
++    );
++  });
++
++  it('resets an in-flight generation and serializes the next request after cancellation', async () => {
++    let started!: () => void;
++    const entered = new Promise<void>((resolve) => {
++      started = resolve;
++    });
++    let calls = 0;
++    const runtime: Lfm3SessionRuntime<{ id: number }> = {
++      async forward(_ids, _cache, signal) {
++        calls++;
++        if (calls === 1) {
++          started();
++          await new Promise<never>((_resolve, reject) => {
++            signal.addEventListener(
++              'abort',
++              () => reject(new RunntimeError('EXECUTION_FAILED', 'LFM3 generation aborted')),
++              { once: true },
++            );
++          });
++        }
++        const logits = new Float32Array(LFM3.vocab).fill(-1);
++        logits[7] = 1;
++        return { logits, cache: { id: calls } };
++      },
++      release() {},
++      trim() {},
++      dispose() {},
++    };
++    const session = createLfm3Session(
++      {
++        bosId: 1,
++        stopIds: new Set([124_900]),
++        encodeChat: () => [1],
++        decode: (ids) => (ids.includes(7) ? 'A' : ''),
++      },
++      runtime,
++    );
++    const interrupted = session.generate([{ role: 'user', content: 'first' }]);
++    await entered;
++    await session.reset();
++    await expect(interrupted.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++    const next = session.generate([{ role: 'user', content: 'after reset' }], { maxNewTokens: 1 });
++    await expect(next.result).resolves.toMatchObject({ text: 'A', completionTokens: 1 });
++    await session.dispose();
++  });
++
++  it('propagates runtime failures to both the stream and result promise', async () => {
++    const runtime = {
++      forward: async () => {
++        throw new Error('GPU readback failed');
++      },
++      release: () => {},
++      trim: () => {},
++      dispose: () => {},
++    } satisfies Lfm3SessionRuntime<never>;
++    const session = createLfm3Session(
++      {
++        bosId: 1,
++        stopIds: new Set([124_900]),
++        encodeChat: () => [1],
++        decode: () => '',
++      },
++      runtime,
++    );
++    const generation = session.generate([{ role: 'user', content: 'hello' }]);
++    await expect(generation.result).rejects.toThrow('GPU readback failed');
++    await expect(generation[Symbol.asyncIterator]().next()).rejects.toThrow('GPU readback failed');
++    await session.dispose();
++  });
++});
+diff --git a/packages/runntime/test/zoo/lfm3/stateDictHooks.test.ts b/packages/runntime/test/zoo/lfm3/stateDictHooks.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c20a2c8d01a7da3e4cf041d198befeac4fffa678
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/stateDictHooks.test.ts
+@@ -0,0 +1,70 @@
++import { describe, expect, it } from 'vitest';
++import {
++  derivedTensor,
++  type LazyStateDict,
++  type LazyTensor,
++} from '../../../src/core/weights/safetensors.ts';
++import { LFM3, Lfm3CausalLM } from '../../../src/zoo/lfm3/model.ts';
++
++function floats(shape: number[], value: (index: number) => number = () => 0): LazyTensor {
++  const elems = shape.reduce((size, part) => size * part, 1);
++  return derivedTensor(
++    shape,
++    () => Promise.resolve(Float32Array.from({ length: elems }, (_, index) => value(index))),
++    elems * 4,
++  );
++}
++
++function stateDict(entries: Record<string, LazyTensor>): LazyStateDict {
++  const tensors = new Map(Object.entries(entries));
++  return {
++    metadata: {},
++    tensors,
++    totalBytes: () => [...tensors.values()].reduce((sum, t) => sum + t.byteLength, 0),
++  };
++}
++
++describe('LFM3 checkpoint transforms', () => {
++  it('filters the multimodal checkpoint, renames norms and interleaves Q/K RoPE rows', async () => {
++    const model = new Lfm3CausalLM();
++    const sd = stateDict({
++      'model.language_model.embed_tokens.weight': floats([LFM3.vocab, LFM3.hidden]),
++      'model.language_model.layers.2.self_attn.q_proj.weight': floats(
++        [LFM3.heads * LFM3.headDim, LFM3.hidden],
++        (index) => Math.floor(index / LFM3.hidden),
++      ),
++      'model.language_model.layers.2.self_attn.k_proj.weight': floats(
++        [LFM3.kvHeads * LFM3.headDim, LFM3.hidden],
++        (index) => Math.floor(index / LFM3.hidden),
++      ),
++      'model.language_model.layers.2.self_attn.q_norm.weight': floats([LFM3.headDim], (i) => i),
++      'model.language_model.layers.2.self_attn.k_norm.weight': floats([LFM3.headDim], (i) => i),
++      'model.audio_encoder.layers.0.weight': floats([1]),
++    });
++
++    model.transformStateDict(sd);
++    expect([...sd.tensors.keys()]).toEqual([
++      'model.embed_tokens.weight',
++      'model.layers.2.self_attn.q_proj.weight',
++      'model.layers.2.self_attn.k_proj.weight',
++      'model.layers.2.self_attn.q_norm.scale',
++      'model.layers.2.self_attn.k_norm.scale',
++      'lm_head.weight',
++    ]);
++    const q = await sd.tensors.get('model.layers.2.self_attn.q_proj.weight')!.f32();
++    const kNorm = await sd.tensors.get('model.layers.2.self_attn.k_norm.scale')!.f32();
++    expect(Array.from(q.slice(0, 8 * LFM3.hidden).filter((_, i) => i % LFM3.hidden === 0))).toEqual(
++      [0, 64, 1, 65, 2, 66, 3, 67],
++    );
++    expect(Array.from(kNorm.slice(0, 8))).toEqual([0, 64, 1, 65, 2, 66, 3, 67]);
++
++    model.lm_head.transformStateDict(sd, 'lm_head');
++    expect(sd.tensors.has('lm_head.weight')).toBe(false);
++    expect(
++      Array.from(
++        { length: 16 },
++        (_, index) => sd.tensors.get(`lm_head.projections.${index}.weight`)!.shape,
++      ),
++    ).toEqual(Array.from({ length: 16 }, () => [LFM3.vocab / 16, LFM3.hidden]));
++  });
++});
+diff --git a/packages/runntime/test/zoo/lfm3/tokenizer.test.ts b/packages/runntime/test/zoo/lfm3/tokenizer.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..20a92e3873b343ded4b6d459f8c03cc178f2df87
+--- /dev/null
++++ b/packages/runntime/test/zoo/lfm3/tokenizer.test.ts
+@@ -0,0 +1,62 @@
++import { describe, expect, it } from 'vitest';
++import { createLfm3Tokenizer } from '../../../src/zoo/lfm3/tokenizer.ts';
++
++const specialTokens = [
++  ['<|startoftext|>', 124_894],
++  ['<|im_start|>', 124_899],
++  ['<|im_end|>', 124_900],
++  ['<|text_end|>', 125_014],
++] as const;
++
++const json = {
++  added_tokens: specialTokens.map(([content, id]) => ({
++    id,
++    content,
++    single_word: false,
++    lstrip: false,
++    rstrip: false,
++    normalized: false,
++    special: true,
++  })),
++  normalizer: null,
++  pre_tokenizer: { type: 'Whitespace' },
++  post_processor: null,
++  decoder: null,
++  model: {
++    type: 'BPE',
++    dropout: null,
++    unk_token: 'unused_0',
++    continuing_subword_prefix: null,
++    end_of_word_suffix: null,
++    fuse_unk: false,
++    byte_fallback: false,
++    vocab: Object.fromEntries(Array.from({ length: 32 }, (_, id) => [`unused_${id}`, id])),
++    merges: [],
++  },
++};
++
++describe('LFM3 tokenizer and chat template', () => {
++  it('pins the original special ids and renders the empty-think generation prefix', () => {
++    const tokenizer = createLfm3Tokenizer(json);
++    const ids = tokenizer.encodeChat([
++      { role: 'system', content: 'Be concise.' },
++      { role: 'user', content: 'Hello.' },
++    ]);
++    expect(tokenizer.bosId).toBe(124_894);
++    expect(ids[0]).toBe(124_894);
++    expect(ids.filter((id) => id === 124_899)).toHaveLength(3);
++    expect(ids.filter((id) => id === 124_900)).toHaveLength(2);
++    expect(tokenizer.stopIds).toEqual(new Set([124_900, 125_014]));
++  });
++
++  it('rejects a tokenizer whose pinned stop token has moved', () => {
++    expect(() =>
++      createLfm3Tokenizer({
++        ...json,
++        added_tokens: json.added_tokens.map((token) =>
++          token.content === '<|text_end|>' ? { ...token, id: 125_013 } : token,
++        ),
++      }),
++    ).toThrow(expect.objectContaining({ code: 'CHECKPOINT_MISMATCH' }));
++  });
++});
+-- 
+2.54.0
+

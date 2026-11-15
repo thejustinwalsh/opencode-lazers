@@ -1,0 +1,23 @@
+[
+  {
+    "name": "typecheck",
+    "command": ["pnpm", "--filter", "runntime", "typecheck"],
+    "exitCode": 0,
+    "startedAt": "2026-11-12T02:12:27.653404+00:00",
+    "finishedAt": "2026-11-12T02:12:31.184582+00:00"
+  },
+  {
+    "name": "build",
+    "command": ["pnpm", "--filter", "runntime", "build"],
+    "exitCode": 0,
+    "startedAt": "2026-11-12T02:12:31.185040+00:00",
+    "finishedAt": "2026-11-12T02:12:33.117120+00:00"
+  },
+  {
+    "name": "unit",
+    "command": ["pnpm", "--filter", "runntime", "test:unit"],
+    "exitCode": 0,
+    "startedAt": "2026-11-12T02:12:33.117517+00:00",
+    "finishedAt": "2026-11-12T02:12:35.072004+00:00"
+  }
+]

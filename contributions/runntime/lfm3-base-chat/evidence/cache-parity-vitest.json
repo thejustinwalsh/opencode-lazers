@@ -1,0 +1,51 @@
+{
+  "numTotalTestSuites": 1,
+  "numPassedTestSuites": 1,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 1,
+  "numPassedTests": 1,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1794502664017,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "matches cached decode with full-forward LFM3 tokens and probabilities",
+          "status": "passed",
+          "title": "matches cached decode with full-forward LFM3 tokens and probabilities",
+          "duration": 158746.30000001192,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1794502665410,
+      "endTime": 1794502824156.3,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/test/zoo/lfm3/cache-parity.gpu.test.ts"
+    }
+  ]
+}

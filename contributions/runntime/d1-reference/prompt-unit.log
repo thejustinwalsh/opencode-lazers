@@ -1,0 +1,12 @@
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+ ✓ |unit| test/zoo/d1/prompt.test.ts > D1 prompt packing > keeps complete state, instruction, and option text when it fits 2ms
+ ✓ |unit| test/zoo/d1/prompt.test.ts > D1 prompt packing > rejects an overlong state instead of truncating it 0ms
+ ✓ |unit| test/zoo/d1/prompt.test.ts > D1 prompt packing > rejects overlong instructions and options instead of truncating them 0ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  18:05:36
+   Duration  103ms (import 41%, transform 25%, tests 19%, worker 15%)
+

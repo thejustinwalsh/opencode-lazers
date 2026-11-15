@@ -7,7 +7,7 @@ import { ModelLease } from "../src/webgpu/lease.ts"
 import { defaultFeatures } from "../src/webgpu/features.ts"
 import type { Plugin } from "@opencode/plugin/gui"
 import type { InferenceTraceEvent } from "../src/webgpu/inference-trace.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 
 const solid: typeof import("solid-js") = await import(
   createRequire(import.meta.url).resolve("solid-js/dist/solid.js")
@@ -39,6 +39,7 @@ let cleanupGate: Promise<void> | undefined
 let failDecisionEnsure = false
 let failDecisionLoad = false
 let chatLoadGate: Promise<void> | undefined
+const chatLoadStarted = Promise.withResolvers<void>()
 let decisionLoadGate: Promise<void> | undefined
 const allocate = () => {
   assert.equal(allocations, 0, "A second GPU model must never allocate")
@@ -58,6 +59,7 @@ const allocate = () => {
 mock.module("../.cache/lfm3-engine.js", () => ({
   Lfm3OmniForConditionalGeneration: {
     from_pretrained: async () => {
+      chatLoadStarted.resolve()
       await chatLoadGate
       return {
         dispose: allocate(),
@@ -119,6 +121,7 @@ const broker = new InferenceBroker()
 const lease = new ModelLease(async () => {})
 const controller = new AbortController()
 const worker = {
+  contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
   attach: async ({ owner }: { owner: string }) => {
     attachCalls++
     if (attachFailures-- > 0) throw { type: "rpc.unavailable", message: "Service is reconnecting" }
@@ -246,10 +249,14 @@ const until = async (condition: () => boolean) => {
   }
 }
 try {
-  await until(() => runtime.modelName() === "LFM3" && runtime.phase() === "loading")
-  assert.equal(runtime.resident(), undefined, "A cold chat load is named from its selected target")
+  const initialWarm = runtime.load()
+  await chatLoadStarted.promise
+  assert.equal(runtime.modelName(), undefined, "A cold load has no resident identity")
+  assert.equal(runtime.resident(), undefined)
+  assert.equal(runtime.phase(), "loading")
   initialChatLoad.resolve()
   chatLoadGate = undefined
+  await initialWarm
   await until(() => runtime.state() === "ready")
   assert.equal(runtime.modelName(), "LFM3")
   assert.equal(runtime.resident(), "chat")
@@ -516,9 +523,9 @@ try {
   assert.equal(attachCalls, beforeReconnect + 1, "A failed reattach does not spin")
   wallNow += 2_000
   timerTick()
-  await until(() => runtime.state() === "ready")
+  await until(() => runtime.state() === "unloaded")
   assert.equal(attachCalls, beforeReconnect + 2)
-  assert.equal(allocations, 1)
+  assert.equal(allocations, 0)
   assert.equal(broker.demand().requested, false)
   // F-S13-1: only confirmed ownership loss enters detach/reload recovery.
   pollFailure = { type: "renderer_ownership_lost", message: "Mailbox rejected this owner" }
@@ -532,9 +539,9 @@ try {
   pollFailure = undefined
   wallNow += 1_000
   timerTick()
-  await until(() => runtime.state() === "ready")
+  await until(() => runtime.state() === "unloaded")
   assert.equal(attachCalls, beforeDetachReconnect + 1)
-  assert.equal(allocations, 1)
+  assert.equal(allocations, 0)
   assert.equal(maximum, 1, "Reconnection reuses ownership without overlapping GPU models")
   assert.equal(broker.demand().requested, false, "Detach recovery needs no new user request")
   pollFailure = new Error("Temporary transport loss before disable")
@@ -548,7 +555,7 @@ try {
   await Bun.sleep(20)
   assert.equal(allocations, 0, "Disabling inference cancels a scheduled reconnect")
   setFeatures(defaultFeatures(true))
-  await until(() => runtime.state() === "ready")
+  await until(() => runtime.state() === "unloaded")
   automaticTicks = true
   failTracing = true
   const withoutLogs = await broker.generate(
@@ -597,9 +604,9 @@ try {
   assert.equal(runtime.resident(), "chat", "A resident remains authoritative during its disposal")
   oldDisposal.resolve()
   cleanupGate = undefined
-  await until(() => runtime.modelName() === "d1" && runtime.resident() === undefined)
+  await until(() => runtime.modelName() === undefined && runtime.resident() === undefined)
   assert.equal(runtime.phase(), "loading")
-  assert.equal(runtime.state(), "loading", "After disposal the selected target is named")
+  assert.equal(runtime.state(), "loading", "After disposal no previous model identity remains")
   decisionLoad.resolve()
   decisionLoadGate = undefined
   assert.equal((await toDecision).ok, true)
@@ -611,7 +618,7 @@ try {
   const toChat = chat()
   await until(
     () =>
-      runtime.modelName() === "LFM3" &&
+      runtime.modelName() === undefined &&
       runtime.resident() === undefined &&
       runtime.phase() === "loading",
   )
@@ -624,7 +631,7 @@ try {
   assert.equal((await decision()).ok, false, "Load failure occurs after disposing the old model")
   failDecisionLoad = false
   assert.equal(runtime.resident(), undefined)
-  assert.equal(runtime.modelName(), "d1", "The failed target is named without claiming residency")
+  assert.equal(runtime.modelName(), undefined, "A failed target has no resident identity")
   assert.equal(runtime.state(), "error")
   await Bun.sleep(600)
   assert.equal(
@@ -632,7 +639,7 @@ try {
     undefined,
     "A failed switch is not retargeted from feature settings",
   )
-  assert.equal(runtime.modelName(), "d1")
+  assert.equal(runtime.modelName(), undefined)
   assert.equal((await decision()).ok, true)
   assert.equal(runtime.modelName(), "d1")
 
@@ -644,7 +651,7 @@ try {
     if (recoveryLoad) {
       await until(
         () =>
-          runtime.modelName() === "d1" &&
+          runtime.modelName() === undefined &&
           runtime.resident() === undefined &&
           runtime.phase() === "loading",
       )
@@ -654,11 +661,15 @@ try {
     await until(
       () => releases > before && (runtime.state() === "ready" || runtime.state() === "error"),
     )
-    assert.equal(runtime.modelName(), "d1", "Device loss recovery retains the known identity")
+    assert.equal(
+      runtime.modelName(),
+      runtime.state() === "ready" ? "d1" : undefined,
+      "Only a resident model has a displayed identity after recovery",
+    )
   }
   assert.equal(runtime.state(), "error")
   assert.equal(runtime.resident(), undefined, "Circuit breaker does not leave a model resident")
-  assert.equal(runtime.modelName(), "d1", "The failed recovery target remains explicitly named")
+  assert.equal(runtime.modelName(), undefined, "A failed recovery has no resident identity")
   assert.match(runtime.detail(), /cooling down/)
   const afterCircuit = releases
   await Bun.sleep(700)
@@ -738,7 +749,7 @@ try {
   assert.equal(runtime.modelName(), undefined)
   setFeatures({ ...defaultFeatures(true), questions: false, dictation: false, readAloud: false })
   const coldDecisionLoad = runtime.load()
-  assert.equal(runtime.modelName(), "d1", "A cold decision load is named from its selected target")
+  assert.equal(runtime.modelName(), undefined, "A cold decision load has no resident identity yet")
   await coldDecisionLoad
   assert.equal(runtime.modelName(), "d1")
   assert.equal(runtime.resident(), "decision")

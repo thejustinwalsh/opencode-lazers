@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "stage": "d1-reference",
+  "base": {
+    "repository": "../runntime (thejustinwalsh/runntime)",
+    "commit": "68f3a12506bada2c9ac6cb3629426f3e06a56349",
+    "tree": "d02b5276e1b078a7b0c87a0fecc83650651e1ded"
+  },
+  "tip": {
+    "commit": "735fbd94195a8c2a7c40a12aec6b86fa34ebd48c",
+    "tree": "d22fa69014942938defdd9c766bd6a57f41f9dc5"
+  },
+  "patches": [
+    {
+      "commit": "dac33a8cb01c527590253965dd48ce0b639314b3",
+      "parent": "68f3a12506bada2c9ac6cb3629426f3e06a56349",
+      "tree": "1d0533212ca216300d47bdaf606ae358b61fbc79",
+      "path": "patches/0001-fix-d1-lifetimes.patch",
+      "sha256": "c599989b464b18a125e43d332754d47b08aa6b22f5b1d39299898cea45e4487e"
+    },
+    {
+      "commit": "735fbd94195a8c2a7c40a12aec6b86fa34ebd48c",
+      "parent": "dac33a8cb01c527590253965dd48ce0b639314b3",
+      "tree": "d22fa69014942938defdd9c766bd6a57f41f9dc5",
+      "path": "patches/0002-test-d1-reference-qualification.patch",
+      "sha256": "3a8f7e2f30c60147e67904f402f3a6607ea21ab643f108f6ac65fce55c3c3d96"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime exec vitest run test/zoo/d1/prompt.test.ts --project unit --reporter=verbose",
+      "exitCode": 0,
+      "path": "prompt-unit.log",
+      "sha256": "0febae4f49c5dac9a35d3fe036dbe685994c47949c3f181d33cc03e0be3d3680"
+    },
+    {
+      "kind": "gpu",
+      "command": "pnpm --filter runntime exec vitest run test/core/gpu/eval.gpu.test.ts --project gpu --reporter=verbose",
+      "exitCode": 0,
+      "path": "executor-gpu.log",
+      "sha256": "1ed7909d7229c771fe37e54c09b89993e647ba8c198e55159d48ceb4b6f950ab"
+    },
+    {
+      "kind": "gpu",
+      "command": "VITE_D1_QUALIFICATION_MODE=baseline pnpm --filter runntime exec vitest run test/zoo/d1/qualification.gpu.test.ts --project gpu --reporter=verbose --reporter=json --outputFile.json=/private/tmp/lazers-runntime-handoff.GSDeio/workspace/design/reviews/runntime/d1-reference/baseline-vitest.json",
+      "exitCode": 0,
+      "path": "baseline-webgpu.log",
+      "sha256": "419100688a99e0a03602691fd1554a3f4a0cf0ffeaf8ed2f636ab55da9a5943b"
+    },
+    {
+      "kind": "gpu",
+      "command": "VITE_D1_QUALIFICATION_MODE=repaired pnpm --filter runntime exec vitest run test/zoo/d1/qualification.gpu.test.ts --project gpu --reporter=verbose --reporter=json --outputFile.json=/private/tmp/lazers-runntime-handoff.GSDeio/workspace/design/reviews/runntime/d1-reference/repaired-vitest.json",
+      "exitCode": 0,
+      "path": "repaired-webgpu.log",
+      "sha256": "7291fae3e8971b5ab020b51943e9c37f633efae9f53494ca9889a93fe11debf7"
+    }
+  ]
+}

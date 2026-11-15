@@ -1,0 +1,54 @@
+From 4bec7104f2e70290982864963f6b194e6d5439fe Mon Sep 17 00:00:00 2001
+From: Justin Walsh <tjw@Mac.localdomain>
+Date: Sat, 14 Nov 2026 10:30:42 -0500
+Subject: [PATCH] test(zoo): cover queued speech failure recovery
+
+
+diff --git a/packages/runntime/test/zoo/tasks/audio/speak.test.ts b/packages/runntime/test/zoo/tasks/audio/speak.test.ts
+index 273c396f64fea6dcf4a2e99618dcea9132c5d1ae..2d8afb5b5cb4dfb6823507661f26b3b6ef271c2d 100644
+--- a/packages/runntime/test/zoo/tasks/audio/speak.test.ts
++++ b/packages/runntime/test/zoo/tasks/audio/speak.test.ts
+@@ -15,0 +16,2 @@ import { describe, expect, it, vi } from 'vitest';
++const fault = vi.hoisted(() => ({ failNextForward: false }));
++
+@@ -62,5 +64,11 @@ vi.mock('../../../../src/zoo/tasks/nlp/lfm3.ts', () => ({
+-    forwardTokens: async () => ({
+-      logits: new Float32Array(4),
+-      hidden: new Float32Array(2048).fill(0.1),
+-      cache: {},
+-    }),
++    forwardTokens: async () => {
++      if (fault.failNextForward) {
++        fault.failNextForward = false;
++        throw new Error('injected language forward failure');
++      }
++      return {
++        logits: new Float32Array(4),
++        hidden: new Float32Array(2048).fill(0.1),
++        cache: {},
++      };
++    },
+@@ -178,0 +187,23 @@ describe('public audio speech stream', () => {
++
++  it('rejects a failed speech result and runs its already-queued successor', async () => {
++    const audio = await createLfm3Audio(
++      { projectorPath: { read: async () => new Uint8Array() } },
++      { warmUp: false },
++    );
++    try {
++      fault.failNextForward = true;
++      const failed = audio.speak('injected failure', { maxAudioFrames: 1, temperature: 0 });
++      const queued = audio.speak('queued recovery', { maxAudioFrames: 1, temperature: 0 });
++
++      await expect(failed.result).rejects.toMatchObject({ code: 'EXECUTION_FAILED' });
++      const chunks: Float32Array[] = [];
++      for await (const chunk of queued) chunks.push(chunk);
++      const result = await queued.result;
++
++      expect(chunks.length).toBeGreaterThan(0);
++      expect(result.audioFrames).toBe(1);
++      expect([...result.samples].every(Number.isFinite)).toBe(true);
++    } finally {
++      await audio.dispose();
++    }
++  });

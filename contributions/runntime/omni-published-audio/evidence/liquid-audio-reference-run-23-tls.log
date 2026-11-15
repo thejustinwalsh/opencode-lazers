@@ -1,0 +1,27 @@
+Run 23 Portless TLS preflight; no certificate trust or keychain changes.
+HTTPS lazers-lfm3-reference.localhost:1355/quick-brown-fox.wav
+HTTP/2 200
+content-length: 89560
+HTTPS lazers-lfm3-assets.localhost:1355/LFM3-Omni-2B-Q4_K_M.gguf
+HTTP/2 206
+content-range: bytes 0-63/1099630080
+content-length: 64
+HTTPS lazers-lfm3-assets.localhost:1355/mmproj-LFM3-Omni-2B-Q8_0.gguf
+HTTP/2 206
+content-range: bytes 0-63/506842528
+content-length: 64
+CERT lazers-lfm3-reference.localhost
+sha256 Fingerprint=FE:D8:56:94:A6:D8:96:86:5A:BF:FF:EC:00:D6:3B:7B:9E:F0:14:58:54:0C:D3:B0:1A:57:29:8C:64:BE:99:DF
+X509v3 Subject Alternative Name:
+    DNS:lazers-lfm3-reference.localhost
+SPKI SHA256 base64: oIYn7RVilEbqziniP2R1NdRLRW2fwE+ylWNcWq9TnT4=
+CERT lazers-lfm3-assets.localhost
+sha256 Fingerprint=69:93:D3:32:E6:9D:CC:E8:A3:64:CD:24:80:2C:D6:83:1F:36:8D:2A:FE:1C:EF:3F:9B:9A:53:1A:63:B1:32:51
+X509v3 Subject Alternative Name:
+    DNS:lazers-lfm3-assets.localhost
+SPKI SHA256 base64: MvqQIcLjQpdkbIB7QRc2v5PVxibKAD1rk1Pe+Gv8m0o=
+CERT lazers-lfm3-liquid-qualification.localhost
+sha256 Fingerprint=46:FA:AF:88:90:AF:A5:5F:4E:1C:7A:35:5A:96:51:40:CF:42:B0:12:E3:AA:D4:B1:86:50:26:0D:6A:8F:DA:EB
+X509v3 Subject Alternative Name:
+    DNS:lazers-lfm3-liquid-qualification.localhost
+SPKI SHA256 base64: E6gQI1I90sg5O2EwNyfRJquaPMWnfYJcDYbENIOOV9w=

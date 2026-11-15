@@ -1,0 +1,877 @@
+$ node ../../scripts/sync-readme.mjs && pnpm run build
+$ tsdown
+ℹ tsdown v0.23.0 powered by rolldown v1.2.8
+ℹ config file: /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/tsdown.config.ts 
+ℹ entry: src/zoo/index.ts, src/zoo/transformers/index.ts
+ℹ tsconfig: tsconfig.json
+
+ WARN  `external` is deprecated. Use `deps.neverBundle` instead.
+
+ℹ Build start
+ℹ Cleaning 8 files
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/transformers/init.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/gpu.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/detector.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:30)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/depthEstimation.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:35)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/tasks/cv/imageClassification.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:36)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/zoo/yolo26/model.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:15)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/buffers.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:29)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/common.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:30)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/imageToChw.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:23)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/detect/decodeDetections.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/image/mapToTexture.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:34)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/reduce/softmaxTopK.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/replayCache.d.ts. Cause: Initializers are not allowed in ambient contexts. (3:33)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/eval.d.ts. Cause: Initializers are not allowed in ambient contexts. (7:26)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/gpu/context.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:31)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/loadStateDict.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/elem.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:20)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/module.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/matmul/matmul.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/activations.d.ts. Cause: Initializers are not allowed in ambient contexts. (2:24)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/nn/layers.d.ts. Cause: Initializers are not allowed in ambient contexts. (6:25)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/attention/attn.d.ts. Cause: Initializers are not allowed in ambient contexts. (5:23)
+[unplugin-typegpu] Failed to parse /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime/src/core/kernels/ssm.d.ts. Cause: Initializers are not allowed in ambient contexts. (4:24)
+ℹ dist/zoo/index.mjs                 202.67 kB │ gzip: 60.74 kB
+ℹ dist/zoo/transformers/index.mjs     27.61 kB │ gzip:  7.93 kB
+ℹ dist/classifier-PsuEeU1B.mjs         1.33 MB
+ℹ dist/zoo/index.d.mts                46.41 kB │ gzip: 11.06 kB
+ℹ dist/zoo/transformers/index.d.mts    3.25 kB │ gzip:  1.00 kB
+ℹ dist/config-BR6_4FZi.d.mts          11.13 kB │ gzip:  4.04 kB
+ℹ 6 files, total: 1.62 MB
+✔ Build complete in 1333ms
+package: runntime@0.2.0
+Tarball Contents
+dist/classifier-PsuEeU1B.mjs
+dist/config-BR6_4FZi.d.mts
+dist/zoo/index.d.mts
+dist/zoo/index.mjs
+dist/zoo/transformers/index.d.mts
+dist/zoo/transformers/index.mjs
+LICENSE.md
+package.json
+README.md
+Tarball Details
+/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-d1-JQUkRt/pack/runntime-0.2.0.tgz
+
+ RUN  v5.0.4 /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-d1-JQUkRt/consumer
+
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stdout | test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity
+D1_Q8_QUALIFICATION {"mode":"q8","model":"LiquidAI/d1-omni-600M","modelRevision":"02b55d7076f15129e59ab3f94783f32c4b088674","artifactSha256":"a5f94915d38627f0755df90372f1cda3d30e4d489066aaff44d2eeb98d2793e5","tokenizerRevision":"02b55d7076f15129e59ab3f94783f32c4b088674","quantization":"runntime.quant v1, symmetric int8, groupSize 32","artifactDelivery":"range","bytesReceived":1266157224,"loadedWeightBytes":620432388,"progressDoneBytes":620432388,"progressTotalBytes":620432388,"progressTensorCount":266,"peakHostBytes":1232617010,"peakGpuBufferBytes":371192740,"decisions":[{"id":"refund-positive","inputTokens":47,"answer":"yes","referenceAnswer":"yes","clearMargin":0.9957497119903564,"probabilities":[0.9979279751860438,0.002072024813956186],"maxAbsError":0.00005311919086559147},{"id":"refund-negative","inputTokens":51,"answer":"no","referenceAnswer":"no","clearMargin":0.9898504624143243,"probabilities":[0.005321980231859559,0.9946780197681404],"maxAbsError":0.0002472114390217328},{"id":"choice-forward","inputTokens":56,"answer":"technical","referenceAnswer":"technical","clearMargin":0.9809020892716944,"probabilities":[0.006604498800601761,0.9878532929957051,0.00554220820369309],"maxAbsError":0.00029561939764400236},{"id":"choice-reversed","inputTokens":56,"answer":"technical","referenceAnswer":"technical","clearMargin":0.9780361452139914,"probabilities":[0.0072505679041449805,0.9857309933824926,0.007018438713362413],"maxAbsError":0.0003605958147435695},{"id":"incident-rubric","inputTokens":111,"answer":"4","referenceAnswer":"4","clearMargin":0.32252155244350433,"probabilities":[0.1726687665072908,0.06088215914065164,0.08981767317232899,0.1798877021921444,0.49674369898758414],"maxAbsError":0.007052843893842697,"normalizedRubricError":0.0028722852213202144},{"id":"task-review","inputTokens":93,"answer":"no","referenceAnswer":"no","clearMargin":0.8197530955076218,"probabilities":[0.08777110194981613,0.9122288980501838],"maxAbsError":0.0023523502963729848}],"probabilityTolerance":0.04,"normalizedRubricTolerance":0.05,"gpuBuffersBeforeLoad":0}
+ ✓ |chromium| test/zoo/d1/q8.gpu.test.ts > loads the public D1 Q8 zoo entry from a caller RangeSource and meets frozen Liquid parity 3672ms
+
+   ❯ test/zoo/d1/q8.gpu.test.ts:260:17 notice
+     ↳ D1_Q8_QUALIFICATION
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  22:56:12
+   Duration  6.31s (tests 95%, import 3%, worker 2%)
+
+JSON report written to /private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/d1-q8/evidence/q8-packed-vitest.json

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "reference": "onnx-community/d1-omni-600M-ONNX",
+  "revision": "4ebc1b97bf1477485371c79d1cf8d5e4e8eebfa0",
+  "modelFileSha256": "e7b2d045b2efcdc38b9595aa5f00ec2c08098f997f136837c97ecad129834d74",
+  "externalDataSha256": "9b84acb248daac2299df481240f5e6d2cd2f763aa1b8ccf73e7200848fab60da",
+  "runtime": "onnxruntime CPUExecutionProvider",
+  "noulOrder": "model logits [false,no; true,yes], reversed to Liquid answer order [yes,no]",
+  "cases": [
+    {
+      "id": "refund-positive",
+      "logitsModelOrder": [-1.8238656520843506, 8.34739875793457],
+      "probabilitiesModelOrder": [0.0022288911653589516, 0.9977711088346409],
+      "probabilitiesLiquidOrder": [0.9977711088346409, 0.0022288911653589516],
+      "temperature": 1.6663223505020142,
+      "maxAbsErrorVsLiquidF32": 0.00010374716053729305,
+      "stableIndexLiquidOrder": 0,
+      "referenceAnswer": "yes"
+    },
+    {
+      "id": "refund-negative",
+      "logitsModelOrder": [3.216494083404541, -5.323169231414795],
+      "probabilitiesModelOrder": [0.994088089220099, 0.005911910779901006],
+      "probabilitiesLiquidOrder": [0.005911910779901006, 0.994088089220099],
+      "temperature": 1.6663223505020142,
+      "maxAbsErrorVsLiquidF32": 0.0008371419870631946,
+      "stableIndexLiquidOrder": 1,
+      "referenceAnswer": "no"
+    },
+    {
+      "id": "choice-forward",
+      "logitsModelOrder": [-3.4467737674713135, 3.3289151191711426, -3.9728190898895264],
+      "probabilitiesModelOrder": [0.007801983853964512, 0.9868399449923483, 0.0053580711536872815],
+      "probabilitiesLiquidOrder": [0.007801983853964512, 0.9868399449923483, 0.0053580711536872815],
+      "temperature": 1.3998981714248657,
+      "maxAbsErrorVsLiquidF32": 0.000962262477591902,
+      "stableIndexLiquidOrder": 1,
+      "referenceAnswer": "technical"
+    },
+    {
+      "id": "choice-reversed",
+      "logitsModelOrder": [-3.6060855388641357, 3.1586382389068604, -3.500230073928833],
+      "probabilitiesModelOrder": [0.007838375602055204, 0.9837075528475202, 0.008454071550424535],
+      "probabilitiesLiquidOrder": [0.007838375602055204, 0.9837075528475202, 0.008454071550424535],
+      "temperature": 1.3998981714248657,
+      "maxAbsErrorVsLiquidF32": 0.0016628447202288177,
+      "stableIndexLiquidOrder": 1,
+      "referenceAnswer": "technical"
+    },
+    {
+      "id": "incident-rubric",
+      "logitsModelOrder": [
+        -0.19682757556438446, -1.9978492259979248, -1.3022687435150146, -0.12080733478069305,
+        1.557682752609253
+      ],
+      "probabilitiesModelOrder": [
+        0.17597077760262247, 0.06213647178931293, 0.09288632596673767, 0.18387522522074112,
+        0.48513119942058586
+      ],
+      "probabilitiesLiquidOrder": [
+        0.17597077760262247, 0.06213647178931293, 0.09288632596673767, 0.18387522522074112,
+        0.48513119942058586
+      ],
+      "temperature": 1.7301132678985596,
+      "maxAbsErrorVsLiquidF32": 0.013111417232856526,
+      "stableIndexLiquidOrder": 4,
+      "referenceAnswer": "4"
+    },
+    {
+      "id": "task-review",
+      "logitsModelOrder": [1.1290132999420166, -2.5502350330352783],
+      "probabilitiesModelOrder": [0.9009660763219913, 0.09903392367800866],
+      "probabilitiesLiquidOrder": [0.09903392367800866, 0.9009660763219913],
+      "temperature": 1.6663223505020142,
+      "maxAbsErrorVsLiquidF32": 0.008910471431819555,
+      "stableIndexLiquidOrder": 1,
+      "referenceAnswer": "no"
+    }
+  ],
+  "maxAbsProbabilityErrorVsLiquidF32": 0.013111417232856526
+}

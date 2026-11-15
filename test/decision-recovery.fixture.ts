@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { createRequire } from "node:module"
 import { InferenceBroker } from "../src/webgpu/broker.ts"
 import { ModelLease } from "../src/webgpu/lease.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 import { isOrtWebGpuDeviceLoss } from "../src/webgpu/decision-loss.ts"
 import type { SystemOneInput } from "../src/webgpu/system-one.ts"
 import type { Plugin } from "@opencode/plugin/gui"
@@ -21,11 +21,18 @@ const decisionFiles = [...contents].map(([id, bytes]) => ({ id, bytes: bytes.len
 mock.module("../src/webgpu/manifest.ts", () => ({
   DECISION_FILES: decisionFiles,
   DECISION_BYTES: decisionFiles.reduce((sum, file) => sum + file.bytes, 0),
+  DECISION_REPOSITORY: "test/decision-model",
+  DECISION_REVISION: "test-decision",
+  ENGINE_SHA256: "0".repeat(64),
+  ENGINE_REVISION: "test-engine",
   MAX_READ_BYTES: 1,
   MODEL_FILES: [],
   MODEL_BYTES: 0,
   MODEL_REPOSITORY: "test/model",
   MODEL_REVISION: "test",
+  LFM3_TOKENIZER_REVISION: "test-tokenizer",
+  LFM3_TOKENIZER_URL: "https://example.test/tokenizer.json",
+  RUNNTIME_REVISION: "test-runntime",
   MODEL_SHORT_NAMES: { chat: "LFM3", decision: "d1" },
   modelURL: () => "",
 }))
@@ -321,6 +328,7 @@ const broker = new InferenceBroker()
 const lease = new ModelLease(async () => {})
 const hostController = new AbortController()
 const worker = {
+  contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
   attach: async ({ owner }: { owner: string }) => broker.attach(owner),
   detach: async ({ owner, error }: { owner: string; error?: string }) =>
     broker.detach(owner, error),
@@ -385,6 +393,7 @@ const loadNextJob = () =>
     new AbortController().signal,
   )
 try {
+  void runtime.load()
   await until(() => runtime.state() === "ready", "initial decision model")
   const failedJob = await loadNextJob()
   assert.equal(failedJob.ok, false, "A positively identified loss must fail the delivered job")

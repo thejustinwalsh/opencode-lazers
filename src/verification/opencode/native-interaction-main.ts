@@ -3,6 +3,10 @@ import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { join } from "node:path"
+import { NativeAudioFixture } from "./audio-fixture-ipc.ts"
+import { readFrozenAudioFixture } from "./audio-fixture.ts"
+import type { AudioFixtureDelivery, PlaybackPlan } from "./audio-fixture-contract.ts"
+import type { FrozenAudioFixtureID, AudioObservationEvent } from "./audio-fixture-contract.ts"
 import { nativeBindingFromManifest, verifyOwnedLaunch } from "./owned-launch.ts"
 import {
   NativeInteraction,
@@ -61,6 +65,9 @@ export const BOUNDED_DOM_SNAPSHOT_SCRIPT = `(() => {
 })()`
 
 const ADAPTER_STARTUP_TIMEOUT_MS = 30_000
+const ADAPTER_HEARTBEAT_INTERVAL_MS = 500
+const ADAPTER_HEARTBEAT_TIMEOUT_MS = 1_000
+const AUDIO_TARGET_TTL_MS = 150_000
 
 export type NativeInputEvent =
   | { type: "mouseDown" | "mouseUp"; x: number; y: number; button: "left"; clickCount: 1 }
@@ -179,9 +186,12 @@ export function nativeSnapshotMatches(
 export function nativeAdapterFailureCategory(error: unknown): string {
   const messages: string[] = []
   let current: unknown = error
-  for (let depth = 0; depth < 6 && current instanceof Error; depth++) {
-    messages.push(current.message)
-    current = current.cause
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
+    const record = current as { message?: unknown; cause?: unknown }
+    if (typeof record.message === "string") messages.push(record.message)
+    const cause = current instanceof Error ? current.cause : record.cause
+    if (cause === undefined || cause === current) break
+    current = cause
   }
   const patterns: Array<[RegExp, string]> = [
     [/candidate source or built gui identity/i, "candidate-identity-mismatch"],
@@ -321,8 +331,23 @@ export class NativeInteractionMainAdapter {
   private readonly snapshots = new Map<number, SnapshotRecord>()
   private binding?: NativeBinding
   private stopped = false
+  private activeHeartbeat?: { stop(): Promise<void> }
   private unwatchOpen?: () => void
   private unwatchClose?: () => void
+  private readonly audioTargets = new Map<
+    number,
+    {
+      requestID: string
+      sessionID: string
+      window: NativeWindowReference
+      kind: "dictation" | "playback"
+      fixtureID?: FrozenAudioFixtureID
+      fixture?: AudioFixtureDelivery
+      plan?: PlaybackPlan
+      consumed: boolean
+      expiresAt: number
+    }
+  >()
 
   constructor(
     private readonly ctx: MainContext,
@@ -334,6 +359,7 @@ export class NativeInteractionMainAdapter {
       }
       electron.app.focus({ steal: true })
     },
+    private readonly loadFixture: typeof readFrozenAudioFixture = readFrozenAudioFixture,
   ) {}
 
   async start(): Promise<void> {
@@ -342,7 +368,8 @@ export class NativeInteractionMainAdapter {
     let lastError: unknown
     while (!this.stopped && !this.ctx.signal.aborted && Date.now() < deadline) {
       try {
-        binding = await this.verifyRuntime(false)
+        // A pending request must reach the broker so stale delivery can be settled without replay.
+        binding = await this.verifyRuntime(true)
         break
       } catch (error) {
         lastError = error
@@ -363,15 +390,40 @@ export class NativeInteractionMainAdapter {
         if (tracker.window === (window as unknown as NativeWindow)) this.forget(id)
       }
     })
-    try {
-      await this.rpc().attach({
-        binding,
-        adapterID: this.adapterID,
-        windows: this.windowReferences(),
-        capabilities: { modifiedKeys: true },
-      })
-    } catch (error) {
-      throw new Error("Native adapter RPC attachment failed", { cause: error })
+    let attached = false
+    while (!this.stopped && !this.ctx.signal.aborted && Date.now() < deadline) {
+      try {
+        await this.rpc().attach(
+          {
+            binding,
+            adapterID: this.adapterID,
+            windows: this.windowReferences(),
+            capabilities: { modifiedKeys: true },
+          },
+          { signal: AbortSignal.any([this.ctx.signal, AbortSignal.timeout(2_000)]) },
+        )
+        attached = true
+        break
+      } catch (error) {
+        lastError = error
+        if (nativeAdapterFailureCategory(error) !== "adapter-generation-conflict") {
+          throw new Error("Native adapter RPC attachment failed", { cause: error })
+        }
+      }
+      await this.delay(250)
+      if (this.stopped || this.ctx.signal.aborted || Date.now() >= deadline) break
+      try {
+        const currentBinding = await this.verifyRuntime(true)
+        if (stableValue(currentBinding) !== stableValue(binding)) {
+          throw new Error("Owned native binding changed before adapter attachment")
+        }
+      } catch (error) {
+        throw new Error("Native adapter RPC attachment failed", { cause: error })
+      }
+    }
+    if (!attached) {
+      if (this.stopped || this.ctx.signal.aborted) return
+      throw new Error("Native adapter RPC attachment failed", { cause: lastError })
     }
     void this.poll()
   }
@@ -388,6 +440,74 @@ export class NativeInteractionMainAdapter {
     return this.execute(operation)
   }
 
+  async audioFixtureEnabled(
+    input: { requestID?: string; sessionID?: string },
+    windowID: number,
+  ): Promise<boolean> {
+    const binding = this.binding
+    if (this.stopped || binding === undefined)
+      throw new Error("Owned audio verification adapter is unavailable")
+    const current = await this.verifyRuntime(true)
+    if (stableValue(current) !== stableValue(binding))
+      throw new Error("Owned audio verification identity changed")
+    if (input.requestID !== undefined || input.sessionID !== undefined) {
+      if (input.requestID === undefined || input.sessionID === undefined)
+        throw new Error("Owned audio monitor target is incomplete")
+      const target = this.audioTargets.get(windowID)
+      if (!target) throw new Error("Owned audio monitor target is no longer armed")
+      this.assertAudioTarget(target, input.sessionID, windowID)
+      if (target.requestID !== input.requestID || !target.consumed)
+        throw new Error("Owned audio monitor target changed")
+    }
+    return true
+  }
+
+  async takeDictationFixture(
+    sessionID: string,
+    windowID: number,
+  ): Promise<AudioFixtureDelivery | null> {
+    const target = this.audioTargets.get(windowID)
+    if (!target || target.kind !== "dictation") return null
+    this.assertAudioTarget(target, sessionID, windowID)
+    if (target.consumed || !target.fixture)
+      throw new Error("Dictation fixture was already consumed")
+    target.consumed = true
+    return target.fixture
+  }
+
+  async takePlaybackPlan(sessionID: string, windowID: number): Promise<PlaybackPlan | null> {
+    const target = this.audioTargets.get(windowID)
+    if (!target || target.kind !== "playback") return null
+    this.assertAudioTarget(target, sessionID, windowID)
+    if (target.consumed || !target.plan) throw new Error("Playback plan was already consumed")
+    target.consumed = true
+    return target.plan
+  }
+
+  async recordAudioObservation(
+    windowID: number,
+    input: { requestID: string; sessionID: string; event: AudioObservationEvent },
+  ): Promise<void> {
+    const target = this.audioTargets.get(windowID)
+    if (!target) throw new Error("Audio observation has no armed native target")
+    this.assertAudioTarget(target, input.sessionID, windowID)
+    if (!target.consumed)
+      throw new Error("Audio observation preceded the native control activation")
+    if (target.requestID !== input.requestID)
+      throw new Error("Audio observation request ID changed")
+    await this.observeAudio(windowID, input.requestID, input.sessionID, input.event)
+    if (
+      input.event.kind === "dictation-complete" ||
+      input.event.kind === "dictation-cancelled" ||
+      input.event.kind === "dictation-failed" ||
+      input.event.kind === "playback-complete" ||
+      input.event.kind === "playback-cancelled" ||
+      input.event.kind === "playback-failed"
+    ) {
+      this.audioTargets.delete(windowID)
+    }
+  }
+
   stop(): void {
     if (this.stopped) return
     this.stopped = true
@@ -398,9 +518,8 @@ export class NativeInteractionMainAdapter {
     for (const id of this.windows.keys()) this.forget(id)
     const binding = this.binding
     if (binding !== undefined) {
-      void this.rpc()
-        .detach({ binding, adapterID: this.adapterID })
-        .catch(() => undefined)
+      const detach = () => this.rpc().detach({ binding, adapterID: this.adapterID })
+      void (this.activeHeartbeat?.stop() ?? Promise.resolve()).then(detach).catch(() => undefined)
     }
   }
 
@@ -474,14 +593,17 @@ export class NativeInteractionMainAdapter {
       }
       if (command !== null) {
         let result: NativeActionResult
+        const heartbeat = this.startHeartbeat(binding)
         try {
           const currentBinding = await this.verifyRuntime(true)
           if (stableValue(currentBinding) !== stableValue(binding)) {
             throw new Error("Owned native binding changed")
           }
-          result = await this.execute(command.operation)
+          result = await this.execute(command.operation, command.requestID)
         } catch {
           result = { delivery: "not-delivered", message: "Owned native preflight failed" }
+        } finally {
+          await heartbeat.stop()
         }
         try {
           await this.rpc().complete({
@@ -498,7 +620,52 @@ export class NativeInteractionMainAdapter {
     }
   }
 
-  private async execute(operation: NativeOperation): Promise<NativeActionResult> {
+  private startHeartbeat(binding: NativeBinding): { stop(): Promise<void> } {
+    let stopped = false
+    let stopPromise: Promise<void> | undefined
+    const controller = new AbortController()
+    const task = (async () => {
+      while (!stopped && !this.stopped && !this.ctx.signal.aborted) {
+        await this.delay(ADAPTER_HEARTBEAT_INTERVAL_MS, controller.signal)
+        if (stopped || this.stopped || this.ctx.signal.aborted) return
+        try {
+          await this.rpc().attach(
+            {
+              binding,
+              adapterID: this.adapterID,
+              windows: this.windowReferences(),
+              capabilities: { modifiedKeys: true },
+            },
+            {
+              signal: AbortSignal.any([
+                this.ctx.signal,
+                AbortSignal.timeout(ADAPTER_HEARTBEAT_TIMEOUT_MS),
+              ]),
+            },
+          )
+        } catch {
+          // Keep trying while the operation is active; completion is still fenced by the broker.
+        }
+      }
+    })()
+    const heartbeat = {
+      stop: () => {
+        stopped = true
+        controller.abort()
+        stopPromise ??= task.finally(() => {
+          if (this.activeHeartbeat === heartbeat) this.activeHeartbeat = undefined
+        })
+        return stopPromise
+      },
+    }
+    this.activeHeartbeat = heartbeat
+    return heartbeat
+  }
+
+  private async execute(
+    operation: NativeOperation,
+    requestID?: string,
+  ): Promise<NativeActionResult> {
     if (operation.kind === "key" && parseNativeKey(operation.key) === undefined) {
       return { delivery: "not-delivered", message: "Native key is not supported" }
     }
@@ -581,6 +748,77 @@ export class NativeInteractionMainAdapter {
         delivery: "not-delivered",
         message: "Owned Desktop window lost focus before native input",
       }
+    }
+
+    if (operation.kind === "dictation-fixture" || operation.kind === "playback-plan") {
+      const binding = this.binding
+      if (binding === undefined || requestID === undefined)
+        return { delivery: "not-delivered", message: "Owned audio verification is unavailable" }
+      const current = this.currentReference(window.id)
+      if (
+        current === undefined ||
+        !sameWindow(current, operation.window) ||
+        !current.focused ||
+        !window.isFocused()
+      )
+        return { delivery: "not-delivered", message: "Owned audio target changed before arming" }
+      const previousTarget = this.audioTargets.get(window.id)
+      if (previousTarget && previousTarget.expiresAt <= this.now())
+        this.audioTargets.delete(window.id)
+      if (this.audioTargets.size >= 32) {
+        for (const [id, target] of this.audioTargets)
+          if (target.expiresAt <= this.now()) this.audioTargets.delete(id)
+      }
+      if (this.audioTargets.has(window.id))
+        return {
+          delivery: "not-delivered",
+          message: "An audio verification request is already armed",
+        }
+      if (operation.kind === "dictation-fixture") {
+        let fixture: AudioFixtureDelivery
+        try {
+          fixture = {
+            ...(await this.loadFixture(binding.verificationBase, operation.fixtureID)),
+            requestID,
+          }
+        } catch {
+          return { delivery: "not-delivered", message: "Approved frozen clip is unavailable" }
+        }
+        const after = this.currentReference(window.id)
+        if (
+          after === undefined ||
+          !sameWindow(after, operation.window) ||
+          !after.focused ||
+          !window.isFocused()
+        )
+          return { delivery: "not-delivered", message: "Owned audio target changed while loading" }
+        this.audioTargets.set(window.id, {
+          requestID,
+          sessionID: operation.sessionID,
+          window: after,
+          kind: "dictation",
+          fixtureID: operation.fixtureID,
+          fixture,
+          consumed: false,
+          expiresAt: this.now() + AUDIO_TARGET_TTL_MS,
+        })
+      } else {
+        this.audioTargets.set(window.id, {
+          requestID,
+          sessionID: operation.sessionID,
+          window: current,
+          kind: "playback",
+          plan: {
+            requestID,
+            sessionID: operation.sessionID,
+            expectedTextHash: operation.expectedTextHash,
+            segmentHashes: [...operation.segmentHashes],
+          },
+          consumed: false,
+          expiresAt: this.now() + AUDIO_TARGET_TTL_MS,
+        })
+      }
+      return { delivery: "delivered", message: "Owned audio verification request armed" }
     }
 
     const previous = this.snapshots.get(window.id)
@@ -725,6 +963,52 @@ export class NativeInteractionMainAdapter {
     return snapshot
   }
 
+  private assertAudioTarget(
+    target: { sessionID: string; window: NativeWindowReference; expiresAt: number },
+    sessionID: string,
+    windowID: number,
+  ): void {
+    const current = this.currentReference(windowID)
+    if (target.expiresAt <= this.now()) {
+      this.audioTargets.delete(windowID)
+      throw new Error("Owned audio fixture expired; arm a fresh request")
+    }
+    if (
+      target.sessionID !== sessionID ||
+      target.window.windowID !== windowID ||
+      current === undefined ||
+      !sameWindow(target.window, current)
+    ) {
+      throw new Error("Owned audio fixture belongs to a different session or window generation")
+    }
+  }
+
+  private async observeAudio(
+    windowID: number,
+    requestID: string,
+    sessionID: string,
+    event: AudioObservationEvent,
+  ): Promise<void> {
+    const binding = this.binding
+    const target = this.audioTargets.get(windowID)
+    const current = this.currentReference(windowID)
+    if (
+      binding === undefined ||
+      target === undefined ||
+      current === undefined ||
+      target.requestID !== requestID ||
+      target.sessionID !== sessionID ||
+      !sameWindow(target.window, current)
+    ) {
+      throw new Error("Owned audio observation target changed")
+    }
+    await this.rpc().audioObserve({
+      binding,
+      adapterID: this.adapterID,
+      observation: { requestID, sessionID, window: current, event },
+    })
+  }
+
   private resolveWindow(reference: NativeWindowReference): NativeWindow | undefined {
     const tracker = this.windows.get(reference.windowID)
     if (tracker === undefined || !this.matches(tracker, reference)) return undefined
@@ -749,6 +1033,7 @@ export class NativeInteractionMainAdapter {
       tracker.rendererPID = rendererPID
       tracker.generation++
       this.snapshots.delete(tracker.window.id)
+      this.audioTargets.delete(tracker.window.id)
     }
     return (
       tracker.window.id === reference.windowID &&
@@ -790,6 +1075,7 @@ export class NativeInteractionMainAdapter {
     tracker.generation++
     tracker.rendererPID = safeRendererPID(tracker.contents)
     this.snapshots.delete(windowID)
+    this.audioTargets.delete(windowID)
   }
 
   private forget(windowID: number): void {
@@ -803,6 +1089,7 @@ export class NativeInteractionMainAdapter {
       tracker.contents.removeListener("destroyed", tracker.onRendererGone)
     }
     if (!tracker.window.isDestroyed()) tracker.window.removeListener("closed", tracker.onClosed)
+    this.audioTargets.delete(windowID)
   }
 
   private windowReferences(): NativeWindowReference[] {
@@ -821,6 +1108,7 @@ export class NativeInteractionMainAdapter {
         tracker.rendererPID = rendererPID
         tracker.generation++
         this.snapshots.delete(window.id)
+        this.audioTargets.delete(window.id)
       }
       references.push({
         windowID: window.id,
@@ -834,18 +1122,28 @@ export class NativeInteractionMainAdapter {
     return references.slice(0, 32)
   }
 
-  private delay(ms: number): Promise<void> {
+  private delay(ms: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolvePromise) => {
+      const signals = signal === undefined ? [this.ctx.signal] : [this.ctx.signal, signal]
+      let finished = false
       const finish = () => {
-        this.ctx.signal.removeEventListener("abort", onAbort)
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        for (const current of signals) current.removeEventListener("abort", onAbort)
         resolvePromise()
       }
       const timer = setTimeout(finish, ms)
       const onAbort = () => {
-        clearTimeout(timer)
         finish()
       }
-      this.ctx.signal.addEventListener("abort", onAbort, { once: true })
+      for (const current of signals) {
+        if (current.aborted) {
+          finish()
+          return
+        }
+        current.addEventListener("abort", onAbort, { once: true })
+      }
     })
   }
 }
@@ -885,10 +1183,22 @@ function sensitiveInput(element: NativeElement): boolean {
 
 export function setupNativeInteractionMain(ctx: MainContext): void | (() => void) {
   const root = process.env.OPENCODE_DESKTOP_TEST_ROOT
-  if (root === undefined || root.length === 0) return
-  const adapter = new NativeInteractionMainAdapter(ctx, root)
-  void adapter.start().catch((error: unknown) => {
-    adapter.stop()
+  const adapter =
+    root === undefined || root.length === 0
+      ? undefined
+      : new NativeInteractionMainAdapter(ctx, root)
+  const provider = ctx.provide(NativeAudioFixture, {
+    enabled: (input, caller) => adapter?.audioFixtureEnabled(input, caller.window) ?? false,
+    takeDictation: (input, caller) =>
+      adapter?.takeDictationFixture(input.sessionID, caller.window) ?? null,
+    takePlaybackPlan: (input, caller) =>
+      adapter?.takePlaybackPlan(input.sessionID, caller.window) ?? null,
+    observe: (input, caller) => adapter?.recordAudioObservation(caller.window, input) ?? undefined,
+  })
+  if (adapter === undefined) return () => provider.dispose()
+  const nativeAdapter = adapter
+  void nativeAdapter.start().catch((error: unknown) => {
+    nativeAdapter.stop()
     try {
       ctx.log.write("warn", "Owned LAZERS native verification adapter is unavailable", {
         reason: nativeAdapterFailureCategory(error),
@@ -898,10 +1208,11 @@ export function setupNativeInteractionMain(ctx: MainContext): void | (() => void
       // Verification support must never affect Desktop startup.
     }
   })
-  const abort = () => adapter.stop()
+  const abort = () => nativeAdapter.stop()
   ctx.signal.addEventListener("abort", abort, { once: true })
   return () => {
     ctx.signal.removeEventListener("abort", abort)
-    adapter.stop()
+    nativeAdapter.stop()
+    provider.dispose()
   }
 }

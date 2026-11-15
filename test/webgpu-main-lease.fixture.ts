@@ -9,7 +9,7 @@ import type { Plugin } from "@opencode/plugin/gui"
 import { ModelFiles } from "../src/webgpu/ipc.ts"
 import type { ModelLeaseGrant, ModelLeaseRetirement } from "../src/webgpu/ipc.ts"
 import { setupMain } from "../src/webgpu/main.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 import { defaultFeatures } from "../src/webgpu/features.ts"
 
 const solid: typeof import("solid-js") = await import(
@@ -278,6 +278,7 @@ const makeRuntime = (host: MainHost) => {
   const controller = new AbortController()
   const files = filesFor(host, 17, controller.signal)
   const worker = {
+    contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
     attach: async ({ owner }: { owner: string }) => {
       host.workerAttachCalls++
       if (host.workerOwner && host.workerOwner !== owner)
@@ -321,6 +322,7 @@ const makeRuntime = (host: MainHost) => {
     disposeRoot = dispose
     return createInferenceRuntime(ctx, () => -1, undefined, features, timing)
   })
+  void runtime.load()
   const entry = { runtime, controller, files, disposeRoot }
   runtimes.push(entry)
   return entry

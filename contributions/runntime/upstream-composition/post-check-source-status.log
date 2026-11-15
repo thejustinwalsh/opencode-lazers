@@ -1,0 +1,10 @@
+$ git status --porcelain=v1
+exitCode=0
+$ git diff --exit-code
+exitCode=0
+$ git diff --cached --exit-code
+exitCode=0
+$ git rev-parse HEAD HEAD^{tree}
+fd28773ca30facdaf6e56d8e9fba06e242ff623d
+1c98121e4200cc8f76ab126e68987e244032d3e5
+exitCode=0

@@ -11,7 +11,7 @@ import { defaultFeatures } from "../src/webgpu/features.ts"
 import { ModelFiles } from "../src/webgpu/ipc.ts"
 import type { ModelLeaseGrant } from "../src/webgpu/ipc.ts"
 import { setupMain } from "../src/webgpu/main.ts"
-import { LocalInference } from "../src/webgpu/rpc.ts"
+import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "../src/webgpu/rpc.ts"
 
 const solid: typeof import("solid-js") = await import(
   createRequire(import.meta.url).resolve("solid-js/dist/solid.js")
@@ -182,6 +182,7 @@ let brokerOwner: string | undefined
 let attachCalls = 0
 let detachCalls = 0
 const worker = {
+  contract: async () => ({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
   attach: async ({ owner }: { owner: string }) => {
     attachCalls++
     broker.attach(owner)
@@ -277,6 +278,7 @@ const requestController = new AbortController()
 
 try {
   current = makeRuntime(main)
+  void current.runtime.load()
   await until(() => current!.runtime.state() === "ready", "registered original renderer")
   const originalMemory = structuredClone(memoryFor(current))
   const originalEntry = memoryFor(current).generations[memoryFor(current).current!]!
@@ -381,7 +383,18 @@ try {
   assert.equal(brokerOwner, oldOwner)
 
   successor = makeRuntime(main)
-  await until(() => successor!.runtime.state() === "ready", "fresh renderer after window reload")
+  await until(
+    () =>
+      successor!.runtime.contractStatus() === "compatible" &&
+      brokerOwner === oldOwner &&
+      attachCalls === 2,
+    "fresh renderer after window reload",
+  )
+  assert.equal(
+    successor.runtime.state(),
+    "unloaded",
+    "A preserved queued request defers model allocation until the renderer polls it",
+  )
   const freshMemory = memoryFor(successor)
   const freshEntry = freshMemory.generations[freshMemory.current!]!
   assert.equal(freshMemory.sequence, 1)

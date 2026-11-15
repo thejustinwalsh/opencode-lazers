@@ -1,0 +1,66 @@
+{
+  "run": 31,
+  "testedTip": {
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "commit": "abee81448bae6b616664b53d01ab68993f713ad3",
+    "tree": "221c485c5dc1645a2080917ade3de6732ff09689"
+  },
+  "publicChatQualification": {
+    "checkpointRevision": "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+    "modelFormat": "gguf",
+    "rangeSource": true,
+    "bytesRead": 8603380320,
+    "progressDone": 1306420224,
+    "progressTotal": 1306420224,
+    "loadAndWarmUpMs": 18828.1,
+    "firstGenerationMs": 295.1,
+    "secondGenerationMs": 136.8,
+    "firstText": "Hello! How can I help you today?",
+    "secondText": "Goodbye!",
+    "sharedExecutorSurvivalText": "I cannot confirm the current status of the shared WebGPU",
+    "liquidReferenceAnswers": [
+      {
+        "id": "arithmetic",
+        "answer": "42"
+      },
+      {
+        "id": "capital",
+        "answer": "Paris"
+      },
+      {
+        "id": "color",
+        "answer": "Blue"
+      }
+    ],
+    "partialLoadAbort": {
+      "reachedWeightUpload": true,
+      "storageBuffersAfterCleanup": 0
+    },
+    "warmUpAbort": {
+      "modelUploadComplete": true,
+      "abortedAtWarmUp": true,
+      "storageBuffersAfterCleanup": 0
+    },
+    "recoveredTextAfterCancellation": "Hello!",
+    "gpuBuffersAfterLoadBytes": 1535385996,
+    "peakGpuBuffersBytes": 1547757452,
+    "peakJsHeapBytes": 1573216198,
+    "hostJsHeapBytesAfterLoad": 1543781624,
+    "gpuStorageBuffersAfterDispose": [],
+    "gpuRootCacheBufferCountAfterDispose": 229,
+    "gpuRootCacheBufferBytesAfterDispose": 515332
+  },
+  "testReport": {
+    "success": true,
+    "totalTests": 1,
+    "passedTests": 1,
+    "failedTests": 0,
+    "tests": [
+      {
+        "name": "loads the published Q4_K_M GGUF and streams text through a packed public consumer",
+        "status": "passed",
+        "durationMs": 67904.39999997616
+      }
+    ]
+  }
+}

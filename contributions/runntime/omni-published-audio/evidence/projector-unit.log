@@ -1,0 +1,10 @@
+$ vitest run --project unit
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+
+ Test Files  55 passed (55)
+      Tests  1165 passed (1165)
+   Start at  08:10:50
+   Duration  2.80s (import 58%, transform 23%, tests 18%, worker 1%)
+

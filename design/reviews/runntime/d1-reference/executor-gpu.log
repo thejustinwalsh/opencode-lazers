@@ -1,0 +1,98 @@
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with an elementwise chain > allocates nothing once warm 39ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with an elementwise chain > frees every buffer it made on dispose 2ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with an elementwise chain > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with an elementwise chain > runs again after a captured frame is disposed 3ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with an elementwise chain > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with layerNorm without a bias > allocates nothing once warm 13ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with layerNorm without a bias > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with layerNorm without a bias > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with layerNorm without a bias > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with layerNorm without a bias > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with softmax > allocates nothing once warm 11ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with softmax > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with softmax > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with softmax > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with softmax > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with matmul > allocates nothing once warm 12ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with matmul > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with matmul > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with matmul > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with matmul > frees a captured frame on dispose 1ms
+stderr | test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > allocates nothing once warm
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (rowBase + c): u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > allocates nothing once warm
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (rowBase + c): u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > allocates nothing once warm
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (rowBase + c): u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > allocates nothing once warm
+⚠️ [implicit-conversion]  Implicit conversions from [
+  i: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRows > allocates nothing once warm 12ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRows > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRows > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRows > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRows > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with flash attention > allocates nothing once warm 31ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with flash attention > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with flash attention > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with flash attention > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with flash attention > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > allocates nothing once warm 18ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with rows split attention > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with decode attention > allocates nothing once warm 11ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with decode attention > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with decode attention > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with decode attention > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with decode attention > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with conv1d > allocates nothing once warm 13ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with conv1d > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with conv1d > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with conv1d > runs again after a captured frame is disposed 2ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with conv1d > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with swigluChunk > allocates nothing once warm 11ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with swigluChunk > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with swigluChunk > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with swigluChunk > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with swigluChunk > frees a captured frame on dispose 3ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with argmaxDot > allocates nothing once warm 14ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with argmaxDot > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with argmaxDot > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with argmaxDot > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with argmaxDot > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRowsFrom > allocates nothing once warm 9ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRowsFrom > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRowsFrom > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRowsFrom > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with gatherRowsFrom > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with writeRows > allocates nothing once warm 10ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with writeRows > frees every buffer it made on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with writeRows > runs again after dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with writeRows > runs again after a captured frame is disposed 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor with writeRows > frees a captured frame on dispose 1ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor trim > the same length again 5ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor trim > a new length, then the first again 6ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor trim > a new length every call 8ms
+ ✓ |gpu (chromium)| test/core/gpu/eval.gpu.test.ts > gpuExecutor trim > does nothing once captured, so the replay keeps its buffers 1ms
+
+ Test Files  1 passed (1)
+      Tests  69 passed (69)
+   Start at  18:05:45
+   Duration  2.17s (tests 56%, import 26%, worker 17%)
+

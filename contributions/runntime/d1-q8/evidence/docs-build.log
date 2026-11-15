@@ -1,0 +1,171 @@
+$ pnpm --filter docs run build
+$ astro build
+[astro] `markdown.remarkPlugins`, `markdown.rehypePlugins`, and `markdown.remarkRehype` are deprecated. Pass them to `unified({...})` from `@astrojs/markdown-remark` directly instead.
+[96m[info][0m Loaded plugin typedoc-plugin-markdown
+22:56:32 [starlight-typedoc-plugin] markdown generated at ./src/content/docs/api/zoo
+[96m[info][0m Loaded plugin typedoc-plugin-markdown
+22:56:33 [build] Waiting for integration "@astrojs/starlight", hook "astro:config:setup"...
+22:56:35 [starlight-typedoc-plugin] markdown generated at ./src/content/docs/api/transformers
+22:56:35 [content] Syncing content
+22:56:35 [content] Synced content
+22:56:35 [types] Generated 320ms
+22:56:35 [build] output: "static"
+22:56:35 [build] mode: "static"
+22:56:35 [build] directory: /private/tmp/lazers-runntime-handoff.GSDeio/runntime/apps/docs/dist/
+22:56:35 [build] Collecting build info...
+22:56:35 [build] ✓ Completed in 6.07s.
+22:56:35 [build] Building static entrypoints...
+(node:72243) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+22:56:48 [vite] ✓ built in 13.05s
+22:56:49 [WARN] [vite] [plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+22:56:49 [vite] ✓ built in 755ms
+22:56:49 [build] Rearranging server assets...
+
+ generating static routes 
+22:56:49 [WARN] [content] The collection "i18n" does not exist or is empty. Please check your content config file for errors.
+22:56:49   ├─ /404.html22:56:49 [WARN] [content] Entry docs → 404 was not found.
+ (+12ms) 
+22:56:49   ├─ /zoo/text-embedding/index.html (+1ms) 
+22:56:49   ├─ /zoo/index.html (+0ms) 
+22:56:49   ├─ /index.html (+0ms) 
+22:56:49   ├─ /api/transformers/index.html (+5ms) 
+22:56:49   ├─ /api/transformers/functions/depthartloader/index.html (+3ms) 
+22:56:49   ├─ /api/transformers/functions/initrunntimebackend/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/isrunntimemodel/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/minilmloader/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/mobilenetv4loader/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/moonshineloader/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/privacyfilterloader/index.html (+5ms) 
+22:56:49   ├─ /api/transformers/functions/registerrunntimebackend/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/unregisterrunntimebackend/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/functions/yolo26loader/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/interfaces/registerrunntimebackendopts/index.html (+2ms) 
+22:56:49   ├─ /api/transformers/interfaces/runntimemodelloader/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/classes/runntimeerror/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/functions/buffersource/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/functions/created1decider/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/createdepthestimator/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/createembedder/index.html (+4ms) 
+22:56:49   ├─ /api/zoo/functions/createimageclassifier/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/functions/createinstancesegmenter/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/functions/createkeypointdetector/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/createobjectdetector/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/createopfscache/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/createprivacyfilter/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/createspeechtotext/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/decodeaudio/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/imagebuffer/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/imagebufferfromimagedata/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/functions/initrunntime/index.html (+3ms) 
+22:56:49   ├─ /api/zoo/functions/isrunntimeerror/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/functions/resampleaudio/index.html (+5ms) 
+22:56:49   ├─ /api/zoo/functions/similarity/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/classification/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/classifyoptions/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/d1decider/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/d1decidermodel/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/depthestimator/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/depthestimatormodel/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/depthmap/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/detectkeypointsoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/detectobjectsoptions/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/embedder/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/embeddermodel/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/embedoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/encodeclassifyoptions/index.html (+4ms) 
+22:56:49   ├─ /api/zoo/interfaces/encodedetectkeypointsoptions/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/encodedetectobjectsoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/encodeestimatedepthoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/encodeoptions/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/encodesegmentinstancesoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/imagebuffer/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/imageclassifier/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/imageclassifiermodel/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/instancesegmentation/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/instancesegmenter/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/instancesegmentermodel/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/keypointdetection/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/keypointdetector/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/keypointdetectormodel/index.html (+4ms) 
+22:56:49   ├─ /api/zoo/interfaces/landmark/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/interfaces/loadoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/objectdetection/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/objectdetector/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/objectdetectormodel/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/point/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/privacyfilter/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/privacyfiltermodel/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/privacyspan/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/rangesource/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/segmentinstancesoptions/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/size/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/speechstreamupdate/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/speechtotext/index.html (+3ms) 
+22:56:49   ├─ /api/zoo/interfaces/speechtotextmodel/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/interfaces/weightcache/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/answer/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/boundingbox/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/boxformat/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/boxmap/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/classificationlist/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/classifyinput/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/cocolandmark/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/depthartvariant/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/depthinput/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/depthmapdata/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/embeddingtask/index.html (+3ms) 
+22:56:49   ├─ /api/zoo/type-aliases/embedinput/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/embedpart/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/gpuencoder/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/gpuimage/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/gpuimagetarget/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/gputensor/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/imageformat/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/imagetokenbudget/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/instancesegmentationdata/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/instancesegmentationlist/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/keypointdetectiondata/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/keypointdetectionlist/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/modelpath/index.html (+3ms) 
+22:56:49   ├─ /api/zoo/type-aliases/objectdetectiondata/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/objectdetectionlist/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/question/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/questiontype/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/resizemode/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/runntimeerrorcode/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/speechtotextarch/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/yolo26input/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/type-aliases/yolo26variant/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/variables/coco_landmarks/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/variables/gpu_mask_size/index.html (+1ms) 
+22:56:49   ├─ /api/zoo/variables/models/index.html (+2ms) 
+22:56:49   ├─ /api/zoo/variables/runntime_error_codes/index.html (+4ms) 
+22:56:49   ├─ /api/zoo/variables/speech_sample_rate/index.html (+1ms) 
+22:56:49   ├─ /zoo/benchmarks/index.html (+10ms) 
+22:56:49   ├─ /zoo/d1/index.html (+3ms) 
+22:56:49   ├─ /zoo/depth-estimation/index.html (+62ms) 
+22:56:49   ├─ /zoo/embedding/index.html (+5ms) 
+22:56:49   ├─ /zoo/error-handling/index.html (+3ms) 
+22:56:49   ├─ /zoo/getting-started/index.html (+15ms) 
+22:56:49   ├─ /zoo/image-classification/index.html (+4ms) 
+22:56:49   ├─ /zoo/instance-segmentation/index.html (+5ms) 
+22:56:49   ├─ /zoo/migrating-from-transformers-js/index.html (+21ms) 
+22:56:49   ├─ /zoo/object-detection/index.html (+8ms) 
+22:56:49   ├─ /zoo/pose-and-keypoints/index.html (+9ms) 
+22:56:49   ├─ /zoo/privacy-filter/index.html (+4ms) 
+22:56:49   ├─ /zoo/speech-to-text/index.html (+6ms) 
+22:56:49 ✓ Completed in 400ms.
+
+22:56:49 [build] ✓ Completed in 14.24s.
+22:56:49 [starlight:pagefind] Building search index with Pagefind...
+22:56:49 [starlight:pagefind] Found 131 HTML files.
+22:56:49 [starlight:pagefind] Finished building search index in 136ms.
+22:56:49 [@astrojs/sitemap] `sitemap-index.xml` created at `dist`
+22:56:49 [build] 128 page(s) built in 20.49s
+22:56:49 [build] Complete!

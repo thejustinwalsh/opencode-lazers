@@ -1,7 +1,12 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { InferenceBroker, RendererOwnershipLost, failed } from "./broker.ts"
-import { LocalInference, RendererInference, rendererOwnershipLostType } from "./rpc.ts"
+import {
+  GENERATION_RESULT_CONTRACT_REVISION,
+  LocalInference,
+  RendererInference,
+  rendererOwnershipLostType,
+} from "./rpc.ts"
 import { OpenCode } from "@opencode/client"
 import type { RpcClient } from "@opencode/client"
 import { Service } from "@opencode/client/service"
@@ -27,6 +32,16 @@ export function registerLocalInference(
 ) {
   return Effect.gen(function* () {
     const broker = new InferenceBroker()
+    // Local tools and audio features forward to the default-location renderer authority.
+    const worker =
+      resolveWorker ??
+      (async () => {
+        const endpoint = await Service.discover()
+        if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
+        return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(
+          RendererInference,
+        )
+      })
     const stored = yield* ctx.storage.get("webgpu.features")
     const saved = FeatureSettings.safeParse(stored)
     let features = defaultFeatures(false)
@@ -50,16 +65,6 @@ export function registerLocalInference(
       featureEnabled(policy.read(), feature)
         ? undefined
         : `LAZERS ${feature} is turned off in Settings → LAZERS.`
-    // Location plugins forward to the default-location queue/settings authority used by Desktop.
-    const worker =
-      resolveWorker ??
-      (async () => {
-        const endpoint = await Service.discover()
-        if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
-        return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(
-          RendererInference,
-        )
-      })
     const systemOne = async (
       input: SystemOneInput,
       signal: AbortSignal,
@@ -155,7 +160,7 @@ export function registerLocalInference(
           }
         }),
     })
-    yield* ctx.rpc.register(RendererInference, {
+    const rendererRegistration = yield* ctx.rpc.register(RendererInference, {
       settings: () => Effect.sync(policy.read),
       configure: (input) =>
         Effect.promise(() => policy.configure(input)).pipe(
@@ -175,7 +180,72 @@ export function registerLocalInference(
         ),
       systemOne: (input) => Effect.promise((signal) => systemOne(input, signal)),
       review: (input) => Effect.promise((signal) => systemOne(input, signal, "review")),
+      nativeConversationReady: ({ requestID }) =>
+        Effect.promise(async () => {
+          await Effect.runPromise(
+            rendererRegistration.events.emit("nativeConversation", { requestID, type: "ready" }),
+          )
+          return {}
+        }),
+      nativeConversation: (input) =>
+        Effect.promise(async (signal) => {
+          const controller = new AbortController()
+          const generationSignal = AbortSignal.any([signal, controller.signal])
+          let deltaWrites = Promise.resolve()
+          let hasStreamFailure = false
+          let streamFailure: unknown
+          const sendDelta = (text: string) => {
+            deltaWrites = deltaWrites
+              .then(() =>
+                Effect.runPromise(
+                  rendererRegistration.events.emit("nativeConversation", {
+                    requestID: input.requestID,
+                    type: "delta",
+                    text,
+                  }),
+                ),
+              )
+              .catch((error: unknown) => {
+                hasStreamFailure = true
+                streamFailure = error
+                controller.abort(error)
+              })
+          }
+          const disabledError = disabled("questions")
+          let result = disabledError
+            ? failed(disabledError)
+            : await broker.generate(
+                {
+                  prompt: input.messages.map((message) => message.content).join("\n"),
+                  messages: [...input.messages],
+                  route: input.route,
+                  streaming: input.streaming,
+                  maxTokens: input.maxTokens,
+                  timeoutMs: input.timeoutMs,
+                  requestID: input.requestID,
+                  mode: "text",
+                  feature: "questions",
+                },
+                generationSignal,
+                input.streaming ? sendDelta : undefined,
+              )
+          await deltaWrites
+          if (hasStreamFailure)
+            result = failed(`Native conversation stream delivery failed: ${String(streamFailure)}`)
+          try {
+            await Effect.runPromise(
+              rendererRegistration.events.emit("nativeConversation", {
+                requestID: input.requestID,
+                type: "end",
+              }),
+            )
+          } catch (error) {
+            result = failed(`Native conversation stream delivery failed: ${String(error)}`)
+          }
+          return result
+        }),
       demand: () => Effect.sync(() => broker.demand()),
+      contract: () => Effect.succeed({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
       transcribe: (input) =>
         Effect.promise(async (signal) => {
           const error = disabled("dictation")
@@ -191,8 +261,12 @@ export function registerLocalInference(
           }
         }),
       decide: (input) => Effect.promise((signal) => decide(input, signal)),
-      attach: ({ owner }) =>
+      attach: ({ owner, contractRevision }) =>
         Effect.sync(() => {
+          if (contractRevision !== GENERATION_RESULT_CONTRACT_REVISION)
+            throw Error(
+              `Incompatible renderer completion contract ${contractRevision}; expected ${GENERATION_RESULT_CONTRACT_REVISION}`,
+            )
           if (!policy.read().enabled) throw Error("Local WebGPU inference is turned off")
           broker.attach(owner)
           return {}
@@ -221,6 +295,7 @@ export function registerLocalInference(
           broker.complete(owner, id, result)
           return {}
         }),
+      delta: ({ owner, id, text }) => Effect.sync(() => broker.delta(owner, id, text)),
     })
     yield* registerInferenceTools(ctx, allowed)
     const reviewer = new TaskReviewer(

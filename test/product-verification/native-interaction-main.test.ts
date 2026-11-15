@@ -7,7 +7,9 @@ import {
   nativeAdapterFailureCategory,
   nativeAdapterFailureHint,
   redactVisibleText,
+  setupNativeInteractionMain,
 } from "../../src/verification/opencode/native-interaction-main.ts"
+import { NativeAudioFixture } from "../../src/verification/opencode/audio-fixture-ipc.ts"
 import type {
   NativeWebContents,
   NativeWindow,
@@ -142,6 +144,36 @@ function reference(harnessValue: ReturnType<typeof harness>): NativeWindowRefere
 }
 
 describe("owned native Desktop adapter", () => {
+  test("ordinary Desktop profiles cannot enable or obtain owned audio fixtures", async () => {
+    const priorRoot = process.env.OPENCODE_DESKTOP_TEST_ROOT
+    delete process.env.OPENCODE_DESKTOP_TEST_ROOT
+    let implementation: Parameters<MainContext["provide"]>[1] | undefined
+    let disposed = false
+    const ctx = {
+      signal: new AbortController().signal,
+      provide: (_token: unknown, value: unknown) => {
+        implementation = value as never
+        return { dispose: () => (disposed = true) }
+      },
+    } as unknown as MainContext
+    try {
+      const cleanup = setupNativeInteractionMain(ctx)
+      expect(implementation).toBeDefined()
+      const methods = implementation as {
+        enabled(input: object, caller: { window: number }): boolean
+        takeDictation(input: { sessionID: string }, caller: { window: number }): null
+      }
+      expect(await methods.enabled({}, { window: 12 })).toBe(false)
+      expect(await methods.takeDictation({ sessionID: "session" }, { window: 12 })).toBeNull()
+      cleanup?.()
+      expect(disposed).toBe(true)
+    } finally {
+      if (priorRoot === undefined) delete process.env.OPENCODE_DESKTOP_TEST_ROOT
+      else process.env.OPENCODE_DESKTOP_TEST_ROOT = priorRoot
+    }
+    expect(NativeAudioFixture.id).toBe("lazers.verification.audio-fixture")
+  })
+
   test("shutdown forgets an already destroyed Electron window without accessing its webContents", () => {
     const h = harness([rawSnapshot])
     h.setDestroyed()
@@ -194,6 +226,11 @@ describe("owned native Desktop adapter", () => {
     expect(nativeAdapterFailureCategory(new Error("Native adapter RPC attachment failed"))).toBe(
       "sidecar-rpc-attach-failed",
     )
+    expect(
+      nativeAdapterFailureCategory({
+        cause: { message: "A different native adapter generation still owns this trial" },
+      }),
+    ).toBe("adapter-generation-conflict")
   })
 
   test("keeps startup failure hints bounded and redacts secrets, URLs, and local paths", () => {

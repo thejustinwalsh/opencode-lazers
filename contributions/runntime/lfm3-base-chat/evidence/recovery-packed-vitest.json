@@ -1,0 +1,70 @@
+{
+  "numTotalTestSuites": 2,
+  "numPassedTestSuites": 2,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 2,
+  "numPassedTests": 1,
+  "numFailedTests": 0,
+  "numPendingTests": 1,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1794502360733,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "loads the original checkpoint and streams text through a packed public consumer",
+          "status": "skipped",
+          "title": "loads the original checkpoint and streams text through a packed public consumer",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1794502360733,
+      "endTime": 1794502360733,
+      "status": "passed",
+      "message": "",
+      "name": "/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-rFUGCS/consumer/test/zoo/lfm3/public.gpu.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "recovers with a new public LFM3 session after real WebGPU device loss",
+          "status": "passed",
+          "title": "recovers with a new public LFM3 session after real WebGPU device loss",
+          "duration": 291268.3000000119,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1794502363026,
+      "endTime": 1794502654294.3,
+      "status": "passed",
+      "message": "",
+      "name": "/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-qk2Laa/tmp/runntime-packed-lfm3-rFUGCS/consumer/test/zoo/lfm3/recovery.gpu.test.ts"
+    }
+  ]
+}

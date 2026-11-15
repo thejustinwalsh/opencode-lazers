@@ -1,0 +1,2 @@
+$ pnpm --filter runntime typecheck
+$ tsc --noEmit

@@ -1,0 +1,15 @@
+
+ RUN  v5.0.4 /private/tmp/lazers-runntime-handoff.GSDeio/runntime/packages/runntime
+
+stdout | test/zoo/lfm3/cache-parity.gpu.test.ts > matches cached decode with full-forward LFM3 tokens and probabilities
+LFM3_CACHE_PARITY {"checkpointRevision":"21d75123f86c1f7ffb4bef1ea202710c4e7ebe67","loadedCheckpointBytes":3981891072,"promptTokens":13,"nativeGreedyPrefixTokens":[35808,9,1712],"cachedFinalGreedyToken":510,"maxProbabilityError":8.894506542400649e-8,"tolerance":0.001,"loadMs":154696.4,"prefillMs":2046.4,"cachedDecodeMs":165.3,"fullForwardMs":283.6}
+stdout | test/zoo/lfm3/cache-parity.gpu.test.ts > matches cached decode with full-forward LFM3 tokens and probabilities
+LFM3_CACHE_PARITY_CLEANUP {"storageBufferCount":0,"rootCacheBufferCount":120}
+ ✓ |gpu (chromium)| test/zoo/lfm3/cache-parity.gpu.test.ts > matches cached decode with full-forward LFM3 tokens and probabilities 158746ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  11:57:44
+   Duration  160.16s (tests 100%)
+
+JSON report written to /private/tmp/lazers-runntime-handoff.GSDeio/workspace/contributions/runntime/lfm3-base-chat/evidence/cache-parity-vitest.json
