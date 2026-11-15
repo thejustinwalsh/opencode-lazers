@@ -57,3 +57,16 @@ storage. It uploads only the input rows; it does not keep a second GPU
 embedding table. Omni is released before D1 loads. Keep that default: the
 new measurements are for exclusive residency and do not qualify loading
 both simultaneously or guarantee a peak below 4 GB with longer prompts.
+
+## First use and regular Desktop
+
+After restarting regular OpenCode Desktop and its background service, native
+`LocalInference.ask` returned “Hello” and `LocalInference.systemOne` returned
+a binary score of 0.9992196 using 36 input tokens. A separate OpenCode 2.2.6
+instance started with no model files. Enabling System One left its cache empty.
+The first System One request downloaded and verified the 620,464,044-byte
+checkpoint and the 4,733,371-byte tokenizer and returned the same score in
+26.9 s. The second request returned it in 220 ms. No Omni weights were
+downloaded. The checkpoint is a
+[separate release asset](https://github.com/thejustinwalsh/runntime/releases/tag/lazers-d1-q8-02b55d7)
+with the original license and conversion notice.

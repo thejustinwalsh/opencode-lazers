@@ -32,6 +32,8 @@ export const modelURL = (name: string) =>
 
 export const DECISION_REPOSITORY = "LiquidAI/d1-omni-600M"
 export const DECISION_REVISION = "02b55d7076f15129e59ab3f94783f32c4b088674"
+export const DECISION_WEIGHT_RELEASE =
+  "https://github.com/thejustinwalsh/runntime/releases/tag/lazers-d1-q8-02b55d7"
 export const MODEL_SHORT_NAMES = {
   chat: "LFM3",
   decision: "d1",
@@ -52,9 +54,9 @@ export const DECISION_FILES = [
 ] as const
 export const DECISION_BYTES = DECISION_FILES.reduce((sum, file) => sum + file.bytes, 0)
 export const decisionURL = (name: string) => {
+  if (name === DECISION_FILES[0].name)
+    return `${DECISION_WEIGHT_RELEASE.replace("/tag/", "/download/")}/${name}`
   if (name === "tokenizer.json")
     return `https://huggingface.co/${DECISION_REPOSITORY}/resolve/${DECISION_REVISION}/${name}`
-  throw Error(
-    "D1 needs the pinned ruNNtime Q8 checkpoint in the LAZERS model cache. See README.md.",
-  )
+  throw Error("Unknown D1 model file")
 }

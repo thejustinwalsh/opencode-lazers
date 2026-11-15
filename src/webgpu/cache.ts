@@ -135,7 +135,7 @@ export class ModelCache {
       this.phase = "downloading"
       const response = await this.download(this.source(file.name), { signal })
       if (!response.ok || !response.body)
-        throw new Error(`Hugging Face download failed: ${response.status}`)
+        throw new Error(`Model download failed (${file.name}): HTTP ${response.status}`)
       const handle = await open(partial, "wx", 0o600)
       const hash = createHash("sha256")
       let received = 0

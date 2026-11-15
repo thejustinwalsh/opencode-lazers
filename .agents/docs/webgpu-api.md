@@ -59,7 +59,7 @@ The `review` RPC runs the same System One input/output contract through the sepa
 | General questions, transcription, speech | LFM3-Omni-2B | Q4_K_M GGUF + Q8 projector          | 1,606,472,608 |
 | Native System One decisions              | D1-Omni-600M | ruNNtime Q8 safetensors + tokenizer |   625,197,415 |
 
-D1 returns typed decisions from text. Provision the pinned converted Q8 checkpoint as described in [the project README](../../README.md). The legacy System One request identifier `d1-omni-2b` remains accepted for RPC clients; the artifact and diagnostic identity is D1-Omni-600M.
+D1 returns typed decisions from text. The first System One request downloads and verifies the pinned Q8 checkpoint and tokenizer, independently of Omni. See [the project README](../../README.md) for the checkpoint, terms, and conversion notice. The legacy System One request identifier `d1-omni-2b` remains accepted for RPC clients; the artifact and diagnostic identity is D1-Omni-600M.
 
 **Only one model may occupy GPU memory.** The FIFO job selects its required model; the previous model's disposal must complete before the next allocation. Cleanup failure prevents allocation. The last model stays warm indefinitely by default. Switching has a cold-load cost that counts toward the request deadline. CPU staging memory is still needed while loading weights.
 

@@ -402,9 +402,8 @@ Cache affinity, bounded memory, hashline editing, and selective compound learnin
 Source: [Agent Harness Solutions conversation](https://chatgpt.com/share/6ae566ed-4b30-83ea-9d5d-23d85c7c4ae4). The [original design brief](.agents/docs/sources/original-design-brief.md) and [visible source transcript](.agents/docs/sources/agent-harness-solutions.json) are retained locally with fetch provenance. The contracts operationalize its final mission; the spike sequence is the proposed implementation path. Current user decisions take precedence over historical examples.
 
 Local inference uses ruNNtime for Omni chat, dictation, speech, and D1 System One.
-Omni downloads Liquid's pinned GGUF files on demand. D1 uses the separately
-converted, pinned Q8 checkpoint described in [the D1 conversion guide](contributions/runntime/d1-q8/README.md).
-Place `d1-omni-600m-text-q8.safetensors` in the sibling of the Omni model directory
-shown in Settings → LAZERS → Downloaded models, named
-`02b55d7076f15129e59ab3f94783f32c4b088674`. LAZERS verifies the file and downloads
-the matching tokenizer. D1 provisioning is independent of Omni.
+Omni downloads Liquid's pinned GGUF files on demand. The first System One
+request downloads the [converted D1 Q8 checkpoint](https://github.com/thejustinwalsh/runntime/releases/tag/lazers-d1-q8-02b55d7)
+and Liquid's matching tokenizer, about 625 MB in total. LAZERS verifies and
+caches both files. D1 downloads independently of Omni. The checkpoint's
+release includes the original model license and conversion notice.
