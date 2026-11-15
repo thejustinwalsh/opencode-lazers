@@ -4,8 +4,37 @@ import { createEffect, createSignal } from "solid-js"
 import { audioFilePCM16, MAX_AUDIO_SECONDS } from "./audio.ts"
 import type { InferenceRuntime } from "./runtime.ts"
 import { CaptureResources } from "./capture.ts"
+import {
+  normalizeASR,
+  NativeAudioFixture,
+} from "../verification/opencode/audio-fixture-contract.ts"
 
 export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: InferenceRuntime) {
+  const audioFixture = ctx.main(NativeAudioFixture)
+  const monitorOwnership = (
+    controller: AbortController,
+    requestID: string,
+    sessionID: string,
+  ): (() => void) => {
+    let checking = false
+    const timer = setInterval(() => {
+      if (checking || controller.signal.aborted) return
+      checking = true
+      void audioFixture
+        .enabled(
+          { requestID, sessionID },
+          { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3_000)]) },
+        )
+        .then((enabled) => {
+          if (!enabled) controller.abort(new Error("Owned audio verification was lost"))
+        })
+        .catch((error: unknown) => controller.abort(error))
+        .finally(() => {
+          checking = false
+        })
+    }, 1_000)
+    return () => clearInterval(timer)
+  }
   const [state, setState] = createSignal<"idle" | "permission" | "recording" | "transcribing">(
     "idle",
   )
@@ -51,6 +80,7 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     const screen = ctx.screen.current()
     if (!session || !screen) return
     const visit = session.visit
+    const audioRoute = runtime.audioRoute()
     operation = new AbortController()
     const controller = operation
     const resources = new CaptureResources()
@@ -62,65 +92,134 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       !controller.signal.aborted
     setState("permission")
     void (async () => {
+      let fixture: Awaited<ReturnType<typeof audioFixture.takeDictation>> | null = null
+      let fixtureReported = false
+      let stopOwnershipMonitor: (() => void) | undefined
+      const report = async (event: Parameters<typeof audioFixture.observe>[0]["event"]) => {
+        if (!fixture) return
+        await audioFixture.observe(
+          { requestID: fixture.requestID, sessionID: session.id, event },
+          { signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(2_000)]) },
+        )
+      }
       try {
-        const media = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true },
-          video: false,
-        })
+        let peakRMS = 0
+        let blob: Blob
+        const fixtureMode = await audioFixture.enabled({}, { signal: controller.signal })
+        if (fixtureMode) {
+          fixture = await audioFixture.takeDictation(
+            { sessionID: session.id },
+            { signal: controller.signal },
+          )
+        }
+        if (fixture)
+          stopOwnershipMonitor = monitorOwnership(controller, fixture.requestID, session.id)
         if (controller.signal.aborted || !current()) {
-          media.getTracks().forEach((track) => track.stop())
+          if (fixture) {
+            await report({ kind: "dictation-cancelled", fixtureID: fixture.fixtureID }).catch(
+              () => {},
+            )
+            fixtureReported = true
+          }
           return
         }
-        resources.stream = media
-        const meter = new AudioContext()
-        resources.meter = meter
-        await meter.resume()
-        controller.signal.throwIfAborted()
-        if (!current()) return
-        const analyser = meter.createAnalyser()
-        analyser.fftSize = 256
-        meter.createMediaStreamSource(media).connect(analyser)
-        const samples = new Float32Array(analyser.fftSize)
-        let peakRMS = 0
-        const recording = new MediaRecorder(media)
-        resources.recorder = recording
-        const chunks: Blob[] = []
-        let bytes = 0
-        const blob = await new Promise<Blob>((resolve, reject) => {
-          recording.ondataavailable = (event) => {
-            bytes += event.data.size
-            if (bytes > 8_000_000) {
-              controller.abort()
-              resources.stop()
-              reject(new Error("Recording exceeded the memory limit"))
-              return
-            }
-            chunks.push(event.data)
-          }
-          recording.onerror = () => reject(new Error("Microphone recording failed"))
-          recording.onstop = () => resolve(new Blob(chunks, { type: recording.mimeType }))
+        if (fixtureMode && fixture === null) {
+          throw new Error("No clean-clip dictation is armed; refusing microphone recording")
+        }
+
+        if (fixture) {
+          if (audioRoute !== "runntime")
+            throw new Error("Select ruNNtime Omni for this session before clean-clip dictation")
+          await report({
+            kind: "dictation-start",
+            fixtureID: fixture.fixtureID,
+            route: "runntime",
+          })
+          const bytes = Uint8Array.from(atob(fixture.audioBase64), (character) =>
+            character.charCodeAt(0),
+          )
           setSeconds(0)
-          const start = performance.now()
-          resources.timer = setInterval(() => {
-            analyser.getFloatTimeDomainData(samples)
-            const rms = Math.sqrt(
-              samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length,
-            )
-            peakRMS = Math.max(peakRMS, rms)
-            const bars = "▁▂▃▄▅▆▇█"
-            const level = Math.min(7, Math.floor(rms * 84))
-            setMeterText((text) => text.slice(1) + bars[level])
-            const elapsed = (performance.now() - start) / 1_000
-            setSeconds(Math.floor(elapsed))
-            if (elapsed >= MAX_AUDIO_SECONDS || !current()) resources.stop()
-          }, 80)
-          recording.start(250)
-          setState("recording")
-        })
+          setMeterText("▆▆▆▆▆▆▆▆▆")
+          blob = await new Promise<Blob>((resolve) => {
+            const start = performance.now()
+            resources.fixtureStop = () => {
+              resources.fixtureStop = undefined
+              resolve(new Blob([bytes], { type: "audio/wav" }))
+            }
+            resources.timer = setInterval(() => {
+              const captureElapsed = performance.now() - start
+              const displayElapsed = Math.min(captureElapsed, fixture!.durationMs)
+              setSeconds(Math.floor(displayElapsed / 1_000))
+              if (
+                captureElapsed >= fixture!.durationMs ||
+                captureElapsed >= MAX_AUDIO_SECONDS * 1_000 ||
+                !current()
+              )
+                resources.stop()
+            }, 80)
+            setState("recording")
+            if (!current()) resources.stop()
+          })
+          peakRMS = 1
+        } else {
+          const media = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true },
+            video: false,
+          })
+          if (controller.signal.aborted || !current()) {
+            media.getTracks().forEach((track) => track.stop())
+            return
+          }
+          resources.stream = media
+          const meter = new AudioContext()
+          resources.meter = meter
+          await meter.resume()
+          controller.signal.throwIfAborted()
+          if (!current()) return
+          const analyser = meter.createAnalyser()
+          analyser.fftSize = 256
+          meter.createMediaStreamSource(media).connect(analyser)
+          const samples = new Float32Array(analyser.fftSize)
+          const recording = new MediaRecorder(media)
+          resources.recorder = recording
+          const chunks: Blob[] = []
+          let bytes = 0
+          blob = await new Promise<Blob>((resolve, reject) => {
+            recording.ondataavailable = (event) => {
+              bytes += event.data.size
+              if (bytes > 8_000_000) {
+                controller.abort()
+                resources.stop()
+                reject(new Error("Recording exceeded the memory limit"))
+                return
+              }
+              chunks.push(event.data)
+            }
+            recording.onerror = () => reject(new Error("Microphone recording failed"))
+            recording.onstop = () => resolve(new Blob(chunks, { type: recording.mimeType }))
+            setSeconds(0)
+            const start = performance.now()
+            resources.timer = setInterval(() => {
+              analyser.getFloatTimeDomainData(samples)
+              const rms = Math.sqrt(
+                samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length,
+              )
+              peakRMS = Math.max(peakRMS, rms)
+              const bars = "▁▂▃▄▅▆▇█"
+              const level = Math.min(7, Math.floor(rms * 84))
+              setMeterText((text) => text.slice(1) + bars[level])
+              const elapsed = (performance.now() - start) / 1_000
+              setSeconds(Math.floor(elapsed))
+              if (elapsed >= MAX_AUDIO_SECONDS || !current()) resources.stop()
+            }, 80)
+            recording.start(250)
+            setState("recording")
+          })
+        }
         release(resources)
         controller.signal.throwIfAborted()
         if (!current()) return
-        if (peakRMS < 0.0015) {
+        if (!fixture && peakRMS < 0.0015) {
           ctx.toast.show({
             title: "No audio detected",
             description: "Nothing was added to the draft.",
@@ -131,22 +230,43 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
         const pcm = await audioFilePCM16(blob, true)
         controller.signal.throwIfAborted()
         let inserted = ""
+        let insertionCalls = 0
+        const insert = (text: string) => {
+          if (!text || !current()) return
+          screen.composer.insert(text)
+          inserted += text
+          insertionCalls++
+        }
         const result = await runtime.transcribe(
           pcm,
-          (text) => {
-            if (current()) {
-              screen.composer.insert(text)
-              inserted += text
-            }
-          },
+          (text) => insert(text),
           controller.signal,
+          audioRoute,
         )
         if (!current()) return
         if (!result.ok) throw new Error(result.error)
-        if (result.text.startsWith(inserted))
-          screen.composer.insert(result.text.slice(inserted.length))
-        else if (!inserted) screen.composer.insert(result.text)
+        if (result.text.startsWith(inserted)) insert(result.text.slice(inserted.length))
+        else if (!inserted) insert(result.text)
+        if (fixture) {
+          await report({
+            kind: "dictation-complete",
+            fixtureID: fixture.fixtureID,
+            matchesExpected: normalizeASR(result.text) === normalizeASR(fixture.transcript),
+            insertedExactlyOnce: normalizeASR(inserted) === normalizeASR(fixture.transcript),
+            insertionCalls,
+            insertedChars: inserted.length,
+            submitted: false,
+          })
+          fixtureReported = true
+        }
       } catch (error) {
+        if (fixture && !fixtureReported) {
+          await report({
+            kind: controller.signal.aborted ? "dictation-cancelled" : "dictation-failed",
+            fixtureID: fixture.fixtureID,
+          }).catch(() => {})
+          fixtureReported = true
+        }
         if (!controller.signal.aborted) {
           ctx.toast.show({
             title: "Local dictation failed",
@@ -155,6 +275,14 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
           })
         }
       } finally {
+        stopOwnershipMonitor?.()
+        if (fixture && !fixtureReported) {
+          await report({
+            kind:
+              controller.signal.aborted || !current() ? "dictation-cancelled" : "dictation-failed",
+            fixtureID: fixture.fixtureID,
+          }).catch(() => {})
+        }
         release(resources)
         if (operation === controller) {
           capture = undefined
@@ -216,7 +344,7 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
   window.addEventListener(
     "blur",
     () => {
-      if (state() === "recording" || state() === "permission") cancel()
+      if (operation) cancel()
     },
     { signal: ctx.signal },
   )

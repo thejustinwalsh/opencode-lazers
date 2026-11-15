@@ -155,6 +155,81 @@ bun src/verification/opencode/cli.ts native-status --root "$ROOT"
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind snapshot
 ```
 
+### Clean-clip dictation and completed-response playback
+
+Use these commands only in the separately authorized owned profile and a
+disposable, no-secret session. Audio fixture transport is enabled only after the
+Main adapter validates the owned launch and authenticated sidecar; ordinary
+profiles cannot obtain a fixture. The CLI accepts only the two frozen clip IDs
+(`quick-brown-fox` and `turn-left-next-street`), verifies each pinned SHA-256,
+size, and PCM WAV format, and does not accept a caller file path. Do not record a
+real microphone for this scenario.
+
+Select **ruNNtime Omni (this session only)** in the Voice settings for the
+disposable session; the speech-route picker is session-scoped and new/other
+sessions remain Liquid by default. Leave the global Chat route and every other
+session untouched. Prepare a harmless preexisting draft with native text entry
+(not the frozen transcript), then do not submit it. For example, take a snapshot
+and type only a neutral prefix into its rendered composer element:
+
+```sh
+bun src/verification/opencode/cli.ts native --root "$ROOT" \
+  --kind snapshot --window WINDOW_ID
+bun src/verification/opencode/cli.ts native --root "$ROOT" \
+  --kind type --window WINDOW_ID --snapshot SNAPSHOT_ID \
+  --element COMPOSER_REF --text 'Existing draft: '
+bun src/verification/opencode/cli.ts audio-fixture --root "$ROOT" \
+  --window WINDOW_ID --session SESSION_ID --clip quick-brown-fox
+bun src/verification/opencode/cli.ts native --root "$ROOT" \
+  --kind snapshot --window WINDOW_ID
+bun src/verification/opencode/cli.ts native --root "$ROOT" \
+  --kind click --window WINDOW_ID --snapshot SNAPSHOT_ID --element MICROPHONE_REF
+```
+
+The returned request ID identifies the fixed clip operation. Click the
+microphone pill through the native `click` command; it enters the ordinary
+capture/transcription/composer insertion path with the pinned WAV instead of
+calling `getUserMedia`. Click the pill again to stop, wait for transcription to
+finish (take a new snapshot before that second click), and verify the exact fixture words were appended once to the intended
+draft, that the prior text is still present, and that no request was sent. Use
+`audio-observe --root "$ROOT" --request REQUEST_ID` to read the bounded native
+completion receipt. A mismatch, cancellation, or inference error is not a pass.
+Repeat with the second fixed ID only when needed; never use an arbitrary audio
+path or paste the words through the text-input command as dictation evidence.
+
+For playback, use a completed assistant response in the same disposable session.
+Arm the response's bounded text/segment hashes, then click its existing speaker
+pill through a fresh native snapshot. Take a separate new snapshot before each
+click; select the speaker element reference from that snapshot:
+
+```sh
+bun src/verification/opencode/cli.ts audio-playback --root "$ROOT" \
+  --window WINDOW_ID --session SESSION_ID \
+  --expected 'The quick brown fox jumps over the lazy dog.'
+bun src/verification/opencode/cli.ts native --root "$ROOT" \
+  --kind snapshot --window WINDOW_ID
+bun src/verification/opencode/cli.ts native --root "$ROOT" \
+  --kind click --window WINDOW_ID --snapshot SNAPSHOT_ID --element SPEAKER_REF
+bun src/verification/opencode/cli.ts audio-observe --root "$ROOT" --request REQUEST_ID
+```
+
+The UI refuses fixture-backed playback unless this session's selected route is
+ruNNtime Omni. The producer validates non-silent, finite mono PCM16 WAV speech at
+24 kHz and a nonempty decoded AudioBuffer; bounded receipts correlate the exact
+expected response/segments with `AudioBufferSourceNode.start()` and natural
+`onended` completion. Cancellation, decode/start errors, wrong-rate/silent audio,
+or missing segment ends never produce a successful completion. Intelligibility
+is separate from app playback: after listening, an operator may record
+`audio-observe --root "$ROOT" --request REQUEST_ID --intelligibility unknown`
+(replace `unknown` with the observed `pass` or `fail` value when warranted).
+Do not report intelligibility from an app completion receipt alone.
+
+The audio CLI waits at most two minutes for a terminal app receipt. If the wait
+expires, the request remains an incomplete observation; do not replay the native
+control or claim success. These operations remain bound to the current owned
+profile, selected session, and window generation; no generic script/eval or
+unrestricted file operation is exposed.
+
 ### Modified-key shortcut and live revalidation
 
 Use this procedure only in a separately authorized, no-secret qualification

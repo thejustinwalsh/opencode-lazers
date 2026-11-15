@@ -1,5 +1,6 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { Schema } from "effect"
+import { AudioObservationEvent } from "./audio-fixture-contract.ts"
 
 const portable = Schema.toStandardSchemaV1
 const shortText = Schema.String.check(Schema.isBetweenLength(1, 512))
@@ -150,6 +151,21 @@ export const NativeOperation = Schema.Union([
     snapshotID: shortText,
     key: NativeKey,
   }),
+  Schema.Struct({
+    kind: Schema.Literals(["dictation-fixture"]),
+    ...Windowed,
+    sessionID: shortText,
+    fixtureID: Schema.Literals(["quick-brown-fox", "turn-left-next-street"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literals(["playback-plan"]),
+    ...Windowed,
+    sessionID: shortText,
+    expectedTextHash: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+    segmentHashes: Schema.Array(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))).check(
+      Schema.isBetweenLength(1, 32),
+    ),
+  }),
 ])
 export type NativeOperation = typeof NativeOperation.Type
 
@@ -160,6 +176,32 @@ export const NativeActionResult = Schema.Struct({
   screenshotBase64: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000_000))),
 })
 export type NativeActionResult = typeof NativeActionResult.Type
+
+const NativeAudioObservation = Schema.Struct({
+  requestID: shortText,
+  sessionID: shortText,
+  window: NativeWindowReference,
+  event: AudioObservationEvent,
+})
+const NativeAudioRecord = Schema.Struct({
+  requestID: shortText,
+  sessionID: shortText,
+  window: NativeWindowReference,
+  kind: Schema.Literals(["dictation", "playback"]),
+  fixtureID: Schema.optionalKey(Schema.Literals(["quick-brown-fox", "turn-left-next-street"])),
+  route: Schema.optionalKey(Schema.Literals(["runntime"])),
+  expectedTextHash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
+  segmentHashes: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))).check(
+      Schema.isBetweenLength(1, 32),
+    ),
+  ),
+  events: Schema.Array(Schema.Struct({ at: Schema.Number, event: AudioObservationEvent })).check(
+    Schema.isMaxLength(100),
+  ),
+  appCompleted: Schema.Boolean,
+  intelligibility: Schema.optionalKey(Schema.Literals(["pass", "fail", "unknown"])),
+})
 
 const NativeCommand = Schema.Struct({
   requestID: shortText,
@@ -236,6 +278,20 @@ export const NativeInteraction = Rpc.define({
     result: {
       input: portable(Schema.Struct({ binding: NativeBinding, requestID: shortText })),
       output: portable(NativeResultState),
+    },
+    audioObserve: {
+      input: portable(
+        Schema.Struct({
+          binding: NativeBinding,
+          adapterID: shortText,
+          observation: NativeAudioObservation,
+        }),
+      ),
+      output: empty,
+    },
+    audioResult: {
+      input: portable(Schema.Struct({ binding: NativeBinding, requestID: shortText })),
+      output: portable(Schema.NullOr(NativeAudioRecord)),
     },
     detach: {
       input: portable(Schema.Struct({ binding: NativeBinding, adapterID: shortText })),

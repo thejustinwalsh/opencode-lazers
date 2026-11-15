@@ -5,6 +5,13 @@ import type { InferenceRuntime } from "./runtime.ts"
 import { createSpeechEventCoordinator, type SpeechEvent } from "./speech-events.ts"
 import { latestCompletedResponse, speechSegments } from "./speech.ts"
 import { playSpeech } from "./speech-playback.ts"
+import { NativeAudioFixture, sha256Text } from "../verification/opencode/audio-fixture-contract.ts"
+import type {
+  AudioObservationEvent,
+  PlaybackPlan,
+} from "../verification/opencode/audio-fixture-contract.ts"
+import { validateSpeechWav } from "./audio.ts"
+import type { ChatRoute } from "./inference-route.ts"
 
 const AUTO_SPEECH_EVENTS = [
   "session.execution.started",
@@ -24,17 +31,78 @@ type Playback = {
   kind: "manual" | "auto"
   queue: string[]
   audio?: AudioContext
+  audioPlan?: PlaybackPlan
+  segmentIndex: number
+  route: ChatRoute
+}
+
+export function validateSpeechBuffer(buffer: AudioBuffer): void {
+  if (
+    !Number.isInteger(buffer.sampleRate) ||
+    buffer.sampleRate !== 24_000 ||
+    !Number.isInteger(buffer.length) ||
+    buffer.length < 1 ||
+    buffer.length > 24_000 * 30 ||
+    !Number.isInteger(buffer.numberOfChannels) ||
+    buffer.numberOfChannels < 1 ||
+    buffer.numberOfChannels > 2 ||
+    !Number.isFinite(buffer.duration) ||
+    buffer.duration <= 0
+  ) {
+    throw new Error("The local model returned empty or non-24 kHz speech")
+  }
+  let hasSpeechSamples = false
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    const samples = buffer.getChannelData(channel)
+    if (samples.length !== buffer.length)
+      throw new Error("The local model returned malformed speech")
+    for (const sample of samples) {
+      if (!Number.isFinite(sample)) throw new Error("The local model returned non-finite speech")
+      if (Math.abs(sample) > 0.00001) hasSpeechSamples = true
+    }
+  }
+  if (!hasSpeechSamples) throw new Error("The local model returned silent speech")
 }
 
 export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: InferenceRuntime) {
+  const audioFixture = ctx.main(NativeAudioFixture)
+  const monitorOwnership = (controller: AbortController, plan: PlaybackPlan): (() => void) => {
+    let checking = false
+    const timer = setInterval(() => {
+      if (checking || controller.signal.aborted) return
+      checking = true
+      void audioFixture
+        .enabled(
+          { requestID: plan.requestID, sessionID: plan.sessionID },
+          { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3_000)]) },
+        )
+        .then((enabled) => {
+          if (!enabled) controller.abort(new Error("Owned audio verification was lost"))
+        })
+        .catch((error: unknown) => controller.abort(error))
+        .finally(() => {
+          checking = false
+        })
+    }, 1_000)
+    return () => clearInterval(timer)
+  }
   const [state, setState] = createSignal<"idle" | "loading" | "playing">("idle")
   const [automatic, setAutomatic] = createSignal(false)
   let operation: Playback | undefined
+  let manualPreflight: { controller: AbortController; visit: object } | undefined
   let coordinator: ReturnType<typeof createSpeechEventCoordinator> | undefined
   let automaticAudio: AudioContext | undefined
   let activeEvents:
     | { visit: object; controller: AbortController; coordinator: NonNullable<typeof coordinator> }
     | undefined
+
+  const cancelPreflight = () => {
+    const pending = manualPreflight
+    if (!pending) return
+    manualPreflight = undefined
+    pending.controller.abort(new DOMException("Playback preflight was cancelled", "AbortError"))
+    if (!operation) setState("idle")
+  }
 
   const stop = (suppressAuto = false) => {
     const previous = operation
@@ -57,11 +125,34 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     void playback?.close().catch(() => {})
   }
 
-  const begin = (segments: readonly string[], kind: Playback["kind"], visit: object) => {
-    if (!segments.length || !runtime.enabled("readAloud")) return
+  const observeAudio = async (
+    plan: PlaybackPlan,
+    event: AudioObservationEvent,
+    signal: AbortSignal = ctx.signal,
+  ) => {
+    await audioFixture.observe(
+      { requestID: plan.requestID, sessionID: plan.sessionID, event },
+      { signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)]) },
+    )
+  }
+
+  const begin = (
+    segments: readonly string[],
+    kind: Playback["kind"],
+    visit: object,
+    audioPlan?: PlaybackPlan,
+    route: ChatRoute = runtime.audioRoute(),
+  ) => {
+    if (
+      !segments.length ||
+      !runtime.enabled("readAloud") ||
+      ctx.signal.aborted ||
+      ctx.sessions.current()?.visit !== visit
+    )
+      return false
     if (operation?.kind === "auto" && kind === "auto" && operation.visit === visit) {
       operation.queue.push(...segments)
-      return
+      return true
     }
     if (operation) stop()
     const current: Playback = {
@@ -69,72 +160,145 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       visit,
       kind,
       queue: [...segments],
+      ...(audioPlan === undefined ? {} : { audioPlan }),
+      segmentIndex: 0,
+      route,
     }
     operation = current
+    const stopOwnershipMonitor = audioPlan
+      ? monitorOwnership(current.controller, audioPlan)
+      : undefined
     setState("loading")
     void (async () => {
       try {
         const playback =
-          kind === "auto" ? (automaticAudio ??= new AudioContext()) : new AudioContext()
+          kind === "auto"
+            ? (automaticAudio ??= new AudioContext({ sampleRate: 24_000 }))
+            : new AudioContext({ sampleRate: 24_000 })
         current.audio = playback
         await playback.resume()
         current.controller.signal.throwIfAborted()
+        if (audioPlan) {
+          await observeAudio(
+            audioPlan,
+            {
+              kind: "playback-start",
+              route: "runntime",
+              expectedTextHash: audioPlan.expectedTextHash,
+              segmentHashes: audioPlan.segmentHashes,
+            },
+            current.controller.signal,
+          )
+        }
         while (operation === current && current.queue.length) {
           const batch = current.queue.splice(0)
           await playSpeech(batch, {
             signal: current.controller.signal,
             waiting: () => setState("loading"),
             async prepare(segment, signal) {
-              const result = await runtime.speak(segment, signal)
+              const result = await runtime.speak(segment, signal, current.route)
               signal.throwIfAborted()
               if (!result.ok || !result.audioBase64)
                 throw new Error(result.error || "The local model returned no speech")
               const bytes = Uint8Array.from(atob(result.audioBase64), (c) => c.charCodeAt(0))
-              return playback.decodeAudioData(bytes.buffer)
+              validateSpeechWav(bytes)
+              const buffer = await playback.decodeAudioData(bytes.buffer)
+              validateSpeechBuffer(buffer)
+              return buffer
             },
             async play(buffer, signal) {
               signal.throwIfAborted()
+              const segmentIndex = current.segmentIndex++
+              const textHash = audioPlan?.segmentHashes[segmentIndex]
+              if (audioPlan && textHash === undefined)
+                throw new Error("Playback produced more speech segments than its armed plan")
+              const details = {
+                segmentIndex,
+                textHash: textHash ?? "0".repeat(64),
+                sampleRate: 24_000 as const,
+                frames: buffer.length,
+                durationMs: Math.max(1, Math.round(buffer.duration * 1_000)),
+              }
               const source = playback.createBufferSource()
               source.buffer = buffer
               source.connect(playback.destination)
               setState("playing")
-              await new Promise<void>((resolve, reject) => {
-                const abort = () => {
-                  try {
-                    source.stop()
-                  } catch {
-                    // The source may already have ended while cancellation was dispatched.
-                  } finally {
-                    source.disconnect()
-                    signal.removeEventListener("abort", abort)
-                    reject(signal.reason)
-                  }
-                }
-                source.onended = () => {
-                  source.disconnect()
-                  signal.removeEventListener("abort", abort)
-                  resolve()
-                }
-                signal.addEventListener("abort", abort, { once: true })
+              const ended = Promise.withResolvers<void>()
+              void ended.promise.catch(() => undefined)
+              let settled = false
+              const cleanup = () => {
+                signal.removeEventListener("abort", abort)
+                source.disconnect()
+              }
+              const abort = () => {
+                if (settled) return
+                settled = true
                 try {
-                  source.start()
-                } catch (error) {
-                  signal.removeEventListener("abort", abort)
-                  source.disconnect()
-                  reject(error)
+                  source.stop()
+                } catch {
+                  // The source can already be stopped while cancellation is dispatched.
                 }
-              })
+                cleanup()
+                ended.reject(signal.reason)
+              }
+              source.onended = () => {
+                if (settled) return
+                settled = true
+                cleanup()
+                ended.resolve()
+              }
+              signal.addEventListener("abort", abort, { once: true })
+              try {
+                source.start()
+              } catch (error) {
+                settled = true
+                cleanup()
+                throw error
+              }
+              if (audioPlan) {
+                await observeAudio(
+                  audioPlan,
+                  { kind: "playback-segment-start", ...details },
+                  current.controller.signal,
+                )
+              }
+              await ended.promise
+              signal.throwIfAborted()
+              if (audioPlan) {
+                await observeAudio(
+                  audioPlan,
+                  { kind: "playback-segment-end", ...details },
+                  current.controller.signal,
+                )
+              }
             },
           })
         }
+        if (audioPlan) {
+          if (current.segmentIndex !== audioPlan.segmentHashes.length)
+            throw new Error("Playback ended without every expected speech segment")
+          await observeAudio(audioPlan, { kind: "playback-complete" }, current.controller.signal)
+        }
       } catch (error) {
-        if (!current.controller.signal.aborted)
+        const cancelled = current.controller.signal.aborted || ctx.signal.aborted
+        if (!cancelled) current.controller.abort(error)
+        if (audioPlan) {
+          await observeAudio(
+            audioPlan,
+            {
+              kind: cancelled ? "playback-cancelled" : "playback-failed",
+            },
+            AbortSignal.timeout(2_000),
+          ).catch(() => {})
+        }
+        if (!cancelled)
           ctx.toast.show({
             title: "Read aloud failed",
             description: String(error),
             variant: "error",
           })
       } finally {
+        stopOwnershipMonitor?.()
         const playback = current.audio
         if (operation === current) {
           if (playback && playback === automaticAudio && automatic()) {
@@ -148,6 +312,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
         } else void playback?.close().catch(() => {})
       }
     })()
+    return true
   }
 
   const stopEvents = () => {
@@ -190,7 +355,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     setAutomatic(next)
     if (next) {
       try {
-        automaticAudio ??= new AudioContext()
+        automaticAudio ??= new AudioContext({ sampleRate: 24_000 })
         void automaticAudio.resume().catch(() => {})
       } catch {
         // Speech reports an unsupported or unavailable audio context when playback is attempted.
@@ -221,16 +386,19 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     const session = ctx.sessions.current()
     const enabled = runtime.enabled("readAloud")
     const auto = automatic()
+    if (!enabled && manualPreflight) cancelPreflight()
     if (!enabled && operation) stop()
     if (!enabled) closeAutomaticAudio()
     if (!auto && operation?.kind === "auto") stop(true)
     if (operation && operation.visit !== session?.visit) stop()
+    if (manualPreflight && manualPreflight.visit !== session?.visit) cancelPreflight()
     syncAutoEvents()
   })
 
   ctx.signal.addEventListener(
     "abort",
     () => {
+      cancelPreflight()
       stop()
       stopEvents()
       closeAutomaticAudio()
@@ -243,7 +411,8 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     show(input) {
       if (!runtime.enabled("readAloud")) return
       const phase = state()
-      const active = operation?.visit === input.session.visit
+      const active =
+        operation?.visit === input.session.visit || manualPreflight?.visit === input.session.visit
       const response = latestCompletedResponse(
         input.session.server.data.session.message.list(input.session.id),
       )
@@ -257,10 +426,91 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
             stop(true)
             return
           }
+          if (manualPreflight) {
+            cancelPreflight()
+            return
+          }
           const text = latestCompletedResponse(
             input.session.server.data.session.message.list(input.session.id),
           )
-          begin(speechSegments(text), "manual", input.session.visit)
+          const segments = speechSegments(text)
+          if (!segments.length) return
+          const route = runtime.audioRoute()
+          const visit = input.session.visit
+          const pending = { controller: new AbortController(), visit }
+          manualPreflight = pending
+          setState("loading")
+          const signal = AbortSignal.any([ctx.signal, pending.controller.signal])
+          const isCurrent = () => {
+            const currentSession = ctx.sessions.current()
+            return (
+              !signal.aborted &&
+              runtime.enabled("readAloud") &&
+              currentSession?.id === input.session.id &&
+              currentSession.visit === visit &&
+              input.session.visit === visit
+            )
+          }
+          const cancelStale = () => {
+            if (isCurrent()) return
+            if (!pending.controller.signal.aborted)
+              pending.controller.abort(new DOMException("Playback session changed", "AbortError"))
+            throw pending.controller.signal.reason
+          }
+          void (async () => {
+            let plan: PlaybackPlan | null = null
+            try {
+              const fixtureMode = await audioFixture.enabled({}, { signal })
+              cancelStale()
+              if (fixtureMode) {
+                plan = await audioFixture.takePlaybackPlan(
+                  { sessionID: input.session.id },
+                  { signal: AbortSignal.timeout(2_000) },
+                )
+                cancelStale()
+              }
+              if (plan) {
+                if (route !== "runntime")
+                  throw new Error(
+                    "Select ruNNtime Omni for this session before playback verification",
+                  )
+                const segmentHashes = await Promise.all(segments.map(sha256Text))
+                const expectedTextHash = await sha256Text(segments.join("\n"))
+                cancelStale()
+                if (
+                  plan.expectedTextHash !== expectedTextHash ||
+                  plan.segmentHashes.length !== segmentHashes.length ||
+                  plan.segmentHashes.some((hash, index) => hash !== segmentHashes[index])
+                ) {
+                  throw new Error("The armed playback plan does not match this completed response")
+                }
+              }
+              cancelStale()
+              if (!begin(segments, "manual", visit, plan ?? undefined, route))
+                throw new DOMException("Playback session changed", "AbortError")
+              manualPreflight = undefined
+            } catch (error) {
+              const cancelled = signal.aborted || !isCurrent()
+              if (plan) {
+                await observeAudio(
+                  plan,
+                  { kind: cancelled ? "playback-cancelled" : "playback-failed" },
+                  AbortSignal.timeout(2_000),
+                ).catch(() => {})
+              }
+              if (!cancelled)
+                ctx.toast.show({
+                  title: "Read aloud failed",
+                  description: String(error),
+                  variant: "error",
+                })
+            } finally {
+              if (manualPreflight === pending) {
+                manualPreflight = undefined
+                if (!operation) setState("idle")
+              }
+            }
+          })()
         },
       }
     },

@@ -15,6 +15,10 @@ import {
 import { main as verificationCLI } from "../../src/verification/opencode/cli.ts"
 import type { NativeInteractionCliDependencies } from "../../src/verification/opencode/native-interaction-cli.ts"
 import type { OwnedLaunchManifest } from "../../src/verification/opencode/owned-launch.ts"
+import type {
+  AudioFixtureDelivery,
+  FrozenAudioFixtureID,
+} from "../../src/verification/opencode/audio-fixture-contract.ts"
 
 const root = "/private/tmp/lazers-native-interaction-cli-pipeline"
 const candidatePath = "/workspace/candidate"
@@ -99,18 +103,23 @@ type PipelineOptions = {
   legacyStatus?: boolean
   failKeyUp?: boolean
   loseEnqueueReply?: boolean
+  loadFixture?: (
+    verificationBase: string,
+    fixtureID: FrozenAudioFixtureID,
+  ) => Promise<AudioFixtureDelivery>
 }
 
 async function pipeline(options: PipelineOptions = {}) {
   const events: NativeInputEvent[] = []
   const insertedText: string[] = []
+  let rendererPID = 30_001
   const windowListeners = new Map<string, (...args: unknown[]) => void>()
   const contentsListeners = new Map<string, (...args: unknown[]) => void>()
   let focused = true
   const webContents: NativeWebContents = {
     id: 42,
     isDestroyed: () => false,
-    getOSProcessId: () => 30_001,
+    getOSProcessId: () => rendererPID,
     getURL: () => "oc://renderer/index.html",
     executeJavaScript: async () => rawSnapshot,
     capturePage: async () => ({ toPNG: () => Buffer.from("png-fixture") }),
@@ -179,6 +188,7 @@ async function pipeline(options: PipelineOptions = {}) {
     root,
     () => 123,
     () => undefined,
+    options.loadFixture,
   )
   Object.defineProperty(adapter, "verifyRuntime", { value: async () => binding })
   adapter.trackWindow(window)
@@ -242,6 +252,7 @@ async function pipeline(options: PipelineOptions = {}) {
     events,
     insertedText,
     windowReference,
+    setRendererPID: (pid: number) => (rendererPID = pid),
     requestIDs,
     acceptedOperations,
     enqueueCount: () => enqueueCount,
@@ -286,6 +297,121 @@ async function freshSnapshot(value: Awaited<ReturnType<typeof pipeline>>): Promi
 }
 
 describe("owned native interaction CLI-to-Main pipeline", () => {
+  test("arms dictation fixtures and playback plans without a DOM snapshot", async () => {
+    const fixture: AudioFixtureDelivery = {
+      requestID: "pending",
+      fixtureID: "quick-brown-fox",
+      transcript: "The quick brown fox jumps over the lazy dog.",
+      sampleRate: 16_000,
+      durationMs: 2_671,
+      sha256: "0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880",
+      audioBase64: "AA==",
+    }
+    const dictation = await pipeline({ loadFixture: async () => fixture })
+    const output = spyOn(console, "log").mockImplementation(() => undefined)
+    try {
+      await verificationCLI(
+        [
+          "audio-fixture",
+          "--root",
+          root,
+          "--window",
+          "12",
+          "--session",
+          "owned-session",
+          "--clip",
+          "quick-brown-fox",
+        ],
+        dictation.dependencies,
+      )
+      expect(dictation.acceptedOperations[0]).toMatchObject({
+        kind: "dictation-fixture",
+        sessionID: "owned-session",
+        fixtureID: "quick-brown-fox",
+      })
+      expect(dictation.leaseState()).toBe("idle")
+      const requestID = dictation.requestIDs[0]!
+      const delivery = await dictation.adapter.takeDictationFixture("owned-session", 12)
+      expect(delivery?.requestID).toBe(requestID)
+      expect(
+        await dictation.adapter.audioFixtureEnabled({ requestID, sessionID: "owned-session" }, 12),
+      ).toBe(true)
+      await expect(
+        dictation.adapter.audioFixtureEnabled(
+          { requestID: "different-request", sessionID: "owned-session" },
+          12,
+        ),
+      ).rejects.toThrow("target changed")
+      dictation.setRendererPID(30_002)
+      dictation.adapter.currentWindowReferences()
+      await expect(
+        dictation.adapter.audioFixtureEnabled({ requestID, sessionID: "owned-session" }, 12),
+      ).rejects.toThrow("no longer armed")
+    } finally {
+      output.mockRestore()
+      dictation.close()
+    }
+
+    const playback = await pipeline()
+    const playbackOutput = spyOn(console, "log").mockImplementation(() => undefined)
+    try {
+      await verificationCLI(
+        [
+          "audio-playback",
+          "--root",
+          root,
+          "--window",
+          "12",
+          "--session",
+          "owned-session",
+          "--expected",
+          "The last completed answer.",
+        ],
+        playback.dependencies,
+      )
+      expect(playback.acceptedOperations[0]).toMatchObject({
+        kind: "playback-plan",
+        sessionID: "owned-session",
+        segmentHashes: [expect.stringMatching(/^[a-f0-9]{64}$/)],
+      })
+      expect(playback.leaseState()).toBe("idle")
+    } finally {
+      playbackOutput.mockRestore()
+      playback.close()
+    }
+  })
+
+  test("audio fixtures accept only fixed clip IDs and expose no caller-supplied path option", async () => {
+    await expect(
+      verificationCLI([
+        "audio-fixture",
+        "--root",
+        root,
+        "--window",
+        "12",
+        "--session",
+        "owned-session",
+        "--clip",
+        "/etc/passwd",
+      ]),
+    ).rejects.toThrow("--clip must be quick-brown-fox or turn-left-next-street")
+    await expect(
+      verificationCLI([
+        "audio-fixture",
+        "--root",
+        root,
+        "--window",
+        "12",
+        "--session",
+        "owned-session",
+        "--clip",
+        "quick-brown-fox",
+        "--path",
+        "/etc/passwd",
+      ]),
+    ).rejects.toThrow()
+  })
+
   test("parses and admits Ctrl+T through the RPC schema and dispatches control key events", async () => {
     const value = await pipeline()
     try {

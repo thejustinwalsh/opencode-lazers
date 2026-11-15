@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { decodePCM16, encodePCM16, wavBase64 } from "./audio.ts"
+import { decodePCM16, encodePCM16, validateSpeechWav, wavBase64 } from "./audio.ts"
 
 test("bounded PCM transport round-trips without retaining recording files", () => {
   const samples = new Float32Array([-1, -0.5, 0, 0.5, 1])
@@ -13,6 +13,12 @@ test("bounded PCM transport round-trips without retaining recording files", () =
   expect(new TextDecoder().decode(wav.subarray(0, 4))).toBe("RIFF")
   expect(new DataView(wav.buffer).getUint32(24, true)).toBe(24000)
   expect(wav.length).toBe(54)
+  expect(() => validateSpeechWav(wav)).not.toThrow()
+  const silent = Uint8Array.from(atob(wavBase64(new Float32Array([0, 0]))), (c) => c.charCodeAt(0))
+  expect(() => validateSpeechWav(silent)).toThrow("silent")
+  const wrongRate = wav.slice()
+  new DataView(wrongRate.buffer).setUint32(24, 16_000, true)
+  expect(() => validateSpeechWav(wrongRate)).toThrow("24 kHz")
 })
 
 test("maximum-duration audio stays bounded and malformed long encodings fail", () => {
