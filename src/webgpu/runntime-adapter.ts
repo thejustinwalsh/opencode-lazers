@@ -1,8 +1,13 @@
 import tgpu, { type TgpuRoot } from "typegpu"
-import { createLfm3Audio, createLfm3Chat, initRunntime } from "runntime/zoo"
-import type { Lfm3Audio, Lfm3ChatSession, RangeSource, WeightCache } from "runntime/zoo"
+import { createD1Decider, createLfm3Omni, initRunntime, models } from "runntime/zoo"
+import type { Lfm3Omni, RangeSource, WeightCache } from "runntime/zoo"
 import { cachedRange } from "./files-fetch.ts"
-import { MODEL_FILES, LFM3_TOKENIZER_REVISION, LFM3_TOKENIZER_URL } from "./manifest.ts"
+import {
+  DECISION_FILES,
+  MODEL_FILES,
+  LFM3_TOKENIZER_REVISION,
+  LFM3_TOKENIZER_URL,
+} from "./manifest.ts"
 import { CleanupUncertainError } from "./lifecycle.ts"
 
 export type ModelFileID = (typeof MODEL_FILES)[number]["id"]
@@ -15,7 +20,7 @@ export type ModelFileRead = (
 
 /** Adapts the renderer's verified, lease-protected cache to ruNNtime's public half-open ranges. */
 export function cachedModelRangeSource(
-  id: ModelFileID,
+  id: ModelFileID | (typeof DECISION_FILES)[number]["id"],
   read: ModelFileRead,
   signal: AbortSignal,
 ): RangeSource {
@@ -25,16 +30,20 @@ export function cachedModelRangeSource(
         throw new Error("Invalid ruNNtime model byte range")
       signal.throwIfAborted()
       const expected = end - begin
-      const bytes = new Uint8Array(expected)
+      let bytes: Uint8Array | undefined
       let offset = 0
       for await (const chunk of cachedRange(read, id, begin, end - 1, signal)) {
-        bytes.set(chunk, offset)
+        if (!bytes && chunk.byteLength === expected) bytes = chunk
+        else {
+          bytes ??= new Uint8Array(expected)
+          bytes.set(chunk, offset)
+        }
         offset += chunk.byteLength
       }
       signal.throwIfAborted()
       if (offset !== expected)
         throw new Error(`Verified model cache returned ${offset} of ${expected} requested bytes`)
-      return bytes
+      return bytes ?? new Uint8Array()
     },
   }
 }
@@ -148,37 +157,61 @@ function owned<T extends { dispose(): Promise<void> }>(
   }
 }
 
-export async function loadRunntimeChat({ read, signal, onProgress }: LoadOptions) {
+export async function loadRunntimeOmni({ read, signal, onProgress }: LoadOptions) {
   const root = await initializeRoot(signal)
+  const ranges = new AbortController()
+  const cancelLoad = () => ranges.abort(signal.reason)
+  signal.addEventListener("abort", cancelLoad, { once: true })
   try {
-    const engine = await createLfm3Chat(
+    signal.throwIfAborted()
+    const engine = await createLfm3Omni(
       {
-        modelPath: cachedModelRangeSource("model", read, signal),
-        tokenizerPath: LFM3_TOKENIZER_URL,
-        format: "gguf",
-      },
-      { signal, onProgress, cache: tokenizerCache, cacheId: TOKENIZER_CACHE_ID },
-    )
-    return owned(root, engine) satisfies OwnedRunntime<Lfm3ChatSession>
-  } catch (error) {
-    return destroyAfterFailedLoad(root, error)
-  }
-}
-
-export async function loadRunntimeAudio({ read, signal, onProgress }: LoadOptions) {
-  const root = await initializeRoot(signal)
-  try {
-    const engine = await createLfm3Audio(
-      {
-        modelPath: cachedModelRangeSource("model", read, signal),
+        modelPath: cachedModelRangeSource("model", read, ranges.signal),
         projectorPath: cachedModelRangeSource("projector", read, signal),
         tokenizerPath: LFM3_TOKENIZER_URL,
         format: "gguf",
       },
       { signal, onProgress, cache: tokenizerCache, cacheId: TOKENIZER_CACHE_ID },
     )
-    return owned(root, engine) satisfies OwnedRunntime<Lfm3Audio>
+    const result = owned(root, engine) satisfies OwnedRunntime<Lfm3Omni>
+    return {
+      ...result,
+      dispose() {
+        ranges.abort()
+        return result.dispose()
+      },
+    }
+  } catch (error) {
+    ranges.abort()
+    return destroyAfterFailedLoad(root, error)
+  } finally {
+    signal.removeEventListener("abort", cancelLoad)
+  }
+}
+
+export async function loadRunntimeDecision({ read, signal, onProgress }: LoadOptions) {
+  const root = await initializeRoot(signal)
+  let tokenizerURL: string | undefined
+  try {
+    const tokenizer = await cachedModelRangeSource("tokenizer", read, signal).read(
+      0,
+      DECISION_FILES[1].bytes,
+    )
+    tokenizerURL = URL.createObjectURL(
+      new Blob([new Uint8Array(tokenizer)], { type: "application/json" }),
+    )
+    const engine = await createD1Decider(
+      {
+        ...models.d1.D1_OMNI_600M.Q8,
+        modelPath: cachedModelRangeSource("weights", read, signal),
+        tokenizerPath: tokenizerURL,
+      },
+      { signal, onProgress },
+    )
+    return owned(root, engine)
   } catch (error) {
     return destroyAfterFailedLoad(root, error)
+  } finally {
+    if (tokenizerURL) URL.revokeObjectURL(tokenizerURL)
   }
 }

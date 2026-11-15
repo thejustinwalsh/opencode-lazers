@@ -19,19 +19,17 @@ const solid: typeof import("solid-js") = await import(
 mock.module("solid-js", () => solid)
 
 let modelDisposals = 0
-mock.module("../.cache/lfm3-engine.js", () => ({
-  Lfm3OmniForConditionalGeneration: {
-    from_pretrained: async () => ({
-      dispose: async () => {
-        modelDisposals++
-      },
-      lost: new Promise(() => {}),
-      deviceInfo: () => ({ description: "Registered reload test GPU" }),
-      create_session: () => ({ dispose: async () => {}, generate: async function* () {} }),
-    }),
-  },
+mock.module("../src/webgpu/runntime-adapter.ts", () => ({
+  loadRunntimeOmni: async () => ({
+    dispose: async () => {
+      modelDisposals++
+    },
+    lost: new Promise(() => {}),
+    deviceInfo: () => ({ description: "Registered reload test GPU" }),
+    engine: { generate: async function* () {} },
+  }),
 }))
-mock.module("../src/webgpu/decision-runtime.ts", () => ({
+mock.module("../src/webgpu/runntime-decision-runtime.ts", () => ({
   loadDecisionRuntime: async () => ({ dispose: async () => {}, systemOne: async () => ({}) }),
 }))
 Object.defineProperty(globalThis, "navigator", { configurable: true, value: { gpu: {} } })

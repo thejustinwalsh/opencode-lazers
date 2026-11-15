@@ -11,6 +11,6 @@ export default defineConfig({
     ),
   },
   resolve: {
-    conditions: ["onnxruntime-web-use-extern-wasm", "module", "browser", "development|production"],
+    conditions: ["module", "browser", "development|production"],
   },
 })

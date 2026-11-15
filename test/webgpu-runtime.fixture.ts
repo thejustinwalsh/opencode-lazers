@@ -56,46 +56,44 @@ const allocate = () => {
     releases++
   }
 }
-mock.module("../.cache/lfm3-engine.js", () => ({
-  Lfm3OmniForConditionalGeneration: {
-    from_pretrained: async () => {
-      chatLoadStarted.resolve()
-      await chatLoadGate
-      return {
-        dispose: allocate(),
-        lost: new Promise(() => {}),
-        deviceInfo: () => ({ description: "Test GPU" }),
-        create_session: () => ({
-          dispose: async () => {},
-          generate: () => {
-            assert.equal(
-              traces.at(-1)?.stage,
-              "generate",
-              "The stage must reach the independent log sink before model work",
-            )
-            const gate = generationGate
-            generationStarted.resolve()
-            return {
-              async *[Symbol.asyncIterator]() {
-                await gate
-                yield { type: "text", text: "" }
-              },
-              result: (async () => {
-                await gate
-                return {
-                  message: { content: "ready" },
-                  usage: { prompt_tokens: 1, completion_tokens: 1 },
-                  finish_reason: "stop",
-                }
-              })(),
-            }
-          },
-        }),
-      }
-    },
+mock.module("../src/webgpu/runntime-adapter.ts", () => ({
+  loadRunntimeOmni: async () => {
+    chatLoadStarted.resolve()
+    await chatLoadGate
+    return {
+      dispose: allocate(),
+      lost: new Promise(() => {}),
+      deviceInfo: () => ({ description: "Test GPU" }),
+      engine: {
+        generate: () => {
+          assert.equal(
+            traces.at(-1)?.stage,
+            "generate",
+            "The stage must reach the independent log sink before model work",
+          )
+          const gate = generationGate
+          generationStarted.resolve()
+          return {
+            async *[Symbol.asyncIterator]() {
+              await gate
+              yield ""
+            },
+            result: (async () => {
+              await gate
+              return {
+                text: "ready",
+                inputTokens: 1,
+                completionTokens: 1,
+                finishReason: "stop",
+              }
+            })(),
+          }
+        },
+      },
+    }
   },
 }))
-mock.module("../src/webgpu/decision-runtime.ts", () => ({
+mock.module("../src/webgpu/runntime-decision-runtime.ts", () => ({
   loadDecisionRuntime: async (
     _read: unknown,
     _signal: unknown,
@@ -258,8 +256,8 @@ try {
   chatLoadGate = undefined
   await initialWarm
   await until(() => runtime.state() === "ready")
-  assert.equal(runtime.modelName(), "LFM3")
-  assert.equal(runtime.resident(), "chat")
+  assert.equal(runtime.modelName(), "ruNNtime Omni")
+  assert.equal(runtime.resident(), "audio")
   const timerTick = () => {
     assert.ok(rendererTimer, "The production renderer timer callback is installed")
     rendererTimer()
@@ -311,7 +309,7 @@ try {
   await until(() =>
     traces.some((event) => event.requestID !== runtimeID && event.stage === "generate"),
   )
-  assert.equal(runtime.modelName(), "LFM3", "A busy resident keeps its short name")
+  assert.equal(runtime.modelName(), "ruNNtime Omni", "A busy resident keeps its short name")
   assert.equal(runtime.phase(), "busy")
   const firstRequestID = traces.find(
     (event) => event.requestID !== runtimeID && event.stage === "generate",
@@ -485,7 +483,7 @@ try {
     traces.every((event) => ["prompt", "text", "audioBase64"].every((field) => !(field in event))),
     "Trace schema must not carry prompt, output or audio content",
   )
-  assert.ok(traces.every((event) => event.observedEP === "unknown"))
+  assert.ok(traces.some((event) => event.observedEP === "webgpu"))
   automaticTicks = false
   // F-S13-1: transport failures preserve the resident model and exact ownership.
   const beforeTransport = { releases, attachCalls, detachCalls }
@@ -584,15 +582,19 @@ try {
   failDecisionEnsure = true
   assert.equal((await decision()).ok, false, "Cache failure occurs before old-model disposal")
   failDecisionEnsure = false
-  assert.equal(runtime.modelName(), "LFM3", "The resident model wins over a failed target")
-  assert.equal(runtime.resident(), "chat")
+  assert.equal(runtime.modelName(), "ruNNtime Omni", "The resident model wins over a failed target")
+  assert.equal(runtime.resident(), "audio")
   assert.equal(runtime.state(), "error")
 
   failCleanup = true
   assert.equal((await decision()).ok, false, "Failed disposal retains the old allocation")
   failCleanup = false
-  assert.equal(runtime.modelName(), "LFM3", "A tainted resident wins over the requested d1 target")
-  assert.equal(runtime.resident(), "chat")
+  assert.equal(
+    runtime.modelName(),
+    "ruNNtime Omni",
+    "A tainted resident wins over the requested d1 target",
+  )
+  assert.equal(runtime.resident(), "audio")
   assert.equal(runtime.state(), "error")
 
   const decisionLoad = Promise.withResolvers<void>()
@@ -600,8 +602,8 @@ try {
   const oldDisposal = Promise.withResolvers<void>()
   cleanupGate = oldDisposal.promise
   const toDecision = decision()
-  await until(() => runtime.modelName() === "LFM3" && runtime.phase() === "loading")
-  assert.equal(runtime.resident(), "chat", "A resident remains authoritative during its disposal")
+  await until(() => runtime.modelName() === "ruNNtime Omni" && runtime.phase() === "loading")
+  assert.equal(runtime.resident(), "audio", "A resident remains authoritative during its disposal")
   oldDisposal.resolve()
   cleanupGate = undefined
   await until(() => runtime.modelName() === undefined && runtime.resident() === undefined)
@@ -625,7 +627,7 @@ try {
   chatLoad.resolve()
   chatLoadGate = undefined
   assert.equal((await toChat).ok, true)
-  assert.equal(runtime.modelName(), "LFM3", "Switching back restores the chat identity")
+  assert.equal(runtime.modelName(), "ruNNtime Omni", "Switching back restores the chat identity")
 
   failDecisionLoad = true
   assert.equal((await decision()).ok, false, "Load failure occurs after disposing the old model")

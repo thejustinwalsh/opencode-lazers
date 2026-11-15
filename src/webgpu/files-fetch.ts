@@ -1,4 +1,4 @@
-import { MAX_READ_BYTES, MODEL_FILES, modelURL } from "./manifest.ts"
+import { MAX_READ_BYTES } from "./manifest.ts"
 
 type Read = (id: string, offset: number, length: number, signal?: AbortSignal) => Promise<string>
 
@@ -45,60 +45,5 @@ export async function* cachedRange(
     }
   } finally {
     controller.abort()
-  }
-}
-
-/** Adapt the engine's HTTP range reads to the plugin's verified on-disk cache. No renderer network fallback. */
-export function cachedModelFetch(
-  read: Read,
-): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
-  return async (input, init) => {
-    const request = new Request(input, init)
-    request.signal.throwIfAborted()
-    const lifetime = new AbortController()
-    const signal = AbortSignal.any([request.signal, lifetime.signal])
-    const file = MODEL_FILES.find((candidate) => modelURL(candidate.name) === request.url)
-    if (!file) throw new Error("The WebGPU engine requested an unpinned resource")
-    const headers = new Headers({
-      "content-length": String(file.bytes),
-      "accept-ranges": "bytes",
-      etag: `"${file.sha256}"`,
-    })
-    if (request.method === "HEAD") return new Response(null, { headers })
-    if (request.method !== "GET") throw new Error("Unsupported cached model operation")
-    const range = request.headers.get("range")
-    const match = range?.match(/^bytes=(\d+)-(\d+)$/)
-    if (range && !match) throw new Error("Invalid cached model range")
-    const start = match ? Number(match[1]) : 0
-    const end = match ? Number(match[2]) : file.bytes - 1
-    if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) ||
-      start < 0 ||
-      end < start ||
-      end >= file.bytes
-    )
-      return new Response(null, { status: 416 })
-    headers.set("content-length", String(end - start + 1))
-    if (match) headers.set("content-range", `bytes ${start}-${end}/${file.bytes}`)
-    const chunks = cachedRange(read, file.id, start, end, signal)
-    const body = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          request.signal.throwIfAborted()
-          const chunk = await chunks.next()
-          if (chunk.done) controller.close()
-          else controller.enqueue(chunk.value)
-        } catch (error) {
-          lifetime.abort(error)
-          controller.error(error)
-        }
-      },
-      cancel: async () => {
-        lifetime.abort()
-        await chunks.return(undefined)
-      },
-    })
-    return new Response(body, { headers, status: match ? 206 : 200 })
   }
 }

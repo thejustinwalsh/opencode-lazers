@@ -1,7 +1,5 @@
 import { createEffect, createSignal } from "solid-js"
 import type { Plugin } from "@opencode/plugin/gui"
-import { Lfm3OmniForConditionalGeneration } from "../../.cache/lfm3-engine.js"
-import type { Session } from "../../.cache/lfm3-engine.js"
 import { ModelFiles } from "./ipc.ts"
 import {
   MODEL_BYTES,
@@ -9,34 +7,30 @@ import {
   DECISION_FILES,
   DECISION_REPOSITORY,
   DECISION_REVISION,
-  ENGINE_SHA256,
-  ENGINE_REVISION,
   LFM3_TOKENIZER_REVISION,
   MODEL_FILES,
   MODEL_REPOSITORY,
   MODEL_REVISION,
   RUNNTIME_REVISION,
 } from "./manifest.ts"
-import { cachedModelFetch } from "./files-fetch.ts"
 import {
   GENERATION_RESULT_CONTRACT_REVISION,
   LocalInference,
   RendererInference,
   isRendererOwnershipLost,
 } from "./rpc.ts"
-import type { InferenceJob, InferenceResult } from "./rpc.ts"
+import type { InferenceJob } from "./rpc.ts"
 import type { DecisionInput } from "./decisions.ts"
 import { failed } from "./broker.ts"
-import { AUDIO_RATE, decodePCM16, wavBase64 } from "./audio.ts"
-import { loadDecisionRuntime } from "./decision-runtime.ts"
-import type { DecisionRuntime } from "./decision-runtime.ts"
+import { decodePCM16, wavBase64 } from "./audio.ts"
+import { loadDecisionRuntime, type DecisionRuntime } from "./runntime-decision-runtime.ts"
 import type { SystemOneInput } from "./system-one.ts"
 import { ExclusiveModels, retryLoad } from "./lifecycle.ts"
-import { DEFAULT_VOICE, speechInstruction } from "./speech.ts"
+import { DEFAULT_VOICE } from "./speech.ts"
 import type { SpeechVoice } from "./speech.ts"
 import { featureEnabled, usesGPU, needsChat } from "./features.ts"
 import type { Features, LocalFeature } from "./features.ts"
-import { loadRunntimeAudio, loadRunntimeChat } from "./runntime-adapter.ts"
+import { loadRunntimeOmni } from "./runntime-adapter.ts"
 import { modelKindForInference } from "./inference-route.ts"
 import type { ChatRoute, ModelKind } from "./inference-route.ts"
 
@@ -48,35 +42,6 @@ import type {
   ModelLeaseIdentity,
   ModelLeaseRetirement,
 } from "./ipc.ts"
-
-type ChatModel =
-  | {
-      route: "liquid"
-      engine: Lfm3OmniForConditionalGeneration
-      lost: Promise<unknown>
-      dispose(): Promise<void>
-      loseDevice?: () => void
-    }
-  | {
-      route: "runntime"
-      engine: Awaited<ReturnType<typeof loadRunntimeChat>>["engine"]
-      lost: Promise<unknown>
-      dispose(): Promise<void>
-      loseDevice(): void
-    }
-
-const normalizeFinishReason = (reason: string): NonNullable<InferenceResult["finishReason"]> => {
-  switch (reason) {
-    case "stop":
-    case "length":
-    case "content-filter":
-    case "tool-calls":
-    case "error":
-      return reason
-    default:
-      return "other"
-  }
-}
 
 class WorkerDetachError extends Error {}
 
@@ -161,8 +126,6 @@ export function createInferenceRuntime(
     wallNow?: () => number
     schedule?: (callback: () => void, delayMs: number) => () => void
     serviceTimeoutMs?: number
-    chatRoute?: () => ChatRoute
-    audioRoute?: () => ChatRoute
   } = {},
 ) {
   const files = ctx.main(ModelFiles)
@@ -180,8 +143,7 @@ export function createInferenceRuntime(
   const now = timing.now ?? (() => performance.now())
   const wallNow = timing.wallNow ?? Date.now
   const runtimeTrace = new RuntimeTrace(writeTrace, now)
-  const chatRoute = () => timing.chatRoute?.() ?? "liquid"
-  const audioRoute = () => timing.audioRoute?.() ?? "liquid"
+  const audioRoute = () => "runntime" as const
   let activeInputTokens: number | undefined
   const traceStage = async (stage: TraceStage, metadata?: InferenceTraceMark) => {
     if (runtimeTrace.hasActiveRequest && metadata?.actualInputTokens !== undefined)
@@ -202,12 +164,9 @@ export function createInferenceRuntime(
   const [gpu, setGPU] = createSignal("")
   const [phase, setPhase] = createSignal("unloaded")
   const [resident, setResidentValue] = createSignal<ModelKind | undefined>()
-  const [residentChatRoute, setResidentChatRoute] = createSignal<ChatRoute | undefined>()
   const setResident = (kind: ModelKind | undefined) => {
     setResidentValue(kind)
-    setResidentChatRoute(kind === "chat" ? models.get("chat")?.route : undefined)
   }
-  const [target, setTarget] = createSignal<ModelKind | undefined>()
   const [contractStatus, setContractStatus] = createSignal<
     "unverified" | "checking" | "compatible" | "incompatible"
   >("unverified")
@@ -263,8 +222,7 @@ export function createInferenceRuntime(
       if (entry) update(entry)
     })
   const models = new ExclusiveModels<{
-    chat: ChatModel
-    audio: Awaited<ReturnType<typeof loadRunntimeAudio>>
+    audio: Awaited<ReturnType<typeof loadRunntimeOmni>>
     decision: { engine: DecisionRuntime; dispose(): Promise<void> }
   }>()
   const transcripts = new Map<string, (text: string) => void>()
@@ -353,12 +311,8 @@ export function createInferenceRuntime(
       models.current() === "decision"
         ? "d1 ready · chat and speech load on demand"
         : models.current() === "audio"
-          ? "ruNNtime Omni audio ready · chat and d1 load on demand"
-          : models.current() === "chat"
-            ? models.get("chat")?.route === "runntime"
-              ? "ruNNtime Omni chat ready · speech and d1 load on demand"
-              : "Liquid chat and speech ready · d1 loads on demand"
-            : "Unloaded; the next request loads the cached model",
+          ? "ruNNtime Omni ready · d1 loads on demand"
+          : "Unloaded; the next request loads the cached model",
     )
   }
   const fail = (error: unknown) => {
@@ -739,30 +693,18 @@ export function createInferenceRuntime(
     void cancel.catch(() => {})
   }
 
-  const ensureModel = async (
-    kind: ModelKind,
-    signal: AbortSignal,
-    selectedChatRoute?: ChatRoute,
-  ) => {
+  const ensureModel = async (kind: ModelKind, signal: AbortSignal) => {
     const requestedSignal = signal
     signal = AbortSignal.any([signal, AbortSignal.timeout(120_000)])
     if (
-      ((kind === "chat" || kind === "audio") && !needsChat(features())) ||
+      (kind === "audio" && !needsChat(features())) ||
       (kind === "decision" && !featureEnabled(features(), "decisions"))
     )
       throw Error("This model's local features are turned off")
-    const requestedRoute: ChatRoute | undefined =
-      kind === "audio"
-        ? "runntime"
-        : kind === "chat"
-          ? (selectedChatRoute ?? chatRoute())
-          : undefined
-    if (models.get(kind) && (kind !== "chat" || models.get("chat")?.route === requestedRoute)) {
+    if (models.get(kind)) {
       setResident(models.current())
-      setTarget(undefined)
       return
     }
-    setTarget(kind)
     const lease = owner
     if (!lease) {
       const error = new Error("Local model cache ownership was lost")
@@ -788,11 +730,7 @@ export function createInferenceRuntime(
     setDetail(
       kind === "decision"
         ? "Loading d1 decision model from cache"
-        : kind === "audio"
-          ? "Loading ruNNtime Omni audio pair from verified cache"
-          : requestedRoute === "runntime"
-            ? "Loading ruNNtime Omni chat from verified cache"
-            : "Loading Liquid chat and speech model from cache",
+        : "Loading ruNNtime Omni from verified cache",
     )
     try {
       if (!usesGPU(features())) throw Error("Local inference is turned off")
@@ -807,102 +745,18 @@ export function createInferenceRuntime(
         if (kind !== "decision") await legacy.ensure({ owner: lease.owner }, { signal })
         else await legacy.decisionEnsure({ owner: lease.owner }, { signal })
       }
-      if (
-        models.current() &&
-        (models.current() !== kind ||
-          models.isTainted() ||
-          (kind === "chat" && models.get("chat")?.route !== requestedRoute))
-      ) {
+      if (models.current() && (models.current() !== kind || models.isTainted())) {
         await models.release()
         setResident(models.current())
       }
-      if (kind === "chat") {
-        const loaded = await models.ensure(
-          "chat",
-          () =>
-            retryLoad(
-              async () => {
-                await traceStage("session-create")
-                if (requestedRoute === "runntime") {
-                  const loaded = await loadRunntimeChat({
-                    read: (id, offset, length, readSignal) =>
-                      readModelFile(id, offset, length, readSignal ?? signal),
-                    signal,
-                    onProgress: (name, done, total) =>
-                      setDetail(
-                        `Loading ruNNtime chat · ${name} · ${Math.floor((done / total) * 100)}%`,
-                      ),
-                  })
-                  await traceStage("session-ready")
-                  let intentional = false
-                  void loaded.lost.then(() => {
-                    if (!intentional && !disposed && !unloading) recover("chat")
-                  })
-                  return {
-                    route: "runntime" as const,
-                    engine: loaded.engine,
-                    lost: loaded.lost,
-                    loseDevice: loaded.loseDevice,
-                    dispose: async () => {
-                      intentional = true
-                      await loaded.dispose()
-                    },
-                  }
-                }
-                const engine = await Lfm3OmniForConditionalGeneration.from_pretrained(
-                  MODEL_REPOSITORY,
-                  {
-                    revision: MODEL_REVISION,
-                    file: MODEL_FILES[0].name,
-                    mmproj: MODEL_FILES[1].name,
-                    maxLength: 4_096,
-                    cache: false,
-                    prefixSnapshotStore: null,
-                    signal,
-                    fetch: cachedModelFetch((id, offset, length, readSignal) =>
-                      readModelFile(id, offset, length, readSignal ?? signal),
-                    ),
-                    onProgress: (progress) =>
-                      setDetail(
-                        `${progress.message ?? "Loading chat model"}${progress.fraction === undefined ? "" : ` · ${Math.floor(progress.fraction * 100)}%`}`,
-                      ),
-                  },
-                )
-                await traceStage("session-ready")
-                let intentional = false
-                void engine.lost.then(() => {
-                  if (!intentional && !disposed && !unloading) recover("chat")
-                })
-                return {
-                  route: "liquid" as const,
-                  engine,
-                  lost: engine.lost,
-                  dispose: async () => {
-                    intentional = true
-                    await engine.dispose()
-                  },
-                }
-              },
-              signal,
-              setDetail,
-            ),
-          signal,
-        )
-        setGPU(
-          loaded.route === "liquid"
-            ? loaded.engine.deviceInfo().description ||
-                loaded.engine.deviceInfo().vendor ||
-                "WebGPU device"
-            : "WebGPU · ruNNtime TypeGPU",
-        )
-      } else if (kind === "audio") {
+      if (kind === "audio") {
         const loaded = await models.ensure(
           "audio",
           () =>
             retryLoad(
               async () => {
                 await traceStage("session-create")
-                const model = await loadRunntimeAudio({
+                const model = await loadRunntimeOmni({
                   read: (id, offset, length, readSignal) =>
                     readModelFile(id, offset, length, readSignal ?? signal),
                   signal,
@@ -938,7 +792,7 @@ export function createInferenceRuntime(
             retryLoad(
               async () => {
                 const engine = await loadDecisionRuntime(
-                  (id, offset, length) => {
+                  (id, offset, length, readSignal = signal) => {
                     if (!supportsLeaseHandoff)
                       return (
                         files as unknown as {
@@ -947,10 +801,13 @@ export function createInferenceRuntime(
                             options: { signal: AbortSignal },
                           ): Promise<string>
                         }
-                      ).decisionRead({ owner: lease.owner, id, offset, length }, { signal })
+                      ).decisionRead(
+                        { owner: lease.owner, id, offset, length },
+                        { signal: readSignal },
+                      )
                     return files.decisionRead(
                       { ...leaseIdentity(lease), id, offset, length },
-                      { signal },
+                      { signal: readSignal },
                     )
                   },
                   signal,
@@ -968,16 +825,14 @@ export function createInferenceRuntime(
             ),
           signal,
         )
-        setGPU("WebGPU · d1-Omni-2B Q4f16")
+        setGPU("WebGPU · ruNNtime d1 Omni 600M Q8")
       }
       signal.throwIfAborted()
       setResident(models.current())
-      setTarget(undefined)
       lastUsed = wallNow()
     } catch (error) {
       setResident(models.current())
       if (requestedSignal.aborted) {
-        if (!models.current()) setTarget(undefined)
         if (!unloading && !disposed) ready()
       } else fail(error)
       throw error
@@ -996,7 +851,6 @@ export function createInferenceRuntime(
     losses.push(wallNow())
     recoveryController = new AbortController()
     recoveryKind = kind
-    setTarget(kind)
     const recoverySignal = AbortSignal.any([
       ctx.signal,
       recoveryController.signal,
@@ -1012,7 +866,6 @@ export function createInferenceRuntime(
         if (waitForDemand) {
           // A failed decision may have exhausted GPU memory. Release its device
           // now and let the next queued job choose and load its model.
-          setTarget(undefined)
           setGPU("")
           ready()
           return
@@ -1037,23 +890,12 @@ export function createInferenceRuntime(
   }
 
   const run = async (job: InferenceJob, token: string, controller: AbortController) => {
-    const route = job.route ?? chatRoute()
-    const inferenceKind = modelKindForInference(job.mode, route)
+    const inferenceKind = modelKindForInference(job.mode)
     const systemOne = inferenceKind === "decision"
-    const backend = systemOne ? "d1" : route === "runntime" ? "runntime" : "liquid"
-    const modelFiles = systemOne
-      ? DECISION_FILES
-      : inferenceKind === "audio" || route === "liquid"
-        ? MODEL_FILES
-        : MODEL_FILES.slice(0, 1)
+    const backend = systemOne ? "d1" : "runntime"
     const modelArtifacts = artifactIdentity(
-      modelFiles,
-      systemOne
-        ? []
-        : [
-            ...(route === "runntime" ? [tokenizerIdentity] : []),
-            ...(route === "liquid" ? [`Liquid engine bundle sha256:${ENGINE_SHA256}`] : []),
-          ],
+      systemOne ? DECISION_FILES : MODEL_FILES,
+      systemOne ? [] : [tokenizerIdentity],
     )
     const trace = runtimeTrace.begin({
       requestID: job.requestID,
@@ -1061,22 +903,14 @@ export function createInferenceRuntime(
       mode: job.mode,
       feature: job.feature,
       configuredEP: "webgpu",
-      observedEP: backend === "runntime" ? "webgpu" : "unknown",
+      observedEP: "webgpu",
       backend,
       modelRepository: systemOne ? DECISION_REPOSITORY : MODEL_REPOSITORY,
       modelRevision: systemOne ? DECISION_REVISION : MODEL_REVISION,
-      modelPrecision: systemOne
-        ? "Q4f16"
-        : modelFiles.length > 1
-          ? "language Q4_K_M + projector Q8_0"
-          : "language Q4_K_M",
+      modelPrecision: systemOne ? "Q8" : "language Q4_K_M + projector Q8_0",
       modelArtifacts,
-      runtimeRevision: systemOne
-        ? "onnxruntime-web@1.31.1"
-        : route === "runntime"
-          ? RUNNTIME_REVISION
-          : ENGINE_REVISION,
-      contextCapacityTokens: systemOne ? 8_192 : 4_096,
+      runtimeRevision: RUNNTIME_REVISION,
+      contextCapacityTokens: systemOne ? 16_384 : 4_096,
       configuredMaxTokens: job.maxTokens,
     })
     activeInputTokens = undefined
@@ -1108,7 +942,6 @@ export function createInferenceRuntime(
         ),
       job.timeoutMs,
     )
-    let session: Session | undefined
     let result = failed("Generation did not complete")
     let failure: unknown
     try {
@@ -1116,7 +949,7 @@ export function createInferenceRuntime(
         throw Error("This local inference feature is turned off")
       recoveryRetry = undefined
       await traceStage("loading")
-      await ensureModel(inferenceKind, controller.signal, job.mode === "text" ? route : undefined)
+      await ensureModel(inferenceKind, controller.signal)
       setState("busy")
       setPhase("busy")
       setDetail(
@@ -1142,7 +975,7 @@ export function createInferenceRuntime(
           promptTokens: output.usage.input_tokens,
           completionTokens: 0,
         }
-      } else if (inferenceKind === "audio") {
+      } else if (inferenceKind === "audio" && job.mode !== "text") {
         const engine = models.get("audio")!.engine
         await traceStage("session-create")
         await traceStage("session-ready")
@@ -1175,8 +1008,8 @@ export function createInferenceRuntime(
             audioBase64: wavBase64(output.samples, output.sampleRate),
           }
         }
-      } else if (models.get("chat")?.route === "runntime") {
-        const engine = models.get("chat")!.engine
+      } else {
+        const engine = models.get("audio")!.engine
         if (!("generate" in engine)) throw Error("ruNNtime chat route is unavailable")
         await traceStage("session-create")
         await traceStage("session-ready")
@@ -1204,92 +1037,13 @@ export function createInferenceRuntime(
           completionTokens: output.completionTokens,
           finishReason: output.finishReason,
         }
-      } else {
-        await traceStage("session-create")
-        const engine = models.get("chat")!.engine
-        if (!("create_session" in engine)) throw Error("Liquid chat route is unavailable")
-        session = engine.create_session()
-        await traceStage("session-ready")
-        const messages: Parameters<Session["generate"]>[0] =
-          job.mode === "transcribe"
-            ? (() => {
-                const samples = decodePCM16(job.audioBase64)
-                const audio = new AudioBuffer({
-                  length: samples.length,
-                  numberOfChannels: 1,
-                  sampleRate: AUDIO_RATE,
-                })
-                audio.getChannelData(0).set(samples)
-                return [
-                  {
-                    role: "system",
-                    content: "Perform ASR in English.",
-                  },
-                  { role: "user", content: [{ type: "audio" as const, audio }] },
-                ]
-              })()
-            : job.mode === "speak"
-              ? [
-                  { role: "system", content: speechInstruction(job.voice) },
-                  { role: "user", content: job.prompt },
-                ]
-              : job.messages
-                ? job.messages.map(({ role, content }) => ({ role, content }))
-                : [{ role: "user", content: job.prompt }]
-        await traceStage("generate", heap())
-        const generation = session!.generate(messages, {
-          generation_mode: job.mode === "speak" ? "audio" : "text",
-          ...(job.mode === "speak"
-            ? { depth_decoder_temperature: 0.4, depth_decoder_repetition_penalty: 1.2 }
-            : {}),
-          max_new_tokens: job.maxTokens,
-          signal: controller.signal,
-          enable_thinking: false,
-        })
-        for await (const event of generation) {
-          controller.signal.throwIfAborted()
-          if (event.type === "text" && event.text) await deliverText(event.text)
-        }
-        const output = await generation.result
-        controller.signal.throwIfAborted()
-        const text =
-          typeof output.message.content === "string"
-            ? output.message.content
-            : output.message.content.map((part) => part.text ?? "").join("")
-        if (job.streaming && streamedText !== text)
-          throw new Error("Liquid stream did not match its final text")
-        if (job.mode === "speak" && output.finish_reason === "length")
-          throw new Error("Speech segment exceeded the generation budget; use shorter text")
-        result = {
-          ok: true,
-          text,
-          error: "",
-          promptTokens: output.usage.prompt_tokens,
-          completionTokens: output.usage.completion_tokens,
-          finishReason: normalizeFinishReason(output.finish_reason),
-          ...(job.mode === "speak" && Array.isArray(output.message.content)
-            ? {
-                audioBase64: wavBase64(
-                  output.message.content.find((part: { type: string }) => part.type === "audio_out")
-                    ?.audio ?? new Float32Array(),
-                ),
-              }
-            : {}),
-        }
       }
     } catch (error) {
       failure = error
       result = failed(error instanceof Error ? error.message : String(error))
     } finally {
       clearTimeout(deadline)
-      try {
-        await traceStage("dispose")
-        await session?.dispose()
-      } catch (error) {
-        failure = error
-        result = failed(`GPU session cleanup failed: ${String(error)}`)
-        recover("chat")
-      }
+      await traceStage("dispose")
       await traceWrites
       let completionFailed = false
       let completionFailure: unknown
@@ -1336,7 +1090,6 @@ export function createInferenceRuntime(
         await recovery
         await models.release()
         setResident(models.current())
-        setTarget(undefined)
         const lease = owner
         if (lease && (!ctx.signal.aborted || !supportsLeaseHandoff)) {
           if (await detachWorker(lease))
@@ -1372,7 +1125,10 @@ export function createInferenceRuntime(
         !(await worker().demand({}, { signal: ctx.signal })).requested &&
         !active
       ) {
-        await ensureModel(needsChat(features()) ? "chat" : "decision", ctx.signal)
+        await ensureModel(
+          modelKindForInference(needsChat(features()) ? "text" : "systemone"),
+          ctx.signal,
+        )
         ready()
       }
       return
@@ -1384,9 +1140,7 @@ export function createInferenceRuntime(
     const signal = AbortSignal.any([ctx.signal, controller.signal, AbortSignal.timeout(600_000)])
     setState("loading")
     setPhase("loading")
-    setTarget(needsChat(features()) ? "chat" : "decision")
     setDetail("Preparing verified local model files")
-    const cacheOperations: Promise<void>[] = []
     initializing = (async () => {
       try {
         await verifyCompletionContract(signal)
@@ -1398,47 +1152,13 @@ export function createInferenceRuntime(
           { signal },
         )
         attachPending = false
-        if (needsChat(features()))
-          cacheOperations.push(
-            retryLoad(
-              () =>
-                supportsLeaseHandoff
-                  ? files.ensure(leaseIdentity(lease), { signal })
-                  : (
-                      files as unknown as {
-                        ensure(
-                          input: { owner: string },
-                          options: { signal: AbortSignal },
-                        ): Promise<void>
-                      }
-                    ).ensure({ owner: lease.owner }, { signal }),
-              signal,
-              setDetail,
-            ),
-          )
-        if (featureEnabled(features(), "decisions"))
-          cacheOperations.push(
-            retryLoad(
-              () =>
-                supportsLeaseHandoff
-                  ? files.decisionEnsure(leaseIdentity(lease), { signal })
-                  : (
-                      files as unknown as {
-                        decisionEnsure(
-                          input: { owner: string },
-                          options: { signal: AbortSignal },
-                        ): Promise<void>
-                      }
-                    ).decisionEnsure({ owner: lease.owner }, { signal }),
-              signal,
-              setDetail,
-            ),
-          )
-        await Promise.all(cacheOperations)
         // Let the mailbox select the model if an inference request is already waiting.
         // Warming chat first would allocate it only to immediately switch to decisions.
         if (warm && !(await worker().demand({}, { signal })).requested)
-          await ensureModel(needsChat(features()) ? "chat" : "decision", signal)
+          await ensureModel(
+            modelKindForInference(needsChat(features()) ? "text" : "systemone"),
+            signal,
+          )
         nextLoadAttempt = 0
         loadFailures = 0
         autoload = false
@@ -1450,7 +1170,6 @@ export function createInferenceRuntime(
           usesGPU(features()) &&
           contractStatus() !== "incompatible"
         controller.abort()
-        await Promise.allSettled(cacheOperations)
         try {
           await models.release()
           setResident(models.current())
@@ -1488,7 +1207,6 @@ export function createInferenceRuntime(
     try {
       await models.release()
       setResident(undefined)
-      setTarget(undefined)
       setGPU("")
       ready()
     } catch (error) {
@@ -1616,8 +1334,7 @@ export function createInferenceRuntime(
         !recoveryRetry &&
         state() !== "error" &&
         !models.isTainted() &&
-        (((models.current() === "chat" || models.current() === "audio") &&
-          !needsChat(features())) ||
+        ((models.current() === "audio" && !needsChat(features())) ||
           (models.current() === "decision" && !featureEnabled(features(), "decisions")))
       ) {
         await releaseResident()
@@ -1708,7 +1425,7 @@ export function createInferenceRuntime(
         autoload = enabled
       }
       if (
-        ((recoveryKind === "chat" || recoveryKind === "audio") && !needsChat(settings)) ||
+        (recoveryKind === "audio" && !needsChat(settings)) ||
         (recoveryKind === "decision" && !featureEnabled(settings, "decisions"))
       )
         recoveryController?.abort(new Error("Model features turned off"))
@@ -1728,23 +1445,6 @@ export function createInferenceRuntime(
     wasEnabled = enabled
     previous = settings
   })
-  let previousRoute = chatRoute()
-  createEffect(() => {
-    const selectedRoute = chatRoute()
-    if (selectedRoute === previousRoute) return
-    previousRoute = selectedRoute
-    const current = models.current() ?? target()
-    if ((current !== "chat" && current !== "audio") || !usesGPU(features()) || disposed) return
-    loadController?.abort(new Error("Chat and audio route changed"))
-    recoveryController?.abort(new Error("Chat and audio route changed"))
-    autoload = true
-    void unload().then(() => {
-      if (disposed || models.isTainted() || !usesGPU(features())) return
-      autoload = true
-      void load()
-    })
-  })
-
   const modelIdentity = () => {
     const kind = resident()
     if (kind === "decision")
@@ -1752,9 +1452,9 @@ export function createInferenceRuntime(
         backend: "d1" as const,
         repository: DECISION_REPOSITORY,
         revision: DECISION_REVISION,
-        precision: "Q4f16",
+        precision: "Q8",
         artifacts: artifactIdentity(DECISION_FILES),
-        runtimeRevision: "onnxruntime-web@1.31.1",
+        runtimeRevision: RUNNTIME_REVISION,
       }
     if (kind === "audio")
       return {
@@ -1765,24 +1465,6 @@ export function createInferenceRuntime(
         artifacts: artifactIdentity(MODEL_FILES, [tokenizerIdentity]),
         runtimeRevision: RUNNTIME_REVISION,
       }
-    if (kind === "chat") {
-      const selectedRoute = residentChatRoute()
-      if (!selectedRoute) return undefined
-      const files = selectedRoute === "liquid" ? MODEL_FILES : MODEL_FILES.slice(0, 1)
-      return {
-        backend: selectedRoute,
-        repository: MODEL_REPOSITORY,
-        revision: MODEL_REVISION,
-        precision: files.length > 1 ? "language Q4_K_M + projector Q8_0" : "language Q4_K_M",
-        artifacts: artifactIdentity(
-          files,
-          selectedRoute === "runntime"
-            ? [tokenizerIdentity]
-            : [`Liquid engine bundle sha256:${ENGINE_SHA256}`],
-        ),
-        runtimeRevision: selectedRoute === "runntime" ? RUNNTIME_REVISION : ENGINE_REVISION,
-      }
-    }
     return undefined
   }
   return {
@@ -1796,10 +1478,8 @@ export function createInferenceRuntime(
     contractStatus,
     modelName: () => {
       const kind = resident()
-      const identity = modelIdentity()
       if (kind === "decision") return "d1"
-      if (kind === "audio") return "ruNNtime Omni audio"
-      if (kind === "chat") return identity?.backend === "runntime" ? "ruNNtime LFM3" : "LFM3"
+      if (kind === "audio") return "ruNNtime Omni"
       return undefined
     },
     audioRoute,
@@ -1815,16 +1495,12 @@ export function createInferenceRuntime(
     canSimulateDeviceLoss: () => {
       const current = resident()
       return Boolean(
-        current &&
-        state() === "ready" &&
-        (models.get("decision") || models.get("audio") || models.get("chat")?.loseDevice),
+        current && state() === "ready" && (models.get("decision") || models.get("audio")),
       )
     },
     simulateDeviceLoss: () => {
-      const chat = models.get("chat")
       const audio = models.get("audio")
-      if (chat?.loseDevice) chat.loseDevice()
-      else if (audio) audio.loseDevice()
+      if (audio) audio.loseDevice()
       else models.get("decision")?.engine.loseDevice()
     },
     generate: (prompt: string, signal?: AbortSignal) =>

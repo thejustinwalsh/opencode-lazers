@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "verify": "bun fmt && bun lint --fix && bun fmt && bun check",
-    "build:gui": "bun scripts/prepare-engine.ts && bun scripts/build-radar-layout.ts && vite build && bun scripts/verify-gui-bundle.ts"
+    "build:gui": "bun scripts/build-radar-layout.ts && vite build && bun scripts/verify-gui-bundle.ts"
   },
   "peerDependencies": {
     "@opencode/plugin": "2.2.5",
@@ -44,9 +44,8 @@
     "echarts": "6.1.0",
     "elkjs": "0.12.1",
     "ignore": "7.0.14",
-    "onnxruntime-web": "1.31.1",
     "repomix": "1.18.1",
-    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-4bec710/runntime-0.2.0-4bec710.tgz",
+    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-68e9e60/runntime-0.2.0-68e9e60.tgz",
     "xstate": "5.33.3",
     "zod": "4.6.7"
   }

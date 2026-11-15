@@ -19,7 +19,7 @@ import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
 import { panelErrorMessage } from "./panel-error.ts"
 import { registerDictation } from "./webgpu/dictation.tsx"
 import { audioFilePCM16 } from "./webgpu/audio.ts"
-import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
+import { DEFAULT_VOICE } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
 import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
@@ -30,7 +30,7 @@ import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rp
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
-import { DEFAULT_OMNI_ROUTE, sessionAudioRoute } from "./webgpu/inference-route.ts"
+
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
@@ -44,16 +44,6 @@ export default Plugin.define({
     ...modelsStores,
     ...trajectoryStores,
     ...radarStores,
-    voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
-      selected: DEFAULT_VOICE,
-    }),
-    modelRoute: Store.global(Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }), {
-      selected: DEFAULT_OMNI_ROUTE,
-    }),
-    audioRoute: Store.session(
-      Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }),
-      { selected: DEFAULT_OMNI_ROUTE },
-    ),
     runtime: Store.global(
       Schema.Struct({
         keepAliveMs: Schema.Number.check(
@@ -205,29 +195,9 @@ export default Plugin.define({
     const runtime = createInferenceRuntime(
       ctx,
       () => ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS,
-      () => ctx.stores.voice.value?.selected ?? DEFAULT_VOICE,
+      () => DEFAULT_VOICE,
       features,
-      {
-        chatRoute: () => ctx.stores.modelRoute.value?.selected ?? DEFAULT_OMNI_ROUTE,
-        audioRoute: () => {
-          const session = ctx.sessions.current()
-          return session
-            ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected)
-            : DEFAULT_OMNI_ROUTE
-        },
-      },
     )
-    const [speechSettingsSession, setSpeechSettingsSession] = createSignal(ctx.sessions.current())
-    createEffect(() => {
-      const session = ctx.sessions.current()
-      if (session) setSpeechSettingsSession(session)
-    })
-    const currentAudioRoute = () => {
-      const session = speechSettingsSession()
-      return session
-        ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected)
-        : DEFAULT_OMNI_ROUTE
-    }
     registerDictation(ctx, runtime)
     registerReadAloud(ctx, runtime)
     ctx.provide(LocalModel, runtime)
@@ -493,26 +463,6 @@ export default Plugin.define({
               </div>
               <p>Local features load models on demand and share GPU memory.</p>
               <Ui.Menu
-                label={`Chat route: ${(ctx.stores.modelRoute.value?.selected ?? DEFAULT_OMNI_ROUTE) === "runntime" ? "ruNNtime Omni (default)" : "Liquid WebGPU"}`}
-                trigger="button"
-                disabled={!settingsReady()}
-                items={[
-                  {
-                    label: "Liquid WebGPU",
-                    onSelect: () => ctx.stores.modelRoute.set({ selected: "liquid" }),
-                  },
-                  {
-                    label: "ruNNtime Omni (default)",
-                    onSelect: () => ctx.stores.modelRoute.set({ selected: "runntime" }),
-                  },
-                ]}
-              />
-              <p class="lazers-local-meta">
-                Chat route changes unload the current model. The next request loads the selected
-                route. ruNNtime failures remain visible and never fall back automatically. System
-                One decisions remain on d1. Speech has a separate session-scoped route below.
-              </p>
-              <Ui.Menu
                 label={`Unload when idle: ${(ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 60_000 ? "1 minute" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 300_000 ? "5 minutes" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 900_000 ? "15 minutes" : "Never"}`}
                 trigger="button"
                 items={[
@@ -523,43 +473,6 @@ export default Plugin.define({
                 ].map((item) => ({
                   label: item.label,
                   onSelect: () => ctx.stores.runtime.set({ keepAliveMs: item.value }),
-                }))}
-              />
-            </section>
-            <section aria-labelledby="lazers-voice-title">
-              <h2 id="lazers-voice-title">Voice</h2>
-              <p>
-                Liquid read aloud uses this voice. ruNNtime Omni currently uses its public API
-                default, American English female.
-              </p>
-              <Ui.Menu
-                label={`Voice: ${VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label}`}
-                trigger="button"
-                disabled={!enabled("readAloud")}
-                items={voiceKeys.map((key) => ({
-                  label: `${VOICES[key].label}${key === DEFAULT_VOICE ? " (default)" : ""}`,
-                  onSelect: () => ctx.stores.voice.set({ selected: key }),
-                }))}
-              />
-              <p>Select a speech route for the current session.</p>
-              <Ui.Menu
-                label={`Speech route for this session: ${
-                  currentAudioRoute() === "runntime" ? "ruNNtime Omni (default)" : "Liquid"
-                }`}
-                trigger="button"
-                disabled={!speechSettingsSession()}
-                items={[
-                  { label: "Liquid", value: "liquid" as const },
-                  {
-                    label: "ruNNtime Omni (default)",
-                    value: "runntime" as const,
-                  },
-                ].map((item) => ({
-                  label: item.label,
-                  onSelect: () => {
-                    const session = speechSettingsSession()
-                    if (session) ctx.stores.audioRoute(session).set({ selected: item.value })
-                  },
                 }))}
               />
             </section>

@@ -20,12 +20,11 @@ let allocations = 0
 let serverContractRevision = "old-contract"
 let failCompletion = false
 let failNextAudioLoad = false
+let decisionProvisioned = false
 let heldAudioLoad: PromiseWithResolvers<void> | undefined
 let loseLastDevice: (() => void) | undefined
 let attachedOwner: string | undefined
 let lastRunntimeMessages: readonly NativeConversationMessage[] | undefined
-let lastLiquidMessages:
-  readonly { role: string; content: string | readonly unknown[] }[] | undefined
 const traces: InferenceTraceEvent[] = []
 
 const allocate = () => {
@@ -39,50 +38,15 @@ const allocate = () => {
   }
 }
 
-mock.module("../../.cache/lfm3-engine.js", () => ({
-  Lfm3OmniForConditionalGeneration: {
-    from_pretrained: async () => ({
-      dispose: allocate(),
-      lost: new Promise(() => {}),
-      deviceInfo: () => ({ description: "Liquid test GPU" }),
-      create_session: () => ({
-        dispose: async () => {},
-        generate: (
-          messages: readonly { role: string; content: string | readonly unknown[] }[],
-          options: { generation_mode: string },
-        ) => {
-          lastLiquidMessages = messages
-          return {
-            async *[Symbol.asyncIterator]() {
-              if (options.generation_mode === "text") {
-                yield { type: "text", text: "Liquid " }
-                yield { type: "text", text: "reply" }
-              }
-            },
-            result: Promise.resolve(
-              options.generation_mode === "audio"
-                ? {
-                    message: {
-                      content: [{ type: "audio_out", audio: new Float32Array([0.25]) }],
-                    },
-                    usage: { prompt_tokens: 6, completion_tokens: 2 },
-                    finish_reason: "stop",
-                  }
-                : {
-                    message: { content: "Liquid reply" },
-                    usage: { prompt_tokens: 6, completion_tokens: 2 },
-                    finish_reason: "stop",
-                  },
-            ),
-          }
-        },
-      }),
-    }),
-  },
-}))
-
 mock.module("./runntime-adapter.ts", () => ({
-  loadRunntimeChat: async () => {
+  loadRunntimeOmni: async () => {
+    if (failNextAudioLoad) {
+      failNextAudioLoad = false
+      throw new Error("simulated audio model load failure")
+    }
+    const gate = heldAudioLoad
+    if (gate) await gate.promise
+    if (heldAudioLoad === gate) heldAudioLoad = undefined
     const dispose = allocate()
     const lost = Promise.withResolvers<{ reason: string }>()
     loseLastDevice = () => lost.resolve({ reason: "simulated" })
@@ -103,25 +67,6 @@ mock.module("./runntime-adapter.ts", () => ({
             }),
           }
         },
-      },
-      lost: lost.promise,
-      dispose,
-      loseDevice: () => lost.resolve({ reason: "simulated" }),
-    }
-  },
-  loadRunntimeAudio: async () => {
-    if (failNextAudioLoad) {
-      failNextAudioLoad = false
-      throw new Error("simulated audio model load failure")
-    }
-    const gate = heldAudioLoad
-    if (gate) await gate.promise
-    if (heldAudioLoad === gate) heldAudioLoad = undefined
-    const dispose = allocate()
-    const lost = Promise.withResolvers<{ reason: string }>()
-    loseLastDevice = () => lost.resolve({ reason: "simulated" })
-    return {
-      engine: {
         transcribe: async () => "ruNNtime transcript",
         speak: () => ({
           async *[Symbol.asyncIterator]() {
@@ -141,7 +86,7 @@ mock.module("./runntime-adapter.ts", () => ({
   },
 }))
 
-mock.module("./decision-runtime.ts", () => ({
+mock.module("./runntime-decision-runtime.ts", () => ({
   loadDecisionRuntime: async (
     _read: unknown,
     _signal: unknown,
@@ -168,7 +113,9 @@ const files = {
   release: async () => {},
   cancel: async () => {},
   ensure: async () => {},
-  decisionEnsure: async () => {},
+  decisionEnsure: async () => {
+    if (!decisionProvisioned) throw new Error("D1 checkpoint has not been provisioned")
+  },
   status: async () => ({ phase: "cached", downloadedBytes: 0, cachedBytes: 1 }),
   decisionStatus: async () => ({ phase: "cached", downloadedBytes: 0, cachedBytes: 1 }),
   trace: async (event: InferenceTraceEvent) => traces.push(event),
@@ -213,7 +160,6 @@ const ctx = {
   client: { rpc: (definition: unknown) => (definition === LocalInference ? {} : worker) },
 } as unknown as Parameters<Plugin.Setup>[0]
 const [features] = solid.createSignal(defaultFeatures(true))
-const [route, setRoute] = solid.createSignal<ChatRoute>("liquid")
 let now = Date.now()
 let timer: (() => void) | undefined
 let stopRuntime: (() => void) | undefined
@@ -229,7 +175,6 @@ const runtime = solid.createRoot((dispose) => {
       }
     },
     serviceTimeoutMs: 2_000,
-    chatRoute: route,
   })
 })
 
@@ -292,7 +237,14 @@ const submit = async (input: {
     controller.signal,
     input.onText,
   )
-  await tick()
+  let settled = false
+  void pending.finally(() => {
+    settled = true
+  })
+  while (!settled) {
+    await tick()
+    await Bun.sleep(5)
+  }
   return pending
 }
 
@@ -314,27 +266,8 @@ try {
   assert.equal(runtime.modelIdentity(), undefined)
   assert.equal(recoveryEnabled, false)
   await initialLoad
-  await until(() => runtime.state() === "ready", "first compatible Liquid load")
+  await until(() => runtime.state() === "ready", "first compatible Omni load")
   assert.equal(runtime.contractStatus(), "compatible")
-  assert.equal(runtime.modelIdentity()?.backend, "liquid")
-  assert.equal(displayedBackend, "liquid")
-  assert.equal(displayedName, "LFM3")
-  assert.equal(recoveryEnabled, false, "Liquid's engine has no injected recovery hook")
-  assert.match(runtime.modelIdentity()?.precision ?? "", /language Q4_K_M \+ projector Q8_0/)
-  assert.match(runtime.modelIdentity()?.artifacts ?? "", /LFM3-Omni-2B-Q4_K_M\.gguf sha256:/)
-  assert.match(runtime.modelIdentity()?.artifacts ?? "", /mmproj-LFM3-Omni-2B-Q8_0\.gguf sha256:/)
-
-  const legacyText = await submit({ prompt: "liquid text" })
-  assert.equal(legacyText.ok, true)
-  assert.equal(legacyText.promptTokens, 6)
-  assert.deepEqual(lastLiquidMessages, [{ role: "user", content: "liquid text" }])
-  const liquidTextTrace = traces.find(
-    (event) => event.mode === "text" && event.backend === "liquid",
-  )!
-  assert.match(liquidTextTrace.modelArtifacts ?? "", /LFM3-Omni-2B-Q4_K_M\.gguf sha256:/)
-  assert.match(liquidTextTrace.modelArtifacts ?? "", /mmproj-LFM3-Omni-2B-Q8_0\.gguf sha256:/)
-  assert.match(liquidTextTrace.modelPrecision ?? "", /language Q4_K_M \+ projector Q8_0/)
-
   const nativeDeltas: string[] = []
   const nativeMessages: NativeConversationMessage[] = [
     { role: "system", content: "System context" },
@@ -352,51 +285,18 @@ try {
   assert.equal(nativeReply.text, "ruNNtime reply")
   assert.deepEqual(nativeDeltas, ["ruNNtime ", "reply"])
   assert.deepEqual(lastRunntimeMessages, nativeMessages)
-  assert.equal(route(), "liquid", "Native model selection does not mutate the global route")
   const nativeTrace = traces.find((event) => event.backend === "runntime" && event.mode === "text")!
   assert.equal(nativeTrace.modelRepository, "LiquidAI/LFM3-Omni-2B-GGUF")
   assert.equal(nativeTrace.modelRevision, "3d29af2ad166f8299c2d820937e47dc0add20ffc")
-  assert.equal(nativeTrace.modelPrecision, "language Q4_K_M")
+  assert.equal(nativeTrace.modelPrecision, "language Q4_K_M + projector Q8_0")
   await tick()
   assert.equal(
     runtime.modelIdentity()?.backend,
     "runntime",
     "Polling must not allocate an idle fallback",
   )
-  const selectedLiquid = await submit({ prompt: "Liquid remains selected", route: "liquid" })
-  assert.equal(selectedLiquid.text, "Liquid reply")
-  assert.equal(traces.filter((event) => event.mode === "text").at(-1)?.backend, "liquid")
-  const liquidConversation = await submit({
-    prompt: "Follow-up question",
-    messages: nativeMessages,
-    route: "liquid",
-    streaming: true,
-    onText: () => {},
-  })
-  assert.equal(liquidConversation.text, "Liquid reply")
-  assert.deepEqual(lastLiquidMessages, nativeMessages)
-  assert.equal(route(), "liquid", "Explicit native route does not mutate the global route")
-
-  setRoute("runntime")
-  assert.equal(runtime.state(), "loading")
-  assert.equal(recoveryEnabled, false)
-  await until(() => runtime.state() === "unloaded", "ruNNtime route switch releases weights")
-  const runntimeText = await submit({ prompt: "ruNNtime text" })
-  assert.equal(displayedBackend, "runntime")
-  assert.equal(displayedName, "ruNNtime LFM3")
-  assert.equal(recoveryEnabled, true)
-  assert.equal(runtime.modelIdentity()?.precision, "language Q4_K_M")
-  assert.match(runtime.modelIdentity()?.artifacts ?? "", /LFM3-Omni-2B-Q4_K_M\.gguf sha256:/)
-  assert.doesNotMatch(runtime.modelIdentity()?.artifacts ?? "", /mmproj-/)
-  assert.equal(runntimeText.text, "ruNNtime reply")
-  assert.equal(runntimeText.promptTokens, 8)
-  const runntimeTextTrace = traces.find(
-    (event) => event.mode === "text" && event.backend === "runntime",
-  )!
-  assert.match(runntimeTextTrace.modelArtifacts ?? "", /tokenizer\.json revision:/)
-  assert.doesNotMatch(runntimeTextTrace.modelArtifacts ?? "", /mmproj-/)
-  assert.equal(runntimeTextTrace.modelPrecision, "language Q4_K_M")
-
+  await runtime.unload()
+  now += 2_000
   failNextAudioLoad = true
   const failedAudio = await submit({
     prompt: "failed audio load",
@@ -421,7 +321,7 @@ try {
   assert.equal(speech.completionTokens, null)
   assert.ok(speech.audioBase64)
   assert.equal(runtime.modelIdentity()?.backend, "runntime")
-  assert.equal(displayedName, "ruNNtime Omni audio")
+  assert.equal(displayedName, "ruNNtime Omni")
   assert.match(runtime.modelIdentity()?.precision ?? "", /language Q4_K_M \+ projector Q8_0/)
   assert.match(runtime.modelIdentity()?.artifacts ?? "", /LFM3-Omni-2B-Q4_K_M\.gguf sha256:/)
   assert.match(runtime.modelIdentity()?.artifacts ?? "", /mmproj-LFM3-Omni-2B-Q8_0\.gguf sha256:/)
@@ -462,26 +362,10 @@ try {
     "recovered ruNNtime audio model",
   )
   assert.equal(displayedBackend, "runntime")
-  assert.equal(displayedName, "ruNNtime Omni audio")
+  assert.equal(displayedName, "ruNNtime Omni")
   assert.equal(recoveryEnabled, true)
 
-  setRoute("liquid")
-  assert.equal(runtime.state(), "loading")
-  assert.equal(recoveryEnabled, false)
-  await until(() => runtime.state() === "unloaded", "route switch back to Liquid releases weights")
-  const liquidSpeech = await submit({ prompt: "Liquid audio", mode: "speak", feature: "readAloud" })
-  assert.equal(displayedBackend, "liquid")
-  assert.equal(displayedName, "LFM3")
-  assert.equal(recoveryEnabled, false)
-  assert.equal(liquidSpeech.ok, true)
-  assert.equal(liquidSpeech.promptTokens, 6)
-  const liquidAudioTrace = traces.find(
-    (event) => event.mode === "speak" && event.backend === "liquid",
-  )!
-  assert.match(liquidAudioTrace.modelPrecision ?? "", /language Q4_K_M \+ projector Q8_0/)
-  for (const file of MODEL_FILES)
-    assert.ok(liquidAudioTrace.modelArtifacts?.includes(`${file.name} sha256:${file.sha256}`))
-
+  decisionProvisioned = true
   const decision = await submit({
     prompt: JSON.stringify({ questions: { q: {} } }),
     mode: "systemone",
@@ -491,7 +375,7 @@ try {
   assert.equal(runtime.modelIdentity()?.backend, "d1")
   assert.equal(runtime.modelIdentity()?.repository, DECISION_REPOSITORY)
   assert.equal(runtime.modelIdentity()?.revision, DECISION_REVISION)
-  assert.match(runtime.modelIdentity()?.precision ?? "", /Q4f16/)
+  assert.match(runtime.modelIdentity()?.precision ?? "", /Q8/)
   assert.equal(displayedBackend, "d1")
   assert.equal(displayedName, "d1")
   assert.equal(recoveryEnabled, true)
@@ -499,7 +383,7 @@ try {
   assert.equal(decisionTrace.backend, "d1")
   assert.equal(decisionTrace.modelRepository, DECISION_REPOSITORY)
   assert.equal(decisionTrace.modelRevision, DECISION_REVISION)
-  assert.match(decisionTrace.modelArtifacts ?? "", /decoder_q4f16\.onnx sha256:/)
+  assert.match(decisionTrace.modelArtifacts ?? "", /d1-omni-600m-text-q8\.safetensors sha256:/)
   assert.doesNotMatch(decisionTrace.modelArtifacts ?? "", /LFM3-Omni/)
 
   now += 60_001

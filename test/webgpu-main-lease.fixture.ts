@@ -45,17 +45,15 @@ const allocateModel = () => {
   }
 }
 
-mock.module("../.cache/lfm3-engine.js", () => ({
-  Lfm3OmniForConditionalGeneration: {
-    from_pretrained: async () => ({
-      dispose: allocateModel(),
-      lost: new Promise(() => {}),
-      deviceInfo: () => ({ description: "Registered test GPU" }),
-      create_session: () => ({ dispose: async () => {}, generate: async function* () {} }),
-    }),
-  },
+mock.module("../src/webgpu/runntime-adapter.ts", () => ({
+  loadRunntimeOmni: async () => ({
+    dispose: allocateModel(),
+    lost: new Promise(() => {}),
+    deviceInfo: () => ({ description: "Registered test GPU" }),
+    engine: { generate: async function* () {} },
+  }),
 }))
-mock.module("../src/webgpu/decision-runtime.ts", () => ({
+mock.module("../src/webgpu/runntime-decision-runtime.ts", () => ({
   loadDecisionRuntime: async () => ({ dispose: allocateModel(), systemOne: async () => ({}) }),
 }))
 Object.defineProperty(globalThis, "navigator", { configurable: true, value: { gpu: {} } })
