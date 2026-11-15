@@ -142,6 +142,7 @@ package revision above. The bundle build emitted non-fatal `inlineDynamicImports
 and ONNX `EMPTY_IMPORT_META` warnings; its bundle evaluation passed. This is
 automated verification only: no Desktop/service lifecycle or real GPU/native
 conversation qualification was performed.
+
 ## LZ-29 clean audio controls
 
 The task implementation adds an owned-profile-only, fixed-ID clean-clip path to
