@@ -1232,7 +1232,9 @@ export function createInferenceRuntime(
                   { role: "system", content: speechInstruction(job.voice) },
                   { role: "user", content: job.prompt },
                 ]
-              : [{ role: "user", content: job.prompt }]
+              : job.messages
+                ? job.messages.map(({ role, content }) => ({ role, content }))
+                : [{ role: "user", content: job.prompt }]
         await traceStage("generate", heap())
         const generation = session!.generate(messages, {
           generation_mode: job.mode === "speak" ? "audio" : "text",

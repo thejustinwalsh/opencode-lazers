@@ -24,6 +24,8 @@ let heldAudioLoad: PromiseWithResolvers<void> | undefined
 let loseLastDevice: (() => void) | undefined
 let attachedOwner: string | undefined
 let lastRunntimeMessages: readonly NativeConversationMessage[] | undefined
+let lastLiquidMessages:
+  readonly { role: string; content: string | readonly unknown[] }[] | undefined
 const traces: InferenceTraceEvent[] = []
 
 const allocate = () => {
@@ -45,26 +47,35 @@ mock.module("../../.cache/lfm3-engine.js", () => ({
       deviceInfo: () => ({ description: "Liquid test GPU" }),
       create_session: () => ({
         dispose: async () => {},
-        generate: (_messages: unknown, options: { generation_mode: string }) => ({
-          async *[Symbol.asyncIterator]() {
-            yield { type: "text", text: "" }
-          },
-          result: Promise.resolve(
-            options.generation_mode === "audio"
-              ? {
-                  message: {
-                    content: [{ type: "audio_out", audio: new Float32Array([0.25]) }],
+        generate: (
+          messages: readonly { role: string; content: string | readonly unknown[] }[],
+          options: { generation_mode: string },
+        ) => {
+          lastLiquidMessages = messages
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (options.generation_mode === "text") {
+                yield { type: "text", text: "Liquid " }
+                yield { type: "text", text: "reply" }
+              }
+            },
+            result: Promise.resolve(
+              options.generation_mode === "audio"
+                ? {
+                    message: {
+                      content: [{ type: "audio_out", audio: new Float32Array([0.25]) }],
+                    },
+                    usage: { prompt_tokens: 6, completion_tokens: 2 },
+                    finish_reason: "stop",
+                  }
+                : {
+                    message: { content: "Liquid reply" },
+                    usage: { prompt_tokens: 6, completion_tokens: 2 },
+                    finish_reason: "stop",
                   },
-                  usage: { prompt_tokens: 6, completion_tokens: 2 },
-                  finish_reason: "stop",
-                }
-              : {
-                  message: { content: "Liquid reply" },
-                  usage: { prompt_tokens: 6, completion_tokens: 2 },
-                  finish_reason: "stop",
-                },
-          ),
-        }),
+            ),
+          }
+        },
       }),
     }),
   },
@@ -313,6 +324,7 @@ try {
   const legacyText = await submit({ prompt: "liquid text" })
   assert.equal(legacyText.ok, true)
   assert.equal(legacyText.promptTokens, 6)
+  assert.deepEqual(lastLiquidMessages, [{ role: "user", content: "liquid text" }])
   const liquidTextTrace = traces.find(
     (event) => event.mode === "text" && event.backend === "liquid",
   )!
@@ -349,6 +361,16 @@ try {
   const selectedLiquid = await submit({ prompt: "Liquid remains selected", route: "liquid" })
   assert.equal(selectedLiquid.text, "Liquid reply")
   assert.equal(traces.filter((event) => event.mode === "text").at(-1)?.backend, "liquid")
+  const liquidConversation = await submit({
+    prompt: "Follow-up question",
+    messages: nativeMessages,
+    route: "liquid",
+    streaming: true,
+    onText: () => {},
+  })
+  assert.equal(liquidConversation.text, "Liquid reply")
+  assert.deepEqual(lastLiquidMessages, nativeMessages)
+  assert.equal(route(), "liquid", "Explicit native route does not mutate the global route")
 
   setRoute("runntime")
   assert.equal(runtime.state(), "loading")

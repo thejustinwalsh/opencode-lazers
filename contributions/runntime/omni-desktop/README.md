@@ -121,3 +121,13 @@ The implementation tree cited above predates the native conversation provider.
 For native conversation qualification, rebuild from the LZ-28 task commit in
 this checkout; the former candidate build is not compatible with the v2 stream
 mailbox contract and must not be used as evidence.
+
+The native-conversation regression suite also verifies the host `aisdk:` package
+gate and SDK/language hook construction, project-to-default-location streaming,
+ordered message history, interruption, ownership loss/replacement, queue
+survival, and a fresh request after recovery. Liquid's runtime fixture asserts
+that system/user/assistant history reaches the actual engine call and that the
+legacy single-prompt diagnostic still supplies one user message. These are
+automated fakes/fixtures, not Desktop or GPU observations; native model selection,
+real service interruption, and rendered conversation qualification remain
+pending.

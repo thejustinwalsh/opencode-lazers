@@ -12,6 +12,7 @@ import { MODEL_REPOSITORY, MODEL_REVISION } from "./manifest.ts"
 import type { InferenceResult, NativeConversationMessage } from "./rpc.ts"
 
 export const NATIVE_PROVIDER_ID = "lazers-local-webgpu"
+export const NATIVE_PROVIDER_PACKAGE = `aisdk:${NATIVE_PROVIDER_ID}`
 export const LIQUID_NATIVE_MODEL_ID = "lfm3-omni-2b-liquid-q4-k-m"
 export const RUNNTIME_NATIVE_MODEL_ID = "lfm3-omni-2b-runntime-q4-k-m"
 
@@ -234,7 +235,7 @@ export function registerNativeConversationProvider(
           id: providerID,
           name: "LAZERS Local WebGPU",
           activation: "enabled",
-          package: "",
+          package: NATIVE_PROVIDER_PACKAGE,
         },
         models: nativeConversationModels(),
       })

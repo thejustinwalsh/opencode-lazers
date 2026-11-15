@@ -5,6 +5,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import {
   LIQUID_NATIVE_MODEL_ID,
   NATIVE_PROVIDER_ID,
+  NATIVE_PROVIDER_PACKAGE,
   RUNNTIME_NATIVE_MODEL_ID,
   createNativeLanguageModel,
   nativeConversationModels,
@@ -54,8 +55,9 @@ test("native provider exposes separately pinned Liquid and ruNNtime conversation
   }
 })
 
-test("supported sdk and language hooks register the selected native model", async () => {
+test("pinned host package gate constructs the native model through sdk and language hooks", async () => {
   const models: ReturnType<typeof nativeConversationModels> = []
+  let providerInfo: { package?: string } | undefined
   const hooks: {
     name: string
     callback: (event: unknown) => Effect.Effect<void>
@@ -65,8 +67,16 @@ test("supported sdk and language hooks register the selected native model", asyn
       transform: (callback: (editor: unknown) => void) =>
         Effect.sync(() => {
           callback({
-            add: ({ models: added }: { models: ReturnType<typeof nativeConversationModels> }) =>
-              models.push(...added),
+            add: ({
+              info,
+              models: added,
+            }: {
+              info: { package?: string }
+              models: ReturnType<typeof nativeConversationModels>
+            }) => {
+              providerInfo = info
+              models.push(...added)
+            },
           })
           return { dispose: Effect.void }
         }),
@@ -90,27 +100,40 @@ test("supported sdk and language hooks register the selected native model", asyn
   )
 
   expect(hooks.map((hook) => hook.name)).toEqual(["sdk", "language"])
+  expect(providerInfo?.package).toBe(NATIVE_PROVIDER_PACKAGE)
   const model = models[1]!
-  const sdkEvent: {
-    model: (typeof models)[number]
-    options: Record<string, unknown>
-    sdk?: unknown
-  } = {
-    model,
-    options: {},
-  }
   const sdkHook = hooks.find((hook) => hook.name === "sdk")!
-  await Effect.runPromise(sdkHook.callback(sdkEvent))
-  const languageEvent: {
-    model: (typeof models)[number]
-    options: Record<string, unknown>
-    sdk: unknown
-    language?: unknown
-  } = { model, options: {}, sdk: sdkEvent.sdk }
   const languageHook = hooks.find((hook) => hook.name === "language")!
-  await Effect.runPromise(languageHook.callback(languageEvent))
+  let hookRuns = 0
+  const resolveHostModel = async (packageName: string | undefined) => {
+    // OpenCode 2.2.5 ModelResolver only enters AISDK.model for Provider.isAISDK packages.
+    if (!packageName?.startsWith("aisdk:")) throw new Error("Unsupported package")
+    const runtimeModel = { ...model, package: packageName }
+    const sdkEvent: {
+      model: typeof runtimeModel
+      package: string
+      options: Record<string, unknown>
+      sdk?: unknown
+    } = { model: runtimeModel, package: packageName.slice("aisdk:".length), options: {} }
+    hookRuns++
+    await Effect.runPromise(sdkHook.callback(sdkEvent))
+    const sdk = sdkEvent.sdk as {
+      languageModel: (id: string) => ReturnType<typeof createNativeLanguageModel>
+    }
+    const languageEvent: {
+      model: typeof runtimeModel
+      options: Record<string, unknown>
+      sdk: unknown
+      language?: unknown
+    } = { model: runtimeModel, options: {}, sdk }
+    hookRuns++
+    await Effect.runPromise(languageHook.callback(languageEvent))
+    return languageEvent.language as ReturnType<typeof createNativeLanguageModel>
+  }
 
-  const language = languageEvent.language as ReturnType<typeof createNativeLanguageModel>
+  await expect(resolveHostModel("")).rejects.toThrow("Unsupported package")
+  expect(hookRuns).toBe(0)
+  const language = await resolveHostModel(providerInfo?.package)
   expect(language.provider).toBe(NATIVE_PROVIDER_ID)
   expect(language.modelId).toBe(model.modelID)
   await language.doGenerate(options())

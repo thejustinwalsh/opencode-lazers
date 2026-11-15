@@ -74,6 +74,28 @@ const Job = Schema.Struct({
 })
 export type InferenceJob = typeof Job.Type
 export type NativeConversationMessage = NonNullable<InferenceJob["messages"]>[number]
+const NativeConversation = portable(
+  Schema.Struct({
+    requestID: ownerToken,
+    route: Schema.Literals(["liquid", "runntime"]),
+    messages: Schema.Array(
+      Schema.Struct({
+        role: Schema.Literals(["system", "user", "assistant"]),
+        content: Schema.String.check(Schema.isMaxLength(64_000)),
+      }),
+    ).check(Schema.isBetweenLength(1, 128)),
+    maxTokens: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 512 })),
+    timeoutMs: Request.fields.timeoutMs,
+    streaming: Schema.Boolean,
+  }),
+)
+const NativeConversationEvent = portable(
+  Schema.Struct({
+    requestID: ownerToken,
+    type: Schema.Literals(["ready", "delta", "end"]),
+    text: Schema.optionalKey(Schema.String.check(Schema.isBetweenLength(1, 8_000))),
+  }),
+)
 const nothing = portable(Schema.Struct({}))
 
 /** Shared location/renderer inference surface; the renderer mailbox adds ownership primitives. */
@@ -104,9 +126,14 @@ export const isRendererOwnershipLost = (error: unknown) =>
 /** Renderer mailbox is deliberately separate from location-scoped public entry points. */
 export const RendererInference = Rpc.define({
   id: "lazers.webgpu-worker",
-  events: {},
+  events: { nativeConversation: { schema: NativeConversationEvent } },
   methods: {
     ...sharedInferenceMethods,
+    nativeConversationReady: {
+      input: portable(Schema.Struct({ requestID: ownerToken })),
+      output: nothing,
+    },
+    nativeConversation: { input: NativeConversation, output: portable(GenerationResult) },
     demand: { input: nothing, output: portable(Schema.Struct({ requested: Schema.Boolean })) },
     contract: { input: nothing, output: generationContract },
     attach: { input: rendererAttachment, output: nothing },
