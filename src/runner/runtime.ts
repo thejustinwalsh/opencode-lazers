@@ -15977,23 +15977,28 @@ export class TaskRuntime {
   ): boolean {
     try {
       const recordedCheck = JSON.parse(row.check_json) as unknown
+      // 309cfc6 fingerprints predate the separate authoredCheck field.
+      const identity = {
+        adoptionID: adoption.id,
+        adoptionInputFingerprint: adoption.input_fingerprint,
+        phase,
+        check: recordedCheck,
+        workspace,
+        artifact,
+        environmentIdentity: row.environment_identity,
+      }
+      const legacyInputFingerprint = fingerprint(identity)
+      const currentInputFingerprint = fingerprint({
+        ...identity,
+        authoredCheck: check,
+      })
       return (
+        row.check_id === check.id &&
         row.workspace === workspace &&
         row.artifact === artifact &&
         sameVerificationCheckIdentity(recordedCheck, check) &&
-        row.input_fingerprint ===
-          fingerprint({
-            adoptionID: adoption.id,
-            adoptionInputFingerprint: adoption.input_fingerprint,
-            phase,
-            authoredCheck: check,
-            // Reconstruct the persisted identity using its recorded timing fields.
-            // These are provenance, not a reason to invalidate a settled pass.
-            check: recordedCheck,
-            workspace,
-            artifact,
-            environmentIdentity: row.environment_identity,
-          })
+        (row.input_fingerprint === legacyInputFingerprint ||
+          row.input_fingerprint === currentInputFingerprint)
       )
     } catch {
       return false

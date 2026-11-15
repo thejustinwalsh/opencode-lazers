@@ -832,7 +832,7 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   expect(f.store.plan(f.planID)?.state).toBe("integrated")
 }, 15_000)
 
-test("restart after completed adoption checks does not replay either phase", async () => {
+test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup without replay", async () => {
   const f = fixture("failed-task", undefined, {
     verificationTimeoutDefaults: { inactivityTimeoutMs: 20_000, hardTimeoutMs: 40_000 },
   })
@@ -859,11 +859,11 @@ test("restart after completed adoption checks does not replay either phase", asy
       (candidate) => candidate.id === row.check_id,
     )
     if (!check) throw new Error(`Missing authored ${row.phase} check ${row.check_id}`)
+    // Authentic 309cfc6 identity: no separate authoredCheck property.
     const legacyFingerprint = fingerprint({
       adoptionID: adoption.id,
       adoptionInputFingerprint: adoption.input_fingerprint,
       phase: row.phase,
-      authoredCheck: check,
       check,
       workspace: row.workspace,
       artifact: row.artifact,
@@ -915,6 +915,28 @@ test("restart after completed adoption checks does not replay either phase", asy
   expect(
     f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
   ).toBe(true)
+  const taskWorkspace = f.store.adoption(requested.adoptionID)!.task_workspace!
+  const combinedWorkspace = f.store.adoption(requested.adoptionID)!.combined_workspace!
+  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
+  expect(readFileSync(f.taskLog, "utf8").length).toBe(taskChecks)
+  expect(readFileSync(f.graphLog, "utf8").length).toBe(combinedChecks)
+  await integratePlan(f)
+  expect(f.store.plan(f.planID)?.state).toBe("integrated")
+  expect(f.events).toContain(`remove:${taskWorkspace}`)
+  expect(f.events).toContain(`remove:${combinedWorkspace}`)
+  expect(existsSync(taskWorkspace)).toBe(false)
+  expect(existsSync(combinedWorkspace)).toBe(false)
+  expect(
+    f.store.adoptionChecks(requested.adoptionID).map((row) => ({
+      phase: row.phase,
+      checkID: row.check_id,
+      checkJSON: row.check_json,
+      inputFingerprint: row.input_fingerprint,
+      receipt: row.receipt,
+      state: row.state,
+    })),
+  ).toEqual(legacyRows)
 }, 15_000)
 
 test("accepted task with blocked combined check adopts a descendant without rewriting acceptance or landing receipts", async () => {
