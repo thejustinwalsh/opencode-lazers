@@ -22,150 +22,26 @@ import { defaultFeatures, FeaturePolicy, FeatureSettings, featureEnabled } from 
 import type { LocalFeature } from "./features.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { defaultSettingsAuthority, readFeatureSettings } from "./settings-read.ts"
-import { registerNativeConversationProvider } from "./native-conversation.ts"
-import type { NativeConversationCall } from "./native-conversation.ts"
-import type { InferenceResult } from "./rpc.ts"
-
-export type RendererInferenceClient = RpcClient<typeof RendererInference> & {
-  waitForEventStreamConnected?: (signal: AbortSignal) => Promise<void>
-}
-
-export function createRendererInferenceClient(
-  client: ReturnType<typeof OpenCode.make>,
-): RendererInferenceClient & {
-  waitForEventStreamConnected: (signal: AbortSignal) => Promise<void>
-} {
-  return Object.assign(client.rpc(RendererInference), {
-    waitForEventStreamConnected: async (signal: AbortSignal) => {
-      const iterator = client.event.subscribe({ signal })[Symbol.asyncIterator]()
-      try {
-        while (true) {
-          signal.throwIfAborted()
-          const next = await iterator.next()
-          signal.throwIfAborted()
-          if (next.done) throw new Error("OpenCode event stream ended before connecting")
-          if (next.value.type === "server.connected") return
-        }
-      } finally {
-        await iterator.return?.()
-      }
-    },
-  })
-}
-
-/** Streams one request from a location-scoped provider through the default renderer authority. */
-export async function forwardNativeConversation(
-  client: RendererInferenceClient,
-  call: NativeConversationCall,
-): Promise<InferenceResult> {
-  const requestID = crypto.randomUUID()
-  const controller = new AbortController()
-  const signal = AbortSignal.any([call.signal, controller.signal, AbortSignal.timeout(60_000)])
-  const iterator = client.events.subscribe("nativeConversation", { signal })[Symbol.asyncIterator]()
-  const ready = Promise.withResolvers<void>()
-  const ended = Promise.withResolvers<void>()
-  const streamFailure = Promise.withResolvers<unknown>()
-  const aborted = Promise.withResolvers<void>()
-  const onAbort = () => aborted.resolve()
-  signal.addEventListener("abort", onAbort, { once: true })
-  if (signal.aborted) onAbort()
-
-  const pump = (async () => {
-    while (true) {
-      const next = await iterator.next()
-      if (next.done) {
-        if (signal.aborted) return
-        throw new Error("Native conversation event stream ended before completion")
-      }
-      const event = next.value.data
-      if (event.requestID !== requestID) continue
-      if (event.type === "ready") ready.resolve()
-      else if (event.type === "delta") {
-        if (event.text === undefined) throw new Error("Native conversation delta omitted its text")
-        call.onText?.(event.text)
-      } else {
-        ended.resolve()
-        return
-      }
-    }
-  })().catch((error: unknown) => {
-    streamFailure.resolve(error)
-  })
-  const waitFor = <T>(promise: Promise<T>) =>
-    Promise.race([
-      promise,
-      streamFailure.promise.then((error) => {
-        throw error
-      }),
-      aborted.promise.then(() => {
-        throw signal.reason ?? new Error("Native conversation was cancelled")
-      }),
-    ])
-
-  let generation: Promise<InferenceResult> | undefined
-  try {
-    signal.throwIfAborted()
-    if (!client.waitForEventStreamConnected)
-      throw new Error("Native conversation event stream readiness is unavailable")
-    await waitFor(client.waitForEventStreamConnected(signal))
-    await waitFor(client.nativeConversationReady({ requestID }, { signal }))
-    await waitFor(ready.promise)
-    generation = client.nativeConversation(
-      {
-        requestID,
-        route: call.route,
-        messages: [...call.messages],
-        maxTokens: call.maxTokens,
-        timeoutMs: 60_000,
-        streaming: Boolean(call.onText),
-      },
-      { signal },
-    )
-    const result = await waitFor(generation)
-    await waitFor(ended.promise)
-    return result
-  } catch (error) {
-    controller.abort(error)
-    await generation?.catch(() => {})
-    throw error
-  } finally {
-    controller.abort()
-    signal.removeEventListener("abort", onAbort)
-    await iterator.return?.()
-    await pump
-  }
-}
 
 export function registerLocalInference(
   ctx: Pick<
     Plugin.Context,
-    | "rpc"
-    | "tool"
-    | "permission"
-    | "agent"
-    | "storage"
-    | "location"
-    | "options"
-    | "provider"
-    | "aisdk"
+    "rpc" | "tool" | "permission" | "agent" | "storage" | "location" | "options"
   >,
-  resolveWorker?: () => Promise<RendererInferenceClient>,
+  resolveWorker?: () => Promise<RpcClient<typeof RendererInference>>,
 ) {
   return Effect.gen(function* () {
     const broker = new InferenceBroker()
-    // Every Location-scoped provider forwards to the same default-location renderer authority.
+    // Local tools and audio features forward to the default-location renderer authority.
     const worker =
       resolveWorker ??
       (async () => {
         const endpoint = await Service.discover()
         if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
-        return createRendererInferenceClient(
-          OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }),
+        return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(
+          RendererInference,
         )
       })
-    yield* registerNativeConversationProvider(ctx, async (call) =>
-      forwardNativeConversation(await worker(), call),
-    )
     const stored = yield* ctx.storage.get("webgpu.features")
     const saved = FeatureSettings.safeParse(stored)
     let features = defaultFeatures(false)
