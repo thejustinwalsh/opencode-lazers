@@ -32,6 +32,7 @@ import type { CheckReceipt } from "./artifacts.ts"
 import type {
   ArchitectSourceResult,
   HostBackgroundObservation,
+  NativeCleanupSettlement,
   HostSession,
   RunnerHost,
 } from "./host.ts"
@@ -600,7 +601,7 @@ async function drive(runtime: TaskRuntime, count = 8) {
   }
 }
 
-async function registeredPlanCommand(runtime: TaskRuntime) {
+async function registeredPlanCommand(runtime: TaskRuntime, sessionID = "owner") {
   const tools = new Map<string, RegisteredRunnerTool>()
   const editor = {
     add: (tool: RegisteredRunnerTool) => tools.set(tool.name, tool),
@@ -621,7 +622,7 @@ async function registeredPlanCommand(runtime: TaskRuntime) {
     execute: async (input: unknown) =>
       Effect.runPromise(
         tool.execute(input, {
-          sessionID: "owner" as never,
+          sessionID: sessionID as never,
           agent: Agent.ID.make("architect"),
           messageID: SessionMessage.ID.make("msg_test"),
           id: Tool.CallID.make("call_test"),
@@ -8343,6 +8344,265 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(await f.host.worktrees()).toEqual([f.root])
   expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("cleanup recovery authority stays local to its accepted attempt across retries and reopen", async () => {
+  const f = fixture({
+    commit: true,
+    wrongFirstA: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  const control = await registeredPlanCommand(f.runtime)
+
+  await runPlan(f)
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  const first = f.store.attempts(planID)[0]!
+  expect(first.state).toBe("failed")
+  expect(first.artifact).toBeTruthy()
+
+  await f.runtime.command(
+    {
+      requestID: "retry-first-cleanup-attempt",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "retry",
+      taskID: task.id,
+      reason: "Retry the failed task from its recorded artifact",
+    },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  const attempts = f.store.attempts(planID)
+  expect(attempts).toHaveLength(2)
+  const latest = attempts[1]!
+  expect(latest.state).toBe("accepted")
+  expect(latest.artifact).toBeTruthy()
+  expect(
+    git(latest.workspace, ["merge-base", "--is-ancestor", first.artifact!, latest.artifact!]),
+  ).toBe("")
+
+  const acceptedPlan = f.store.plan(planID)!
+  expect(acceptedPlan.artifact).toBe(latest.artifact)
+  git(f.root, ["merge", "--ff-only", acceptedPlan.artifact!])
+  expect(git(f.root, ["merge-base", "--is-ancestor", first.artifact!, "HEAD"])).toBe("")
+
+  const firstWorker = f.sessions.get(first.session_id)!
+  const latestWorker = f.sessions.get(latest.session_id)!
+  const firstIdle = structuredClone(firstWorker.background)
+  if (!firstIdle || firstIdle.state !== "observed")
+    throw new Error("The first attempt must retain its original native idle observation")
+  firstWorker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "The earlier attempt's native idle report is unavailable",
+  }
+  latestWorker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "The accepted attempt requires fresh cleanup settlement",
+  }
+
+  const removeCalls: string[] = []
+  const retireCalls: string[] = []
+  const settlementCalls: string[] = []
+  const removeWorktree = f.host.removeWorktree.bind(f.host)
+  f.host.removeWorktree = async (directory) => {
+    removeCalls.push(directory)
+    await removeWorktree(directory)
+  }
+  f.host.retireWorktreeLocation = async (directory) => {
+    retireCalls.push(directory)
+    return "not-loaded"
+  }
+  let latestSettlement: NativeCleanupSettlement | undefined
+  f.host.cleanupSettlement = async (input) => {
+    settlementCalls.push(input.attemptID)
+    if (input.attemptID !== latest.id)
+      throw new Error("Only the exact accepted attempt has recovery settlement")
+    if (!latestSettlement) {
+      const observedAt = Date.now()
+      const eventID = `evt_cleanup_${latest.id}`
+      latestSettlement = {
+        schemaVersion: 1,
+        projectID: "project",
+        attemptID: latest.id,
+        sessionID: latest.session_id,
+        workspace: latest.workspace,
+        assignedMessageID: latest.message_id,
+        inputID: latest.message_id,
+        idleReport: {
+          source: "experimental.idle",
+          observedAt: observedAt - 1,
+          inputID: latest.message_id,
+          executionStartSequence: 1,
+          eventSequence: 2,
+          count: 0,
+          kinds: { shell: 0, subagent: 0, image: 0 },
+        },
+        terminal: {
+          sequence: 3,
+          eventID,
+          messageID: SessionMessage.ID.fromEvent(eventID),
+          previousEventSequence: 2,
+        },
+        observedAt,
+        inventory: {
+          activeSession: false,
+          activeDescendants: 0,
+          pendingInput: false,
+          pendingPermissions: 0,
+          pendingForms: 0,
+          runningShells: 0,
+        },
+      }
+    }
+    return latestSettlement
+  }
+
+  await control.execute({
+    requestID: "integrate-multi-attempt-cleanup",
+    planID,
+    expectedVersion: acceptedPlan.version,
+    action: "integrated",
+    artifact: acceptedPlan.artifact,
+    targetBranch: "main",
+    reason: "The accepted retry is merged and ready for cleanup",
+  })
+  await f.runtime.tick()
+  expect(f.store.plan(planID)).toMatchObject({ state: "cleanup-blocked" })
+  expect(f.store.plan(planID)?.reason).toContain(
+    "The earlier attempt's native idle report is unavailable",
+  )
+  expect(f.store.plan(planID)?.reason).not.toContain("Cleanup recovery authorization is stale")
+  expect(await f.host.worktrees()).toContain(first.workspace)
+  expect(await f.host.worktrees()).toContain(latest.workspace)
+  expect(settlementCalls).toEqual([])
+  expect(removeCalls).toEqual([])
+  expect(retireCalls).toEqual([])
+
+  const wrongTarget = {
+    requestID: "recover-wrong-cleanup-attempt",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "recover-cleanup",
+    taskID: task.id,
+    attemptID: first.id,
+    artifact: first.artifact,
+    targetBranch: "main",
+    reason: "This earlier failed attempt is not eligible for recovery authority",
+  }
+  await expect(control.execute(wrongTarget)).rejects.toThrow(
+    "Cleanup recovery task, accepted artifact or latest attempt changed",
+  )
+  const recoveryCommand = {
+    requestID: "recover-latest-cleanup-attempt",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "recover-cleanup",
+    taskID: task.id,
+    attemptID: latest.id,
+    artifact: latest.artifact,
+    targetBranch: "main",
+    reason: "Authorize exact native settlement for the accepted retry only",
+  }
+  const recoveryReceipt = await control.execute(recoveryCommand)
+  expect(await control.execute(recoveryCommand)).toEqual(recoveryReceipt)
+  const recoveryCount = () =>
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            `SELECT COUNT(*) AS count FROM runner_transitions
+           WHERE plan_id=? AND task_id=? AND event='WORKTREE_CLEANUP_RECOVERY_AUTHORIZED'`,
+          )
+          .get(planID, task.id)!.count,
+    )
+  expect(recoveryCount()).toBe(1)
+
+  await f.runtime.stop()
+  const reopened = reopenRuntime(f)
+  const reopenedControl = await registeredPlanCommand(reopened.runtime)
+  await reopened.runtime.tick()
+  expect(reopened.store.plan(planID)).toMatchObject({ state: "cleanup-blocked" })
+  expect(reopened.store.plan(planID)?.reason).toContain(
+    "The earlier attempt's native idle report is unavailable",
+  )
+  expect(await f.host.worktrees()).toContain(first.workspace)
+  expect(await f.host.worktrees()).toContain(latest.workspace)
+  expect(settlementCalls).toEqual([])
+  expect(removeCalls).toEqual([])
+  expect(retireCalls).toEqual([])
+  expect(await reopenedControl.execute(recoveryCommand)).toEqual(recoveryReceipt)
+  const reopenedWrongTarget = {
+    ...wrongTarget,
+    requestID: "recover-wrong-cleanup-attempt-after-reopen",
+    expectedVersion: reopened.store.plan(planID)!.version,
+  }
+  await expect(reopenedControl.execute(reopenedWrongTarget)).rejects.toThrow(
+    "Cleanup recovery task, accepted artifact or latest attempt changed",
+  )
+  expect(recoveryCount()).toBe(1)
+
+  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner" })
+  await reopenedControl.execute({
+    requestID: "reassign-cleanup-after-reopen",
+    planID,
+    expectedVersion: reopened.store.plan(planID)!.version,
+    action: "reassign",
+    targetSessionID: "new-owner",
+    reason: "Transfer cleanup review to the current Architect",
+  })
+  firstWorker.background = firstIdle
+  await reopened.runtime.tick()
+  expect(reopened.store.plan(planID)).toMatchObject({ state: "cleanup-blocked" })
+  expect(reopened.store.plan(planID)?.reason).toContain(
+    "Cleanup recovery authorization is stale or no longer matches the accepted attempt",
+  )
+  expect(existsSync(first.workspace)).toBe(false)
+  expect(existsSync(latest.workspace)).toBe(true)
+  expect(removeCalls).toEqual([first.workspace])
+  expect(retireCalls).toEqual([first.workspace])
+  expect(settlementCalls).toEqual([])
+
+  const newOwnerControl = await registeredPlanCommand(reopened.runtime, "new-owner")
+  const reauthorized = {
+    requestID: "reauthorize-cleanup-after-owner-change",
+    planID,
+    expectedVersion: reopened.store.plan(planID)!.version,
+    action: "recover-cleanup",
+    taskID: task.id,
+    attemptID: latest.id,
+    artifact: latest.artifact,
+    targetBranch: "main",
+    reason: "The new owner revalidates the exact accepted attempt",
+  }
+  await newOwnerControl.execute(reauthorized)
+  expect(recoveryCount()).toBe(2)
+  await reopened.runtime.tick()
+
+  expect(reopened.store.plan(planID)).toMatchObject({ state: "integrated", reason: null })
+  expect(await f.host.worktrees()).toEqual([f.root])
+  expect(removeCalls).toEqual([first.workspace, latest.workspace])
+  expect(retireCalls).toEqual([first.workspace, latest.workspace])
+  expect(settlementCalls).toEqual([latest.id, latest.id])
+  const earlierRemoval = reopened.store
+    .effects(planID)
+    .find(
+      (effect) => effect.kind === "worktree-remove" && effect.payload.includes(first.workspace),
+    )!
+  const latestRemoval = reopened.store
+    .effects(planID)
+    .find(
+      (effect) => effect.kind === "worktree-remove" && effect.payload.includes(latest.workspace),
+    )!
+  expect(earlierRemoval.state).toBe("completed")
+  expect(earlierRemoval.receipt).not.toContain("lazers-native-cleanup-settlement/v1")
+  expect(latestRemoval.state).toBe("completed")
+  expect(latestRemoval.receipt).toContain("lazers-native-cleanup-settlement/v1")
 })
 
 test("scheduler retires an integrated worker with a missing historical idle report", async () => {

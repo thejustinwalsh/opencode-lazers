@@ -315,11 +315,50 @@ export class WorktreeCleanup {
     source: EffectRow,
     workspace: string,
   ): CleanupRecoveryAuthorization | undefined {
-    const authorization = this.runtime.store.latestTransition<CleanupRecoveryAuthorization>(
-      plan.id,
-      attempt.task_id,
-      "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED",
+    const taskAttempts = this.runtime.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === attempt.task_id)
+    const attemptIDs = new Set(taskAttempts.map((candidate) => candidate.id))
+    const authorizations = this.runtime.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string, string]>(
+          `SELECT payload FROM runner_transitions
+           WHERE plan_id=? AND task_id IS ? AND event='WORKTREE_CLEANUP_RECOVERY_AUTHORIZED'
+           ORDER BY id`,
+        )
+        .all(plan.id, attempt.task_id),
     )
+    let authorization: CleanupRecoveryAuthorization | undefined
+    for (const row of authorizations) {
+      let candidate: unknown
+      try {
+        candidate = JSON.parse(row.payload)
+      } catch {
+        throw new Error(
+          "Cleanup recovery authorization history is malformed; preserve the worktree for reconciliation",
+        )
+      }
+      if (!isRecord(candidate) || typeof candidate.attemptID !== "string")
+        throw new Error(
+          "Cleanup recovery authorization attempt binding is missing; preserve the worktree for reconciliation",
+        )
+      if (!attemptIDs.has(candidate.attemptID))
+        throw new Error(
+          "Cleanup recovery authorization names an unknown task attempt; preserve the worktree for reconciliation",
+        )
+      if (candidate.attemptID !== attempt.id) {
+        if (
+          candidate.sourceEffectID === source.id ||
+          candidate.sessionID === attempt.session_id ||
+          candidate.assignedMessageID === attempt.message_id
+        )
+          throw new Error(
+            "Cleanup recovery authorization is stale or bound to a different worker assignment; preserve the worktree",
+          )
+        continue
+      }
+      authorization = candidate as CleanupRecoveryAuthorization
+    }
     if (!authorization) return undefined
     const node = this.runtime.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
     const proposal = PlanInput.parse(JSON.parse(plan.body))
