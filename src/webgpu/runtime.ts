@@ -101,9 +101,11 @@ const errorDetail = (error: unknown): string => {
   return String(error).slice(0, 2_000)
 }
 
+export const DEFAULT_MODEL_KEEP_ALIVE_MS = 60_000
+
 export function createInferenceRuntime(
   ctx: Parameters<Plugin.Setup>[0],
-  keepAliveMs: () => number = () => -1,
+  keepAliveMs: () => number = () => DEFAULT_MODEL_KEEP_ALIVE_MS,
   voice: () => SpeechVoice = () => DEFAULT_VOICE,
   features: () => Features,
   timing: {
