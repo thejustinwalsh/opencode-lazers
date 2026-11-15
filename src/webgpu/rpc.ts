@@ -29,11 +29,13 @@ export type InferenceRequest = typeof Request.Type
 export const SpeechRequest = Schema.Struct({
   ...Request.fields,
   voice: Schema.optionalKey(Schema.Literals(voiceKeys)),
+  route: Schema.optionalKey(Schema.Literals(["liquid", "runntime"])),
 })
 export const TranscriptionRequest = Schema.Struct({
   audioBase64: Schema.String.check(Schema.isBetweenLength(4, 1_280_000)),
   requestID: Schema.String.check(Schema.isBetweenLength(1, 100)),
   timeoutMs: Request.fields.timeoutMs,
+  route: Schema.optionalKey(Schema.Literals(["liquid", "runntime"])),
 })
 export const GenerationResult = Schema.Struct({
   ok: Schema.Boolean,

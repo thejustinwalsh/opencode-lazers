@@ -1,6 +1,8 @@
 import { OpenCode } from "@opencode/client"
 import { lstat, mkdir, open } from "node:fs/promises"
 import { join, resolve } from "node:path"
+import { speechSegments } from "../../webgpu/speech.ts"
+import { sha256Text } from "./audio-fixture-contract.ts"
 import {
   beginNativeInteraction,
   nativeBindingFromManifest,
@@ -20,8 +22,17 @@ import {
 const REQUEST_TIMEOUT_MS = 30_000
 const RPC_TIMEOUT_MS = 3_000
 const POLL_INTERVAL_MS = 200
+const AUDIO_OBSERVATION_TIMEOUT_MS = 120_000
 
-type NativeKind = "snapshot" | "capture" | "focus" | "click" | "type" | "key"
+type NativeKind =
+  | "snapshot"
+  | "capture"
+  | "focus"
+  | "click"
+  | "type"
+  | "key"
+  | "dictation-fixture"
+  | "playback-plan"
 
 export type NativeCommandInput = {
   root: string
@@ -33,6 +44,9 @@ export type NativeCommandInput = {
   key?: string
   output?: string
   confirmSafePage?: boolean
+  sessionID?: string
+  fixtureID?: string
+  expected?: string
 }
 
 export type NativeInteractionCliDependencies = {
@@ -66,9 +80,52 @@ function nativeWindow(
   return selected
 }
 
-function operation(input: NativeCommandInput, window: NativeWindowReference): NativeOperation {
+async function operation(
+  input: NativeCommandInput,
+  window: NativeWindowReference,
+): Promise<NativeOperation> {
   if (input.kind === "snapshot" || input.kind === "capture" || input.kind === "focus") {
     return { kind: input.kind, window }
+  }
+  if (input.kind === "dictation-fixture") {
+    if (
+      input.sessionID === undefined ||
+      input.sessionID.length === 0 ||
+      input.sessionID.length > 160
+    )
+      throw new Error("Dictation fixture requires a bounded target session ID")
+    if (input.fixtureID !== "quick-brown-fox" && input.fixtureID !== "turn-left-next-street")
+      throw new Error("Frozen clip must be quick-brown-fox or turn-left-next-street")
+    return {
+      kind: "dictation-fixture",
+      window,
+      sessionID: input.sessionID,
+      fixtureID: input.fixtureID,
+    }
+  }
+  if (input.kind === "playback-plan") {
+    if (
+      input.sessionID === undefined ||
+      input.sessionID.length === 0 ||
+      input.sessionID.length > 160
+    )
+      throw new Error("Playback plan requires a bounded target session ID")
+    if (
+      input.expected === undefined ||
+      input.expected.length === 0 ||
+      input.expected.length > 4_000
+    )
+      throw new Error("Playback plan requires expected speech text (1–4000 characters)")
+    const segments = speechSegments(input.expected)
+    if (segments.length === 0 || segments.length > 32)
+      throw new Error("Expected speech must produce 1–32 bounded segments")
+    return {
+      kind: "playback-plan",
+      window,
+      sessionID: input.sessionID,
+      expectedTextHash: await sha256Text(segments.join("\n")),
+      segmentHashes: await Promise.all(segments.map(sha256Text)),
+    }
   }
   const snapshotID = input.snapshotID
   if (snapshotID === undefined || snapshotID.length === 0) {
@@ -159,7 +216,7 @@ export async function runNativeInteraction(
       )
     }
     const target = nativeWindow(status.windows, input.windowID)
-    const command = operation(input, target)
+    const command = await operation(input, target)
     if (
       command.kind === "key" &&
       nativeKeyUsesModifiers(command.key) &&
@@ -218,6 +275,12 @@ export async function runNativeInteraction(
     }
     finishAttempted = true
     await lease.finish({ state: "idle", message: `Completed as ${result.result.delivery}` })
+    if (
+      (input.kind === "dictation-fixture" || input.kind === "playback-plan") &&
+      result.result.delivery !== "delivered"
+    ) {
+      throw new Error(result.result.message ?? "Owned audio operation could not be armed")
+    }
     if (input.kind === "capture" && result.result.screenshotBase64 !== undefined) {
       const path = await saveScreenshot(
         preflight.manifest.candidate.workspace,
@@ -288,6 +351,90 @@ export async function resolveNativeInteractionResult(
     replayed: false,
     snapshot: result.result.snapshot,
   })
+}
+
+export async function nativeAudioObservations(
+  root: string,
+  requestID: string,
+  intelligibility?: "pass" | "fail" | "unknown",
+): Promise<void> {
+  const proof = await verifyOwnedSidecar(root, { allowInteractionRecovery: true })
+  const client = makeClient(proof.registration)
+  const info = await client.server.info({ signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
+  if (info.pid !== proof.health.pid || info.version !== proof.health.version)
+    throw new Error("Authenticated owned sidecar identity changed")
+  const binding = nativeBindingFromManifest(proof.manifest)
+  const rpc = client.rpc(NativeInteraction)
+  const deadline = Date.now() + AUDIO_OBSERVATION_TIMEOUT_MS
+  let record = await rpc.audioResult(
+    { binding, requestID },
+    { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
+  )
+  if (record === null) throw new Error("No audio observation exists for this owned request")
+  const isTerminal = () =>
+    record?.events.some(({ event }) =>
+      [
+        "dictation-complete",
+        "dictation-cancelled",
+        "dictation-failed",
+        "playback-complete",
+        "playback-cancelled",
+        "playback-failed",
+      ].includes(event.kind),
+    ) === true
+  while (!isTerminal() && Date.now() < deadline) {
+    await delay(POLL_INTERVAL_MS)
+    record = await rpc.audioResult(
+      { binding, requestID },
+      { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
+    )
+    if (record === null) throw new Error("Audio observation disappeared while waiting")
+  }
+  if (!isTerminal())
+    throw new Error("Timed out waiting for the owned app audio operation to finish")
+  if (intelligibility !== undefined) {
+    if (!record.appCompleted || record.kind !== "playback")
+      throw new Error("Record intelligibility only after all real app playback segments finish")
+    const status = await rpc.status({ binding }, { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
+    if (!status.ready || !status.adapterID)
+      throw new Error("Owned native adapter is unavailable for the intelligibility note")
+    await rpc.audioObserve(
+      {
+        binding,
+        adapterID: status.adapterID,
+        observation: {
+          requestID,
+          sessionID: record.sessionID,
+          window: record.window,
+          event: { kind: "intelligibility", value: intelligibility },
+        },
+      },
+      { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
+    )
+    record = await rpc.audioResult(
+      { binding, requestID },
+      { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
+    )
+    if (record === null) throw new Error("Audio observation disappeared after intelligibility note")
+  }
+  const complete = record.appCompleted
+  printResult({
+    requestID: record.requestID,
+    sessionID: record.sessionID,
+    kind: record.kind,
+    fixtureID: record.fixtureID,
+    route: record.route,
+    expectedTextHash: record.expectedTextHash,
+    expectedSegments: record.segmentHashes?.length,
+    observedEvents: record.events.length,
+    observedNaturalEnds: record.events.filter((item) => item.event.kind === "playback-segment-end")
+      .length,
+    appCompleted: complete,
+    intelligibility: record.intelligibility ?? "not-recorded",
+    observations: record.events,
+    passed: complete,
+  })
+  if (!complete) throw new Error("Owned audio request did not complete successfully")
 }
 
 async function saveScreenshot(

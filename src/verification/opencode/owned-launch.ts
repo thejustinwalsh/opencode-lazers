@@ -133,7 +133,15 @@ export type OwnedLaunchManifest = {
   nativeInteraction?: {
     state: "idle" | "pending" | "ambiguous"
     requestID?: string
-    kind?: "snapshot" | "capture" | "focus" | "click" | "type" | "key"
+    kind?:
+      | "snapshot"
+      | "capture"
+      | "focus"
+      | "click"
+      | "type"
+      | "key"
+      | "dictation-fixture"
+      | "playback-plan"
     updatedAt?: string
     message?: string
   }
@@ -2301,9 +2309,16 @@ async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
       !["idle", "pending", "ambiguous"].includes(String(interaction.state)) ||
       (interaction.requestID !== undefined && typeof interaction.requestID !== "string") ||
       (interaction.kind !== undefined &&
-        !["snapshot", "capture", "focus", "click", "type", "key"].includes(
-          String(interaction.kind),
-        )) ||
+        ![
+          "snapshot",
+          "capture",
+          "focus",
+          "click",
+          "type",
+          "key",
+          "dictation-fixture",
+          "playback-plan",
+        ].includes(String(interaction.kind))) ||
       (interaction.updatedAt !== undefined && typeof interaction.updatedAt !== "string") ||
       (interaction.message !== undefined && typeof interaction.message !== "string")
     ) {

@@ -66,6 +66,45 @@ export function wavBase64(samples: Float32Array, rate = 24_000): string {
   return btoa(binary)
 }
 
+/** Require bounded, nonempty, finite mono PCM16 speech at the published 24 kHz rate. */
+export function validateSpeechWav(bytes: Uint8Array): void {
+  if (
+    bytes.byteLength < 46 ||
+    bytes.byteLength > 44 + 24_000 * MAX_AUDIO_SECONDS * 2 ||
+    ascii(bytes, 0, 4) !== "RIFF" ||
+    ascii(bytes, 8, 8) !== "WAVEfmt " ||
+    ascii(bytes, 36, 4) !== "data"
+  ) {
+    throw new Error("Speech output is not a bounded WAV clip")
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const payloadLength = bytes.byteLength - 44
+  if (
+    view.getUint32(4, true) !== bytes.byteLength - 8 ||
+    view.getUint32(16, true) !== 16 ||
+    view.getUint16(20, true) !== 1 ||
+    view.getUint16(22, true) !== 1 ||
+    view.getUint32(24, true) !== 24_000 ||
+    view.getUint32(28, true) !== 48_000 ||
+    view.getUint16(32, true) !== 2 ||
+    view.getUint16(34, true) !== 16 ||
+    view.getUint32(40, true) !== payloadLength ||
+    payloadLength === 0 ||
+    payloadLength % 2 !== 0
+  ) {
+    throw new Error("Speech output is not finite nonempty 24 kHz PCM16 audio")
+  }
+  let hasSignal = false
+  for (let offset = 44; offset < bytes.byteLength; offset += 2) {
+    if (view.getInt16(offset, true) !== 0) hasSignal = true
+  }
+  if (!hasSignal) throw new Error("Speech output is silent")
+}
+
+function ascii(bytes: Uint8Array, offset: number, length: number): string {
+  return String.fromCharCode(...bytes.subarray(offset, offset + length))
+}
+
 function encodePCM16AtRate(samples: Float32Array) {
   // Output can be 24 kHz; encode chunks within the stricter 16 kHz transport bound.
   const encoded: string[] = []

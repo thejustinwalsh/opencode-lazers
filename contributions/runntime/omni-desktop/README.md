@@ -121,3 +121,26 @@ The implementation tree cited above predates the native conversation provider.
 For native conversation qualification, rebuild from the LZ-28 task commit in
 this checkout; the former candidate build is not compatible with the v2 stream
 mailbox contract and must not be used as evidence.
+
+## LZ-29 clean audio controls
+
+The task implementation adds an owned-profile-only, fixed-ID clean-clip path to
+the existing composer microphone control and a bounded receipt for the existing
+completed-response speaker. See [the full Desktop procedure](../../../.agents/docs/product-verification.md#clean-clip-dictation-and-completed-response-playback)
+for the required fresh-snapshot native clicks and safety boundary. The fixture
+IDs are `quick-brown-fox` and `turn-left-next-street`; the transport validates
+their pinned hashes and PCM16 WAV format and accepts no caller path. A fixture
+does not call the real microphone API. Verify that the existing draft remains
+intact, the expected words are inserted once, and nothing is sent.
+
+The speech model picker is independent of the global Chat route and is scoped to
+the selected session. Liquid remains the per-session default; choose ruNNtime
+Omni only in the disposable session used for this audio probe. The bounded
+playback receipt is successful only after the expected nonempty finite 24 kHz
+segments start in the real app output and each ends naturally. Listening-based
+intelligibility is an optional, separate operator observation.
+
+These code paths and behavior tests do not qualify a live Desktop profile. No
+Desktop/service lifecycle operation or live audio interaction was performed by
+this worker; the LZ-29 Desktop observations remain pending authorized Architect
+review and must not be inferred from unit or native-bridge tests.

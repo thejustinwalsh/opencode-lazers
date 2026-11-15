@@ -160,6 +160,7 @@ export function createInferenceRuntime(
     schedule?: (callback: () => void, delayMs: number) => () => void
     serviceTimeoutMs?: number
     chatRoute?: () => ChatRoute
+    audioRoute?: () => ChatRoute
   } = {},
 ) {
   const files = ctx.main(ModelFiles)
@@ -178,6 +179,7 @@ export function createInferenceRuntime(
   const wallNow = timing.wallNow ?? Date.now
   const runtimeTrace = new RuntimeTrace(writeTrace, now)
   const chatRoute = () => timing.chatRoute?.() ?? "liquid"
+  const audioRoute = () => timing.audioRoute?.() ?? "liquid"
   let activeInputTokens: number | undefined
   const traceStage = async (stage: TraceStage, metadata?: InferenceTraceMark) => {
     if (runtimeTrace.hasActiveRequest && metadata?.actualInputTokens !== undefined)
@@ -1770,6 +1772,7 @@ export function createInferenceRuntime(
       if (kind === "chat") return identity?.backend === "runntime" ? "ruNNtime LFM3" : "LFM3"
       return undefined
     },
+    audioRoute,
     load,
     unload,
     dispose,
@@ -1798,17 +1801,24 @@ export function createInferenceRuntime(
       rpc().ask({ prompt, maxTokens: 128, timeoutMs: 60_000 }, { signal }),
     decide: (input: DecisionInput, signal?: AbortSignal) => rpc().decide(input, { signal }),
     systemOne: (input: SystemOneInput, signal?: AbortSignal) => rpc().systemOne(input, { signal }),
-    speak: (prompt: string, signal?: AbortSignal) =>
-      rpc().speak({ prompt, voice: voice(), maxTokens: 512, timeoutMs: 60_000 }, { signal }),
+    speak: (prompt: string, signal?: AbortSignal, route?: ChatRoute) =>
+      rpc().speak(
+        { prompt, voice: voice(), route: route ?? audioRoute(), maxTokens: 512, timeoutMs: 60_000 },
+        { signal },
+      ),
     transcribe: async (
       audioBase64: string,
       onText: (text: string) => void,
       signal?: AbortSignal,
+      route?: ChatRoute,
     ) => {
       const requestID = crypto.randomUUID()
       transcripts.set(requestID, onText)
       try {
-        return await rpc().transcribe({ audioBase64, requestID, timeoutMs: 60_000 }, { signal })
+        return await rpc().transcribe(
+          { audioBase64, requestID, route: route ?? audioRoute(), timeoutMs: 60_000 },
+          { signal },
+        )
       } finally {
         transcripts.delete(requestID)
       }

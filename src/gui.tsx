@@ -30,6 +30,7 @@ import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rp
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
+import { sessionAudioRoute } from "./webgpu/inference-route.ts"
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
@@ -49,6 +50,10 @@ export default Plugin.define({
     modelRoute: Store.global(Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }), {
       selected: "liquid",
     }),
+    audioRoute: Store.session(
+      Schema.Struct({ selected: Schema.Literals(["liquid", "runntime"]) }),
+      { selected: "liquid" },
+    ),
     runtime: Store.global(
       Schema.Struct({
         keepAliveMs: Schema.Number.check(
@@ -202,8 +207,20 @@ export default Plugin.define({
       () => ctx.stores.runtime.value?.keepAliveMs ?? -1,
       () => ctx.stores.voice.value?.selected ?? DEFAULT_VOICE,
       features,
-      { chatRoute: () => ctx.stores.modelRoute.value?.selected ?? "liquid" },
+      {
+        chatRoute: () => ctx.stores.modelRoute.value?.selected ?? "liquid",
+        audioRoute: () => {
+          const session = ctx.sessions.current()
+          return session
+            ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected)
+            : "liquid"
+        },
+      },
     )
+    const currentAudioRoute = () => {
+      const session = ctx.sessions.current()
+      return session ? sessionAudioRoute(ctx.stores.audioRoute(session).value?.selected) : "liquid"
+    }
     registerDictation(ctx, runtime)
     registerReadAloud(ctx, runtime)
     ctx.provide(LocalModel, runtime)
@@ -487,7 +504,7 @@ export default Plugin.define({
               </Show>
               <p>Enabled local features load their model automatically and share GPU memory.</p>
               <Ui.Menu
-                label={`Chat and audio route: ${ctx.stores.modelRoute.value?.selected === "runntime" ? "ruNNtime Omni (unqualified)" : "Liquid WebGPU (default)"}`}
+                label={`Chat route: ${ctx.stores.modelRoute.value?.selected === "runntime" ? "ruNNtime Omni (unqualified)" : "Liquid WebGPU (default)"}`}
                 trigger="button"
                 disabled={!settingsReady()}
                 items={[
@@ -502,9 +519,9 @@ export default Plugin.define({
                 ]}
               />
               <p class="lazers-local-meta">
-                Route changes unload the active chat/audio model before loading the selected route.
+                Chat route changes unload the active chat model before loading the selected route.
                 ruNNtime failures remain visible and never fall back automatically. System One
-                decisions remain on d1.
+                decisions remain on d1. Speech has a separate session-scoped route below.
               </p>
               <Ui.Menu
                 label={`Unload when idle: ${ctx.stores.runtime.value?.keepAliveMs === 60_000 ? "1 minute" : ctx.stores.runtime.value?.keepAliveMs === 300_000 ? "5 minutes" : ctx.stores.runtime.value?.keepAliveMs === 900_000 ? "15 minutes" : "Never"}`}
@@ -533,6 +550,32 @@ export default Plugin.define({
                 items={voiceKeys.map((key) => ({
                   label: `${VOICES[key].label}${key === DEFAULT_VOICE ? " (default)" : ""}`,
                   onSelect: () => ctx.stores.voice.set({ selected: key }),
+                }))}
+              />
+              <p>
+                Speech route is scoped to this session. Liquid remains the default; ruNNtime Omni is
+                unqualified.
+              </p>
+              <Ui.Menu
+                label={`Speech route for this session: ${
+                  currentAudioRoute() === "runntime"
+                    ? "ruNNtime Omni (unqualified)"
+                    : "Liquid (default)"
+                }`}
+                trigger="button"
+                disabled={!ctx.sessions.current()}
+                items={[
+                  { label: "Liquid (default)", value: "liquid" as const },
+                  {
+                    label: "ruNNtime Omni (unqualified; this session only)",
+                    value: "runntime" as const,
+                  },
+                ].map((item) => ({
+                  label: item.label,
+                  onSelect: () => {
+                    const session = ctx.sessions.current()
+                    if (session) ctx.stores.audioRoute(session).set({ selected: item.value })
+                  },
                 }))}
               />
             </section>

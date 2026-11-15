@@ -310,4 +310,193 @@ describe("owned native interaction broker", () => {
     })
     expect(value.status(binding).blocked).toBe(false)
   })
+
+  test("binds clean-clip dictation completion to the armed session, clip, and window generation", () => {
+    const { value } = broker()
+    value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    const requestID = "afc30312-7715-4a1a-a12f-2bb8e53f17c4"
+    const operation: NativeOperation = {
+      kind: "dictation-fixture",
+      window: windowRef,
+      sessionID: "owned-session",
+      fixtureID: "quick-brown-fox",
+    }
+    expect(value.enqueue({ binding, requestID, operation })).toEqual({ state: "queued" })
+    value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    value.complete({ binding, adapterID: "adapter-1", requestID, result: deliveredResult })
+
+    expect(() =>
+      value.observeAudio({
+        binding,
+        adapterID: "adapter-1",
+        observation: {
+          requestID,
+          sessionID: "other-session",
+          window: windowRef,
+          event: { kind: "dictation-start", fixtureID: "quick-brown-fox", route: "runntime" },
+        },
+      }),
+    ).toThrow("unknown or stale")
+    expect(() =>
+      value.observeAudio({
+        binding,
+        adapterID: "adapter-old",
+        observation: {
+          requestID,
+          sessionID: "owned-session",
+          window: windowRef,
+          event: { kind: "dictation-start", fixtureID: "quick-brown-fox", route: "runntime" },
+        },
+      }),
+    ).toThrow("stale")
+    expect(() =>
+      value.observeAudio({
+        binding,
+        adapterID: "adapter-1",
+        observation: {
+          requestID,
+          sessionID: "owned-session",
+          window: { ...windowRef, generation: windowRef.generation + 1 },
+          event: { kind: "dictation-start", fixtureID: "quick-brown-fox", route: "runntime" },
+        },
+      }),
+    ).toThrow("unknown or stale")
+    expect(() =>
+      value.observeAudio({
+        binding,
+        adapterID: "adapter-1",
+        observation: {
+          requestID,
+          sessionID: "owned-session",
+          window: windowRef,
+          event: {
+            kind: "dictation-start",
+            fixtureID: "turn-left-next-street",
+            route: "runntime",
+          },
+        },
+      }),
+    ).toThrow("does not match")
+
+    value.observeAudio({
+      binding,
+      adapterID: "adapter-1",
+      observation: {
+        requestID,
+        sessionID: "owned-session",
+        window: windowRef,
+        event: { kind: "dictation-start", fixtureID: "quick-brown-fox", route: "runntime" },
+      },
+    })
+    value.observeAudio({
+      binding,
+      adapterID: "adapter-1",
+      observation: {
+        requestID,
+        sessionID: "owned-session",
+        window: windowRef,
+        event: {
+          kind: "dictation-complete",
+          fixtureID: "quick-brown-fox",
+          matchesExpected: true,
+          insertedExactlyOnce: true,
+          insertionCalls: 2,
+          insertedChars: 45,
+          submitted: false,
+        },
+      },
+    })
+    expect(value.audioResult(binding, requestID)).toMatchObject({
+      kind: "dictation",
+      fixtureID: "quick-brown-fox",
+      sessionID: "owned-session",
+      appCompleted: true,
+      events: [{ event: { kind: "dictation-start" } }, { event: { kind: "dictation-complete" } }],
+    })
+  })
+
+  test("records real playback starts and natural ends separately from intelligibility", () => {
+    const { value } = broker()
+    value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    const requestID = "bfc30312-7715-4a1a-a12f-2bb8e53f17c5"
+    const expectedTextHash = "a".repeat(64)
+    const textHash = "b".repeat(64)
+    const operation: NativeOperation = {
+      kind: "playback-plan",
+      window: windowRef,
+      sessionID: "owned-session",
+      expectedTextHash,
+      segmentHashes: [textHash],
+    }
+    value.enqueue({ binding, requestID, operation })
+    value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    value.complete({ binding, adapterID: "adapter-1", requestID, result: deliveredResult })
+    const send = (event: Parameters<typeof value.observeAudio>[0]["observation"]["event"]) =>
+      value.observeAudio({
+        binding,
+        adapterID: "adapter-1",
+        observation: { requestID, sessionID: "owned-session", window: windowRef, event },
+      })
+
+    expect(() => send({ kind: "playback-complete" })).toThrow("before every expected")
+    send({
+      kind: "playback-start",
+      route: "runntime",
+      expectedTextHash,
+      segmentHashes: [textHash],
+    })
+    const segment = {
+      segmentIndex: 0,
+      textHash,
+      sampleRate: 24_000 as const,
+      frames: 4_800,
+      durationMs: 200,
+    }
+    send({ kind: "playback-segment-start", ...segment })
+    expect(() => send({ kind: "playback-segment-end", ...segment, frames: 4_799 })).toThrow(
+      "did not end naturally",
+    )
+    send({ kind: "playback-segment-end", ...segment })
+    send({ kind: "playback-complete" })
+    expect(value.audioResult(binding, requestID)).toMatchObject({
+      kind: "playback",
+      appCompleted: true,
+    })
+    send({ kind: "intelligibility", value: "unknown" })
+    expect(value.audioResult(binding, requestID)).toMatchObject({
+      appCompleted: true,
+      intelligibility: "unknown",
+    })
+    expect(() => send({ kind: "playback-failed" })).toThrow("unknown or stale")
+  })
+
+  test("cancellation and route mismatch produce terminal but unsuccessful audio receipts", () => {
+    const { value } = broker()
+    value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    const requestID = "cfc30312-7715-4a1a-a12f-2bb8e53f17c6"
+    const fixtureOperation: NativeOperation = {
+      kind: "dictation-fixture",
+      window: windowRef,
+      sessionID: "owned-session",
+      fixtureID: "turn-left-next-street",
+    }
+    value.enqueue({ binding, requestID, operation: fixtureOperation })
+    value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })
+    value.complete({ binding, adapterID: "adapter-1", requestID, result: deliveredResult })
+    value.observeAudio({
+      binding,
+      adapterID: "adapter-1",
+      observation: {
+        requestID,
+        sessionID: "owned-session",
+        window: windowRef,
+        event: { kind: "dictation-failed", fixtureID: "turn-left-next-street" },
+      },
+    })
+    expect(value.audioResult(binding, requestID)).toMatchObject({
+      kind: "dictation",
+      appCompleted: false,
+      events: [{ event: { kind: "dictation-failed" } }],
+    })
+  })
 })
