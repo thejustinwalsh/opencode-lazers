@@ -16,6 +16,7 @@
     "dist"
   ],
   "scripts": {
+    "package:release": "bun scripts/release-package.ts",
     "verify": "bun fmt && bun lint --fix && bun fmt && bun check",
     "build:gui": "bun scripts/build-radar-layout.ts && vite build && bun scripts/verify-gui-bundle.ts"
   },

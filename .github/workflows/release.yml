@@ -1,0 +1,65 @@
+name: Release plugin
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for a test artifact (vMAJOR.MINOR.PATCH)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install the pinned Bun build
+        run: |
+          bun_version="$(node -p 'require("./package.json").packageManager.replace(/^bun@/, "")')"
+          npm install --prefix "$RUNNER_TEMP/lazers-bun" --no-audit --no-fund "bun@$bun_version"
+          echo "$RUNNER_TEMP/lazers-bun/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: bun install --frozen-lockfile
+      - run: bun run verify
+      - run: git diff --exit-code
+      - run: bun test src/webgpu src/radar/packaging.test.ts
+      - name: Build and smoke-install the release package
+        env:
+          RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+        run: bun run package:release "$RELEASE_TAG" release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: opencode-lazers
+          path: release/*.tgz
+          if-no-files-found: error
+          compression-level: 0
+  draft:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: opencode-lazers
+          path: release
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          asset="release/opencode-lazers-${RELEASE_TAG#v}.tgz"
+          test -f "$asset"
+          gh release create "$RELEASE_TAG" "$asset" --verify-tag --draft --generate-notes

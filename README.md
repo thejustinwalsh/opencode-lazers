@@ -284,7 +284,7 @@ The scaffold targets the installed OpenCode CLI and Desktop 2.2.5 with `@opencod
 
 Use the Bun version pinned in `package.json`, then run `bun install --frozen-lockfile`. The selected canary package is `1.4.4-canary.20261030.1`, verified as binary revision `1.4.4-canary.1+da867c60b`. `bun run verify` runs native `bun fmt`, `bun lint --fix`, `bun fmt` again to normalize lint edits, and `bun check`. Quality workflows auto-fix formatting and lint before reporting remaining failures; do not spend model repair turns on mechanical fixes. Run the task's behavior tests as well.
 
-LAZERS is one reusable package. The development installation selects the repository package directory through global `plugins` configuration; native `plugin.use` policies exclude the known legacy project/worktree loader targets so they do not compete with it. The [observed development migration](.agents/docs/evidence/native-liveness/development-source-rollout-20261102.jsonl) preserves the exact selected targets and effective inventories. Plugin replacement needs an external operator because unloading LAZERS also removes Architect's registrations. Clean installation and upgrade qualification remain release work. Run `bun test` for contract, persistence, and tool behavior tests.
+LAZERS is one reusable package. The development installation selects the repository package directory through global `plugins` configuration; native `plugin.use` policies exclude the known legacy project/worktree loader targets so they do not compete with it. The [observed development migration](.agents/docs/evidence/native-liveness/development-source-rollout-20261102.jsonl) preserves the exact selected targets and effective inventories. Plugin replacement needs an external operator because unloading LAZERS also removes Architect's registrations. Use the tagged release archive for installations outside the development checkout. Run `bun test` for contract, persistence, and tool behavior tests.
 
 | Tooling                                   | Status                                                                                 |
 | ----------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -400,6 +400,36 @@ The target Architect flow above guides these increments: enable current web rese
 Cache affinity, bounded memory, hashline editing, and selective compound learning remain separate experiments. Each needs a stated hypothesis, a fixed comparison, and a retention criterion.
 
 Source: [Agent Harness Solutions conversation](https://chatgpt.com/share/6ae566ed-4b30-83ea-9d5d-23d85c7c4ae4). The [original design brief](.agents/docs/sources/original-design-brief.md) and [visible source transcript](.agents/docs/sources/agent-harness-solutions.json) are retained locally with fetch provenance. The contracts operationalize its final mission; the spike sequence is the proposed implementation path. Current user decisions take precedence over historical examples.
+
+## Install the release package
+
+Use OpenCode Desktop 2.2.6. Download the versioned `opencode-lazers-VERSION.tgz`
+from the GitHub release, then install it in a dedicated local directory:
+
+```sh
+mkdir -p "$HOME/.local/share/opencode/lazers-plugin"
+cd "$HOME/.local/share/opencode/lazers-plugin"
+bun add --ignore-scripts /absolute/path/to/opencode-lazers-VERSION.tgz
+```
+
+In your global OpenCode `opencode.json(c)`, add the installed package to
+`plugins`. Replace an existing LAZERS source checkout entry if present.
+
+```json
+{
+  "plugins": ["/absolute/path/to/.local/share/opencode/lazers-plugin/node_modules/opencode-lazers"]
+}
+```
+
+Restart OpenCode Desktop and its background service. The same package loads
+Architect, the server tools, and the Desktop panels. It needs no plugin build
+step. Enable local inference in **Settings → LAZERS** if you want to use
+Omni or D1.
+
+For release maintainers: run the **Release plugin** workflow manually to
+build a test artifact. Pushing a `vMAJOR.MINOR.PATCH` tag creates a draft
+GitHub release after checks and a clean package install. Install that exact
+archive in OpenCode Desktop before publishing the draft.
 
 Local inference uses ruNNtime for Omni chat, dictation, speech, and D1 System One.
 Omni downloads Liquid's pinned GGUF files on demand. The first System One
