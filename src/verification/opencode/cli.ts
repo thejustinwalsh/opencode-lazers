@@ -139,6 +139,7 @@ export async function main(
     await resolveNativeInteractionResult(
       resolve(required(args, "--root")),
       required(args, "--request"),
+      nativeDependencies,
     )
     return
   }

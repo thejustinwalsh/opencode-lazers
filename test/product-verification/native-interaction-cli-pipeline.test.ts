@@ -190,7 +190,13 @@ async function pipeline(options: PipelineOptions = {}) {
     () => undefined,
     options.loadFixture,
   )
-  Object.defineProperty(adapter, "verifyRuntime", { value: async () => binding })
+  const runtimeAllowPending: boolean[] = []
+  Object.defineProperty(adapter, "verifyRuntime", {
+    value: async (allowPending: boolean) => {
+      runtimeAllowPending.push(allowPending)
+      return binding
+    },
+  })
   adapter.trackWindow(window)
   const windowReference = adapter.currentWindowReferences()[0]!
   if (options.legacyAdapter) {
@@ -202,7 +208,9 @@ async function pipeline(options: PipelineOptions = {}) {
   const requestIDs: string[] = []
   const acceptedOperations: NativeOperation[] = []
   let enqueueCount = 0
-  let leaseState: "idle" | "ambiguous" | undefined
+  let loseEnqueueReply = options.loseEnqueueReply === true
+  let leaseState: "idle" | "pending" | "ambiguous" | undefined
+  let leaseRequestID: string | undefined
   let leaseFinishes = 0
   const rpc = {
     status: async ({ binding: requestedBinding }: { binding: NativeBinding }) => {
@@ -218,7 +226,10 @@ async function pipeline(options: PipelineOptions = {}) {
       requestIDs.push(input.requestID)
       acceptedOperations.push(validation.value.operation)
       const result = broker.enqueue(validation.value)
-      if (options.loseEnqueueReply) throw new Error("fixture lost the enqueue reply")
+      if (loseEnqueueReply) {
+        loseEnqueueReply = false
+        throw new Error("fixture lost the enqueue reply")
+      }
       return result
     },
     result: async ({
@@ -235,14 +246,36 @@ async function pipeline(options: PipelineOptions = {}) {
   } as unknown as ReturnType<NativeInteractionCliDependencies["makeClient"]>
   const dependencies: NativeInteractionCliDependencies = {
     verifyOwnedLaunch: async () => proof,
-    beginNativeInteraction: async () => ({
-      manifest,
-      finish: async ({ state }) => {
-        leaseFinishes++
-        leaseState = state
-      },
-    }),
+    beginNativeInteraction: async (_root, requestID) => {
+      if (leaseState === "pending" || leaseState === "ambiguous")
+        throw new Error(
+          "A previous native interaction is unresolved; inspect its request without replay",
+        )
+      leaseRequestID = requestID
+      leaseState = "pending"
+      manifest.nativeInteraction = { state: "pending", requestID, kind: "key" }
+      return {
+        manifest,
+        finish: async ({ state }) => {
+          leaseFinishes++
+          if (leaseRequestID !== requestID || leaseState !== "pending")
+            throw new Error("Native interaction lease changed while a request was pending")
+          leaseState = state
+          manifest.nativeInteraction = { state, requestID, kind: "key" }
+          if (state === "ambiguous") manifest.status = "cleanup-blocked"
+        },
+      }
+    },
     makeClient: () => client,
+    verifyOwnedSidecar: async () => proof as never,
+    resolveNativeInteraction: async (_root, requestID) => {
+      if (leaseRequestID !== requestID || leaseState !== "ambiguous")
+        throw new Error("Native interaction resolution does not match the pending request")
+      leaseState = "idle"
+      manifest.status = "ready"
+      manifest.nativeInteraction = { state: "idle", requestID, kind: "key" }
+      return { ...manifest, nativeInteraction: { state: "idle", requestID } }
+    },
   }
 
   return {
@@ -255,6 +288,7 @@ async function pipeline(options: PipelineOptions = {}) {
     setRendererPID: (pid: number) => (rendererPID = pid),
     requestIDs,
     acceptedOperations,
+    runtimeAllowPending: () => runtimeAllowPending,
     enqueueCount: () => enqueueCount,
     leaseState: () => leaseState,
     leaseFinishes: () => leaseFinishes,
@@ -415,6 +449,7 @@ describe("owned native interaction CLI-to-Main pipeline", () => {
   test("parses and admits Ctrl+T through the RPC schema and dispatches control key events", async () => {
     const value = await pipeline()
     try {
+      expect(value.runtimeAllowPending()[0]).toBe(true)
       expect(value.broker.status(binding)).toMatchObject({
         ready: true,
         capabilities: { modifiedKeys: true },
@@ -537,6 +572,24 @@ describe("owned native interaction CLI-to-Main pipeline", () => {
         { type: "keyUp", keyCode: "T", modifiers: ["control"] },
       ])
       expect(value.enqueueCount()).toBe(1)
+      await expect(
+        runCLI(nativeArgs("Enter", "snapshot-before-resolution"), value.dependencies),
+      ).rejects.toThrow("previous native interaction is unresolved")
+      expect(value.enqueueCount()).toBe(1)
+
+      await runCLI(["native-resolve", "--root", root, "--request", requestID], value.dependencies)
+      expect(value.leaseState()).toBe("idle")
+      const nextSnapshotID = await freshSnapshot(value)
+      await runCLI(nativeArgs("Enter", nextSnapshotID), value.dependencies)
+      expect(value.enqueueCount()).toBe(2)
+      expect(value.acceptedOperations).toHaveLength(2)
+      expect(value.events).toEqual([
+        { type: "keyDown", keyCode: "T", modifiers: ["control"] },
+        { type: "keyUp", keyCode: "T", modifiers: ["control"] },
+        { type: "keyDown", keyCode: "Enter" },
+        { type: "keyUp", keyCode: "Enter" },
+      ])
+      expect(value.leaseState()).toBe("idle")
     } finally {
       value.close()
     }

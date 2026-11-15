@@ -40,6 +40,7 @@ type HostRecord = {
 
 type AudioRecord = {
   requestID: string
+  adapterID?: string
   sessionID: string
   window: NativeWindowReference
   kind: "dictation" | "playback"
@@ -92,19 +93,25 @@ export class NativeInteractionBroker {
     capabilities?: NativeInteractionCapabilities
   }): void {
     this.assertBinding(input.binding)
+    const windows = this.validateWindows(input.windows)
+    const now = this.now()
     const current = this.host
-    if (current !== undefined && current.adapterID !== input.adapterID) {
-      throw new Error("A different native adapter generation still owns this trial")
-    }
     if (current !== undefined && !same(current.binding, input.binding)) {
       throw new Error("Native adapter binding changed during this trial")
+    }
+    if (current !== undefined && now - current.lastSeen <= HOST_FRESH_MS) {
+      if (current.adapterID !== input.adapterID) {
+        throw new Error("A different native adapter generation still owns this trial")
+      }
+    } else if (current !== undefined) {
+      this.settleStaleRequest()
     }
     this.host = {
       binding: input.binding,
       adapterID: input.adapterID,
-      windows: this.validateWindows(input.windows),
+      windows,
       capabilities: { modifiedKeys: input.capabilities?.modifiedKeys === true },
-      lastSeen: this.now(),
+      lastSeen: now,
     }
   }
 
@@ -248,6 +255,8 @@ export class NativeInteractionBroker {
       return null
     }
     record.state = "delivered"
+    const audioRecord = this.audio.get(record.request.requestID)
+    if (audioRecord !== undefined) audioRecord.adapterID = input.adapterID
     return record.request
   }
 
@@ -258,14 +267,9 @@ export class NativeInteractionBroker {
     result: NativeActionResult
   }): void {
     this.assertBinding(input.binding)
-    const host = this.host
-    if (
-      host === undefined ||
-      !same(host.binding, input.binding) ||
-      host.adapterID !== input.adapterID
-    ) {
+    const host = this.requireFreshHost(input.binding)
+    if (host.adapterID !== input.adapterID)
       throw new Error("Native completion came from a stale adapter generation")
-    }
     const record = this.requests.get(input.requestID)
     if (
       record === undefined ||
@@ -307,8 +311,12 @@ export class NativeInteractionBroker {
     const host = this.requireFreshHost(input.binding)
     if (host.adapterID !== input.adapterID) throw new Error("Audio observation adapter is stale")
     const record = this.audio.get(input.observation.requestID)
+    const request = this.requests.get(input.observation.requestID)
     if (
       !record ||
+      record.adapterID !== input.adapterID ||
+      request?.state !== "completed" ||
+      request.result?.delivery !== "delivered" ||
       (record.terminal && input.observation.event.kind !== "intelligibility") ||
       record.sessionID !== input.observation.sessionID ||
       !same(record.window, input.observation.window)
@@ -327,7 +335,12 @@ export class NativeInteractionBroker {
     this.assertBinding(binding)
     const record = this.audio.get(requestID)
     if (!record) return null
-    const { activeSegment: _activeSegment, terminal: _terminal, ...result } = record
+    const {
+      activeSegment: _activeSegment,
+      terminal: _terminal,
+      adapterID: _adapterID,
+      ...result
+    } = record
     return structuredClone(result)
   }
 
@@ -416,6 +429,26 @@ export class NativeInteractionBroker {
       throw new Error("Owned Desktop native adapter is not freshly attached")
     }
     return host
+  }
+
+  private settleStaleRequest(): void {
+    if (this.activeRequest === undefined) return
+    const record = this.requests.get(this.activeRequest)
+    if (record?.state === "queued") {
+      record.state = "completed"
+      record.result = {
+        delivery: "not-delivered",
+        message: "Desktop adapter heartbeat expired before dispatch",
+      }
+    } else if (record?.state === "delivered") {
+      record.state = "completed"
+      record.result = {
+        delivery: "ambiguous",
+        message: "Desktop adapter heartbeat expired after dispatch",
+      }
+      this.ambiguous = true
+    }
+    this.activeRequest = undefined
   }
 
   private validateWindows(windows: ReadonlyArray<NativeWindowReference>): NativeWindowReference[] {

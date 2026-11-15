@@ -53,6 +53,8 @@ export type NativeInteractionCliDependencies = {
   verifyOwnedLaunch: typeof verifyOwnedLaunch
   beginNativeInteraction: typeof beginNativeInteraction
   makeClient: typeof makeClient
+  verifyOwnedSidecar?: typeof verifyOwnedSidecar
+  resolveNativeInteraction?: typeof resolveNativeInteraction
 }
 
 const nativeInteractionDependencies: NativeInteractionCliDependencies = {
@@ -318,12 +320,18 @@ export async function runNativeInteraction(
 export async function resolveNativeInteractionResult(
   root: string,
   requestID: string,
+  dependencies: Pick<NativeInteractionCliDependencies, "makeClient"> &
+    Partial<
+      Pick<NativeInteractionCliDependencies, "verifyOwnedSidecar" | "resolveNativeInteraction">
+    > = nativeInteractionDependencies,
 ): Promise<void> {
-  const proof = await verifyOwnedSidecar(root, { allowInteractionRecovery: true })
+  const proof = await (dependencies.verifyOwnedSidecar ?? verifyOwnedSidecar)(root, {
+    allowInteractionRecovery: true,
+  })
   if (proof.manifest.nativeInteraction?.requestID !== requestID) {
     throw new Error("Request ID does not match the unresolved native interaction")
   }
-  const client = makeClient(proof.registration)
+  const client = dependencies.makeClient(proof.registration)
   const binding = nativeBindingFromManifest(proof.manifest)
   const result = await client
     .rpc(NativeInteraction)
@@ -342,7 +350,11 @@ export async function resolveNativeInteractionResult(
     })
     return
   }
-  const manifest = await resolveNativeInteraction(root, requestID, result.result.delivery)
+  const manifest = await (dependencies.resolveNativeInteraction ?? resolveNativeInteraction)(
+    root,
+    requestID,
+    result.result.delivery,
+  )
   printResult({
     requestID,
     state: result.state,

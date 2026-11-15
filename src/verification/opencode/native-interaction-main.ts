@@ -362,7 +362,8 @@ export class NativeInteractionMainAdapter {
     let lastError: unknown
     while (!this.stopped && !this.ctx.signal.aborted && Date.now() < deadline) {
       try {
-        binding = await this.verifyRuntime(false)
+        // A pending request must reach the broker so stale delivery can be settled without replay.
+        binding = await this.verifyRuntime(true)
         break
       } catch (error) {
         lastError = error

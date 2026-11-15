@@ -146,6 +146,36 @@ the Main adapter sends native `T` key-down/key-up events with Electron's
 and refuses to infer it from an older response or adapter. Legacy adapters
 continue to support the existing bare-key operations.
 
+### Recovering a stale native adapter
+
+The sidecar considers the attached adapter fresh for two seconds after its last
+heartbeat. A different adapter generation cannot replace a fresh owner. During
+the normal Desktop adapter startup path, a correctly bound replacement may
+attach after the predecessor is stale; status then reports the replacement's
+current windows and capabilities. There is no force-reset or manual-RPC recovery
+command. Do not detach a live owner, change the profile/service binding, or use a
+second Desktop profile to try to take ownership. If status is not ready, let the
+normal owned adapter lifecycle recover and recheck it before interacting.
+
+Recovery preserves the request ledger rather than restarting it. Work still
+queued when the heartbeat expires becomes a completed `not-delivered` receipt
+and is never polled again. Work already delivered without a final receipt becomes
+`ambiguous`, remains an interaction block, and is not made safe by replacement.
+Completed results remain readable. Audio observations stay tied to the adapter
+generation that received the request; neither a predecessor nor its replacement
+can add late audio events to that receipt. A stale completion, heartbeat, or
+detach cannot clear or mutate the replacement's ownership.
+
+Use `native-resolve` only for the exact outstanding request ID. It reads the
+existing receipt without replay; a completed, conclusive result can release that
+request's reservation. Continue only after the command reports `resolved: true`
+and `native-status` shows the interaction idle. An unknown or ambiguous result
+remains blocked: do not retry the native action, clear the reservation, or clean
+up the owned root. A pending reservation is allowed through replacement startup
+so the broker can settle queued/delivered work, but the CLI reservation still
+blocks fresh requests until explicit resolution. Ambiguous launch state remains
+fail-closed.
+
 Use the verification CLI from the candidate checkout while the owned Desktop is
 running. It reads the owned service credential internally and does not print it
 or copy it to another profile:
