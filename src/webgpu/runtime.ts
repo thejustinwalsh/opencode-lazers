@@ -24,7 +24,7 @@ import {
   RendererInference,
   isRendererOwnershipLost,
 } from "./rpc.ts"
-import type { InferenceJob } from "./rpc.ts"
+import type { InferenceJob, InferenceResult } from "./rpc.ts"
 import type { DecisionInput } from "./decisions.ts"
 import { failed } from "./broker.ts"
 import { AUDIO_RATE, decodePCM16, wavBase64 } from "./audio.ts"
@@ -64,6 +64,19 @@ type ChatModel =
       dispose(): Promise<void>
       loseDevice(): void
     }
+
+const normalizeFinishReason = (reason: string): NonNullable<InferenceResult["finishReason"]> => {
+  switch (reason) {
+    case "stop":
+    case "length":
+    case "content-filter":
+    case "tool-calls":
+    case "error":
+      return reason
+    default:
+      return "other"
+  }
+}
 
 class WorkerDetachError extends Error {}
 
@@ -722,7 +735,11 @@ export function createInferenceRuntime(
     void cancel.catch(() => {})
   }
 
-  const ensureModel = async (kind: ModelKind, signal: AbortSignal) => {
+  const ensureModel = async (
+    kind: ModelKind,
+    signal: AbortSignal,
+    selectedChatRoute?: ChatRoute,
+  ) => {
     const requestedSignal = signal
     signal = AbortSignal.any([signal, AbortSignal.timeout(120_000)])
     if (
@@ -731,7 +748,11 @@ export function createInferenceRuntime(
     )
       throw Error("This model's local features are turned off")
     const requestedRoute: ChatRoute | undefined =
-      kind === "audio" ? "runntime" : kind === "chat" ? chatRoute() : undefined
+      kind === "audio"
+        ? "runntime"
+        : kind === "chat"
+          ? (selectedChatRoute ?? chatRoute())
+          : undefined
     if (models.get(kind) && (kind !== "chat" || models.get("chat")?.route === requestedRoute)) {
       setResident(models.current())
       setTarget(undefined)
@@ -1014,7 +1035,7 @@ export function createInferenceRuntime(
   }
 
   const run = async (job: InferenceJob, token: string, controller: AbortController) => {
-    const route = chatRoute()
+    const route = job.route ?? chatRoute()
     const inferenceKind = modelKindForInference(job.mode, route)
     const systemOne = inferenceKind === "decision"
     const backend = systemOne ? "d1" : route === "runntime" ? "runntime" : "liquid"
@@ -1057,6 +1078,25 @@ export function createInferenceRuntime(
       configuredMaxTokens: job.maxTokens,
     })
     activeInputTokens = undefined
+    let streamedText = ""
+    const deliverText = async (text: string) => {
+      if (!text) return
+      controller.signal.throwIfAborted()
+      if (!job.streaming) {
+        transcripts.get(job.requestID)?.(text)
+        return
+      }
+      streamedText += text
+      for (let offset = 0; offset < text.length; offset += 8_000) {
+        const { accepted } = await worker().delta(
+          { owner: token, id: job.id, text: text.slice(offset, offset + 8_000) },
+          { signal: AbortSignal.any([controller.signal, serviceSignal()]) },
+        )
+        if (!accepted)
+          throw new Error("Native conversation stream was cancelled or lost renderer ownership")
+        controller.signal.throwIfAborted()
+      }
+    }
     trace.mark("polled", { active: true, inputChars: job.prompt.length, ...heap() })
     await traceWrites
     const deadline = setTimeout(
@@ -1075,7 +1115,7 @@ export function createInferenceRuntime(
       deferModelUntilDemand = false
       recoveryRetry = undefined
       await traceStage("loading")
-      await ensureModel(inferenceKind, controller.signal)
+      await ensureModel(inferenceKind, controller.signal, job.mode === "text" ? route : undefined)
       setState("busy")
       setPhase("busy")
       setDetail(
@@ -1112,7 +1152,7 @@ export function createInferenceRuntime(
             signal: controller.signal,
           })
           controller.signal.throwIfAborted()
-          if (text) transcripts.get(job.requestID)?.(text)
+          if (text) await deliverText(text)
           result = { ok: true, text, error: "", promptTokens: null, completionTokens: null }
         } else {
           const generation = engine.speak(job.prompt, {
@@ -1140,22 +1180,28 @@ export function createInferenceRuntime(
         await traceStage("session-create")
         await traceStage("session-ready")
         await traceStage("generate", heap())
-        const generation = engine.generate([{ role: "user", content: job.prompt }], {
-          maxNewTokens: job.maxTokens,
-          signal: controller.signal,
-        })
+        const generation = engine.generate(
+          job.messages ?? [{ role: "user", content: job.prompt }],
+          {
+            maxNewTokens: job.maxTokens,
+            signal: controller.signal,
+          },
+        )
         for await (const text of generation) {
           controller.signal.throwIfAborted()
-          if (text) transcripts.get(job.requestID)?.(text)
+          await deliverText(text)
         }
         const output = await generation.result
         controller.signal.throwIfAborted()
+        if (job.streaming && streamedText !== output.text)
+          throw new Error("ruNNtime stream did not match its final text")
         result = {
           ok: true,
           text: output.text,
           error: "",
           promptTokens: output.inputTokens,
           completionTokens: output.completionTokens,
+          finishReason: output.finishReason,
         }
       } else {
         await traceStage("session-create")
@@ -1186,7 +1232,9 @@ export function createInferenceRuntime(
                   { role: "system", content: speechInstruction(job.voice) },
                   { role: "user", content: job.prompt },
                 ]
-              : [{ role: "user", content: job.prompt }]
+              : job.messages
+                ? job.messages.map(({ role, content }) => ({ role, content }))
+                : [{ role: "user", content: job.prompt }]
         await traceStage("generate", heap())
         const generation = session!.generate(messages, {
           generation_mode: job.mode === "speak" ? "audio" : "text",
@@ -1199,21 +1247,25 @@ export function createInferenceRuntime(
         })
         for await (const event of generation) {
           controller.signal.throwIfAborted()
-          if (event.type === "text" && event.text) transcripts.get(job.requestID)?.(event.text)
+          if (event.type === "text" && event.text) await deliverText(event.text)
         }
         const output = await generation.result
         controller.signal.throwIfAborted()
+        const text =
+          typeof output.message.content === "string"
+            ? output.message.content
+            : output.message.content.map((part) => part.text ?? "").join("")
+        if (job.streaming && streamedText !== text)
+          throw new Error("Liquid stream did not match its final text")
         if (job.mode === "speak" && output.finish_reason === "length")
           throw new Error("Speech segment exceeded the generation budget; use shorter text")
         result = {
           ok: true,
-          text:
-            typeof output.message.content === "string"
-              ? output.message.content
-              : output.message.content.map((part) => part.text ?? "").join(""),
+          text,
           error: "",
           promptTokens: output.usage.prompt_tokens,
           completionTokens: output.usage.completion_tokens,
+          finishReason: normalizeFinishReason(output.finish_reason),
           ...(job.mode === "speak" && Array.isArray(output.message.content)
             ? {
                 audioBase64: wavBase64(

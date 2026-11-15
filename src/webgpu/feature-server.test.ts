@@ -51,6 +51,8 @@ test("saved switches enforce public RPC, cancel only disabled work, and remove n
         }),
     },
     permission: { assert: () => Effect.void },
+    provider: { transform: () => Effect.succeed({ dispose: Effect.void }) },
+    aisdk: { hook: () => Effect.succeed({ dispose: Effect.void }) },
     tool: {
       transform: (callback: (editor: ToolEditor) => void) =>
         Effect.sync(() => {

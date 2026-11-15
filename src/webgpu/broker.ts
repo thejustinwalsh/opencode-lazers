@@ -1,7 +1,13 @@
-import type { InferenceJob, InferenceRequest, InferenceResult } from "./rpc.ts"
+import type {
+  InferenceJob,
+  InferenceRequest,
+  InferenceResult,
+  NativeConversationMessage,
+} from "./rpc.ts"
 import { DEFAULT_VOICE } from "./speech.ts"
 import type { SpeechVoice } from "./speech.ts"
 import { SYSTEM_ONE_TRANSPORT_MAX_CHARS } from "./system-one.ts"
+import type { ChatRoute } from "./inference-route.ts"
 
 export const failed = (error: string): InferenceResult => ({
   ok: false,
@@ -21,14 +27,9 @@ export class RendererOwnershipLost extends Error {
 export class InferenceBroker {
   private owner: string | undefined
   private heartbeat = 0
-  private pending:
-    { job: InferenceJob; delivered: boolean; finish: (result: InferenceResult) => void } | undefined
+  private pending: QueuedJob | undefined
   private cancelled: string | null = null
-  private queue: {
-    job: InferenceJob
-    delivered: boolean
-    finish: (result: InferenceResult) => void
-  }[] = []
+  private queue: QueuedJob[] = []
 
   constructor(
     private readonly now = Date.now,
@@ -80,6 +81,27 @@ export class InferenceBroker {
     if (this.pending?.job.id === id) this.pending.finish(result)
   }
 
+  delta(owner: string, id: string, text: string) {
+    this.assertOwner(owner)
+    const pending = this.pending
+    if (
+      text.length < 1 ||
+      text.length > 8_000 ||
+      !pending ||
+      pending.job.id !== id ||
+      !pending.job.streaming ||
+      !pending.onDelta ||
+      this.cancelled === id
+    )
+      return { accepted: false }
+    try {
+      pending.onDelta(text)
+      return { accepted: true }
+    } catch {
+      return { accepted: false }
+    }
+  }
+
   expire() {
     if (this.owner && this.now() - this.heartbeat > this.heartbeatMs)
       this.disconnect("Desktop renderer heartbeat was lost")
@@ -98,21 +120,37 @@ export class InferenceBroker {
 
   generate(
     request: InferenceRequest & {
-      mode?: "speak" | "systemone"
+      mode?: "text" | "speak" | "systemone"
       audioBase64?: string
       requestID?: string
       voice?: SpeechVoice
       feature?: InferenceJob["feature"]
+      messages?: NativeConversationMessage[]
+      route?: ChatRoute
+      streaming?: boolean
     },
     signal: AbortSignal,
+    onDelta?: (text: string) => void,
   ): Promise<InferenceResult> {
     this.expire()
     if (this.queue.length + Number(Boolean(this.pending)) >= 8)
       return Promise.resolve(failed("Local inference queue is full (8 requests)"))
+    const nativeText = request.messages?.map((message) => message.content).join("\n")
+    const prompt = nativeText ?? request.prompt
     const promptLimit = request.mode === "systemone" ? SYSTEM_ONE_TRANSPORT_MAX_CHARS : 8_000
+    const nativeLimit = 64_000
     if (
-      !request.prompt.trim() ||
-      request.prompt.length > promptLimit ||
+      !prompt.trim() ||
+      (request.messages
+        ? request.messages.length < 1 ||
+          request.messages.length > 128 ||
+          request.messages.some(
+            (message) =>
+              !["system", "user", "assistant"].includes(message.role) ||
+              message.content.length > nativeLimit,
+          ) ||
+          prompt.length > nativeLimit
+        : request.prompt.length > promptLimit) ||
       !Number.isInteger(request.maxTokens) ||
       request.maxTokens < 1 ||
       request.maxTokens > 512 ||
@@ -127,12 +165,18 @@ export class InferenceBroker {
             : "Inference request exceeds the experiment limits",
         ),
       )
+    if (request.streaming && !onDelta)
+      return Promise.resolve(failed("Native conversation stream consumer is unavailable"))
+    if (onDelta && !request.streaming)
+      return Promise.resolve(failed("Native conversation stream was not requested"))
     if (signal.aborted) return Promise.resolve(failed("Inference cancelled"))
     return new Promise((resolve) => {
       let settled = false
       const id = crypto.randomUUID()
       const job: InferenceJob = {
         ...request,
+        ...(request.messages ? { messages: [...request.messages] } : {}),
+        prompt,
         id,
         mode: request.mode ?? (request.audioBase64 ? "transcribe" : "text"),
         audioBase64: request.audioBase64 ?? "",
@@ -167,7 +211,7 @@ export class InferenceBroker {
         request.timeoutMs,
       )
       signal.addEventListener("abort", abort, { once: true })
-      this.queue.push({ job, delivered: false, finish })
+      this.queue.push({ job, delivered: false, finish, ...(onDelta ? { onDelta } : {}) })
     })
   }
 
@@ -186,4 +230,11 @@ export class InferenceBroker {
     }
     for (const item of [...this.queue]) if (disabled(item.job)) item.finish(failed(reason))
   }
+}
+
+type QueuedJob = {
+  job: InferenceJob
+  delivered: boolean
+  finish: (result: InferenceResult) => void
+  onDelta?: (text: string) => void
 }

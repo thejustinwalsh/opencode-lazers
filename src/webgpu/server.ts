@@ -22,16 +22,150 @@ import { defaultFeatures, FeaturePolicy, FeatureSettings, featureEnabled } from 
 import type { LocalFeature } from "./features.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { defaultSettingsAuthority, readFeatureSettings } from "./settings-read.ts"
+import { registerNativeConversationProvider } from "./native-conversation.ts"
+import type { NativeConversationCall } from "./native-conversation.ts"
+import type { InferenceResult } from "./rpc.ts"
+
+export type RendererInferenceClient = RpcClient<typeof RendererInference> & {
+  waitForEventStreamConnected?: (signal: AbortSignal) => Promise<void>
+}
+
+export function createRendererInferenceClient(
+  client: ReturnType<typeof OpenCode.make>,
+): RendererInferenceClient & {
+  waitForEventStreamConnected: (signal: AbortSignal) => Promise<void>
+} {
+  return Object.assign(client.rpc(RendererInference), {
+    waitForEventStreamConnected: async (signal: AbortSignal) => {
+      const iterator = client.event.subscribe({ signal })[Symbol.asyncIterator]()
+      try {
+        while (true) {
+          signal.throwIfAborted()
+          const next = await iterator.next()
+          signal.throwIfAborted()
+          if (next.done) throw new Error("OpenCode event stream ended before connecting")
+          if (next.value.type === "server.connected") return
+        }
+      } finally {
+        await iterator.return?.()
+      }
+    },
+  })
+}
+
+/** Streams one request from a location-scoped provider through the default renderer authority. */
+export async function forwardNativeConversation(
+  client: RendererInferenceClient,
+  call: NativeConversationCall,
+): Promise<InferenceResult> {
+  const requestID = crypto.randomUUID()
+  const controller = new AbortController()
+  const signal = AbortSignal.any([call.signal, controller.signal, AbortSignal.timeout(60_000)])
+  const iterator = client.events.subscribe("nativeConversation", { signal })[Symbol.asyncIterator]()
+  const ready = Promise.withResolvers<void>()
+  const ended = Promise.withResolvers<void>()
+  const streamFailure = Promise.withResolvers<unknown>()
+  const aborted = Promise.withResolvers<void>()
+  const onAbort = () => aborted.resolve()
+  signal.addEventListener("abort", onAbort, { once: true })
+  if (signal.aborted) onAbort()
+
+  const pump = (async () => {
+    while (true) {
+      const next = await iterator.next()
+      if (next.done) {
+        if (signal.aborted) return
+        throw new Error("Native conversation event stream ended before completion")
+      }
+      const event = next.value.data
+      if (event.requestID !== requestID) continue
+      if (event.type === "ready") ready.resolve()
+      else if (event.type === "delta") {
+        if (event.text === undefined) throw new Error("Native conversation delta omitted its text")
+        call.onText?.(event.text)
+      } else {
+        ended.resolve()
+        return
+      }
+    }
+  })().catch((error: unknown) => {
+    streamFailure.resolve(error)
+  })
+  const waitFor = <T>(promise: Promise<T>) =>
+    Promise.race([
+      promise,
+      streamFailure.promise.then((error) => {
+        throw error
+      }),
+      aborted.promise.then(() => {
+        throw signal.reason ?? new Error("Native conversation was cancelled")
+      }),
+    ])
+
+  let generation: Promise<InferenceResult> | undefined
+  try {
+    signal.throwIfAborted()
+    if (!client.waitForEventStreamConnected)
+      throw new Error("Native conversation event stream readiness is unavailable")
+    await waitFor(client.waitForEventStreamConnected(signal))
+    await waitFor(client.nativeConversationReady({ requestID }, { signal }))
+    await waitFor(ready.promise)
+    generation = client.nativeConversation(
+      {
+        requestID,
+        route: call.route,
+        messages: [...call.messages],
+        maxTokens: call.maxTokens,
+        timeoutMs: 60_000,
+        streaming: Boolean(call.onText),
+      },
+      { signal },
+    )
+    const result = await waitFor(generation)
+    await waitFor(ended.promise)
+    return result
+  } catch (error) {
+    controller.abort(error)
+    await generation?.catch(() => {})
+    throw error
+  } finally {
+    controller.abort()
+    signal.removeEventListener("abort", onAbort)
+    await iterator.return?.()
+    await pump
+  }
+}
 
 export function registerLocalInference(
   ctx: Pick<
     Plugin.Context,
-    "rpc" | "tool" | "permission" | "agent" | "storage" | "location" | "options"
+    | "rpc"
+    | "tool"
+    | "permission"
+    | "agent"
+    | "storage"
+    | "location"
+    | "options"
+    | "provider"
+    | "aisdk"
   >,
-  resolveWorker?: () => Promise<RpcClient<typeof RendererInference>>,
+  resolveWorker?: () => Promise<RendererInferenceClient>,
 ) {
   return Effect.gen(function* () {
     const broker = new InferenceBroker()
+    // Every Location-scoped provider forwards to the same default-location renderer authority.
+    const worker =
+      resolveWorker ??
+      (async () => {
+        const endpoint = await Service.discover()
+        if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
+        return createRendererInferenceClient(
+          OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }),
+        )
+      })
+    yield* registerNativeConversationProvider(ctx, async (call) =>
+      forwardNativeConversation(await worker(), call),
+    )
     const stored = yield* ctx.storage.get("webgpu.features")
     const saved = FeatureSettings.safeParse(stored)
     let features = defaultFeatures(false)
@@ -55,16 +189,6 @@ export function registerLocalInference(
       featureEnabled(policy.read(), feature)
         ? undefined
         : `LAZERS ${feature} is turned off in Settings → LAZERS.`
-    // Location plugins forward to the default-location queue/settings authority used by Desktop.
-    const worker =
-      resolveWorker ??
-      (async () => {
-        const endpoint = await Service.discover()
-        if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
-        return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(
-          RendererInference,
-        )
-      })
     const systemOne = async (
       input: SystemOneInput,
       signal: AbortSignal,
@@ -160,7 +284,7 @@ export function registerLocalInference(
           }
         }),
     })
-    yield* ctx.rpc.register(RendererInference, {
+    const rendererRegistration = yield* ctx.rpc.register(RendererInference, {
       settings: () => Effect.sync(policy.read),
       configure: (input) =>
         Effect.promise(() => policy.configure(input)).pipe(
@@ -180,6 +304,70 @@ export function registerLocalInference(
         ),
       systemOne: (input) => Effect.promise((signal) => systemOne(input, signal)),
       review: (input) => Effect.promise((signal) => systemOne(input, signal, "review")),
+      nativeConversationReady: ({ requestID }) =>
+        Effect.promise(async () => {
+          await Effect.runPromise(
+            rendererRegistration.events.emit("nativeConversation", { requestID, type: "ready" }),
+          )
+          return {}
+        }),
+      nativeConversation: (input) =>
+        Effect.promise(async (signal) => {
+          const controller = new AbortController()
+          const generationSignal = AbortSignal.any([signal, controller.signal])
+          let deltaWrites = Promise.resolve()
+          let hasStreamFailure = false
+          let streamFailure: unknown
+          const sendDelta = (text: string) => {
+            deltaWrites = deltaWrites
+              .then(() =>
+                Effect.runPromise(
+                  rendererRegistration.events.emit("nativeConversation", {
+                    requestID: input.requestID,
+                    type: "delta",
+                    text,
+                  }),
+                ),
+              )
+              .catch((error: unknown) => {
+                hasStreamFailure = true
+                streamFailure = error
+                controller.abort(error)
+              })
+          }
+          const disabledError = disabled("questions")
+          let result = disabledError
+            ? failed(disabledError)
+            : await broker.generate(
+                {
+                  prompt: input.messages.map((message) => message.content).join("\n"),
+                  messages: [...input.messages],
+                  route: input.route,
+                  streaming: input.streaming,
+                  maxTokens: input.maxTokens,
+                  timeoutMs: input.timeoutMs,
+                  requestID: input.requestID,
+                  mode: "text",
+                  feature: "questions",
+                },
+                generationSignal,
+                input.streaming ? sendDelta : undefined,
+              )
+          await deltaWrites
+          if (hasStreamFailure)
+            result = failed(`Native conversation stream delivery failed: ${String(streamFailure)}`)
+          try {
+            await Effect.runPromise(
+              rendererRegistration.events.emit("nativeConversation", {
+                requestID: input.requestID,
+                type: "end",
+              }),
+            )
+          } catch (error) {
+            result = failed(`Native conversation stream delivery failed: ${String(error)}`)
+          }
+          return result
+        }),
       demand: () => Effect.sync(() => broker.demand()),
       contract: () => Effect.succeed({ revision: GENERATION_RESULT_CONTRACT_REVISION }),
       transcribe: (input) =>
@@ -231,6 +419,7 @@ export function registerLocalInference(
           broker.complete(owner, id, result)
           return {}
         }),
+      delta: ({ owner, id, text }) => Effect.sync(() => broker.delta(owner, id, text)),
     })
     yield* registerInferenceTools(ctx, allowed)
     const reviewer = new TaskReviewer(

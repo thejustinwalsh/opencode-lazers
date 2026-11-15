@@ -7,6 +7,7 @@ import { InferenceBroker } from "./broker.ts"
 import { defaultFeatures } from "./features.ts"
 import type { InferenceTraceEvent } from "./inference-trace.ts"
 import type { ChatRoute } from "./inference-route.ts"
+import type { NativeConversationMessage } from "./rpc.ts"
 import { DECISION_REPOSITORY, DECISION_REVISION, MODEL_FILES } from "./manifest.ts"
 import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./rpc.ts"
 
@@ -22,6 +23,9 @@ let failNextAudioLoad = false
 let heldAudioLoad: PromiseWithResolvers<void> | undefined
 let loseLastDevice: (() => void) | undefined
 let attachedOwner: string | undefined
+let lastRunntimeMessages: readonly NativeConversationMessage[] | undefined
+let lastLiquidMessages:
+  readonly { role: string; content: string | readonly unknown[] }[] | undefined
 const traces: InferenceTraceEvent[] = []
 
 const allocate = () => {
@@ -43,26 +47,35 @@ mock.module("../../.cache/lfm3-engine.js", () => ({
       deviceInfo: () => ({ description: "Liquid test GPU" }),
       create_session: () => ({
         dispose: async () => {},
-        generate: (_messages: unknown, options: { generation_mode: string }) => ({
-          async *[Symbol.asyncIterator]() {
-            yield { type: "text", text: "" }
-          },
-          result: Promise.resolve(
-            options.generation_mode === "audio"
-              ? {
-                  message: {
-                    content: [{ type: "audio_out", audio: new Float32Array([0.25]) }],
+        generate: (
+          messages: readonly { role: string; content: string | readonly unknown[] }[],
+          options: { generation_mode: string },
+        ) => {
+          lastLiquidMessages = messages
+          return {
+            async *[Symbol.asyncIterator]() {
+              if (options.generation_mode === "text") {
+                yield { type: "text", text: "Liquid " }
+                yield { type: "text", text: "reply" }
+              }
+            },
+            result: Promise.resolve(
+              options.generation_mode === "audio"
+                ? {
+                    message: {
+                      content: [{ type: "audio_out", audio: new Float32Array([0.25]) }],
+                    },
+                    usage: { prompt_tokens: 6, completion_tokens: 2 },
+                    finish_reason: "stop",
+                  }
+                : {
+                    message: { content: "Liquid reply" },
+                    usage: { prompt_tokens: 6, completion_tokens: 2 },
+                    finish_reason: "stop",
                   },
-                  usage: { prompt_tokens: 6, completion_tokens: 2 },
-                  finish_reason: "stop",
-                }
-              : {
-                  message: { content: "Liquid reply" },
-                  usage: { prompt_tokens: 6, completion_tokens: 2 },
-                  finish_reason: "stop",
-                },
-          ),
-        }),
+            ),
+          }
+        },
       }),
     }),
   },
@@ -75,12 +88,21 @@ mock.module("./runntime-adapter.ts", () => ({
     loseLastDevice = () => lost.resolve({ reason: "simulated" })
     return {
       engine: {
-        generate: () => ({
-          async *[Symbol.asyncIterator]() {
-            yield "ruNNtime reply"
-          },
-          result: Promise.resolve({ text: "ruNNtime reply", inputTokens: 8, completionTokens: 3 }),
-        }),
+        generate: (messages: readonly NativeConversationMessage[]) => {
+          lastRunntimeMessages = messages
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield "ruNNtime "
+              yield "reply"
+            },
+            result: Promise.resolve({
+              text: "ruNNtime reply",
+              inputTokens: 8,
+              completionTokens: 3,
+              finishReason: "stop",
+            }),
+          }
+        },
       },
       lost: lost.promise,
       dispose,
@@ -178,6 +200,8 @@ const worker = {
     }
     broker.complete(owner, id, result)
   },
+  delta: async ({ owner, id, text }: { owner: string; id: string; text: string }) =>
+    broker.delta(owner, id, text),
   demand: async () => broker.demand(),
 }
 const ctx = {
@@ -234,20 +258,36 @@ const tick = async () => {
   timer()
   await Bun.sleep(0)
 }
+const tickUntil = async (condition: () => boolean, description: string) => {
+  const deadline = Date.now() + 5_000
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`)
+    await tick()
+    await Bun.sleep(5)
+  }
+}
 const submit = async (input: {
   prompt: string
   mode?: "speak" | "systemone"
   audioBase64?: string
   requestID?: string
   feature?: "questions" | "decisions" | "readAloud" | "dictation"
+  messages?: readonly NativeConversationMessage[]
+  route?: ChatRoute
+  streaming?: boolean
+  onText?: (text: string) => void
 }) => {
   const pending = broker.generate(
     {
       ...input,
       maxTokens: input.mode === "systemone" ? 1 : 32,
       timeoutMs: 4_000,
+      messages: input.messages ? [...input.messages] : undefined,
+      route: input.route,
+      streaming: input.streaming,
     },
     controller.signal,
+    input.onText,
   )
   await tick()
   return pending
@@ -284,12 +324,53 @@ try {
   const legacyText = await submit({ prompt: "liquid text" })
   assert.equal(legacyText.ok, true)
   assert.equal(legacyText.promptTokens, 6)
+  assert.deepEqual(lastLiquidMessages, [{ role: "user", content: "liquid text" }])
   const liquidTextTrace = traces.find(
     (event) => event.mode === "text" && event.backend === "liquid",
   )!
   assert.match(liquidTextTrace.modelArtifacts ?? "", /LFM3-Omni-2B-Q4_K_M\.gguf sha256:/)
   assert.match(liquidTextTrace.modelArtifacts ?? "", /mmproj-LFM3-Omni-2B-Q8_0\.gguf sha256:/)
   assert.match(liquidTextTrace.modelPrecision ?? "", /language Q4_K_M \+ projector Q8_0/)
+
+  const nativeDeltas: string[] = []
+  const nativeMessages: NativeConversationMessage[] = [
+    { role: "system", content: "System context" },
+    { role: "user", content: "First question" },
+    { role: "assistant", content: "Previous answer" },
+    { role: "user", content: "Follow-up question" },
+  ]
+  const nativeReply = await submit({
+    prompt: "Follow-up question",
+    messages: nativeMessages,
+    route: "runntime",
+    streaming: true,
+    onText: (text) => nativeDeltas.push(text),
+  })
+  assert.equal(nativeReply.text, "ruNNtime reply")
+  assert.deepEqual(nativeDeltas, ["ruNNtime ", "reply"])
+  assert.deepEqual(lastRunntimeMessages, nativeMessages)
+  assert.equal(route(), "liquid", "Native model selection does not mutate the global route")
+  const nativeTrace = traces.find((event) => event.backend === "runntime" && event.mode === "text")!
+  assert.equal(nativeTrace.modelRepository, "LiquidAI/LFM3-Omni-2B-GGUF")
+  assert.equal(nativeTrace.modelRevision, "3d29af2ad166f8299c2d820937e47dc0add20ffc")
+  assert.equal(nativeTrace.modelPrecision, "language Q4_K_M")
+  await tickUntil(
+    () => runtime.state() === "ready" && runtime.modelIdentity()?.backend === "liquid",
+    "global Liquid route restoration after native Omni call",
+  )
+  const selectedLiquid = await submit({ prompt: "Liquid remains selected", route: "liquid" })
+  assert.equal(selectedLiquid.text, "Liquid reply")
+  assert.equal(traces.filter((event) => event.mode === "text").at(-1)?.backend, "liquid")
+  const liquidConversation = await submit({
+    prompt: "Follow-up question",
+    messages: nativeMessages,
+    route: "liquid",
+    streaming: true,
+    onText: () => {},
+  })
+  assert.equal(liquidConversation.text, "Liquid reply")
+  assert.deepEqual(lastLiquidMessages, nativeMessages)
+  assert.equal(route(), "liquid", "Explicit native route does not mutate the global route")
 
   setRoute("runntime")
   assert.equal(runtime.state(), "loading")
