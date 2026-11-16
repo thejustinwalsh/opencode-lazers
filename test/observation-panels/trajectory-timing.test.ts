@@ -77,7 +77,7 @@ function checkRecord(spec: CheckSpec) {
     scope: spec.scope,
     attemptID: spec.scope === "attempt" ? attemptID : null,
     state: "completed",
-    result: "passed",
+    result: spec.id === "reversed" ? "failed" : "passed",
     command: `bun test ${spec.id}`,
     startedAt: spec.startedAt,
     endedAt: spec.endedAt,
@@ -557,6 +557,34 @@ test("registered Trajectory panel renders proportional check intervals and preci
       expect(intervalForPlan(id)!.dataset.point).toBe("true")
       expect(Number.parseFloat(intervalForPlan(id)!.style.width)).toBe(0)
     }
+    const rail = (id: string) => intervalForPlan(id)!
+    expect(rail("equal").classList.contains("lazers-trajectory-rail")).toBe(true)
+    expect(Number.parseFloat(rail("equal").style.width)).toBe(0)
+    expect([rail("equal").dataset.start, rail("equal").dataset.end]).toEqual([
+      "recorded",
+      "recorded",
+    ])
+    expect([rail("start-only").dataset.start, rail("start-only").dataset.end]).toEqual([
+      "recorded",
+      "missing",
+    ])
+    expect([rail("end-only").dataset.start, rail("end-only").dataset.end]).toEqual([
+      "missing",
+      "recorded",
+    ])
+    expect(Number.parseFloat(rail("reversed").style.width)).toBe(0)
+    expect(rail("reversed").dataset.end).toBe("missing")
+    expect(rail("reversed").dataset.failed).toBe("true")
+    expect(rail("equal").dataset.failed).toBe("false")
+    expect(container.querySelectorAll(".lazers-trajectory-check-endpoint")).toHaveLength(1)
+    expect(markerStarting("Plan check reversed")?.getAttribute("aria-label")).toContain("failed")
+    expect(
+      container.querySelector('[data-track="checks"] [role="listbox"]')?.getAttribute("style"),
+    ).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-plot svg")).toBeNull()
+    expect(trajectoryCSS).toContain("--trajectory-row")
+    expect(trajectoryCSS).toContain(".lazers-trajectory-rail")
+    expect(trajectoryCSS).not.toContain("--trajectory-check-rows")
     // Every placed check is a keyboard option in one Checks track.
     const checkTrack = container.querySelector<HTMLElement>(
       '[data-track="checks"] [role="listbox"]',

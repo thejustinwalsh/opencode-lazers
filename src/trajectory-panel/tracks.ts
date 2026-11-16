@@ -34,6 +34,7 @@ export type FileMark = {
   coverage: FileTargets["coverage"]
   paths: string[]
   tool: string
+  outcome: Outcome
   at: number
   left: number
 }
@@ -248,6 +249,7 @@ export function buildTracks(
             coverage: tool.files.coverage,
             paths: tool.files.paths,
             tool: tool.tool,
+            outcome: tool.outcome,
             at: tool.at,
             left: tool.left,
           },
@@ -331,22 +333,4 @@ export function trackTimes(events: readonly TrajectoryEvent[]) {
     if (end) times.push(end.at)
   }
   return times
-}
-
-/** Greedy sub-row packing so overlapping check intervals stay individually visible. */
-export function packRows<T extends { left: number; width: number }>(
-  items: readonly T[],
-  minimumGap = 1.5,
-) {
-  const ends: number[] = []
-  return items.map((item) => {
-    const start = item.left
-    const end = item.left + Math.max(item.width, minimumGap)
-    let row = ends.findIndex((last) => last <= start)
-    if (row < 0) {
-      row = ends.length
-      ends.push(end)
-    } else ends[row] = end
-    return row
-  })
 }

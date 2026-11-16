@@ -21,7 +21,6 @@ import {
   nearestMark,
   neighborMark,
   nextZoom,
-  packRows,
   toolOutcome,
   trackTimes,
 } from "../../src/trajectory-panel/tracks.ts"
@@ -80,6 +79,7 @@ test("native context and LAZERS progress facts for one call become one tool mark
       coverage: "observed",
       paths: ["src/a.ts"],
       tool: "read",
+      outcome: "succeeded",
       at: origin + 10_000,
       left: 10,
     },
@@ -143,7 +143,7 @@ test("untimed calls, omitted file paths, gaps and unloaded pages are counted, no
   expect(tracks.loadedThrough).toBe(75)
 })
 
-test("track helpers keep keyboard order, wide hit targets and packed check rows", () => {
+test("track helpers keep keyboard order and wide hit targets", () => {
   const marks = [
     { id: "a", left: 0, width: 0 },
     { id: "b", left: 10, width: 5 },
@@ -158,7 +158,6 @@ test("track helpers keep keyboard order, wide hit targets and packed check rows"
   expect(nearestMark(marks, 12, 1)?.id).toBe("b")
   expect(nearestMark(marks, 16, 2)?.id).toBe("b")
   expect(nearestMark(marks, 30, 2)).toBeUndefined()
-  expect(packRows([...marks, { left: 12, width: 2 }])).toEqual([0, 0, 0, 1])
   expect(nextZoom(1, 1)).toBe(2)
   expect(nextZoom(1, -1)).toBe(1)
   expect(nextZoom(32, 1)).toBe(32)
