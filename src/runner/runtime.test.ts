@@ -4473,17 +4473,15 @@ async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: stri
 function reopenRuntime(
   f: ReturnType<typeof fixture>,
   verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number },
+  wakeScheduler?: () => void,
 ) {
   const repository = new TaskRepository(f.repository.path, f.root)
   const store = new RunnerStore(repository)
   store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const runtime = new TaskRuntime(
-    store,
-    f.host,
-    "project",
-    undefined,
-    verificationTimeoutDefaults ? { verificationTimeoutDefaults } : {},
-  )
+  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+    verificationTimeoutDefaults,
+    wakeScheduler,
+  })
   cleanup.unshift(async () => {
     await runtime.stop()
     repository.close()
@@ -4498,6 +4496,7 @@ async function prepareInterruptedCombinedCheck(
     reopenTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     interruptedCheckID?: string
     legacyCompletedCheckID?: string
+    wakeScheduler?: () => void
   } = {},
 ) {
   const f = fixture({
@@ -4566,7 +4565,7 @@ async function prepareInterruptedCombinedCheck(
   rmSync(join(payload.workspace, ".lazers-combined-started"), { force: true })
   rmSync(join(payload.workspace, ".lazers-combined-release"), { force: true })
 
-  const reopened = reopenRuntime(f, options.reopenTimeoutDefaults)
+  const reopened = reopenRuntime(f, options.reopenTimeoutDefaults, options.wakeScheduler)
   await drive(reopened.runtime, 4)
   const interrupted = reopened.store
     .effects(f.receipt.planID)
@@ -5248,7 +5247,8 @@ test("integrated combined cleanup accepts a completed legacy check after default
 })
 
 test("registered plan command resumes settled combined verification without replaying accepted workers", async () => {
-  const state = await prepareInterruptedCombinedCheck()
+  let wakes = 0
+  const state = await prepareInterruptedCombinedCheck({ wakeScheduler: () => wakes++ })
   const { f, reopened, interrupted, receiptPath, planID } = state
   const originalReceipt = interrupted.receipt!
   const originalDiskReceipt = readFileSync(receiptPath, "utf8")
@@ -5266,6 +5266,7 @@ test("registered plan command resumes settled combined verification without repl
   const registered = await registeredPlanCommand(reopened.runtime)
   // The caller loses this reply when the owner process is replaced.
   await registered.execute(command)
+  expect(wakes).toBe(1)
   await reopened.runtime.stop()
 
   const replayedRuntime = reopenRuntime(f)

@@ -7010,6 +7010,9 @@ export class TaskRuntime {
       (command.action === "integrated" && result?.status === "cleanup-requested") ||
       (command.action === "reconcile" && result?.status === "reconciling") ||
       (command.action === "cancel" && result?.status === "cancelling") ||
+      (command.action === "resume" &&
+        (result?.status === "verification-resumed" ||
+          result?.status === "combined-verification-resumed")) ||
       (command.action === "amend-scope" &&
         result?.status === "scope-amended" &&
         "instructionUpdates" in result &&
