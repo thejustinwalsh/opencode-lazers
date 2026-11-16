@@ -15,13 +15,13 @@ import {
 
 export { createReactiveStore, createTestUI, registryTokens }
 
-export function setupRadar(context: unknown) {
+export function setupRadar(context: unknown, navigation?: unknown) {
   return createRoot((dispose) => {
     createComponent(PluginContext.Provider, {
       value: context as never,
       get children() {
         return createComponent(() => {
-          setupRadarPanel(context as never)
+          setupRadarPanel(context as never, navigation as never)
           return null
         }, {})
       },

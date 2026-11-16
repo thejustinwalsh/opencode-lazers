@@ -19,7 +19,7 @@ type DOMEntry = {
   }
   registryTokens: { Command: unknown; MenuItem: unknown; Panel: unknown; Style: unknown }
   createTestUI(): unknown
-  setupRadar(context: unknown): () => void
+  setupRadar(context: unknown, navigation?: unknown): () => void
   radarPanelRegistration(
     registrations: Array<{ token: unknown; value: unknown }>,
   ): { render(props: unknown): unknown } | undefined
@@ -134,7 +134,7 @@ afterAll(async () => {
   await rm(outputDirectory, { recursive: true, force: true })
 })
 
-test("registered /lz-radar renders live scopes, concurrent calls and stable compact inspection", async () => {
+test("registered /lz-radar renders live session activity, concurrent calls and stable compact inspection", async () => {
   const dom = new Window({ url: "https://radar-monitor.localhost" })
   const browserDocument = dom.document as unknown as Document
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 390 })
@@ -339,18 +339,23 @@ test("registered /lz-radar renders live scopes, concurrent calls and stable comp
     const viewStore = (await loadDOMEntry()).createReactiveStore({
       projects: {} as Record<string, unknown>,
     })
+    const opened: unknown[] = []
     const context = {
       id: "lazers",
       add: (token: unknown, value: unknown) => registrations.push({ token, value }),
       sessions: { current: () => session },
       layout: { open: () => {} },
+      tabs: { open: (...args: unknown[]) => opened.push(["worker", ...args]) },
       stores: { radarView: () => viewStore },
       appearance: { font: () => "test-mono" },
       ui: (await loadDOMEntry()).createTestUI(),
       main: () => ({}),
     }
     const host = await loadDOMEntry()
-    disposeSetup = host.setupRadar(context)
+    disposeSetup = host.setupRadar(context, {
+      openTask: (_session: unknown, target: unknown) => opened.push(["task", target]),
+      openTrajectory: (_session: unknown, target: unknown) => opened.push(["trajectory", target]),
+    })
     const panel = host.radarPanelRegistration(registrations)
     expect(panel).toBeDefined()
     const tokens = host.registryTokens
@@ -362,7 +367,10 @@ test("registered /lz-radar renders live scopes, concurrent calls and stable comp
     expect(registrations.some((item) => item.token === tokens.MenuItem)).toBe(true)
     const styles = registrations.find((item) => item.token === tokens.Style)?.value
     expect(String(styles)).toContain(".lazers-radar-monitor")
-    expect(String(styles)).toContain("@media (max-width: 450px)")
+    expect(String(styles)).toContain("@container lazers-radar (max-width: 360px)")
+    expect(String(styles)).toContain("@container lazers-radar (min-width: 640px)")
+    expect(String(styles)).not.toContain("lazers-radar-timeline")
+    expect(String(styles)).not.toContain("--icon-success-base);\n}\n.lazers-radar-status-dot")
     expect(String(styles)).toContain("prefers-reduced-motion")
 
     const container = browserDocument.createElement("div")
@@ -371,17 +379,35 @@ test("registered /lz-radar renders live scopes, concurrent calls and stable comp
     browserDocument.body.append(container)
     mounted = host.mountRadarPanel(panel!, context, session, container)
 
+    const text = () => container.textContent ?? ""
+    const sessionButton = (sessionID: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-session-main")].find(
+        (button) => button.title === `Session ${sessionID}`,
+      )
+    const chooseScope = async (label: string) => {
+      container.querySelector<HTMLButtonElement>(".lazers-radar-scope button")!.click()
+      const item = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+        (button) => button.textContent === label,
+      )!
+      item.click()
+    }
+
     await until(
       () =>
         liveRequests.some((request) => request.scope === "session") &&
-        container.textContent?.includes("Current Architect") === true,
+        sessionButton("ses-view-architect")?.textContent?.includes("Architect") === true,
     )
     expect(liveRequests[0]).toMatchObject({
       scope: "session",
       sessionID: "ses-view-architect",
       includeUnmanagedSessions: false,
     })
-    expect(container.textContent).toContain("No supported native metadata signal")
+    expect(text()).toContain("No model or tool events in this read")
+    expect(text()).toContain("Busy · no current call observed")
+    expect(["Live", "Partial"]).toContain(
+      container.querySelector(".lazers-radar-connection")?.textContent ?? "",
+    )
+    expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe("This session")
     tracker.native({
       id: "evt-ui-architect-step",
       type: "session.step.started",
@@ -433,104 +459,122 @@ test("registered /lz-radar renders live scopes, concurrent calls and stable comp
     })
     await until(
       () =>
-        container.textContent?.includes("model-request") === true &&
-        container.textContent?.includes("gpt-6-luna") === true &&
-        container.textContent?.includes("Tool Read") === true,
+        text().includes("Model request") &&
+        text().includes("gpt-6-luna") &&
+        text().includes("Read completed"),
     )
-    expect(container.textContent).toContain("Message msg_ui_architect")
-    expect(container.textContent).toContain("Call call-ui-…itect")
+    expect(sessionButton("ses-view-architect")?.textContent).toContain("gpt-6-luna · high")
+    const modelFlow = [
+      ...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-flow-row"),
+    ].find((button) => button.textContent?.includes("Model request"))!
+    expect(modelFlow.textContent).toContain("Architect / Model request")
+    modelFlow.click()
+    await until(() => modelFlow.getAttribute("aria-pressed") === "true")
+    const inspectorText = () =>
+      container.querySelector(".lazers-radar-monitor-inspector")?.textContent ?? ""
+    expect(inspectorText()).toContain("msg_ui_architect")
+    expect(inspectorText()).toContain("openai / gpt-6-luna · high")
     for (const decoy of [
       "PRIVATE ARCHITECT TEXT DECOY",
       "PRIVATE ARCHITECT OUTPUT DECOY",
       "PRIVATE ARCHITECT ARGUMENT DECOY",
       "PRIVATE ARCHITECT TOOL RESULT DECOY",
     ])
-      expect(container.textContent).not.toContain(decoy)
-    expect(container.textContent).not.toContain("[object Object]")
+      expect(text()).not.toContain(decoy)
+    expect(text()).not.toContain("[object Object]")
     expect(legacyCalls).toEqual({ snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 })
 
-    const scopeButtons = [
-      ...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-scope button"),
-    ]
-    const projectButton = scopeButtons.find((button) => button.textContent === "Project")!
-    projectButton.click()
+    await chooseScope("Project")
     await until(() =>
       liveRequests.some(
         (request) => request.scope === "project" && !request.includeUnmanagedSessions,
       ),
     )
-    expect(projectButton.getAttribute("aria-pressed")).toBe("true")
-    await until(() =>
-      [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-monitor-session")].some(
-        (button) => button.textContent?.includes("ses-failed"),
-      ),
-    )
-    const workerSessionButton = [
-      ...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-monitor-session"),
-    ].find((button) => button.textContent?.includes("ses-failed"))!
-    workerSessionButton.click()
+    await until(() => sessionButton("ses-failed") !== undefined)
+    expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe("Project")
+    sessionButton("ses-failed")!.click()
+    const lines = () => [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-line")]
     await until(
       () =>
-        container.textContent?.includes("src/worker.ts") === true &&
-        container.textContent?.includes("Tool calls · 2 returned") === true,
+        lines().some((line) => line.textContent?.includes("src/worker.ts")) &&
+        lines().some((line) => line.textContent?.includes("patch failed")),
     )
-    expect(container.textContent).toContain("read requested")
-    expect(container.textContent).toContain("patch requested")
-    expect(container.textContent).toContain("failed")
-    expect(container.textContent).not.toContain("NATIVE FILE BODY DECOY")
-    expect(container.textContent).not.toContain("PRIVATE TOKEN DECOY")
-    expect(container.textContent).not.toContain("PATCH BODY DECOY")
-    const broaderButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "Managed sessions",
-    )!
-    broaderButton.click()
+    expect(sessionButton("ses-failed")?.textContent).toContain("Worker · Task")
+    expect(sessionButton("ses-failed")?.textContent).toContain("· configured")
+    expect(sessionButton("ses-failed")?.textContent).toContain("Running")
+    expect(
+      lines().find((line) => line.textContent?.includes("patch failed"))?.textContent,
+    ).toContain("Patch failed after the request; change is unknown.")
+    expect(text()).not.toContain("NATIVE FILE BODY DECOY")
+    expect(text()).not.toContain("PRIVATE TOKEN DECOY")
+    expect(text()).not.toContain("PATCH BODY DECOY")
+
+    await chooseScope("Project · all sessions")
     await until(() =>
       liveRequests.some(
         (request) => request.scope === "project" && request.includeUnmanagedSessions,
       ),
     )
-    expect(broaderButton.getAttribute("aria-pressed")).toBe("true")
-    expect(container.textContent).toContain("Broader sessions shown")
-    await until(
-      () =>
-        container.textContent?.includes("src/worker.ts") === true &&
-        container.textContent?.includes("Tool calls · 2 returned") === true,
+    expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe(
+      "Project · all sessions",
     )
-    expect(container.querySelector(".lazers-radar-monitor-inspector")?.textContent).toContain(
-      "ses-failed",
-    )
+    await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
+    expect(inspectorText()).toContain("ses-failed")
     expect(historyRequests).toContain("ses-failed")
 
     const activity = container.querySelector<HTMLDivElement>(".lazers-radar-monitor-activity")!
-    await until(() =>
-      [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-monitor-target")].some(
-        (button) => button.textContent?.includes("src/worker.ts"),
-      ),
-    )
-    const targetButton = [
-      ...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-monitor-target"),
-    ].find((button) => button.textContent?.includes("src/worker.ts"))!
-    targetButton.focus()
-    targetButton.click()
-    await until(() => container.textContent?.includes("Selected call") === true)
-    expect(container.textContent).toContain("Selected requested target:")
-    expect(targetButton.getAttribute("aria-pressed")).toBe("true")
-    expect(targetButton.querySelector("code")?.getAttribute("style")).toContain("test-mono")
+    const readLine = lines().find((line) => line.textContent?.includes("src/worker.ts"))!
+    readLine.focus()
+    readLine.click()
+    await until(() => inspectorText().includes("Requested read target"))
+    expect(readLine.getAttribute("aria-pressed")).toBe("true")
+    expect(readLine.querySelector("code")?.getAttribute("style")).toContain("test-mono")
+    expect(inspectorText()).toContain("src/worker.ts")
+
+    const linkButton = (label: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-links button")].find(
+        (button) => button.textContent === label,
+      )!
+    linkButton("Open worker").click()
+    linkButton("Open task").click()
+    linkButton("Open trajectory").click()
+    expect(opened).toEqual([
+      ["worker", { server: "radar-server", id: "ses-failed" }, { focus: true }],
+      ["task", { taskID: expect.any(String), projectID, projectDirectory: fixture.directory }],
+      [
+        "trajectory",
+        {
+          taskID: expect.any(String),
+          reference: expect.stringMatching(/^Task /),
+          projectID,
+          projectDirectory: fixture.directory,
+        },
+      ],
+    ])
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
     expect(separator.getAttribute("aria-orientation")).toBe("horizontal")
+    expect(separator.getAttribute("aria-valuetext")).toContain("Activity")
     const before = Number(separator.getAttribute("aria-valuenow"))
     separator.focus()
     separator.dispatchEvent(
       new dom.window.KeyboardEvent("keydown", {
-        key: "ArrowUp",
+        key: "PageDown",
         bubbles: true,
       }) as unknown as KeyboardEvent,
     )
-    expect(Number(separator.getAttribute("aria-valuenow"))).toBeGreaterThan(before)
+    await until(() => Number(separator.getAttribute("aria-valuenow")) > before)
+    const savedProject = Object.values(
+      viewStore.value.projects as Record<
+        string,
+        { project: { monitorSplit?: number; monitorSessionID?: string } }
+      >,
+    )[0]!.project
+    expect(savedProject.monitorSplit).toBe(Number(separator.getAttribute("aria-valuenow")))
+    expect(savedProject.monitorSessionID).toBe("ses-failed")
 
     activity.scrollTop = 37
-    targetButton.focus()
+    readLine.focus()
     const previousReadCount = liveRequests.length
     tracker.native({
       id: "evt-ui-refresh",
@@ -538,16 +582,35 @@ test("registered /lz-radar renders live scopes, concurrent calls and stable comp
       data: { sessionID: "ses-failed" },
     })
     await until(() => liveRequests.length > previousReadCount)
-    expect(
-      [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-monitor-target")].find(
-        (button) => button.textContent?.includes("src/worker.ts"),
-      ),
-    ).toBe(targetButton)
-    expect(browserDocument.activeElement).toBe(targetButton)
+    expect(lines().find((line) => line.textContent?.includes("src/worker.ts"))).toBe(readLine)
+    expect(browserDocument.activeElement).toBe(readLine)
     expect(activity.scrollTop).toBe(37)
+    expect(readLine.getAttribute("aria-pressed")).toBe("true")
     expect(legacyCalls).toEqual({ snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 })
-    expect(separator.getAttribute("aria-valuenow")).not.toBeNull()
-    expect(container.textContent).toContain("Scheduler")
+    expect(container.querySelector(".lazers-radar-monitor-summary")?.textContent).toMatch(
+      /(Scheduler \w+|No scheduler) · 1 active · \d+ idle/,
+    )
+    expect(text()).not.toContain("Tool completed")
+
+    const actions = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.getAttribute("aria-label") === "Radar actions",
+    )!
+    actions.click()
+    ;[...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      .find((button) => button.textContent === "Diagnostics")!
+      .click()
+    await until(() => text().includes("Live monitor"))
+    expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(true)
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].map(
+      (tab) => tab.textContent,
+    )
+    expect(tabs).toEqual(["Map", "Flow"])
+    expect(text()).not.toContain("Timeline")
+    ;[...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Live monitor")!
+      .click()
+    await until(() => container.querySelector(".lazers-radar-monitor") !== null)
+    expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(false)
   } finally {
     mounted?.dispose()
     disposeSetup?.()

@@ -1,97 +1,75 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
+import { For, Show, createMemo, createSignal, onCleanup } from "solid-js"
 import type { Accessor, JSX } from "solid-js"
-import type { LiveRadarResponse, ObservationScope } from "../observability/contract.ts"
+import type { Ui } from "@opencode/plugin/gui"
+import type { ObservationScope } from "../observability/contract.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
+import {
+  callStatusWord,
+  clockTime,
+  connectionStatus,
+  coverageGaps,
+  flowIcon,
+  flowPhase,
+  formatAge,
+  formatDuration,
+  lineView,
+  monitorSummary,
+  recentFlow,
+  routeDetail,
+  sessionActivity,
+  sessionModel,
+  sessionRole,
+  sessionState,
+  sessionTask,
+  shortID,
+} from "./monitor-model.ts"
+import type { ActivityLine, LiveFlow, LiveSession } from "./monitor-model.ts"
+
+export const MONITOR_SPLIT = { min: 28, max: 80, initial: 60 } as const
+
+export function clampMonitorSplit(value: number) {
+  return Number.isFinite(value)
+    ? Math.max(MONITOR_SPLIT.min, Math.min(MONITOR_SPLIT.max, value))
+    : MONITOR_SPLIT.initial
+}
+
+export type MonitorScopeChoice = "session" | "project" | "project-all"
 
 type Props = {
+  ui: Ui
   data: Accessor<RadarMonitorData>
   scope: ObservationScope
   anchorSessionID: string
   includeUnmanagedSessions: boolean
   monoFont: string
-  onScopeChange: (scope: ObservationScope["kind"]) => void
-  onIncludeUnmanagedSessionsChange: (include: boolean) => void
+  split: number
+  onSplitChange: (value: number, commit: boolean) => void
+  onScopeChange: (choice: MonitorScopeChoice) => void
   onSelectSession: (sessionID: string) => void
   onRefresh: () => void
   onLoadMoreHistory: () => void
   onOpenDiagnostics: () => void
+  onOpenWorker?: (sessionID: string) => void
+  onOpenTask?: (taskID: string) => void
+  onOpenTrajectory?: (taskID: string) => void
 }
 
-function shortID(value: string) {
-  return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-5)}` : value
-}
+type Selection = { kind: "call" | "flow"; id: string } | null
 
-function timestamp(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "Time unavailable"
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleTimeString()
-}
-
-function elapsed(start: number | null, end: number | null) {
-  if (start === null || end === null || !Number.isFinite(start) || !Number.isFinite(end))
-    return "Duration unavailable"
-  const seconds = Math.max(0, Math.floor((end - start) / 1000))
-  return seconds < 60
-    ? `${seconds}s`
-    : seconds < 3600
-      ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
-      : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
-}
-
-function callStateLabel(status: string) {
-  switch (status) {
-    case "input-started":
-      return "Input started"
-    case "running":
-      return "Running"
-    case "not-executed":
-      return "Not executed"
-    case "succeeded":
-      return "Succeeded"
-    case "failed":
-      return "Failed"
-    default:
-      return "Unknown"
-  }
-}
-
-function sessionStateLabel(session: LiveRadarResponse["sessions"][number]) {
-  return `${session.availability} · ${session.freshness} · ${session.state}`
-}
-
-function routeLabel(live: LiveRadarResponse, routeID: string | null) {
-  if (!routeID) return "Not observed"
-  const route = live.routes.find((candidate) => candidate.id === routeID)
-  return route
-    ? [route.providerID, route.modelID, route.variant].filter(Boolean).join(" · ")
-    : "Unavailable"
-}
-
-function coverageLabel(live: LiveRadarResponse) {
-  const coverage = live.coverage
-  const omissions = [
-    coverage.inventoryTruncated && "inventory",
-    coverage.assignmentTruncated && "assignments",
-    coverage.progressTruncated && "progress",
-    coverage.payloadTruncated && "payload",
-    coverage.callsTruncated && "calls",
-    coverage.flowTruncated && "flow",
-    coverage.routeTruncated && "routes",
-    coverage.journalTruncated && "journal",
-  ].filter(Boolean)
-  return omissions.length
-    ? `Bounded · omissions: ${omissions.join(", ")}`
-    : "No truncation reported"
+const SCOPE_LABEL: Record<MonitorScopeChoice, string> = {
+  session: "This session",
+  project: "Project",
+  "project-all": "Project · all sessions",
 }
 
 export function RadarMonitorView(props: Props) {
-  const [split, setSplit] = createSignal(58)
-  const [selectedCallID, setSelectedCallID] = createSignal<string | null>(null)
-  const [selectedTarget, setSelectedTarget] = createSignal<string | null>(null)
-  const [selectedEventID, setSelectedEventID] = createSignal<string | null>(null)
+  const Ui = props.ui
+  const [selection, setSelection] = createSignal<Selection>(null)
+  const [now, setNow] = createSignal(Date.now())
+  const clock = setInterval(() => setNow(Date.now()), 1_000)
+  onCleanup(() => clearInterval(clock))
   let root: HTMLDivElement | undefined
-  let activity: HTMLDivElement | undefined
-  let lastSelectedSessionID = ""
+  let header: HTMLElement | undefined
 
   const live = () => props.data().live
   const sessions = () => live()?.sessions ?? []
@@ -99,6 +77,27 @@ export function RadarMonitorView(props: Props) {
   const sessionByID = createMemo(
     () => new Map(sessions().map((session) => [session.sessionID, session])),
   )
+  const activity = createMemo(() => {
+    const response = live()
+    return new Map(
+      response
+        ? response.sessions.map((session) => [
+            session.sessionID,
+            sessionActivity(response, session),
+          ])
+        : [],
+    )
+  })
+  const lineByID = createMemo(
+    () =>
+      new Map(
+        [...activity().values()].flatMap((item) => item.lines.map((line) => [line.id, line])),
+      ),
+  )
+  const flowItems = createMemo(() => (live() ? recentFlow(live()!) : []))
+  const flowIDs = createMemo(() => flowItems().map((item) => item.id))
+  const flowByID = createMemo(() => new Map((live()?.flow ?? []).map((item) => [item.id, item])))
+
   const selectedSessionID = () =>
     props.data().selectedSessionID ??
     sessions().find((session) => session.sessionID === props.anchorSessionID)?.sessionID ??
@@ -108,374 +107,443 @@ export function RadarMonitorView(props: Props) {
     const id = selectedSessionID()
     return id ? sessionByID().get(id) : undefined
   }
-  const calls = () => {
-    const id = selectedSessionID()
-    return live()?.calls.filter((call) => call.sessionID === id) ?? []
+  /** A selected call or event only counts while it belongs to the selected session. */
+  const selectedLine = () => {
+    const current = selection()
+    if (current?.kind !== "call") return undefined
+    const line = lineByID().get(current.id)
+    return line?.kind === "call" && line.sessionID === selectedSessionID() ? line : undefined
   }
-  const callIDs = createMemo(() => calls().map((call) => call.id))
-  const callByID = createMemo(() => new Map(calls().map((call) => [call.id, call])))
-  const selectedCall = () => {
-    const id = selectedCallID()
-    return id ? callByID().get(id) : undefined
-  }
-  const flow = () => {
-    const id = selectedSessionID()
-    return live()?.flow.filter((item) => item.sessionID === id) ?? []
-  }
-  const flowIDs = createMemo(() => flow().map((item) => item.id))
-  const flowByID = createMemo(() => new Map(flow().map((item) => [item.id, item])))
   const selectedFlow = () => {
-    const id = selectedEventID()
-    return id ? flowByID().get(id) : undefined
+    const current = selection()
+    if (current?.kind !== "flow") return undefined
+    const item = flowByID().get(current.id)
+    return item && item.sessionID === selectedSessionID() ? item : undefined
   }
 
-  createEffect(() => {
-    const id = selectedSessionID() ?? ""
-    if (id && id !== lastSelectedSessionID) {
-      lastSelectedSessionID = id
-      setSelectedCallID(null)
-      setSelectedTarget(null)
-      setSelectedEventID(null)
-    }
-    if (!id && lastSelectedSessionID) lastSelectedSessionID = ""
-  })
-  createEffect(() => {
-    const id = selectedSessionID()
-    if (id && props.data().selectedSessionID !== id) props.onSelectSession(id)
-  })
-  createEffect(() => {
-    if (selectedCallID() && !callByID().has(selectedCallID()!)) setSelectedCallID(null)
-  })
-
-  const refreshLabel = () => {
-    const data = props.data()
-    if (data.connection === "disconnected") return "Disconnected · stale snapshot"
-    if (data.connection === "reconnecting") return "Reconnecting · stale snapshot"
-    if (data.stale) return "Live coverage incomplete or resynchronizing"
-    return "Live updates connected"
+  const chooseSession = (sessionID: string) => {
+    if (props.data().selectedSessionID !== sessionID) props.onSelectSession(sessionID)
   }
-  const requestTime = (call: NonNullable<ReturnType<typeof selectedCall>>) =>
-    call.inputAt ?? call.calledAt ?? call.observedAt
-  const duration = (call: NonNullable<ReturnType<typeof selectedCall>>) =>
-    elapsed(requestTime(call), call.completedAt ?? live()?.observedAt ?? null)
+  const chooseLine = (line: ActivityLine) => {
+    chooseSession(line.sessionID)
+    if (line.kind === "call") setSelection({ kind: "call", id: line.id })
+    else if (line.kind === "phase") setSelection({ kind: "flow", id: line.flow.id })
+    else setSelection(null)
+  }
+  const chooseFlow = (item: LiveFlow) => {
+    chooseSession(item.sessionID)
+    setSelection({ kind: "flow", id: item.id })
+  }
+
+  const status = () => connectionStatus(props.data())
+  const scopeChoice = (): MonitorScopeChoice =>
+    props.scope.kind === "session"
+      ? "session"
+      : props.includeUnmanagedSessions
+        ? "project-all"
+        : "project"
+  const runningEnd = () => (props.data().stale && live() ? live()!.observedAt : now())
+  const lineDuration = (line: ActivityLine) => {
+    if (line.kind === "note" || line.startedAt === null) return ""
+    const end = line.endedAt ?? (line.current ? runningEnd() : null)
+    if (end === null) return ""
+    return `${line.current && props.data().stale ? "≥ " : ""}${formatDuration(end - line.startedAt)}`
+  }
+  const sessionTitle = (session: LiveSession) => {
+    const task = sessionTask(session)
+    return `${sessionRole(session).label}${task ? ` · ${task}` : ""}`
+  }
+
+  const resize = (value: number, commit: boolean) =>
+    props.onSplitChange(clampMonitorSplit(value), commit)
   const resizeByKey: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (event) => {
-    if (event.key === "ArrowUp") setSplit((value) => Math.min(78, value + 3))
-    else if (event.key === "ArrowDown") setSplit((value) => Math.max(32, value - 3))
-    else if (event.key === "Home") setSplit(32)
-    else if (event.key === "End") setSplit(78)
+    const steps: Record<string, number> = {
+      ArrowUp: -2,
+      ArrowDown: 2,
+      PageUp: -10,
+      PageDown: 10,
+    }
+    if (event.key === "Home") resize(MONITOR_SPLIT.min, true)
+    else if (event.key === "End") resize(MONITOR_SPLIT.max, true)
+    else if (event.key in steps) resize(props.split + steps[event.key]!, true)
     else return
     event.preventDefault()
   }
   const pointerDown: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
     const separator = event.currentTarget
-    const pointer = event.pointerId
-    separator.setPointerCapture(pointer)
+    separator.setPointerCapture(event.pointerId)
+    let latest = props.split
     const move = (next: PointerEvent) => {
       const rect = root?.getBoundingClientRect()
-      if (!rect || rect.height <= 0) return
-      const usable = rect.height - (activity?.offsetTop ?? 0)
-      const ratio = ((next.clientY - rect.top - (activity?.offsetTop ?? 0)) / usable) * 100
-      setSplit(Math.max(32, Math.min(78, ratio)))
+      const top = (rect?.top ?? 0) + (header?.offsetHeight ?? 0)
+      const usable = (rect?.height ?? 0) - (header?.offsetHeight ?? 0) - separator.offsetHeight
+      if (!rect || usable <= 0) return
+      latest = clampMonitorSplit(((next.clientY - top) / usable) * 100)
+      resize(latest, false)
     }
     const end = () => {
       separator.removeEventListener("pointermove", move)
       separator.removeEventListener("pointerup", end)
       separator.removeEventListener("pointercancel", end)
+      resize(latest, true)
     }
     separator.addEventListener("pointermove", move)
     separator.addEventListener("pointerup", end, { once: true })
     separator.addEventListener("pointercancel", end, { once: true })
   }
 
+  const Mono = (local: { children: JSX.Element; title?: string }) => (
+    <code style={{ "font-family": props.monoFont }} title={local.title}>
+      {local.children}
+    </code>
+  )
+
+  const ActivityLineButton = (local: { id: string }) => {
+    const line = () => lineByID().get(local.id)
+    const view = () => (line() ? lineView(line()!) : undefined)
+    const pressed = () => {
+      const value = line()
+      return value?.kind === "call"
+        ? selectedLine()?.id === value.id
+        : value?.kind === "phase"
+          ? selectedFlow()?.id === value.flow.id
+          : false
+    }
+    return (
+      <Show when={view()}>
+        {(value) => (
+          <Show
+            when={value().selectable}
+            fallback={
+              <span class="lazers-radar-line lazers-radar-line-note">
+                <span class="lazers-radar-line-icon" aria-hidden="true">
+                  <Ui.Icon name={value().icon} size="small" />
+                </span>
+                <span class="lazers-radar-line-label">{value().label}</span>
+              </span>
+            }
+          >
+            <button
+              type="button"
+              class="lazers-radar-line"
+              data-status={value().status}
+              data-current={value().current}
+              aria-pressed={pressed()}
+              onClick={() => chooseLine(line()!)}
+            >
+              <span class="lazers-radar-line-icon" aria-hidden="true">
+                <Ui.Icon name={value().icon} size="small" />
+              </span>
+              <span class="lazers-radar-line-label">{value().label}</span>
+              <Show
+                when={value().target}
+                fallback={
+                  <Show when={value().targetNote}>
+                    <span class="lazers-radar-line-target-note">{value().targetNote}</span>
+                  </Show>
+                }
+              >
+                {(target) => (
+                  <span class="lazers-radar-line-target" title={target()}>
+                    <Mono>{target()}</Mono>
+                    <Show when={value().extraTargets > 0}>
+                      <span> +{value().extraTargets}</span>
+                    </Show>
+                  </span>
+                )}
+              </Show>
+              <span class="lazers-radar-line-duration">{lineDuration(line()!)}</span>
+              <Show when={value().error}>
+                {(error) => <span class="lazers-radar-line-error">{error()}</span>}
+              </Show>
+            </button>
+          </Show>
+        )}
+      </Show>
+    )
+  }
+
+  const SessionRow = (local: { id: string }) => {
+    const session = () => sessionByID().get(local.id)
+    const lineIDs = createMemo(
+      () =>
+        activity()
+          .get(local.id)
+          ?.lines.map((line) => line.id) ?? [],
+    )
+    const lastActivity = () => activity().get(local.id)?.lastActivityAt ?? null
+    const model = () => (session() && live() ? sessionModel(live()!, session()!) : undefined)
+    const age = () => (lastActivity() === null ? "" : formatAge(now() - lastActivity()!))
+    return (
+      <Show when={session()}>
+        {(value) => (
+          <li
+            class="lazers-radar-session"
+            data-selected={selectedSessionID() === local.id}
+            data-state={value().state}
+            data-available={value().availability === "available"}
+          >
+            <button
+              type="button"
+              class="lazers-radar-session-main"
+              aria-pressed={selectedSessionID() === local.id}
+              aria-label={[
+                sessionTitle(value()),
+                sessionState(value()),
+                model()?.label ? `model ${model()!.label}` : "model not observed",
+                age() ? `last activity ${age()}` : "",
+              ]
+                .filter(Boolean)
+                .join(", ")}
+              title={`Session ${value().sessionID}`}
+              onClick={() => {
+                chooseSession(local.id)
+                setSelection(null)
+              }}
+            >
+              <span class="lazers-radar-session-icon" aria-hidden="true">
+                <Ui.Icon name={sessionRole(value()).icon} size="small" />
+              </span>
+              <span class="lazers-radar-session-identity">
+                <strong>{sessionRole(value()).label}</strong>
+                <Show when={sessionTask(value())}>
+                  {(task) => <span class="lazers-radar-session-task"> · {task()}</span>}
+                </Show>
+              </span>
+              <span
+                class="lazers-radar-session-model"
+                data-basis={model()?.basis ?? "none"}
+                title={model()?.detail}
+              >
+                {model()?.label ? model()!.label : "Model not observed"}
+                <Show when={model()?.basis === "configured"}>
+                  <span class="lazers-radar-session-basis"> · configured</span>
+                </Show>
+              </span>
+              <span class="lazers-radar-session-state">{sessionState(value())}</span>
+              <time
+                class="lazers-radar-session-age"
+                dateTime={
+                  lastActivity() === null ? undefined : new Date(lastActivity()!).toISOString()
+                }
+                title={
+                  lastActivity() === null ? undefined : `Last activity ${clockTime(lastActivity())}`
+                }
+              >
+                {age()}
+              </time>
+            </button>
+            <Show when={lineIDs().length > 0}>
+              <ul
+                class="lazers-radar-session-lines"
+                aria-label={`${sessionTitle(value())} activity`}
+              >
+                <For each={lineIDs()}>
+                  {(id) => (
+                    <li>
+                      <ActivityLineButton id={id} />
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </li>
+        )}
+      </Show>
+    )
+  }
+
+  const FlowRow = (local: { id: string }) => {
+    const item = () => flowByID().get(local.id)
+    const owner = () => (item() ? sessionByID().get(item()!.sessionID) : undefined)
+    return (
+      <Show when={item()}>
+        {(value) => (
+          <li>
+            <button
+              type="button"
+              class="lazers-radar-flow-row"
+              aria-pressed={selectedFlow()?.id === local.id}
+              onClick={() => chooseFlow(value())}
+            >
+              <span class="lazers-radar-line-icon" aria-hidden="true">
+                <Ui.Icon name={flowIcon(value())} size="small" />
+              </span>
+              <time class="lazers-radar-flow-time" style={{ "font-family": props.monoFont }}>
+                {clockTime(value().observedAt)}
+              </time>
+              <span class="lazers-radar-flow-label">
+                <span class="lazers-radar-flow-subject">
+                  {owner() ? sessionTitle(owner()!) : `Session ${shortID(value().sessionID)}`}
+                </span>
+                {" / "}
+                {flowPhase(value(), live()).label}
+                <Show when={value().kind !== "tool-phase" && live()}>
+                  <Show when={routeDetail(live()!, value().routeID)}>
+                    {(route) => <span class="lazers-radar-flow-route"> · {route()}</span>}
+                  </Show>
+                </Show>
+              </span>
+            </button>
+          </li>
+        )}
+      </Show>
+    )
+  }
+
+  const Links = (local: { session: LiveSession }) => (
+    <div class="lazers-radar-links">
+      <Show when={props.onOpenWorker}>
+        <Ui.Button
+          variant="ghost"
+          size="small"
+          icon="square-arrow-top-right"
+          onClick={() => props.onOpenWorker!(local.session.sessionID)}
+        >
+          Open worker
+        </Ui.Button>
+      </Show>
+      <Show when={local.session.assignment && props.onOpenTask}>
+        <Ui.Button
+          variant="ghost"
+          size="small"
+          icon="square-arrow-top-right"
+          onClick={() => props.onOpenTask!(local.session.assignment!.taskID)}
+        >
+          Open task
+        </Ui.Button>
+      </Show>
+      <Show when={local.session.assignment && props.onOpenTrajectory}>
+        <Ui.Button
+          variant="ghost"
+          size="small"
+          icon="square-arrow-top-right"
+          onClick={() => props.onOpenTrajectory!(local.session.assignment!.taskID)}
+        >
+          Open trajectory
+        </Ui.Button>
+      </Show>
+    </div>
+  )
+
   return (
     <div
       class="lazers-radar lazers-radar-monitor"
       ref={(element) => (root = element)}
-      style={{ "--radar-visual-fr": `${split()}fr`, "--radar-detail-fr": `${100 - split()}fr` }}
+      style={{
+        "--radar-visual-fr": `${props.split}fr`,
+        "--radar-detail-fr": `${100 - props.split}fr`,
+      }}
     >
-      <header class="lazers-radar-header lazers-radar-monitor-header">
-        <div class="lazers-radar-heading">
-          <h2>Radar · live monitor</h2>
-          <span
-            class="lazers-radar-status-dot"
-            data-stale={props.data().stale}
-            role="img"
-            aria-label={refreshLabel()}
-            title={refreshLabel()}
-          />
-          <span class="lazers-radar-monitor-status" role="status">
-            {refreshLabel()}
+      <header class="lazers-radar-monitor-header" ref={(element) => (header = element)}>
+        <div class="lazers-radar-monitor-bar">
+          <h2>Radar</h2>
+          <span class="lazers-radar-scope">
+            <Ui.Menu
+              label={SCOPE_LABEL[scopeChoice()]}
+              trigger="button"
+              icon="chevron-down"
+              placement="bottom-start"
+              items={(["session", "project", "project-all"] as const).map((choice) => ({
+                label: SCOPE_LABEL[choice],
+                icon: choice === scopeChoice() ? ("check-small" as const) : undefined,
+                onSelect: () => props.onScopeChange(choice),
+              }))}
+            />
           </span>
+          <span class="lazers-radar-connection" data-state={status().state} title={status().detail}>
+            <span class="lazers-radar-connection-dot" aria-hidden="true" />
+            <span role="status">{status().word}</span>
+          </span>
+          <Ui.Menu
+            label="Radar actions"
+            icon="outline-dots"
+            items={[
+              { label: "Refresh", icon: "refresh", onSelect: props.onRefresh },
+              { label: "Diagnostics", icon: "window-analytics", onSelect: props.onOpenDiagnostics },
+            ]}
+          />
         </div>
-        <div class="lazers-radar-controls">
-          <div class="lazers-radar-scope" role="group" aria-label="Monitor scope">
-            <button
-              type="button"
-              aria-pressed={props.scope.kind === "session"}
-              onClick={() => props.onScopeChange("session")}
-            >
-              Session
-            </button>
-            <button
-              type="button"
-              aria-pressed={props.scope.kind === "project"}
-              onClick={() => props.onScopeChange("project")}
-            >
-              Project
-            </button>
-          </div>
-          <Show when={props.scope.kind === "project"}>
-            <button
-              type="button"
-              class="lazers-radar-other-sessions"
-              aria-pressed={props.includeUnmanagedSessions}
-              onClick={() =>
-                props.onIncludeUnmanagedSessionsChange(!props.includeUnmanagedSessions)
-              }
-            >
-              {props.includeUnmanagedSessions ? "Broader sessions shown" : "Managed sessions"}
-            </button>
-          </Show>
-          <button
-            type="button"
-            class="lazers-radar-refresh"
-            onClick={props.onRefresh}
-            disabled={props.data().loading}
-          >
-            Refresh
-          </button>
-          <button type="button" class="lazers-radar-refresh" onClick={props.onOpenDiagnostics}>
-            Diagnostics
-          </button>
-        </div>
+        <Show when={live()}>
+          {(response) => (
+            <p class="lazers-radar-monitor-summary">
+              <Ui.Icon name="settings-gear" size="small" />
+              <span>{monitorSummary(response())}</span>
+              <Show when={coverageGaps(response()).length > 0}>
+                <span
+                  class="lazers-radar-monitor-gaps"
+                  title="The read hit a size limit; omitted records are not reconstructed."
+                >
+                  · Some {coverageGaps(response()).join(", ")} omitted
+                </span>
+              </Show>
+            </p>
+          )}
+        </Show>
       </header>
 
       <div
+        id="lazers-radar-monitor-activity"
         class="lazers-radar-visual lazers-radar-monitor-activity"
-        ref={(element) => (activity = element)}
+        role="region"
         aria-label="Live session activity"
       >
         <Show when={props.data().error}>
           <div class="lazers-radar-note" data-error="true" role="alert">
             <span>{props.data().error}</span>
-            <button type="button" onClick={props.onRefresh}>
-              Retry live read
-            </button>
+            <Ui.Button variant="ghost" size="small" onClick={props.onRefresh}>
+              Retry
+            </Ui.Button>
           </div>
         </Show>
         <Show
           when={live()}
           fallback={
-            <div class="lazers-radar-note" role="status">
-              {props.data().loading
-                ? "Loading authorized live session activity…"
-                : "Live session activity is unavailable; no idle or no-workers conclusion can be drawn."}
-            </div>
+            <Show
+              when={props.data().loading}
+              fallback={
+                <p class="lazers-radar-note">
+                  Live session activity is unavailable. Nothing can be concluded about workers.
+                </p>
+              }
+            >
+              <p class="lazers-radar-note lazers-radar-loading">
+                <Ui.Loader size="small" />
+                <span>Loading live activity…</span>
+              </p>
+            </Show>
           }
         >
           {(response) => (
             <>
-              <div class="lazers-radar-monitor-coverage" role="status">
-                <span>{response().coverage.sessionCount} returned</span>
-                <span>{response().coverage.managedSessionCount} managed</span>
-                <span>{response().freshness.nativeInventory} inventory</span>
-                <span>{response().freshness.nativeEvents} events</span>
-                <span>
-                  Scheduler {response().scheduler.status}
-                  {response().scheduler.participants === null
-                    ? ""
-                    : ` · ${response().scheduler.participants} project participants`}
-                </span>
-                <span>{coverageLabel(response())}</span>
-              </div>
               <Show
                 when={sessions().length > 0}
                 fallback={
-                  <div class="lazers-radar-note" role="status">
-                    No authorized session records were returned. Inventory and event coverage are
-                    shown above; this does not prove no workers exist.
-                  </div>
+                  <p class="lazers-radar-note">
+                    No sessions returned for this scope.
+                    {response().freshness.nativeInventory === "complete"
+                      ? ""
+                      : ` Session inventory is ${response().freshness.nativeInventory}, so some sessions may be missing.`}
+                  </p>
                 }
               >
-                <section class="lazers-radar-monitor-sessions" aria-label="Sessions">
-                  <For each={sessionIDs()}>
-                    {(id) => {
-                      const session = () => sessionByID().get(id)
-                      return (
-                        <button
-                          type="button"
-                          class="lazers-radar-monitor-session"
-                          aria-pressed={selectedSessionID() === id}
-                          aria-label={`${session()?.isCurrentArchitect === true ? "Current Architect" : session()?.isViewSession ? "Current view session" : (session()?.classification ?? "unknown")} session ${id}, ${session() ? sessionStateLabel(session()!) : "unavailable"}`}
-                          onClick={() => props.onSelectSession(id)}
-                        >
-                          <span class="lazers-radar-monitor-session-title">
-                            <strong>
-                              {session()?.isCurrentArchitect === true
-                                ? "Current Architect"
-                                : session()?.isViewSession
-                                  ? "Current session"
-                                  : session()?.classification === "managed"
-                                    ? "Managed"
-                                    : "Session"}
-                            </strong>
-                            <code style={{ "font-family": props.monoFont }}>{id}</code>
-                          </span>
-                          <span class="lazers-radar-monitor-session-state">
-                            {session() ? sessionStateLabel(session()!) : "Session unavailable"}
-                          </span>
-                          <span class="lazers-radar-monitor-session-task">
-                            {session()?.assignment
-                              ? `Task ${shortID(session()!.assignment!.taskID)} · Attempt ${shortID(session()!.assignment!.attemptID)} · ${session()!.assignment!.state}`
-                              : "Task association unavailable"}
-                          </span>
-                          <span class="lazers-radar-monitor-session-route">
-                            Observed {routeLabel(response(), session()?.observedRouteID ?? null)}
-                          </span>
-                          <span class="lazers-radar-monitor-session-configured">
-                            Configured{" "}
-                            {routeLabel(response(), session()?.configuredRouteID ?? null)}
-                          </span>
-                        </button>
-                      )
-                    }}
-                  </For>
-                </section>
+                <ul class="lazers-radar-sessions" aria-label="Sessions">
+                  <For each={sessionIDs()}>{(id) => <SessionRow id={id} />}</For>
+                </ul>
               </Show>
-
-              <section class="lazers-radar-monitor-calls" aria-label="Concurrent tool calls">
-                <h3>Tool calls · {calls().length} returned</h3>
+              <section class="lazers-radar-recent" aria-labelledby="lazers-radar-recent-title">
+                <h3 id="lazers-radar-recent-title">Recent activity</h3>
                 <Show
-                  when={calls().length > 0}
+                  when={flowIDs().length > 0}
                   fallback={
-                    <p class="lazers-radar-monitor-empty">
-                      No tool calls in this observation. Missing or bounded telemetry is not
-                      inactivity.
+                    <p class="lazers-radar-note">
+                      No model or tool events in this read. Missing telemetry is not inactivity.
                     </p>
                   }
                 >
-                  <div class="lazers-radar-monitor-call-list">
-                    <For each={callIDs()}>
-                      {(id) => {
-                        const call = () => callByID().get(id)
-                        return (
-                          <article
-                            class="lazers-radar-monitor-call"
-                            data-status={call()?.status ?? "unknown"}
-                          >
-                            <button
-                              type="button"
-                              class="lazers-radar-monitor-call-select"
-                              aria-pressed={selectedCallID() === id}
-                              onClick={() => {
-                                setSelectedCallID(id)
-                                setSelectedTarget(null)
-                                setSelectedEventID(null)
-                              }}
-                            >
-                              <strong>{call()?.tool ?? "Unknown tool"}</strong>
-                              <span>{call() ? callStateLabel(call()!.status) : "Unknown"}</span>
-                              <span>{call() ? duration(call()!) : "Duration unavailable"}</span>
-                              <code style={{ "font-family": props.monoFont }}>
-                                {shortID(call()?.callID ?? id)}
-                              </code>
-                            </button>
-                            <div class="lazers-radar-monitor-targets">
-                              <Show
-                                when={call()?.fileTargets}
-                                fallback={
-                                  <span class="lazers-radar-monitor-target-unknown">
-                                    File target unknown · not observed
-                                  </span>
-                                }
-                              >
-                                {(target) => (
-                                  <>
-                                    <span class="lazers-radar-monitor-target-coverage">
-                                      {target().coverage === "observed"
-                                        ? `${target().operation ?? "File"} requested`
-                                        : `File target ${target().coverage}`}
-                                    </span>
-                                    <For each={target().paths}>
-                                      {(path) => (
-                                        <button
-                                          type="button"
-                                          class="lazers-radar-monitor-target"
-                                          aria-pressed={
-                                            selectedCallID() === id && selectedTarget() === path
-                                          }
-                                          onClick={() => {
-                                            setSelectedCallID(id)
-                                            setSelectedTarget(path)
-                                            setSelectedEventID(null)
-                                          }}
-                                        >
-                                          <code style={{ "font-family": props.monoFont }}>
-                                            {path}
-                                          </code>
-                                        </button>
-                                      )}
-                                    </For>
-                                  </>
-                                )}
-                              </Show>
-                            </div>
-                          </article>
-                        )
-                      }}
-                    </For>
-                  </div>
-                </Show>
-              </section>
-
-              <section class="lazers-radar-monitor-stream" aria-label="Observed activity stream">
-                <h3>Observed activity · {flow().length} returned</h3>
-                <Show
-                  when={flow().length > 0}
-                  fallback={
-                    <p class="lazers-radar-monitor-empty">
-                      No supported native metadata signal is retained in this read. Prior unassigned
-                      history is unavailable and is not reconstructed; this does not establish
-                      inactivity.
-                    </p>
-                  }
-                >
-                  <div class="lazers-radar-monitor-flow">
-                    <For each={flowIDs()}>
-                      {(id) => {
-                        const item = () => flowByID().get(id)
-                        return (
-                          <button
-                            type="button"
-                            class="lazers-radar-monitor-flow-row"
-                            aria-pressed={selectedEventID() === id}
-                            onClick={() => {
-                              setSelectedEventID(id)
-                              setSelectedCallID(null)
-                              setSelectedTarget(null)
-                            }}
-                          >
-                            <strong>{item()?.kind ?? "Observed event"}</strong>
-                            <span>{item()?.status ?? "unknown"}</span>
-                            <span>{item()?.tool ? `Tool ${item()!.tool}` : ""}</span>
-                            <span>{item()?.agent ? `Agent ${item()!.agent}` : ""}</span>
-                            <span>
-                              {item()?.routeID
-                                ? routeLabel(live()!, item()!.routeID)
-                                : "Observed route unavailable"}
-                            </span>
-                            <span>{timestamp(item()?.observedAt)}</span>
-                            <span>
-                              {item()?.messageID
-                                ? `Message ${shortID(item()!.messageID!)}`
-                                : "Message identity unavailable"}
-                            </span>
-                            <span>{item()?.callID ? `Call ${shortID(item()!.callID!)}` : ""}</span>
-                          </button>
-                        )
-                      }}
-                    </For>
-                  </div>
+                  <ol class="lazers-radar-flow-list">
+                    <For each={flowIDs()}>{(id) => <FlowRow id={id} />}</For>
+                  </ol>
                 </Show>
               </section>
             </>
@@ -486,173 +554,218 @@ export function RadarMonitorView(props: Props) {
       <div
         class="lazers-radar-separator"
         role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize live activity and session details"
-        aria-valuemin={32}
-        aria-valuemax={78}
-        aria-valuenow={Math.round(split())}
         tabIndex={0}
+        aria-orientation="horizontal"
+        aria-label="Resize activity and details"
+        aria-controls="lazers-radar-monitor-activity lazers-radar-monitor-inspector"
+        aria-valuemin={MONITOR_SPLIT.min}
+        aria-valuemax={MONITOR_SPLIT.max}
+        aria-valuenow={Math.round(props.split)}
+        aria-valuetext={`Activity ${Math.round(props.split)}% of the panel`}
         onKeyDown={resizeByKey}
         onPointerDown={pointerDown}
       />
 
       <section
+        id="lazers-radar-monitor-inspector"
         class="lazers-radar-detail lazers-radar-monitor-inspector"
         aria-label="Selected session details"
       >
         <Show
           when={selectedSession()}
           fallback={
-            <p class="lazers-radar-monitor-empty">
-              Select a returned session to inspect its observed activity.
-            </p>
+            <p class="lazers-radar-note">Select a session to see its details and history.</p>
           }
         >
           {(session) => (
             <>
-              <h3>Selected session</h3>
-              <dl class="lazers-radar-monitor-detail-grid">
-                <dt>Session</dt>
-                <dd>
-                  <code style={{ "font-family": props.monoFont }}>{session().sessionID}</code>
-                </dd>
-                <dt>View identity</dt>
-                <dd>
-                  {session().isCurrentArchitect === true
-                    ? "Current Architect · exact view session and native architect agent"
-                    : session().isViewSession
-                      ? session().isCurrentArchitect === false
-                        ? "Current view session · native agent is not Architect"
-                        : "Current view session · Architect identity unknown"
-                      : session().classification}
-                </dd>
-                <dt>Association</dt>
-                <dd>
-                  {session().classification} ·{" "}
-                  {session().assignment ? `Task ${session().assignment!.taskID}` : "task unknown"}
-                </dd>
-                <dt>Health / wait</dt>
-                <dd>
-                  {sessionStateLabel(session())}; agent {session().agent ?? "unknown"}
-                </dd>
-                <dt>Configured route</dt>
-                <dd>{routeLabel(live()!, session().configuredRouteID)}</dd>
-                <dt>Observed route</dt>
-                <dd>{routeLabel(live()!, session().observedRouteID)}</dd>
-                <dt>Observed at</dt>
-                <dd>{timestamp(live()?.observedAt)}</dd>
-                <dt>Project scheduler</dt>
-                <dd>
-                  {live()?.scheduler.status ?? "unknown"}
-                  {live()?.scheduler.participants === null ||
-                  live()?.scheduler.participants === undefined
-                    ? " · participant count unknown"
-                    : ` · ${live()!.scheduler.participants} exact-key participants`}
-                  {" · pause state is not represented"}
-                </dd>
-              </dl>
+              <header class="lazers-radar-inspector-head">
+                <span class="lazers-radar-session-icon" aria-hidden="true">
+                  <Ui.Icon name={sessionRole(session()).icon} size="small" />
+                </span>
+                <h3>
+                  {sessionTitle(session())}
+                  <Show when={selectedLine()}>
+                    {(line) => <span class="lazers-radar-inspector-sub"> · {line().tool}</span>}
+                  </Show>
+                  <Show when={selectedFlow()}>
+                    {(item) => (
+                      <span class="lazers-radar-inspector-sub">
+                        {" "}
+                        · {flowPhase(item(), live()).label}
+                      </span>
+                    )}
+                  </Show>
+                </h3>
+                <span class="lazers-radar-inspector-state">
+                  <Show when={selectedLine()} fallback={sessionState(session())}>
+                    {(line) => (
+                      <>
+                        {callStatusWord(line().status)}
+                        <Show when={lineDuration(line())}> · {lineDuration(line())}</Show>
+                      </>
+                    )}
+                  </Show>
+                </span>
+              </header>
 
-              <Show when={selectedCall()}>
-                {(call) => (
-                  <div class="lazers-radar-monitor-selected-detail">
-                    <h3>Selected call</h3>
-                    <dl class="lazers-radar-monitor-detail-grid">
-                      <dt>Call / tool</dt>
-                      <dd>
-                        {call().callID} · {call().tool ?? "tool unknown"}
-                      </dd>
-                      <dt>Lifecycle</dt>
-                      <dd>
-                        {callStateLabel(call().status)} · execution {call().execution ?? "unknown"}
-                      </dd>
-                      <dt>Timing</dt>
-                      <dd>
-                        Started {timestamp(requestTime(call()))}; duration {duration(call())};
-                        observed {timestamp(call().observedAt)}
-                      </dd>
-                      <dt>Target coverage</dt>
-                      <dd>
-                        {call().fileTargets?.coverage ?? "unknown"} · requested target is not proof
-                        of permission or change
-                      </dd>
-                      <Show when={call().error}>
-                        <dt>Failure</dt>
-                        <dd>{call().error}</dd>
-                      </Show>
-                    </dl>
-                    <Show when={selectedTarget()}>
-                      <p class="lazers-radar-monitor-selected-target">
-                        Selected requested target:{" "}
-                        <code style={{ "font-family": props.monoFont }}>{selectedTarget()}</code>
+              <Show when={selectedLine()}>
+                {(line) => (
+                  <div class="lazers-radar-inspector-block">
+                    <Show
+                      when={(line().record?.fileTargets?.paths.length ?? 0) > 0}
+                      fallback={
+                        <p class="lazers-radar-inspector-muted">
+                          {line().targetNote ??
+                            (line().record
+                              ? "No file target recorded for this call."
+                              : "File activity is unavailable for this session's calls.")}
+                        </p>
+                      }
+                    >
+                      <ul class="lazers-radar-inspector-paths" aria-label="Requested files">
+                        <For each={line().record!.fileTargets!.paths}>
+                          {(path) => (
+                            <li>
+                              <Ui.Icon name="file-document" size="small" />
+                              <Mono>{path}</Mono>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                      <p class="lazers-radar-inspector-muted">
+                        {line().record!.fileTargets!.coverage === "observed"
+                          ? `Requested ${line().record!.fileTargets!.operation ?? "file"} target; not a confirmed change.`
+                          : "Target list is partial; omitted paths are not reconstructed."}
                       </p>
                     </Show>
+                    <Show when={line().error}>
+                      <p class="lazers-radar-inspector-error">{line().error}</p>
+                    </Show>
+                    <Show when={line().record?.result}>
+                      <p class="lazers-radar-inspector-muted">{line().record!.result}</p>
+                    </Show>
+                    <dl class="lazers-radar-facts">
+                      <dt>Started</dt>
+                      <dd>{clockTime(line().startedAt)}</dd>
+                      <Show when={line().endedAt !== null}>
+                        <dt>Ended</dt>
+                        <dd>{clockTime(line().endedAt)}</dd>
+                      </Show>
+                      <dt>Call</dt>
+                      <dd>
+                        <Mono>{line().callID}</Mono>
+                      </dd>
+                    </dl>
                   </div>
                 )}
               </Show>
 
               <Show when={selectedFlow()}>
                 {(item) => (
-                  <div class="lazers-radar-monitor-selected-detail">
-                    <h3>Selected observed event</h3>
-                    <dl class="lazers-radar-monitor-detail-grid">
-                      <dt>Kind / status</dt>
+                  <dl class="lazers-radar-facts lazers-radar-inspector-block">
+                    <dt>Observed</dt>
+                    <dd>{clockTime(item().observedAt)}</dd>
+                    <Show when={item().startedAt !== null}>
+                      <dt>Started</dt>
+                      <dd>{clockTime(item().startedAt)}</dd>
+                    </Show>
+                    <Show when={live() && routeDetail(live()!, item().routeID)}>
+                      <dt>Model</dt>
+                      <dd>{routeDetail(live()!, item().routeID)}</dd>
+                    </Show>
+                    <Show when={item().tool}>
+                      <dt>Tool</dt>
+                      <dd>{item().tool}</dd>
+                    </Show>
+                    <Show when={item().messageID}>
+                      <dt>Message</dt>
                       <dd>
-                        {item().kind} · {item().status}
+                        <Mono>{item().messageID}</Mono>
                       </dd>
-                      <dt>Message / call</dt>
+                    </Show>
+                    <Show when={item().callID}>
+                      <dt>Call</dt>
                       <dd>
-                        {item().messageID ?? "message unknown"} · {item().callID ?? "call unknown"}
+                        <Mono>{item().callID}</Mono>
                       </dd>
-                      <dt>Source</dt>
-                      <dd>
-                        {item().source} · {item().sourceEventType ?? "event type unavailable"} ·{" "}
-                        {item().sourceEventID ?? "event ID unavailable"}
-                      </dd>
-                      <dt>Source sequence</dt>
-                      <dd>
-                        {item().sourceProgressSequence === null
-                          ? `Native revision ${item().sourceNativeRevision ?? "unavailable"}`
-                          : `Runner progress ${item().sourceProgressSequence}`}
-                      </dd>
-                      <dt>Observed</dt>
-                      <dd>
-                        {timestamp(item().observedAt)} · Unix ms {item().observedAt}
-                      </dd>
-                    </dl>
-                  </div>
+                    </Show>
+                  </dl>
                 )}
               </Show>
 
-              <details class="lazers-radar-monitor-history">
+              <Show when={!selectedLine() && !selectedFlow()}>
+                <dl class="lazers-radar-facts lazers-radar-inspector-block">
+                  <dt>Model</dt>
+                  <dd>{live() ? sessionModel(live()!, session()).detail : "Unavailable"}</dd>
+                  <dt>Agent</dt>
+                  <dd>{session().agent ?? "Not reported"}</dd>
+                  <Show when={session().assignment}>
+                    {(assignment) => (
+                      <>
+                        <dt>Attempt</dt>
+                        <dd>
+                          {sessionState(session())} since {clockTime(assignment().startedAt)}
+                        </dd>
+                      </>
+                    )}
+                  </Show>
+                  <dt>Session</dt>
+                  <dd>
+                    <Mono>{session().sessionID}</Mono>
+                  </dd>
+                </dl>
+              </Show>
+
+              <Links session={session()} />
+
+              <details class="lazers-radar-disclosure lazers-radar-monitor-history">
                 <summary>
-                  Selected session history · {props.data().history?.items.length ?? 0} returned
-                  {props.data().history?.coverage.hasMore ? " · more available" : ""}
+                  History
+                  <Show when={props.data().history}>
+                    {(history) => (
+                      <span class="lazers-radar-inspector-muted">
+                        {" "}
+                        · {history().items.length}
+                        {history().coverage.hasMore ? "+" : ""}
+                      </span>
+                    )}
+                  </Show>
                 </summary>
                 <Show when={props.data().historyLoading}>
-                  <p role="status">Loading selected history…</p>
+                  <p class="lazers-radar-note lazers-radar-loading">
+                    <Ui.Loader size="small" />
+                    <span>Loading history…</span>
+                  </p>
                 </Show>
                 <Show when={props.data().historyError}>
-                  <p role="alert">{props.data().historyError}</p>
+                  <p class="lazers-radar-note" data-error="true">
+                    {props.data().historyError}
+                  </p>
                 </Show>
                 <Show when={props.data().history}>
                   {(history) => (
-                    <ol class="lazers-radar-monitor-history-list">
+                    <ol class="lazers-radar-history">
                       <For each={history().items}>
                         {(item) => (
                           <li>
-                            <strong>{item.tool ?? item.kind}</strong>
-                            <span>{item.status ?? "status unknown"}</span>
-                            <time>{timestamp(item.at)}</time>
-                            <Show when={item.fileTargets}>
-                              {(targets) => (
-                                <span>
-                                  {targets().coverage} file target ·{" "}
-                                  {targets().paths.join(", ") || "path omitted"}
-                                </span>
-                              )}
+                            <time style={{ "font-family": props.monoFont }}>
+                              {clockTime(item.at)}
+                            </time>
+                            <span>
+                              {item.tool ?? item.kind}
+                              {item.status ? ` ${item.status}` : ""}
+                            </span>
+                            <Show
+                              when={
+                                item.fileTargets?.coverage === "observed" &&
+                                item.fileTargets.paths.length > 0
+                              }
+                            >
+                              <Mono>{item.fileTargets!.paths.join(", ")}</Mono>
                             </Show>
                             <Show when={item.error}>
-                              <span>{item.error}</span>
+                              <span class="lazers-radar-inspector-error">{item.error}</span>
                             </Show>
                           </li>
                         )}
@@ -661,48 +774,39 @@ export function RadarMonitorView(props: Props) {
                   )}
                 </Show>
                 <Show when={props.data().history?.nextCursor}>
-                  <button
-                    type="button"
+                  <Ui.Button
+                    variant="ghost"
+                    size="small"
                     onClick={props.onLoadMoreHistory}
                     disabled={props.data().historyLoading}
                   >
-                    Load older history
-                  </button>
-                </Show>
-                <Show
-                  when={props.data().history && props.data().history!.coverage.payloadTruncated}
-                >
-                  <p role="status">
-                    History payload coverage is bounded; omitted data is not reconstructed.
-                  </p>
+                    Load older
+                  </Ui.Button>
                 </Show>
               </details>
 
-              <details class="lazers-radar-monitor-coverage-detail">
-                <summary>Coverage and observation boundary</summary>
+              <details class="lazers-radar-disclosure lazers-radar-monitor-coverage">
+                <summary>Coverage</summary>
                 <Show when={live()}>
                   {(response) => (
-                    <dl class="lazers-radar-monitor-detail-grid">
+                    <dl class="lazers-radar-facts">
                       <dt>Runner</dt>
                       <dd>{response().freshness.runner}</dd>
-                      <dt>Native inventory</dt>
+                      <dt>Inventory</dt>
                       <dd>{response().freshness.nativeInventory}</dd>
-                      <dt>Native events</dt>
+                      <dt>Events</dt>
                       <dd>{response().freshness.nativeEvents}</dd>
-                      <dt>Journal</dt>
-                      <dd>{response().coverage.journal}</dd>
-                      <dt>Read limits</dt>
+                      <dt>Sessions</dt>
                       <dd>
-                        {response().coverage.sourceRowsRead} returned source rows ·{" "}
-                        {response().coverage.sourceQueries} queries ·{" "}
-                        {response().coverage.sourceBytesRead} bytes
+                        {response().coverage.sessionCount} returned ·{" "}
+                        {response().coverage.managedSessionCount} managed
                       </dd>
-                      <dt>Context loads</dt>
-                      <dd>{response().coverage.nativeContextLoads}</dd>
-                      <dt>Boundary</dt>
+                      <dt>Omitted</dt>
+                      <dd>{coverageGaps(response()).join(", ") || "None reported"}</dd>
+                      <dt>Observed</dt>
                       <dd>
-                        Unix ms {response().observedAt} · event {response().boundary.eventSequence}{" "}
-                        · runner revision {response().boundary.runnerRevision ?? "unavailable"}
+                        {clockTime(response().observedAt)} · event{" "}
+                        {response().boundary.eventSequence}
                       </dd>
                     </dl>
                   )}

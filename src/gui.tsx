@@ -113,7 +113,30 @@ export default Plugin.define({
     setupTaskPanel(ctx, openTaskTrajectory)
     setupModelsPanel(ctx, openTaskTrajectory)
     setupTrajectoryPanel(ctx)
-    setupRadarPanel(ctx)
+    setupRadarPanel(ctx, {
+      openTrajectory: openTaskTrajectory,
+      openTask(session, target) {
+        ctx.stores.taskView(session).update((draft) => {
+          const previous = draft.projects[target.projectDirectory] ?? {
+            scope: "project" as const,
+            selectedID: null,
+            search: "",
+            split: 48,
+            listScroll: 0,
+            detailScroll: 0,
+          }
+          draft.projects[target.projectDirectory] = {
+            ...previous,
+            scope: "project",
+            search: "",
+            selectedID: target.taskID,
+            detailScroll: 0,
+            revealTaskID: target.taskID,
+          }
+        })
+        ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
+      },
+    })
     const Ui = ctx.ui
     const pageID = "lazers"
     const Overview = bindPlugin(() => (

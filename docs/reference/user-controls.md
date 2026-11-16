@@ -18,7 +18,7 @@ The panel offers **Start** only when a plan can start under the runtime's rules.
 
 ## Radar and Trajectory
 
-Open **Radar** from the session panel menu, or run `/lz-radar`, to inspect task and session activity. Choose **This session** or **Project**. Switch among **Map**, **Flow**, and **Timeline**.
+Open **Radar** from the session panel menu, or run `/lz-radar`, to watch live session activity: each session's role, task, model and effort, current tool calls with their targets and durations, and recent model and tool events. Choose **This session**, **Project**, or **Project · all sessions**. Select a session, call or event to inspect it below the divider, then open its worker, task or trajectory. **Diagnostics** in the actions menu shows the **Map** and **Flow** state chart. Attempt and check history lives in **Trajectory**.
 
 Open **Trajectory** from the session panel menu, or run `/lz-trajectory`, to inspect task attempts, checks, and recorded usage. Choose a task and scope. Select an attempt or check to inspect its details. Task links in other LAZERS panels can open the matching trajectory.
 
