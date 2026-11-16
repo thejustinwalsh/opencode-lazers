@@ -7520,6 +7520,84 @@ test("an explicitly cancelled worker can continue through its owner without repl
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
 })
 
+test.each(["dirty", "committed"] as const)(
+  "a same-plan dependent resumes authorized %s progress through its new input",
+  async (progress) => {
+    const f = fixture({ delayed: true })
+    await runPlan(f)
+    await f.runtime.tick()
+    const first = f.store.attempts(f.receipt.planID)[0]!
+    git(first.workspace, ["add", "a.txt"])
+    git(first.workspace, [
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      "Retain prerequisite implementation",
+    ])
+    f.completeWorker(first.session_id)
+    await driveWithTaskSourceLandings(f, 8)
+    const dependent = f.store.attempts(f.receipt.planID)[1]!
+    expect(dependent.state).toBe("running")
+    expect(
+      f.store.latestTransition(f.receipt.planID, first.task_id, "TASK_INTEGRATION_RECORDED"),
+    ).toBeDefined()
+    if (progress === "committed") {
+      git(dependent.workspace, ["add", "b.txt"])
+      git(dependent.workspace, [
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "Retain dependent implementation",
+      ])
+    }
+    const previousHead = git(dependent.workspace, ["rev-parse", "HEAD"])
+    const previousPrompt = dependent.message_id
+    const promptsBefore = f.events.filter((event) => event.startsWith("prompt:")).length
+    await f.runtime.command(
+      {
+        requestID: `stop-dependent-${progress}`,
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "cancel",
+      },
+      "owner",
+    )
+    await drive(f.runtime, 2)
+    expect(f.store.plan(f.receipt.planID)!.state).toBe("cancelled")
+    await f.runtime.command(
+      {
+        requestID: `resume-dependent-${progress}`,
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "resume",
+        taskID: dependent.task_id,
+        attemptID: dependent.id,
+        reason: "Continue this exact dependent after its prerequisite source landed",
+      },
+      "owner",
+    )
+    await drive(f.runtime, 4)
+    const resumed = f.store.attempts(f.receipt.planID)[1]!
+    expect(resumed).toMatchObject({
+      id: dependent.id,
+      session_id: dependent.session_id,
+      workspace: dependent.workspace,
+      base_commit: dependent.base_commit,
+      state: "running",
+    })
+    expect(resumed.message_id).not.toBe(previousPrompt)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(promptsBefore + 1)
+    expect(git(resumed.workspace, ["rev-parse", "HEAD"])).toBe(previousHead)
+    expect(readFileSync(join(resumed.workspace, "b.txt"), "utf8")).toBe("b")
+  },
+)
+
 test("a cancelled afterPlans child resumes its retained committed attempt", async () => {
   const f = fixture({
     independent: true,
