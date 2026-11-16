@@ -207,6 +207,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     historyCapturedAt: null,
     historyExpiresAt: null,
     historyError: "",
+    pageRecaptureRequired: false,
     statusReadAt: null,
     recapturingHistory: false,
     loading: true,
@@ -1391,14 +1392,29 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     {currentData()?.events.length.toLocaleString()} of{" "}
                     {currentData()?.totalEvents.toLocaleString()} captured events loaded
                   </span>
-                  <Ui.Button
-                    variant="ghost"
-                    size="small"
-                    busy={currentData()?.loadingActivity || currentData()?.recapturingHistory}
-                    onClick={() => void state.loadMoreActivity()}
-                  >
-                    Load more
-                  </Ui.Button>
+                  <Show when={!currentData()?.pageRecaptureRequired}>
+                    <Ui.Button
+                      variant="ghost"
+                      size="small"
+                      busy={currentData()?.loadingActivity || currentData()?.recapturingHistory}
+                      onClick={() => void state.loadMoreActivity()}
+                    >
+                      Load more
+                    </Ui.Button>
+                  </Show>
+                </Show>
+                <Show when={currentData()?.historyError}>
+                  <div class="lazers-trajectory-error" role="alert">
+                    <span>{currentData()?.historyError}</span>
+                    <Ui.Button
+                      variant="ghost"
+                      size="small"
+                      busy={currentData()?.recapturingHistory}
+                      onClick={() => void state.recaptureActivity()}
+                    >
+                      Recapture history
+                    </Ui.Button>
+                  </div>
                 </Show>
               </div>
             </Show>
@@ -2027,16 +2043,31 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           )}
                         </For>
                         <Show when={currentData()?.eventCursor}>
-                          <Ui.Button
-                            variant="ghost"
-                            size="small"
-                            busy={
-                              currentData()?.loadingActivity || currentData()?.recapturingHistory
+                          <Show
+                            when={currentData()?.pageRecaptureRequired}
+                            fallback={
+                              <Ui.Button
+                                variant="ghost"
+                                size="small"
+                                busy={
+                                  currentData()?.loadingActivity ||
+                                  currentData()?.recapturingHistory
+                                }
+                                onClick={() => void state.loadMoreActivity()}
+                              >
+                                Load more activity
+                              </Ui.Button>
                             }
-                            onClick={() => void state.loadMoreActivity()}
                           >
-                            Load more activity
-                          </Ui.Button>
+                            <Ui.Button
+                              variant="ghost"
+                              size="small"
+                              busy={currentData()?.recapturingHistory}
+                              onClick={() => void state.recaptureActivity()}
+                            >
+                              Recapture history
+                            </Ui.Button>
+                          </Show>
                         </Show>
                       </div>
                     </details>
