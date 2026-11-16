@@ -1,5 +1,5 @@
 import { createComponent, createEffect, createRoot, createSignal } from "solid-js"
-import { render } from "solid-js/web"
+import { insert, render } from "solid-js/web"
 import { Command, MenuItem, Panel, Style } from "@opencode/plugin/gui"
 import type { Panel as PanelContribution } from "@opencode/plugin/gui"
 import {
@@ -87,6 +87,14 @@ export function createTestUI() {
         root.append(menu)
       })
       return root
+    },
+    /** Records the tooltip text on its trigger so tests can read hover/focus labels. */
+    Tooltip: (props: { value: unknown; children: unknown }) => {
+      const trigger = document.createElement("span")
+      trigger.className = "fixture-tooltip"
+      createEffect(() => trigger.setAttribute("data-tooltip", String(props.value ?? "")))
+      insert(trigger, () => props.children as never)
+      return trigger
     },
     Icon: (props: { name: string }) => {
       const element = document.createElement("span")

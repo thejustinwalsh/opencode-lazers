@@ -22,7 +22,9 @@ export type TaskBlocker = { kind: "task" | "plan"; id: string }
 export type TaskRowPresentation = {
   tone: TaskTone
   icon: IconName
-  /** One or two short words that never truncate. Quiet scheduled and integrated rows carry none. */
+  /** One short word naming the state: the icon's accessible name and tooltip lead. */
+  label: string
+  /** The single-word badge for wide rows, or null; quiet scheduled and integrated rows carry none. */
   badge: string | null
   /** The recorded source reason behind the badge, for its tooltip and accessible description. */
   badgeDetail: string | null
@@ -100,13 +102,14 @@ export function taskRowPresentation(
     icon: IconName,
     badge: string | null,
     badgeDetail: string | null = null,
-  ): TaskRowPresentation => ({ tone, icon, badge, badgeDetail, blockers, blockerTotal })
+    label = badge ?? stateWord(status),
+  ): TaskRowPresentation => ({ tone, icon, label, badge, badgeDetail, blockers, blockerTotal })
   const attention = attentionLabel(activity)
   if (open && attention)
     return state(
       "attention",
       "circle-exclamation",
-      activity?.pendingInput ? "Needs input" : "Needs approval",
+      activity?.pendingInput ? "Input" : "Approval",
       attention,
     )
   if (row.dispatchPause && ["queued", "ready"].includes(status))
@@ -142,13 +145,13 @@ export function taskRowPresentation(
     case "ready":
       return state("ready", "status", "Ready")
     case "queued":
-      return state("scheduled", "status", null)
+      return state("scheduled", "status", null, null, "Queued")
     case "submitted":
-      return state("submitted", "dash", "Not started")
+      return state("submitted", "dash", "Proposed")
     case "accepted":
       return state("accepted", "check", "Accepted", "Accepted; not yet integrated")
     case "incorporated":
-      return state("integrated", "circle-check", null)
+      return state("integrated", "circle-check", null, null, "Integrated")
     case "failed":
       return state("failed", "circle-x", "Failed", row.reason)
     case "exhausted":
@@ -158,6 +161,30 @@ export function taskRowPresentation(
     default:
       return state("scheduled", "status", null)
   }
+}
+
+function stateWord(status: string) {
+  const word = status.split(/[^a-z]/iu).find(Boolean) ?? "Unknown"
+  return `${word[0]!.toUpperCase()}${word.slice(1).toLowerCase()}`
+}
+
+/** What fills the row's one trailing slot. */
+export type TaskRowTail = "badge" | "blocker" | null
+
+/**
+ * A row shows at most one status beside its title so the title keeps the width. Native attention
+ * keeps its badge; otherwise a typed blocker wins because it navigates; otherwise the badge.
+ */
+export function taskRowTail(presentation: TaskRowPresentation): TaskRowTail {
+  if (presentation.tone !== "attention" && presentation.blockers.length) return "blocker"
+  return presentation.badge ? "badge" : null
+}
+
+/** Hover and focus text for the row's state icon: the state word, then its recorded reason. */
+export function taskStateTooltip(presentation: TaskRowPresentation) {
+  return presentation.badgeDetail
+    ? `${presentation.label} · ${presentation.badgeDetail}`
+    : presentation.label
 }
 
 /** Plan-level lifecycle worth naming beside a plan heading; ordinary running/queued stays quiet. */

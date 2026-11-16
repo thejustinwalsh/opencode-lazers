@@ -56,6 +56,8 @@ import {
   distinctReasons,
   rowHoldReasons,
   taskRowPresentation,
+  taskRowTail,
+  taskStateTooltip,
 } from "./row-presentation.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
@@ -789,15 +791,18 @@ function TaskPanel(
               <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
             </span>
           </Show>
-          <span
-            class="lazers-tasks-state"
-            data-state={taskRow().status}
-            data-waiting={waiting()}
-            data-tone={presentation().tone}
-            aria-hidden="true"
-          >
-            <Ui.Icon name={presentation().icon} size="small" />
-          </span>
+          <Ui.Tooltip value={taskStateTooltip(presentation())}>
+            <span
+              class="lazers-tasks-state"
+              data-state={taskRow().status}
+              data-waiting={waiting()}
+              data-tone={presentation().tone}
+              role="img"
+              aria-label={presentation().label}
+            >
+              <Ui.Icon name={presentation().icon} size="small" />
+            </span>
+          </Ui.Tooltip>
           <Show when={taskRow().reference}>
             {(reference) => (
               <span
@@ -809,17 +814,23 @@ function TaskPanel(
             )}
           </Show>
           <span class="lazers-tasks-row-title">{taskTitle(taskRow().title)}</span>
-          <Show when={presentation().blockers[0]}>
-            {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
-          </Show>
-          <Show when={presentation().badge}>
-            {(badge) => (
-              <span
-                class="lazers-tasks-badge"
-                data-tone={presentation().tone}
-                title={presentation().badgeDetail ?? badge()}
-              >
-                {badge()}
+          <Show when={taskRowTail(presentation())}>
+            {(tail) => (
+              <span class="lazers-tasks-row-tail" data-tail={tail()}>
+                <Show
+                  when={tail() === "blocker" && presentation().blockers[0]}
+                  fallback={
+                    <span
+                      class="lazers-tasks-badge"
+                      data-tone={presentation().tone}
+                      title={taskStateTooltip(presentation())}
+                    >
+                      {presentation().badge}
+                    </span>
+                  }
+                >
+                  {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
+                </Show>
               </span>
             )}
           </Show>
@@ -850,34 +861,42 @@ function TaskPanel(
     )
   }
   /**
-   * The row's one linked blocker: the first typed task or plan it waits behind, plus a count.
-   * Pointer convenience only (not a tab stop); the inspector lists every reference by keyboard.
+   * The row's one linked blocker: the first typed task or plan it waits behind. Narrow rows show
+   * only the themed link icon; wide rows add the name and count. Pointer convenience only (not a
+   * tab stop, so the tree keeps one roving stop); the inspector lists every reference by keyboard.
    */
   const renderBlockerLink = (blocker: TaskBlocker, total: number) => {
     const name = () =>
       blocker.kind === "plan"
         ? (schedulingPlan(blocker.id)?.title ?? `Plan ${blocker.id.slice(0, 8)}`)
         : relationLabel(blocker.id)
+    const more = () => (total > 1 ? ` and ${total - 1} more` : "")
     return (
-      <button
-        type="button"
-        class="lazers-tasks-row-blocker"
-        data-blocker-kind={blocker.kind}
-        tabIndex={-1}
-        title={`Waiting on ${name()}${total > 1 ? ` and ${total - 1} more` : ""}`}
-        aria-label={`Open blocker ${name()}`}
-        style={blocker.kind === "task" ? { "font-family": ctx.appearance.font("mono") } : {}}
-        onClick={(event) => {
-          event.stopPropagation()
-          if (blocker.kind === "plan") openPrerequisitePlan(blocker.id)
-          else selectTask(blocker.id)
-        }}
-      >
-        <span class="lazers-tasks-row-blocker-name">{name()}</span>
-        <Show when={total > 1}>
-          <span class="lazers-tasks-row-blocker-count">+{total - 1}</span>
-        </Show>
-      </button>
+      <Ui.Tooltip value={`Waiting on ${name()}${more()}`}>
+        <button
+          type="button"
+          class="lazers-tasks-row-blocker"
+          data-blocker-kind={blocker.kind}
+          tabIndex={-1}
+          aria-label={`Open blocker ${name()}${more()}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            if (blocker.kind === "plan") openPrerequisitePlan(blocker.id)
+            else selectTask(blocker.id)
+          }}
+        >
+          <Ui.Icon name="link" size="small" />
+          <span
+            class="lazers-tasks-row-blocker-name"
+            style={blocker.kind === "task" ? { "font-family": ctx.appearance.font("mono") } : {}}
+          >
+            {name()}
+          </span>
+          <Show when={total > 1}>
+            <span class="lazers-tasks-row-blocker-count">+{total - 1}</span>
+          </Show>
+        </button>
+      </Ui.Tooltip>
     )
   }
   const renderSignalRow = (taskRow: ExecutionListRow, label: "Now" | "Attention") => {
@@ -904,6 +923,7 @@ function TaskPanel(
           data-waiting={waiting()}
           data-tone={presentation().tone}
           aria-hidden="true"
+          title={taskStateTooltip(presentation())}
         >
           <Ui.Icon name={presentation().icon} size="small" />
         </span>
@@ -913,7 +933,7 @@ function TaskPanel(
             <span
               class="lazers-tasks-badge"
               data-tone={presentation().tone}
-              title={presentation().badgeDetail ?? badge()}
+              title={taskStateTooltip(presentation())}
             >
               {badge()}
             </span>

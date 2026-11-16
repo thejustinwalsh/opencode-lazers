@@ -5,6 +5,8 @@ import {
   rowBlockers,
   rowHoldReasons,
   taskRowPresentation,
+  taskRowTail,
+  taskStateTooltip,
 } from "./row-presentation.ts"
 
 const row = (change: Partial<ExecutionListRow> = {}): ExecutionListRow => ({
@@ -36,6 +38,7 @@ test("scheduled work stays quiet while running, ready and submitted work is name
   expect(taskRowPresentation(row())).toEqual({
     tone: "scheduled",
     icon: "status",
+    label: "Queued",
     badge: null,
     badgeDetail: null,
     ...quiet,
@@ -50,7 +53,7 @@ test("scheduled work stays quiet while running, ready and submitted work is name
     tone: "ready",
     badge: "Ready",
   })
-  expect(taskRowPresentation(row({ status: "submitted" })).badge).toBe("Not started")
+  expect(taskRowPresentation(row({ status: "submitted" })).badge).toBe("Proposed")
 })
 
 test("native attention outranks holds and running state", () => {
@@ -60,11 +63,12 @@ test("native attention outranks holds and running state", () => {
   ).toEqual({
     tone: "attention",
     icon: "circle-exclamation",
-    badge: "Needs input",
+    label: "Input",
+    badge: "Input",
     badgeDetail: "Input pending · Approval pending",
     ...quiet,
   })
-  expect(taskRowPresentation(held, activity({ pendingForms: 2 })).badge).toBe("Needs approval")
+  expect(taskRowPresentation(held, activity({ pendingForms: 2 })).badge).toBe("Approval")
   // A finished task never asks for attention, whatever a stale observation says.
   expect(
     taskRowPresentation(row({ status: "accepted" }), activity({ pendingInput: true })).tone,
@@ -84,6 +88,7 @@ test("waiting rows keep a short state; reasons move to the detail, blockers stay
   ).toEqual({
     tone: "waiting",
     icon: "circle-ban-sign",
+    label: "Waiting",
     badge: "Waiting",
     badgeDetail: "Waiting on LZ-8 (queued), LZ-9 (running)",
     blockers: [
@@ -148,6 +153,7 @@ test("a dispatch pause applies only to work that has not started and outranks wa
   expect(taskRowPresentation(row({ dispatchPause }))).toEqual({
     tone: "paused",
     icon: "stop",
+    label: "Paused",
     badge: "Paused",
     badgeDetail: "Paused until LZ-4 integrates",
     ...quiet,
@@ -171,6 +177,7 @@ test("acceptance, integration, failure and cancellation stay distinct", () => {
   expect(taskRowPresentation(row({ status: "incorporated" }))).toMatchObject({
     tone: "integrated",
     icon: "circle-check",
+    label: "Integrated",
     badge: null,
   })
   expect(taskRowPresentation(row({ status: "failed", reason: "Check failed" }))).toMatchObject({
@@ -181,6 +188,7 @@ test("acceptance, integration, failure and cancellation stay distinct", () => {
   expect(taskRowPresentation(row({ status: "exhausted" })).badge).toBe("Exhausted")
   expect(taskRowPresentation(row({ status: "cancelled" }))).toMatchObject({
     tone: "cancelled",
+    label: "Cancelled",
     badge: null,
   })
   // Terminal work is never shown as waiting or blocked, even inside a held plan.
@@ -193,6 +201,57 @@ test("acceptance, integration, failure and cancellation stay distinct", () => {
       }),
     ),
   ).toMatchObject({ tone: "accepted", blockers: [] })
+})
+
+test("every row state is one short word, so badges never crowd the title", () => {
+  const rows = [
+    row(),
+    ...[
+      "submitted",
+      "ready",
+      "running",
+      "verifying",
+      "blocked",
+      "accepted",
+      "incorporated",
+      "failed",
+      "exhausted",
+      "cancelled",
+      "mystery-state",
+    ].map((status) => row({ status: status as ExecutionListRow["status"] })),
+    row({ waiting: true, holdReason: "A long recorded hold reason that stays out of the row" }),
+    row({ dispatchPause: { reason: "Paused until LZ-4 integrates", untilPlans: [] } }),
+  ]
+  const presentations = [
+    ...rows.map((value) => taskRowPresentation(value)),
+    taskRowPresentation(row({ status: "running" }), activity({ pendingInput: true })),
+    taskRowPresentation(row({ status: "running" }), activity({ pendingPermissions: 1 })),
+  ]
+  for (const presentation of presentations) {
+    expect(presentation.label).toMatch(/^[A-Z][a-z]{1,9}$/u)
+    if (presentation.badge) expect(presentation.badge).toMatch(/^[A-Z][a-z]{1,9}$/u)
+  }
+  expect(taskRowPresentation(row({ status: "mystery-state" as never })).label).toBe("Mystery")
+})
+
+test("a row shows one trailing status: attention badge, else its blocker, else its badge", () => {
+  const scheduling = {
+    decision: "waiting" as const,
+    reason: "Waiting for prerequisite source integration.",
+    waitingOn: ["a"],
+    reservationTaskIDs: [],
+  }
+  const waiting = taskRowPresentation(row({ scheduling }))
+  // The scheduler's recorded decision still sets the tone; the blocker replaces the word.
+  expect(waiting).toMatchObject({ tone: "waiting", label: "Waiting", badge: "Waiting" })
+  expect(taskRowTail(waiting)).toBe("blocker")
+  expect(taskStateTooltip(waiting)).toBe("Waiting · Waiting for prerequisite source integration.")
+  const asking = taskRowPresentation(row({ scheduling }), activity({ pendingInput: true }))
+  expect(asking.blockers).toHaveLength(1)
+  expect(taskRowTail(asking)).toBe("badge")
+  expect(taskRowTail(taskRowPresentation(row({ status: "running" })))).toBe("badge")
+  expect(taskRowTail(taskRowPresentation(row()))).toBeNull()
+  expect(taskStateTooltip(taskRowPresentation(row()))).toBe("Queued")
 })
 
 test("plan headings name integration and cleanup, not ordinary progress", () => {

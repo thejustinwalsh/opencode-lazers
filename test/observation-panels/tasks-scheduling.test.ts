@@ -448,7 +448,6 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       signal: new AbortController().signal,
       ui: (() => {
         const ui = host.createTestUI() as Record<string, unknown>
-        ui.Tooltip = (props: { children?: unknown }) => props.children
         ui.IconButton = (props: { label: string; onClick?: () => void; disabled?: boolean }) => {
           const button = browserDocument.createElement("button")
           button.textContent = props.label
@@ -540,11 +539,18 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     planPrerequisite.click()
     await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
 
-    // The row keeps a whole short state and one linked blocker; the machine reason is not in it.
+    // The scheduler's recorded wait sets the row's state icon; its one trailing status is the
+    // linked blocker, and the machine reason stays out of the row.
     const waitingRow = row(ids.waiting)!
-    expect(
-      waitingRow.querySelector(":scope > .lazers-tasks-row .lazers-tasks-badge")?.textContent,
-    ).toBe("Waiting")
+    const waitingState = waitingRow.querySelector<HTMLElement>(
+      ":scope > .lazers-tasks-row .lazers-tasks-state",
+    )!
+    expect(waitingState.getAttribute("data-tone")).toBe("waiting")
+    expect(waitingState.getAttribute("aria-label")).toBe("Waiting")
+    expect(waitingState.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip).toStartWith(
+      "Waiting · Waiting for prerequisite source integration.",
+    )
+    expect(waitingRow.querySelector(":scope > .lazers-tasks-row .lazers-tasks-badge")).toBeNull()
     expect(waitingRow.querySelector(".lazers-tasks-node-reason")).toBeNull()
     expect(waitingRow.textContent).not.toContain("Waiting for prerequisite source integration.")
     const waitingBlocker = waitingRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
@@ -552,6 +558,10 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     // One prerequisite, 100 listed reservation holders and one more the read only counted.
     expect(waitingBlocker.querySelector(".lazers-tasks-row-blocker-count")?.textContent).toBe(
       "+101",
+    )
+    expect(waitingBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-1 and 101 more")
+    expect(waitingBlocker.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip).toBe(
+      "Waiting on LZ-1 and 101 more",
     )
     expect(waitingRow.getAttribute("aria-label")).toContain(
       "Waiting for prerequisite source integration.",
