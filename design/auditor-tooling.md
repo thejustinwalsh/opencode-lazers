@@ -124,6 +124,13 @@ failed baseline cannot establish a mutation score.
   Disabling remote config transport in a scratch copy exposed a second path:
   `fallow-extract → lightningcss → getrandom`. Keep CSS analysis. Qualify its
   entropy backend in the WebAssembly binding before testing static reports.
+- With JavaScript entropy enabled and the existing 64-bit cache layout
+  assertions scoped to 64-bit targets, `fallow-extract`, `fallow-graph`, and
+  `fallow-core` passed `cargo check` for `wasm32-unknown-unknown`. The full
+  `fallow-engine` still fails in platform-specific Git path conversion,
+  churn-cache path handling, file URLs, and dependency symlinks. Use explicit
+  host inputs for those operations. Report parity and WebAssembly execution
+  of the static scans still need verification.
 - Bun ran the instrumented output with a fresh Worker per mutant. A test
   asserted that the boundary value 10 qualifies. The run found eight mutants:
   two killed by the assertion, two survived, and four in a function the test
