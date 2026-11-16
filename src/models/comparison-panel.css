@@ -356,28 +356,41 @@
 
 .lazers-models-chart-empty {
   margin: 0;
-  color: var(--text-weak);
-  font-size: 11px;
-  line-height: 1.35;
+  padding: 16px 0;
+  color: var(--text-base);
+  font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
+/* The plot owns its height; legend and Chart data stack below and never squeeze it. */
 .lazers-models-comparison-chart {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  gap: 3px;
-  height: 236px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
   min-width: 0;
 }
 
-.lazers-models-comparison-chart > [role="img"] {
+.lazers-models-comparison-chart-plot {
+  height: var(--models-chart-height, 236px);
   min-height: 0;
+  border-radius: 4px;
+}
+
+.lazers-models-comparison-chart[data-empty="true"] > .lazers-models-comparison-chart-plot {
+  display: none;
+}
+
+.lazers-models-comparison-chart-plot:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 2px;
 }
 
 .lazers-models-comparison-chart-data summary {
-  min-height: 20px;
+  min-height: 24px;
   color: var(--text-weak);
-  font-size: 9px;
+  font-size: max(11px, 0.85em);
+  line-height: 24px;
   cursor: pointer;
 }
 
@@ -389,8 +402,8 @@
   margin: 0;
   padding: 0;
   color: var(--text-weak);
-  font-size: 9px;
-  line-height: 1.2;
+  font-size: max(11px, 0.85em);
+  line-height: 1.3;
   list-style: none;
 }
 
@@ -465,12 +478,13 @@
 
 .lazers-models-comparison-chart-data button {
   max-width: 100%;
+  min-height: 24px;
   padding: 3px 2px;
   border: 0;
   color: var(--text-weak);
   background: transparent;
   font: inherit;
-  font-size: 10px;
+  font-size: max(11px, 0.85em);
   line-height: 1.4;
   text-align: left;
   overflow-wrap: anywhere;
@@ -482,86 +496,6 @@
   text-decoration: underline;
   text-decoration-color: var(--border-selected);
   text-underline-offset: 2px;
-}
-
-.lazers-models-candidate {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px 12px;
-  width: 100%;
-  min-width: 0;
-  padding: 8px 4px;
-  border: 0;
-  border-bottom: 1px solid var(--border-weak-base);
-  color: var(--text-base);
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.lazers-models-candidate-list {
-  display: grid;
-  min-width: 0;
-}
-
-.lazers-models-candidate:hover,
-.lazers-models-candidate[data-selected="true"] {
-  background: var(--surface-base-hover);
-}
-
-.lazers-models-candidate[data-selected="true"] {
-  box-shadow: inset 2px 0 0 var(--border-selected);
-}
-
-.lazers-models-candidate-main {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.lazers-models-candidate-identity {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.lazers-models-candidate strong {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-candidate small {
-  color: var(--text-weak);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.lazers-models-candidate-route {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lazers-models-candidate-meta {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  min-width: 0;
-  color: var(--text-weak);
-  text-align: right;
-}
-
-.lazers-models-selection-mark {
-  flex: 0 0 auto;
-  width: 14px;
-  color: var(--text-strong);
-  font-size: 12px;
 }
 
 .lazers-models-separator {
@@ -587,13 +521,10 @@
 }
 
 .lazers-models-inspector-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-weak-base);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-bottom: 8px;
 }
 
 .lazers-models-inspector-heading h2 {
@@ -652,10 +583,29 @@
 .lazers-models-market-summary small {
   grid-column: 1;
   min-width: 0;
-  color: var(--text-weak);
-  font-size: 9px;
-  line-height: 1.25;
+  color: var(--text-base);
+  font-size: 12px;
+  line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.lazers-models-selection-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+
+.lazers-models-selection-actions > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.lazers-models-status-details {
+  margin: 0 0 4px;
 }
 
 .lazers-models-route-pages {
@@ -1375,8 +1325,8 @@
 }
 
 @container models-panel (min-width: 720px) {
-  .lazers-models-comparison-chart {
-    height: 260px;
+  .lazers-models-comparison-chart-plot {
+    height: var(--models-chart-height, 260px);
   }
 
   .lazers-models-inspector-columns {
@@ -1403,18 +1353,6 @@
 
   .lazers-models-sources {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .lazers-models-candidate {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-    padding: 5px 2px;
-  }
-
-  .lazers-models-candidate-meta {
-    justify-content: flex-end;
-    padding-left: 0;
-    text-align: right;
   }
 
   .lazers-models-assignment-row {

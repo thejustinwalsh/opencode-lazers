@@ -1,7 +1,7 @@
 import { Store, bindPlugin, createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
 import type { KnownUsageMarketScenario } from "./market-range.ts"
@@ -32,7 +32,6 @@ import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
   boundedModelLabel,
-  candidateLabel,
   formatDate,
   currentMarketEstimateSummary,
   modelDisplayLabel,
@@ -63,6 +62,7 @@ const Preference = Schema.Struct({
   selectedCandidateID: Schema.NullOr(Schema.String),
   selectedConfigurationID: Schema.optional(Schema.NullOr(Schema.String)),
   split: Schema.Number,
+  evidenceOpen: Schema.optional(Schema.Boolean),
   topScroll: Schema.Number,
   inspectorScroll: Schema.Number,
 })
@@ -74,6 +74,7 @@ const initial: typeof Preference.Type = {
   selectedCandidateID: null,
   selectedConfigurationID: null,
   split: 64,
+  evidenceOpen: false,
   topScroll: 0,
   inspectorScroll: 0,
 }
@@ -102,6 +103,10 @@ const modelTaskKindLabels: Record<ModelDecisionTaskKind, string> = {
 const modelTaskKinds = Object.keys(modelTaskKindLabels) as ModelDecisionTaskKind[]
 
 const clampSplit = (value: number) => Math.min(76, Math.max(24, value))
+/** Plot height bounds; the pane supplies the height in between. */
+const chartHeightBounds = { minimum: 168, maximum: 320 } as const
+/** Legend, Chart data summary and pane padding kept visible below the plot. */
+const chartFooterReserve = 56
 
 function formatNumber(value: number | null | undefined) {
   return value === null || value === undefined ? "Unknown" : value.toLocaleString()
@@ -119,57 +124,42 @@ function benchmarkLabel(candidate: ModelCandidate) {
     : `Coding index ${benchmark.codingIndex}`
 }
 
-function candidateEffortLabel(candidate: ModelCandidate) {
-  return candidate.identity.variant ?? "Not specified"
-}
-
-function candidateAvailabilityLabel(candidate: ModelCandidate) {
-  if (candidate.native.enabled === null) return "Availability unknown"
-  return candidate.native.enabled ? "Available" : "Disabled"
-}
-
 function personaFilterLabel(persona: typeof initial.persona) {
   if (!persona) return "All"
   return persona === "small-refactoring" ? "Refactor" : modelPersonaLabels[persona]
 }
 
+/** Short source name for the summary line; freshness only when it is not current. */
 function marketSummarySource(context: string) {
-  const [source, ...details] = context.split(" · ")
-  const conciseSource = (() => {
-    switch (source) {
-      case "OpenRouter model catalog":
-        return "OpenRouter"
-      case "OpenCode model catalog":
-        return "OpenCode"
-      case "Configured price sources":
-        return "Configured sources"
-      case "Configured price source":
-        return "Configured source"
-      default:
-        return source
-    }
-  })()
-  return [conciseSource, ...details].join(" · ")
+  const [source = "", ...details] = context.split(" · ")
+  const name =
+    {
+      "OpenRouter model catalog": "OpenRouter",
+      "OpenCode model catalog": "OpenCode",
+      "Configured price sources": "Configured sources",
+      "Configured price source": "Configured source",
+    }[source] ?? source
+  return details.includes("stale") ? `${name} · out of date` : name
 }
 
 function decisionStatusLabel(status: ModelComparisonPanelData["decisionStatus"]) {
   switch (status) {
     case "loading":
-      return "Loading producer decision data"
+      return "Loading comparison data"
     case "ready":
-      return "Current producer snapshot"
+      return "Comparison data is current"
     case "partial":
-      return "Some comparison data missing"
+      return "Some comparison data is missing"
     case "stale":
-      return "Stale producer evidence"
+      return "Comparison data may be out of date"
     case "unknown":
-      return "Producer freshness unknown"
+      return "Comparison data age is unknown"
     case "backend-not-ready":
-      return "Decision backend not ready"
+      return "Comparison data is not ready yet"
     case "missing-rpc":
-      return "Decision RPC unavailable"
+      return "Comparison is not available on this server"
     case "error":
-      return "Decision read failed"
+      return "Comparison data could not be loaded"
   }
 }
 
@@ -180,17 +170,17 @@ function decisionStatusSummary(status: ModelComparisonPanelData["decisionStatus"
     case "ready":
       return "Current"
     case "partial":
-      return "Partial"
+      return "Incomplete"
     case "stale":
-      return "Stale evidence"
+      return "Out of date"
     case "unknown":
-      return "Freshness unknown"
+      return "Age unknown"
     case "backend-not-ready":
-      return "Backend not ready"
+      return "Not ready"
     case "missing-rpc":
-      return "RPC unavailable"
+      return "Unavailable"
     case "error":
-      return "Read failed"
+      return "Couldn't load"
   }
 }
 
@@ -742,60 +732,11 @@ function variantCoverageLabel(candidate: ModelCandidate) {
   return `Variants (coverage unknown): ${variants?.join(", ") || "Not reported"}`
 }
 
-export function ModelCandidateRow(props: {
-  candidate: ModelCandidate
-  selected: boolean
-  tabIndex: number
-  onKeyDown: JSX.EventHandler<HTMLButtonElement, KeyboardEvent>
-  onSelect: () => void
-}) {
-  const candidate = () => props.candidate
-  const modelName = () => candidate().native.name?.trim() || candidate().identity.modelID
-  const fullRoute = () => candidateLabel(candidate())
-  return (
-    <button
-      type="button"
-      class="lazers-models-candidate"
-      data-selected={props.selected}
-      data-candidate-id={candidate().candidateID}
-      aria-pressed={props.selected}
-      aria-label={`${modelName()}. Exact route ${fullRoute()}. Effort ${candidateEffortLabel(candidate())}. ${candidateAvailabilityLabel(candidate())} in the native catalog.`}
-      tabIndex={props.tabIndex}
-      onKeyDown={props.onKeyDown}
-      onClick={props.onSelect}
-    >
-      <span class="lazers-models-candidate-main">
-        <span class="lazers-models-selection-mark" aria-hidden="true">
-          {props.selected ? "●" : "○"}
-        </span>
-        <span class="lazers-models-candidate-identity">
-          <strong title={modelName()}>{boundedModelLabel(modelName())}</strong>
-          <small class="lazers-models-candidate-route" title={fullRoute()}>
-            {fullRoute()}
-          </small>
-        </span>
-      </span>
-      <span class="lazers-models-candidate-meta">
-        <small>Effort {candidateEffortLabel(candidate())}</small>
-        <small>{candidateAvailabilityLabel(candidate())}</small>
-      </span>
-    </button>
-  )
-}
-
-export function HistoricalChartPlaceholder() {
-  return (
-    <p class="lazers-models-chart-empty" role="status">
-      Unknown prices and zero-accepted configurations stay unplotted.
-    </p>
-  )
-}
-
 function sourceRefreshLabel(data: ModelComparisonPanelData) {
-  if (data.sourceRefresh === "refreshing") return "Refreshing external and native sources…"
-  if (data.sourceRefresh === "failed") return "Source refresh failed; cached evidence is retained."
+  if (data.sourceRefresh === "refreshing") return "Refreshing sources…"
+  if (data.sourceRefresh === "failed") return "Source refresh failed; showing saved data."
   if (data.sourceRefresh === "succeeded") return "Sources refreshed."
-  return "Using the latest saved source snapshots."
+  return "Showing saved data."
 }
 
 function statusText(status: string) {
@@ -826,7 +767,7 @@ function ModelPanel(
     new ModelComparisonPanelState(() => {}).data,
   )
   const [split, setSplit] = createSignal(initial.split)
-  const [decisionEvidenceOpen, setDecisionEvidenceOpen] = createSignal(false)
+  const [chartHeight, setChartHeight] = createSignal<number>()
   const [assignmentPersona, setAssignmentPersona] = createSignal<WorkerPersona | null>(null)
   const [assignmentScope, setAssignmentScope] =
     createSignal<ModelMappingTargetInput["scope"]>("task")
@@ -835,9 +776,17 @@ function ModelPanel(
     id: "",
     variant: "",
   })
+  // A route carried from Compare into the Assignments editor draft for one persona.
+  const [assignmentPrefill, setAssignmentPrefill] = createSignal<{
+    persona: WorkerPersona
+    route: { providerID: string; id: string; variant: string }
+    version: number
+  }>()
   let assignmentPickerRequest = 0
   let root: HTMLDivElement | undefined
   let topPane: HTMLDivElement | undefined
+  let header: HTMLElement | undefined
+  let comparison: HTMLElement | undefined
   let inspector: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
 
@@ -1056,6 +1005,28 @@ function ModelPanel(
       inspector.scrollTop = prefs().inspectorScroll
   })
 
+  // Size the plot from the space left in the top pane. Chart data and the legend sit
+  // below the plot, so opening them scrolls the pane instead of shrinking the plot.
+  const fitChart = () => {
+    const plot = topPane?.querySelector<HTMLElement>(".lazers-models-comparison-chart-plot")
+    if (!topPane || !plot || topPane.clientHeight <= 0 || !plot.getClientRects().length) return
+    const offset =
+      plot.getBoundingClientRect().top - topPane.getBoundingClientRect().top + topPane.scrollTop
+    const next = Math.round(
+      Math.min(
+        chartHeightBounds.maximum,
+        Math.max(chartHeightBounds.minimum, topPane.clientHeight - offset - chartFooterReserve),
+      ),
+    )
+    if (next !== chartHeight()) setChartHeight(next)
+  }
+  onMount(() => {
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => fitChart())
+    for (const element of [topPane, header, comparison]) if (element) observer.observe(element)
+    onCleanup(() => observer.disconnect())
+  })
+
   const selectedCandidate = () => {
     const configuration = selectedDecisionConfiguration()
     if (!configuration) return undefined
@@ -1123,10 +1094,26 @@ function ModelPanel(
       priceFreshness: freshness,
     })
   }
-  const selectedMarketSummary = () => {
+  /** Two-line summary: model · effort above, rounded cost · sample size · source below. */
+  const selectedSummaryLine = () => {
+    const inspection = visible()?.decisionInspection
+    if (!inspection || inspection.status !== "found") return undefined
+    const count = inspection.cohort.acceptedTaskCount
+    const tasks = `from ${count} task${count === 1 ? "" : "s"}`
     const summary = selectedMarketEstimate()
-    const configuration = selectedDecisionConfiguration()
-    return summary && configuration ? { summary, configuration } : undefined
+    // No applicable price: omit the cost rather than label it unavailable.
+    if (!summary)
+      return count > 0
+        ? { text: `From ${count} task${count === 1 ? "" : "s"}`, title: `${count} accepted tasks` }
+        : undefined
+    return {
+      text: `${summary.amount} · ${tasks} · ${marketSummarySource(summary.context)}`,
+      title: summary.title,
+    }
+  }
+  const selectedContributors = () => {
+    const inspection = visible()?.decisionInspection
+    return inspection?.status === "found" ? inspection.contributorPage.contributors : []
   }
   type DecisionChartGraph = NonNullable<ModelComparisonPanelData["decisionOverview"]>["graph"]
   let chartReferencePoints: DecisionChartGraph["points"] | undefined
@@ -1324,6 +1311,7 @@ function ModelPanel(
   const selectAssignmentPersona = (persona: WorkerPersona) => {
     assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
+    setAssignmentPrefill(undefined)
     setAssignmentPersona(persona)
   }
   const selectAssignmentScope = (scope: ModelMappingTargetInput["scope"]) => {
@@ -1363,19 +1351,23 @@ function ModelPanel(
     const persona = assignmentPersona()
     const scope = assignmentScope()
     const setting = assignmentSettings()
+    const prefill = assignmentPrefill()
     if (!panel?.settings || !persona || !setting) {
       lastAssignmentDraftKey = ""
       return
     }
     const layer = setting.layers[scope]
-    const key = `${panel.key}:${panel.settings.taskID ?? "project"}:${persona}:${scope}:${layer?.revision ?? 0}`
+    const carried = prefill?.persona === persona ? prefill : undefined
+    const key = `${panel.key}:${panel.settings.taskID ?? "project"}:${persona}:${scope}:${layer?.revision ?? 0}:${carried?.version ?? 0}`
     if (key === lastAssignmentDraftKey) return
     lastAssignmentDraftKey = key
-    setAssignmentRoute({
-      providerID: layer?.route?.providerID ?? "",
-      id: layer?.route?.id ?? "",
-      variant: layer?.route?.variant ?? "",
-    })
+    setAssignmentRoute(
+      carried?.route ?? {
+        providerID: layer?.route?.providerID ?? "",
+        id: layer?.route?.id ?? "",
+        variant: layer?.route?.variant ?? "",
+      },
+    )
   })
   const saveAssignmentRoute = () => {
     const persona = assignmentPersona()
@@ -1391,6 +1383,7 @@ function ModelPanel(
   const removeAssignmentRoute = () => {
     const persona = assignmentPersona()
     if (!persona || !assignmentLayer()?.route || assignmentBlocked()) return
+    setAssignmentPrefill(undefined)
     void state.configureMapping(persona, assignmentScope(), null)
   }
   const assignmentLayerLabel = (
@@ -1702,25 +1695,34 @@ function ModelPanel(
       )}
     </Show>
   )
+  /** Technical reason behind the status chip; shown only inside a collapsed disclosure. */
+  const decisionStatusDetail = () => {
+    const panel = visible()
+    if (!panel) return undefined
+    if (panel.decisionError) return panel.decisionError
+    return panel.decisionStatus === "backend-not-ready"
+      ? panel.decisionContext?.unavailableReason
+      : undefined
+  }
   const sourceWarning = () => {
     const sources = visible()?.comparison?.sources ?? []
     if (sources.some((source) => source.refresh?.state === "failed"))
       return {
-        message: "One or more source refreshes failed; cached evidence may be stale.",
+        message: "A price source couldn't refresh; showing saved data.",
         role: "alert" as const,
       }
     if (sources.some((source) => source.refresh?.state === "cancelled"))
       return {
-        message: "A source refresh was cancelled; cached evidence is retained.",
+        message: "Source refresh cancelled; showing saved data.",
         role: "status" as const,
       }
     if (sources.some((source) => source.storage !== "ready"))
       return {
-        message: "Source metadata is unavailable; model matching may be incomplete.",
+        message: "Some source details are missing; model names may not match.",
         role: "status" as const,
       }
     if (sources.length && sources.some((source) => !source.snapshot))
-      return { message: "One or more source snapshots are unavailable.", role: "status" as const }
+      return { message: "Some sources have no saved data yet.", role: "status" as const }
     return undefined
   }
   const effortDetailsSummary = () => {
@@ -1734,6 +1736,24 @@ function ModelPanel(
   }
 
   const selectTab = (tab: Tab) => save({ tab })
+  /** Open the Assignments editor for a persona with the compared route as an unsaved draft. */
+  const assignSelectedRoute = (persona: WorkerPersona) => {
+    const configuration = selectedDecisionConfiguration()
+    if (!configuration || assignmentBlocked()) return
+    assignmentPickerRequest++
+    clearConfirmedAssignmentWrite()
+    setAssignmentPrefill((previous) => ({
+      persona,
+      route: {
+        providerID: configuration.route.providerID,
+        id: configuration.route.modelID,
+        variant: configuration.route.variant ?? "",
+      },
+      version: (previous?.version ?? 0) + 1,
+    }))
+    setAssignmentPersona(persona)
+    selectTab("assignments")
+  }
   const selectTask = (taskID: string) => {
     assignmentPickerRequest++
     state.selectTask(taskID)
@@ -1821,6 +1841,7 @@ function ModelPanel(
       }}
       style={{
         "--models-top-size": `${split()}%`,
+        ...(chartHeight() ? { "--models-chart-height": `${chartHeight()}px` } : {}),
       }}
     >
       <div
@@ -1830,7 +1851,12 @@ function ModelPanel(
         }}
         onScroll={(event) => save({ topScroll: event.currentTarget.scrollTop })}
       >
-        <header class="lazers-models-header">
+        <header
+          class="lazers-models-header"
+          ref={(element) => {
+            header = element
+          }}
+        >
           <div class="lazers-models-title-row">
             <h2>Models</h2>
             <span
@@ -1961,7 +1987,7 @@ function ModelPanel(
           </div>
           <Show when={visible()?.sourceRefresh === "refreshing"}>
             <p class="lazers-models-refresh-note" role="status">
-              Refreshing sources; saved comparison rows remain available.
+              Refreshing sources…
             </p>
           </Show>
           <Show when={visible()?.sourceRefresh === "failed"}>
@@ -1983,7 +2009,7 @@ function ModelPanel(
           </Show>
           <Show when={visible()?.comparisonStale}>
             <p class="lazers-models-refresh-note" role="status">
-              Comparison is stale; showing the last successful data.
+              Comparison is out of date; showing the last saved data.
             </p>
           </Show>
           <Show
@@ -1994,7 +2020,7 @@ function ModelPanel(
             }
           >
             <p class="lazers-models-refresh-note" role="status">
-              Latest evidence could not be confirmed; showing saved data.
+              Showing saved data; the latest couldn't be confirmed.
             </p>
           </Show>
           <Show when={!visible()?.comparison && visible()?.comparisonError}>
@@ -2016,7 +2042,13 @@ function ModelPanel(
         </header>
 
         <div class="lazers-models-comparison-content">
-          <section class="lazers-models-compare" aria-label="Model comparison">
+          <section
+            class="lazers-models-compare"
+            aria-label="Model comparison"
+            ref={(element) => {
+              comparison = element
+            }}
+          >
             <details class="lazers-models-sources-details">
               <summary>Sources</summary>
               <div class="lazers-models-sources" aria-label="Source snapshot coverage">
@@ -2057,24 +2089,6 @@ function ModelPanel(
               </div>
             </details>
 
-            <Show when={visible()?.decisionError}>
-              <p
-                class={
-                  visible()?.decisionStatus === "error" ||
-                  visible()?.decisionStatus === "missing-rpc"
-                    ? "lazers-models-error"
-                    : "lazers-models-refresh-note"
-                }
-                role={
-                  visible()?.decisionStatus === "error" ||
-                  visible()?.decisionStatus === "missing-rpc"
-                    ? "alert"
-                    : "status"
-                }
-              >
-                {visible()?.decisionError}
-              </p>
-            </Show>
             <div class="lazers-models-overview">
               <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
                 <div class="lazers-models-section-heading">
@@ -2082,11 +2096,10 @@ function ModelPanel(
                     {(() => {
                       const points = visible()?.decisionOverview?.graph.points ?? []
                       const references = decisionChartReferences()
-                      if (comparisonChartHasPlottablePoints(points))
-                        return "Historical task outcomes"
+                      if (comparisonChartHasPlottablePoints(points)) return "Task outcomes"
                       if (comparisonChartHasPlottablePoints([], references))
-                        return "Catalog reference estimates"
-                      return "No plottable comparison points"
+                        return "Catalog estimates"
+                      return "No comparison yet"
                     })()}
                   </h3>
                   <span
@@ -2102,6 +2115,14 @@ function ModelPanel(
                     {decisionStatusSummary(visible()?.decisionStatus ?? "loading")}
                   </span>
                 </div>
+                <Show when={decisionStatusDetail()}>
+                  {(detail) => (
+                    <details class="lazers-models-warning-details lazers-models-status-details">
+                      <summary>Status details</summary>
+                      <p>{detail()}</p>
+                    </details>
+                  )}
+                </Show>
                 <Show
                   when={
                     visible()?.decisionStatus === "backend-not-ready"
@@ -2109,15 +2130,22 @@ function ModelPanel(
                       : visible()?.decisionOverview
                   }
                   fallback={
-                    <p class="lazers-models-chart-empty" role="status">
+                    <p
+                      class="lazers-models-chart-empty"
+                      role={
+                        visible()?.decisionStatus === "error" ||
+                        visible()?.decisionStatus === "missing-rpc"
+                          ? "alert"
+                          : "status"
+                      }
+                    >
                       {visible()?.decisionStatus === "backend-not-ready"
-                        ? (visible()?.decisionContext?.unavailableReason ??
-                          "No decision points or estimate are available yet.")
+                        ? "Comparison data isn't ready yet. Refresh to check again."
                         : visible()?.decisionStatus === "missing-rpc"
-                          ? "The native Models decision service is not registered. No fixture data is substituted."
+                          ? "Model comparison isn't available on this OpenCode server."
                           : visible()?.decisionStatus === "error"
-                            ? "No graph or estimate is shown because the producer read failed."
-                            : "Waiting for the producer-owned comparison snapshot."}
+                            ? "Comparison data couldn't be loaded. Refresh to retry."
+                            : "Loading comparison…"}
                     </p>
                   }
                 >
@@ -2247,29 +2275,66 @@ function ModelPanel(
               {(configuration) => (
                 <>
                   <div class="lazers-models-inspector-heading">
-                    <div>
-                      <h2
-                        title={routeLabel(configuration().route)}
-                        aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
-                      >
-                        {decisionModelLabel(configuration())}
-                      </h2>
-                      <Show when={selectedMarketSummary()}>
-                        {(selected) => (
-                          <p
-                            class="lazers-models-market-summary"
-                            role="status"
-                            aria-label={`Selected ${decisionModelFullName(selected().configuration)} · exact route ${routeLabel(selected().configuration.route)}. ${selected().summary.title}`}
-                            title={selected().summary.title}
-                          >
-                            <small>
-                              {selected().summary.amount} ·{" "}
-                              {marketSummarySource(selected().summary.context)}
-                            </small>
-                          </p>
-                        )}
-                      </Show>
-                    </div>
+                    <h2
+                      title={routeLabel(configuration().route)}
+                      aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
+                    >
+                      {decisionModelLabel(configuration())}
+                      {configuration().route.variant ? ` · ${configuration().route.variant}` : ""}
+                    </h2>
+                    <Show when={selectedSummaryLine()}>
+                      {(line) => (
+                        <p
+                          class="lazers-models-market-summary"
+                          role="status"
+                          aria-label={`Selected ${decisionModelFullName(configuration())} · exact route ${routeLabel(configuration().route)}. ${line().title}`}
+                          title={line().title}
+                        >
+                          <small>{line().text}</small>
+                        </p>
+                      )}
+                    </Show>
+                  </div>
+                  <div
+                    class="lazers-models-selection-actions"
+                    role="group"
+                    aria-label="Selected model actions"
+                  >
+                    <Ui.Menu
+                      label="View contributing trajectories"
+                      trigger="button"
+                      icon="chevron-down"
+                      placement="bottom-start"
+                      disabled={!selectedContributors().length}
+                      items={[
+                        ...selectedContributors().map((contributor) => ({
+                          label: `${contributor.taskReference} · ${contributor.contribution}`,
+                          onSelect: () => openContributorTrajectory(contributor),
+                        })),
+                        ...(visible()?.decisionInspection?.contributorPage.nextCursor
+                          ? [
+                              { type: "separator" as const },
+                              {
+                                label: "Load more tasks",
+                                onSelect: () => void state.moreDecisionContributors(),
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
+                    <Ui.Menu
+                      label="Assign to…"
+                      trigger="button"
+                      icon="chevron-down"
+                      placement="bottom-start"
+                      disabled={
+                        !visible()?.settings || visible()?.settingsLoading || assignmentBlocked()
+                      }
+                      items={personas().map((persona) => ({
+                        label: persona.personaLabel,
+                        onSelect: () => assignSelectedRoute(persona.persona),
+                      }))}
+                    />
                   </div>
                   <Show
                     when={
@@ -2305,26 +2370,26 @@ function ModelPanel(
                   </Show>
                   <Show when={visible()?.decisionInspectLoading}>
                     <p class="lazers-models-note" role="status">
-                      <Ui.Loader size="small" /> Loading exact configuration inspection…
+                      <Ui.Loader size="small" /> Loading model details…
                     </p>
                   </Show>
                   <Show when={visible()?.decisionInspectError}>
-                    <p class="lazers-models-error" role="alert">
-                      Configuration inspection unavailable: {visible()?.decisionInspectError}
-                    </p>
+                    <div class="lazers-models-error" role="alert">
+                      <p>Model details couldn't be loaded. Refresh to retry.</p>
+                      <details class="lazers-models-warning-details">
+                        <summary>Error details</summary>
+                        <p>{visible()?.decisionInspectError}</p>
+                      </details>
+                    </div>
                   </Show>
                   <Show when={visible()?.decisionNotFound}>
                     <p class="lazers-models-note" role="status">
-                      This exact configuration is not present in the selected producer snapshot.
+                      This model isn't in the current comparison. Choose another model.
                     </p>
                   </Show>
                   <Show when={visible()?.decisionStatus === "backend-not-ready"}>
-                    <p class="lazers-models-estimate" role="status">
-                      <strong>Decision backend not ready</strong>
-                      <span>
-                        {visible()?.decisionContext?.unavailableReason ??
-                          "No estimate is available."}
-                      </span>
+                    <p class="lazers-models-note" role="status">
+                      No estimate yet; comparison data isn't ready.
                     </p>
                   </Show>
                   <Show when={visible()?.decisionInspection}>
@@ -2332,10 +2397,14 @@ function ModelPanel(
                       <>
                         <details
                           class="lazers-models-evidence-details"
-                          open={decisionEvidenceOpen()}
-                          onToggle={(event) => setDecisionEvidenceOpen(event.currentTarget.open)}
+                          open={prefs().evidenceOpen ?? false}
+                          onToggle={(event) => {
+                            const open = event.currentTarget.open
+                            if (open !== (prefs().evidenceOpen ?? false))
+                              save({ evidenceOpen: open })
+                          }}
                         >
-                          <summary>Estimate basis, coverage and model stats</summary>
+                          <summary>Estimate details</summary>
                           <div class="lazers-models-evidence-content">
                             <Show when={selectedMarketEstimate()}>
                               {(summary) => (

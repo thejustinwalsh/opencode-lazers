@@ -5,7 +5,7 @@ import * as echarts from "echarts/core"
 import type { EChartsCoreOption, EChartsType } from "echarts/core"
 import { LabelLayout } from "echarts/features"
 import { SVGRenderer } from "echarts/renderers"
-import { For, Show, createEffect, createUniqueId, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount } from "solid-js"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
@@ -91,6 +91,99 @@ const tokenAxis = new Intl.NumberFormat("en-US", {
 const noPointDescription =
   "No plottable observations. Unknown prices, zero-accepted configurations, and missing actual token coordinates remain unplotted."
 
+/** Visible explanation for a chart with nothing to plot; names what is missing. */
+export function comparisonChartEmptyText(
+  points: readonly ComparisonChartPoint[],
+  references: readonly ComparisonChartReference[] = [],
+) {
+  const models = new Set([
+    ...points.map((point) => point.configurationID),
+    ...references.map((reference) => reference.configurationID),
+  ]).size
+  if (!models)
+    return "No accepted tasks match these filters yet. Models appear here once a task is accepted and a price source covers the model."
+  const unpriced = references.filter(
+    (reference) =>
+      reference.estimate.acceptedTaskCount > 0 && referenceAmount(reference.estimate) === undefined,
+  ).length
+  const unmeasured = references.filter(
+    (reference) =>
+      referenceAmount(reference.estimate) !== undefined && reference.tokensPerAcceptedTask === null,
+  ).length
+  const noAccepted = references.filter(
+    (reference) => reference.estimate.acceptedTaskCount < 1,
+  ).length
+  const plural = (count: number, singular: string, many: string) =>
+    `${count} ${count === 1 ? singular : many}`
+  const reasons = [
+    ...(unpriced
+      ? [`${plural(unpriced, "model has", "models have")} no price from any source`]
+      : []),
+    ...(unmeasured
+      ? [`${plural(unmeasured, "model has", "models have")} no token measurements`]
+      : []),
+    ...(noAccepted ? [`${plural(noAccepted, "model has", "models have")} no accepted tasks`] : []),
+  ]
+  return `Nothing to plot yet: ${reasons.length ? reasons.join("; ") : `${plural(models, "model is", "models are")} missing a price or token measurement`}. Chart data lists each model.`
+}
+
+/** Short visible Chart data row: model · cost · tokens, or what keeps it off the plot. */
+export function comparisonChartChoiceSummary(choice: {
+  point?: ComparisonChartPoint
+  reference?: ComparisonChartReference
+}) {
+  if (choice.point && plottable(choice.point))
+    return `${comparisonChartPointTooltip(choice.point)} · ${compactTokenAxisValue(choice.point.tokensPerAcceptedTask)} tokens`
+  const reference = choice.reference
+  if (reference) {
+    const cost = comparisonChartReferenceTooltip(reference)
+    if (cost && reference.tokensPerAcceptedTask !== null)
+      return `${cost} · ${compactTokenAxisValue(reference.tokensPerAcceptedTask)} tokens`
+    const name = boundedModelEffortLabel(
+      modelEffortLabel(reference.label, reference.estimate.route),
+    )
+    if (cost) return `${cost} · not plotted, no token measurement`
+    return reference.estimate.acceptedTaskCount < 1
+      ? `${name} · not plotted, no accepted tasks`
+      : `${name} · not plotted, no price`
+  }
+  const point = choice.point!
+  return `${boundedModelEffortLabel(modelEffortLabel(point.label, point.route))} · not plotted`
+}
+
+type KeyboardChoice = { configurationID: string; label: string; tokens: number; amount: number }
+
+/** Plotted marks in left-to-right order for arrow-key travel; one stop per model. */
+export function comparisonChartKeyboardOrder(
+  points: readonly ComparisonChartPoint[],
+  references: readonly ComparisonChartReference[] = [],
+) {
+  const choices = new Map<string, KeyboardChoice>()
+  for (const reference of references) {
+    const amount = referenceAmount(reference.estimate)
+    if (!amount || !referenceIsPlottable(reference) || reference.tokensPerAcceptedTask === null)
+      continue
+    choices.set(reference.configurationID, {
+      configurationID: reference.configurationID,
+      label: comparisonChartReferenceTooltip(reference),
+      tokens: reference.tokensPerAcceptedTask,
+      amount: "value" in amount ? amount.value : amount.minimum,
+    })
+  }
+  for (const point of points) {
+    if (!plottable(point)) continue
+    choices.set(point.configurationID, {
+      configurationID: point.configurationID,
+      label: comparisonChartPointTooltip(point),
+      tokens: point.tokensPerAcceptedTask,
+      amount: point.currentMarketUSDPerAcceptedTask,
+    })
+  }
+  return [...choices.values()].toSorted(
+    (left, right) => left.tokens - right.tokens || left.amount - right.amount,
+  )
+}
+
 export function compactTokenAxisValue(value: number) {
   return tokenAxis.format(value)
 }
@@ -167,20 +260,10 @@ export function comparisonChartPointText(point: ComparisonChartPoint) {
   return `${point.label} · ${identity}; ${tokens.format(point.tokensPerAcceptedTask)} actual tokens per accepted task; canonical current-market value ${money.format(point.currentMarketUSDPerAcceptedTask)} per accepted task (short display ${formatMarketAmount(point.currentMarketUSDPerAcceptedTask)}); ordered whole-model price-source valuation from ${source}; ${point.observationCount} observation${point.observationCount === 1 ? "" : "s"}; denominator ${point.acceptedTaskCount} accepted task${point.acceptedTaskCount === 1 ? "" : "s"}${partial}.`
 }
 
+/** Terse model · cost text shared by the pointer tooltip and keyboard announcement. */
 export function comparisonChartPointTooltip(point: ComparisonChartPoint) {
-  const source =
-    point.marketSource === "openrouter"
-      ? "OpenRouter model catalog"
-      : point.marketSource === "opencode"
-        ? "OpenCode model catalog"
-        : point.marketSource === "mixed"
-          ? "Configured sources"
-          : point.marketSource === "unavailable"
-            ? "Price source unavailable"
-            : "Price source not supplied"
   const label = boundedModelEffortLabel(modelEffortLabel(point.label, point.route))
-  const route = point.route ? ` · exact route ${routeLabel(point.route)}` : ""
-  return `${label}${route} · ≈${formatMarketAmount(point.currentMarketUSDPerAcceptedTask)} / accepted task · ${point.acceptedTaskCount} accepted task${point.acceptedTaskCount === 1 ? "" : "s"} · ${source} · ${compactTokenAxisValue(point.tokensPerAcceptedTask)} tokens${point.partial ? " · partial cohort" : ""}`
+  return `${label} · ≈${formatMarketAmount(point.currentMarketUSDPerAcceptedTask)} / task`
 }
 
 type ReferenceAmount =
@@ -222,23 +305,18 @@ export function comparisonChartReferenceText(reference: ComparisonChartReference
   return `${modelEffortLabel(reference.label, estimate.route)} · exact route ${routeLabel(estimate.route)}: ${coordinate}; ${amountLabel}; basis OpenRouter model catalog reference cost per accepted task; denominator ${estimate.acceptedTaskCount} accepted task${estimate.acceptedTaskCount === 1 ? "" : "s"}; OpenRouter model catalog source ${estimate.provenance.freshness}; actual route-specific task mix (not a common workload).`
 }
 
+/** Terse model · cost text; a known subtotal is a lower bound, never a total. */
 export function comparisonChartReferenceTooltip(reference: ComparisonChartReference) {
   const amount = referenceAmount(reference.estimate)
   if (!amount) return ""
+  const label = boundedModelEffortLabel(modelEffortLabel(reference.label, reference.estimate.route))
   const value =
-    amount.kind === "scalar" || amount.kind === "subtotal"
-      ? formatMarketAmount(amount.value)
-      : formatMarketRange({ minimum: amount.minimum, maximum: amount.maximum })
-  const description =
     amount.kind === "scalar"
-      ? "scalar reference"
+      ? `≈${formatMarketAmount(amount.value)}`
       : amount.kind === "range"
-        ? "conditional range"
-        : amount.kind === "subtotal"
-          ? "priced portion · total unknown"
-          : "priced portion range · total unknown"
-  const denominator = reference.estimate.acceptedTaskCount
-  return `OpenRouter model catalog ${description} · ${boundedModelEffortLabel(modelEffortLabel(reference.label, reference.estimate.route))} · exact route ${routeLabel(reference.estimate.route)} · ≈${value}${amount.kind === "subtotal" || amount.kind === "subtotal-range" ? " priced portion" : ""} / accepted task · ${denominator} accepted task${denominator === 1 ? "" : "s"}`
+        ? `≈${formatMarketRange({ minimum: amount.minimum, maximum: amount.maximum })}`
+        : `≥${formatMarketAmount(amount.kind === "subtotal" ? amount.value : amount.minimum)}`
+  return `${label} · ${value} / task`
 }
 
 function tooltipText(value: string) {
@@ -470,6 +548,7 @@ export function comparisonChartOptions(
   const fontSize = layout.fontSize
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
   const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.66)), 8, 18)
+  const roomForAllLabels = plotWidth >= fontSize * 22
   const boundedSelectedLabels = selectedLabelData.map((item) => ({
     ...item,
     alignment: selectedLabelAlignment(item.tokens),
@@ -570,7 +649,8 @@ export function comparisonChartOptions(
               borderWidth: selected ? 2 : 1,
             },
             label: {
-              show: !selected,
+              // Narrow plots keep only frontier labels; the rest stay on tooltip and keyboard.
+              show: !selected && (roomForAllLabels || frontier.has(point.configurationID)),
               formatter: chartModelEffortLabel(point.label, point.route, labelLimit),
               position: labelPosition(point.tokensPerAcceptedTask),
               color: selected ? theme.text : theme.mutedText,
@@ -737,6 +817,7 @@ export class ComparisonChartAdapter {
   private data?: ComparisonChartData
   private theme?: ComparisonChartTheme
   private appliedLayout?: string
+  private focused?: string
   private readonly click = (parameters: { data?: unknown }) => {
     if (!this.active || typeof parameters.data !== "object" || parameters.data === null) return
     if (!("configurationID" in parameters.data)) return
@@ -794,7 +875,35 @@ export class ComparisonChartAdapter {
       }
     }
     this.chart.resize({ width, height })
+    // Rebuilt options drop the visible tooltip; restore the keyboard-focused one.
+    if (this.focused && this.appliedLayout) this.showFocusedTip()
     return true
+  }
+
+  /** Show the tooltip for a keyboard-focused model, or hide it with undefined. */
+  focus(configurationID: string | undefined) {
+    if (!this.active) return
+    this.focused = configurationID
+    if (configurationID && this.appliedLayout) this.showFocusedTip()
+    else if (!configurationID) this.chart.dispatchAction({ type: "hideTip" })
+  }
+
+  private showFocusedTip() {
+    const series =
+      (this.chart.getOption() as { series?: Array<{ id?: string; data?: unknown[] }> }).series ?? []
+    for (const [seriesIndex, item] of series.entries()) {
+      if (item.id === "selected-identities" || item.id === "authoritative-frontier") continue
+      const dataIndex = (item.data ?? []).findIndex(
+        (datum) =>
+          typeof datum === "object" &&
+          datum !== null &&
+          (datum as { configurationID?: unknown }).configurationID === this.focused,
+      )
+      if (dataIndex < 0) continue
+      this.chart.dispatchAction({ type: "showTip", seriesIndex, dataIndex })
+      return
+    }
+    this.chart.dispatchAction({ type: "hideTip" })
   }
 
   dispose() {
@@ -808,8 +917,21 @@ export class ComparisonChartAdapter {
     this.data = undefined
     this.theme = undefined
     this.appliedLayout = undefined
+    this.focused = undefined
   }
 }
+
+const visuallyHidden = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  padding: "0",
+  margin: "-1px",
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  "white-space": "nowrap",
+  border: "0",
+} as const
 
 export function ComparisonChart(props: ComparisonChartProps) {
   let host: HTMLDivElement | undefined
@@ -873,40 +995,98 @@ export function ComparisonChart(props: ComparisonChartProps) {
     adapter = undefined
   })
 
+  const empty = () => !comparisonChartHasPlottablePoints(props.points, props.references ?? [])
+  const keyboardOrder = () => comparisonChartKeyboardOrder(props.points, props.references ?? [])
+  const [announcement, setAnnouncement] = createSignal("")
+  const focusChoice = (choice: { configurationID: string; label: string } | undefined) => {
+    adapter?.focus(choice?.configurationID)
+    setAnnouncement(choice?.label ?? "")
+  }
+  const keyDown = (event: KeyboardEvent) => {
+    const order = keyboardOrder()
+    if (event.key === "Escape") {
+      focusChoice(undefined)
+      return
+    }
+    if (!order.length) return
+    const current = order.findIndex(
+      (choice) => choice.configurationID === props.selectedConfigurationID,
+    )
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? order.length - 1
+          : event.key === "ArrowRight" || event.key === "ArrowDown"
+            ? current < 0
+              ? 0
+              : Math.min(order.length - 1, current + 1)
+            : event.key === "ArrowLeft" || event.key === "ArrowUp"
+              ? Math.max(0, current - 1)
+              : undefined
+    if (next === undefined) return
+    event.preventDefault()
+    const choice = order[next]!
+    focusChoice(choice)
+    if (choice.configurationID !== props.selectedConfigurationID)
+      props.onSelect(choice.configurationID)
+  }
+
   return (
-    <div class="lazers-models-comparison-chart" style={{ width: "100%", "min-width": "0" }}>
+    <div
+      class="lazers-models-comparison-chart"
+      data-empty={empty()}
+      style={{ width: "100%", "min-width": "0" }}
+    >
       <div
-        ref={(element) => {
-          host = element
-        }}
-        role="img"
-        aria-label="Actual cohort tokens, canonical current-market observations, and OpenRouter model catalog reference costs per accepted task"
-        aria-describedby={descriptionID}
-        style={{
-          width: "100%",
-          height: "100%",
-          "min-height": "0",
-          overflow: "hidden",
-          "font-family": "inherit",
-        }}
-      />
-      <p
-        id={descriptionID}
-        style={{
-          position: "absolute",
-          width: "1px",
-          height: "1px",
-          padding: "0",
-          margin: "-1px",
-          overflow: "hidden",
-          clip: "rect(0, 0, 0, 0)",
-          "white-space": "nowrap",
-          border: "0",
-        }}
+        class="lazers-models-comparison-chart-plot"
+        role="group"
+        aria-roledescription="chart"
+        aria-label="Model cost chart. Arrow keys move between models; Escape hides the tooltip."
+        tabIndex={empty() ? -1 : 0}
+        onKeyDown={keyDown}
+        onFocus={() =>
+          focusChoice(
+            keyboardOrder().find(
+              (choice) => choice.configurationID === props.selectedConfigurationID,
+            ),
+          )
+        }
+        onBlur={() => focusChoice(undefined)}
+        style={{ width: "100%", "min-width": "0" }}
       >
+        <div
+          ref={(element) => {
+            host = element
+          }}
+          role="img"
+          aria-label="Cost per accepted task against tokens per accepted task"
+          aria-describedby={descriptionID}
+          style={{
+            width: "100%",
+            height: "100%",
+            "min-height": "0",
+            overflow: "hidden",
+            "font-family": "inherit",
+          }}
+        />
+      </div>
+      <Show when={empty()}>
+        <p class="lazers-models-chart-empty" role="status">
+          {comparisonChartEmptyText(props.points, props.references ?? [])}
+        </p>
+      </Show>
+      <p id={descriptionID} style={visuallyHidden}>
         {comparisonChartDescription(props.points, props.references ?? [])}
       </p>
-      <ul class="lazers-models-comparison-chart-legend" aria-label="Chart mark legend">
+      <p aria-live="polite" style={visuallyHidden}>
+        {announcement()}
+      </p>
+      <ul
+        class="lazers-models-comparison-chart-legend"
+        aria-label="Chart mark legend"
+        hidden={empty()}
+      >
         <Show when={props.points.some(plottable)}>
           <li>
             <span
@@ -930,10 +1110,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
             (reference) => reference.estimate.status === "exact" && referenceIsPlottable(reference),
           )}
         >
-          <li
-            aria-label="OpenRouter model catalog reference estimate"
-            title="OpenRouter model catalog reference estimate"
-          >
+          <li aria-label="Estimate from catalog prices" title="Estimate from catalog prices">
             <span
               class="lazers-models-chart-key lazers-models-chart-key-reference"
               aria-hidden="true"
@@ -957,8 +1134,8 @@ export function ComparisonChart(props: ComparisonChartProps) {
         </Show>
         <Show when={hasSubtotal() || hasSubtotalRange()}>
           <li
-            aria-label="Priced portion; total and remainder unknown"
-            title="Priced portion; total and remainder unknown"
+            aria-label="Lower bound; some usage has no price"
+            title="Lower bound; some usage has no price"
           >
             <Show when={hasSubtotal()}>
               <span
@@ -972,7 +1149,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
                 aria-hidden="true"
               />
             </Show>
-            Priced portion
+            Lower bound
           </li>
         </Show>
       </ul>
@@ -991,12 +1168,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
                   : []),
               ]
               const text = descriptions.join(" ")
-              const tooltip = [
-                choice.point ? comparisonChartPointTooltip(choice.point) : "",
-                choice.reference ? comparisonChartReferenceTooltip(choice.reference) : "",
-              ]
-                .filter(Boolean)
-                .join(" · ")
+              const visible = comparisonChartChoiceSummary(choice)
               return (
                 <li>
                   <button
@@ -1004,10 +1176,10 @@ export function ComparisonChart(props: ComparisonChartProps) {
                     data-configuration-id={configurationID}
                     aria-pressed={props.selectedConfigurationID === configurationID}
                     aria-label={`Select ${text}`}
-                    title={tooltip || text}
+                    title={text}
                     onClick={() => props.onSelect(configurationID)}
                   >
-                    {text}
+                    {visible}
                   </button>
                 </li>
               )

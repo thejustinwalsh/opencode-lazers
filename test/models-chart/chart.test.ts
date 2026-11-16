@@ -575,6 +575,10 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(originalSVG?.getAttribute("width")).toBe("480")
   expect(originalSVG?.getAttribute("height")).toBe("320")
   expect(chartHost.getAttribute("role")).toBe("img")
+  const keyboardChart = chartHost.parentElement!
+  expect(keyboardChart.getAttribute("role")).toBe("group")
+  expect(keyboardChart.getAttribute("aria-roledescription")).toBe("chart")
+  expect(keyboardChart.tabIndex).toBe(0)
   expect(chartHost.getAttribute("aria-label")).toContain("12,345.5 actual tokens per accepted task")
   const descriptionID = chartHost.getAttribute("aria-describedby")
   const description = container.querySelector(`[id="${descriptionID}"]`)
@@ -596,7 +600,8 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
     "exact route openai / luna-1 · max",
   )
-  expect(buttonFor(exact)?.getAttribute("title")).toContain("1 accepted task · OpenRouter")
+  expect(buttonFor(exact)?.textContent).toContain("≈$0.123 / task · 12.3K tokens")
+  expect(buttonFor(exact)?.textContent).not.toContain("exact route")
   buttonFor(exact)?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
   expect(selections).toEqual([exact])
 
@@ -612,11 +617,11 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
         style.display === "block" &&
         style.visibility !== "hidden" &&
         style.opacity !== "0" &&
-        child.textContent?.includes("≈$0.123 / accepted task") === true
+        child.textContent?.includes("≈$0.123 / task") === true
       )
     })
   await until(() => pointTooltip() !== undefined)
-  expect(pointTooltip()?.textContent).toContain("12.3K tokens")
+  expect(pointTooltip()?.textContent).not.toContain("tokens")
   expect(pointTooltip()?.textContent).not.toContain("0.123456")
 
   const originalQwen = points[1]!
@@ -763,17 +768,17 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
     "Range",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Priced portion",
+    "Lower bound",
   )
   expect(
     container
       .querySelector("[aria-label='Chart mark legend']")
-      ?.querySelector("[aria-label='OpenRouter model catalog reference estimate']"),
+      ?.querySelector("[aria-label='Estimate from catalog prices']"),
   ).not.toBeNull()
   expect(
     container
       .querySelector("[aria-label='Chart mark legend']")
-      ?.querySelector("[aria-label='Priced portion; total and remainder unknown']"),
+      ?.querySelector("[aria-label='Lower bound; some usage has no price']"),
   ).not.toBeNull()
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).not.toContain(
     "Canonical actual-cohort",
@@ -844,38 +849,30 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
     (entry) => entry.id === "openrouter-reference-scalars",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: scalarSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("scalar reference") !== undefined)
-  expect(visibleTooltip("scalar reference")?.textContent).toContain("≈$1.23e-11 / accepted task")
-  expect(visibleTooltip("scalar reference")?.textContent).toContain("3 accepted tasks")
-  expect(visibleTooltip("scalar reference")?.textContent).toContain("OpenRouter")
-  expect(visibleTooltip("scalar reference")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
+  await until(() => visibleTooltip("≈$1.23e-11 / task") !== undefined)
+  expect(visibleTooltip("≈$1.23e-11 / task")?.textContent).not.toContain("accepted task")
+  expect(visibleTooltip("≈$1.23e-11 / task")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
   const rangeSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-conditional-ranges",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: rangeSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("conditional range") !== undefined)
-  expect(visibleTooltip("conditional range")?.textContent).toContain(
-    "≈$4e-8–$1.2e-7 / accepted task",
-  )
-  expect(visibleTooltip("conditional range")?.textContent).toContain(
-    "GPT-6 Luna · high · exact route openai / reference-model · high",
+  await until(() => visibleTooltip("≈$4e-8–$1.2e-7 / task") !== undefined)
+  expect(visibleTooltip("≈$4e-8–$1.2e-7 / task")?.textContent).toBe(
+    "GPT-6 Luna · high · ≈$4e-8–$1.2e-7 / task",
   )
   const subtotalSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-reference-subtotals",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: subtotalSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("priced portion") !== undefined)
-  expect(visibleTooltip("priced portion")?.textContent).toContain("total unknown")
-  expect(visibleTooltip("priced portion")?.textContent).toContain("3 accepted tasks")
+  // A priced subtotal is a lower bound, never presented as the total.
+  await until(() => visibleTooltip("≥$") !== undefined)
+  expect(visibleTooltip("≥$")?.textContent).toMatch(/ · ≥\$[^ ]+ \/ task$/)
   const subtotalRangeSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-subtotal-ranges",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: subtotalRangeSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("priced portion range") !== undefined)
-  expect(visibleTooltip("priced portion range")?.textContent).toContain(
-    "≈$0.00002–$0.00005 priced portion / accepted task",
-  )
-  expect(visibleTooltip("priced portion range")?.textContent).toContain("total unknown")
+  await until(() => visibleTooltip("≥$0.00002 / task") !== undefined)
+  expect(visibleTooltip("≥$0.00002 / task")?.textContent).not.toContain("–")
 })
 
 test("selected Luna ranges use readable model-effort labels and retain exact route and mark identity", async () => {
@@ -993,9 +990,11 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
           seriesIndex: rangeSeriesIndex,
           dataIndex: index,
         })
-        await until(() => visibleTooltip(exactRoute) !== undefined)
-        expect(visibleTooltip(exactRoute)?.textContent).toContain("GPT-6 Luna · max")
-        expect(visibleTooltip(exactRoute)?.textContent).toContain(`exact route ${exactRoute}`)
+        await until(() => visibleTooltip("GPT-6 Luna · max") !== undefined)
+        expect(visibleTooltip("GPT-6 Luna · max")?.textContent).toBe(
+          "GPT-6 Luna · max · ≈$4e-8–$1.2e-7 / task",
+        )
+        expect(visibleTooltip("GPT-6 Luna · max")?.textContent).not.toContain(exactRoute)
 
         const chartEvents = adapter.chart as unknown as {
           trigger: (event: string, payload: unknown) => void
@@ -1009,7 +1008,7 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
   }
 })
 
-test("rendered priced-portion legend uses only the supplied scalar and range keys", async () => {
+test("rendered lower-bound legend uses only the supplied scalar and range keys", async () => {
   const scalar = reference("legend-scalar", "partial", 12_000)
   const range = pricedRangeReference("legend-range", 24_000)
   const cases = [
@@ -1036,9 +1035,9 @@ test("rendered priced-portion legend uses only the supplied scalar and range key
     cleanups.push(dispose)
     await until(() => container.querySelector("[aria-label='Chart mark legend']") !== null)
     const legend = container.querySelector("[aria-label='Chart mark legend']")!
-    expect(legend.textContent).toContain("Priced portion")
+    expect(legend.textContent).toContain("Lower bound")
     expect(
-      legend.querySelector("[aria-label='Priced portion; total and remainder unknown']"),
+      legend.querySelector("[aria-label='Lower bound; some usage has no price']"),
     ).not.toBeNull()
     expect(legend.querySelectorAll(".lazers-models-chart-key-subtotal")).toHaveLength(
       entry.scalarKey,
@@ -1207,12 +1206,12 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
       seriesIndex: observationsIndex,
       dataIndex: qwenDataIndex,
     })
-    const fullRouteTooltip = () =>
+    const qwenTooltip = () =>
       Array.from(host.children).find(
-        (child) => child.tagName === "DIV" && child.textContent?.includes(longEffort),
+        (child) => child.tagName === "DIV" && child.textContent?.includes("/ task") === true,
       )
-    await until(() => fullRouteTooltip() !== undefined)
-    expect(fullRouteTooltip()?.textContent).toContain(`exact route qwen / qwen-7 · ${longEffort}`)
+    await until(() => qwenTooltip() !== undefined)
+    expect(qwenTooltip()?.textContent).not.toContain("exact route")
     chartEvents.trigger("click", { data: { configurationID: qwenID } })
     expect(selections).toEqual([referenceID, qwenID])
   } finally {
@@ -1415,4 +1414,90 @@ test("adapter owns one instance and completely disposes theme, resize and listen
     Reflect.set(window, "addEventListener", originalAdd)
     Reflect.set(window, "removeEventListener", originalRemove)
   }
+})
+
+test("keyboard travel selects models left to right and announces the terse model · cost tooltip", async () => {
+  const container = dom.document.createElement("main")
+  dom.document.body.append(container)
+  const selections: string[] = []
+  const [selected, setSelected] = browser.createSignal<string | null>(points[0]!.configurationID)
+  const dispose = browser.render(
+    () =>
+      browser.createComponent(browser.ComparisonChart, {
+        points,
+        frontierConfigurationIDs: [],
+        get selectedConfigurationID() {
+          return selected()
+        },
+        theme,
+        onSelect: (configurationID: string) => {
+          selections.push(configurationID)
+          setSelected(configurationID)
+        },
+      }),
+    container as unknown as HTMLElement,
+  )
+  cleanups.push(dispose)
+  await until(() => container.querySelector("[xmlns='http://www.w3.org/2000/svg']") !== null)
+  const host = container.querySelector("[role='img']") as unknown as HTMLElement
+  const plot = host.parentElement!
+  const announcement = () => container.querySelector("[aria-live='polite']")?.textContent ?? ""
+  const press = (key: string) =>
+    plot.dispatchEvent(new dom.KeyboardEvent("keydown", { key, bubbles: true }) as never)
+  const visibleTooltip = (text: string) =>
+    Array.from(host.children).find((child) => {
+      if (child.tagName !== "DIV") return false
+      const style = dom.getComputedStyle(
+        child as unknown as Parameters<typeof dom.getComputedStyle>[0],
+      )
+      return style.display === "block" && child.textContent?.includes(text) === true
+    })
+
+  plot.focus()
+  expect(announcement()).toBe("Luna · Max · ≈$0.123 / task")
+  press("ArrowRight")
+  expect(selections).toEqual([points[1]!.configurationID])
+  expect(announcement()).toBe("Qwen · ≈$0.09 / task")
+  await until(() => visibleTooltip("Qwen · ≈$0.09 / task") !== undefined)
+  press("End")
+  press("ArrowRight")
+  press("Home")
+  expect(selections).toEqual([
+    points[1]!.configurationID,
+    points[2]!.configurationID,
+    points[0]!.configurationID,
+  ])
+  press("Escape")
+  expect(announcement()).toBe("")
+})
+
+test("a chart with nothing plottable says what is missing on screen instead of drawing an empty plot", async () => {
+  const container = dom.document.createElement("main")
+  dom.document.body.append(container)
+  const unpriced = reference("empty:unmeasured", "exact", null)
+  const dispose = browser.render(
+    () =>
+      browser.createComponent(browser.ComparisonChart, {
+        points: [],
+        references: [unpriced],
+        frontierConfigurationIDs: [],
+        selectedConfigurationID: null,
+        theme,
+        onSelect: () => {},
+      }),
+    container as unknown as HTMLElement,
+  )
+  cleanups.push(dispose)
+  const chart = container.querySelector(".lazers-models-comparison-chart")!
+  expect(chart.getAttribute("data-empty")).toBe("true")
+  const message = container.querySelector(".lazers-models-chart-empty")!
+  expect(message.getAttribute("role")).toBe("status")
+  expect(message.textContent).toContain("1 model has no token measurements")
+  expect(message.textContent).not.toContain("$0")
+  expect(container.querySelector("[role='group']")?.getAttribute("tabindex")).toBe("-1")
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.hasAttribute("hidden")).toBe(
+    true,
+  )
+  const choice = container.querySelector(`[data-configuration-id="${unpriced.configurationID}"]`)
+  expect(choice?.textContent).toContain("not plotted, no token measurement")
 })
