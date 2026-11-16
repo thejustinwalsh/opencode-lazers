@@ -305,7 +305,6 @@ test("trajectory presents commentary separately from automatic worker facts with
       attemptID: firstAttemptID,
       tool: null,
       status: "succeeded",
-      result: "check completed",
       recordedAt: expect.any(Number),
       execution: { status: "executed", source: "native-event" },
       timing: {
@@ -317,6 +316,7 @@ test("trajectory presents commentary separately from automatic worker facts with
         },
       },
     })
+    expect(automatic).not.toHaveProperty("result")
     expect(report.coverage.workerProgress).toMatchObject({
       commentary: 1,
       automaticFacts: 1,
