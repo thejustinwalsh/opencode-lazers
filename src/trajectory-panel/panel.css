@@ -462,30 +462,6 @@
   color: var(--text-weak);
   font-variant-numeric: tabular-nums;
 }
-.lazers-trajectory-segment {
-  position: absolute;
-  top: calc(50% - 2px);
-  height: 4px;
-  min-width: 0;
-  border-radius: 2px;
-  background: var(--text-base);
-}
-.lazers-trajectory-segment[data-failed="true"] {
-  background: var(--trajectory-failed);
-}
-.lazers-trajectory-segment[data-point="true"] {
-  width: 7px !important;
-  height: 7px;
-  top: calc(50% - 3.5px);
-  transform: translateX(-50%);
-  border-radius: 50%;
-}
-/* An open bar ends in a fade: the attempt is active and its end is not recorded. */
-.lazers-trajectory-segment[data-open="true"] {
-  border-radius: 2px 0 0 2px;
-  -webkit-mask-image: linear-gradient(to right, #000 70%, transparent);
-  mask-image: linear-gradient(to right, #000 70%, transparent);
-}
 .lazers-trajectory-lane {
   box-sizing: border-box;
   height: var(--trajectory-row);
