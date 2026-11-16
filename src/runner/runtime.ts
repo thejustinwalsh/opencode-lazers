@@ -8276,6 +8276,10 @@ export class TaskRuntime {
     this.renewalEvent(renewal, event, { renewalID: renewal.id, error, ...payload }, fence)
   }
 
+  private architectWaitingForHuman(session: HostSession) {
+    return (session.pendingForms ?? 0) > 0 || (session.pendingPermissions ?? 0) > 0
+  }
+
   private async considerArchitectRenewal(plan: PlanRow, owner: HostSession, fence: number) {
     if (
       !this.architectPromptHook ||
@@ -8283,6 +8287,7 @@ export class TaskRuntime {
       !this.host.architectInputPage ||
       owner.idleAt === undefined ||
       owner.busy ||
+      this.architectWaitingForHuman(owner) ||
       !owner.model ||
       this.now() - owner.idleAt < this.architectIdleWindowMs
     )
@@ -8395,6 +8400,18 @@ export class TaskRuntime {
           if (successor && !this.renewalSuccessorMatches(successor, renewal))
             throw new Error("Native Architect renewal ID belongs to another session or route")
           if (!successor) {
+            const predecessor = await this.host.session(renewal.previous_session_id)
+            if (predecessor && this.architectWaitingForHuman(predecessor)) {
+              this.store.setArchitectRenewalState(
+                this.owner,
+                fence,
+                renewal.id,
+                ["creating"],
+                "deferred",
+                "Predecessor is waiting for human input",
+              )
+              return
+            }
             const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
             await this.host
               .createArchitect({
@@ -8427,7 +8444,12 @@ export class TaskRuntime {
           const tooRecent =
             predecessor?.idleAt === undefined ||
             this.now() - predecessor.idleAt < this.architectIdleWindowMs
-          if (!this.validArchitect(predecessor) || predecessor.busy || tooRecent) {
+          if (
+            !this.validArchitect(predecessor) ||
+            predecessor.busy ||
+            this.architectWaitingForHuman(predecessor) ||
+            tooRecent
+          ) {
             this.store.setArchitectRenewalState(
               this.owner,
               fence,
@@ -8568,13 +8590,14 @@ export class TaskRuntime {
         }
         if (
           predecessorBeforeArchive.busy ||
+          this.architectWaitingForHuman(predecessorBeforeArchive) ||
           predecessorBeforeArchive.idleAt === undefined ||
           this.now() - predecessorBeforeArchive.idleAt < this.architectIdleWindowMs
         ) {
           this.renewalIssue(
             renewal,
             "ARCHITECT_RENEWAL_ARCHIVE_DEFERRED",
-            "Predecessor became busy or recent before archival",
+            "Predecessor became busy, recent, or started waiting for human input before archival",
             { busy: predecessorBeforeArchive.busy, idleAt: predecessorBeforeArchive.idleAt },
             fence,
           )

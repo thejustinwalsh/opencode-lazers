@@ -14165,6 +14165,30 @@ test("idle-window overrides, busy sessions, unsupported hooks, and pre-create in
   }
 })
 
+test("Architect renewal waits for native questions and permissions to clear", async () => {
+  const now = 2_000_000_124_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const owner = f.sessions.get("owner")!
+  owner.pendingForms = 1
+  await f.runtime.tick()
+  owner.pendingForms = 0
+  owner.pendingPermissions = 1
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.events.some((event) => event.startsWith("create-architect:"))).toBe(false)
+  expect(owner.archived).toBe(false)
+
+  owner.pendingPermissions = 0
+  await f.runtime.tick()
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)?.state).toBe("committed")
+})
+
 test("renewal requires an explicit checkpoint and retains queued native inputs by ID", async () => {
   const now = 2_000_000_125_000
   const missingCheckpoint = fixture({
