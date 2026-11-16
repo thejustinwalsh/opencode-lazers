@@ -4,7 +4,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { ModelFiles } from "./webgpu/ipc.ts"
 import { setupMain } from "./webgpu/main.ts"
 import { setupNativeInteractionMain } from "./verification/opencode/native-interaction-main.ts"
-import { createInferenceRuntime, DEFAULT_MODEL_KEEP_ALIVE_MS } from "./webgpu/runtime.ts"
+import { createInferenceRuntime } from "./webgpu/runtime.ts"
 import { LocalModel } from "./webgpu/contract.ts"
 import {
   DECISION_BYTES,
@@ -27,7 +27,12 @@ import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
 import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rpc.ts"
-import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
+import {
+  DEFAULT_MODEL_KEEP_ALIVE_MS,
+  defaultFeatures,
+  featureEnabled,
+  usesGPU,
+} from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 

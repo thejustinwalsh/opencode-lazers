@@ -29,7 +29,7 @@ import type { SystemOneInput } from "./system-one.ts"
 import { ExclusiveModels, retryLoad } from "./lifecycle.ts"
 import { DEFAULT_VOICE } from "./speech.ts"
 import type { SpeechVoice } from "./speech.ts"
-import { featureEnabled, usesGPU, needsChat } from "./features.ts"
+import { DEFAULT_MODEL_KEEP_ALIVE_MS, featureEnabled, usesGPU, needsChat } from "./features.ts"
 import type { Features, LocalFeature } from "./features.ts"
 import { loadRunntimeOmni } from "./runntime-adapter.ts"
 import { modelKindForInference } from "./inference-route.ts"
@@ -114,8 +114,6 @@ const artifactIdentity = (
 ) => [...files.map(({ name, sha256 }) => `${name} sha256:${sha256}`), ...extra].join("; ")
 
 const tokenizerIdentity = `LiquidAI/LFM3-Omni-2B tokenizer.json revision:${LFM3_TOKENIZER_REVISION}`
-
-export const DEFAULT_MODEL_KEEP_ALIVE_MS = 60_000
 
 export function createInferenceRuntime(
   ctx: Parameters<Plugin.Setup>[0],

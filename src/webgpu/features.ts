@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+export const DEFAULT_MODEL_KEEP_ALIVE_MS = 60_000
+
 export const FeatureSettings = z.strictObject({
   enabled: z.boolean(),
   questions: z.boolean(),
