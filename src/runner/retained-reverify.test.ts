@@ -193,7 +193,7 @@ function fixture(
     writeFileSync(
       join(root, "src", "runner", "retained-check.test.ts"),
       [
-        'import { appendFileSync, existsSync, mkdirSync, readFileSync, watch } from "node:fs"',
+        'import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"',
         'import { join } from "node:path"',
         'import { expect, test } from "bun:test"',
         'test("waits for explicit retained-check release", async () => {',
@@ -202,13 +202,8 @@ function fixture(
         "  mkdirSync(home, { recursive: true })",
         '  appendFileSync(join(home, "started"), "started\\n")',
         '  const release = join(home, "release")',
-        "  await new Promise<void>((resolve) => {",
-        "    if (existsSync(release)) return resolve()",
-        "    const watcher = watch(home, (_event, filename) => {",
-        '      if (filename === "release" && existsSync(release)) { watcher.close(); resolve() }',
-        "    })",
-        "    if (existsSync(release)) { watcher.close(); resolve() }",
-        "  })",
+        "  const deadline = Date.now() + 4_000",
+        "  while (!existsSync(release) && Date.now() < deadline) await Bun.sleep(10)",
         "  expect(existsSync(release)).toBe(true)",
         '  expect(readFileSync("result.txt", "utf8")).toContain("retained candidate")',
         "})",
@@ -990,20 +985,16 @@ async function waitForRetainedCheckStartFor(
 
 function gatedRetainedCheckScript(): string {
   return [
-    'import { appendFileSync, existsSync, mkdirSync, watch } from "node:fs"',
+    'import { appendFileSync, existsSync, mkdirSync } from "node:fs"',
     'import { join } from "node:path"',
     "if (!process.env.LAZERS_VERIFICATION_SQLITE) process.exit(1)",
     "const home = process.env.HOME!",
     "mkdirSync(home, { recursive: true })",
     'appendFileSync(join(home, "started"), "started\\n")',
     'const release = join(home, "release")',
-    "await new Promise<void>((resolve) => {",
-    "  if (existsSync(release)) return resolve()",
-    "  const watcher = watch(home, (_event, filename) => {",
-    '    if (filename === "release" && existsSync(release)) { watcher.close(); resolve() }',
-    "  })",
-    "  if (existsSync(release)) { watcher.close(); resolve() }",
-    "})",
+    "const deadline = Date.now() + 4_000",
+    "while (!existsSync(release) && Date.now() < deadline) await Bun.sleep(10)",
+    "if (!existsSync(release)) process.exit(1)",
     "",
   ].join("\n")
 }
@@ -3996,6 +3987,9 @@ test("a source binding change after admission fences publication of retained che
       .query("UPDATE runner_source_quarantines SET request_id=? WHERE attempt_id=?")
       .run("changed-after-admission", f.attempt.id),
   )
+  const activity = await waitForRetainedCheckActivity(f, operationID)
+  writeFileSync(join(contextPath, "home", "release"), "continue\n")
+  await activity.settled
   await waitForFixtureObservation(f, "retained verification authority race hold", () => {
     const row = f.store.atomic((db) =>
       db
@@ -4006,9 +4000,6 @@ test("a source binding change after admission fences publication of retained che
     )
     return Boolean(row && JSON.parse(row.payload).state === "held")
   })
-  writeFileSync(join(contextPath, "home", "release"), "continue\n")
-  const activity = await waitForRetainedCheckActivity(f, operationID)
-  await activity.settled
   await f.runtime.tick()
 
   const operation = f.store.atomic((db) =>
