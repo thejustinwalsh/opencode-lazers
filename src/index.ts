@@ -141,7 +141,11 @@ export default Plugin.define({
         (sessionID) => runtime.observeArchitectSourceEvent(sessionID),
         () => scheduler?.request(),
       )
-      const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
+      const trajectoryHost = nativeTrajectoryHost(
+        ctx,
+        ctx.location.project.id,
+        host.ownsCurrentWorkspace,
+      )
       const radarSessionHost = nativeRadarSessionHost(ctx)
       const taskValuationProvider = createModelsTaskValuationProvider(ctx, repository)
       yield* registerTrajectoryTools(

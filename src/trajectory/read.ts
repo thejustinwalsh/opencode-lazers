@@ -937,15 +937,18 @@ export async function inspectTrajectory(
   const sessions = new Map<string, TrajectorySession | null>()
   const sessionErrors = new Map<string, string>()
   const statuses = new Map<string, "available" | "missing" | "unavailable">()
-  const sessionsByID = new Map<string, Promise<TrajectorySession | null>>()
+  const sessionsByAssignment = new Map<string, Promise<TrajectorySession | null>>()
   for (const { attempt } of allAttempts) {
     try {
-      let read = sessionsByID.get(attempt.session_id)
+      const sessionKey = JSON.stringify([attempt.session_id, attempt.id, attempt.workspace])
+      let read = sessionsByAssignment.get(sessionKey)
       if (!read) {
         const sessionID = attempt.session_id
         read =
-          options.includeMessages === false ? statusReader!(sessionID) : host.session(sessionID)
-        sessionsByID.set(sessionID, read)
+          options.includeMessages === false
+            ? statusReader!(sessionID, attempt)
+            : host.session(sessionID, attempt)
+        sessionsByAssignment.set(sessionKey, read)
       }
       const session = await read
       if (session && (session.id !== attempt.session_id || session.projectID !== projectID))

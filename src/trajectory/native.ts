@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { DateTime, Effect } from "effect"
+import { isWorkerAgent } from "../runner/worker-agent.ts"
 import { privacyStats, safeError } from "./privacy.ts"
 
 export type UsageSnapshot = {
@@ -25,11 +26,13 @@ export type TrajectorySession = {
   messageError: string | null
 }
 
+type OwnedAttempt = { id: string; workspace: string }
+
 export interface TrajectoryHost {
   /** Called only with an ID obtained from an owned runner_attempt row. */
-  session(id: string): Promise<TrajectorySession | null>
+  session(id: string, attempt?: OwnedAttempt): Promise<TrajectorySession | null>
   /** Reads live session metadata without loading transcript context. */
-  status?(id: string): Promise<TrajectorySession | null>
+  status?(id: string, attempt?: OwnedAttempt): Promise<TrajectorySession | null>
 }
 
 export class TrajectoryIdentityError extends Error {
@@ -47,8 +50,9 @@ const notFound = (error: unknown) =>
 export function nativeTrajectoryHost(
   ctx: Pick<Plugin.Context, "session">,
   projectID: string,
+  ownsCurrentWorkspace?: (directory: string) => Promise<boolean>,
 ): TrajectoryHost {
-  async function loadSession(id: string, includeContext: boolean) {
+  async function loadSession(id: string, includeContext: boolean, attempt?: OwnedAttempt) {
     const session = await Effect.runPromise(
       ctx.session
         .get({ sessionID: Session.ID.make(id) })
@@ -57,7 +61,16 @@ export function nativeTrajectoryHost(
         ),
     )
     if (!session) return null
-    if (session.id !== id || session.projectID !== projectID) throw new TrajectoryIdentityError()
+    if (session.id !== id) throw new TrajectoryIdentityError()
+    if (
+      session.projectID !== projectID &&
+      (!attempt ||
+        !isWorkerAgent(session.agent) ||
+        session.metadata?.lazersAttemptID !== attempt.id ||
+        session.location.directory !== attempt.workspace ||
+        !(await ownsCurrentWorkspace?.(attempt.workspace)))
+    )
+      throw new TrajectoryIdentityError()
 
     let messages: ReadonlyArray<SessionMessage.Info> | null = null
     let messageStatus: TrajectorySession["messageStatus"] = includeContext
@@ -78,7 +91,7 @@ export function nativeTrajectoryHost(
     const tokens = session.tokens
     return {
       id: session.id,
-      projectID: session.projectID,
+      projectID,
       parentID: session.parentID ?? null,
       model: session.model
         ? {
@@ -109,7 +122,7 @@ export function nativeTrajectoryHost(
     }
   }
   return {
-    session: (id) => loadSession(id, true),
-    status: (id) => loadSession(id, false),
+    session: (id, attempt) => loadSession(id, true, attempt),
+    status: (id, attempt) => loadSession(id, false, attempt),
   }
 }

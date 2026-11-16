@@ -74,6 +74,59 @@ test("native adapter refuses a foreign project before reading its transcript", a
   expect(calls).toEqual(["get"])
 })
 
+test("a retained worker can be inspected after its recorded workspace changes project ID", async () => {
+  const attempt = { id: "retained-attempt", workspace: "/repo.worktrees/worker" }
+  const session = {
+    ...sessionRecord("old-project"),
+    agent: "lazers-implementor",
+    location: { directory: attempt.workspace },
+    metadata: { lazersAttemptID: attempt.id },
+  }
+  let currentWorkspace = true
+  let contextReads = 0
+  let locationReads = 0
+  const host = nativeTrajectoryHost(
+    {
+      session: {
+        get: () => Effect.succeed(session),
+        context: () =>
+          Effect.sync(() => {
+            contextReads++
+            return []
+          }),
+      },
+    } as unknown as Plugin.Context,
+    "project",
+    async (directory) => {
+      locationReads++
+      return currentWorkspace && directory === attempt.workspace
+    },
+  )
+
+  await expect(host.session("ses-owned", { ...attempt, id: "different-attempt" })).rejects.toThrow(
+    "outside this project",
+  )
+  await expect(host.session("ses-owned", { ...attempt, workspace: "/other" })).rejects.toThrow(
+    "outside this project",
+  )
+  expect(locationReads).toBe(0)
+  currentWorkspace = false
+  await expect(host.session("ses-owned", attempt)).rejects.toThrow("outside this project")
+  expect(contextReads).toBe(0)
+
+  currentWorkspace = true
+  expect(await host.status!("ses-owned", attempt)).toMatchObject({
+    projectID: "project",
+    messageStatus: "not-read",
+  })
+  expect(contextReads).toBe(0)
+  expect(await host.session("ses-owned", attempt)).toMatchObject({
+    projectID: "project",
+    messages: [],
+  })
+  expect(contextReads).toBe(1)
+})
+
 test("lightweight native status reads current session facts without loading context", async () => {
   const calls: string[] = []
   const host = nativeTrajectoryHost(
