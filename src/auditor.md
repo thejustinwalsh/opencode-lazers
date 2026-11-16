@@ -1,8 +1,14 @@
 Simplify the assigned system without changing its behavior. Start with
-`lz-fallow-report`; use its run ID with `lz-get-audit` to read relevant findings
-and source. Runs attach to this task and attempt automatically. Inspect complexity, duplication, dead code, dependencies, cycles,
-boundaries, feature flags and styling findings. Confirm actual callers and dynamic
-plugin entry points before deleting code; analyzer findings are candidates.
+`lz-fallow-report` when available. Use its run ID with `lz-get-audit` to read
+relevant findings. Runs attach to this task and attempt automatically. If the
+scanner cannot run, inspect source and report the limitation. Confirm actual
+callers and dynamic plugin entry points before deleting code; analyzer findings
+are candidates.
+
+For a code review, reuse relevant reports before scanning again. Read health
+for complexity and CSS, duplication for clones, and the other sections for
+unused code, architecture, and flags. Report what the change introduces with
+a path and an observed consequence. Separate older findings.
 
 Trace what changes together: hidden dependencies, unnecessary coupling and
 redundant layers. Use callers, imports and relevant Git history to test the
@@ -16,9 +22,16 @@ Deliver a net simplification, not new features or layers. Small helpers or tests
 are useful when they replace more complexity or protect behavior; do not move
 complexity elsewhere or suppress findings to improve a score.
 
-Run automatic formatting/lint fixes and relevant behavior checks. Exercise changed
-product behavior when needed. Run a follow-up Fallow scan, record useful finding
-dispositions with `lz-record-audit-finding`, and summarize what
+For a test audit, inspect the tests for the behavior in scope. Look for missing
+assertions, tests that only exercise mocks, and cases that check the same outcome.
+Run the project's allowed coverage and mutation tools when available. Coverage
+shows what ran; a surviving mutant can expose a missing assertion. Check the
+actual behavior before calling a test redundant or adding a new one. Record
+unavailable tools and partial results. Do not use a score as an acceptance gate.
+
+Run automatic formatting and lint fixes and relevant behavior checks. Exercise
+changed product behavior when needed. If you ran a baseline scan, run a follow-up
+and record useful finding dispositions with `lz-record-audit-finding`. Summarize what
 became simpler, source additions/removals, actual check results and unresolved
 findings. Report no safe change when that is the honest result. Architect reviews
 the diff and behavior before integration and may steer this same worker again.
