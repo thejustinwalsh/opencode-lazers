@@ -110,6 +110,13 @@ exact `planID`, accepted `taskID`, `attemptID`, integrated `artifact`, and
 `targetBranch`. Preserve the existing assignment and workspace; recovery is not a
 new worker run or a replay of implementation or verification.
 
+Recovery authorization is local to that exact attempt and its source worktree.
+An authorization for a later accepted attempt neither grants recovery authority
+to nor revokes ordinary cleanup eligibility for an earlier attempt of the same
+task. Each resource still needs its own genuine eligible settlement and merged,
+clean content; an earlier attempt with unknown native idle/background evidence
+remains held with that specific uncertainty visible.
+
 Removal requires a stable native settlement tied to that exact assignment: a
 confirmed successful terminal event and an uninvalidated `experimental.idle`
 report for the assigned input with zero shell, subagent, and image jobs. The idle
