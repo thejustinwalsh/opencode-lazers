@@ -109,6 +109,24 @@ const Check = z
 const Interval = z
   .object({ startedAt: NullableTime, endedAt: NullableTime, basis: z.string() })
   .strip()
+const TimingEndpoint = z
+  .object({
+    at: NullableTime,
+    source: z.string().nullable().optional(),
+    sourceType: z.string().nullable().optional(),
+  })
+  .strip()
+// Server-projected timing endpoints (src/trajectory/read.ts contextTiming and
+// src/progress/projection.ts projectedTiming). Only times and source labels pass.
+const EventTiming = z.object({ endpoints: z.record(z.string(), TimingEndpoint.nullable()) }).strip()
+// Server-validated, workspace-relative requested paths (src/progress/projection.ts).
+const FileTargets = z
+  .object({
+    coverage: z.enum(["observed", "partial", "omitted"]),
+    operation: z.enum(["read", "edit", "patch"]).nullable(),
+    paths: z.array(z.string()).max(8),
+  })
+  .strip()
 const Event = z
   .object({
     id: z.string(),
@@ -119,6 +137,8 @@ const Event = z
     taskID: z.string().optional(),
     attemptID: z.string().nullable().optional(),
     sessionID: z.string().nullable().optional(),
+    messageID: z.string().nullable().optional(),
+    callID: z.string().nullable().optional(),
     source: z.string().optional(),
     sources: z.array(z.string()).optional(),
     eventIDs: z.array(z.string()).optional(),
@@ -159,6 +179,8 @@ const Event = z
     timedOut: z.boolean().nullable().optional(),
     unchanged: z.boolean().nullable().optional(),
     artifact: z.string().optional(),
+    timing: EventTiming.optional().catch(undefined),
+    fileTargets: FileTargets.optional().catch(undefined),
   })
   .strip()
 const Report = z
@@ -170,7 +192,9 @@ const Report = z
       status: z.string(),
       specification: z.object({ objective: z.string() }).strip(),
     }),
-    plans: z.array(z.object({ id: z.string(), checks: z.array(Check) })),
+    plans: z.array(
+      z.object({ id: z.string(), state: z.string().optional(), checks: z.array(Check) }),
+    ),
     attempts: z.array(
       z.object({
         id: z.string(),
@@ -411,6 +435,10 @@ export type AttemptTimeline = {
     left: number
     width: number
     pointOnly: boolean
+    startRecorded: boolean
+    endRecorded: boolean
+    /** Active attempt drawn to the capture time; its end is not recorded. */
+    open: boolean
     visible: boolean
     basis: string
   }>
@@ -429,6 +457,8 @@ export type Timeline = {
   ticks: TimelineTick[]
   attempts: AttemptTimeline[]
   checks: CheckTimeline[]
+  /** Capture time that bounds open bars, or null when no attempt is open. */
+  openEnd?: number | null
 }
 
 function timelineAttempts(
@@ -518,33 +548,135 @@ function timestampValues(attempts: RecordedAttempt[], checks: RecordedCheck[]) {
   return values.filter(Number.isFinite)
 }
 
-function niceMinuteStep(minutes: number) {
-  if (minutes <= 6) return 1
-  if (minutes <= 15) return 5
-  if (minutes <= 60) return 10
-  if (minutes <= 180) return 30
-  return 60
+const SECOND = 1_000
+const MINUTE = 60 * SECOND
+const HOUR = 60 * MINUTE
+const TICK_STEPS = [
+  1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1_800, 3_600, 7_200, 10_800, 21_600, 43_200, 86_400,
+].map((seconds) => seconds * SECOND)
+const ACTIVE_ATTEMPT_STATES = new Set(["preparing", "running", "verifying"])
+
+/** Smallest readable step that keeps the fitted axis at or below `maxTicks` intervals. */
+export function tickStep(spanMs: number, maxTicks = 6) {
+  return TICK_STEPS.find((step) => Math.ceil(spanMs / step) <= maxTicks) ?? TICK_STEPS.at(-1)!
 }
 
+/** Compact elapsed label: 45s, 1m30s, 12m, 1h, 1h30m. */
+export function elapsedLabel(elapsedMs: number) {
+  const total = Math.round(elapsedMs / SECOND)
+  if (total === 0) return "0"
+  const hours = Math.floor(total / 3_600)
+  const minutes = Math.floor((total % 3_600) / 60)
+  const seconds = total % 60
+  if (hours) return `${hours}h${minutes ? `${minutes}m` : ""}`
+  if (minutes) return `${minutes}m${seconds ? `${seconds}s` : ""}`
+  return `${seconds}s`
+}
+
+/** Human duration for inspector rows: 240 ms, 4.2 s, 4m 47s, 1h 02m. */
+export function durationText(durationMs: number) {
+  if (durationMs < SECOND) return `${Math.round(durationMs)} ms`
+  if (durationMs < MINUTE) return `${(durationMs / SECOND).toFixed(1)} s`
+  const total = Math.round(durationMs / SECOND)
+  if (durationMs < HOUR) return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s`
+  return `${Math.floor(total / 3_600)}h ${String(Math.floor((total % 3_600) / 60)).padStart(2, "0")}m`
+}
+
+export function isActiveAttemptState(state: string) {
+  return ACTIVE_ATTEMPT_STATES.has(state)
+}
+
+/**
+ * Plan states the runtime treats as terminal (src/runner/plan-control.ts
+ * `terminalPlanStates`). Mirrored here so the GUI bundle does not import runner code;
+ * a test keeps both sets equal.
+ */
+export const SETTLED_PLAN_STATES: ReadonlySet<string> = new Set([
+  "accepted",
+  "failed",
+  "cancelled",
+  "exhausted",
+  "incorporated",
+  "integrated",
+  "cleanup-blocked",
+])
+
+/**
+ * A settled history has no busy worker, no active attempt and only terminal plans. It is a
+ * polling policy for this view, not a workflow state: a resumed plan changes the recorded
+ * snapshot, and reconnect or explicit refresh always reads status again.
+ */
+export function settledHistory(report: TrajectoryReport | undefined) {
+  return Boolean(
+    report &&
+    !report.coverage.ongoing &&
+    report.plans.length > 0 &&
+    report.plans.every((plan) => plan.state !== undefined && SETTLED_PLAN_STATES.has(plan.state)) &&
+    report.attempts.every((attempt) => !isActiveAttemptState(attempt.state)),
+  )
+}
+
+/** Recorded facts whose change means a settled task may have resumed. */
+export function taskSnapshotFingerprint(snapshot: ProjectedSnapshot | undefined, taskID: string) {
+  if (!snapshot) return null
+  const planIDs = new Set(
+    snapshot.plans
+      .filter((plan) => plan.nodes.some((node) => node.taskID === taskID))
+      .map((plan) => plan.id),
+  )
+  return JSON.stringify([
+    snapshot.plans.flatMap((plan) =>
+      plan.nodes
+        .filter((node) => node.taskID === taskID)
+        .map((node) => [plan.id, node.state, node.revision ?? null]),
+    ),
+    snapshot.attempts
+      .filter((attempt) => attempt.taskID === taskID)
+      .map((attempt) => [attempt.id, attempt.state, attempt.endedAt, attempt.executions.length]),
+    snapshot.checks
+      .filter(
+        (check) =>
+          check.taskID === taskID ||
+          (check.taskID === null && typeof check.planID === "string" && planIDs.has(check.planID)),
+      )
+      .map((check) => [check.id, check.state, check.startedAt, check.endedAt, check.exitCode]),
+  ])
+}
+
+/**
+ * Projects recorded attempt and check intervals onto one elapsed axis whose origin is the
+ * earliest recorded attempt start. `asOf` (history capture time) only extends the axis and
+ * the open bar of an attempt still in an active state; it never becomes a recorded end.
+ */
 export function buildTimeline(
   snapshot: ProjectedSnapshot | undefined,
   taskID: string,
   report?: TrajectoryReport,
+  asOf?: number | null,
+  extraTimes: readonly number[] = [],
 ): Timeline {
   const attempts = timelineAttempts(snapshot, taskID, report)
   const checks = timelineChecks(snapshot, taskID, report)
   const starts = attempts.map((attempt) => attempt.startedAt).filter(Number.isFinite)
   const origin = starts.length ? Math.min(...starts) : (report?.effort.firstAttemptAt ?? null)
   if (origin === null) return { origin: null, durationMs: 0, ticks: [], attempts: [], checks: [] }
-  const values = timestampValues(attempts, checks)
+  const openAttempt = attempts.some(
+    (attempt) => attempt.endedAt === null && isActiveAttemptState(attempt.state),
+  )
+  const openEnd =
+    openAttempt && typeof asOf === "number" && Number.isFinite(asOf) && asOf > origin ? asOf : null
+  const values = [
+    ...timestampValues(attempts, checks),
+    ...extraTimes.filter(Number.isFinite),
+    ...(openEnd === null ? [] : [openEnd]),
+  ]
   const maximum = Math.max(origin, ...values)
-  const rawMinutes = Math.max(0, (maximum - origin) / 60_000)
-  const step = niceMinuteStep(rawMinutes)
-  const durationMinutes = Math.max(step, Math.ceil(rawMinutes / step) * step)
-  const durationMs = durationMinutes * 60_000
+  const span = Math.max(0, maximum - origin)
+  const step = tickStep(span)
+  const durationMs = Math.max(step, Math.ceil(span / step) * step)
   const ticks: TimelineTick[] = []
-  for (let minute = 0; minute <= durationMinutes; minute += step)
-    ticks.push({ elapsedMs: minute * 60_000, label: `${minute}m` })
+  for (let elapsed = 0; elapsed <= durationMs; elapsed += step)
+    ticks.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
   const position = (at: number) => Math.max(0, Math.min(100, ((at - origin) / durationMs) * 100))
   const attemptsWithGeometry = attempts.map((attempt) => {
     const executions =
@@ -559,19 +691,32 @@ export function buildTimeline(
               timingBasis: attempt.timingBasis,
             },
           ]
+    const active = attempt.endedAt === null && isActiveAttemptState(attempt.state)
     return {
       attempt,
-      segments: executions.map((execution) => {
+      segments: executions.map((execution, index) => {
         const point = execution.startedAt ?? execution.endedAt ?? attempt.startedAt
         const left = position(point)
+        // Only the last execution of an active attempt may stay open to the capture time.
+        const open =
+          active &&
+          openEnd !== null &&
+          index === executions.length - 1 &&
+          execution.startedAt !== null &&
+          execution.endedAt === null
         const width =
           execution.startedAt !== null && execution.endedAt !== null
             ? Math.max(0, position(execution.endedAt) - left)
-            : 0
+            : open
+              ? Math.max(0, position(openEnd) - left)
+              : 0
         return {
           left: execution.startedAt === null && execution.endedAt === null ? 0 : left,
           width,
-          pointOnly: execution.startedAt === null || execution.endedAt === null,
+          pointOnly: !open && (execution.startedAt === null || execution.endedAt === null),
+          startRecorded: execution.startedAt !== null,
+          endRecorded: execution.endedAt !== null,
+          open,
           visible: execution.startedAt !== null || execution.endedAt !== null,
           basis: execution.timingBasis,
         }
@@ -596,7 +741,23 @@ export function buildTimeline(
       visible: startLeft !== null || endLeft !== null,
     }
   })
-  return { origin, durationMs, ticks, attempts: attemptsWithGeometry, checks: checksWithGeometry }
+  return {
+    origin,
+    durationMs,
+    ticks,
+    attempts: attemptsWithGeometry,
+    checks: checksWithGeometry,
+    openEnd,
+  }
+}
+
+/** Word-boundary display title; the full objective stays available below the heading. */
+export function displayTitle(objective: string) {
+  const line = objective.trim().split(/\r?\n/)[0]?.trim() ?? ""
+  if (line.length <= 72) return line
+  const cut = line.slice(0, 72 + 1)
+  const boundary = cut.lastIndexOf(" ")
+  return `${(boundary > 24 ? cut.slice(0, boundary) : line.slice(0, 72)).replace(/[\s,.;:–-]+$/, "")}…`
 }
 
 export type CheckTiming =

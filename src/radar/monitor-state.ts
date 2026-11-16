@@ -103,12 +103,13 @@ export class RadarMonitorState {
     scope: ObservationScope,
     transport: RadarMonitorTransport,
     includeUnmanagedSessions: boolean,
+    storedSessionID: string | null = null,
   ) {
     const preferredSessionID =
       this.selectionPreference?.projectID === projectID &&
       this.selectionPreference.anchorSessionID === scope.sessionID
         ? this.selectionPreference.sessionID
-        : null
+        : storedSessionID
     this.close()
     this.validateSelectionOnNextLiveRead = Boolean(preferredSessionID)
     this.transport = transport

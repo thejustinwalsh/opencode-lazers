@@ -12,7 +12,18 @@ import {
 } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  createUniqueId,
+  onCleanup,
+  onMount,
+} from "solid-js"
 import type { Accessor, JSX } from "solid-js"
 import type { TaskProposal } from "../task.ts"
 import { Tasks } from "./contract.ts"
@@ -20,7 +31,15 @@ import { Observability } from "../observability/contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import { taskChanges } from "./events.ts"
 import type { PanelData } from "./panel-state.ts"
-import { clampSplit, splitFromPointer } from "./panel-layout.ts"
+import {
+  SPLIT_DEFAULT,
+  SPLIT_MAX,
+  SPLIT_MIN,
+  clampSplit,
+  contentSplit,
+  splitFromPointer,
+  splitWasAdjusted,
+} from "./panel-layout.ts"
 import { taskTitle, sourcePlanLine } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import {
@@ -30,6 +49,12 @@ import {
   connectionLabel,
   workerActivityLabel,
 } from "./panel-view.ts"
+import {
+  attentionLabel,
+  distinctReasons,
+  rowHoldReasons,
+  taskRowPresentation,
+} from "./row-presentation.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
 import { ExecutionPlanGroupView } from "./execution-list-view.tsx"
@@ -43,6 +68,8 @@ const View = Schema.Struct({
   selectedID: Schema.NullOr(Schema.String),
   search: Schema.String,
   split: Schema.Number,
+  /** Set once the person resizes; until then the split follows the list's content. */
+  splitAdjusted: Schema.optionalKey(Schema.Boolean),
   listScroll: Schema.Number,
   detailScroll: Schema.Number,
   state: Schema.optionalKey(
@@ -66,7 +93,7 @@ const initial: typeof View.Type = {
   scope: "session",
   selectedID: null,
   search: "",
-  split: 48,
+  split: SPLIT_DEFAULT,
   listScroll: 0,
   detailScroll: 0,
   history: false,
@@ -84,6 +111,13 @@ export type TaskTrajectoryOpener = (
   session: PanelProps["session"],
   target: TaskTrajectoryRequest,
 ) => void
+export type TaskRadarRequest = {
+  taskID: string
+  projectDirectory: string
+  /** Exact worker association, when the runtime recorded one. */
+  workerSessionID?: string
+}
+export type TaskRadarOpener = (session: PanelProps["session"], target: TaskRadarRequest) => void
 
 export function verificationTimingSummary(check: TaskProposal["verification"][number]): string {
   const timing = (value: number | undefined) =>
@@ -97,8 +131,12 @@ export function verificationTimingSummary(check: TaskProposal["verification"][nu
   return parts.join(" · ")
 }
 
-function distinctReasons(reasons: readonly (string | null | undefined)[]) {
-  return [...new Set(reasons.filter((reason): reason is string => Boolean(reason?.trim())))]
+/** Done when previews this many criteria; explicit expansion shows every one. */
+const CRITERIA_PREVIEW = 3
+
+/** The goal repeats only when it says more than the derived title. */
+function objectiveExtendsTitle(objective: string) {
+  return taskTitle(objective) !== objective.trim().replace(/\s+/g, " ")
 }
 
 const terminalLifecycleStates = new Set([
@@ -109,7 +147,13 @@ const terminalLifecycleStates = new Set([
   "cancelled",
 ])
 
-function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskTrajectoryOpener }) {
+function TaskPanel(
+  props: PanelProps & {
+    ctx: TaskContext
+    openTrajectory: TaskTrajectoryOpener
+    openRadar: TaskRadarOpener
+  },
+) {
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
@@ -124,7 +168,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     error: "",
   })
   const [searchOpen, setSearchOpen] = createSignal(false)
-  const [split, setSplit] = createSignal(48)
+  const [dragSplit, setDragSplit] = createSignal<number | null>(null)
+  const [paneHeight, setPaneHeight] = createSignal(0)
+  const [showAllCriteria, setShowAllCriteria] = createSignal(false)
+  const listID = createUniqueId()
+  const detailID = createUniqueId()
   const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
   const [copyStatus, setCopyStatus] = createSignal("")
   const [revealedTaskIDs, setRevealedTaskIDs] = createSignal<Set<string>>(new Set())
@@ -218,7 +266,6 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     },
     ({ value, key }) => {
       const view = prefs()
-      setSplit(view.split)
       const sessionID = view.scope === "session" ? value.session : undefined
       const rpc = () => props.session.server.client.rpc(Tasks)
       state.connect(
@@ -574,34 +621,26 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     group?: Accessor<ExecutionPlanGroup>,
     depth = 0,
   ): JSX.Element => {
+    const expandable = () => Boolean(group && taskRow().fork)
     const expanded = () => Boolean(group && taskRow().fork && forkExpanded(group(), taskRow()))
+    const toggle = () => {
+      if (group) toggleFork(group(), taskRow())
+    }
     const currentActivity = () => visible()?.currentActivity[taskRow().taskID]
+    const presentation = createMemo(() =>
+      taskRowPresentation(taskRow(), currentActivity(), relationLabel),
+    )
     const waiting = () => taskRow().waiting || currentActivity()?.waiting === true
     const showWorker = () =>
       Boolean(currentActivity()?.attemptID || currentActivity()?.workerSessionID)
-    const holdReasons = () =>
-      distinctReasons([
-        taskRow().waiting ? taskRow().holdReason : null,
-        currentActivity()?.waiting ? currentActivity()?.holdReason : null,
-      ])
-    const showCurrent = () =>
-      ["running", "verifying"].includes(taskRow().status) ||
-      Boolean(taskRow().dispatchPause) ||
-      waiting() ||
-      currentActivity()?.foreground === "active"
-    const pendingLabel = () => {
-      const activity = currentActivity()
-      return [
-        ...(activity?.pendingInput ? ["Input pending"] : []),
-        ...((activity?.pendingPermissions ?? 0) > 0 || (activity?.pendingForms ?? 0) > 0
-          ? ["Approval pending"]
-          : []),
-      ].join(" · ")
-    }
+    const pendingDependencies = () =>
+      (taskRow().dependencyTasks ?? []).filter((dependency) => dependency.waiting)
     const accessibleDescription = () => {
       const activity = currentActivity()
-      const reasons = holdReasons()
+      const reasons = rowHoldReasons(taskRow(), activity)
+      const branches = taskRow().fork?.branches.length ?? 0
       return [
+        ...(taskRow().reference ? [taskRow().reference] : []),
         taskTitle(taskRow().title),
         `recorded lifecycle ${taskRow().status}`,
         ...(showWorker()
@@ -617,143 +656,105 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             ]
           : []),
         ...(waiting() ? [`waiting${reasons.length ? `: ${reasons.join("; ")}` : ""}`] : []),
-        ...(pendingLabel() ? [pendingLabel()] : []),
+        ...(waiting() && pendingDependencies().length
+          ? [
+              `waiting on ${pendingDependencies()
+                .map(
+                  (dependency) =>
+                    `${dependency.reference ?? relationLabel(dependency.taskID)} (${dependency.state})`,
+                )
+                .join(", ")}`,
+            ]
+          : []),
+        ...(presentation().tone === "paused" ? [`paused: ${presentation().badgeDetail}`] : []),
+        ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
+        ...(expandable() ? [`${branches} parallel branch${branches === 1 ? "" : "es"}`] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
-    const dependencies = () => taskRow().dependencyTasks ?? []
-    const pendingDependencies = () => dependencies().filter((dependency) => dependency.waiting)
     return (
-      <div class="lazers-tasks-entry" data-context-only={taskRow().contextOnly}>
-        <div class="lazers-tasks-entry-line" style={{ "padding-left": `${depth * 12}px` }}>
-          <Show when={taskRow().fork && group}>
-            <button
-              type="button"
+      <div
+        class="lazers-tasks-entry"
+        role="treeitem"
+        data-task-id={taskRow().taskID}
+        data-context-only={taskRow().contextOnly}
+        aria-level={depth + 1}
+        aria-selected={taskRow().taskID === visible()?.selectedID}
+        aria-expanded={expandable() ? expanded() : undefined}
+        aria-label={accessibleDescription()}
+        tabIndex={rowTabIndex(taskRow().taskID)}
+        onKeyDown={(event) =>
+          rowKey(event, { expandable: expandable(), expanded: expanded(), toggle })
+        }
+        onClick={(event) => {
+          event.stopPropagation()
+          selectTask(taskRow().taskID)
+        }}
+      >
+        <div class="lazers-tasks-row" data-tone={presentation().tone}>
+          <Show
+            when={expandable()}
+            fallback={<span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />}
+          >
+            <span
               class="lazers-tasks-disclosure"
-              aria-label={`${expanded() ? "Collapse" : "Expand"} parallel work under ${taskTitle(taskRow().title)}`}
-              aria-expanded={expanded()}
+              aria-hidden="true"
+              title={expanded() ? "Collapse parallel work" : "Expand parallel work"}
               onClick={(event) => {
                 event.stopPropagation()
-                if (group) toggleFork(group(), taskRow())
+                toggle()
               }}
             >
               <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
-            </button>
-          </Show>
-          <Show when={!taskRow().fork || !group}>
-            <span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />
-          </Show>
-          <button
-            type="button"
-            class="lazers-tasks-row"
-            data-task-id={taskRow().taskID}
-            aria-pressed={taskRow().taskID === visible()?.selectedID}
-            aria-label={accessibleDescription()}
-            tabIndex={rowTabIndex(taskRow().taskID)}
-            onKeyDown={rowKey}
-            onClick={() => selectTask(taskRow().taskID)}
-          >
-            <span
-              class="lazers-tasks-state"
-              data-state={taskRow().status}
-              data-waiting={waiting()}
-              aria-hidden="true"
-            />
-            <span class="lazers-tasks-row-copy">
-              <span class="lazers-tasks-row-title">
-                <Show when={taskRow().reference}>
-                  <span class="lazers-tasks-row-reference">{taskRow().reference} </span>
-                </Show>
-                {taskTitle(taskRow().title)}
-              </span>
-              <Show when={showCurrent()}>
-                <span class="lazers-tasks-row-meta">
-                  <span class="lazers-tasks-row-lifecycle">
-                    {waiting() ? "Waiting" : taskRow().dispatchPause ? "Paused" : taskRow().status}
-                  </span>
-                  <Show when={showWorker()}>
-                    <span class="lazers-tasks-row-activity">
-                      <span
-                        class="lazers-tasks-activity-indicator"
-                        data-state={currentActivity()?.foreground ?? "unknown"}
-                        aria-hidden="true"
-                      />
-                      Worker {workerActivityLabel(currentActivity())}
-                    </span>
-                  </Show>
-                  <Show when={pendingLabel()}>
-                    {(label) => <span class="lazers-tasks-row-attention">{label()}</span>}
-                  </Show>
-                </span>
-              </Show>
             </span>
-          </button>
-        </div>
-        <Show when={taskRow().dispatchPause}>
-          {(pause) => (
-            <div class="lazers-tasks-row-hold" style={{ "padding-left": `${depth * 12 + 30}px` }}>
-              {pause().reason}
-            </div>
-          )}
-        </Show>
-        <Show when={taskRow().sourcePlan}>
-          {(source) => (
-            <div
-              class="lazers-tasks-row-dependencies"
-              style={{ "padding-left": `${depth * 12 + 30}px` }}
-            >
-              <button
-                type="button"
-                title={source().path}
-                onClick={() => void openSourcePlan(source())}
+          </Show>
+          <span
+            class="lazers-tasks-state"
+            data-state={taskRow().status}
+            data-waiting={waiting()}
+            data-tone={presentation().tone}
+            aria-hidden="true"
+          >
+            <Ui.Icon name={presentation().icon} size="small" />
+          </span>
+          <Show when={taskRow().reference}>
+            {(reference) => (
+              <span
+                class="lazers-tasks-row-reference"
+                style={{ "font-family": ctx.appearance.font("mono") }}
               >
-                {source().path.split("/").pop()}
-                {source().section ? ` › ${source().section}` : ""}
-              </button>
-            </div>
-          )}
-        </Show>
-        <Show when={dependencies().length > 0}>
+                {reference()}
+              </span>
+            )}
+          </Show>
+          <span class="lazers-tasks-row-title">{taskTitle(taskRow().title)}</span>
+          <Show when={presentation().badge}>
+            {(badge) => (
+              <span
+                class="lazers-tasks-badge"
+                data-tone={presentation().tone}
+                title={presentation().badgeDetail ?? badge()}
+              >
+                {badge()}
+              </span>
+            )}
+          </Show>
+        </div>
+        <Show when={expandable() && expanded()}>
           <div
-            class="lazers-tasks-row-dependencies"
-            style={{ "padding-left": `${depth * 12 + 30}px` }}
+            class="lazers-tasks-branches"
+            role="group"
+            aria-label={`Parallel work after ${taskTitle(taskRow().title)}`}
           >
-            <span>{waiting() && pendingDependencies().length ? "Waiting on" : "After"}</span>
-            <For each={pendingDependencies().length ? pendingDependencies() : dependencies()}>
-              {(dependency) => (
-                <button
-                  type="button"
-                  title={`${dependency.title} · ${dependency.state}`}
-                  onClick={() => selectTask(dependency.taskID)}
-                >
-                  {dependency.reference ?? relationLabel(dependency.taskID)}
-                  <span class="lazers-tasks-dependency-state"> · {dependency.state}</span>
-                </button>
-              )}
-            </For>
-          </div>
-        </Show>
-        <Show when={waiting() && !pendingDependencies().length && holdReasons().length > 0}>
-          <div
-            class="lazers-tasks-row-hold"
-            title={holdReasons().join("; ")}
-            style={{ "padding-left": `${depth * 12 + 30}px` }}
-          >
-            {holdReasons().join("; ")}
-          </div>
-        </Show>
-        <Show when={taskRow().fork && group && expanded()}>
-          <div class="lazers-tasks-branches">
             <Keyed each={taskRow().fork?.branches ?? []} by={(branch) => branch.id}>
               {(branch) => (
-                <div class="lazers-tasks-branch">
+                <div class="lazers-tasks-branch" role="none">
                   <Keyed each={branch().rows} by={(child) => child.taskID}>
                     {(child) => renderTaskRow(child, group, depth + 1)}
                   </Keyed>
                   <Show when={branch().hiddenCount > 0}>
-                    <div class="lazers-tasks-branch-note">
-                      {branch().hiddenCount} task{branch().hiddenCount === 1 ? "" : "s"} not shown
-                      in this page or filter
+                    <div class="lazers-tasks-branch-note" role="none">
+                      {branch().hiddenCount} more not in this page or filter
                     </div>
                   </Show>
                 </div>
@@ -787,6 +788,104 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       projectDirectory: value.project,
     })
   }
+  const selectedRow = () => {
+    const selectedID = visible()?.selectedID
+    return selectedID ? rowValues().find((row) => row.taskID === selectedID) : undefined
+  }
+  const selectedPresentation = () => {
+    const row = selectedRow()
+    const activity = selectedActivity()
+    if (row) return taskRowPresentation(row, activity, relationLabel)
+    return taskRowPresentation(
+      {
+        taskID: visible()?.selectedID ?? "",
+        title: "",
+        status: selectedRecordedState() ?? "submitted",
+        reason: selectedExecution()?.reason ?? null,
+        waiting: selectedIsWaiting(),
+        holdReason: null,
+        ordinal: 0,
+        ...(selectedExecution()?.dispatchPause
+          ? { dispatchPause: selectedExecution()!.dispatchPause }
+          : {}),
+        contextOnly: false,
+        prerequisites: [],
+        successors: [],
+      },
+      activity,
+      relationLabel,
+    )
+  }
+  const selectedSourcePlan = () =>
+    visible()?.tasks.find((task) => task.taskID === visible()?.selectedID)?.sourcePlan ??
+    selectedRow()?.sourcePlan
+  /** One contextual action leads; the rest stay one menu away. */
+  const primaryAction = (): "start" | "architect" | "radar" | "trajectory" => {
+    if (canStart(selectedExecution()?.state ?? selectedTask()?.status ?? "")) return "start"
+    if (selectedIsWaiting() && selectedDetail()?.architectSessionID) return "architect"
+    if (["running", "verifying"].includes(selectedRecordedState() ?? "")) return "radar"
+    return "trajectory"
+  }
+  const openArchitect = () => {
+    const sessionID = selectedDetail()?.architectSessionID
+    if (sessionID)
+      ctx.tabs.open({ server: props.session.server.id, id: sessionID }, { focus: true })
+  }
+  const openSelectedRadar = () => {
+    const task = selectedTask()
+    const value = current()
+    if (!task || !value) return
+    const workerSessionID = selectedActivity()?.workerSessionID
+    props.openRadar(props.session, {
+      taskID: task.id,
+      projectDirectory: value.project,
+      ...(workerSessionID ? { workerSessionID } : {}),
+    })
+  }
+  const secondaryActions = () => {
+    const primary = primaryAction()
+    const source = selectedSourcePlan()
+    const reference = selectedDetail()?.reference
+    return [
+      ...(primary !== "trajectory"
+        ? [
+            {
+              label: "Open trajectory",
+              icon: "window-analytics" as const,
+              disabled: !reference,
+              onSelect: openSelectedTrajectory,
+            },
+          ]
+        : []),
+      ...(primary !== "radar" &&
+      (selectedActivity()?.workerSessionID ||
+        ["running", "verifying"].includes(selectedRecordedState() ?? ""))
+        ? [{ label: "Open in Radar", icon: "eye" as const, onSelect: openSelectedRadar }]
+        : []),
+      ...(primary !== "architect" && selectedDetail()?.architectSessionID
+        ? [{ label: "Open Architect", icon: "speech-bubble" as const, onSelect: openArchitect }]
+        : []),
+      ...(source
+        ? [
+            {
+              label: "Open source plan",
+              icon: "file-document" as const,
+              onSelect: () => void openSourcePlan(source),
+            },
+          ]
+        : []),
+      {
+        label: "Copy task link",
+        icon: "link" as const,
+        disabled: !reference,
+        onSelect: () => void copyTaskLink(),
+      },
+    ]
+  }
+  createEffect(() => {
+    selectionKey()
+    setShowAllCriteria(false)
+  })
   const startTask = async (taskID: string, revision: 1) => {
     const value = current()
     if (!value) return
@@ -801,20 +900,56 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       feedback.finish(ticket)
     }
   }
-  const rowKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
-    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
-    event.preventDefault()
-    const rows = [...(list?.querySelectorAll<HTMLButtonElement>("[data-task-id]") ?? [])]
-    const index = rows.indexOf(event.currentTarget)
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? rows.length - 1
-          : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
-    rows[next]?.focus()
-    const id = rows[next]?.dataset.taskId
+  /** Rows the person can currently see, in visual order; collapsed plan bodies are skipped. */
+  const treeItems = () =>
+    [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].filter(
+      (item) => !item.parentElement?.closest("details:not([open])"),
+    )
+  const focusRow = (item: HTMLElement | null | undefined) => {
+    if (!item) return
+    item.focus()
+    const id = item.dataset.taskId
     if (id) selectTask(id)
+  }
+  const rowKey = (
+    event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
+    fork: { expandable: boolean; expanded: boolean; toggle(): void },
+  ) => {
+    // Nested tree items bubble their keys through each ancestor item.
+    if (event.target !== event.currentTarget) return
+    const rows = treeItems()
+    const index = rows.indexOf(event.currentTarget)
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowDown":
+      case "Home":
+      case "End": {
+        event.preventDefault()
+        const next =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? rows.length - 1
+              : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
+        focusRow(rows[next])
+        return
+      }
+      case "ArrowRight":
+        event.preventDefault()
+        if (!fork.expandable) return
+        if (!fork.expanded) fork.toggle()
+        else focusRow(rows[index + 1])
+        return
+      case "ArrowLeft":
+        event.preventDefault()
+        if (fork.expandable && fork.expanded) fork.toggle()
+        else focusRow(event.currentTarget.parentElement?.closest<HTMLElement>("[role=treeitem]"))
+        return
+      case "Enter":
+      case " ":
+        event.preventDefault()
+        if (event.currentTarget.dataset.taskId) selectTask(event.currentTarget.dataset.taskId)
+    }
   }
   const stateLabel = (state: NonNullable<typeof initial.state>) => {
     if (state === "failed") return "Failed / exhausted"
@@ -829,14 +964,49 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     focusedSelection = key
     queueMicrotask(() => {
       if (selectionKey() !== key) return
-      const row = [...(list?.querySelectorAll<HTMLButtonElement>("[data-task-id]") ?? [])].find(
+      const row = [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].find(
         (item) => item.dataset.taskId === selectedID,
       )
       row?.scrollIntoView({ block: "nearest" })
       row?.focus({ preventScroll: true })
     })
   })
-  const resize = (next: number) => setSplit(clampSplit(next))
+  const measure = () => {
+    if (!root) return
+    setPaneHeight(
+      root.getBoundingClientRect().height -
+        (header?.getBoundingClientRect().height ?? 0) -
+        (separator?.getBoundingClientRect().height ?? 0),
+    )
+  }
+  onMount(() => {
+    measure()
+    if (typeof ResizeObserver === "undefined" || !root) return
+    const observer = new ResizeObserver(measure)
+    observer.observe(root)
+    if (header) observer.observe(header)
+    onCleanup(() => observer.disconnect())
+  })
+  // Hold the last fitted value while a view loads so the divider does not jump to its minimum.
+  const autoSplit = createMemo<number>((previous) => {
+    const value = visible()
+    if (!value || value.loading) return previous
+    const model = executionList()
+    return contentSplit({
+      rows: rowValues().length,
+      headings: model.plans.filter((group) => group.hasRecordedTitle && group.totalCount > 1)
+        .length,
+      extra: 16 + (value.page?.nextCursor ? 36 : 0),
+      available: paneHeight(),
+    })
+  }, SPLIT_DEFAULT)
+  const split = () => {
+    const dragged = dragSplit()
+    if (dragged !== null) return dragged
+    const view = prefs()
+    return splitWasAdjusted(view) ? clampSplit(view.split) : autoSplit()
+  }
+  const commitSplit = (next: number) => save({ split: clampSplit(next), splitAdjusted: true })
   const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
     endDrag?.()
     const key = expectedKey()
@@ -845,7 +1015,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     const move = (moveEvent: PointerEvent) => {
       const rect = root?.getBoundingClientRect()
       if (rect)
-        resize(
+        setDragSplit(
           splitFromPointer(
             split(),
             rect.top,
@@ -860,7 +1030,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       element.removeEventListener("pointermove", move)
       element.removeEventListener("pointerup", end)
       element.removeEventListener("pointercancel", end)
-      if (expectedKey() === key) save({ split: split() })
+      if (expectedKey() === key) commitSplit(split())
+      setDragSplit(null)
       endDrag = undefined
     }
     element.addEventListener("pointermove", move)
@@ -985,6 +1156,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       </header>
       <div
         class="lazers-tasks-list"
+        id={listID}
         ref={(element) => {
           list = element
         }}
@@ -1059,7 +1231,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                     </div>
                   }
                 >
-                  <div aria-label={`${stateLabel(stateFilter())} tasks`}>
+                  <div role="tree" aria-label={`${stateLabel(stateFilter())} tasks`}>
                     <Keyed each={executionList().plans} by={(group) => group.planID}>
                       {(group) => (
                         <ExecutionPlanGroupView group={group()} stateFilter={stateFilter()}>
@@ -1092,26 +1264,30 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         role="separator"
         aria-label="Resize task list"
         aria-orientation="horizontal"
-        aria-valuemin={20}
-        aria-valuemax={75}
+        aria-controls={`${listID} ${detailID}`}
+        aria-valuemin={SPLIT_MIN}
+        aria-valuemax={SPLIT_MAX}
         aria-valuenow={Math.round(split())}
+        aria-valuetext={`Task list ${Math.round(split())}% of the panel`}
         tabIndex={0}
         onPointerDown={drag}
         onKeyDown={(event) => {
-          if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
+          const step: Record<string, number> = {
+            ArrowUp: -5,
+            ArrowDown: 5,
+            PageUp: -10,
+            PageDown: 10,
+          }
+          if (event.key === "Home") commitSplit(SPLIT_MIN)
+          else if (event.key === "End") commitSplit(SPLIT_MAX)
+          else if (step[event.key] !== undefined) commitSplit(split() + step[event.key]!)
+          else return
           event.preventDefault()
-          resize(
-            event.key === "Home"
-              ? 20
-              : event.key === "End"
-                ? 75
-                : split() + (event.key === "ArrowDown" ? 5 : -5),
-          )
-          save({ split: split() })
         }}
       />
       <div
         class="lazers-tasks-detail"
+        id={detailID}
         ref={(element) => {
           detail = element
         }}
@@ -1134,13 +1310,20 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         >
           {(task) => (
             <>
-              <div class="lazers-tasks-reference-row">
+              <div class="lazers-tasks-inspector-head">
                 <span
                   class="lazers-tasks-reference"
                   style={{ "font-family": ctx.appearance.font("mono") }}
                   aria-label={`Task reference ${selectedDetail()?.reference ?? "unknown"}`}
                 >
                   <Ui.Tooltip value={task().id}>{selectedDetail()?.reference ?? "Task"}</Ui.Tooltip>
+                </span>
+                <span
+                  class="lazers-tasks-inspector-icon"
+                  data-tone={selectedPresentation().tone}
+                  aria-hidden="true"
+                >
+                  <Ui.Icon name={selectedPresentation().icon} size="small" />
                 </span>
                 <span
                   class="lazers-tasks-inspector-state"
@@ -1150,83 +1333,51 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 >
                   {selectedInspectorStatus()}
                 </span>
-                <Show when={canStart(selectedExecution()?.state ?? task().status)}>
-                  <Ui.Button
-                    size="small"
-                    variant="ghost-muted"
-                    class="lazers-tasks-start"
-                    busy={startFeedback().taskID === task().id}
-                    disabled={Boolean(startFeedback().taskID)}
-                    aria-label={`Start ${taskTitle(task().proposal.objective)}`}
-                    onClick={() => void startTask(task().id, task().revision)}
-                  >
-                    Start
-                  </Ui.Button>
-                </Show>
-                <Show when={selectedIsWaiting() && selectedDetail()?.architectSessionID}>
-                  {(sessionID) => (
-                    <Ui.Button
-                      size="small"
-                      variant="ghost-muted"
-                      onClick={() =>
-                        ctx.tabs.open(
-                          { server: props.session.server.id, id: sessionID() },
-                          { focus: true },
-                        )
-                      }
-                    >
-                      Open Architect
-                    </Ui.Button>
-                  )}
-                </Show>
-                <Ui.Button
-                  size="small"
-                  variant="ghost-muted"
-                  aria-label={`Open trajectory for ${selectedDetail()?.reference ?? "selected task"}`}
-                  disabled={!selectedDetail()?.reference}
-                  onClick={openSelectedTrajectory}
-                >
-                  Open trajectory
-                </Ui.Button>
-                <Ui.Button
-                  size="small"
-                  variant="ghost-muted"
-                  aria-label="Copy task link"
-                  disabled={!selectedDetail()?.reference}
-                  onClick={() => void copyTaskLink()}
-                >
-                  Copy task link
-                </Ui.Button>
+                <span class="lazers-tasks-inspector-actions">
+                  <Switch>
+                    <Match when={primaryAction() === "start"}>
+                      <Ui.Button
+                        size="small"
+                        variant="ghost-muted"
+                        class="lazers-tasks-start"
+                        busy={startFeedback().taskID === task().id}
+                        disabled={Boolean(startFeedback().taskID)}
+                        aria-label={`Start ${taskTitle(task().proposal.objective)}`}
+                        onClick={() => void startTask(task().id, task().revision)}
+                      >
+                        Start
+                      </Ui.Button>
+                    </Match>
+                    <Match when={primaryAction() === "architect"}>
+                      <Ui.Button size="small" variant="ghost-muted" onClick={openArchitect}>
+                        Open Architect
+                      </Ui.Button>
+                    </Match>
+                    <Match when={primaryAction() === "radar"}>
+                      <Ui.Button
+                        size="small"
+                        variant="ghost-muted"
+                        aria-label={`Open ${selectedDetail()?.reference ?? "selected task"} in Radar`}
+                        onClick={openSelectedRadar}
+                      >
+                        Open in Radar
+                      </Ui.Button>
+                    </Match>
+                    <Match when={primaryAction() === "trajectory"}>
+                      <Ui.Button
+                        size="small"
+                        variant="ghost-muted"
+                        aria-label={`Open trajectory for ${selectedDetail()?.reference ?? "selected task"}`}
+                        disabled={!selectedDetail()?.reference}
+                        onClick={openSelectedTrajectory}
+                      >
+                        Open trajectory
+                      </Ui.Button>
+                    </Match>
+                  </Switch>
+                  <Ui.Menu label="More task actions" items={secondaryActions()} />
+                </span>
               </div>
-              <div class="lazers-tasks-objective">
-                <Ui.Markdown text={task().proposal.objective} />
-              </div>
-              <Show when={selectedRelations().waitingOn.length}>
-                <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
-                  <span>Waiting on </span>
-                  <For each={selectedRelations().waitingOn}>
-                    {(taskID, index) => (
-                      <>
-                        {index() ? ", " : ""}
-                        {renderRelation(taskID)}
-                      </>
-                    )}
-                  </For>
-                </div>
-              </Show>
-              <Show when={selectedExecution()?.dispatchPause}>
-                {(pause) => <p class="lazers-tasks-reason">{pause().reason}</p>}
-              </Show>
-              <h4>Done when</h4>
-              <ul class="lazers-tasks-assertions">
-                <For each={task().proposal.acceptance}>
-                  {(assertion) => (
-                    <li>
-                      <Ui.Markdown text={assertion.assertion} />
-                    </li>
-                  )}
-                </For>
-              </ul>
               <Show when={copyStatus()}>
                 <p class="lazers-tasks-reason" role="status">
                   {copyStatus()}
@@ -1236,6 +1387,72 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 <p class="lazers-tasks-error" role="alert">
                   {startFeedback().error}
                 </p>
+              </Show>
+              <h3 class="lazers-tasks-title" title={task().proposal.objective}>
+                {taskTitle(task().proposal.objective)}
+              </h3>
+              <Switch>
+                <Match when={selectedRelations().waitingOn.length}>
+                  <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
+                    <Ui.Icon name="link" size="small" />
+                    <span>Waiting on</span>
+                    <For each={selectedRelations().waitingOn}>
+                      {(taskID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderRelation(taskID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Match>
+                <Match when={selectedExecution()?.dispatchPause}>
+                  {(pause) => (
+                    <p class="lazers-tasks-blocker" title={pause().reason}>
+                      Paused · {pause().reason}
+                    </p>
+                  )}
+                </Match>
+                <Match when={selectedHoldReasons()[0]}>
+                  {(reason) => (
+                    <p class="lazers-tasks-blocker" title={selectedHoldReasons().join("; ")}>
+                      {reason().trim().split(/\r?\n/)[0]}
+                    </p>
+                  )}
+                </Match>
+              </Switch>
+              <Show when={objectiveExtendsTitle(task().proposal.objective)}>
+                <div class="lazers-tasks-objective">
+                  <Ui.Markdown text={task().proposal.objective} />
+                </div>
+              </Show>
+              <h4>Done when</h4>
+              <ul class="lazers-tasks-assertions" aria-label="Done when">
+                <For
+                  each={
+                    showAllCriteria()
+                      ? task().proposal.acceptance
+                      : task().proposal.acceptance.slice(0, CRITERIA_PREVIEW)
+                  }
+                >
+                  {(assertion) => (
+                    <li>
+                      <Ui.Markdown text={assertion.assertion} />
+                    </li>
+                  )}
+                </For>
+              </ul>
+              <Show when={task().proposal.acceptance.length > CRITERIA_PREVIEW}>
+                <button
+                  type="button"
+                  class="lazers-tasks-more"
+                  aria-expanded={showAllCriteria()}
+                  onClick={() => setShowAllCriteria(!showAllCriteria())}
+                >
+                  {showAllCriteria()
+                    ? "Show fewer"
+                    : `Show all ${task().proposal.acceptance.length}`}
+                </button>
               </Show>
               <details class="lazers-tasks-section lazers-tasks-activity-details">
                 <summary>
@@ -1590,7 +1807,16 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
   )
 }
 
-export function setupTaskPanel(ctx: TaskContext, openTrajectory: TaskTrajectoryOpener) {
+/**
+ * `openRadar` selects the worker when a caller can write Radar's view; without one, Tasks opens
+ * the Radar panel itself and leaves Radar's own selection untouched.
+ */
+export function setupTaskPanel(
+  ctx: TaskContext,
+  openTrajectory: TaskTrajectoryOpener,
+  openRadar: TaskRadarOpener = (session) =>
+    ctx.layout.open(`${ctx.id}:radar`, session, { tab: "select" }),
+) {
   const Ui = ctx.ui
   ctx.add(
     LinkHandler,
@@ -1667,7 +1893,7 @@ export function setupTaskPanel(ctx: TaskContext, openTrajectory: TaskTrajectoryO
     region: "side",
     list: (input) => (input.open.includes(tab.id) ? [tab] : []),
     render: bindPlugin((props: PanelProps) => (
-      <TaskPanel {...props} ctx={ctx} openTrajectory={openTrajectory} />
+      <TaskPanel {...props} ctx={ctx} openTrajectory={openTrajectory} openRadar={openRadar} />
     )),
   })
   ctx.add(Command, {

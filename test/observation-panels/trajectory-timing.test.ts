@@ -77,7 +77,7 @@ function checkRecord(spec: CheckSpec) {
     scope: spec.scope,
     attemptID: spec.scope === "attempt" ? attemptID : null,
     state: "completed",
-    result: "passed",
+    result: spec.id === "reversed" ? "failed" : "passed",
     command: `bun test ${spec.id}`,
     startedAt: spec.startedAt,
     endedAt: spec.endedAt,
@@ -484,7 +484,8 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(trajectoryCSS).toContain("min-width: 0")
     expect(trajectoryCSS).toContain("overflow-wrap: anywhere")
     expect(trajectoryCSS).toContain("min-width: 24px")
-    expect(trajectoryCSS).toContain("@media (max-width: 380px)")
+    expect(trajectoryCSS).toContain("@container lazers-trajectory (max-width: 380px)")
+    expect(trajectoryCSS).not.toContain("@media (max-width")
     expect(trajectoryCSS).toContain(".lazers-trajectory-inspector")
     const style = browserDocument.createElement("style")
     style.textContent = trajectoryCSS ?? ""
@@ -499,12 +500,16 @@ test("registered Trajectory panel renders proportional check intervals and preci
       () =>
         container.querySelector(".lazers-trajectory-heading")?.textContent ===
           "Show recorded verification timing precisely" &&
-        container.querySelectorAll(".lazers-trajectory-check-row").length === 10 &&
-        statusCalls > 0,
+        container.querySelectorAll(".lazers-trajectory-check-row").length === 10,
+    )
+    // Opening reads the captured history once; no status read follows until a change arrives.
+    expect(statusCalls).toBe(0)
+    expect(container.querySelector(".lazers-trajectory-capture-stamp")?.textContent).toStartWith(
+      "Live · captured",
     )
     const markerStarting = (label: string) =>
-      [...container.querySelectorAll<HTMLButtonElement>(".lazers-trajectory-check-marker")].find(
-        (button) => button.getAttribute("aria-label")?.startsWith(label),
+      [...container.querySelectorAll<HTMLElement>(".lazers-trajectory-check-marker")].find(
+        (marker) => marker.getAttribute("aria-label")?.startsWith(label),
       )
     const checkRows = (name: string) =>
       [...container.querySelectorAll<HTMLButtonElement>(".lazers-trajectory-check-row")].filter(
@@ -512,14 +517,14 @@ test("registered Trajectory panel renders proportional check intervals and preci
       )
     const checkRow = (name: string) => checkRows(name)[0]
 
-    const intervalForPlan = (id: string) => {
-      const row = [
-        ...container.querySelectorAll<HTMLElement>(".lazers-trajectory-plan-checks"),
-      ].find((candidate) => candidate.textContent?.includes(`Plan check · ${id}`))!
-      return row.querySelector<HTMLElement>(".lazers-trajectory-check-interval")!
-    }
+    const intervalForPlan = (id: string) =>
+      [
+        ...container.querySelectorAll<HTMLElement>(
+          '.lazers-trajectory-checks .lazers-trajectory-check-interval[data-scope="plan"]',
+        ),
+      ].find((candidate) => candidate.dataset.checkId === id)
     for (const [id, [startedAt, endedAt]] of Object.entries(pairs)) {
-      const interval = intervalForPlan(id)
+      const interval = intervalForPlan(id)!
       expect(interval.hidden).toBe(false)
       expect(Number.parseFloat(interval.style.width)).toBeGreaterThan(0)
       expect(interval.getAttribute("aria-hidden")).toBe("true")
@@ -529,7 +534,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
       )
     }
     const attemptInterval = container.querySelector<HTMLElement>(
-      ".lazers-trajectory-attempt .lazers-trajectory-check-interval",
+      '.lazers-trajectory-checks .lazers-trajectory-check-interval[data-scope="attempt"]',
     )!
     expect(attemptInterval.hidden).toBe(false)
     expect(attemptInterval.dataset.point).toBe("false")
@@ -541,24 +546,60 @@ test("registered Trajectory panel renders proportional check intervals and preci
       ((pairs.models[1] - pairs.models[0]) / 2_400_000) * 100,
       12,
     )
-    const missingRow = [
-      ...container.querySelectorAll<HTMLElement>(".lazers-trajectory-plan-checks"),
-    ].find((candidate) => candidate.textContent?.includes("Plan check · missing"))!
-    expect(missingRow.querySelector(".lazers-trajectory-check-marker")).toBeNull()
-    expect(intervalForPlan("missing").hidden).toBe(true)
+    // A check with neither endpoint has no place on the time axis; it stays listed below.
+    expect(intervalForPlan("missing")).toBeUndefined()
+    expect(markerStarting("Plan check missing")).toBeUndefined()
     expect(container.querySelectorAll(".lazers-trajectory-check-row").length).toBe(10)
-    expect(intervalForPlan("equal").dataset.point).toBe("true")
-    expect(Number.parseFloat(intervalForPlan("equal").style.width)).toBe(0)
+    expect(intervalForPlan("equal")!.dataset.point).toBe("true")
+    expect(Number.parseFloat(intervalForPlan("equal")!.style.width)).toBe(0)
     for (const id of ["start-only", "end-only"]) {
-      expect(intervalForPlan(id).hidden).toBe(false)
-      expect(intervalForPlan(id).dataset.point).toBe("true")
-      expect(Number.parseFloat(intervalForPlan(id).style.width)).toBe(0)
+      expect(intervalForPlan(id)!.hidden).toBe(false)
+      expect(intervalForPlan(id)!.dataset.point).toBe("true")
+      expect(Number.parseFloat(intervalForPlan(id)!.style.width)).toBe(0)
     }
+    const rail = (id: string) => intervalForPlan(id)!
+    expect(rail("equal").classList.contains("lazers-trajectory-rail")).toBe(true)
+    expect(Number.parseFloat(rail("equal").style.width)).toBe(0)
+    expect([rail("equal").dataset.start, rail("equal").dataset.end]).toEqual([
+      "recorded",
+      "recorded",
+    ])
+    expect([rail("start-only").dataset.start, rail("start-only").dataset.end]).toEqual([
+      "recorded",
+      "missing",
+    ])
+    expect([rail("end-only").dataset.start, rail("end-only").dataset.end]).toEqual([
+      "missing",
+      "recorded",
+    ])
+    expect(Number.parseFloat(rail("reversed").style.width)).toBe(0)
+    expect(rail("reversed").dataset.end).toBe("missing")
+    expect(rail("reversed").dataset.failed).toBe("true")
+    expect(rail("equal").dataset.failed).toBe("false")
+    expect(container.querySelectorAll(".lazers-trajectory-check-endpoint")).toHaveLength(1)
+    expect(markerStarting("Plan check reversed")?.getAttribute("aria-label")).toContain("failed")
+    expect(
+      container.querySelector('[data-track="checks"] [role="listbox"]')?.getAttribute("style"),
+    ).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-plot svg")).toBeNull()
+    expect(trajectoryCSS).toContain("--trajectory-row")
+    expect(trajectoryCSS).toContain(".lazers-trajectory-rail")
+    expect(trajectoryCSS).not.toContain("--trajectory-check-rows")
+    // Every placed check is a keyboard option in one Checks track.
+    const checkTrack = container.querySelector<HTMLElement>(
+      '[data-track="checks"] [role="listbox"]',
+    )!
+    expect(checkTrack.getAttribute("aria-orientation")).toBe("horizontal")
+    expect(
+      [...checkTrack.querySelectorAll('[role="option"]')].filter(
+        (option) => option.getAttribute("tabindex") === "0",
+      ),
+    ).toHaveLength(1)
 
-    const planQualityMarker = markerStarting("Select plan check quality")!
+    const planQualityMarker = markerStarting("Plan check quality")!
     planQualityMarker.click()
     await until(
-      () => markerStarting("Select plan check quality")?.getAttribute("aria-pressed") === "true",
+      () => markerStarting("Plan check quality")?.getAttribute("aria-selected") === "true",
     )
     let qualityRows = checkRows("quality")
     expect(qualityRows).toHaveLength(2)
@@ -581,9 +622,10 @@ test("registered Trajectory panel renders proportional check intervals and preci
 
     qualityRows[1]!.click()
     await until(() => checkRows("quality")[1]?.getAttribute("aria-pressed") === "true")
-    const attemptQualityMarker = markerStarting("Select check quality")!
-    expect(attemptQualityMarker.getAttribute("aria-pressed")).toBe("true")
-    expect(markerStarting("Select plan check quality")?.getAttribute("aria-pressed")).toBe("false")
+    const attemptQualityMarker = markerStarting("Attempt 1 check quality")!
+    expect(attemptQualityMarker.getAttribute("aria-selected")).toBe("true")
+    expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
+    expect(attemptQualityMarker.getAttribute("tabindex")).toBe("0")
     expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).toBe(
       "Attempt 1 · bun test quality",
     )
@@ -605,9 +647,25 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(timing.textContent).toBe("Elapsed duration · 1.076 s (1076 ms)")
     expect(timing.getAttribute("aria-live")).toBe("polite")
 
+    const press = (key: string) =>
+      checkTrack.dispatchEvent(
+        new browserDocument.defaultView!.KeyboardEvent("keydown", { key, bubbles: true }),
+      )
+    const laneOrder = [...checkTrack.querySelectorAll<HTMLElement>('[role="option"]')]
+    press("Home")
+    await until(() => laneOrder[0]?.getAttribute("aria-selected") === "true")
+    expect(laneOrder[0]?.getAttribute("tabindex")).toBe("0")
+    const firstHeading = container.querySelector(".lazers-trajectory-inspector h3")?.textContent
+    press("ArrowRight")
+    await until(() => laneOrder[1]?.getAttribute("aria-selected") === "true")
+    expect(laneOrder[0]?.getAttribute("aria-selected")).toBe("false")
+    expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).not.toBe(
+      firstHeading,
+    )
+
     checkRows("quality")[0]!.click()
     await until(
-      () => markerStarting("Select plan check quality")?.getAttribute("aria-pressed") === "true",
+      () => markerStarting("Plan check quality")?.getAttribute("aria-selected") === "true",
     )
     checkRow("missing")!.click()
     await until(() => checkRow("missing")?.getAttribute("aria-pressed") === "true")
@@ -658,7 +716,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
     qualityRows = checkRows("quality")
     qualityRows[1]!.click()
     await until(
-      () => markerStarting("Select check quality")?.getAttribute("aria-pressed") === "true",
+      () => markerStarting("Attempt 1 check quality")?.getAttribute("aria-selected") === "true",
     )
     const historyDetails = container.querySelector<HTMLDetailsElement>(
       ".lazers-trajectory-activity",
@@ -669,7 +727,13 @@ test("registered Trajectory panel renders proportional check intervals and preci
         ".lazers-trajectory-activity-list .lazers-trajectory-event",
       ),
     ]
+    // Opening loads one captured page; the tracks show partial coverage until Load more.
     expect(capturedEvents()).toHaveLength(1)
+    expect(historyCalls).toEqual([undefined])
+    expect(container.querySelector(".lazers-trajectory-coverage-line")?.textContent).toContain(
+      "1 of 2 captured events loaded",
+    )
+    expect(container.querySelector(".lazers-trajectory-unloaded")).not.toBeNull()
     const initialHistoryTime = capturedEvents()[0]!.querySelector("time")?.textContent
     const initialCaptureMetadata = container.querySelector(
       ".lazers-trajectory-capture-note",
@@ -701,12 +765,15 @@ test("registered Trajectory panel renders proportional check intervals and preci
           .querySelector('.lazers-trajectory-metadata [role="status"]')
           ?.textContent?.includes("1126 ms") === true,
     )
-    expect(markerStarting("Select check quality")?.getAttribute("aria-pressed")).toBe("true")
-    expect(markerStarting("Select plan check quality")?.getAttribute("aria-pressed")).toBe("false")
+    expect(markerStarting("Attempt 1 check quality")?.getAttribute("aria-selected")).toBe("true")
+    expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
     expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).toBe(
       "Attempt 1 · bun test quality",
     )
     expect(capturedEvents()[0]?.querySelector("time")?.textContent).toBe(initialHistoryTime)
+    expect(container.querySelector(".lazers-trajectory-capture-stamp")?.textContent).toContain(
+      "Live · status",
+    )
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )
@@ -727,12 +794,15 @@ test("registered Trajectory panel renders proportional check intervals and preci
       "live status is not captured history",
     )
 
+    expect(capturedEvents()).toHaveLength(1)
+    expect(historyCalls).toEqual([undefined])
     const loadMore = [...historyDetails.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent?.includes("Load more activity"),
     )!
     loadMore.click()
     await until(() => capturedEvents().length === 2)
     expect(historyCalls).toEqual([undefined, "captured-page-two"])
+    expect(container.querySelector(".lazers-trajectory-unloaded")).toBeNull()
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )

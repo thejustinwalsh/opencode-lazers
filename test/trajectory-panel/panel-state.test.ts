@@ -19,6 +19,7 @@ import {
   detailedChecks,
   eventPayload,
   eventTitle,
+  settledHistory,
 } from "../../src/trajectory-panel/projection.ts"
 import type { ObservationRpc, TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
 import type { TaskTrajectoryTarget } from "../../src/trajectory-panel/panel-state.ts"
@@ -117,6 +118,18 @@ function transportFor(
     publish: (event: ObservationChange) => deliver?.(event),
     snapshotCount: () => snapshotCount,
   }
+}
+
+/**
+ * The shared fixture is a settled task (accepted plan, finished attempts), which the panel no
+ * longer polls on change events. Live-status mechanics run against a running plan instead.
+ */
+function makeLiveFixture() {
+  const fixture = makeFixture()
+  fixture.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='running',version=version+1").run(),
+  )
+  return fixture
 }
 
 async function waitFor(state: TrajectoryPanelState, predicate: () => boolean) {
@@ -486,7 +499,10 @@ test("a historical target loads over the broad snapshot cap through the real tra
 
     state.selectAttempt(firstAttemptID)
     const capturedAt = state.data.historyCapturedAt
+    // A settled history is not re-read by a change-driven refresh; an explicit one reads status.
     await state.refresh()
+    expect(statusCalls).toBe(0)
+    await state.refresh({ force: true })
     expect(snapshotCalls).toBe(0)
     expect(statusCalls).toBe(1)
     expect(state.data.taskID).toBe(taskID)
@@ -610,7 +626,7 @@ for (const duringCapture of [false, true])
   })
 
 test("a newer event after target capture causes one scoped status refresh", async () => {
-  const fixture = makeFixture()
+  const fixture = makeLiveFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   for (let index = 1; index <= 10; index++)
@@ -667,8 +683,143 @@ test("a newer event after target capture causes one scoped status refresh", asyn
   }
 })
 
-test("a newer event during target capture triggers one status follow-up and preserves selection", async () => {
+test("a settled target skips change-driven status reads; resnapshot and explicit refresh still read", async () => {
   const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport, publish } = transportFor(fixture, tracker)
+  const history = transport.history
+  const status = transport.status
+  let historyCalls = 0
+  let statusCalls = 0
+  transport.history = async (scope, id, signal, cursor) => {
+    historyCalls++
+    return history(scope, id, signal, cursor, 2)
+  }
+  transport.status = async (...args) => {
+    statusCalls++
+    return status(...args)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  const change = (sequence: number, resnapshotRequired: boolean) =>
+    publish({
+      projectID: "project",
+      sequence,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: resnapshotRequired ? "gap" : "native",
+      resnapshotRequired,
+    })
+  try {
+    state.connect(
+      "settled-target",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID: null,
+        selection: null,
+        target: targetFor(fixture, taskID, "LZ-1", "settled-target"),
+      },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    expect(settledHistory(state.data.report)).toBe(true)
+    state.selectAttempt(firstAttemptID)
+    const cursor = state.data.eventCursor
+    const captured = state.data.historyCapturedAt
+    const loaded = state.data.events.map((event) => event.id)
+    expect(cursor).not.toBeNull()
+    expect(loaded).toHaveLength(2)
+
+    change(11, false)
+    change(12, false)
+    for (let index = 0; index < 8; index++) await tick()
+    expect(statusCalls).toBe(0)
+    expect(state.data.statusReadAt).toBeNull()
+
+    change(13, true)
+    await waitFor(state, () => statusCalls === 1 && !state.data.loading)
+    await state.refresh({ force: true })
+    expect(statusCalls).toBe(2)
+    expect(state.data.statusReadAt).not.toBeNull()
+    expect(historyCalls).toBe(1)
+    expect(state.data.eventCursor).toBe(cursor)
+    expect(state.data.historyCapturedAt).toBe(captured)
+    expect(state.data.events.map((event) => event.id)).toEqual(loaded)
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+
+    // Partial coverage stays explicit: only a user request loads the next captured page.
+    await state.loadMoreActivity()
+    expect(historyCalls).toBe(2)
+    expect(state.data.events).toHaveLength(4)
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a settled snapshot-scoped task reads status again only when its recorded facts change", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport, publish, snapshotCount } = transportFor(fixture, tracker)
+  const status = transport.status
+  let statusCalls = 0
+  transport.status = async (...args) => {
+    statusCalls++
+    return status(...args)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  const change = (sequence: number) =>
+    publish({
+      projectID: "project",
+      sequence,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: "runner",
+      resnapshotRequired: false,
+    })
+  try {
+    state.connect(
+      "settled-snapshot",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    expect(settledHistory(state.data.report)).toBe(true)
+    const sequence = state.data.eventSequence ?? 0
+    const reads = snapshotCount()
+    change(sequence + 1)
+    await waitFor(state, () => snapshotCount() > reads && !state.data.loading)
+    for (let index = 0; index < 4; index++) await tick()
+    expect(statusCalls).toBe(0)
+
+    // A resumed plan changes the task's recorded node state.
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_plans SET state='running',version=version+1").run()
+      db.query("UPDATE runner_nodes SET state='running',version=version+1 WHERE task_id=?").run(
+        taskID,
+      )
+    })
+    change(sequence + 2)
+    await waitFor(state, () => statusCalls === 1 && !state.data.loading)
+    expect(settledHistory(state.data.report)).toBe(false)
+    expect(state.data.statusReadAt).not.toBeNull()
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a newer event during target capture triggers one status follow-up and preserves selection", async () => {
+  const fixture = makeLiveFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   for (let index = 1; index <= 10; index++)
@@ -977,12 +1128,18 @@ test("expired history continuations retain old pages and require an explicit rec
     const originalPayload = structuredClone(state.data.selectionEventSnapshot)
     expect(originalCursor).not.toBeNull()
     await state.loadMoreActivity()
+    expect(state.data.pageRecaptureRequired).toBe(true)
     expect(state.data.events).toEqual(originalEvents)
     expect(state.data.eventCursor).toBe(originalCursor)
     expect(state.data.historyError).toBe(
       "Captured history has expired. Recapture history to continue.",
     )
     expect(state.data.historyError).not.toContain("[object Object]")
+    // A dead cursor is never re-sent.
+    await state.loadMoreActivity()
+    expect(calls).toHaveLength(2)
+    expect(state.data.events).toEqual(originalEvents)
+    expect(state.data.eventCursor).toBe(originalCursor)
     expect(state.data.selection).toEqual(originalSelection)
     expect(state.data.selectionEventSnapshot).toEqual(originalPayload)
     expect(state.data.historyCapturedAt).toBe(originalCapturedAt)
@@ -1010,6 +1167,105 @@ test("expired history continuations retain old pages and require an explicit rec
     expect(state.data.stale).toBe(false)
     expect(state.data.selection).toEqual(originalSelection)
     expect(state.data.selectionEventSnapshot?.id).toBe(originalPayload?.id)
+    expect(state.data.pageRecaptureRequired).toBe(false)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a transient continuation failure keeps Load more retryable", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalHistory = transport.history
+  let failNext = true
+  const calls: Array<string | undefined> = []
+  transport.history = async (scope, id, signal, cursor, _limit) => {
+    calls.push(cursor)
+    if (cursor && failNext) {
+      failNext = false
+      throw new Error("network down")
+    }
+    return originalHistory(scope, id, signal, cursor, 2)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "transient-history",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.pageRecaptureRequired).toBe(false)
+    expect(state.data.historyError).toContain("network down")
+    expect(state.data.events).toHaveLength(2)
+    await state.loadMoreActivity()
+    expect(calls).toHaveLength(3)
+    expect(state.data.events.length).toBeGreaterThan(2)
+    expect(state.data.historyError).toBe("")
+    expect(state.data.stale).toBe(false)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a recapture and paging resume from the new capture; a failed recapture keeps paging blocked", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalHistory = transport.history
+  let failRecapture = false
+  let expireContinuations = true
+  const calls: Array<string | undefined> = []
+  transport.history = async (scope, id, signal, cursor, _limit) => {
+    calls.push(cursor)
+    if (cursor && expireContinuations)
+      throw {
+        type: "trajectory_history_unavailable",
+        message: "Trajectory history expired; recapture explicitly",
+        data: { reason: "expired", recovery: "recapture" },
+      }
+    if (!cursor && failRecapture) throw new Error("network down")
+    return originalHistory(scope, id, signal, cursor, 2)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "recapture-paging",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.pageRecaptureRequired).toBe(true)
+
+    failRecapture = true
+    await state.recaptureActivity()
+    expect(state.data.pageRecaptureRequired).toBe(true)
+    const callsAfterFailure = calls.length
+    await state.loadMoreActivity()
+    expect(calls).toHaveLength(callsAfterFailure)
+
+    failRecapture = false
+    expireContinuations = false
+    await state.recaptureActivity()
+    expect(state.data.pageRecaptureRequired).toBe(false)
+    const freshCursor = state.data.eventCursor!
+    await state.loadMoreActivity()
+    expect(calls.at(-1)).toBe(freshCursor)
+    expect(state.data.events.length).toBeGreaterThan(2)
+    expect(state.data.historyError).toBe("")
   } finally {
     state.close()
     fixture.close()
@@ -1302,7 +1558,7 @@ test("explicit projection gaps resnapshot even when their sequence is not newer"
 })
 
 test("live status and progress do not cancel page-size-two history or rewrite its event selection", async () => {
-  const fixture = makeFixture()
+  const fixture = makeLiveFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport } = transportFor(fixture, tracker)
@@ -1390,21 +1646,23 @@ test("live status and progress do not cancel page-size-two history or rewrite it
         "succeeded",
     )
     const completed = state.data.liveEvents.find((fact) => fact.id === `progress:${sequence}`)
-    expect(completed).toMatchObject({ status: "succeeded", result: "tool completed" })
+    // Native success events keep terminal evidence only (src/progress/recorder.ts): status and
+    // the completion boundary pass, raw tool output does not.
+    expect(completed).toMatchObject({
+      status: "succeeded",
+      timing: { endpoints: { completedAt: { at: 3010, source: "native-event" } } },
+    })
+    expect(completed).not.toHaveProperty("result")
     const selectedCompleted = selectedEventFor(state.data)
     expect(selectedCompleted).toMatchObject({ id: progressID, status: "succeeded" })
-    expect(eventPayload(selectedCompleted!)).toMatchObject({
-      status: "succeeded",
-      result: "tool completed",
-    })
+    expect(eventPayload(selectedCompleted!)).toMatchObject({ status: "succeeded" })
+    expect(eventPayload(selectedCompleted!)).not.toHaveProperty("result")
+    expect(JSON.stringify(state.data.liveEvents)).not.toContain("tool completed")
     expect(eventTitle(selectedCompleted!)).toBe("Worker tool · succeeded")
     expect(state.data.selectionEventSnapshot).toEqual(runningSnapshot)
     state.selectEvent(progressID)
-    expect(state.data.selectionEventSnapshot).toMatchObject({
-      id: progressID,
-      status: "succeeded",
-      result: "tool completed",
-    })
+    expect(state.data.selectionEventSnapshot).toMatchObject({ id: progressID, status: "succeeded" })
+    expect(state.data.selectionEventSnapshot).not.toHaveProperty("result")
     expect(selectedEventFor(state.data)).toMatchObject({ id: progressID, status: "succeeded" })
     expect(selectedEventFor({ ...state.data, liveEvents: [] })).toEqual(
       state.data.selectionEventSnapshot,
@@ -1549,7 +1807,7 @@ test("failed snapshot reads back off, recover without a new event, reset and can
 })
 
 test("a failed live status read recovers without recapturing selected historical activity", async () => {
-  const fixture = makeFixture()
+  const fixture = makeLiveFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport } = transportFor(fixture, tracker)

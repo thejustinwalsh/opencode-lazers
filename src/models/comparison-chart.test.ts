@@ -17,7 +17,9 @@ const vite = await createServer({
 })
 afterAll(() => vite.close())
 const {
+  comparisonChartEmptyText,
   comparisonChartHasPlottablePoints,
+  comparisonChartKeyboardOrder,
   comparisonChartOptions,
   comparisonChartPointText,
   comparisonChartReferenceText,
@@ -359,16 +361,17 @@ test("reference scalars, conditional envelopes and priced subtotals remain disti
   const subtotalTooltip = option.tooltip.formatter({
     data: { configurationID: subtotal.configurationID, markKind: "reference" },
   })
-  expect(scalarTooltip).toContain("scalar reference")
-  expect(scalarTooltip).toContain("OpenRouter model catalog")
-  expect(scalarTooltip).toContain("exact route openai / gpt-6 · high")
-  expect(scalarTooltip).toContain("≈$3.08e-12 / accepted task")
-  expect(rangeTooltip).toContain("conditional range")
-  expect(rangeTooltip).toContain("≈$1e-8–$3e-8 / accepted task")
-  expect(subtotalTooltip).toContain("priced portion")
-  expect(subtotalTooltip).toContain("total unknown")
-  expect(subtotalTooltip).toContain("4 accepted tasks")
-  expect(subtotalTooltip).toContain("OpenRouter")
+  // Tooltips are terse: model and cost only; provenance stays in Chart data and details.
+  expect(scalarTooltip).toBe("Reference reference:scalar · high · ≈$3.08e-12 / task")
+  expect(rangeTooltip).toContain("≈$1e-8–$3e-8 / task")
+  expect(rangeTooltip).not.toContain("conditional")
+  // A known subtotal is shown as a lower bound, never as a total.
+  expect(subtotalTooltip).toMatch(/ · ≥\$[^ ]+ \/ task$/)
+  for (const tooltip of [scalarTooltip, rangeTooltip, subtotalTooltip]) {
+    expect(tooltip).not.toContain("exact route")
+    expect(tooltip).not.toContain("accepted task")
+    expect(tooltip).not.toContain("OpenRouter")
+  }
   expect(comparisonChartReferenceText(scalar)).toContain("exact route openai / gpt-6 · high")
   expect(comparisonChartReferenceText(scalar)).toContain(
     "basis OpenRouter model catalog reference cost per accepted task",
@@ -480,8 +483,7 @@ test("selected point and every reference amount kind receive readable identity l
       const tooltip = option.tooltip.formatter({
         data: { configurationID, markKind: "canonical" },
       })
-      expect(tooltip).toContain("GPT-6 Luna · high")
-      expect(tooltip).toContain("exact route openai / gpt-6-luna · high")
+      expect(tooltip).toBe("GPT-6 Luna · high · ≈$0.1 / task")
       expect(observations.data[1]).toMatchObject({
         configurationID: nearbyPoint.configurationID,
         label: { show: true },
@@ -502,8 +504,93 @@ test("selected point and every reference amount kind receive readable identity l
     theme,
   )
   expect(absent.series.find((series) => series.id === "selected-identities")?.data).toEqual([])
-  expect(comparisonChartReferenceTooltip(references[1]!)).toContain("4 accepted tasks")
-  expect(comparisonChartReferenceTooltip(references[1]!)).toContain(
-    "OpenRouter model catalog conditional range",
+  expect(comparisonChartReferenceTooltip(references[1]!)).toMatch(/ · ≈\$[^ ]+–\$[^ ]+ \/ task$/)
+})
+
+test("empty chart copy names the missing data and never offers a zero cost", () => {
+  expect(comparisonChartEmptyText([], [])).toBe(
+    "No accepted tasks match these filters yet. Models appear here once a task is accepted and a price source covers the model.",
   )
+  const unmeasured = chartReference("empty:unmeasured", "exact", null)
+  const text = comparisonChartEmptyText([], [unmeasured])
+  expect(text).toContain("1 model has no token measurements")
+  expect(text).toContain("Chart data lists each model")
+  expect(text).not.toContain("$0")
+})
+
+test("keyboard order visits each plotted model once from fewest to most tokens", () => {
+  const references = [
+    chartReference("keyboard:scalar", "exact", 18_000),
+    chartReference("keyboard:range", "conditional", 6_000),
+    chartReference("keyboard:subtotal", "partial", 30_000),
+    chartReference("keyboard:unplotted", "exact", null),
+  ]
+  const order = comparisonChartKeyboardOrder(points, references)
+  expect(order.some((choice) => choice.configurationID === "keyboard:unplotted")).toBe(false)
+  expect(order.map((choice) => choice.tokens)).toEqual(
+    order.map((choice) => choice.tokens).toSorted((left, right) => left - right),
+  )
+  expect(new Set(order.map((choice) => choice.configurationID)).size).toBe(order.length)
+  for (const choice of order) expect(choice.label).toMatch(/ · [≈≥]\$[^ ]+ \/ task$/)
+})
+
+type FrontierLine = {
+  id: string
+  name: string
+  type: string
+  data: unknown[]
+  z?: number
+  silent: boolean
+  smooth: boolean
+  connectNulls: boolean
+  showSymbol: boolean
+  lineStyle: unknown
+  emphasis: unknown
+  blur: { lineStyle: { opacity: number } }
+  endLabel: { show: boolean } & Record<string, unknown>
+}
+
+test("observed frontier is a visible dashed accent line with an end label and deterministic ties", () => {
+  const tied = (id: string, tokens: number, cost: number): ComparisonChartPoint => ({
+    ...points[0]!,
+    configurationID: id,
+    tokensPerAcceptedTask: tokens,
+    currentMarketUSDPerAcceptedTask: cost,
+  })
+  const members = [
+    tied("b", 100, 0.5),
+    tied("a", 100, 0.5),
+    tied("c", 100, 0.4),
+    tied("d", 50, 0.9),
+  ]
+  const options = (ids: ComparisonChartPoint[]) =>
+    comparisonChartOptions(
+      { points: ids, frontierConfigurationIDs: ["a", "b", "c", "d", "ghost"] },
+      theme,
+    )
+  const forward = options(members).series[1] as unknown as FrontierLine
+  expect(forward.id).toBe("authoritative-frontier")
+  expect(forward.data).toEqual([
+    [50, 0.9],
+    [100, 0.4],
+    [100, 0.5],
+    [100, 0.5],
+  ])
+  expect((options(members.toReversed()).series[1] as unknown as FrontierLine).data).toEqual(
+    forward.data,
+  )
+  expect(forward.lineStyle).toEqual({ color: "native-accent", width: 2, type: "dashed" })
+  expect(forward.z).toBe(1)
+  expect(forward.silent).toBe(true)
+  expect(forward.emphasis).toEqual({ disabled: true })
+  expect(forward.blur.lineStyle.opacity).toBe(1)
+  expect(forward.endLabel).toMatchObject({
+    show: true,
+    formatter: "Observed frontier",
+    color: "native-muted",
+    fontFamily: "Native Sans",
+  })
+  const single = options([members[0]!]).series[1] as unknown as FrontierLine
+  expect(single.data).toEqual([])
+  expect(single.endLabel.show).toBe(false)
 })

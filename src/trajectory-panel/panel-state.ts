@@ -5,7 +5,9 @@ import {
   detailedChecks,
   parseProjectedSnapshot,
   parseTrajectoryReport,
+  settledHistory,
   taskChoices,
+  taskSnapshotFingerprint,
 } from "./projection.ts"
 import type {
   ProjectedSnapshot,
@@ -50,6 +52,10 @@ export type PanelData = {
   historyCapturedAt: number | null
   historyExpiresAt: number | null
   historyError: string
+  /** The captured cursor cannot advance; only a fresh capture can continue paging. */
+  pageRecaptureRequired: boolean
+  /** Panel clock when the last live status read was applied; null while showing only capture. */
+  statusReadAt: number | null
   recapturingHistory: boolean
   loading: boolean
   loadingActivity: boolean
@@ -86,6 +92,8 @@ const blank = (key = ""): PanelData => ({
   historyCapturedAt: null,
   historyExpiresAt: null,
   historyError: "",
+  pageRecaptureRequired: false,
+  statusReadAt: null,
   recapturingHistory: false,
   loading: true,
   loadingActivity: false,
@@ -159,6 +167,15 @@ function historyFailureMessage(error: unknown) {
   return "Captured history could not be loaded. Recapture history to try again."
 }
 
+/** Internal page validation failure: the captured cursor can no longer be trusted. */
+class PageRecaptureError extends Error {}
+
+function requiresRecapture(error: unknown) {
+  return (
+    error instanceof PageRecaptureError || record(error)?.type === "trajectory_history_unavailable"
+  )
+}
+
 function requestFailureMessage(error: unknown, fallback: string) {
   if (error instanceof Error) return safeText(error.message, privacyStats(), 400) || fallback
   return fallback
@@ -187,6 +204,9 @@ export class TrajectoryPanelState {
   private refreshing = false
   private pendingRefresh = false
   private pendingResnapshot = false
+  private pendingForce = false
+  /** Task snapshot facts when status or history was last read for the selected task. */
+  private readFingerprint: string | null = null
 
   constructor(
     private readonly changed: (data: PanelData) => void,
@@ -246,17 +266,23 @@ export class TrajectoryPanelState {
     this.cancelRetry = this.schedule(() => {
       if (generation !== this.generation) return
       this.cancelRetry = undefined
-      void this.refresh()
+      void this.refresh({ force: true })
     }, this.retryDelay)
     this.retryDelay = Math.min(30_000, this.retryDelay * 2)
   }
 
-  async refresh() {
+  /**
+   * Change events refresh live histories only. `force` is for reconnects, resnapshots,
+   * retries and explicit user refresh: it always reads status again.
+   */
+  async refresh(options: { force?: boolean } = {}) {
+    const force = options.force === true
     const transport = this.transport
     const scope = this.scope
     if (!transport || !scope || this.controller.signal.aborted || this.targetError) return
     if (this.refreshing) {
       this.pendingRefresh = true
+      this.pendingForce ||= force
       return
     }
     this.cancelRetry?.()
@@ -304,8 +330,10 @@ export class TrajectoryPanelState {
           this.update({ loading: false, stale: true, error: "" })
         } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
           await this.captureHistory(taskID, taskSignal, !taskChanged)
-        } else {
+        } else if (force || !settledHistory(this.data.report)) {
           await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
+        } else {
+          this.update({ loading: false, stale: Boolean(this.data.historyError), error: "" })
         }
         return
       }
@@ -349,6 +377,7 @@ export class TrajectoryPanelState {
           historyCapturedAt: null,
           historyExpiresAt: null,
           historyError: "",
+          pageRecaptureRequired: false,
           recapturingHistory: false,
           loading: false,
           loadingActivity: false,
@@ -363,8 +392,14 @@ export class TrajectoryPanelState {
         this.update({ loading: false, stale: true, error: "" })
       } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
         await this.captureHistory(taskID, taskSignal, !taskChanged)
-      } else {
+      } else if (
+        force ||
+        !settledHistory(this.data.report) ||
+        taskSnapshotFingerprint(snapshot, taskID) !== this.readFingerprint
+      ) {
         await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
+      } else {
+        this.update({ loading: false, stale: Boolean(this.data.historyError), error: "" })
       }
     } catch (error) {
       if (generation === this.generation && request === this.snapshotRequest && !signal.aborted) {
@@ -384,18 +419,22 @@ export class TrajectoryPanelState {
         if (!this.data.error) this.retryDelay = 1_000
         const pendingSequence = this.pendingSequence
         this.pendingSequence = 0
+        let pendingForce = this.pendingForce
+        this.pendingForce = false
         if (this.pendingResnapshot) {
           this.pendingResnapshot = false
+          pendingForce = true
           this.update({ eventSequence: null })
         }
         if (
           this.pendingRefresh ||
+          pendingForce ||
           (pendingSequence > 0 &&
             (typeof this.data.eventSequence !== "number" ||
               pendingSequence > this.data.eventSequence))
         ) {
           this.pendingRefresh = false
-          void this.refresh()
+          void this.refresh({ force: pendingForce })
         }
       }
     }
@@ -403,6 +442,7 @@ export class TrajectoryPanelState {
 
   private beginTask(taskID: string | null) {
     this.statusCursor = undefined
+    this.readFingerprint = null
     this.taskController.abort()
     this.taskController = new AbortController()
     this.taskRequest++
@@ -423,6 +463,8 @@ export class TrajectoryPanelState {
       historyCapturedAt: null,
       historyExpiresAt: null,
       historyError: "",
+      pageRecaptureRequired: false,
+      statusReadAt: null,
       recapturingHistory: false,
       loading: taskID !== null,
       loadingActivity: false,
@@ -510,6 +552,7 @@ export class TrajectoryPanelState {
         )
       }
       this.statusCursor = response.live?.cursor ?? undefined
+      this.readFingerprint = taskSnapshotFingerprint(this.data.snapshot, taskID)
       const tasks = this.data.tasks.map((task) =>
         task.taskID === taskID ? { ...task, status: statusReport.task.status } : task,
       )
@@ -517,6 +560,7 @@ export class TrajectoryPanelState {
         report,
         tasks,
         liveEvents,
+        statusReadAt: Date.now(),
         eventSequence: this.observeEventSequence(response.boundary.eventSequence),
         loading: false,
         stale: Boolean(this.data.historyError),
@@ -682,10 +726,12 @@ export class TrajectoryPanelState {
         task.taskID === taskID ? { ...task, status: report.task.status } : task,
       )
       this.statusCursor = undefined
+      this.readFingerprint = taskSnapshotFingerprint(this.data.snapshot, taskID)
       this.update({
         report,
         tasks,
         eventSequence: this.observeEventSequence(response.boundary.eventSequence),
+        statusReadAt: null,
         selection,
         selectionEventSnapshot,
         events,
@@ -696,6 +742,7 @@ export class TrajectoryPanelState {
         historyCapturedAt: response.capturedAt,
         historyExpiresAt: response.expiresAt,
         historyError: "",
+        pageRecaptureRequired: false,
         recapturingHistory: false,
         loading: false,
         loadingActivity: false,
@@ -856,6 +903,7 @@ export class TrajectoryPanelState {
       !scope ||
       !taskID ||
       !cursor ||
+      this.data.pageRecaptureRequired ||
       this.data.loadingActivity ||
       this.data.recapturingHistory
     )
@@ -877,6 +925,7 @@ export class TrajectoryPanelState {
     ) {
       this.update({
         stale: true,
+        pageRecaptureRequired: true,
         historyError: "Captured activity pages are inconsistent. Recapture history to continue.",
       })
       return
@@ -891,7 +940,12 @@ export class TrajectoryPanelState {
         signal.aborted
       )
         return
-      const report = parseTrajectoryReport(response)
+      let report: TrajectoryReport
+      try {
+        report = parseTrajectoryReport(response)
+      } catch (error) {
+        throw new PageRecaptureError(error instanceof Error ? error.message : "Unsupported page")
+      }
       if (
         response.projectID !== this.projectID ||
         !responseMatchesScope(response, scope) ||
@@ -899,7 +953,7 @@ export class TrajectoryPanelState {
         response.capturedAt !== capturedAt ||
         response.expiresAt !== expiresAt
       )
-        throw new Error("Activity page belongs to another project or task")
+        throw new PageRecaptureError("Activity page belongs to another project or task")
       const pageEvents = report.trajectory.events
       const pageIDs = pageEvents.map((event) => event.id)
       const offset = this.data.events.length
@@ -917,7 +971,7 @@ export class TrajectoryPanelState {
         Boolean(report.trajectory.nextCursor) !== hasExpectedNextPage ||
         report.trajectory.nextCursor === cursor
       )
-        throw new Error(
+        throw new PageRecaptureError(
           "Activity page order changed or cursor did not advance; recapture explicitly",
         )
       if (
@@ -925,13 +979,14 @@ export class TrajectoryPanelState {
         (response.eventIDs.length !== capturedEventIDs.length ||
           response.eventIDs.some((id, index) => id !== capturedEventIDs[index]))
       )
-        throw new Error("Activity page belongs to another captured event sequence")
+        throw new PageRecaptureError("Activity page belongs to another captured event sequence")
       const events = [...this.data.events, ...pageEvents]
       this.update({
         events,
         eventCursor: report.trajectory.nextCursor,
         totalEvents: report.trajectory.totalEvents,
         loadingActivity: false,
+        historyError: "",
       })
     } catch (error) {
       if (
@@ -939,12 +994,15 @@ export class TrajectoryPanelState {
         taskRequest === this.taskRequest &&
         request === this.activityRequest &&
         !signal.aborted
-      )
+      ) {
+        const pageRecaptureRequired = requiresRecapture(error)
         this.update({
           loadingActivity: false,
-          stale: true,
+          stale: this.data.stale || pageRecaptureRequired,
+          pageRecaptureRequired,
           historyError: historyFailureMessage(error),
         })
+      }
     }
   }
 
@@ -963,7 +1021,7 @@ export class TrajectoryPanelState {
             } else this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
           } else if (event.resnapshotRequired) {
             this.update({ eventSequence: null })
-            void this.refresh()
+            void this.refresh({ force: true })
           } else if (
             typeof this.data.eventSequence !== "number" ||
             event.sequence > this.data.eventSequence
@@ -976,7 +1034,8 @@ export class TrajectoryPanelState {
         this.update({ stale: true })
         await delay(signal)
         if (signal.aborted) return
-        if (transport.online()) void this.refresh()
+        // Events may have been missed while the stream was down.
+        if (transport.online()) void this.refresh({ force: true })
       }
     }
   }
@@ -996,6 +1055,8 @@ export class TrajectoryPanelState {
     this.retryDelay = 1_000
     this.pendingSequence = 0
     this.pendingResnapshot = false
+    this.pendingForce = false
+    this.readFingerprint = null
     this.transport = undefined
     this.scope = undefined
     this.projectDirectory = ""
