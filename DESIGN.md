@@ -51,19 +51,29 @@ colors, bundle a font, or maintain a separate light/dark palette.
 Changing theme or font updates an open panel without losing view state. Raster
 references establish composition and hierarchy, not literal colors or typography.
 
+Design each panel for side-panel width first. Review the full workflow at 360
+and 420 CSS pixels inside a wide OpenCode window. Use the panel's available width
+to adapt the layout. Keep primary content and controls readable at those widths.
+
 ## Tasks
 
 Reference: [tasks-focus-v2](design/task-panel/tasks-focus-v2.png) and the
 [visual contract](design/task-panel/visual-contract.md).
 
-Show a compact grouped list with status icons, readable task labels and copyable
-project references. Reveal sequential dependencies and parallel sibling groups
-using actual plan relationships; expandable groups keep the list readable. Expose
+Use Linear as the reference for a compact, expandable list. Give each task one
+row with a readable title and a copyable project reference. Use theme-aware
+colors, icons and short badges to distinguish running, blocked, scheduled and
+attention states at a glance. Show dependencies in the list tree. Group parallel
+siblings and place sequential work under its actual plan relationships. Expose
 state filters, including completed tasks, and access to historical trajectories.
 Make current work, attention and next eligible work easy to distinguish. Show
 actual priorities, dependencies and reservation reasons from the runtime;
 queued tasks inside running plans remain queued. Link executing work to its
 Radar session and trajectory. Keep acceptance, integration and cleanup distinct.
+Keep blocker reasons short in the row and put explanations in the inspector.
+Offer a contextual Run next action through the scheduler. A priority change
+moves eligible work ahead in the queue and keeps dependency and capacity checks
+in effect. Show the blocker when the task cannot start yet.
 
 The lower inspector leads with reference, title, waiting-on relationship and goal.
 **Done when stays visible as a checklist.** Details and Activity start collapsed.
@@ -80,6 +90,13 @@ durations, results, trajectory health and observed message/data flow. Default to
 LAZERS-managed sessions; optionally include others. Task ordering and the backlog
 belong in Tasks.
 
+Use [Agent Radar](https://awesome-copilot.github.com/extension/agent-radar/) as
+the reference for live relationships and activity. At side-panel widths, show
+the current scheduler state and active or waiting sessions in a vertical
+overview. Keep the parent and worker relationship readable. Use the inspector
+for the selected session's calls, file activity and observed flows. Keep the map
+and statechart in Diagnostics, and use Trajectory for historical timelines.
+
 Lead with compact live session activity above the existing horizontal inspector.
 Keep concurrent calls distinct. Show last meaningful activity and concrete wait
 or failure reasons; native busy state alone does not establish progress. Attribute
@@ -95,8 +112,11 @@ summaries/deltas and fetch selected historical detail separately.
 ## Trajectory
 
 Reference: [trajectory-review-v2](design/trajectory-panel/trajectory-review-v2.png).
-Lead with the task, real attempt timeline and model/effort. Inspect selected
-events/checks below the split; keep payloads and secondary activity collapsed.
+Lead with the task, selected attempt and its model/effort. Show a scrollable
+session timeline with separate tracks for tool calls, recorded file activity
+and checks. Align tracks on the same time axis so successes and failures show
+when they happened. Give each mark a keyboard-accessible selection and show its
+details below the split. Keep payloads and secondary activity collapsed.
 Show timing origin, units, coverage and gaps. Separate token categories and
 measurement scope; unknown cost remains unknown. Never expose private reasoning.
 
@@ -115,6 +135,10 @@ are illustrative; derive actual points and the frontier from compatible records.
 Help choose a capable model that completes the intended work efficiently, using
 our research, live catalogs/prices/benchmarks and historical task outcomes. The
 primary view is **comparison for a task class/persona**, not a config editor.
+Use persona as a comparison filter. Show public benchmark results and live
+market prices as a baseline. Add comparable trajectory observations where
+available so the user can see measured task outcomes and cost. Label the source
+of each comparison and keep unlike measures out of the same Pareto frontier.
 Use live APIs wherever the relevant data is available. Product costs, recorded
 market valuations, estimates and comparisons use an ordered price-source setting,
 independent of execution provider or subscription. Initially offer OpenRouter and
