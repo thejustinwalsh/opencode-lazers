@@ -30,7 +30,7 @@ write scope. Architect chooses the smallest coherent increments and dependencies
 
 ## Current source findings to verify before implementation
 
-Read the two parent handoffs, `README.md`, `AGENTS.md`, the current
+Read the two parent handoffs, [contributor contracts](../docs/reference/contributor-contracts.md), `README.md`, `AGENTS.md`, the current
 `.agents/docs/handoff.md`, `.agents/docs/task-authoring.md`, and pinned
 `.agents/docs/opencode-api.md`.
 
