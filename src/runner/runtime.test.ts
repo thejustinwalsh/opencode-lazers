@@ -94,6 +94,7 @@ function fixture(
     loseWorktreeResponse?: boolean | "empty-error"
     architectIdleWindowMs?: number
     architectPromptHook?: boolean
+    wakeScheduler?: () => void
     now?: () => number
     checkCommand?: string | ((name: string, path: string, root: string) => string)
     beforeCheck?: string
@@ -468,6 +469,7 @@ function fixture(
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     architectIdleWindowMs: options.architectIdleWindowMs,
     architectPromptHook: options.architectPromptHook,
+    wakeScheduler: options.wakeScheduler,
     ...(options.verificationTimeoutDefaults === undefined
       ? {}
       : { verificationTimeoutDefaults: options.verificationTimeoutDefaults }),
@@ -8351,7 +8353,8 @@ test("a shared node's first attempt starts at reviewed HEAD, not an older accept
 })
 
 test("an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes", async () => {
-  const f = fixture({ shared: true, wrongFirstB: true })
+  let wakes = 0
+  const f = fixture({ shared: true, wrongFirstB: true, wakeScheduler: () => wakes++ })
   const { predecessor, failed } = await failSecondSharedTask(f)
   const predecessorArtifact = predecessor.artifact
   const failedArtifact = failed.artifact
@@ -8375,6 +8378,7 @@ test("an explicit corrected shared baseline wins across reopen and excludes revi
   expect(correctedBaseline).not.toBe(failedArtifact)
   expect(git(f.root, ["show", `${correctedBaseline}:reviewer-fix.txt`])).toBe("approved")
 
+  const wakesBeforeRetry = wakes
   const retry = await f.runtime.command(
     {
       requestID: "retry-corrected-baseline",
@@ -8389,6 +8393,7 @@ test("an explicit corrected shared baseline wins across reopen and excludes revi
     "owner",
   )
   expect(retry).toMatchObject({ status: "retrying" })
+  expect(wakes).toBe(wakesBeforeRetry + 1)
   expect(
     f.store.latestTransition<{ attemptID: string; source: string; explicitBaseline: boolean }>(
       f.receipt.planID,
@@ -12789,7 +12794,8 @@ test("an explicit resume continues one process-replaced interrupted attempt with
   // Reopening the runtime preserves the running attempt and still cannot infer
   // that the retained native process is idle or authorize a continuation.
   await f.runtime.stop()
-  const replaced = reopenRuntime(f)
+  let wakes = 0
+  const replaced = reopenRuntime(f, undefined, () => wakes++)
   await replaced.runtime.tick()
   expect(f.store.plan(planID)?.state).toBe("blocked")
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
@@ -12805,6 +12811,7 @@ test("an explicit resume continues one process-replaced interrupted attempt with
   }
   const receipt = await replaced.runtime.command(resume, "owner")
   expect(await replaced.runtime.command(resume, "owner")).toEqual(receipt)
+  expect(wakes).toBe(1)
   const assigned = f.store.attempts(planID)[0]!
   expect(receipt).toMatchObject({ status: "resuming" })
   expect(assigned).toMatchObject({

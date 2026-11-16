@@ -7688,8 +7688,10 @@ export class TaskRuntime {
       (command.action === "reconcile" && result?.status === "reconciling") ||
       (command.action === "cancel" && result?.status === "cancelling") ||
       (command.action === "resume" &&
-        (result?.status === "verification-resumed" ||
+        (result?.status === "resuming" ||
+          result?.status === "verification-resumed" ||
           result?.status === "combined-verification-resumed")) ||
+      (command.action === "retry" && result?.status === "retrying") ||
       (command.action === "amend-scope" &&
         result?.status === "scope-amended" &&
         "instructionUpdates" in result &&
