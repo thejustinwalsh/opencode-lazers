@@ -47,6 +47,27 @@ problem, and proposed correction. Report relevant inherited problems separately
 from regressions. Use Auditor when the fix needs a broader refactor. Keep
 review and scores independent of dispatch and acceptance.
 
+## Type checking
+
+`go version -m` identifies the installed `tsc` as
+`github.com/microsoft/typescript-go/cmd/tsgo`, built with Go 1.26.4.
+Remove the optional dependency chain in the analyzer port. The five current
+scans do not need a TypeScript checker.
+
+If we add semantic checks, qualify Oxc's
+[`@ts-rs/wasm`](https://github.com/oxc-project/tsrs/blob/main/docs/STATUS.md)
+first. I ran `0.15.0-ts7.1.0-dev.20260929` in Bun with in-memory files.
+`tsc` accepted a valid assignment and returned `TS2322` for a string assigned
+to a number. The package declares no native dependencies. Its Bun entry
+runs on the calling thread, so use a dedicated worker in OpenCode. The
+smoke test did not exercise a full TypeScript project.
+
+Diagnostics do not implement [Fallow's semantic protocol](https://github.com/fallow-rs/fallow/blob/main/docs/type-aware-analysis.md).
+Before enabling type-aware Fallow rules, prove an in-process adapter can
+answer the required symbol queries and preserve unknown results. Compare the
+answers with the native backend in development only; keep that backend out of
+the distributed plugin.
+
 ## Implementation plan
 
 1. **Prove the analyzer port.** Pin the upstream Fallow source. Build a thin
