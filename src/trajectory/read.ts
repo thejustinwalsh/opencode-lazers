@@ -252,7 +252,11 @@ function safeSpec(task: TaskSpec, stats: PrivacyStats) {
     verification: proposal.verification.map((item) => ({
       id: safeText(item.id, stats, 120),
       command: safeText(item.command, stats),
-      timeoutMs: item.timeoutMs,
+      ...(item.timeoutMs === undefined ? {} : { timeoutMs: item.timeoutMs }),
+      ...(item.inactivityTimeoutMs === undefined
+        ? {}
+        : { inactivityTimeoutMs: item.inactivityTimeoutMs }),
+      ...(item.hardTimeoutMs === undefined ? {} : { hardTimeoutMs: item.hardTimeoutMs }),
     })),
   }
 }

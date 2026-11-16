@@ -500,8 +500,12 @@ test("registered Trajectory panel renders proportional check intervals and preci
       () =>
         container.querySelector(".lazers-trajectory-heading")?.textContent ===
           "Show recorded verification timing precisely" &&
-        container.querySelectorAll(".lazers-trajectory-check-row").length === 10 &&
-        statusCalls > 0,
+        container.querySelectorAll(".lazers-trajectory-check-row").length === 10,
+    )
+    // Opening reads the captured history once; no status read follows until a change arrives.
+    expect(statusCalls).toBe(0)
+    expect(container.querySelector(".lazers-trajectory-capture-stamp")?.textContent).toStartWith(
+      "Live · captured",
     )
     const markerStarting = (label: string) =>
       [...container.querySelectorAll<HTMLElement>(".lazers-trajectory-check-marker")].find(
@@ -695,9 +699,13 @@ test("registered Trajectory panel renders proportional check intervals and preci
         ".lazers-trajectory-activity-list .lazers-trajectory-event",
       ),
     ]
-    // The bounded captured history fills the tracks without a manual page request.
-    await until(() => capturedEvents().length === 2)
-    expect(historyCalls).toEqual([undefined, "captured-page-two"])
+    // Opening loads one captured page; the tracks show partial coverage until Load more.
+    expect(capturedEvents()).toHaveLength(1)
+    expect(historyCalls).toEqual([undefined])
+    expect(container.querySelector(".lazers-trajectory-coverage-line")?.textContent).toContain(
+      "1 of 2 captured events loaded",
+    )
+    expect(container.querySelector(".lazers-trajectory-unloaded")).not.toBeNull()
     const initialHistoryTime = capturedEvents()[0]!.querySelector("time")?.textContent
     const initialCaptureMetadata = container.querySelector(
       ".lazers-trajectory-capture-note",
@@ -735,6 +743,9 @@ test("registered Trajectory panel renders proportional check intervals and preci
       "Attempt 1 · bun test quality",
     )
     expect(capturedEvents()[0]?.querySelector("time")?.textContent).toBe(initialHistoryTime)
+    expect(container.querySelector(".lazers-trajectory-capture-stamp")?.textContent).toContain(
+      "Live · status",
+    )
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )
@@ -755,8 +766,15 @@ test("registered Trajectory panel renders proportional check intervals and preci
       "live status is not captured history",
     )
 
-    expect(capturedEvents()).toHaveLength(2)
+    expect(capturedEvents()).toHaveLength(1)
+    expect(historyCalls).toEqual([undefined])
+    const loadMore = [...historyDetails.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("Load more activity"),
+    )!
+    loadMore.click()
+    await until(() => capturedEvents().length === 2)
     expect(historyCalls).toEqual([undefined, "captured-page-two"])
+    expect(container.querySelector(".lazers-trajectory-unloaded")).toBeNull()
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )

@@ -55,9 +55,17 @@ test("native status deltas preserve mutable tool progress, retry delivery and sc
       { scope, taskID, live: { cursor: running.live!.cursor! } },
       tracker,
     )
-    expect(parseTrajectoryReport(completed).trajectory.events).toContainEqual(
-      expect.objectContaining({ id: progressID, status: "succeeded", result: "passed" }),
+    // Native success events keep terminal evidence only (src/progress/recorder.ts): the
+    // status and completion boundary are delivered; raw tool output is not.
+    const delivered = parseTrajectoryReport(completed).trajectory.events.find(
+      (event) => event.id === progressID,
     )
+    expect(delivered).toMatchObject({
+      status: "succeeded",
+      timing: { endpoints: { completedAt: { at: 3000, source: "native-event" } } },
+    })
+    expect(delivered).not.toHaveProperty("result")
+    expect(JSON.stringify(delivered)).not.toContain("passed")
     // Ignore the last response and retry the original baseline.
     const retry = await reads.trajectoryStatus({ scope, taskID, live: { cursor } }, tracker)
     expect(parseTrajectoryReport(retry).trajectory.events).toContainEqual(

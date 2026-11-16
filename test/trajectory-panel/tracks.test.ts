@@ -307,3 +307,9 @@ test("the panel schema keeps only allow-listed event fields and tolerates new sh
   expect(parsedEvent?.fileTargets).toBeUndefined()
   expect(JSON.stringify(eventPayload(parsedEvent!))).not.toContain("private chain of thought")
 })
+
+test("settled-history plan states mirror the runner's terminal plan states", async () => {
+  const { terminalPlanStates } = await import("../../src/runner/plan-control.ts")
+  const { SETTLED_PLAN_STATES } = await import("../../src/trajectory-panel/projection.ts")
+  expect([...SETTLED_PLAN_STATES].sort()).toEqual([...terminalPlanStates].sort())
+})

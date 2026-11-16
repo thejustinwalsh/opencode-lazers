@@ -62,6 +62,57 @@ function candidate(
   }
 }
 
+/** A model with one matched public benchmark row and an OpenRouter list price. */
+function benchmarked(base: ReturnType<typeof candidate>) {
+  const slug = `${base.identity.providerID}/${base.identity.modelID}`
+  return {
+    ...base,
+    correspondence: { status: "exact", basis: "exact-published-catalog-id", evidence },
+    externalModel: {
+      kind: "openrouter-model",
+      id: slug,
+      canonicalSlug: slug,
+      name: base.native.name,
+      contextLength: 128_000,
+      architecture: {
+        modality: null,
+        inputModalities: null,
+        outputModalities: null,
+        tokenizer: null,
+        instructType: null,
+      },
+      supportedParameters: null,
+      prices: {
+        unit: "USD per token",
+        tiers: [
+          {
+            minPromptTokens: null,
+            utcStart: null,
+            utcEnd: null,
+            prompt: "0.0000004",
+            completion: "0.0000016",
+            inputCacheRead: "0.0000001",
+            inputCacheWrite: null,
+          },
+        ],
+      },
+    },
+    benchmarkCorrespondence: { status: "exact", basis: "published-canonical-slug", evidence },
+    externalBenchmark: {
+      kind: "openrouter-benchmark",
+      source: "artificial-analysis",
+      taskType: "coding",
+      modelPermaslug: slug,
+      displayName: `${base.native.name} (high)`,
+      effort: null,
+      codingIndex: 42.5,
+      agenticIndex: 38,
+      intelligenceIndex: null,
+      prices: null,
+    },
+  }
+}
+
 export function comparison(projectID: string, revision: number, cursor?: string) {
   if (cursor)
     return ModelComparisonOutputSchema.parse({
@@ -96,7 +147,7 @@ export function comparison(projectID: string, revision: number, cursor?: string)
       : candidate("anthropic", "claude-4", "Claude 4 project B")
   const secondCandidate =
     projectID === PROJECT_A
-      ? candidate("openai", "gpt-6-mini", "GPT-6 Mini")
+      ? benchmarked(candidate("openai", "gpt-6-mini", "GPT-6 Mini"))
       : candidate("anthropic", "claude-4-sonnet", "Claude 4 Sonnet project B")
 
   return ModelComparisonOutputSchema.parse({

@@ -10,6 +10,7 @@ import type {
   ComparisonChartReference,
   ComparisonChartTheme,
 } from "../../src/models/comparison-chart.tsx"
+import type { BenchmarkBaselinePoint } from "../../src/models/benchmark-baseline.ts"
 import { ModelDecisionReferenceEstimateSchema } from "../../src/models/reference-estimate.ts"
 import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-estimate.ts"
 
@@ -1500,4 +1501,119 @@ test("a chart with nothing plottable says what is missing on screen instead of d
   )
   const choice = container.querySelector(`[data-configuration-id="${unpriced.configurationID}"]`)
   expect(choice?.textContent).toContain("not plotted, no token measurement")
+})
+
+function benchmarkPoint(
+  id: string,
+  label: string,
+  codingIndex: number,
+  input: number,
+  output: number,
+  observed: boolean,
+): BenchmarkBaselinePoint {
+  return {
+    id,
+    route: { providerID: "openai", modelID: id },
+    label,
+    benchmark: {
+      displayName: `${label} (high)`,
+      modelPermaslug: `openai/${id}`,
+      codingIndex,
+      agenticIndex: null,
+      intelligenceIndex: null,
+    },
+    price: {
+      source: "openrouter",
+      input,
+      output,
+      cacheRead: null,
+      cacheWrite: null,
+      blended: (input * 3 + output) / 4,
+      appliesBelowTokens: null,
+      retrievedAt: "2026-11-15T10:00:00.000Z",
+    },
+    observed,
+  }
+}
+
+test("benchmark baseline renders its own units, labels the source and travels by keyboard", async () => {
+  const container = dom.document.createElement("main")
+  dom.document.body.append(container)
+  const cheap = benchmarkPoint("cheap", "Mini", 30, 0.1, 0.4, false)
+  const strong = benchmarkPoint("strong", "Max", 61.25, 2, 8, true)
+  strong.benchmark.displayName = "Max (High)"
+  const selections: string[] = []
+  const [selected, setSelected] = browser.createSignal<string | null>(null)
+  const dispose = browser.render(
+    () =>
+      browser.createComponent(browser.BenchmarkChart, {
+        points: [cheap, strong],
+        gaps: [
+          {
+            id: "unpriced",
+            route: { providerID: "openai", modelID: "unpriced" },
+            label: "Unpriced",
+            benchmark: { ...strong.benchmark, modelPermaslug: "openai/unpriced" },
+            price: null,
+            reason: "no-price" as const,
+          },
+        ],
+        get selectedID() {
+          return selected()
+        },
+        observedLabel: "Observed for UI",
+        emptyText: "No benchmark",
+        theme,
+        onSelect: (id: string) => {
+          selections.push(id)
+          setSelected(id)
+        },
+      }),
+    container as unknown as HTMLElement,
+  )
+  cleanups.push(dispose)
+  await until(() => container.querySelector("[xmlns='http://www.w3.org/2000/svg']") !== null)
+  const host = container.querySelector("[role='img']") as unknown as HTMLElement
+  const chart = browser.getComparisonChartInstance(host)!
+  const option = chart.getOption() as unknown as RenderedOption & {
+    series: Array<{ id?: string; data?: Array<{ value?: number[]; configurationID?: string }> }>
+  }
+  expect(option.yAxis?.[0]?.name).toBe("Coding Index")
+  expect(option.xAxis?.[0]?.name).toContain("USD / 1M tokens")
+  // One series, no frontier line: unlike measures never share the observed Pareto frontier.
+  expect(option.series.map((series) => series.id)).toEqual(["benchmark-baseline"])
+  const values = option.series[0]!.data!.map((datum) => (datum as { value: number[] }).value)
+  expect(values.map(([price]) => price)).toEqual([expect.closeTo(0.175), expect.closeTo(3.5)])
+  expect(values.map(([, codingIndex]) => codingIndex)).toEqual([30, 61.25])
+
+  const legend = container.querySelector("[aria-label='Chart mark legend']")!
+  expect(legend.textContent).toContain("Observed for UI")
+  expect(legend.textContent).toContain("Benchmark only")
+  const rows = [...container.querySelectorAll(".lazers-models-comparison-chart-data button")]
+  expect(rows.map((row) => row.textContent)).toEqual([
+    "Mini · Coding 30 · $0.175 / 1M tokens · OpenRouter",
+    "Max · Coding 61.3 · $3.5 / 1M tokens · OpenRouter",
+    "Unpriced · not plotted, no price",
+  ])
+  expect(rows[1]!.getAttribute("aria-label")).toContain("for Max (High)")
+  expect(rows[1]!.getAttribute("aria-label")).toContain("$2 input and $8 output per 1M tokens")
+  expect(rows[1]!.getAttribute("aria-label")).toContain("3 input : 1 output tokens")
+  expect(rows[1]!.getAttribute("aria-label")).not.toMatch(/per (accepted )?task/)
+
+  const plot = host.parentElement!
+  const announcement = () => container.querySelector("[aria-live='polite']")?.textContent ?? ""
+  const press = (key: string) =>
+    plot.dispatchEvent(new dom.KeyboardEvent("keydown", { key, bubbles: true }) as never)
+  plot.focus()
+  press("ArrowRight")
+  expect(selections).toEqual(["cheap"])
+  expect(announcement()).toBe("Mini · Coding 30 · $0.175 / 1M tokens")
+  press("End")
+  expect(selections).toEqual(["cheap", "strong"])
+  await until(() =>
+    Array.from(host.children).some(
+      (child) =>
+        child.tagName === "DIV" && child.textContent === "Max · Coding 61.3 · $3.5 / 1M tokens",
+    ),
+  )
 })

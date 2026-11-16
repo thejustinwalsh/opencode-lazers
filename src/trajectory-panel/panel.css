@@ -221,6 +221,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.lazers-trajectory-capture-stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  min-height: 24px;
+  margin: -4px 0 4px;
+  color: var(--text-weak);
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+}
 .lazers-trajectory-zoom {
   flex: none;
   gap: 0;

@@ -18,6 +18,7 @@ import {
   eventTitle,
   eventPayload,
   isActiveAttemptState,
+  settledHistory,
   sourceReferences,
 } from "./projection.ts"
 import type {
@@ -72,9 +73,6 @@ const initial: typeof View.Type = {
   selectedRecordID: "",
   split: 56,
 }
-
-/** Captured pages loaded automatically for the tracks; later pages stay explicit. */
-const AUTO_LOAD_EVENTS = 1_000
 
 export const trajectoryStores = {
   trajectoryView: Store.session(Schema.Struct({ projects: Schema.Record(Schema.String, View) }), {
@@ -209,6 +207,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     historyCapturedAt: null,
     historyExpiresAt: null,
     historyError: "",
+    statusReadAt: null,
     recapturingHistory: false,
     loading: true,
     loadingActivity: false,
@@ -355,9 +354,13 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     },
   )
 
+  // Connecting the view already reads; only a reconnect forces a status read.
+  let wasConnected = props.session.server.connected
   createEffect(() => {
+    const connected = props.session.server.connected
     const value = current()
-    if (value && props.session.server.connected) void state.refresh()
+    if (value && connected && !wasConnected) void state.refresh({ force: true })
+    wasConnected = connected
   })
 
   createEffect(() => {
@@ -366,21 +369,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     if (!value || !target || target.requestID === handledTargetRequestID) return
     handledTargetRequestID = target.requestID
     state.selectTarget(target)
-  })
-
-  // Fill the tracks from the bounded captured history; later pages stay explicit.
-  createEffect(() => {
-    const value = visible()
-    if (
-      !value?.report ||
-      !value.eventCursor ||
-      value.loadingActivity ||
-      value.recapturingHistory ||
-      value.historyError ||
-      value.events.length >= AUTO_LOAD_EVENTS
-    )
-      return
-    void state.loadMoreActivity()
   })
 
   const currentData = () => visible()
@@ -408,6 +396,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     return value ? [...value.events, ...value.liveEvents] : []
   })
   const capturedAt = () => currentData()?.historyCapturedAt ?? null
+  const settled = () => settledHistory(report())
   const timeline = createMemo(() => {
     const value = currentData()
     if (!value?.taskID || (!value.snapshot && !value.report)) return undefined
@@ -865,7 +854,11 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
           <Show when={currentData()?.error}>
             <div class="lazers-trajectory-error" role="alert">
               <span>{currentData()?.error}</span>
-              <Ui.Button variant="ghost" size="small" onClick={() => void state.refresh()}>
+              <Ui.Button
+                variant="ghost"
+                size="small"
+                onClick={() => void state.refresh({ force: true })}
+              >
                 Retry status
               </Ui.Button>
             </div>
@@ -1026,6 +1019,30 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 </button>
               </span>
             </div>
+            <Show when={capturedAt() !== null}>
+              <div
+                class="lazers-trajectory-capture-stamp"
+                title={`History captured ${new Date(capturedAt()!).toLocaleString(undefined, { timeZoneName: "short" })}${currentData()?.statusReadAt ? ` · live status read ${new Date(currentData()!.statusReadAt!).toLocaleString(undefined, { timeZoneName: "short" })}` : ""}`}
+              >
+                <span>
+                  {settled()
+                    ? `As of capture ${new Date(capturedAt()!).toLocaleTimeString()}`
+                    : currentData()?.statusReadAt
+                      ? `Live · status ${new Date(currentData()!.statusReadAt!).toLocaleTimeString()} · captured ${new Date(capturedAt()!).toLocaleTimeString()}`
+                      : `Live · captured ${new Date(capturedAt()!).toLocaleTimeString()}`}
+                </span>
+                <Show when={settled()}>
+                  <Ui.Button
+                    variant="ghost"
+                    size="small"
+                    busy={currentData()?.loading}
+                    onClick={() => void state.refresh({ force: true })}
+                  >
+                    Refresh
+                  </Ui.Button>
+                </Show>
+              </div>
+            </Show>
             <Show
               when={timeline()?.origin !== null && timeline()?.origin !== undefined}
               fallback={<div class="lazers-trajectory-note">No attempts have been recorded.</div>}
@@ -1374,19 +1391,14 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     {currentData()?.events.length.toLocaleString()} of{" "}
                     {currentData()?.totalEvents.toLocaleString()} captured events loaded
                   </span>
-                  <Show
-                    when={(currentData()?.events.length ?? 0) >= AUTO_LOAD_EVENTS}
-                    fallback={<Ui.Loader size="small" />}
+                  <Ui.Button
+                    variant="ghost"
+                    size="small"
+                    busy={currentData()?.loadingActivity || currentData()?.recapturingHistory}
+                    onClick={() => void state.loadMoreActivity()}
                   >
-                    <Ui.Button
-                      variant="ghost"
-                      size="small"
-                      busy={currentData()?.loadingActivity}
-                      onClick={() => void state.loadMoreActivity()}
-                    >
-                      Load more
-                    </Ui.Button>
-                  </Show>
+                    Load more
+                  </Ui.Button>
                 </Show>
               </div>
             </Show>

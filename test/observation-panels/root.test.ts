@@ -2889,6 +2889,66 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toMatchObject({ filters: { persona: "systems", taskKind: "testing" } })
     taskKindFilter.click()
     menuItemWithText(containerA, "Maintenance")?.click()
+    // Fewer than two observed models: the public benchmark leads until the user chooses.
+    await until(
+      () => containerA.querySelector(".lazers-models-chart h3")?.textContent === "Public benchmark",
+    )
+    const modeButton = (mode: "observed" | "benchmark") =>
+      containerA.querySelector<HTMLButtonElement>(`[data-compare-mode="${mode}"]`)!
+    expect(modeButton("benchmark").getAttribute("aria-checked")).toBe("true")
+    expect(modeButton("benchmark").closest("[role=radiogroup]")?.getAttribute("aria-label")).toBe(
+      "Comparison basis",
+    )
+    expect(containerA.querySelector(".lazers-models-chart-caption")?.textContent).toContain(
+      "Artificial Analysis Coding Index",
+    )
+    expect(containerA.querySelector(".lazers-models-chart-caption")?.textContent).toContain(
+      "OpenRouter list price per 1M tokens, 3:1 input:output",
+    )
+    expect(containerA.querySelector(".lazers-models-decision-status")).toBeNull()
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.compareMode ?? null).toBeNull()
+    const miniRow = containerA.querySelector<HTMLButtonElement>(
+      '.lazers-models-benchmark-chart [data-configuration-id="6:openai|10:gpt-6-mini|-"]',
+    )!
+    expect(miniRow.textContent).toBe("GPT-6 Mini · Coding 42.5 · $0.7 / 1M tokens · OpenRouter")
+    expect(miniRow.getAttribute("aria-label")).toContain("exact route openai / gpt-6-mini")
+    expect(containerA.querySelector(".lazers-models-benchmark-coverage")?.textContent).toContain(
+      "1 plotted",
+    )
+    miniRow.click()
+    await until(
+      () =>
+        containerA.querySelector(".lazers-models-inspector-compare h2")?.textContent ===
+        "GPT-6 Mini",
+    )
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(
+      "6:openai|10:gpt-6-mini|-",
+    )
+    const benchmarkSummary = containerA.querySelector(
+      ".lazers-models-inspector-compare .lazers-models-market-summary",
+    )!
+    expect(benchmarkSummary.textContent).toBe("Coding 42.5 · $0.7 / 1M tokens (3:1) · OpenRouter")
+    const benchmarkDetails = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-benchmark-details",
+    )!
+    // Shares the saved details preference with the observed inspector.
+    expect(benchmarkDetails.open).toBe(
+      modelStore.snapshot().projects[DIRECTORY_A]?.evidenceOpen ?? false,
+    )
+    expect(benchmarkDetails.textContent).toContain("does not state the effort")
+    expect(benchmarkDetails.textContent).toContain("input $0.4 · output $1.6 · cache read $0.1")
+    expect(benchmarkDetails.textContent).toContain("A list price is not a task cost")
+    const benchmarkActions = containerA.querySelector(
+      ".lazers-models-inspector-compare .lazers-models-selection-actions",
+    )!
+    const benchmarkAssign = buttonWithText(benchmarkActions, "Assign to…")!
+    await until(() => !benchmarkAssign.disabled)
+    benchmarkAssign.click()
+    expect(menuItemWithText(benchmarkActions, "UI")).toBeDefined()
+    benchmarkAssign.click()
+    expect(containerA.querySelector(".lazers-models-selection-tools")).toBeNull()
+    modeButton("observed").click()
+    await until(() => modelStore.snapshot().projects[DIRECTORY_A]?.compareMode === "observed")
     await until(
       () =>
         containerA.querySelector(".lazers-models-chart h3")?.textContent === "Catalog estimates" &&
