@@ -9,6 +9,7 @@ if (!tag || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag) || !d
   throw Error("Usage: bun run package:release vMAJOR.MINOR.PATCH OUTPUT_DIRECTORY")
 const output = resolve(destination)
 const version = tag.slice(1)
+const runtimeScripts = ["src/context/processor.ts", "src/context/repo-worker.ts"]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
   const process = Bun.spawn(command, { cwd, stdio: ["ignore", "inherit", "inherit"] })
@@ -47,13 +48,13 @@ try {
     "-e",
     `const manifest = await Bun.file("node_modules/opencode-lazers/package.json").json()
      if (manifest.version !== ${JSON.stringify(version)}) throw Error("Installed version mismatch")
-     for (const entry of Object.values(manifest.exports)) {
+     for (const entry of [...Object.values(manifest.exports), ...${JSON.stringify(runtimeScripts)}]) {
        if (!(await Bun.file("node_modules/opencode-lazers/" + entry).exists()))
-         throw Error("Missing plugin export: " + entry)
+         throw Error("Missing installed plugin entry: " + entry)
      }
      const { default: plugin } = await import("opencode-lazers")
      if (!plugin) throw Error("Missing server plugin")
-     console.log("Installed ${filename}: all exports present; server import passed")`,
+     console.log("Installed ${filename}: exports and runtime scripts present; server import passed")`,
   )
   await cp(join(staging, filename), join(output, filename), { force: false, errorOnExist: true })
 } finally {

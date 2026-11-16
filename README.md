@@ -412,14 +412,29 @@ cd "$HOME/.local/share/opencode/lazers-plugin"
 bun add --ignore-scripts /absolute/path/to/opencode-lazers-VERSION.tgz
 ```
 
-In your global OpenCode `opencode.json(c)`, add the installed package to
-`plugins`. Replace an existing LAZERS source checkout entry if present.
+In your global OpenCode `opencode.json(c)`, replace any existing LAZERS entry in
+`plugins` with the installed package path below; do not append a second LAZERS
+entry. If an older source checkout is registered in project configuration, or a
+legacy loader is still auto-discovered under `.opencode/plugins/lazers`, remove
+or replace that LAZERS registration too. Keep unrelated plugin entries and
+settings unchanged.
 
 ```json
 {
-  "plugins": ["/absolute/path/to/.local/share/opencode/lazers-plugin/node_modules/opencode-lazers"]
+  "plugins": ["{env:HOME}/.local/share/opencode/lazers-plugin/node_modules/opencode-lazers"]
 }
 ```
+
+To upgrade, download the newer versioned release archive and run the install
+command again from the same dedicated directory, using the new archive path:
+
+```sh
+cd "$HOME/.local/share/opencode/lazers-plugin"
+bun add --ignore-scripts /absolute/path/to/opencode-lazers-NEW-VERSION.tgz
+```
+
+Keep the single LAZERS configuration entry pointed at that installed package;
+do not add another entry for the newer archive.
 
 Restart OpenCode Desktop and its background service. The same package loads
 Architect, the server tools, and the Desktop panels. It needs no plugin build
