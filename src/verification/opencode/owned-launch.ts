@@ -31,6 +31,14 @@ export type ProcessIdentity = {
   command: string
 }
 
+export class ServiceNotStartedError extends Error {}
+
+export type SpawnedService = {
+  pid: number
+  command: string
+  spawnedAt: number
+}
+
 export type ProcessObservation =
   | { kind: "authoritatively-absent" }
   | { kind: "live"; identity: ProcessIdentity }
@@ -113,6 +121,8 @@ export type OwnedLaunchManifest = {
     serviceRegistrationPath: string
   }
   protocolHandlerBaseline: string | null
+  serviceStartupPending?: boolean
+  pendingService?: SpawnedService
   service?: {
     process: ProcessIdentity
     id: string
@@ -327,7 +337,12 @@ export type LaunchDependencies = {
     existingRegistration: boolean
     effectiveEnvironment: ReadonlyMap<string, string>
   }>
-  startService(input: { root: string; cliPath: string; version: string }): Promise<ProcessIdentity>
+  startService(input: {
+    root: string
+    cliPath: string
+    version: string
+    onSpawn(process: SpawnedService): Promise<void>
+  }): Promise<ProcessIdentity>
   waitForService(input: { root: string; process: ProcessIdentity; version: string }): Promise<{
     registration: ServiceRegistration
     health: { pid: number; version: string }
@@ -412,13 +427,21 @@ export async function startOwnedDesktop(
       ],
     }
     await dependencies.writeManifest(manifest)
+    manifest.serviceStartupPending = true
+    await dependencies.writeManifest(manifest)
 
     try {
       const serviceProcess = await dependencies.startService({
         root: manifest.root,
         cliPath: manifest.target.cliPath,
         version: manifest.target.cliVersion,
+        onSpawn: async (process) => {
+          manifest!.pendingService = process
+          await dependencies.writeManifest(manifest!)
+        },
       })
+      delete manifest.pendingService
+      delete manifest.serviceStartupPending
       manifest.service = {
         process: serviceProcess,
         id: "",
@@ -491,6 +514,18 @@ export async function startOwnedDesktop(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       cleanupAttempted = true
+      if (
+        error instanceof ServiceNotStartedError &&
+        manifest.pendingService === undefined &&
+        manifest.service === undefined
+      ) {
+        delete manifest.serviceStartupPending
+        try {
+          await dependencies.writeManifest(manifest)
+        } catch {
+          // The pre-spawn classification is conclusive; cleanup still owns the root.
+        }
+      }
       const cleanup = await dependencies.cleanup(manifest).catch((cleanupError: unknown) => ({
         clean: false,
         reason: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
@@ -498,8 +533,17 @@ export async function startOwnedDesktop(
       if (!cleanup.clean) {
         manifest.status = "cleanup-blocked"
         manifest.cleanupIssue = cleanup.reason ?? "Owned launch cleanup is incomplete"
-        await dependencies.writeManifest(manifest)
+        let persistenceIssue: string | undefined
+        try {
+          await dependencies.writeManifest(manifest)
+        } catch (persistError) {
+          persistenceIssue =
+            persistError instanceof Error ? persistError.message : String(persistError)
+        }
         await dependencies.retainBlockedReservation?.(manifest.ownerID)
+        if (persistenceIssue !== undefined) {
+          manifest.cleanupIssue = `${manifest.cleanupIssue}; cleanup state could not be persisted: ${persistenceIssue}`
+        }
         throw new Error(
           `${message}; owned cleanup remains retryable at ${manifest.root}: ${manifest.cleanupIssue}`,
           { cause: error },
@@ -530,6 +574,7 @@ export async function startOwnedDesktop(
 export type CleanupDependencies = Pick<LaunchDependencies, "writeManifest"> & {
   verifyAndStopDesktop(process: ProcessIdentity): Promise<OwnedCleanupOutcome>
   verifyAndStopService(manifest: OwnedLaunchManifest): Promise<OwnedCleanupOutcome>
+  observeProcess?(pid: number): ProcessObservation
   protocolHandler(): Promise<string | null>
   restoreProtocolHandler?(handlerID: string): Promise<void>
   effectiveRegistrationPath?(root: string): Promise<string>
@@ -556,6 +601,32 @@ export async function cleanupOwnedDesktop(
     return block(
       "Native interaction delivery is pending or ambiguous; resolve the same request without replay before cleanup",
     )
+  }
+  if (
+    manifest.serviceStartupPending === true &&
+    manifest.pendingService === undefined &&
+    manifest.service === undefined
+  ) {
+    return block(
+      "Service startup began without durable process ownership; preserve the root for reconciliation",
+    )
+  }
+  if (manifest.pendingService !== undefined) {
+    const spawned = manifest.pendingService
+    if (!isSpawnedService(spawned)) {
+      return block("Unconfirmed service ownership is malformed; preserve the owned root")
+    }
+    const observed = (dependencies.observeProcess ?? observeProcess)(spawned.pid)
+    if (observed.kind !== "authoritatively-absent") {
+      return block(
+        observed.kind === "live"
+          ? "Spawned service identity was not confirmed and its PID is still live; preserve the root"
+          : "Spawned service exit cannot be observed; preserve the root and retry cleanup",
+      )
+    }
+    delete manifest.pendingService
+    delete manifest.serviceStartupPending
+    await dependencies.writeManifest(manifest)
   }
   if (manifest.desktop !== undefined) {
     const desktopResult = await dependencies.verifyAndStopDesktop(manifest.desktop)
@@ -797,19 +868,37 @@ export class SystemLaunchDependencies implements LaunchDependencies {
     root: string
     cliPath: string
     version: string
+    onSpawn(process: SpawnedService): Promise<void>
   }): Promise<ProcessIdentity> {
     const paths = runtimePaths(input.root)
-    const port = await reserveLoopbackPort()
-    const env = isolatedEnvironment(input.root)
-    const child = spawn(input.cliPath, [...SERVICE_ARGS, "--port", String(port)], {
-      cwd: paths.root,
-      detached: true,
-      env,
-      stdio: "ignore",
+    const port = await reserveLoopbackPort().catch((error: unknown) => {
+      throw new ServiceNotStartedError("Owned service port preparation failed before spawn", {
+        cause: error,
+      })
     })
-    child.unref()
-    if (child.pid === undefined) throw new Error("Owned service child did not receive a PID")
+    const env = isolatedEnvironment(input.root)
+    let child: ReturnType<typeof spawn>
     try {
+      child = spawn(input.cliPath, [...SERVICE_ARGS, "--port", String(port)], {
+        cwd: paths.root,
+        detached: true,
+        env,
+        stdio: "ignore",
+      })
+    } catch (error) {
+      throw new ServiceNotStartedError("Owned service could not spawn", { cause: error })
+    }
+    child.once("error", () => {})
+    child.unref()
+    if (child.pid === undefined) {
+      throw new ServiceNotStartedError("Owned service child did not receive a PID")
+    }
+    try {
+      await input.onSpawn({
+        pid: child.pid,
+        command: [input.cliPath, ...SERVICE_ARGS, "--port", String(port)].join(" "),
+        spawnedAt: Date.now(),
+      })
       return await waitForProcessIdentity(child.pid, input.cliPath, [
         ...SERVICE_ARGS,
         "--port",
@@ -825,7 +914,13 @@ export class SystemLaunchDependencies implements LaunchDependencies {
         identity.command.includes(String(port))
       ) {
         process.kill(child.pid, "SIGTERM")
-        await waitUntilGone({ ...identity, command: identity.command }, SHUTDOWN_TIMEOUT_MS)
+        const exit = await waitUntilGone(identity, SHUTDOWN_TIMEOUT_MS)
+        if (exit.kind !== "observed-exited") {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}; spawned service cleanup: ${exit.kind}`,
+            { cause: error },
+          )
+        }
       }
       throw error
     }
@@ -2129,6 +2224,21 @@ async function writeManifestFile(path: string, manifest: OwnedLaunchManifest): P
   await rename(temporary, path)
 }
 
+function isSpawnedService(value: unknown): value is SpawnedService {
+  if (typeof value !== "object" || value === null) return false
+  const spawned = value as Record<string, unknown>
+  return (
+    typeof spawned.pid === "number" &&
+    Number.isSafeInteger(spawned.pid) &&
+    spawned.pid > 0 &&
+    typeof spawned.command === "string" &&
+    spawned.command.length > 0 &&
+    typeof spawned.spawnedAt === "number" &&
+    Number.isSafeInteger(spawned.spawnedAt) &&
+    spawned.spawnedAt > 0
+  )
+}
+
 async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
   const parsed = JSON.parse(await readFile(path, "utf8")) as OwnedLaunchManifest
   if (
@@ -2142,6 +2252,15 @@ async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
     !(typeof parsed.protocolHandlerBaseline === "string" || parsed.protocolHandlerBaseline === null)
   ) {
     throw new Error("Owned launch manifest is malformed")
+  }
+  if (
+    parsed.serviceStartupPending !== undefined &&
+    typeof parsed.serviceStartupPending !== "boolean"
+  ) {
+    throw new Error("Owned launch service startup intent is malformed")
+  }
+  if (parsed.pendingService !== undefined && !isSpawnedService(parsed.pendingService)) {
+    throw new Error("Owned launch unconfirmed service ownership is malformed")
   }
   if (parsed.nativeInteraction !== undefined) {
     const interaction = parsed.nativeInteraction as Record<string, unknown>
