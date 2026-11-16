@@ -1,9 +1,11 @@
 # Auditor tools for restricted OpenCode installs
 
-Use the existing Auditor role and audit history. Replace the platform Fallow
-add-on with a WebAssembly build if the build can produce the required reports
-inside the OpenCode service. Keep mutation execution separate from static
-analysis. A WebAssembly module does not supply a Bun, Node, or Vitest runner.
+Use the existing Auditor role and audit history. Ship the analyzer as a
+WebAssembly module inside the OpenCode service. Vendor or fork Fallow if an
+upstream release does not support the required analyses. The plugin must not
+install or execute native tool binaries or load native add-ons. Do not ship a
+native fallback. Separate mutation generation from test execution: a
+WebAssembly module does not supply a Bun, Node, or Vitest runner.
 
 ## What ships today
 
@@ -61,16 +63,23 @@ review and scores independent of dispatch and acceptance.
    filesystem and process dependencies. Prefer a library binding with explicit
    host inputs over a WASI command with broad filesystem access.
 2. **Package the proven analyzer.** Put the built module and license in the
-   release archive and replace the native Fallow dependency. Keep the current
+   release archive and replace the native Fallow dependency. Remove the unused
+   similar-code and type-aware companion dependency chains. If a future
+   requirement needs either companion, implement and qualify it in WebAssembly
+   first. Keep the current
    tool names, assignment context, request replay and SQLite history. In CI,
    inspect the archive and a clean install for executable or library formats,
    including transitive `.node` files. Qualify the installed package on the
    target policy. Do not silently download or load a native fallback.
-3. **Add test audit reports.** Use the project test runner where device policy
-   permits it. Capture a passing baseline, scoped coverage, and selected
-   mutation outcomes. Store them with the task and attempt through the existing
-   report history. Import reports from approved CI when the device cannot run
-   the test runner. Report the difference between an untested path, a surviving
+3. **Add test audit reports.** Use a WebAssembly mutator and an in-process,
+   isolated test adapter, without child processes. Prove one supported test
+   fixture with a passing baseline, measured coverage, and known killed,
+   surviving and uncovered mutants. Establish runner compatibility before
+   accepting a project's real tests. Run only project checks that the user
+   authorized. Store the outcomes with the task and attempt through the
+   existing report history. If a suite needs an unsupported runner feature,
+   report that limitation; imported reports remain a separate evidence source
+   and cannot qualify the local runner. Report the difference between an untested path, a surviving
    mutant, and a run that did not execute. Review duplicate test candidates
    against actual assertions, fixtures, and distinct behavior before removing
    a test. Do not add a score threshold to task acceptance.
@@ -82,15 +91,16 @@ coverage and mutation reports. Confirm the selected build supports the runner
 and report format before exposing those options in LAZERS.
 
 The [Fallow mutation crate](https://docs.rs/fallow-mutation/latest/fallow_mutation/)
-can generate and instrument mutations from source without I/O. A WebAssembly
-build of that crate would still need a host test runner to get kill results.
-Test that port only if approved runner integration or CI import cannot meet
-the need. Keep static test reach, measured coverage, and mutation results
-separately labeled. A failed baseline cannot establish a mutation score.
+can generate and instrument mutations from source without I/O. Use it to
+prototype the mutator and add the test adapter as a separate step. Keep static
+test reach, measured coverage, and mutation results separately labeled. A
+failed baseline cannot establish a mutation score.
 
 Review OpenCode's host commands separately from dependency packaging.
 `src/runner/artifacts.ts` uses Git and runs configured checks through a shell.
 `src/runner/retained-verification/isolation.ts` uses Bun to install candidate
 dependencies. `src/verification/opencode/owned-launch.ts` launches OpenCode for
-isolated product verification. The analyzer change cannot make an unapproved
-host executable available.
+isolated product verification. These call sites fall outside the Auditor
+migration and still need review before we can claim that the whole plugin runs
+without spawning native tools. Replace or disable each incompatible path in
+the restricted install. Do not hide a native process behind a bridge.
