@@ -4644,7 +4644,7 @@ async function driveWithTaskSourceLandings(
   runtime: TaskRuntime = f.runtime,
 ) {
   for (let iteration = 0; iteration < count; iteration++) {
-    await runtime.tick()
+    await settleVerification(runtime)
     const plan = f.store.plan(planID)
     if (plan?.state === "accepted") break
     if (!plan || plan.state !== "running") continue
@@ -16386,6 +16386,9 @@ test("dispatch pause lets active work finish and unpause admits the next task", 
   expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+  await integrateTaskSource(f, f.receipt.planID, first.task_id)
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   await f.runtime.command(
     {
       requestID: "unpause",
