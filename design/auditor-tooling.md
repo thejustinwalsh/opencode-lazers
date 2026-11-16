@@ -2,10 +2,8 @@
 
 Use the existing Auditor role and audit history. Ship the analyzer as a
 WebAssembly module inside the OpenCode service. Vendor or fork Fallow if an
-upstream release does not support the required analyses. The plugin must not
-install or execute native tool binaries or load native add-ons. Do not ship a
-native fallback. Separate mutation generation from test execution: a
-WebAssembly module does not supply a Bun, Node, or Vitest runner.
+upstream release does not support the required analyses. Distribute only the
+WebAssembly Fallow build. The project test runner executes the checks.
 
 ## What ships today
 
@@ -92,19 +90,15 @@ the distributed plugin.
    inspect the archive and a clean install for executable or library formats,
    including transitive `.node` files. Qualify the installed package on the
    target policy. Do not silently download or load a native fallback.
-3. **Add test audit reports.** Keep each project's existing test suite and
-   runner. Use a WebAssembly mutator to supply instrumented source to that
-   runner through a supported in-process entry point without spawning tools.
-   Prove discovery, configuration, setup, mocks, assertions, and coverage on
-   an existing suite before advertising the runner as supported. Do not
-   rewrite project tests into a LAZERS test format. Run only checks the user
-   authorized. Store the outcomes with the task and attempt through the
-   existing report history. If a runner cannot execute in-process, report
-   that limitation; imported reports remain a separate evidence source and
-   cannot qualify the local runner. Distinguish an untested path, a surviving
-   mutant, and a run that did not execute. Review duplicate test candidates
-   against actual assertions, fixtures, and distinct behavior before removing
-   a test. Do not add a score threshold to task acceptance.
+3. **Add test audit reports.** Let the WebAssembly mutator generate instrumented
+   source. Give it a small host API for reading and writing files within a
+   disposable audit worktree. Run the project's configured test command through
+   existing verification against that worktree. Check a passing baseline before
+   attributing failures to mutants. Preserve setup, configuration, and mocks
+   from the project. Restore instrumented files between trials and clean up the
+   worktree after success, failure, or cancellation. Record completed and
+   incomplete trials in the audit history. Qualify the flow on an existing
+   project suite before advertising support.
 
 [Fallow mutation](https://fallow.tools/docs/cli/mutation/) runs project tests
 against changes to source. Upstream supports Vitest, the Node test runner, and
@@ -115,7 +109,7 @@ and report format before exposing those options in LAZERS.
 
 The [Fallow mutation crate](https://docs.rs/fallow-mutation/latest/fallow_mutation/)
 can generate and instrument mutations from source without I/O. Use it to
-prototype the mutator and add the test adapter as a separate step. Keep static
+generate mutations for the worktree host API. Keep static
 test reach, measured coverage, and mutation results separately labeled. A
 failed baseline cannot establish a mutation score.
 
@@ -135,19 +129,12 @@ failed baseline cannot establish a mutation score.
   two killed by the assertion, two survived, and four in a function the test
   did not call. This proves a small custom fixture. It does not qualify the
   existing project test suite.
-- Importing `bun:test` in a Worker started by a normal Bun application did not
-  enable test registration. The `test()` call reported
-  `Cannot use test outside of the test runner`. Do not describe that Worker
-  adapter as compatible with ordinary Bun tests.
-- Bun rejected `node:test.run({ isolation: "none" })` with
-  `NotImplementedError`. No existing Vitest, Node, or Bun suite is qualified
-  for the restricted path yet.
-
-Review OpenCode's host commands separately from dependency packaging.
-`src/runner/artifacts.ts` uses Git and runs configured checks through a shell.
-`src/runner/retained-verification/isolation.ts` uses Bun to install candidate
-dependencies. `src/verification/opencode/owned-launch.ts` launches OpenCode for
-isolated product verification. These call sites fall outside the Auditor
-migration and still need review before we can claim that the whole plugin runs
-without spawning native tools. Replace or disable each incompatible path in
-the restricted install. Do not hide a native process behind a bridge.
+- A disposable copy of `src/panel-error.ts` and its existing test proved
+  disk-based instrumentation. The original and instrumented baselines each
+  passed both tests using `bun test`. A preload activated Fallow's
+  return-value mutant, and the same two assertions failed on the mutated
+  return value. The production integration still needs to run this flow
+  through the verification service in an audit worktree.
+  Project verification uses the configured host commands. The WebAssembly Fallow
+  package supplies analysis and mutations. The existing verification path runs
+  the project's tests and collects their results.
