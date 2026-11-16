@@ -905,6 +905,13 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     key(row(ids.forkRoot)!, "ArrowLeft")
     await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "false")
     expect(row(ids.branchA)).toBeNull()
+    const branchAttention = container.querySelector<HTMLButtonElement>(
+      `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.branchA}"]`,
+    )
+    expect(branchAttention).not.toBeNull()
+    branchAttention!.click()
+    await until(() => row(ids.branchA)?.getAttribute("aria-selected") === "true")
+    expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
     row(ids.unknown)!.click()
     await until(() => row(ids.unknown)?.getAttribute("aria-selected") === "true")
     // Scroll restoration applies once the reselected detail mounts; scroll only after that.
