@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { Schema } from "effect"
 import { captureTrajectoryHistory, inspectTrajectory, inspectTrajectoryStatus } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
@@ -258,6 +259,25 @@ test("trajectory specifications preserve legacy policy references and omit absen
     } finally {
       fixture.close()
     }
+  }
+})
+
+test("trajectory with default check timing is encodable by the native JSON RPC boundary", async () => {
+  const fixture = makeFixture({ defaultVerificationTiming: true })
+  try {
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    expect(report.task.specification.verification).toEqual([
+      { id: "attempt-check", command: "bun test" },
+    ])
+    expect(Schema.is(Schema.Json)(report)).toBe(true)
+  } finally {
+    fixture.close()
   }
 })
 

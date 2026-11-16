@@ -146,7 +146,9 @@ export function makeMessages(which: "failed" | "accepted") {
   ]
 }
 
-export function makeFixture(options: { withoutPolicy?: boolean } = {}) {
+export function makeFixture(
+  options: { withoutPolicy?: boolean; defaultVerificationTiming?: boolean } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), "lazers-trajectory-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), directory)
   const store = new RunnerStore(repository)
@@ -163,7 +165,13 @@ export function makeFixture(options: { withoutPolicy?: boolean } = {}) {
       evidence: [{ kind: "verification", verificationID: "attempt-check" }],
     },
   ]
-  proposal.verification = [{ id: "attempt-check", command: "bun test", timeoutMs: 60000 }]
+  proposal.verification = [
+    {
+      id: "attempt-check",
+      command: "bun test",
+      ...(options.defaultVerificationTiming ? {} : { timeoutMs: 60000 }),
+    },
+  ]
   const task = repository.insert({
     schemaVersion: 1,
     id: taskID,
