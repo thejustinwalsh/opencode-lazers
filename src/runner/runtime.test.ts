@@ -6155,6 +6155,13 @@ test("an unavailable native inbox cannot be reported as successful supersession"
     f.inbox.get("owner")?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID),
   ).toHaveLength(1)
 
+  await f.runtime.tick()
+  await f.runtime.tick()
+  const repeated = (f.store.detail(f.receipt.planID).delivery as typeof rows).find(
+    (row) => JSON.parse(row.payload).status === "task-accepted",
+  )!
+  expect(repeated.receipt).toBe(older.receipt)
+
   f.host.outcomeInbox = listInbox
   await f.runtime.tick()
   rows = f.store.detail(f.receipt.planID).delivery as typeof rows
