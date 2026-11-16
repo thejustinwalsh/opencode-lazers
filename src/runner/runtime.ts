@@ -7010,6 +7010,10 @@ export class TaskRuntime {
       (command.action === "integrated" && result?.status === "cleanup-requested") ||
       (command.action === "reconcile" && result?.status === "reconciling") ||
       (command.action === "cancel" && result?.status === "cancelling") ||
+      (command.action === "amend-scope" &&
+        result?.status === "scope-amended" &&
+        "instructionUpdates" in result &&
+        (result.instructionUpdates?.length ?? 0) > 0) ||
       (command.action === "retained-repair" && result?.status === "retained-repair-requested") ||
       (command.action === "quarantine-source" && result?.status === "quarantining-source")
     )

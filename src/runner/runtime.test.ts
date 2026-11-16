@@ -2474,7 +2474,7 @@ test("scope amendment requires this plan's unfinished task and explicit additive
   expect(f.store.plan(planID)!.version).toBe(1)
 })
 
-test("Architect run, reconcile, and cancel wake the scheduler before periodic reconciliation", async () => {
+test("Architect run, scope amendment, reconcile, and cancel wake the scheduler before periodic reconciliation", async () => {
   const f = fixture({ delayed: true })
   let drained = Promise.withResolvers<void>()
   const registration = sharedScheduler.register(
@@ -2493,7 +2493,7 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
   const runtime = new TaskRuntime(f.store, f.host, "project", undefined, {
     wakeScheduler: () => {
       wakes++
-      expect(f.store.plan(f.receipt.planID)?.state).toBe(wakes === 3 ? "cancelling" : "running")
+      expect(f.store.plan(f.receipt.planID)?.state).toBe(wakes === 4 ? "cancelling" : "running")
       registration.request()
     },
   })
@@ -2512,6 +2512,21 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
     const attempts = f.store.attempts(f.receipt.planID)
     expect(attempts).toHaveLength(1)
     expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+    drained = Promise.withResolvers<void>()
+    const amendment = {
+      ...command,
+      requestID: "architect-scope",
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "amend-scope",
+      taskID: attempts[0]!.task_id,
+      scopeAdditions: ["dependency.test.ts"],
+      reason: "Keep the dependency test in the same attempt.",
+    }
+    const amended = await tool.execute(amendment)
+    expect(await tool.execute(amendment)).toEqual(amended)
+    await drained.promise
+    expect(wakes).toBe(2)
+    expect(f.instructions.get(attempts[0]!.session_id)?.size).toBe(1)
     f.completeWorker(attempts[0]!.session_id)
     drained = Promise.withResolvers<void>()
     await tool.execute({
@@ -2521,7 +2536,7 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
       action: "reconcile",
     })
     await drained.promise
-    expect(wakes).toBe(2)
+    expect(wakes).toBe(3)
     expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
       id: attempts[0]!.id,
       state: "verifying",
@@ -2533,7 +2548,7 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
       expectedVersion: f.store.plan(f.receipt.planID)!.version,
       action: "cancel",
     })
-    expect(wakes).toBe(3)
+    expect(wakes).toBe(4)
     await drained.promise
   } finally {
     await registration.dispose()
