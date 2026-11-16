@@ -16,6 +16,8 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import type { Accessor, JSX } from "solid-js"
 import type { TaskProposal } from "../task.ts"
 import { Tasks } from "./contract.ts"
+import { TasksScheduling } from "./scheduling-contract.ts"
+import type { SchedulingScope } from "./scheduling-contract.ts"
 import { Observability } from "../observability/contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import { taskChanges } from "./events.ts"
@@ -118,6 +120,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     tasks: [],
     currentActivity: {},
     activityError: "",
+    schedulingError: "",
     linkedDetails: {},
     loading: true,
     stale: false,
@@ -242,6 +245,10 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               },
               { location: { directory: value.directory }, signal },
             ),
+          scheduling: (input, signal) =>
+            value.client
+              .rpc(TasksScheduling)
+              .read(input, { location: { directory: value.directory }, signal }),
           currentActivity: (taskIDs, signal) =>
             rpc().currentActivity(
               { sessionID: value.session, scope: view.scope, taskIDs },
@@ -260,6 +267,10 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
           limit: 30,
         },
         view.selectedID ?? undefined,
+        {
+          kind: view.scope,
+          sessionID: value.session,
+        } satisfies SchedulingScope,
       )
       onCleanup(() => state.close())
     },
@@ -297,10 +308,43 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     buildExecutionList({
       topology: visible()?.topology,
       tasks: visible()?.tasks ?? [],
+      scheduling: visible()?.scheduling,
       search: prefs().search,
       revealTaskIDs: revealedTaskIDs(),
     }),
   )
+  const schedulingPlans = () => visible()?.scheduling?.plans ?? []
+  const schedulingNode = (taskID: string) =>
+    schedulingPlans()
+      .flatMap((plan) => plan.nodes)
+      .find((node) => node.taskID === taskID)
+  const schedulingPlan = (planID: string | undefined) =>
+    planID ? schedulingPlans().find((plan) => plan.planID === planID) : undefined
+  const nowRows = () =>
+    rowValues().filter((row) => visible()?.currentActivity[row.taskID]?.foreground === "active")
+  const attentionRows = () =>
+    rowValues().filter((row) => {
+      if (visible()?.currentActivity[row.taskID]?.foreground === "active") return false
+      return (
+        row.waiting ||
+        visible()?.currentActivity[row.taskID]?.waiting === true ||
+        row.scheduling?.decision === "waiting"
+      )
+    })
+  const nextStatus = () => {
+    const value = visible()
+    if (!value?.scheduling || value.schedulingError || value.stale)
+      return { status: "unknown" as const }
+    return value.scheduling.next
+  }
+  const nextCandidate = () => {
+    const next = nextStatus()
+    return next.status === "known" ? next.candidate : undefined
+  }
+  const openPrerequisitePlan = (planID: string) => {
+    const firstTask = schedulingPlan(planID)?.nodes.toSorted((a, b) => a.ordinal - b.ordinal)[0]
+    if (firstTask) selectTask(firstTask.taskID)
+  }
   const forkPreferenceKey = (planID: string, forkID: string) => {
     const value = current()
     return JSON.stringify([
@@ -455,7 +499,12 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       plan?.state !== "cancelled" &&
       (node.state === "blocked" || (plan?.state === "blocked" && !terminal)),
     )
-    return Boolean(selectedActivity()?.waiting || topologyWaiting || execution?.state === "blocked")
+    return Boolean(
+      selectedActivity()?.waiting ||
+      topologyWaiting ||
+      execution?.state === "blocked" ||
+      (taskID ? schedulingNode(taskID)?.decision === "waiting" : false),
+    )
   }
   const selectedHoldReasons = () => {
     const activity = selectedActivity()
@@ -469,6 +518,10 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
           node?.reason,
           plan?.reason,
           execution?.reason,
+          taskID && schedulingNode(taskID)?.decision === "waiting"
+            ? schedulingNode(taskID)?.reason
+            : null,
+          schedulingPlan(execution?.planID)?.reason,
         ])
       : []
   }
@@ -480,7 +533,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         : (selectedRecordedState() ?? "Unknown")
   const selectedRelations = () => {
     const taskID = visible()?.selectedID
-    const waitingOn = selectedExecution()?.waitingOn ?? []
+    const waitSet = new Set([
+      ...(selectedExecution()?.waitingOn ?? []),
+      ...(taskID ? (schedulingNode(taskID)?.waitingOn ?? []) : []),
+    ])
+    const waitingOn = [...waitSet]
     const waitingSet = new Set(waitingOn)
     const prerequisites = new Set<string>()
     const successors = new Set<string>()
@@ -493,7 +550,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     return {
       prerequisites: [...prerequisites],
       waitingOn,
+      waitingOnPlans: taskID ? (schedulingNode(taskID)?.waitingOnPlans ?? []) : [],
       successors: [...successors],
+      planPrerequisites: schedulingPlan(selectedExecution()?.planID)?.afterPlans ?? [],
     }
   }
   const relationLabel = (taskID: string) =>
@@ -518,6 +577,21 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       >
         <Ui.Markdown text={taskMarkdownLink(reference(), selectedTask()!.provenance.projectID)} />
       </Show>
+    )
+  }
+  const renderPlanRelation = (planID: string) => {
+    const plan = schedulingPlan(planID)
+    const title = plan?.title ?? `Plan ${planID.slice(0, 8)}`
+    return (
+      <button
+        type="button"
+        class="lazers-tasks-dependency-ref"
+        aria-label={`Open prerequisite ${title}`}
+        title={planID}
+        onClick={() => openPrerequisitePlan(planID)}
+      >
+        {title}
+      </button>
     )
   }
   createEffect(() => {
@@ -576,13 +650,17 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
   ): JSX.Element => {
     const expanded = () => Boolean(group && taskRow().fork && forkExpanded(group(), taskRow()))
     const currentActivity = () => visible()?.currentActivity[taskRow().taskID]
-    const waiting = () => taskRow().waiting || currentActivity()?.waiting === true
+    const waiting = () =>
+      taskRow().waiting ||
+      currentActivity()?.waiting === true ||
+      taskRow().scheduling?.decision === "waiting"
     const showWorker = () =>
       Boolean(currentActivity()?.attemptID || currentActivity()?.workerSessionID)
     const holdReasons = () =>
       distinctReasons([
         taskRow().waiting ? taskRow().holdReason : null,
         currentActivity()?.waiting ? currentActivity()?.holdReason : null,
+        taskRow().scheduling?.decision === "waiting" ? taskRow().scheduling?.reason : null,
       ])
     const showCurrent = () =>
       ["running", "verifying"].includes(taskRow().status) ||
@@ -623,6 +701,12 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     }
     const dependencies = () => taskRow().dependencyTasks ?? []
     const pendingDependencies = () => dependencies().filter((dependency) => dependency.waiting)
+    const schedulingReferences = () => [
+      ...new Set([
+        ...(taskRow().scheduling?.waitingOn ?? []),
+        ...(taskRow().scheduling?.reservationTaskIDs ?? []),
+      ]),
+    ]
     return (
       <div class="lazers-tasks-entry" data-context-only={taskRow().contextOnly}>
         <div class="lazers-tasks-entry-line" style={{ "padding-left": `${depth * 12}px` }}>
@@ -761,7 +845,67 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             </Keyed>
           </div>
         </Show>
+        <Show
+          when={
+            taskRow().scheduling?.reason ||
+            schedulingReferences().length ||
+            taskRow().scheduling?.waitingOnPlans?.length
+          }
+        >
+          <div class="lazers-tasks-schedule-reason lazers-tasks-node-reason">
+            <Show when={taskRow().scheduling?.reason}>{(reason) => <span>{reason()}</span>}</Show>
+            <For each={taskRow().scheduling?.waitingOnPlans}>{renderPlanRelation}</For>
+            <For each={schedulingReferences()}>
+              {(taskID) => (
+                <button
+                  type="button"
+                  class="lazers-tasks-dependency-ref"
+                  aria-label={`Open scheduling prerequisite ${relationLabel(taskID)}`}
+                  onClick={() => selectTask(taskID)}
+                >
+                  {relationLabel(taskID)}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
       </div>
+    )
+  }
+  const renderSignalRow = (taskRow: ExecutionListRow, label: "Now" | "Attention") => {
+    const activity = visible()?.currentActivity[taskRow.taskID]
+    const waiting = Boolean(
+      taskRow.waiting || activity?.waiting || taskRow.scheduling?.decision === "waiting",
+    )
+    const reason = distinctReasons([
+      taskRow.holdReason,
+      activity?.waiting ? activity.holdReason : null,
+      taskRow.scheduling?.decision === "waiting" ? taskRow.scheduling.reason : null,
+    ]).join("; ")
+    return (
+      <button
+        type="button"
+        class="lazers-tasks-schedule-entry"
+        data-scheduling-task-id={taskRow.taskID}
+        data-scheduling-group={label.toLowerCase()}
+        aria-pressed={taskRow.taskID === visible()?.selectedID}
+        aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity ? `, observed foreground activity ${activity.foreground}` : ""}${waiting ? `, waiting${reason ? `: ${reason}` : ""}` : ""}`}
+        tabIndex={-1}
+        onKeyDown={rowKey}
+        onClick={() => selectTask(taskRow.taskID)}
+      >
+        <span
+          class="lazers-tasks-state"
+          data-state={taskRow.status}
+          data-waiting={waiting}
+          aria-hidden="true"
+        />
+        <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow.title)}</span>
+        <span class="lazers-tasks-schedule-entry-meta">
+          {taskRow.reference ?? taskRow.status}
+          {waiting ? " · Waiting" : ""}
+        </span>
+      </button>
     )
   }
   const copyTaskLink = async () => {
@@ -804,7 +948,10 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
   const rowKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
     event.preventDefault()
-    const rows = [...(list?.querySelectorAll<HTMLButtonElement>("[data-task-id]") ?? [])]
+    const rows = [
+      ...(list?.querySelectorAll<HTMLButtonElement>("[data-task-id], [data-scheduling-task-id]") ??
+        []),
+    ]
     const index = rows.indexOf(event.currentTarget)
     const next =
       event.key === "Home"
@@ -813,7 +960,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
           ? rows.length - 1
           : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
     rows[next]?.focus()
-    const id = rows[next]?.dataset.taskId
+    const id = rows[next]?.dataset.taskId ?? rows[next]?.dataset.schedulingTaskId
     if (id) selectTask(id)
   }
   const stateLabel = (state: NonNullable<typeof initial.state>) => {
@@ -1020,9 +1167,18 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             </div>
           )}
         </Show>
+        <Show when={visible()?.schedulingError}>
+          {(message) => (
+            <div class="lazers-tasks-scheduling-warning" role="status">
+              {message()}
+            </div>
+          )}
+        </Show>
         <Show when={visible() && !visible()?.topology && !visible()?.topologyError}>
           <div class="lazers-tasks-note" role="status">
-            Execution topology unavailable. Showing tasks without grouping.
+            {visible()?.scheduling && !visible()?.schedulingError
+              ? "Execution topology unavailable. Showing scheduling-backed groups where covered."
+              : "Execution topology unavailable. Showing tasks without grouping."}
           </div>
         </Show>
         <Show
@@ -1048,7 +1204,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 }
               >
                 <Show
-                  when={rowValues().length}
+                  when={rowValues().length || value().scheduling}
                   fallback={
                     <div class="lazers-tasks-note">
                       {prefs().search
@@ -1060,9 +1216,72 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   }
                 >
                   <div aria-label={`${stateLabel(stateFilter())} tasks`}>
+                    <div class="lazers-tasks-schedule-groups">
+                      <Show when={nowRows().length}>
+                        <section class="lazers-tasks-schedule-group" aria-label="Now">
+                          <h3 class="lazers-tasks-schedule-heading">Now</h3>
+                          <For each={nowRows()}>{(taskRow) => renderSignalRow(taskRow, "Now")}</For>
+                        </section>
+                      </Show>
+                      <Show when={attentionRows().length}>
+                        <section class="lazers-tasks-schedule-group" aria-label="Attention">
+                          <h3 class="lazers-tasks-schedule-heading">Attention</h3>
+                          <For each={attentionRows()}>
+                            {(taskRow) => renderSignalRow(taskRow, "Attention")}
+                          </For>
+                        </section>
+                      </Show>
+                      <Show when={value().scheduling || value().schedulingError}>
+                        <section class="lazers-tasks-schedule-group" aria-label="Next">
+                          <h3 class="lazers-tasks-schedule-heading">Next</h3>
+                          <Show
+                            when={nextCandidate()}
+                            fallback={
+                              <div class="lazers-tasks-scheduling-warning" role="status">
+                                {nextStatus().status === "none"
+                                  ? "No eligible task is currently selected."
+                                  : "Next is unknown; scheduling coverage is unavailable or incomplete."}
+                              </div>
+                            }
+                          >
+                            {(candidate) => (
+                              <button
+                                type="button"
+                                class="lazers-tasks-schedule-entry"
+                                data-scheduling-task-id={candidate().taskID}
+                                data-scheduling-group="next"
+                                aria-label={`Next: ${candidate().reference ?? candidate().taskID.slice(0, 8)} ${taskTitle(candidate().title)}, priority ${candidate().priority}, plan order ${candidate().planOrder + 1}, node order ${candidate().ordinal + 1}`}
+                                aria-pressed={candidate().taskID === value().selectedID}
+                                tabIndex={
+                                  rowValues().some((row) => row.taskID === candidate().taskID)
+                                    ? -1
+                                    : 0
+                                }
+                                onKeyDown={rowKey}
+                                onClick={() => selectTask(candidate().taskID)}
+                              >
+                                <Ui.Icon name="chevron-right" size="small" />
+                                <span class="lazers-tasks-schedule-entry-title">
+                                  {candidate().reference ?? candidate().taskID.slice(0, 8)} ·{" "}
+                                  {taskTitle(candidate().title)}
+                                </span>
+                                <span class="lazers-tasks-schedule-entry-meta">
+                                  P{candidate().priority} · #{candidate().planOrder + 1}.
+                                  {candidate().ordinal + 1}
+                                </span>
+                              </button>
+                            )}
+                          </Show>
+                        </section>
+                      </Show>
+                    </div>
                     <Keyed each={executionList().plans} by={(group) => group.planID}>
                       {(group) => (
-                        <ExecutionPlanGroupView group={group()} stateFilter={stateFilter()}>
+                        <ExecutionPlanGroupView
+                          group={group()}
+                          stateFilter={stateFilter()}
+                          onOpenPlan={openPrerequisitePlan}
+                        >
                           <Keyed each={group().rows} by={(taskRow) => taskRow.taskID}>
                             {(taskRow) => renderTaskRow(taskRow, group)}
                           </Keyed>
@@ -1201,7 +1420,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               <div class="lazers-tasks-objective">
                 <Ui.Markdown text={task().proposal.objective} />
               </div>
-              <Show when={selectedRelations().waitingOn.length}>
+              <Show
+                when={
+                  selectedRelations().waitingOn.length || selectedRelations().waitingOnPlans.length
+                }
+              >
                 <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
                   <span>Waiting on </span>
                   <For each={selectedRelations().waitingOn}>
@@ -1209,6 +1432,14 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                       <>
                         {index() ? ", " : ""}
                         {renderRelation(taskID)}
+                      </>
+                    )}
+                  </For>
+                  <For each={selectedRelations().waitingOnPlans}>
+                    {(planID, index) => (
+                      <>
+                        {index() || selectedRelations().waitingOn.length ? ", " : ""}
+                        {renderPlanRelation(planID)}
                       </>
                     )}
                   </For>
@@ -1333,6 +1564,19 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                         <>
                           {index() ? ", " : ""}
                           {renderRelation(taskID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={selectedRelations().planPrerequisites.length}>
+                  <div class="lazers-tasks-dependencies">
+                    <span>Plan waits for </span>
+                    <For each={selectedRelations().planPrerequisites}>
+                      {(planID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderPlanRelation(planID)}
                         </>
                       )}
                     </For>
