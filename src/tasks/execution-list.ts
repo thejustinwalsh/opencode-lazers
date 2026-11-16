@@ -47,6 +47,10 @@ export type ExecutionPlanGroup = {
   planRevision: number
   title: string
   hasRecordedTitle: boolean
+  /** Recorded plan lifecycle, distinct from any task row state. */
+  state: string
+  /** Recorded scheduler priority; higher dispatches first among eligible plans. */
+  priority: number
   nonterminalCount: number
   totalCount: number
   rows: ExecutionListRow[]
@@ -425,6 +429,8 @@ export function buildExecutionList(input: {
       planRevision: plan.revision,
       title: plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
       hasRecordedTitle: plan.title !== null,
+      state: plan.state,
+      priority: plan.priority ?? 0,
       nonterminalCount,
       totalCount: nodes.length,
       rows: rootRows.toSorted((left, right) => {
