@@ -37,7 +37,7 @@ export function benchmarkPointText(point: BenchmarkBaselinePoint) {
   const tier = price.appliesBelowTokens
     ? `; base rate for prompts under ${tokenCount.format(price.appliesBelowTokens)} tokens`
     : ""
-  return `${point.label} · exact route ${routeLabel(point.route)}: Artificial Analysis Coding Index ${index.format(point.benchmark.codingIndex)} for ${point.benchmark.displayName ?? point.benchmark.modelPermaslug}, effort not stated by the benchmark; ${benchmarkSourceName[price.source]} list price ${formatMarketAmount(price.input)} input and ${formatMarketAmount(price.output)} output per 1M tokens, ${formatMarketAmount(price.blended)} per 1M at ${mix}${tier}; ${point.observed ? "has observed task outcomes for these filters" : "no observed task outcomes for these filters"}.`
+  return `${point.label} · exact route ${routeLabel(point.route)}: Artificial Analysis Coding Index ${index.format(point.benchmark.codingIndex)} for ${point.benchmark.displayName ?? point.benchmark.modelPermaslug}; ${benchmarkSourceName[price.source]} list price ${formatMarketAmount(price.input)} input and ${formatMarketAmount(price.output)} output per 1M tokens, ${formatMarketAmount(price.blended)} per 1M at ${mix}${tier}; ${point.observed ? "has observed task outcomes for these filters" : "no observed task outcomes for these filters"}.`
 }
 
 export function benchmarkGapText(gap: BenchmarkBaselineGap) {

@@ -1541,6 +1541,7 @@ test("benchmark baseline renders its own units, labels the source and travels by
   dom.document.body.append(container)
   const cheap = benchmarkPoint("cheap", "Mini", 30, 0.1, 0.4, false)
   const strong = benchmarkPoint("strong", "Max", 61.25, 2, 8, true)
+  strong.benchmark.displayName = "Max (High)"
   const selections: string[] = []
   const [selected, setSelected] = browser.createSignal<string | null>(null)
   const dispose = browser.render(
@@ -1594,7 +1595,7 @@ test("benchmark baseline renders its own units, labels the source and travels by
     "Max · Coding 61.3 · $3.5 / 1M tokens · OpenRouter",
     "Unpriced · not plotted, no price",
   ])
-  expect(rows[1]!.getAttribute("aria-label")).toContain("effort not stated by the benchmark")
+  expect(rows[1]!.getAttribute("aria-label")).toContain("for Max (High)")
   expect(rows[1]!.getAttribute("aria-label")).toContain("$2 input and $8 output per 1M tokens")
   expect(rows[1]!.getAttribute("aria-label")).toContain("3 input : 1 output tokens")
   expect(rows[1]!.getAttribute("aria-label")).not.toMatch(/per (accepted )?task/)
