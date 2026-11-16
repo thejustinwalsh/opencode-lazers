@@ -92,22 +92,24 @@ the distributed plugin.
    inspect the archive and a clean install for executable or library formats,
    including transitive `.node` files. Qualify the installed package on the
    target policy. Do not silently download or load a native fallback.
-3. **Add test audit reports.** Use a WebAssembly mutator and an in-process,
-   isolated test adapter, without child processes. Prove one supported test
-   fixture with a passing baseline, measured coverage, and known killed,
-   surviving and uncovered mutants. Establish runner compatibility before
-   accepting a project's real tests. Run only project checks that the user
+3. **Add test audit reports.** Keep each project's existing test suite and
+   runner. Use a WebAssembly mutator to supply instrumented source to that
+   runner through a supported in-process entry point without spawning tools.
+   Prove discovery, configuration, setup, mocks, assertions, and coverage on
+   an existing suite before advertising the runner as supported. Do not
+   rewrite project tests into a LAZERS test format. Run only checks the user
    authorized. Store the outcomes with the task and attempt through the
-   existing report history. If a suite needs an unsupported runner feature,
-   report that limitation; imported reports remain a separate evidence source
-   and cannot qualify the local runner. Report the difference between an untested path, a surviving
+   existing report history. If a runner cannot execute in-process, report
+   that limitation; imported reports remain a separate evidence source and
+   cannot qualify the local runner. Distinguish an untested path, a surviving
    mutant, and a run that did not execute. Review duplicate test candidates
    against actual assertions, fixtures, and distinct behavior before removing
    a test. Do not add a score threshold to task acceptance.
 
 [Fallow mutation](https://fallow.tools/docs/cli/mutation/) runs project tests
-against changes to source. Its kill matrix can identify candidates for redundant
-tests. [Fallow health](https://fallow.tools/docs/cli/health/) can consume saved
+against changes to source. Upstream supports Vitest, the Node test runner, and
+Bun by starting their native runtimes. Its kill matrix can identify candidates
+for redundant tests. [Fallow health](https://fallow.tools/docs/cli/health/) can consume saved
 coverage and mutation reports. Confirm the selected build supports the runner
 and report format before exposing those options in LAZERS.
 
@@ -125,8 +127,9 @@ failed baseline cannot establish a mutation score.
   list. The resulting module declares zero WebAssembly imports.
 - The same target fails for the static analysis crate group. Cargo traces the
   first error through `fallow-config → ureq → rustls → ring → getrandom`.
-  Disable the remote config transport in the WebAssembly build first. Then
-  rerun the compile check to find remaining dependencies on the host.
+  Disabling remote config transport in a scratch copy exposed a second path:
+  `fallow-extract → lightningcss → getrandom`. Keep CSS analysis. Qualify its
+  entropy backend in the WebAssembly binding before testing static reports.
 - Bun ran the instrumented output with a fresh Worker per mutant. A test
   asserted that the boundary value 10 qualifies. The run found eight mutants:
   two killed by the assertion, two survived, and four in a function the test
@@ -136,6 +139,9 @@ failed baseline cannot establish a mutation score.
   enable test registration. The `test()` call reported
   `Cannot use test outside of the test runner`. Do not describe that Worker
   adapter as compatible with ordinary Bun tests.
+- Bun rejected `node:test.run({ isolation: "none" })` with
+  `NotImplementedError`. No existing Vitest, Node, or Bun suite is qualified
+  for the restricted path yet.
 
 Review OpenCode's host commands separately from dependency packaging.
 `src/runner/artifacts.ts` uses Git and runs configured checks through a shell.
