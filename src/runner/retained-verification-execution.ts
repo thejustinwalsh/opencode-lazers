@@ -18,7 +18,7 @@ import {
   gitAsync,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import { checkSucceeded, checkFailureReason } from "./checks.ts"
+import { checkSucceeded, checkFailureReason, isConclusiveNonTimeoutInterruption } from "./checks.ts"
 import type { HostSession } from "./host.ts"
 import { PlanInput } from "./schema.ts"
 import type { PlanRow } from "./store.ts"
@@ -43,7 +43,11 @@ import {
   settleRetainedVerificationResources,
   updateRetainedVerificationResourceIdentity,
 } from "./retained-verification/store.ts"
-import { forgetVerificationActivity, verificationActivityKey } from "./verification-activities.ts"
+import {
+  forgetVerificationActivity,
+  verificationActivitiesForDatabase,
+  verificationActivityKey,
+} from "./verification-activities.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
 import {
   createRetainedCheckContext,
@@ -800,6 +804,7 @@ export class RetainedVerificationExecution {
       const plan = this.runtime.store.plan(initial.planID)
       if (!plan || plan.revision !== initial.planRevision)
         throw new Error("Retained verification plan revision changed")
+      const input = PlanInput.parse(JSON.parse(plan.body))
       const target: VerificationTimeoutTarget = {
         ...this.runtime.verificationTarget(
           plan,
@@ -831,6 +836,38 @@ export class RetainedVerificationExecution {
         retainedVerificationChecks(db, initial.id, phase).find((row) => row.checkID === check.id),
       )
       const activityID = `retained:${initial.id}:${initial.generation}:${phase}:${check.id}`
+      let retryAuthorization:
+        | {
+            requestID?: unknown
+            continuationKind?: unknown
+            continuationID?: unknown
+            owner?: unknown
+            ownerEpoch?: unknown
+            planRevision?: unknown
+            planVersion?: unknown
+            operationID?: unknown
+            generation?: unknown
+            taskID?: unknown
+            taskRevision?: unknown
+            attemptID?: unknown
+            phase?: unknown
+            checkID?: unknown
+            candidateArtifact?: unknown
+            commandFingerprint?: unknown
+            amendmentID?: unknown
+            environmentIdentity?: unknown
+            planBodyFingerprint?: unknown
+            combinedInputFingerprint?: unknown
+            acceptedArtifacts?: unknown
+            sourceQuarantineFingerprint?: unknown
+            priorReceipt?: unknown
+            priorReceiptFingerprint?: unknown
+            priorCheckFingerprint?: unknown
+            priorReceiptPath?: unknown
+            priorResources?: unknown
+            reason?: unknown
+          }
+        | undefined
       if (existing?.state === "retry-authorized") {
         let previousCheck: unknown
         let previousReceipt: unknown
@@ -841,33 +878,26 @@ export class RetainedVerificationExecution {
           previousCheck = undefined
           previousReceipt = undefined
         }
-        const authorization = this.runtime.store.latestTransition<{
-          requestID?: unknown
-          owner?: unknown
-          ownerEpoch?: unknown
-          planRevision?: unknown
-          operationID?: unknown
-          generation?: unknown
-          taskID?: unknown
-          taskRevision?: unknown
-          attemptID?: unknown
-          phase?: unknown
-          checkID?: unknown
-          candidateArtifact?: unknown
-          commandFingerprint?: unknown
-          amendmentID?: unknown
-          priorReceiptFingerprint?: unknown
-          priorCheckFingerprint?: unknown
-          reason?: unknown
-        }>(initial.planID, initial.taskID, "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED")
+        const authorization = this.runtime.store.latestTransition<
+          NonNullable<typeof retryAuthorization>
+        >(initial.planID, initial.taskID, "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED")
+        retryAuthorization = authorization
         const retryResources = this.runtime.store.atomic((db) =>
           db
-            .query<{ state: string }, [string, string, string]>(
-              `SELECT state FROM runner_retained_verification_resources
-               WHERE operation_id=? AND phase=? AND check_id=?`,
+            .query<
+              { resource_name: string; canonical_path: string; state: string },
+              [string, string, string]
+            >(
+              `SELECT resource_name,canonical_path,state FROM runner_retained_verification_resources
+               WHERE operation_id=? AND phase=? AND check_id=? ORDER BY resource_name`,
             )
             .all(initial.id, phase, check.id),
         )
+        const retryResourceBindings = retryResources.map((resource) => ({
+          name: resource.resource_name,
+          pathFingerprint: fingerprint(resource.canonical_path),
+          state: resource.state,
+        }))
         const previousBoundReceipt =
           isRecord(previousCheck) && previousReceipt
             ? this.retainedVerificationCheckReceipt(
@@ -880,16 +910,122 @@ export class RetainedVerificationExecution {
                 existing.environmentIdentity,
               )
             : undefined
+        const interruptedContinuation = authorization?.continuationKind === "interrupted-check"
+        const planNodes = this.runtime.store.nodes(initial.planID)
+        const planAttempts = this.runtime.store.attempts(initial.planID)
+        let acceptedArtifactsCurrent = true
+        const acceptedArtifacts = input.integrationOrder.map((taskID) => {
+          const authored = input.nodes.find((candidate) => candidate.taskID === taskID)
+          const planNode = planNodes.find((candidate) => candidate.task_id === taskID)
+          const task = this.runtime.store.repository.get(taskID)
+          const attempt = planAttempts.filter((candidate) => candidate.task_id === taskID).at(-1)
+          const retainedCandidate = Boolean(
+            initial.sourceQuarantine &&
+            taskID === initial.taskID &&
+            task?.revision === initial.taskRevision &&
+            attempt?.id === initial.attemptID &&
+            attempt.state === "verifying" &&
+            attempt.artifact === initial.artifact &&
+            this.retainedTaskCandidateAccepted(initial),
+          )
+          const artifact = planNode?.artifact ?? null
+          if (
+            !authored ||
+            !planNode ||
+            (!retainedCandidate && !["accepted", "incorporated"].includes(planNode.state)) ||
+            !artifact ||
+            !task ||
+            task.revision !== authored.revision ||
+            task.provenance.projectID !== this.runtime.projectID ||
+            task.provenance.projectDirectory !== this.runtime.directory ||
+            this.runtime.store.repository.taskDisposition(taskID) !== undefined ||
+            !attempt ||
+            (!retainedCandidate && (attempt.state !== "accepted" || attempt.artifact !== artifact))
+          )
+            acceptedArtifactsCurrent = false
+          return { taskID, taskRevision: task?.revision ?? null, artifact }
+        })
+        const unresolvedEffects = this.runtime.store.effects(initial.planID).filter((effect) => {
+          if (!["intended", "uncertain"].includes(effect.state)) return false
+          if (
+            !initial.sourceQuarantine ||
+            effect.task_id !== initial.taskID ||
+            effect.attempt_id !== initial.attemptID ||
+            !effect.kind.startsWith("verify:")
+          )
+            return true
+          const sourceCheckID = effect.kind.slice("verify:".length)
+          const sourceCheck = this.runtime.store.repository
+            .get(initial.taskID)
+            ?.proposal.verification.find((candidate) => candidate.id === sourceCheckID)
+          if (!sourceCheck) return true
+          try {
+            const payload: unknown = JSON.parse(effect.payload)
+            return !(
+              isRecord(payload) &&
+              payload.artifact === initial.artifact &&
+              payload.workspace === initial.originalWorkspace &&
+              isRecord(payload.check) &&
+              payload.check.id === sourceCheck.id &&
+              payload.check.command === sourceCheck.command
+            )
+          } catch {
+            return true
+          }
+        })
+        const unrelatedActivity = verificationActivitiesForDatabase(
+          this.runtime.store.repository.path,
+        ).some(
+          (activity) =>
+            activity.metadata.planID === initial.planID &&
+            activity.state === "running" &&
+            !(
+              activity.metadata.kind === "retained-advance" &&
+              activity.metadata.operationID === initial.id &&
+              activity.metadata.generation === initial.generation
+            ),
+        )
+        const currentCombinedArtifact =
+          interruptedContinuation && acceptedArtifactsCurrent
+            ? await combineArtifacts(
+                this.runtime.directory,
+                input.baseCommit,
+                acceptedArtifacts.flatMap((item) => (item.artifact ? [item.artifact] : [])),
+              ).catch(() => undefined)
+            : undefined
+        const retryKindMatches = interruptedContinuation
+          ? authorization?.continuationID !== undefined &&
+            phase === "combined" &&
+            acceptedArtifactsCurrent &&
+            !unresolvedEffects.length &&
+            !unrelatedActivity &&
+            currentCombinedArtifact === initial.combinedArtifact &&
+            previousBoundReceipt !== undefined &&
+            isConclusiveNonTimeoutInterruption(previousBoundReceipt) &&
+            authorization.planVersion === initial.planVersion &&
+            plan.version === initial.planVersion &&
+            authorization.planBodyFingerprint === fingerprint(plan.body) &&
+            authorization.combinedInputFingerprint === initial.combinedInputFingerprint &&
+            fingerprint(authorization.acceptedArtifacts) === fingerprint(acceptedArtifacts) &&
+            authorization.sourceQuarantineFingerprint ===
+              fingerprint(initial.sourceQuarantine ?? null) &&
+            fingerprint(previousCheck) === fingerprint(effectiveCheck)
+          : Boolean(
+              deadline.amendmentID &&
+              previousBoundReceipt?.timedOut &&
+              authorization?.amendmentID === deadline.amendmentID,
+            )
         if (
-          !deadline.amendmentID ||
           existing.cleanupState !== "complete" ||
           existing.artifact !== artifact ||
           existing.workspace !== workspace ||
           !isRecord(previousCheck) ||
           previousCheck.id !== check.id ||
           previousCheck.command !== check.command ||
-          !previousBoundReceipt?.timedOut ||
+          !retryKindMatches ||
+          !previousBoundReceipt ||
           !checkResourcesSettled(previousBoundReceipt) ||
+          previousBoundReceipt.environmentIdentity !== existing.environmentIdentity ||
           authorization?.owner !== initial.owner ||
           authorization.ownerEpoch !== initial.ownerEpoch ||
           authorization.planRevision !== initial.planRevision ||
@@ -902,15 +1038,19 @@ export class RetainedVerificationExecution {
           authorization.checkID !== check.id ||
           authorization.candidateArtifact !== artifact ||
           authorization.commandFingerprint !== verificationCommandFingerprint(check.command) ||
-          authorization.amendmentID !== deadline.amendmentID ||
+          (authorization.environmentIdentity !== undefined &&
+            authorization.environmentIdentity !== existing.environmentIdentity) ||
           authorization.priorReceiptFingerprint !== fingerprint(existing.receipt) ||
           authorization.priorCheckFingerprint !== fingerprint(existing.checkJSON) ||
+          authorization.priorReceiptPath !== existing.receiptPath ||
+          fingerprint(authorization.priorReceipt) !== fingerprint(previousReceipt) ||
+          fingerprint(retryResourceBindings) !== fingerprint(authorization.priorResources) ||
           retryResources.length === 0 ||
           retryResources.some((resource) => resource.state !== "removed")
         ) {
           await this.holdRetainedVerification(
             initial,
-            `Explicit retained timing continuation ${phase}:${check.id} lost its settled retry binding`,
+            `Explicit retained check continuation ${phase}:${check.id} lost its settled retry binding`,
             fence,
           )
           return undefined
@@ -1316,7 +1456,12 @@ export class RetainedVerificationExecution {
         return undefined
       }
       const retryReceiptSuffix =
-        existing?.state === "retry-authorized" ? `-amendment-${deadline.amendmentID}` : ""
+        retryAuthorization?.continuationKind === "interrupted-check" &&
+        typeof retryAuthorization.continuationID === "string"
+          ? `-continuation-${retryAuthorization.continuationID}`
+          : existing?.state === "retry-authorized" && deadline.amendmentID
+            ? `-amendment-${deadline.amendmentID}`
+            : ""
       const receiptPath = join(
         this.runtime.dataDirectory,
         "receipts",
@@ -1352,6 +1497,9 @@ export class RetainedVerificationExecution {
             receiptPath,
             contextPath: context.directory,
             createdAt: this.runtime.now(),
+            ...(retryAuthorization?.continuationKind === "interrupted-check"
+              ? { allowUnchangedCheck: true }
+              : {}),
           }),
         )
       } catch (error) {

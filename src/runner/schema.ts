@@ -198,9 +198,10 @@ export const CommandInput = z
         "verify-retained",
         "cancel-retained-verification",
         "extend-verification-deadline",
+        "continue-retained-check",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -277,25 +278,31 @@ export const CommandInput = z
       .min(1)
       .max(200)
       .optional()
-      .describe("Current native project identity for retained verification."),
+      .describe(
+        "Current native project identity for retained verification or exact retained-check continuation.",
+      ),
     planRevision: z
       .int()
       .positive()
       .optional()
-      .describe("Current plan revision for retained verification."),
+      .describe(
+        "Current plan revision for retained verification or exact retained-check continuation.",
+      ),
     taskRevision: z
       .int()
       .positive()
       .optional()
       .describe("Current task revision for retained verification."),
     verificationPhase: VerificationPhase.optional().describe(
-      "Exact task or combined check phase for extend-verification-deadline.",
+      "Exact task or combined check phase for deadline extension; combined only for retained-check continuation.",
     ),
     checkID: z
       .string()
       .regex(/^[a-z][a-z0-9-]{0,63}$/)
       .optional()
-      .describe("Exact declared verification check ID for extend-verification-deadline."),
+      .describe(
+        "Exact declared verification check ID for deadline extension or retained-check continuation.",
+      ),
     timeoutMs: z
       .int()
       .positive()
@@ -315,13 +322,13 @@ export const CommandInput = z
       .uuid()
       .optional()
       .describe(
-        "Exact durable retained-verification operation for cancellation, human evidence, or an explicit settled-check timing continuation.",
+        "Exact durable retained-verification operation for cancellation, human evidence, or explicit settled-check continuation.",
       ),
     retainedGeneration: z
       .int()
       .positive()
       .optional()
-      .describe("Exact retained-verification generation for a settled-check timing continuation."),
+      .describe("Exact retained-verification generation for a settled-check continuation."),
   })
   .superRefine((input, context) => {
     if (input.scopeRemovals && input.action !== "amend-scope")
@@ -576,6 +583,74 @@ export const CommandInput = z
           message: "Only a retained timing continuation accepts retainedGeneration",
         })
     }
+    if (command.action === "continue-retained-check") {
+      for (const field of [
+        "projectID",
+        "planRevision",
+        "taskID",
+        "taskRevision",
+        "attemptID",
+        "retainedVerificationID",
+        "retainedGeneration",
+        "verificationPhase",
+        "checkID",
+        "artifact",
+        "reason",
+      ] as const)
+        if (command[field] === undefined || command[field] === "")
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Retained-check continuation requires ${field}`,
+          })
+      if (command.verificationPhase !== "combined")
+        context.addIssue({
+          code: "custom",
+          path: ["verificationPhase"],
+          message: "Retained-check continuation is limited to a combined check",
+        })
+      if (command.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(command.artifact))
+        context.addIssue({
+          code: "custom",
+          path: ["artifact"],
+          message: "Retained-check continuation requires an exact full candidate identity",
+        })
+      if (!command.reason?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["reason"],
+          message: "Retained-check continuation requires a concrete reason",
+        })
+      for (const field of ["timeoutMs", "inactivityTimeoutMs", "hardTimeoutMs"] as const)
+        if (command[field] !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: "Retained-check continuation does not change verification timing",
+          })
+      for (const field of [
+        "priority",
+        "afterPlans",
+        "resumeAfterPlans",
+        "workspaceMode",
+        "baseCommit",
+        "targetSessionID",
+        "sourceSessionID",
+        "reviewInputID",
+        "scopeAdditions",
+        "scopeRemovals",
+        "assertionID",
+        "descendantCommit",
+        "adoptionID",
+        "targetBranch",
+      ] as const)
+        if (command[field] !== undefined)
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Retained-check continuation does not accept ${field}`,
+          })
+    }
     if (command.action === "cancel-retained-verification" && !command.retainedVerificationID)
       context.addIssue({
         code: "custom",
@@ -592,22 +667,27 @@ export const CommandInput = z
       command.retainedVerificationID !== undefined &&
       command.action !== "cancel-retained-verification" &&
       command.action !== "human-evidence" &&
-      command.action !== "extend-verification-deadline"
+      command.action !== "extend-verification-deadline" &&
+      command.action !== "continue-retained-check"
     )
       context.addIssue({
         code: "custom",
         path: ["retainedVerificationID"],
         message:
-          "Retained verification ID is valid only for cancellation, human evidence or explicit timing continuation",
+          "Retained verification ID is valid only for cancellation, human evidence or explicit check continuation",
       })
-    for (const field of [
-      "verificationPhase",
-      "checkID",
-      "timeoutMs",
-      "inactivityTimeoutMs",
-      "hardTimeoutMs",
-      "retainedGeneration",
-    ] as const)
+    for (const field of ["verificationPhase", "checkID", "retainedGeneration"] as const)
+      if (
+        command[field] !== undefined &&
+        command.action !== "extend-verification-deadline" &&
+        command.action !== "continue-retained-check"
+      )
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `Retained check field ${field} requires an exact check continuation action`,
+        })
+    for (const field of ["timeoutMs", "inactivityTimeoutMs", "hardTimeoutMs"] as const)
       if (command[field] !== undefined && command.action !== "extend-verification-deadline")
         context.addIssue({
           code: "custom",
