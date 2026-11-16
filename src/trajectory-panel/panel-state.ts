@@ -52,6 +52,8 @@ export type PanelData = {
   historyCapturedAt: number | null
   historyExpiresAt: number | null
   historyError: string
+  /** The captured cursor cannot advance; only a fresh capture can continue paging. */
+  pageRecaptureRequired: boolean
   /** Panel clock when the last live status read was applied; null while showing only capture. */
   statusReadAt: number | null
   recapturingHistory: boolean
@@ -90,6 +92,7 @@ const blank = (key = ""): PanelData => ({
   historyCapturedAt: null,
   historyExpiresAt: null,
   historyError: "",
+  pageRecaptureRequired: false,
   statusReadAt: null,
   recapturingHistory: false,
   loading: true,
@@ -162,6 +165,15 @@ function historyFailureMessage(error: unknown) {
   if (error instanceof Error)
     return safeText(error.message, privacyStats(), 400) || "Captured history could not be loaded."
   return "Captured history could not be loaded. Recapture history to try again."
+}
+
+/** Internal page validation failure: the captured cursor can no longer be trusted. */
+class PageRecaptureError extends Error {}
+
+function requiresRecapture(error: unknown) {
+  return (
+    error instanceof PageRecaptureError || record(error)?.type === "trajectory_history_unavailable"
+  )
 }
 
 function requestFailureMessage(error: unknown, fallback: string) {
@@ -365,6 +377,7 @@ export class TrajectoryPanelState {
           historyCapturedAt: null,
           historyExpiresAt: null,
           historyError: "",
+          pageRecaptureRequired: false,
           recapturingHistory: false,
           loading: false,
           loadingActivity: false,
@@ -450,6 +463,7 @@ export class TrajectoryPanelState {
       historyCapturedAt: null,
       historyExpiresAt: null,
       historyError: "",
+      pageRecaptureRequired: false,
       statusReadAt: null,
       recapturingHistory: false,
       loading: taskID !== null,
@@ -728,6 +742,7 @@ export class TrajectoryPanelState {
         historyCapturedAt: response.capturedAt,
         historyExpiresAt: response.expiresAt,
         historyError: "",
+        pageRecaptureRequired: false,
         recapturingHistory: false,
         loading: false,
         loadingActivity: false,
@@ -888,6 +903,7 @@ export class TrajectoryPanelState {
       !scope ||
       !taskID ||
       !cursor ||
+      this.data.pageRecaptureRequired ||
       this.data.loadingActivity ||
       this.data.recapturingHistory
     )
@@ -909,6 +925,7 @@ export class TrajectoryPanelState {
     ) {
       this.update({
         stale: true,
+        pageRecaptureRequired: true,
         historyError: "Captured activity pages are inconsistent. Recapture history to continue.",
       })
       return
@@ -923,7 +940,12 @@ export class TrajectoryPanelState {
         signal.aborted
       )
         return
-      const report = parseTrajectoryReport(response)
+      let report: TrajectoryReport
+      try {
+        report = parseTrajectoryReport(response)
+      } catch (error) {
+        throw new PageRecaptureError(error instanceof Error ? error.message : "Unsupported page")
+      }
       if (
         response.projectID !== this.projectID ||
         !responseMatchesScope(response, scope) ||
@@ -931,7 +953,7 @@ export class TrajectoryPanelState {
         response.capturedAt !== capturedAt ||
         response.expiresAt !== expiresAt
       )
-        throw new Error("Activity page belongs to another project or task")
+        throw new PageRecaptureError("Activity page belongs to another project or task")
       const pageEvents = report.trajectory.events
       const pageIDs = pageEvents.map((event) => event.id)
       const offset = this.data.events.length
@@ -949,7 +971,7 @@ export class TrajectoryPanelState {
         Boolean(report.trajectory.nextCursor) !== hasExpectedNextPage ||
         report.trajectory.nextCursor === cursor
       )
-        throw new Error(
+        throw new PageRecaptureError(
           "Activity page order changed or cursor did not advance; recapture explicitly",
         )
       if (
@@ -957,13 +979,14 @@ export class TrajectoryPanelState {
         (response.eventIDs.length !== capturedEventIDs.length ||
           response.eventIDs.some((id, index) => id !== capturedEventIDs[index]))
       )
-        throw new Error("Activity page belongs to another captured event sequence")
+        throw new PageRecaptureError("Activity page belongs to another captured event sequence")
       const events = [...this.data.events, ...pageEvents]
       this.update({
         events,
         eventCursor: report.trajectory.nextCursor,
         totalEvents: report.trajectory.totalEvents,
         loadingActivity: false,
+        historyError: "",
       })
     } catch (error) {
       if (
@@ -971,12 +994,15 @@ export class TrajectoryPanelState {
         taskRequest === this.taskRequest &&
         request === this.activityRequest &&
         !signal.aborted
-      )
+      ) {
+        const pageRecaptureRequired = requiresRecapture(error)
         this.update({
           loadingActivity: false,
-          stale: true,
+          stale: this.data.stale || pageRecaptureRequired,
+          pageRecaptureRequired,
           historyError: historyFailureMessage(error),
         })
+      }
     }
   }
 

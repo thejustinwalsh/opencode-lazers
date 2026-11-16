@@ -577,6 +577,11 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
 }
+.lazers-trajectory-coverage-line .lazers-trajectory-error {
+  flex: 1 1 100%;
+  padding: 2px 0;
+  font-size: 1em;
+}
 
 .lazers-trajectory-separator {
   position: relative;

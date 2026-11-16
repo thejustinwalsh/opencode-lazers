@@ -88,6 +88,8 @@ test("a task target renders its scoped report timeline without a broad snapshot"
   let snapshotCalls = 0
   let historyCalls = 0
   let latestHistoryReport: Record<string, unknown> | undefined
+  let forcedHistoryLimit: number | undefined
+  let expireContinuations = false
   try {
     const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
     const entry = fileURLToPath(
@@ -221,7 +223,16 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           cursor?: string
         }) => {
           historyCalls++
-          const response = await reads.trajectoryHistory(input, tracker)
+          if (input.cursor && expireContinuations)
+            throw {
+              type: "trajectory_history_unavailable",
+              message: "Trajectory history expired; recapture explicitly",
+              data: { reason: "expired", recovery: "recapture" },
+            }
+          const response = await reads.trajectoryHistory(
+            { ...input, limit: forcedHistoryLimit ?? input.limit },
+            tracker,
+          )
           latestHistoryReport = response.report
           return response
         },
@@ -373,6 +384,37 @@ test("a task target renders its scoped report timeline without a broad snapshot"
         : false,
     )
     expect(attemptOptions[0]!.getAttribute("aria-selected")).toBe("false")
+
+    // An expired continuation surfaces beside the pagination controls with its recovery.
+    disposePanel?.()
+    forcedHistoryLimit = 2
+    const pagedContainer = browserDocument.createElement("main")
+    browserDocument.body.append(pagedContainer)
+    disposePanel = mountTrajectoryPanel(panel!, context, session, pagedContainer).dispose
+    const recapture = (root: ParentNode) =>
+      [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.textContent?.trim() === "Recapture history",
+      )
+    const coverage = () => pagedContainer.querySelector(".lazers-trajectory-coverage-line")
+    const loadMore = () =>
+      [...(coverage()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (button) => button.textContent?.trim() === "Load more",
+      )
+    await until(() => loadMore() !== undefined)
+    expireContinuations = true
+    loadMore()!.click()
+    await until(() => coverage()?.querySelector('[role="alert"]') != null)
+    expect(coverage()?.querySelector('[role="alert"]')?.textContent).toContain(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(recapture(coverage()!)).toBeDefined()
+    expect(loadMore()).toBeUndefined()
+    expect(coverage()?.textContent).toContain("captured events loaded")
+    expireContinuations = false
+    recapture(coverage()!)!.click()
+    await until(
+      () => loadMore() !== undefined && coverage()?.querySelector('[role="alert"]') == null,
+    )
   } finally {
     disposePanel?.()
     disposeSetup?.()

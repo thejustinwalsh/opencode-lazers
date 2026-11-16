@@ -1128,12 +1128,18 @@ test("expired history continuations retain old pages and require an explicit rec
     const originalPayload = structuredClone(state.data.selectionEventSnapshot)
     expect(originalCursor).not.toBeNull()
     await state.loadMoreActivity()
+    expect(state.data.pageRecaptureRequired).toBe(true)
     expect(state.data.events).toEqual(originalEvents)
     expect(state.data.eventCursor).toBe(originalCursor)
     expect(state.data.historyError).toBe(
       "Captured history has expired. Recapture history to continue.",
     )
     expect(state.data.historyError).not.toContain("[object Object]")
+    // A dead cursor is never re-sent.
+    await state.loadMoreActivity()
+    expect(calls).toHaveLength(2)
+    expect(state.data.events).toEqual(originalEvents)
+    expect(state.data.eventCursor).toBe(originalCursor)
     expect(state.data.selection).toEqual(originalSelection)
     expect(state.data.selectionEventSnapshot).toEqual(originalPayload)
     expect(state.data.historyCapturedAt).toBe(originalCapturedAt)
@@ -1161,6 +1167,105 @@ test("expired history continuations retain old pages and require an explicit rec
     expect(state.data.stale).toBe(false)
     expect(state.data.selection).toEqual(originalSelection)
     expect(state.data.selectionEventSnapshot?.id).toBe(originalPayload?.id)
+    expect(state.data.pageRecaptureRequired).toBe(false)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a transient continuation failure keeps Load more retryable", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalHistory = transport.history
+  let failNext = true
+  const calls: Array<string | undefined> = []
+  transport.history = async (scope, id, signal, cursor, _limit) => {
+    calls.push(cursor)
+    if (cursor && failNext) {
+      failNext = false
+      throw new Error("network down")
+    }
+    return originalHistory(scope, id, signal, cursor, 2)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "transient-history",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.pageRecaptureRequired).toBe(false)
+    expect(state.data.historyError).toContain("network down")
+    expect(state.data.events).toHaveLength(2)
+    await state.loadMoreActivity()
+    expect(calls).toHaveLength(3)
+    expect(state.data.events.length).toBeGreaterThan(2)
+    expect(state.data.historyError).toBe("")
+    expect(state.data.stale).toBe(false)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a recapture and paging resume from the new capture; a failed recapture keeps paging blocked", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalHistory = transport.history
+  let failRecapture = false
+  let expireContinuations = true
+  const calls: Array<string | undefined> = []
+  transport.history = async (scope, id, signal, cursor, _limit) => {
+    calls.push(cursor)
+    if (cursor && expireContinuations)
+      throw {
+        type: "trajectory_history_unavailable",
+        message: "Trajectory history expired; recapture explicitly",
+        data: { reason: "expired", recovery: "recapture" },
+      }
+    if (!cursor && failRecapture) throw new Error("network down")
+    return originalHistory(scope, id, signal, cursor, 2)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "recapture-paging",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.pageRecaptureRequired).toBe(true)
+
+    failRecapture = true
+    await state.recaptureActivity()
+    expect(state.data.pageRecaptureRequired).toBe(true)
+    const callsAfterFailure = calls.length
+    await state.loadMoreActivity()
+    expect(calls).toHaveLength(callsAfterFailure)
+
+    failRecapture = false
+    expireContinuations = false
+    await state.recaptureActivity()
+    expect(state.data.pageRecaptureRequired).toBe(false)
+    const freshCursor = state.data.eventCursor!
+    await state.loadMoreActivity()
+    expect(calls.at(-1)).toBe(freshCursor)
+    expect(state.data.events.length).toBeGreaterThan(2)
+    expect(state.data.historyError).toBe("")
   } finally {
     state.close()
     fixture.close()
