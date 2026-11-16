@@ -5,7 +5,7 @@ import {
   rowBlockers,
   rowHoldReasons,
   taskRowPresentation,
-  taskRowTail,
+  taskRowBlocker,
   taskStateTooltip,
 } from "./row-presentation.ts"
 
@@ -39,21 +39,20 @@ test("scheduled work stays quiet while running, ready and submitted work is name
     tone: "scheduled",
     icon: "status",
     label: "Queued",
-    badge: null,
-    badgeDetail: null,
+    detail: null,
     ...quiet,
   })
   expect(taskRowPresentation(row({ status: "running" }))).toMatchObject({
     tone: "running",
     icon: "status-active",
-    badge: "Running",
+    label: "Running",
   })
-  expect(taskRowPresentation(row({ status: "verifying" })).badge).toBe("Verifying")
+  expect(taskRowPresentation(row({ status: "verifying" })).label).toBe("Verifying")
   expect(taskRowPresentation(row({ status: "ready" }))).toMatchObject({
     tone: "ready",
-    badge: "Ready",
+    label: "Ready",
   })
-  expect(taskRowPresentation(row({ status: "submitted" })).badge).toBe("Proposed")
+  expect(taskRowPresentation(row({ status: "submitted" })).label).toBe("Proposed")
 })
 
 test("native attention outranks holds and running state", () => {
@@ -64,11 +63,10 @@ test("native attention outranks holds and running state", () => {
     tone: "attention",
     icon: "circle-exclamation",
     label: "Input",
-    badge: "Input",
-    badgeDetail: "Input pending · Approval pending",
+    detail: "Input pending · Approval pending",
     ...quiet,
   })
-  expect(taskRowPresentation(held, activity({ pendingForms: 2 })).badge).toBe("Approval")
+  expect(taskRowPresentation(held, activity({ pendingForms: 2 })).label).toBe("Approval")
   // A finished task never asks for attention, whatever a stale observation says.
   expect(
     taskRowPresentation(row({ status: "accepted" }), activity({ pendingInput: true })).tone,
@@ -89,8 +87,7 @@ test("waiting rows keep a short state; reasons move to the detail, blockers stay
     tone: "waiting",
     icon: "circle-ban-sign",
     label: "Waiting",
-    badge: "Waiting",
-    badgeDetail: "Waiting on LZ-8 (queued), LZ-9 (running)",
+    detail: "Waiting on LZ-8 (queued), LZ-9 (running)",
     blockers: [
       { kind: "task", id: "a" },
       { kind: "task", id: "b" },
@@ -98,18 +95,18 @@ test("waiting rows keep a short state; reasons move to the detail, blockers stay
     blockerTotal: 2,
   })
 
-  // A long machine reason never becomes the badge; it is the detail behind it.
+  // A long machine reason never becomes the label; it is the detail behind it.
   const machineReason =
     "Waiting for prerequisite source integration in the selected source revision before dispatch."
   const holds = taskRowPresentation(
     row({ status: "running", waiting: true, holdReason: "Plan hold" }),
     activity({ waiting: true, holdReason: machineReason }),
   )
-  expect(holds.badge).toBe("Waiting")
-  expect(holds.badgeDetail).toBe(`Plan hold; ${machineReason}`)
+  expect(holds.label).toBe("Waiting")
+  expect(holds.detail).toBe(`Plan hold; ${machineReason}`)
   expect(taskRowPresentation(row({ status: "blocked", reason: machineReason }))).toMatchObject({
-    badge: "Blocked",
-    badgeDetail: machineReason,
+    label: "Blocked",
+    detail: machineReason,
   })
   expect(
     rowHoldReasons(
@@ -134,8 +131,8 @@ test("scheduling waits link prerequisites, plans and every reservation holder", 
   const presentation = taskRowPresentation(scheduled)
   expect(presentation).toMatchObject({
     tone: "waiting",
-    badge: "Waiting",
-    badgeDetail: "Waiting for prerequisite source integration.",
+    label: "Waiting",
+    detail: "Waiting for prerequisite source integration.",
   })
   expect(presentation.blockers).toEqual([
     { kind: "task", id: "a" },
@@ -154,8 +151,7 @@ test("a dispatch pause applies only to work that has not started and outranks wa
     tone: "paused",
     icon: "stop",
     label: "Paused",
-    badge: "Paused",
-    badgeDetail: "Paused until LZ-4 integrates",
+    detail: "Paused until LZ-4 integrates",
     ...quiet,
   })
   expect(
@@ -165,31 +161,29 @@ test("a dispatch pause applies only to work that has not started and outranks wa
         scheduling: { decision: "waiting", reason: "x", waitingOn: ["a"], reservationTaskIDs: [] },
       }),
     ),
-  ).toMatchObject({ badge: "Paused", blockers: [{ kind: "task", id: "a" }] })
+  ).toMatchObject({ label: "Paused", blockers: [{ kind: "task", id: "a" }] })
   expect(taskRowPresentation(row({ status: "running", dispatchPause })).tone).toBe("running")
 })
 
 test("acceptance, integration, failure and cancellation stay distinct", () => {
   expect(taskRowPresentation(row({ status: "accepted" }))).toMatchObject({
     icon: "check",
-    badge: "Accepted",
+    label: "Accepted",
   })
   expect(taskRowPresentation(row({ status: "incorporated" }))).toMatchObject({
     tone: "integrated",
     icon: "circle-check",
     label: "Integrated",
-    badge: null,
   })
   expect(taskRowPresentation(row({ status: "failed", reason: "Check failed" }))).toMatchObject({
     tone: "failed",
-    badge: "Failed",
-    badgeDetail: "Check failed",
+    label: "Failed",
+    detail: "Check failed",
   })
-  expect(taskRowPresentation(row({ status: "exhausted" })).badge).toBe("Exhausted")
+  expect(taskRowPresentation(row({ status: "exhausted" })).label).toBe("Exhausted")
   expect(taskRowPresentation(row({ status: "cancelled" }))).toMatchObject({
     tone: "cancelled",
     label: "Cancelled",
-    badge: null,
   })
   // Terminal work is never shown as waiting or blocked, even inside a held plan.
   expect(
@@ -203,7 +197,7 @@ test("acceptance, integration, failure and cancellation stay distinct", () => {
   ).toMatchObject({ tone: "accepted", blockers: [] })
 })
 
-test("every row state is one short word, so badges never crowd the title", () => {
+test("every row state is one short word, the state icon's accessible name", () => {
   const rows = [
     row(),
     ...[
@@ -229,12 +223,12 @@ test("every row state is one short word, so badges never crowd the title", () =>
   ]
   for (const presentation of presentations) {
     expect(presentation.label).toMatch(/^[A-Z][a-z]{1,9}$/u)
-    if (presentation.badge) expect(presentation.badge).toMatch(/^[A-Z][a-z]{1,9}$/u)
+    expect(presentation).not.toHaveProperty("badge")
   }
   expect(taskRowPresentation(row({ status: "mystery-state" as never })).label).toBe("Mystery")
 })
 
-test("a row shows one trailing status: attention badge, else its blocker, else its badge", () => {
+test("a row links its first blocker unless native attention outranks the wait", () => {
   const scheduling = {
     decision: "waiting" as const,
     reason: "Waiting for prerequisite source integration.",
@@ -242,15 +236,14 @@ test("a row shows one trailing status: attention badge, else its blocker, else i
     reservationTaskIDs: [],
   }
   const waiting = taskRowPresentation(row({ scheduling }))
-  // The scheduler's recorded decision still sets the tone; the blocker replaces the word.
-  expect(waiting).toMatchObject({ tone: "waiting", label: "Waiting", badge: "Waiting" })
-  expect(taskRowTail(waiting)).toBe("blocker")
+  // The scheduler's recorded decision still sets the tone; the icon names it, the reason follows.
+  expect(waiting).toMatchObject({ tone: "waiting", label: "Waiting" })
+  expect(taskRowBlocker(waiting)).toEqual({ kind: "task", id: "a" })
   expect(taskStateTooltip(waiting)).toBe("Waiting · Waiting for prerequisite source integration.")
   const asking = taskRowPresentation(row({ scheduling }), activity({ pendingInput: true }))
   expect(asking.blockers).toHaveLength(1)
-  expect(taskRowTail(asking)).toBe("badge")
-  expect(taskRowTail(taskRowPresentation(row({ status: "running" })))).toBe("badge")
-  expect(taskRowTail(taskRowPresentation(row()))).toBeNull()
+  expect(taskRowBlocker(asking)).toBeUndefined()
+  expect(taskRowBlocker(taskRowPresentation(row({ status: "running" })))).toBeUndefined()
   expect(taskStateTooltip(taskRowPresentation(row()))).toBe("Queued")
 })
 

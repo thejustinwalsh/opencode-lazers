@@ -550,7 +550,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         entry.value.includes(".lazers-tasks {"),
     )?.value as string | undefined
     expect(tasksCSS).toContain('.lazers-tasks-state[data-tone="waiting"]')
-    expect(tasksCSS).toContain(".lazers-tasks-badge")
+    expect(tasksCSS).not.toContain(".lazers-tasks-badge")
     expect(tasksCSS).toContain("container: lazers-tasks / inline-size")
     expect(tasksCSS).toContain(".lazers-tasks-activity-indicator")
     expect(tasksCSS).toContain("overflow-wrap: anywhere")
@@ -573,8 +573,6 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     })
     const row = (taskID: string) =>
       container.querySelector<HTMLElement>(`[data-task-id="${taskID}"]`)
-    const badge = (taskID: string) =>
-      row(taskID)?.querySelector<HTMLElement>(":scope > .lazers-tasks-row .lazers-tasks-badge")
     const chooseAction = (label: string) => {
       const trigger = container.querySelector<HTMLButtonElement>(
         'button[aria-haspopup=menu][aria-label="More task actions"]',
@@ -629,8 +627,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(container.querySelector(".lazers-tasks-row-hold")).toBeNull()
     expect(heldRow.querySelector(".lazers-tasks-row-reference")?.textContent).toBe("LZ-1")
     expect(heldRow.querySelector(".lazers-tasks-row-title")?.textContent).toBe(taskNames.held)
-    // One trailing status: the linked blocker replaces the "Waiting" word, and the themed state
-    // icon names the state with the source reason on hover.
+    // Row status is icons only: the themed state icon names the state with the source reason on
+    // hover, and the link icon opens the blocker. No status word appears at any width.
     const tooltip = (element: Element | null | undefined) =>
       element?.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip
     const rowPart = (taskID: string, part: string) =>
@@ -641,18 +639,16 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(tooltip(heldState)).toStartWith("Waiting · ")
     expect(tooltip(heldState)).toContain("Reconciliation hold: awaiting review")
     expect(tooltip(heldState)).toContain("Additional hold: retain the audit trail")
-    expect(badge(ids.held)).toBeNull()
+    expect(container.querySelector(".lazers-tasks-badge")).toBeNull()
     expect(
-      heldRow.querySelectorAll(":scope > .lazers-tasks-row .lazers-tasks-row-tail"),
+      heldRow.querySelectorAll(":scope > .lazers-tasks-row .lazers-tasks-row-blocker"),
     ).toHaveLength(1)
     const heldBlocker = heldRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
-    expect(heldBlocker.closest(".lazers-tasks-row-tail")?.getAttribute("data-tail")).toBe("blocker")
-    expect(heldBlocker.querySelector(".lazers-tasks-row-blocker-name")?.textContent).toBe("LZ-8")
+    expect(heldBlocker.textContent).toBe("link")
     expect(heldBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-8")
     expect(tooltip(heldBlocker)).toBe("Waiting on LZ-8")
     // Not a tab stop: the tree keeps one roving stop and the inspector lists blockers by keyboard.
     expect(heldBlocker.tabIndex).toBe(-1)
-    expect(getComputedStyle(heldBlocker.closest(".lazers-tasks-row-tail")!).flexShrink).toBe("0")
     expect(getComputedStyle(heldBlocker).flexShrink).toBe("0")
     // The title is the one element that yields width, and the row stays one line.
     const heldTitle = rowPart(ids.held, ".lazers-tasks-row-title")!
@@ -660,9 +656,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(getComputedStyle(heldTitle).minWidth).toBe("0")
     expect(getComputedStyle(heldTitle).whiteSpace).toBe("nowrap")
     expect(getComputedStyle(heldTitle).textOverflow).toBe("ellipsis")
-    expect(tasksCSS).toMatch(
-      /@container lazers-tasks \(max-width: 479\.98px\) \{\s*\.lazers-tasks-row-tail\[data-tail="badge"\],\s*\.lazers-tasks-schedule-entry \.lazers-tasks-badge,\s*\.lazers-tasks-row-blocker-name,\s*\.lazers-tasks-row-blocker-count \{\s*display: none;/u,
-    )
+    // Icons only at every width: no container query swaps a word in or out of the row.
+    expect(tasksCSS).not.toContain("@container lazers-tasks (max-width")
+    expect(tasksCSS).not.toContain(".lazers-tasks-row-blocker-name")
     expect(heldRow.getAttribute("aria-label")).toContain("waiting on LZ-8 (queued)")
     // Row icons add no tab stops: the tree keeps exactly one roving stop, on a tree item.
     const tree = container.querySelector<HTMLElement>('[role="tree"]')!
@@ -708,13 +704,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(activeRow.getAttribute("aria-label")).toContain("observed foreground activity active")
     expect(activeRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
     expect(activeRow.getAttribute("aria-label")).toContain("Input pending · Approval pending")
-    // Native attention outranks the hold in the row; the hold stays in the inspector.
-    expect(badge(ids.active)?.textContent).toBe("Input")
-    expect(badge(ids.active)?.getAttribute("data-tone")).toBe("attention")
-    expect(badge(ids.active)?.title).toBe("Input · Input pending · Approval pending")
-    expect(badge(ids.active)?.closest(".lazers-tasks-row-tail")?.getAttribute("data-tail")).toBe(
-      "badge",
-    )
+    // Native attention outranks the hold in the row's icon; the hold stays in the inspector.
+    expect(rowPart(ids.active, ".lazers-tasks-state")?.getAttribute("data-tone")).toBe("attention")
     expect(rowPart(ids.active, ".lazers-tasks-state")?.getAttribute("aria-label")).toBe("Input")
     expect(tooltip(rowPart(ids.active, ".lazers-tasks-state"))).toBe(
       "Input · Input pending · Approval pending",
@@ -722,8 +713,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(unknownRow.getAttribute("aria-label")).toContain("observed foreground activity unknown")
     expect(unknownRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
     expect(unknownRow.getAttribute("aria-label")).toContain("activity observation unavailable")
-    expect(badge(ids.unknown)?.textContent).toBe("Waiting")
-    expect(badge(ids.unknown)?.title).toContain("Additional hold: retain the audit trail")
+    expect(rowPart(ids.unknown, ".lazers-tasks-state")?.getAttribute("aria-label")).toBe("Waiting")
     expect(tooltip(rowPart(ids.unknown, ".lazers-tasks-state"))).toContain(
       "Additional hold: retain the audit trail",
     )

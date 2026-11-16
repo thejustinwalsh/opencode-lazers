@@ -523,6 +523,14 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     )
     expect(row(ids.active)?.getAttribute("aria-label")).toContain("waiting")
     expect(container.querySelectorAll(".lazers-tasks-schedule-group")).toHaveLength(3)
+    // Now and Attention entries carry the same colored state icon and no status word.
+    for (const group of ["now", "attention"]) {
+      const entry = container.querySelector<HTMLElement>(`[data-scheduling-group="${group}"]`)!
+      const state = entry.querySelector<HTMLElement>(".lazers-tasks-state")!
+      expect(state.dataset.tone).toBeTruthy()
+      expect(state.title).toBeTruthy()
+      expect(entry.querySelector(".lazers-tasks-badge")).toBeNull()
+    }
 
     const targetGroup = [...container.querySelectorAll<HTMLElement>(".lazers-tasks-plan")].find(
       (element) => element.textContent?.includes("Higher-priority target plan"),
@@ -539,8 +547,8 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     planPrerequisite.click()
     await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
 
-    // The scheduler's recorded wait sets the row's state icon; its one trailing status is the
-    // linked blocker, and the machine reason stays out of the row.
+    // The scheduler's recorded wait sets the row's state icon; the link icon opens the blocker,
+    // and the machine reason stays out of the row.
     const waitingRow = row(ids.waiting)!
     const waitingState = waitingRow.querySelector<HTMLElement>(
       ":scope > .lazers-tasks-row .lazers-tasks-state",
@@ -554,11 +562,8 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     expect(waitingRow.querySelector(".lazers-tasks-node-reason")).toBeNull()
     expect(waitingRow.textContent).not.toContain("Waiting for prerequisite source integration.")
     const waitingBlocker = waitingRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
-    expect(waitingBlocker.querySelector(".lazers-tasks-row-blocker-name")?.textContent).toBe("LZ-1")
+    expect(waitingBlocker.textContent).toBe("link")
     // One prerequisite, 100 listed reservation holders and one more the read only counted.
-    expect(waitingBlocker.querySelector(".lazers-tasks-row-blocker-count")?.textContent).toBe(
-      "+101",
-    )
     expect(waitingBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-1 and 101 more")
     expect(waitingBlocker.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip).toBe(
       "Waiting on LZ-1 and 101 more",

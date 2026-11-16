@@ -668,28 +668,6 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
 .lazers-tasks-entry[data-context-only="true"] > .lazers-tasks-row .lazers-tasks-row-title {
   color: var(--text-base);
 }
-.lazers-tasks-badge {
-  flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 4px;
-  color: var(--text-weak);
-  font-size: 0.85em;
-  line-height: 18px;
-  white-space: nowrap;
-}
-.lazers-tasks-badge[data-tone="running"] {
-  color: var(--text-base);
-}
-.lazers-tasks-badge[data-tone="attention"],
-.lazers-tasks-badge[data-tone="waiting"] {
-  border-color: color-mix(in srgb, var(--icon-warning-base) 45%, transparent);
-  color: var(--text-base);
-}
-.lazers-tasks-badge[data-tone="failed"] {
-  border-color: color-mix(in srgb, var(--icon-critical-base) 45%, transparent);
-  color: var(--text-base);
-}
 .lazers-tasks-branches {
   display: grid;
   gap: 2px;
@@ -716,30 +694,20 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
 }
 
 /*
- * Row tail: one status slot that never shrinks, so the title alone yields width. Below 480px rows
- * are icon-only (the state icon names the state; the link icon opens the blocker); wider rows add
- * the single-word badge or the blocker name and count. Now/Attention entries follow suit.
+ * Row status is icons only at every width, so the title alone yields width: the themed state icon
+ * names the state, and a link icon that never shrinks opens the first blocker. Now/Attention match.
  */
-.lazers-tasks-row-tail {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  min-width: 0;
-}
 .lazers-tasks-row-blocker {
-  display: inline-flex;
+  display: inline-grid;
   flex: none;
-  align-items: center;
-  gap: 4px;
-  min-width: 24px;
+  place-items: center;
+  width: 24px;
   height: 24px;
-  justify-content: center;
-  padding: 0 4px;
+  padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--icon-base);
-  font-size: 0.85em;
   cursor: pointer;
 }
 .lazers-tasks-row-blocker:hover,
@@ -750,23 +718,4 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
 .lazers-tasks-row-blocker:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
-}
-.lazers-tasks-row-blocker-name {
-  max-width: 8em;
-  overflow: hidden;
-  color: var(--text-base);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lazers-tasks-row-blocker-count {
-  flex: none;
-  color: var(--text-weak);
-}
-@container lazers-tasks (max-width: 479.98px) {
-  .lazers-tasks-row-tail[data-tail="badge"],
-  .lazers-tasks-schedule-entry .lazers-tasks-badge,
-  .lazers-tasks-row-blocker-name,
-  .lazers-tasks-row-blocker-count {
-    display: none;
-  }
 }

@@ -2,7 +2,7 @@ import type { IconName } from "@opencode/plugin/gui"
 import type { CurrentTaskActivity } from "./contract.ts"
 import type { ExecutionListRow } from "./execution-list.ts"
 
-/** Visual family of a task row; each tone pairs a host icon with an optional short badge. */
+/** Visual family of a task row; each tone pairs a host icon with a theme status color. */
 export type TaskTone =
   | "attention"
   | "waiting"
@@ -24,10 +24,8 @@ export type TaskRowPresentation = {
   icon: IconName
   /** One short word naming the state: the icon's accessible name and tooltip lead. */
   label: string
-  /** The single-word badge for wide rows, or null; quiet scheduled and integrated rows carry none. */
-  badge: string | null
-  /** The recorded source reason behind the badge, for its tooltip and accessible description. */
-  badgeDetail: string | null
+  /** The recorded source reason behind the state, for its tooltip and accessible description. */
+  detail: string | null
   /** Waiting-on tasks, plans and reservation holders, in that order, without duplicates. */
   blockers: TaskBlocker[]
   /** Known blocker count, including references the scheduling read did not enumerate. */
@@ -100,10 +98,9 @@ export function taskRowPresentation(
   const state = (
     tone: TaskTone,
     icon: IconName,
-    badge: string | null,
-    badgeDetail: string | null = null,
-    label = badge ?? stateWord(status),
-  ): TaskRowPresentation => ({ tone, icon, label, badge, badgeDetail, blockers, blockerTotal })
+    label: string,
+    detail: string | null = null,
+  ): TaskRowPresentation => ({ tone, icon, label, detail, blockers, blockerTotal })
   const attention = attentionLabel(activity)
   if (open && attention)
     return state(
@@ -145,21 +142,21 @@ export function taskRowPresentation(
     case "ready":
       return state("ready", "status", "Ready")
     case "queued":
-      return state("scheduled", "status", null, null, "Queued")
+      return state("scheduled", "status", "Queued")
     case "submitted":
       return state("submitted", "dash", "Proposed")
     case "accepted":
       return state("accepted", "check", "Accepted", "Accepted; not yet integrated")
     case "incorporated":
-      return state("integrated", "circle-check", null, null, "Integrated")
+      return state("integrated", "circle-check", "Integrated")
     case "failed":
       return state("failed", "circle-x", "Failed", row.reason)
     case "exhausted":
       return state("failed", "circle-x", "Exhausted", row.reason)
     case "cancelled":
-      return state("cancelled", "minus", null)
+      return state("cancelled", "minus", "Cancelled")
     default:
-      return state("scheduled", "status", null)
+      return state("scheduled", "status", stateWord(status))
   }
 }
 
@@ -168,23 +165,17 @@ function stateWord(status: string) {
   return `${word[0]!.toUpperCase()}${word.slice(1).toLowerCase()}`
 }
 
-/** What fills the row's one trailing slot. */
-export type TaskRowTail = "badge" | "blocker" | null
-
 /**
- * A row shows at most one status beside its title so the title keeps the width. Native attention
- * keeps its badge; otherwise a typed blocker wins because it navigates; otherwise the badge.
+ * The blocker a row links beside its title, if any. Native attention outranks recorded waits, so an
+ * attention row links none; the inspector still lists every reference.
  */
-export function taskRowTail(presentation: TaskRowPresentation): TaskRowTail {
-  if (presentation.tone !== "attention" && presentation.blockers.length) return "blocker"
-  return presentation.badge ? "badge" : null
+export function taskRowBlocker(presentation: TaskRowPresentation): TaskBlocker | undefined {
+  return presentation.tone === "attention" ? undefined : presentation.blockers[0]
 }
 
 /** Hover and focus text for the row's state icon: the state word, then its recorded reason. */
 export function taskStateTooltip(presentation: TaskRowPresentation) {
-  return presentation.badgeDetail
-    ? `${presentation.label} · ${presentation.badgeDetail}`
-    : presentation.label
+  return presentation.detail ? `${presentation.label} · ${presentation.detail}` : presentation.label
 }
 
 /** Plan-level lifecycle worth naming beside a plan heading; ordinary running/queued stays quiet. */
