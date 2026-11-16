@@ -451,6 +451,26 @@ function intervalRenderer(
   return renderer
 }
 
+/** Small muted caption at the last frontier point, kept inside the plot (above-left of the point). */
+export function frontierEndLabel(
+  text: string,
+  show: boolean,
+  theme: ComparisonChartTheme,
+  fontSize: number,
+) {
+  return {
+    show,
+    formatter: text,
+    position: "top" as const,
+    align: "right" as const,
+    verticalAlign: "bottom" as const,
+    distance: 6,
+    color: theme.mutedText,
+    fontFamily: theme.fontFamily,
+    fontSize,
+  }
+}
+
 export function comparisonChartOptions(
   data: ComparisonChartData,
   theme: ComparisonChartTheme,
@@ -495,7 +515,16 @@ export function comparisonChartOptions(
   )
   const frontierPoints = points
     .filter((point) => frontier.has(point.configurationID))
-    .toSorted((left, right) => left.tokensPerAcceptedTask - right.tokensPerAcceptedTask)
+    .toSorted(
+      (left, right) =>
+        left.tokensPerAcceptedTask - right.tokensPerAcceptedTask ||
+        left.currentMarketUSDPerAcceptedTask - right.currentMarketUSDPerAcceptedTask ||
+        (left.configurationID < right.configurationID
+          ? -1
+          : left.configurationID > right.configurationID
+            ? 1
+            : 0),
+    )
   const description = comparisonChartDescription(points, references)
   const referenceByConfiguration = new Map(
     referenceMarks.map((item) => [item.reference.configurationID, item.reference]),
@@ -681,7 +710,11 @@ export function comparisonChartOptions(
         connectNulls: false,
         showSymbol: false,
         silent: true,
-        lineStyle: { color: theme.accent, width: 1.5, type: "dashed" },
+        z: 1,
+        lineStyle: { color: theme.accent, width: 2, type: "dashed" },
+        emphasis: { disabled: true },
+        blur: { lineStyle: { opacity: 1 }, endLabel: { opacity: 1 } },
+        endLabel: frontierEndLabel("Observed frontier", frontierPoints.length > 1, theme, fontSize),
       },
       {
         id: "openrouter-reference-scalars",
@@ -902,7 +935,12 @@ export class ComparisonChartAdapter<Data = ComparisonChartData> {
     const series =
       (this.chart.getOption() as { series?: Array<{ id?: string; data?: unknown[] }> }).series ?? []
     for (const [seriesIndex, item] of series.entries()) {
-      if (item.id === "selected-identities" || item.id === "authoritative-frontier") continue
+      if (
+        item.id === "selected-identities" ||
+        item.id === "authoritative-frontier" ||
+        item.id === "benchmark-frontier"
+      )
+        continue
       const dataIndex = (item.data ?? []).findIndex(
         (datum) =>
           typeof datum === "object" &&

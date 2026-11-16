@@ -533,3 +533,64 @@ test("keyboard order visits each plotted model once from fewest to most tokens",
   expect(new Set(order.map((choice) => choice.configurationID)).size).toBe(order.length)
   for (const choice of order) expect(choice.label).toMatch(/ · [≈≥]\$[^ ]+ \/ task$/)
 })
+
+type FrontierLine = {
+  id: string
+  name: string
+  type: string
+  data: unknown[]
+  z?: number
+  silent: boolean
+  smooth: boolean
+  connectNulls: boolean
+  showSymbol: boolean
+  lineStyle: unknown
+  emphasis: unknown
+  blur: { lineStyle: { opacity: number } }
+  endLabel: { show: boolean } & Record<string, unknown>
+}
+
+test("observed frontier is a visible dashed accent line with an end label and deterministic ties", () => {
+  const tied = (id: string, tokens: number, cost: number): ComparisonChartPoint => ({
+    ...points[0]!,
+    configurationID: id,
+    tokensPerAcceptedTask: tokens,
+    currentMarketUSDPerAcceptedTask: cost,
+  })
+  const members = [
+    tied("b", 100, 0.5),
+    tied("a", 100, 0.5),
+    tied("c", 100, 0.4),
+    tied("d", 50, 0.9),
+  ]
+  const options = (ids: ComparisonChartPoint[]) =>
+    comparisonChartOptions(
+      { points: ids, frontierConfigurationIDs: ["a", "b", "c", "d", "ghost"] },
+      theme,
+    )
+  const forward = options(members).series[1] as unknown as FrontierLine
+  expect(forward.id).toBe("authoritative-frontier")
+  expect(forward.data).toEqual([
+    [50, 0.9],
+    [100, 0.4],
+    [100, 0.5],
+    [100, 0.5],
+  ])
+  expect((options(members.toReversed()).series[1] as unknown as FrontierLine).data).toEqual(
+    forward.data,
+  )
+  expect(forward.lineStyle).toEqual({ color: "native-accent", width: 2, type: "dashed" })
+  expect(forward.z).toBe(1)
+  expect(forward.silent).toBe(true)
+  expect(forward.emphasis).toEqual({ disabled: true })
+  expect(forward.blur.lineStyle.opacity).toBe(1)
+  expect(forward.endLabel).toMatchObject({
+    show: true,
+    formatter: "Observed frontier",
+    color: "native-muted",
+    fontFamily: "Native Sans",
+  })
+  const single = options([members[0]!]).series[1] as unknown as FrontierLine
+  expect(single.data).toEqual([])
+  expect(single.endLabel.show).toBe(false)
+})
