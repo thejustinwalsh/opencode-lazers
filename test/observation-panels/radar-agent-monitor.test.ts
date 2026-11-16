@@ -370,6 +370,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(String(styles)).toContain("@container lazers-radar (max-width: 360px)")
     expect(String(styles)).toContain("@container lazers-radar (min-width: 640px)")
     expect(String(styles)).not.toContain("lazers-radar-timeline")
+    expect(String(styles)).toContain(".lazers-radar-session-main > .lazers-radar-session-icon")
+    expect(String(styles)).not.toMatch(/\n\.lazers-radar-session-icon \{\n\s+grid-area/)
     expect(String(styles)).not.toContain("--icon-success-base);\n}\n.lazers-radar-status-dot")
     expect(String(styles)).toContain("prefers-reduced-motion")
 
@@ -521,6 +523,23 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
     expect(inspectorText()).toContain("ses-failed")
     expect(historyRequests).toContain("ses-failed")
+    const inspectorHead = container.querySelector(".lazers-radar-inspector-head")!
+    expect(inspectorHead.querySelector(".lazers-radar-inspector-icon")).not.toBeNull()
+    expect(inspectorHead.querySelector(".lazers-radar-session-icon")).toBeNull()
+    expect(inspectorHead.querySelector("h3")?.textContent).toContain("Worker · Task")
+    const rowStates = [
+      ...container.querySelectorAll(".lazers-radar-sessions .lazers-radar-session-state"),
+    ].map((state) => state.textContent ?? "")
+    expect(rowStates.length).toBeGreaterThan(2)
+    expect(rowStates.findIndex((state) => state.startsWith("Idle"))).toBeGreaterThan(
+      rowStates.findLastIndex((state) => state === "Busy" || state === "Running"),
+    )
+    expect(container.querySelector(".lazers-radar-unavailable")).toBeNull()
+    const status = container.querySelector<HTMLDetailsElement>(".lazers-radar-monitor-status")!
+    expect(status.open).toBe(false)
+    expect(status.querySelector("summary")?.textContent).toMatch(/· 1 active ·/)
+    expect(status.textContent).toContain("Journal")
+    expect(inspectorText()).not.toContain("Journal")
 
     const activity = container.querySelector<HTMLDivElement>(".lazers-radar-monitor-activity")!
     const readLine = lines().find((line) => line.textContent?.includes("src/worker.ts"))!

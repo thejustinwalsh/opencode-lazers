@@ -335,15 +335,42 @@ export function schedulerLabel(status: Live["scheduler"]["status"]) {
   }
 }
 
+/** Recorded-state rank: active or assigned work leads, then idle, then unknown. */
+function sessionRank(session: LiveSession) {
+  if (session.state === "busy" || session.assignment) return 0
+  return session.state === "idle" ? 1 : 2
+}
+
+/**
+ * Available sessions lead in recorded-state order; the server's order is kept within a rank so
+ * rows only move when their state changes. Unavailable (historical) sessions are grouped apart.
+ */
+export function sessionGroups(live: Live) {
+  const available = live.sessions.filter((session) => session.availability === "available")
+  return {
+    leading: available
+      .map((session, index) => ({ session, index }))
+      .toSorted(
+        (left, right) =>
+          sessionRank(left.session) - sessionRank(right.session) || left.index - right.index,
+      )
+      .map(({ session }) => session.sessionID),
+    unavailable: live.sessions
+      .filter((session) => session.availability !== "available")
+      .map((session) => session.sessionID),
+  }
+}
+
+/** One compact status line; unavailable sessions are counted by their own group. */
 export function monitorSummary(live: Live) {
-  const busy = live.sessions.filter((session) => session.state === "busy").length
-  const idle = live.sessions.filter((session) => session.state === "idle").length
-  const unavailable = live.sessions.filter((session) => session.availability !== "available").length
+  const available = live.sessions.filter((session) => session.availability === "available")
+  const busy = available.filter((session) => session.state === "busy").length
+  const idle = available.filter((session) => session.state === "idle").length
   return [
     schedulerLabel(live.scheduler.status),
     `${busy} active`,
     `${idle} idle`,
-    unavailable ? `${unavailable} unavailable` : "",
+    coverageGaps(live).length ? "incomplete" : "",
   ]
     .filter(Boolean)
     .join(" · ")

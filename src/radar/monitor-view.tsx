@@ -14,6 +14,7 @@ import {
   formatDuration,
   lineView,
   monitorSummary,
+  sessionGroups,
   recentFlow,
   routeDetail,
   sessionActivity,
@@ -74,6 +75,10 @@ export function RadarMonitorView(props: Props) {
   const live = () => props.data().live
   const sessions = () => live()?.sessions ?? []
   const sessionIDs = createMemo(() => sessions().map((session) => session.sessionID))
+  const groups = createMemo(() =>
+    live() ? sessionGroups(live()!) : { leading: [] as string[], unavailable: [] as string[] },
+  )
+  const [showUnavailable, setShowUnavailable] = createSignal(false)
   const sessionByID = createMemo(
     () => new Map(sessions().map((session) => [session.sessionID, session])),
   )
@@ -466,18 +471,42 @@ export function RadarMonitorView(props: Props) {
         </div>
         <Show when={live()}>
           {(response) => (
-            <p class="lazers-radar-monitor-summary">
-              <Ui.Icon name="settings-gear" size="small" />
-              <span>{monitorSummary(response())}</span>
-              <Show when={coverageGaps(response()).length > 0}>
-                <span
-                  class="lazers-radar-monitor-gaps"
-                  title="The read hit a size limit; omitted records are not reconstructed."
-                >
-                  · Some {coverageGaps(response()).join(", ")} omitted
+            <details class="lazers-radar-monitor-status">
+              <summary>
+                <span class="lazers-radar-monitor-summary">
+                  <Ui.Icon name="settings-gear" size="small" />
+                  <span>{monitorSummary(response())}</span>
                 </span>
-              </Show>
-            </p>
+              </summary>
+              <dl class="lazers-radar-facts">
+                <dt>Scheduler</dt>
+                <dd>
+                  {response().scheduler.status}
+                  {response().scheduler.participants === null
+                    ? ""
+                    : ` · ${response().scheduler.participants} participants`}
+                </dd>
+                <dt>Sessions</dt>
+                <dd>
+                  {response().coverage.sessionCount} returned ·{" "}
+                  {response().coverage.managedSessionCount} managed
+                </dd>
+                <dt>Runner</dt>
+                <dd>{response().freshness.runner}</dd>
+                <dt>Inventory</dt>
+                <dd>{response().freshness.nativeInventory}</dd>
+                <dt>Events</dt>
+                <dd>{response().freshness.nativeEvents}</dd>
+                <dt>Journal</dt>
+                <dd>{response().coverage.journal}</dd>
+                <dt>Omitted</dt>
+                <dd>{coverageGaps(response()).join(", ") || "None reported"}</dd>
+                <dt>Observed</dt>
+                <dd>
+                  {clockTime(response().observedAt)} · event {response().boundary.eventSequence}
+                </dd>
+              </dl>
+            </details>
           )}
         </Show>
       </header>
@@ -527,9 +556,28 @@ export function RadarMonitorView(props: Props) {
                   </p>
                 }
               >
-                <ul class="lazers-radar-sessions" aria-label="Sessions">
-                  <For each={sessionIDs()}>{(id) => <SessionRow id={id} />}</For>
-                </ul>
+                <Show when={groups().leading.length > 0}>
+                  <ul class="lazers-radar-sessions" aria-label="Sessions">
+                    <For each={groups().leading}>{(id) => <SessionRow id={id} />}</For>
+                  </ul>
+                </Show>
+                <Show when={groups().unavailable.length > 0}>
+                  <details
+                    class="lazers-radar-unavailable"
+                    open={
+                      showUnavailable() || groups().unavailable.includes(selectedSessionID() ?? "")
+                    }
+                    onToggle={(event) => setShowUnavailable(event.currentTarget.open)}
+                  >
+                    <summary>
+                      {groups().unavailable.length} unavailable{" "}
+                      {groups().unavailable.length === 1 ? "session" : "sessions"}
+                    </summary>
+                    <ul class="lazers-radar-sessions" aria-label="Unavailable sessions">
+                      <For each={groups().unavailable}>{(id) => <SessionRow id={id} />}</For>
+                    </ul>
+                  </details>
+                </Show>
               </Show>
               <section class="lazers-radar-recent" aria-labelledby="lazers-radar-recent-title">
                 <h3 id="lazers-radar-recent-title">Recent activity</h3>
@@ -580,7 +628,7 @@ export function RadarMonitorView(props: Props) {
           {(session) => (
             <>
               <header class="lazers-radar-inspector-head">
-                <span class="lazers-radar-session-icon" aria-hidden="true">
+                <span class="lazers-radar-inspector-icon" aria-hidden="true">
                   <Ui.Icon name={sessionRole(session()).icon} size="small" />
                 </span>
                 <h3>
@@ -782,34 +830,6 @@ export function RadarMonitorView(props: Props) {
                   >
                     Load older
                   </Ui.Button>
-                </Show>
-              </details>
-
-              <details class="lazers-radar-disclosure lazers-radar-monitor-coverage">
-                <summary>Coverage</summary>
-                <Show when={live()}>
-                  {(response) => (
-                    <dl class="lazers-radar-facts">
-                      <dt>Runner</dt>
-                      <dd>{response().freshness.runner}</dd>
-                      <dt>Inventory</dt>
-                      <dd>{response().freshness.nativeInventory}</dd>
-                      <dt>Events</dt>
-                      <dd>{response().freshness.nativeEvents}</dd>
-                      <dt>Sessions</dt>
-                      <dd>
-                        {response().coverage.sessionCount} returned ·{" "}
-                        {response().coverage.managedSessionCount} managed
-                      </dd>
-                      <dt>Omitted</dt>
-                      <dd>{coverageGaps(response()).join(", ") || "None reported"}</dd>
-                      <dt>Observed</dt>
-                      <dd>
-                        {clockTime(response().observedAt)} · event{" "}
-                        {response().boundary.eventSequence}
-                      </dd>
-                    </dl>
-                  )}
                 </Show>
               </details>
             </>

@@ -265,22 +265,56 @@
   border-color: currentColor;
   background: transparent;
 }
-.lazers-radar-monitor-summary {
+.lazers-radar-monitor-status {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px 8px;
-  margin: 0;
   color: var(--text-weak);
   font-size: 0.9em;
   line-height: 1.4;
 }
+.lazers-radar-monitor-status > summary {
+  min-height: 24px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.lazers-radar-monitor-summary {
+  display: inline-flex;
+  max-width: calc(100% - 16px);
+  align-items: baseline;
+  gap: 4px;
+  vertical-align: top;
+}
 .lazers-radar-monitor-summary > span {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
-.lazers-radar-monitor-gaps {
+.lazers-radar-monitor-status .lazers-radar-facts {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 4px 0 4px 16px;
+}
+.lazers-radar-monitor-status .lazers-radar-facts dt {
   color: var(--text-weak);
+}
+.lazers-radar-monitor-status .lazers-radar-facts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-base);
+  overflow-wrap: break-word;
+}
+.lazers-radar-unavailable {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-radar-unavailable > summary {
+  min-height: 32px;
+  padding: 6px 8px;
+  color: var(--text-weak);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.lazers-radar-unavailable > .lazers-radar-sessions {
+  border-top: 0;
 }
 .lazers-radar-monitor-activity,
 .lazers-radar-monitor-inspector {
@@ -352,13 +386,13 @@
   text-align: left;
   cursor: pointer;
 }
-.lazers-radar-session-icon {
+.lazers-radar-session-main > .lazers-radar-session-icon {
   grid-area: icon;
   display: inline-flex;
   align-self: center;
   color: var(--text-base);
 }
-.lazers-radar-session-identity {
+.lazers-radar-session-main > .lazers-radar-session-identity {
   grid-area: identity;
   min-width: 0;
   overflow: hidden;
@@ -372,13 +406,13 @@
 .lazers-radar-session-task {
   color: var(--text-base);
 }
-.lazers-radar-session-state {
+.lazers-radar-session-main > .lazers-radar-session-state {
   grid-area: state;
   min-width: 0;
   color: var(--text-weak);
   font-size: 0.9em;
 }
-.lazers-radar-session-model {
+.lazers-radar-session-main > .lazers-radar-session-model {
   grid-area: model;
   min-width: 0;
   max-width: 24ch;
@@ -393,7 +427,7 @@
 .lazers-radar-session-basis {
   color: var(--text-weak);
 }
-.lazers-radar-session-age {
+.lazers-radar-session-main > .lazers-radar-session-age {
   grid-area: age;
   color: var(--text-weak);
   font-size: 0.86em;
@@ -517,21 +551,36 @@ button.lazers-radar-line:hover,
 .lazers-radar-monitor-inspector {
   padding: 12px var(--radar-inset) 16px;
 }
+/* Explicit columns: a long title wraps between words in its own track, never per letter. */
 .lazers-radar-inspector-head {
   min-width: 0;
   display: grid;
   grid-template-columns: var(--radar-row-icon) minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 4px var(--radar-row-gap);
+  gap: 2px var(--radar-row-gap);
+}
+.lazers-radar-inspector-icon {
+  grid-column: 1;
+  grid-row: 1;
+  display: inline-flex;
+  align-self: center;
+  color: var(--text-base);
 }
 .lazers-radar-detail .lazers-radar-inspector-head h3 {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
   margin: 0;
   font-size: 1em;
+  line-height: 1.4;
+  overflow-wrap: break-word;
 }
 .lazers-radar-inspector-sub {
   font-weight: 500;
 }
 .lazers-radar-inspector-state {
+  grid-column: 3;
+  grid-row: 1;
   color: var(--text-base);
   font-size: 0.9em;
   white-space: nowrap;
@@ -620,6 +669,11 @@ button.lazers-radar-line:hover,
   .lazers-radar-line-duration {
     grid-column: 3;
     grid-row: 1;
+  }
+  .lazers-radar-inspector-state {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    white-space: normal;
   }
 }
 @container lazers-radar (min-width: 640px) {

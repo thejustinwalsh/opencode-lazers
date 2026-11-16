@@ -10,6 +10,7 @@ import {
   monitorSummary,
   recentFlow,
   sessionActivity,
+  sessionGroups,
   sessionModel,
   sessionRole,
   sessionState,
@@ -316,7 +317,12 @@ test("header summary, coverage gaps and connection words are distinct and neutra
       session({ sessionID: "ses-gone", state: "unknown", availability: "missing" }),
     ],
   })
-  expect(monitorSummary(response)).toBe("Scheduler running · 1 active · 1 idle · 1 unavailable")
+  expect(monitorSummary(response)).toBe("Scheduler running · 1 active · 1 idle")
+  expect(
+    monitorSummary(
+      live({ ...response, coverage: { ...response.coverage, journalTruncated: true } }),
+    ),
+  ).toBe("Scheduler running · 1 active · 1 idle · incomplete")
   expect(coverageGaps(response)).toEqual([])
   expect(coverageGaps(live({ coverage: { ...response.coverage, callsTruncated: true } }))).toEqual([
     "calls",
@@ -358,4 +364,22 @@ test("durations and ages are compact and labelled", () => {
   expect(formatAge(8_000)).toBe("8s ago")
   expect(formatAge(180_000)).toBe("3m ago")
   expect(formatAge(7_200_000)).toBe("2h ago")
+})
+
+test("active and assigned sessions lead; unavailable historical sessions are grouped apart", () => {
+  const response = live({
+    sessions: [
+      session({ sessionID: "ses-gone-1", state: "unknown", availability: "missing" }),
+      session({ sessionID: "ses-idle", state: "idle", assignment: null }),
+      session({ sessionID: "ses-unknown", state: "unknown", assignment: null }),
+      session({ sessionID: "ses-gone-2", state: "idle", availability: "archived" }),
+      session({ sessionID: "ses-assigned", state: "idle" }),
+      session({ sessionID: "ses-busy", state: "busy", assignment: null }),
+    ],
+  })
+  expect(sessionGroups(response)).toEqual({
+    leading: ["ses-assigned", "ses-busy", "ses-idle", "ses-unknown"],
+    unavailable: ["ses-gone-1", "ses-gone-2"],
+  })
+  expect(monitorSummary(response)).toBe("Scheduler running · 1 active · 2 idle")
 })
