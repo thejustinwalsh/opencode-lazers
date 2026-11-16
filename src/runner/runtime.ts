@@ -7009,6 +7009,7 @@ export class TaskRuntime {
       (command.action === "run" && result?.status === "running") ||
       (command.action === "integrated" && result?.status === "cleanup-requested") ||
       (command.action === "reconcile" && result?.status === "reconciling") ||
+      (command.action === "cancel" && result?.status === "cancelling") ||
       (command.action === "retained-repair" && result?.status === "retained-repair-requested") ||
       (command.action === "quarantine-source" && result?.status === "quarantining-source")
     )

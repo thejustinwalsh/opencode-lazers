@@ -2473,7 +2473,7 @@ test("scope amendment requires this plan's unfinished task and explicit additive
   expect(f.store.plan(planID)!.version).toBe(1)
 })
 
-test("Architect run and reconcile wake the scheduler before periodic reconciliation", async () => {
+test("Architect run, reconcile, and cancel wake the scheduler before periodic reconciliation", async () => {
   const f = fixture({ delayed: true })
   let drained = Promise.withResolvers<void>()
   const registration = sharedScheduler.register(
@@ -2492,7 +2492,7 @@ test("Architect run and reconcile wake the scheduler before periodic reconciliat
   const runtime = new TaskRuntime(f.store, f.host, "project", undefined, {
     wakeScheduler: () => {
       wakes++
-      expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+      expect(f.store.plan(f.receipt.planID)?.state).toBe(wakes === 3 ? "cancelling" : "running")
       registration.request()
     },
   })
@@ -2525,6 +2525,15 @@ test("Architect run and reconcile wake the scheduler before periodic reconciliat
       id: attempts[0]!.id,
       state: "verifying",
     })
+    drained = Promise.withResolvers<void>()
+    await tool.execute({
+      ...command,
+      requestID: "architect-cancel",
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    })
+    expect(wakes).toBe(3)
+    await drained.promise
   } finally {
     await registration.dispose()
     await runtime.stop()
