@@ -58,9 +58,12 @@ export type ExecutionPlanGroup = {
   planRevision?: number
   title: string
   hasRecordedTitle: boolean
+  /** Recorded plan lifecycle, distinct from any task row state. */
+  state?: string
   nonterminalCount: number
   totalCount: number
   rows: ExecutionListRow[]
+  /** Scheduler priority, present only when the scheduling read covers this plan. */
   priority?: number
   planOrder?: number
   schedulingDecision?: SchedulingPlan["decision"]
@@ -172,6 +175,7 @@ function buildScheduledGroups(input: {
         planVersion: plan.planVersion,
         title: plan.title,
         hasRecordedTitle: true,
+        state: plan.lifecycle,
         nonterminalCount: nodes.filter((node) => !terminal.has(node.lifecycle)).length,
         totalCount: nodes.length,
         rows,
@@ -661,6 +665,7 @@ export function buildExecutionList(input: {
       planRevision: plan.revision,
       title: scheduleByPlan.get(plan.id)?.title ?? plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
       hasRecordedTitle: plan.title !== null || Boolean(scheduleByPlan.get(plan.id)?.title),
+      state: plan.state,
       nonterminalCount,
       totalCount: nodes.length,
       rows: scheduleByPlan.has(plan.id)

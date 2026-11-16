@@ -129,6 +129,7 @@ describe("tasks native affordances", () => {
       planRevision: 1,
       title,
       hasRecordedTitle: true,
+      state: "running",
       nonterminalCount,
       totalCount,
       rows: [],
@@ -164,15 +165,74 @@ describe("tasks native affordances", () => {
     expect(unnamed).not.toContain("<summary")
     expect(unnamed).toContain("Standalone task")
 
-    const completed = renderGroup("Completed plan", 0, 1, "completed")
+    const completed = renderGroup("Completed plan", 0, 2, "completed")
     expect(completed).toContain('aria-label="Completed plan"')
-    expect(completed).not.toContain(">0/1</span>")
+    expect(completed).not.toContain(">0/2 remaining</span>")
     expect(completed).toContain("Visible task")
 
-    const cancelled = renderGroup("Cancelled plan", 1, 1, "cancelled")
+    const cancelled = renderGroup("Cancelled plan", 1, 2, "cancelled")
     expect(cancelled).toContain('aria-label="Cancelled plan"')
-    expect(cancelled).not.toContain(">1/1</span>")
+    expect(cancelled).not.toContain(">1/2 remaining</span>")
     expect(cancelled).toContain("Visible task")
+
+    // A one-task plan is its task: no heading competes with the row's own title.
+    const single = renderGroup("Single task plan", 1, 1, "open")
+    expect(single).not.toContain("Single task plan")
+    expect(single).not.toContain("<summary")
+    expect(single).toContain("Visible task")
+  })
+
+  test("plan headings show recorded priority and integration or cleanup state", () => {
+    const rendered = renderToString(() =>
+      createComponent(ExecutionPlanGroupView, {
+        group: {
+          planID: "cleanup",
+          planVersion: 1,
+          planRevision: 1,
+          title: "Retry-safe submission",
+          hasRecordedTitle: true,
+          state: "cleanup-blocked",
+          priority: 2,
+          nonterminalCount: 0,
+          totalCount: 3,
+          rows: [],
+        },
+        stateFilter: "all",
+        children: "Visible task",
+      }),
+    )
+    expect(rendered).toContain('role="group"')
+    expect(rendered).toContain(
+      'aria-label="Retry-safe submission, priority 2, plan cleanup blocked"',
+    )
+    expect(rendered).toContain(">Cleanup blocked</span>")
+    expect(rendered).toMatch(/Scheduler priority for this plan"[^>]*>Priority (?:<!--[^>]*-->)*2/)
+    // A one-task plan keeps its heading when the scheduler records plan prerequisites.
+    const gated = renderToString(() =>
+      createComponent(ExecutionPlanGroupView, {
+        group: {
+          planID: "gated",
+          planVersion: 1,
+          planRevision: 1,
+          title: "Gated single task",
+          hasRecordedTitle: true,
+          nonterminalCount: 1,
+          totalCount: 1,
+          rows: [],
+          priority: 0,
+          planOrder: 2,
+          afterPlans: ["11111111-1111-4111-8111-111111111111"],
+          schedulingReason: "Waiting for prerequisite plans to integrate.",
+        },
+        stateFilter: "open",
+        planTitle: () => "Parent implementation",
+        children: "Visible task",
+      }),
+    )
+    expect(gated).toContain("Gated single task")
+    expect(gated).toMatch(/>Order (?:<!--[^>]*-->)*3/)
+    expect(gated).toContain(">Parent implementation</button>")
+    expect(gated).toContain('title="Waiting for prerequisite plans to integrate."')
   })
 
   test("session.panel menu places Tasks after the native extra-panel entries", () => {

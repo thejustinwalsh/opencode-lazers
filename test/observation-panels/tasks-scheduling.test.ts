@@ -120,7 +120,11 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       revision: 1,
       status: "submitted",
       createdAt: "2026-11-05T00:00:00.000Z",
-      proposal: { ...proposal, objective: names[taskID as keyof typeof names] },
+      // Task specifications always carry an objective, including reservation holders.
+      proposal: {
+        ...proposal,
+        objective: names[taskID as keyof typeof names] ?? `Reservation holder ${taskID.slice(-4)}`,
+      },
       provenance: {
         projectID,
         projectDirectory,
@@ -501,7 +505,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
 
     await until(() => container.querySelector('[data-scheduling-group="next"]') !== null)
     const row = (taskID: string) =>
-      container.querySelector<HTMLButtonElement>(`.lazers-tasks-row[data-task-id="${taskID}"]`)
+      container.querySelector<HTMLElement>(`[role="treeitem"][data-task-id="${taskID}"]`)
     expect(container.querySelector('[aria-label="Now"]')?.textContent).toContain(
       "Foreground active work",
     )
@@ -534,18 +538,50 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     planPrerequisite.focus()
     expect(planPrerequisite.ownerDocument.activeElement).toBe(planPrerequisite)
     planPrerequisite.click()
-    await until(() => row(ids.active)?.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
 
-    const nodeReason = container.querySelector<HTMLDivElement>(".lazers-tasks-node-reason")!
+    // The row keeps a whole short state and one linked blocker; the machine reason is not in it.
+    const waitingRow = row(ids.waiting)!
+    expect(
+      waitingRow.querySelector(":scope > .lazers-tasks-row .lazers-tasks-badge")?.textContent,
+    ).toBe("Waiting")
+    expect(waitingRow.querySelector(".lazers-tasks-node-reason")).toBeNull()
+    expect(waitingRow.textContent).not.toContain("Waiting for prerequisite source integration.")
+    const waitingBlocker = waitingRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
+    expect(waitingBlocker.querySelector(".lazers-tasks-row-blocker-name")?.textContent).toBe("LZ-1")
+    // One prerequisite, 100 listed reservation holders and one more the read only counted.
+    expect(waitingBlocker.querySelector(".lazers-tasks-row-blocker-count")?.textContent).toBe(
+      "+101",
+    )
+    expect(waitingRow.getAttribute("aria-label")).toContain(
+      "Waiting for prerequisite source integration.",
+    )
+
+    // Selecting the waiting task puts the source reason and every reference in the inspector.
+    const selectWaiting = async () => {
+      row(ids.waiting)!.click()
+      await until(() => row(ids.waiting)?.getAttribute("aria-selected") === "true")
+      await until(
+        () => container.querySelector(".lazers-tasks-detail .lazers-tasks-node-reason") !== null,
+      )
+      return container.querySelector<HTMLDivElement>(
+        ".lazers-tasks-detail .lazers-tasks-node-reason",
+      )!
+    }
+    let nodeReason = await selectWaiting()
     expect(nodeReason.textContent).toContain("Waiting for prerequisite source integration.")
     expect(nodeReason.textContent).toContain(
       "Showing 100 of 101 blocker task references visible in this session.",
     )
-    expect(nodeReason.querySelectorAll("button")).toHaveLength(101)
-    const taskPrerequisite = nodeReason.querySelector<HTMLButtonElement>("button")!
-    expect(taskPrerequisite.getAttribute("aria-label")).toContain("LZ-1")
-    taskPrerequisite.click()
-    await until(() => row(ids.active)?.getAttribute("aria-pressed") === "true")
+    expect(nodeReason.querySelectorAll("button")).toHaveLength(100)
+    expect(nodeReason.querySelector("details")?.open).toBe(false)
+    expect(
+      container.querySelector(".lazers-tasks-detail .lazers-tasks-dependencies-visible")
+        ?.textContent,
+    ).toContain("LZ-1")
+    waitingBlocker.click()
+    await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
+    nodeReason = await selectWaiting()
     const blockerReference = [...nodeReason.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.getAttribute("aria-label")?.includes(blockerIDs[0]!.slice(0, 8)),
     )!

@@ -112,6 +112,10 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       queuedFour: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       queuedFive: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       completed: "66666666-6666-4666-8666-666666666666",
+      forkRoot: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      branchA: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      branchB: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      join: "ffffffff-ffff-4fff-8fff-ffffffffffff",
     }
     const attemptIDs = Object.fromEntries(
       Object.entries(ids).map(([key]) => [key, crypto.randomUUID()]),
@@ -135,6 +139,10 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       queuedFour: "Queued page three",
       queuedFive: "Queued page three companion",
       completed: "Completed despite a combined gate",
+      forkRoot: "Prepare parallel checks",
+      branchA: "Check the light theme",
+      branchB: "Check the dark theme",
+      join: "Merge the theme checks",
     }
     const proposal = validProposal()
     const taskObjects = Object.fromEntries(
@@ -163,7 +171,14 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       [ids.unknown]: "running",
       [ids.queuedOne]: "queued",
       [ids.queuedTwo]: "queued",
+      [ids.queuedThree]: "queued",
+      [ids.queuedFour]: "queued",
+      [ids.queuedFive]: "queued",
       [ids.completed]: "accepted",
+      [ids.forkRoot]: "running",
+      [ids.branchA]: "queued",
+      [ids.branchB]: "queued",
+      [ids.join]: "queued",
     }
     const summary = (taskID: string) => {
       const key = (Object.keys(ids) as Array<keyof typeof ids>).find(
@@ -197,6 +212,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       }
     }
     const allRunning = [ids.held, ids.active, ids.unknown]
+    const forkTasks = [ids.forkRoot, ids.branchA, ids.branchB, ids.join]
     const allQueued = [
       ids.queuedOne,
       ids.queuedTwo,
@@ -236,7 +252,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       } else if (input.state === "open" && input.cursor === "open-page-two") {
         taskIDs = allQueued
       } else {
-        taskIDs = allRunning
+        taskIDs = [...allRunning, ...forkTasks]
       }
       return {
         projectDirectory,
@@ -254,6 +270,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     }
     const planID = "77777777-7777-4777-8777-777777777777"
     const completedPlanID = "88888888-8888-4888-8888-888888888888"
+    const forkPlanID = "12121212-1212-4121-8121-121212121212"
     const activityHoldReason =
       "Worker-level hold: waiting for a reviewer to reconcile the external result before this task may continue.\nAdditional hold: retain the audit trail and confirm the exact input provenance before resuming."
     const node = (taskID: string, ordinal: number) => ({
@@ -322,6 +339,22 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
             afterPlans: [],
             nodes: [node(ids.completed, 0)],
             dependencies: [],
+          },
+          {
+            id: forkPlanID,
+            revision: 1,
+            version: 1,
+            state: "running",
+            reason: null,
+            title: "Parallel checks",
+            afterPlans: [],
+            nodes: forkTasks.map(node),
+            dependencies: [
+              { prerequisite: ids.forkRoot, successor: ids.branchA },
+              { prerequisite: ids.forkRoot, successor: ids.branchB },
+              { prerequisite: ids.branchA, successor: ids.join },
+              { prerequisite: ids.branchB, successor: ids.join },
+            ],
           },
         ],
         unplannedTasks: [],
@@ -517,7 +550,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         typeof entry.value === "string" &&
         entry.value.includes(".lazers-tasks {"),
     )?.value as string | undefined
-    expect(tasksCSS).toContain('.lazers-tasks-state[data-waiting="true"]')
+    expect(tasksCSS).toContain('.lazers-tasks-state[data-tone="waiting"]')
+    expect(tasksCSS).toContain(".lazers-tasks-badge")
+    expect(tasksCSS).toContain("container: lazers-tasks / inline-size")
     expect(tasksCSS).toContain(".lazers-tasks-activity-indicator")
     expect(tasksCSS).toContain("overflow-wrap: anywhere")
     const style = browserDocument.createElement("style")
@@ -538,7 +573,24 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       },
     })
     const row = (taskID: string) =>
-      container.querySelector<HTMLButtonElement>(`[data-task-id="${taskID}"]`)
+      container.querySelector<HTMLElement>(`[data-task-id="${taskID}"]`)
+    const badge = (taskID: string) =>
+      row(taskID)?.querySelector<HTMLElement>(":scope > .lazers-tasks-row .lazers-tasks-badge")
+    const chooseAction = (label: string) => {
+      const trigger = container.querySelector<HTMLButtonElement>(
+        'button[aria-haspopup=menu][aria-label="More task actions"]',
+      )!
+      trigger.click()
+      const item = [...container.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].find(
+        (button) => button.textContent === label,
+      )
+      expect(item).toBeDefined()
+      item!.click()
+    }
+    const key = (element: HTMLElement, value: string) =>
+      element.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true }) as unknown as Event,
+      )
     const activityDetails = () =>
       container.querySelector<HTMLDetailsElement>(".lazers-tasks-activity-details")!
     const toggleActivityDetailsFromKeyboard = (key: "Enter" | " ") => {
@@ -568,33 +620,40 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(heldRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
     expect(heldRow.getAttribute("aria-label")).toContain("Additional hold: retain the audit trail")
     expect(heldRow.querySelector(".lazers-tasks-state")?.getAttribute("data-waiting")).toBe("true")
-    expect(
-      heldRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
-    ).toBe("inactive")
-    expect(heldRow.textContent).toContain("Worker archived")
+    expect(heldRow.querySelector(".lazers-tasks-state")?.getAttribute("data-tone")).toBe("waiting")
+    // One tree item per task, one visual line each: no stacked meta, hold or dependency lines.
+    expect(container.querySelector('[role="tree"]')).not.toBeNull()
+    expect(heldRow.getAttribute("role")).toBe("treeitem")
+    expect(heldRow.getAttribute("aria-level")).toBe("1")
+    expect(heldRow.querySelectorAll(":scope > *")).toHaveLength(1)
+    expect(container.querySelector(".lazers-tasks-row-dependencies")).toBeNull()
+    expect(container.querySelector(".lazers-tasks-row-hold")).toBeNull()
+    expect(heldRow.querySelector(".lazers-tasks-row-reference")?.textContent).toBe("LZ-1")
+    expect(heldRow.querySelector(".lazers-tasks-row-title")?.textContent).toBe(taskNames.held)
+    // A short state that never truncates, the linked blocker, and the source reason on hover.
+    expect(badge(ids.held)?.textContent).toBe("Waiting")
+    expect(badge(ids.held)?.title).toContain("Reconciliation hold: awaiting review")
+    expect(badge(ids.held)?.title).toContain("Additional hold: retain the audit trail")
+    const heldBlocker = heldRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
+    expect(heldBlocker.textContent).toBe("LZ-8")
+    expect(heldBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-8")
+    expect(heldBlocker.tabIndex).toBe(-1)
+    expect(getComputedStyle(badge(ids.held)!).flexShrink).toBe("0")
+    expect(getComputedStyle(heldBlocker).flexShrink).toBe("0")
+    expect(heldRow.getAttribute("aria-label")).toContain("waiting on LZ-8 (queued)")
+    heldBlocker.click()
+    await until(() => row(ids.queuedFive)?.getAttribute("aria-selected") === "true")
+    expect(heldRow.textContent).not.toContain("Additional hold: retain the audit trail")
+    expect(heldRow.textContent).not.toContain("Worker archived")
+    row(ids.held)!.click()
+    await until(() => row(ids.held)?.getAttribute("aria-selected") === "true")
+    await until(() =>
+      Boolean(container.querySelector(".lazers-tasks-current-activity")?.textContent),
+    )
     expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
       "Worker archived",
     )
-    expect(heldRow.textContent).toContain("Waiting")
-    const dependencyRow = [
-      ...heldRow.closest(".lazers-tasks-entry")!.querySelectorAll(".lazers-tasks-row-dependencies"),
-    ].find((line) => line.textContent?.includes("Waiting on"))!
-    expect(dependencyRow.textContent).toContain("Waiting on")
-    expect(dependencyRow.querySelector("button")?.textContent).toContain(
-      referenceByTaskID.get(ids.queuedFive)!,
-    )
-    dependencyRow.querySelector<HTMLButtonElement>("button")!.click()
-    await until(() => row(ids.queuedFive)?.getAttribute("aria-pressed") === "true")
-    row(ids.held)!.click()
-    await until(() => row(ids.held)?.getAttribute("aria-pressed") === "true")
-    expect(heldRow.textContent).not.toContain("Additional hold: retain the audit trail")
-    expect(container.querySelector(".lazers-tasks-row-hold")?.textContent).toContain(
-      "Reconciliation hold",
-    )
-    const sourceButton = [
-      ...heldRow.closest(".lazers-tasks-entry")!.querySelectorAll("button"),
-    ].find((button) => button.textContent?.includes("roadmap.md › Recovery"))!
-    sourceButton.click()
+    chooseAction("Open source plan")
     await until(() => sourceSelections.length === 1)
     expect(sourceSelections[0]).toEqual(["design/roadmap.md", { start: 3, end: 3 }])
     expect(opened.at(-1)?.[0]).toBe("file:design/roadmap.md")
@@ -605,25 +664,46 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     )
     expect(activeRow.getAttribute("aria-label")).toContain("observed foreground activity active")
     expect(activeRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
-    expect(
-      activeRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
-    ).toBe("active")
-    expect(activeRow.textContent).toContain("Input pending")
-    expect(activeRow.textContent).toContain("Approval pending")
+    expect(activeRow.getAttribute("aria-label")).toContain("Input pending · Approval pending")
+    // Native attention outranks the hold in the row; the hold stays in the inspector.
+    expect(badge(ids.active)?.textContent).toBe("Needs input")
+    expect(badge(ids.active)?.getAttribute("data-tone")).toBe("attention")
+    expect(badge(ids.active)?.title).toBe("Input pending · Approval pending")
     expect(unknownRow.getAttribute("aria-label")).toContain("observed foreground activity unknown")
     expect(unknownRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
     expect(unknownRow.getAttribute("aria-label")).toContain("activity observation unavailable")
-    expect(unknownRow.textContent).toContain("Worker unknown")
-    expect(
-      unknownRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
-    ).toBe("unknown")
+    expect(badge(ids.unknown)?.textContent).toBe("Waiting")
+    expect(badge(ids.unknown)?.title).toContain("Additional hold: retain the audit trail")
+    expect(unknownRow.querySelector(".lazers-tasks-row-blocker")).toBeNull()
     expect(container.querySelector(".lazers-tasks-plan-heading")?.textContent).toContain(
       "remaining",
     )
     expect(container.querySelector(".lazers-tasks-inspector-state")?.textContent).toBe("Waiting")
     const inspectorPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
     const inspectorText = inspectorPane.textContent ?? ""
+    expect(inspectorPane.querySelector(".lazers-tasks-title")?.textContent).toBe(taskNames.held)
+    // A one-sentence objective is the title; the goal is not repeated beneath it.
+    expect(inspectorPane.querySelector(".lazers-tasks-objective")).toBeNull()
+    expect(inspectorText.indexOf("LZ-1")).toBeLessThan(inspectorText.indexOf(taskNames.held))
+    expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Waiting on"))
     expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Done when"))
+    expect(inspectorPane.querySelectorAll(".lazers-tasks-assertions li").length).toBe(
+      Math.min(3, proposal.acceptance.length),
+    )
+    // Running work leads with Radar; trajectory, plan and link stay in the overflow menu.
+    const radarAction = [...inspectorPane.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Open in Radar",
+    )!
+    expect(radarAction.getAttribute("aria-label")).toBe("Open LZ-1 in Radar")
+    expect(
+      [...inspectorPane.querySelectorAll("button")].some(
+        (button) => button.textContent === "Open trajectory",
+      ),
+    ).toBe(false)
+    opened.length = 0
+    radarAction.click()
+    expect(opened.at(-1)?.[0]).toBe("lazers:radar")
+    opened.length = 0
     const waitingDependencies = container.querySelector<HTMLDivElement>(
       ".lazers-tasks-dependencies-visible",
     )!
@@ -654,12 +734,12 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       selectedID: ids.queuedFive,
       scope: "project",
     })
-    await until(() => row(ids.queuedFive)?.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.queuedFive)?.getAttribute("aria-selected") === "true")
     expect(taskView.projects[projectDirectory]?.scope).toBe("project")
     expect(opened).toHaveLength(1)
     opened.length = 0
     row(ids.held)!.click()
-    await until(() => row(ids.held)?.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.held)?.getAttribute("aria-selected") === "true")
 
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => activityDetails().open)
@@ -681,7 +761,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         bubbles: true,
       }) as unknown as Event,
     )
-    await until(() => row(ids.active)?.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
     const activeRowAfterNavigation = row(ids.active)!
     activeRowAfterNavigation.click()
     await until(
@@ -711,10 +791,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(diagnosticText).toContain("Additional hold: retain the audit trail")
     toggleActivityDetailsFromKeyboard(" ")
     await until(() => !activityDetails().open)
-    const openTrajectory = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.getAttribute("aria-label")?.startsWith("Open trajectory for"),
-    )!
-    openTrajectory.click()
+    chooseAction("Open trajectory")
     expect(opened).toHaveLength(1)
     expect(
       (trajectoryStore.value as { projects: Record<string, { selectedTaskID?: string }> }).projects[
@@ -729,7 +806,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         bubbles: true,
       }) as unknown as Event,
     )
-    await until(() => row(ids.unknown)?.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.unknown)?.getAttribute("aria-selected") === "true")
     expect(activityDetails().open).toBe(false)
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => activityDetails().open)
@@ -741,6 +818,45 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(diagnosticText).toContain("Additional hold: retain the audit trail")
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => !activityDetails().open)
+
+    // Parallel branches hang from their fork root; Right/Left expand, enter, leave and collapse.
+    const forkRow = row(ids.forkRoot)!
+    expect(forkRow.getAttribute("aria-expanded")).toBe("false")
+    expect(forkRow.getAttribute("aria-label")).toContain("2 parallel branches")
+    expect(row(ids.branchA)).toBeNull()
+    expect(row(ids.join)?.getAttribute("aria-level")).toBe("1")
+    forkRow.focus()
+    key(forkRow, "ArrowRight")
+    await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "true")
+    const branches = row(ids.forkRoot)!.querySelector('[role="group"]')!
+    expect(branches.getAttribute("aria-label")).toBe("Parallel work after Prepare parallel checks")
+    expect(branches.querySelectorAll(".lazers-tasks-branch")).toHaveLength(2)
+    expect(row(ids.branchA)?.getAttribute("aria-level")).toBe("2")
+    expect(row(ids.branchB)?.getAttribute("aria-level")).toBe("2")
+    expect(
+      Object.values(
+        (taskStore.value as { projects: Record<string, { collapsedForks?: object }> }).projects[
+          projectDirectory
+        ]?.collapsedForks ?? {},
+      ),
+    ).toContain(false)
+    key(row(ids.forkRoot)!, "ArrowRight")
+    await until(() => row(ids.branchA)?.getAttribute("aria-selected") === "true")
+    expect(row(ids.branchA)!.ownerDocument.activeElement).toBe(row(ids.branchA))
+    key(row(ids.branchA)!, "ArrowDown")
+    await until(() => row(ids.branchB)?.getAttribute("aria-selected") === "true")
+    key(row(ids.branchB)!, "ArrowLeft")
+    await until(() => row(ids.forkRoot)?.getAttribute("aria-selected") === "true")
+    key(row(ids.forkRoot)!, "ArrowLeft")
+    await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "false")
+    expect(row(ids.branchA)).toBeNull()
+    row(ids.unknown)!.click()
+    await until(() => row(ids.unknown)?.getAttribute("aria-selected") === "true")
+    // Scroll restoration applies once the reselected detail mounts; scroll only after that.
+    await until(
+      () => container.querySelector(".lazers-tasks-title")?.textContent === taskNames.unknown,
+    )
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
     const list = container.querySelector<HTMLDivElement>(".lazers-tasks-list")!
     const detailPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
@@ -757,10 +873,27 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(
       () =>
         queryCalls.length > readsBeforeRefresh &&
-        row(ids.unknown)?.getAttribute("aria-pressed") === "true",
+        row(ids.unknown)?.getAttribute("aria-selected") === "true",
     )
     expect(list.scrollTop).toBe(37)
     expect(detailPane.scrollTop).toBe(23)
+
+    // The split follows content until the person resizes it; then the explicit value persists.
+    const separator = container.querySelector<HTMLDivElement>(".lazers-tasks-separator")!
+    const root = container.querySelector<HTMLDivElement>(".lazers-tasks")!
+    const view = () =>
+      (taskStore.value as { projects: Record<string, { split?: number; splitAdjusted?: boolean }> })
+        .projects[projectDirectory]
+    expect(view()?.splitAdjusted).toBeUndefined()
+    expect(root.style.getPropertyValue("--task-list-fr")).toBe("48fr")
+    expect(separator.getAttribute("aria-controls")?.split(" ")).toEqual([list.id, detailPane.id])
+    key(separator, "PageDown")
+    await until(() => view()?.split === 58)
+    expect(view()?.splitAdjusted).toBe(true)
+    expect(separator.getAttribute("aria-valuetext")).toBe("Task list 58% of the panel")
+    expect(root.style.getPropertyValue("--task-list-fr")).toBe("58fr")
+    key(separator, "Home")
+    await until(() => view()?.split === 20)
 
     const chooseFilter = async (label: string) => {
       const trigger = [
@@ -825,7 +958,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     ).toBe(true)
 
     row(ids.completed)!.click()
-    await until(() => row(ids.completed)?.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.completed)?.getAttribute("aria-selected") === "true")
     topologyFails = true
     snapshot++
     eventSubscriber?.({
@@ -836,7 +969,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       container.textContent?.includes("Execution links unavailable: transient topology failure"),
     )
     expect(row(ids.completed)).not.toBeNull()
-    expect(row(ids.completed)?.getAttribute("aria-pressed")).toBe("true")
+    expect(row(ids.completed)?.getAttribute("aria-selected")).toBe("true")
     expect(container.querySelectorAll("[data-task-id]").length).toBeGreaterThanOrEqual(1)
     expect(queryCalls.at(-1)?.state).toBe("completed")
   } finally {
