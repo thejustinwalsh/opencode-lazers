@@ -6,6 +6,8 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "../runner/artifacts.ts"
 import { RunnerStore } from "../runner/store.ts"
+import { buildExecutionList } from "./execution-list.ts"
+import { SchedulingOutput } from "./scheduling-contract.ts"
 import { TaskSchedulingRead } from "./scheduling-read.ts"
 
 const cleanup: (() => void)[] = []
@@ -35,6 +37,7 @@ function fixture() {
     dependency = false,
     afterPlans: string[] = [],
     sessionID = "owner",
+    writeScope = [`${name}.ts`],
   ) => {
     const task = repository.insert({
       schemaVersion: 1,
@@ -49,7 +52,7 @@ function fixture() {
         sessionID,
         startingRevision: { kind: "git", commit: baseCommit },
       },
-      proposal: { ...validProposal(), objective: name, writeScope: [`${name}.ts`] },
+      proposal: { ...validProposal(), objective: name, writeScope },
     })
     const plan = store.submit(
       {
@@ -178,6 +181,183 @@ test("Session associations include same-project afterPlans prerequisites but not
     nodeCount: 2,
     coveredNodeCount: 2,
   })
+})
+
+test.each([100, 101])(
+  "complete reservation facts with %i blockers remain schema-safe and render bounded blocker links",
+  async (reservationCount) => {
+    const f = fixture()
+    const target = f.create("reservation-target", 1_000, false, [], "session-a", ["shared.ts"])
+    const blockers = Array.from({ length: reservationCount }, (_, index) =>
+      f.create(`reservation-${index}`, 100, false, [], "session-b", ["shared.ts"]),
+    )
+    const globalNext = f.create("global-next", -1, false, [], "session-b", ["other.ts"])
+    const baseCommit = git(f.directory, ["rev-parse", "HEAD"])
+
+    f.repository.atomic((db) => {
+      const setRunning = db.query(
+        "UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?",
+      )
+      const insertAttempt = db.query(
+        `INSERT INTO runner_attempts
+          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+         VALUES(?,?,?,?,?,?,?,?,?,'running',?)`,
+      )
+      for (const [index, blocker] of blockers.entries()) {
+        setRunning.run(blocker.plan.planID, blocker.task.id)
+        insertAttempt.run(
+          crypto.randomUUID(),
+          blocker.plan.planID,
+          blocker.task.id,
+          1,
+          `worker-${index}`,
+          `message-${index}`,
+          join(f.directory, `.worktree-${index}`),
+          baseCommit,
+          JSON.stringify({ workspaceMode: "isolated" }),
+          index,
+        )
+      }
+      f.repository.changed()
+    })
+
+    const read = new TaskSchedulingRead(f.store, () => 90)
+    const scope = { kind: "project" as const, sessionID: "session-a" }
+    const firstPage = SchedulingOutput.parse(await read.read({ scope, limit: 100 }))
+    const targetNode = firstPage.plans[0]?.nodes.find((node) => node.taskID === target.task.id)
+    expect(targetNode).toMatchObject({
+      decision: "waiting",
+      reason: "A conflicting write scope is reserved.",
+      reservationTaskCount: reservationCount,
+      reservationTaskIDsComplete: reservationCount <= 100,
+      reservationTaskIDsScopeLimited: false,
+    })
+    expect(targetNode?.reservationTaskIDs).toHaveLength(Math.min(reservationCount, 100))
+    expect(firstPage.coverage).toMatchObject({
+      status: "complete",
+      activeReservationCount: reservationCount,
+      reservationsComplete: true,
+    })
+    expect(firstPage.selectionComplete).toBe(true)
+    expect(firstPage.next).toMatchObject({
+      status: "known",
+      candidate: { taskID: globalNext.task.id },
+    })
+
+    const { nextCursor: _nextCursor, ...snapshot } = firstPage
+    const list = buildExecutionList({
+      tasks: [],
+      revealTaskIDs: new Set([target.task.id]),
+      scheduling: snapshot,
+    })
+    const row = list.plans[0]?.rows.find((candidate) => candidate.taskID === target.task.id)
+    expect(row?.scheduling?.reservationTaskIDs).toHaveLength(Math.min(reservationCount, 100))
+    if (reservationCount > 100)
+      expect(row?.scheduling?.reason).toContain("Showing 100 of 101 blocker task references.")
+    else expect(row?.scheduling?.reason).toBe("A conflicting write scope is reserved.")
+
+    const session = SchedulingOutput.parse(
+      await read.read({ scope: { kind: "session", sessionID: "session-a" }, limit: 100 }),
+    )
+    const sessionTarget = session.plans[0]?.nodes.find((node) => node.taskID === target.task.id)
+    expect(session.plans.map((plan) => plan.planID)).toEqual([target.plan.planID])
+    expect(sessionTarget).toMatchObject({
+      decision: "waiting",
+      reservationTaskCount: 0,
+      reservationTaskIDs: [],
+      reservationTaskIDsComplete: true,
+      reservationTaskIDsScopeLimited: true,
+    })
+    expect(session.coverage.reservationsComplete).toBe(true)
+    expect(session.next.status).toBe("unknown")
+    expect(session.next).not.toMatchObject({ candidate: { taskID: globalNext.task.id } })
+    const { nextCursor: _sessionCursor, ...sessionSnapshot } = session
+    const sessionList = buildExecutionList({
+      tasks: [],
+      revealTaskIDs: new Set([target.task.id]),
+      scheduling: sessionSnapshot,
+    })
+    expect(sessionList.plans[0]?.rows[0]?.scheduling?.reason).toContain(
+      "No blocker references are visible in this session; known blockers outside this scope are not shown.",
+    )
+  },
+)
+
+test("partial reservation capture keeps known blockers waiting and unknown candidates ineligible", async () => {
+  const f = fixture()
+  const knownBlocked = f.create("known-blocked", 1_000, false, [], "session-a", ["known.ts"])
+  const unknownCandidate = f.create("unknown-candidate", 900, false, [], "session-a", [
+    "omitted.ts",
+  ])
+  const captured = f.create("captured-reservation", 10, false, [], "session-b", ["known.ts"])
+  const omitted = f.create("omitted-reservation", 0, false, [], "session-b", ["omitted.ts"])
+  const baseCommit = git(f.directory, ["rev-parse", "HEAD"])
+  f.repository.atomic((db) => {
+    const setRunning = db.query(
+      "UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?",
+    )
+    const insertAttempt = db.query(
+      `INSERT INTO runner_attempts
+        (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+       VALUES(?,?,?,?,?,?,?,?,?,'running',?)`,
+    )
+    for (const [index, reservation] of [captured, omitted].entries()) {
+      setRunning.run(reservation.plan.planID, reservation.task.id)
+      insertAttempt.run(
+        crypto.randomUUID(),
+        reservation.plan.planID,
+        reservation.task.id,
+        1,
+        `partial-worker-${index}`,
+        `partial-message-${index}`,
+        join(f.directory, `.partial-worktree-${index}`),
+        baseCommit,
+        JSON.stringify({ workspaceMode: "isolated" }),
+        index,
+      )
+    }
+    f.repository.changed()
+  })
+
+  const read = new TaskSchedulingRead(f.store, () => 91, { maxReservations: 1 })
+  const page = SchedulingOutput.parse(
+    await read.read({ scope: { kind: "project", sessionID: "session-a" }, limit: 100 }),
+  )
+  const nodes = new Map(page.plans.flatMap((plan) => plan.nodes.map((node) => [node.taskID, node])))
+  expect(page.coverage).toMatchObject({
+    status: "partial",
+    activeReservationCount: 2,
+    reservationsComplete: false,
+  })
+  expect(nodes.get(knownBlocked.task.id)).toMatchObject({
+    decision: "waiting",
+    reservationTaskIDs: [captured.task.id],
+    reservationTaskCount: 1,
+    reservationTaskIDsComplete: false,
+    reservationTaskIDsScopeLimited: false,
+  })
+  expect(nodes.get(unknownCandidate.task.id)).toMatchObject({
+    decision: "unknown",
+    reason: "Active reservation coverage is incomplete; task eligibility cannot be established.",
+    reservationTaskIDs: [],
+    reservationTaskCount: 0,
+    reservationTaskIDsComplete: false,
+    reservationTaskIDsScopeLimited: false,
+  })
+  expect(page.selectedTaskIDs).toEqual([])
+  expect(page.selectionComplete).toBe(false)
+  expect(page.next.status).toBe("unknown")
+  expect(page.next).not.toEqual({ status: "none" })
+  expect(omitted.task.id).not.toBe(captured.task.id)
+  const { nextCursor: _cursor, ...snapshot } = page
+  const list = buildExecutionList({
+    tasks: [],
+    revealTaskIDs: new Set([knownBlocked.task.id]),
+    scheduling: snapshot,
+  })
+  expect(list.plans[0]?.rows[0]?.scheduling?.reason).toContain(
+    "At least 1 blocker task reference is known; reservation coverage is incomplete.",
+  )
 })
 
 test("an outside-Session global winner never promotes a lower local task and pages stay scoped", async () => {

@@ -99,6 +99,10 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       waiting: "22222222-2222-4222-8222-222222222222",
       next: "33333333-3333-4333-8333-333333333333",
     }
+    const blockerIDs = Array.from(
+      { length: 100 },
+      (_, index) => `44444444-4444-4444-8444-${(index + 1).toString().padStart(12, "0")}`,
+    )
     const references = new Map([
       [ids.active, "LZ-1"],
       [ids.waiting, "LZ-2"],
@@ -350,32 +354,38 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
               reason: "Waiting for prerequisite source integration.",
               prerequisites: [ids.active],
               waitingOn: [ids.active],
-              reservationTaskIDs: [],
+              reservationTaskIDs: blockerIDs,
+              reservationTaskCount: 101,
+              reservationTaskIDsComplete: false,
             },
           ],
         },
       ],
       nextCursor: null,
     })
-    const detail = async ({ taskID }: { taskID: string }) => ({
-      status: "found",
-      task: taskSpec(taskID),
-      classification: summaries(taskID).classification,
-      classificationHistory: [summaries(taskID).classification],
-      advice: null,
-      reference: references.get(taskID),
-      recordedState: taskID === ids.active ? "running" : "queued",
-      execution: {
-        planID: taskID === ids.next ? targetPlanID : parentPlanID,
-        taskID,
-        state: taskID === ids.active ? "running" : "queued",
-        version: 1,
-        reason: null,
-        waitingOn: taskID === ids.waiting ? [ids.active] : [],
-      },
-      attempts: [],
-      activity: [],
-    })
+    const detailRequests: string[] = []
+    const detail = async ({ taskID }: { taskID: string }) => {
+      detailRequests.push(taskID)
+      return {
+        status: "found",
+        task: taskSpec(taskID),
+        classification: summaries(taskID).classification,
+        classificationHistory: [summaries(taskID).classification],
+        advice: null,
+        reference: references.get(taskID),
+        recordedState: taskID === ids.active ? "running" : "queued",
+        execution: {
+          planID: taskID === ids.next ? targetPlanID : parentPlanID,
+          taskID,
+          state: taskID === ids.active ? "running" : "queued",
+          version: 1,
+          reason: null,
+          waitingOn: taskID === ids.waiting ? [ids.active] : [],
+        },
+        attempts: [],
+        activity: [],
+      }
+    }
     let subscriber: ((event: { type: string; data?: unknown } | undefined) => void) | undefined
     const event = {
       subscribe: ({ signal }: { signal: AbortSignal }) =>
@@ -528,10 +538,19 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
 
     const nodeReason = container.querySelector<HTMLDivElement>(".lazers-tasks-node-reason")!
     expect(nodeReason.textContent).toContain("Waiting for prerequisite source integration.")
+    expect(nodeReason.textContent).toContain(
+      "Showing 100 of 101 blocker task references visible in this session.",
+    )
+    expect(nodeReason.querySelectorAll("button")).toHaveLength(101)
     const taskPrerequisite = nodeReason.querySelector<HTMLButtonElement>("button")!
     expect(taskPrerequisite.getAttribute("aria-label")).toContain("LZ-1")
     taskPrerequisite.click()
     await until(() => row(ids.active)?.getAttribute("aria-pressed") === "true")
+    const blockerReference = [...nodeReason.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.getAttribute("aria-label")?.includes(blockerIDs[0]!.slice(0, 8)),
+    )!
+    blockerReference.click()
+    await until(() => detailRequests.includes(blockerIDs[0]!))
 
     const callsBefore = queryCalls
     schedulingUnknown = true

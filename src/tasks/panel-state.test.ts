@@ -230,6 +230,8 @@ test("native activity events refresh only matching tasks and coalesce repeated n
 test("Tasks panel assembles one paginated scheduling snapshot without changing its numeric observation time", async () => {
   const state = new TaskPanelState(() => {})
   const scope: SchedulingScope = { kind: "project", sessionID: "session" }
+  const blockedTaskID = crypto.randomUUID()
+  const blockerTaskIDs = Array.from({ length: 100 }, () => crypto.randomUUID())
   const base = {
     schemaVersion: 1 as const,
     snapshotID: crypto.randomUUID(),
@@ -240,9 +242,9 @@ test("Tasks panel assembles one paginated scheduling snapshot without changing i
       status: "complete" as const,
       planCount: 2,
       coveredPlanCount: 2,
-      nodeCount: 0,
-      coveredNodeCount: 0,
-      activeReservationCount: 0,
+      nodeCount: 1,
+      coveredNodeCount: 1,
+      activeReservationCount: 101,
       reservationsComplete: true,
       reason: null,
     },
@@ -264,7 +266,23 @@ test("Tasks panel assembles one paginated scheduling snapshot without changing i
           decision: "waiting",
           reason: null,
           afterPlans: [],
-          nodes: [],
+          nodes: [
+            {
+              taskID: blockedTaskID,
+              title: "Blocked task",
+              objective: "Blocked task",
+              ordinal: 0,
+              order: 0,
+              lifecycle: "queued",
+              decision: "waiting",
+              reason: "A conflicting write scope is reserved.",
+              prerequisites: [],
+              waitingOn: [],
+              reservationTaskIDs: blockerTaskIDs,
+              reservationTaskCount: 101,
+              reservationTaskIDsComplete: false,
+            },
+          ],
           nodesComplete: true,
         },
       ],
@@ -306,6 +324,17 @@ test("Tasks panel assembles one paginated scheduling snapshot without changing i
     "First page plan",
     "Second page plan",
   ])
+  const blockedRow = buildExecutionList({
+    tasks: state.data.tasks,
+    revealTaskIDs: new Set([blockedTaskID]),
+    scheduling: state.data.scheduling,
+  }).plans[0]?.rows.find((row) => row.taskID === blockedTaskID)
+  expect(blockedRow?.scheduling).toMatchObject({
+    reservationTaskCount: 101,
+    reservationTaskIDs: blockerTaskIDs,
+    reservationTaskIDsComplete: false,
+  })
+  expect(blockedRow?.scheduling?.reason).toContain("Showing 100 of 101 blocker task references.")
   expect(state.data.schedulingError).toBe("")
   state.close()
 })
