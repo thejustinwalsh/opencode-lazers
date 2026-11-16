@@ -192,7 +192,9 @@ const Report = z
       status: z.string(),
       specification: z.object({ objective: z.string() }).strip(),
     }),
-    plans: z.array(z.object({ id: z.string(), checks: z.array(Check) })),
+    plans: z.array(
+      z.object({ id: z.string(), state: z.string().optional(), checks: z.array(Check) }),
+    ),
     attempts: z.array(
       z.object({
         id: z.string(),
@@ -580,6 +582,63 @@ export function durationText(durationMs: number) {
 
 export function isActiveAttemptState(state: string) {
   return ACTIVE_ATTEMPT_STATES.has(state)
+}
+
+/**
+ * Plan states the runtime treats as terminal (src/runner/plan-control.ts
+ * `terminalPlanStates`). Mirrored here so the GUI bundle does not import runner code;
+ * a test keeps both sets equal.
+ */
+export const SETTLED_PLAN_STATES: ReadonlySet<string> = new Set([
+  "accepted",
+  "failed",
+  "cancelled",
+  "exhausted",
+  "incorporated",
+  "integrated",
+  "cleanup-blocked",
+])
+
+/**
+ * A settled history has no busy worker, no active attempt and only terminal plans. It is a
+ * polling policy for this view, not a workflow state: a resumed plan changes the recorded
+ * snapshot, and reconnect or explicit refresh always reads status again.
+ */
+export function settledHistory(report: TrajectoryReport | undefined) {
+  return Boolean(
+    report &&
+    !report.coverage.ongoing &&
+    report.plans.length > 0 &&
+    report.plans.every((plan) => plan.state !== undefined && SETTLED_PLAN_STATES.has(plan.state)) &&
+    report.attempts.every((attempt) => !isActiveAttemptState(attempt.state)),
+  )
+}
+
+/** Recorded facts whose change means a settled task may have resumed. */
+export function taskSnapshotFingerprint(snapshot: ProjectedSnapshot | undefined, taskID: string) {
+  if (!snapshot) return null
+  const planIDs = new Set(
+    snapshot.plans
+      .filter((plan) => plan.nodes.some((node) => node.taskID === taskID))
+      .map((plan) => plan.id),
+  )
+  return JSON.stringify([
+    snapshot.plans.flatMap((plan) =>
+      plan.nodes
+        .filter((node) => node.taskID === taskID)
+        .map((node) => [plan.id, node.state, node.revision ?? null]),
+    ),
+    snapshot.attempts
+      .filter((attempt) => attempt.taskID === taskID)
+      .map((attempt) => [attempt.id, attempt.state, attempt.endedAt, attempt.executions.length]),
+    snapshot.checks
+      .filter(
+        (check) =>
+          check.taskID === taskID ||
+          (check.taskID === null && typeof check.planID === "string" && planIDs.has(check.planID)),
+      )
+      .map((check) => [check.id, check.state, check.startedAt, check.endedAt, check.exitCode]),
+  ])
 }
 
 /**
