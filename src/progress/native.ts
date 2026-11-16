@@ -1255,6 +1255,9 @@ export function registerProgress(
             observedExecutionStarts.delete(sessionID)
             requireNewerStart(sessionID, sequence ?? null)
             throw error
+          } finally {
+            if (type === "session.execution.failed" || type === "session.execution.interrupted")
+              workerIdle?.()
           }
         }
       } else if (observing && type === "session.idle" && sessionID) {
