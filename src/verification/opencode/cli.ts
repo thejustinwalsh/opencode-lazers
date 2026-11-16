@@ -32,14 +32,15 @@ export async function main(
     return
   }
   if (operation === "launch") {
-    assertAllowed(args, ["--desktop", "--cli", "--candidate", "--target"])
+    assertAllowed(args, ["--desktop", "--cli", "--candidate", "--target", "--base"])
     const desktopBundle = required(args, "--desktop")
     const cliPath = required(args, "--cli")
     const candidatePath = resolve(required(args, "--candidate"))
     const targetPath = resolve(required(args, "--target"))
+    const base = args.has("--base") ? resolve(required(args, "--base")) : undefined
     const manifest = await startOwnedDesktop(
       { desktopBundle, cliPath, candidatePath, targetPath },
-      launchDependencies(),
+      launchDependencies(base),
     )
     console.log(
       JSON.stringify(
