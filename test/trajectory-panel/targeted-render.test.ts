@@ -341,16 +341,38 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     expect(measuredSegment?.dataset.point).toBe("false")
     expect(measuredSegment?.title).toContain("Report model-activity interval:")
     expect(measuredSegment?.title).not.toContain("WORKER_STARTED")
+    const attemptOptions = [
+      ...container.querySelectorAll<HTMLElement>('.lazers-trajectory-attempt[role="option"]'),
+    ]
     expect(
-      [...container.querySelectorAll<HTMLButtonElement>(".lazers-trajectory-attempt-label")].map(
-        (button) => button.getAttribute("aria-label"),
+      attemptOptions.map((option) => option.getAttribute("aria-label")?.split(", ")[0]),
+    ).toEqual(["Attempt 1", "Attempt 2"])
+    expect(
+      attemptOptions.map((option) => option.getAttribute("aria-label")?.split(", ")[1]),
+    ).toEqual(["failed", "accepted"])
+    expect(
+      attemptOptions.map((option) =>
+        option.querySelector(".lazers-trajectory-attempt-state")?.getAttribute("data-outcome"),
       ),
-    ).toEqual(["Select attempt 1, failed", "Select attempt 2, accepted"])
+    ).toEqual(["failed", "succeeded"])
     expect(
-      [...container.querySelectorAll<HTMLButtonElement>(".lazers-trajectory-check-marker")].some(
-        (button) => button.getAttribute("aria-label")?.includes("attempt-check"),
+      [...container.querySelectorAll<HTMLElement>(".lazers-trajectory-check-marker")].some(
+        (marker) => marker.getAttribute("aria-label")?.includes("attempt-check"),
       ),
     ).toBe(true)
+    // The header model and timing follow the selected attempt.
+    attemptOptions[0]!.click()
+    await until(() => attemptOptions[0]!.getAttribute("aria-selected") === "true")
+    expect(container.querySelector(".lazers-trajectory-model-scope")?.textContent).toContain(
+      "Attempt 1",
+    )
+    attemptOptions[1]!.click()
+    await until(() =>
+      container.querySelector(".lazers-trajectory-model-scope")?.textContent?.includes("Attempt 2")
+        ? true
+        : false,
+    )
+    expect(attemptOptions[0]!.getAttribute("aria-selected")).toBe("false")
   } finally {
     disposePanel?.()
     disposeSetup?.()
