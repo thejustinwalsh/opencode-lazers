@@ -6,6 +6,7 @@ import type { BenchmarkBaselineGap, BenchmarkBaselinePoint } from "./benchmark-b
 import {
   ComparisonChartAdapter,
   chartKeyStep,
+  frontierEndLabel,
   resolveNativeComparisonChartTheme,
   visuallyHidden,
 } from "./comparison-chart.tsx"
@@ -46,6 +47,52 @@ export function benchmarkGapText(gap: BenchmarkBaselineGap) {
     : `${boundedModelLabel(gap.label)} · not plotted, no Coding Index`
 }
 
+/**
+ * Non-dominated plotted points: no other point is at most as expensive with at
+ * least as high a Coding Index (and strictly better on one). Sorted by price
+ * ascending, then Coding Index descending, then id. Real coordinates only.
+ */
+export function benchmarkFrontier(
+  points: readonly BenchmarkBaselinePoint[],
+): BenchmarkBaselinePoint[] {
+  const x = (point: BenchmarkBaselinePoint) => point.price.blended
+  const y = (point: BenchmarkBaselinePoint) => point.benchmark.codingIndex
+  const sorted = points
+    .filter((point) => Number.isFinite(x(point)) && Number.isFinite(y(point)))
+    .toSorted(
+      (left, right) =>
+        x(left) - x(right) ||
+        y(right) - y(left) ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+    )
+  const frontier: BenchmarkBaselinePoint[] = []
+  let best = -Infinity
+  for (const point of sorted) {
+    // Sorted by x asc, y desc: a point survives only if it beats every cheaper-or-equal one,
+    // or exactly ties the current best at the same coordinates.
+    const last = frontier.at(-1)
+    const duplicate = last !== undefined && x(last) === x(point) && y(last) === y(point)
+    if (y(point) > best || duplicate) {
+      frontier.push(point)
+      best = Math.max(best, y(point))
+    }
+  }
+  return frontier
+}
+
+function benchmarkFrontierText(frontier: readonly BenchmarkBaselinePoint[]) {
+  return frontier.length === 0
+    ? ""
+    : ` Benchmark frontier, lowest list price for each higher Coding Index: ${frontier.map((point) => boundedModelLabel(point.label)).join(", ")}.`
+}
+
+function benchmarkDescription(points: readonly BenchmarkBaselinePoint[]) {
+  return (
+    points.map(benchmarkPointText).join(" ") + benchmarkFrontierText(benchmarkFrontier(points)) ||
+    "No benchmarked models with a price."
+  )
+}
+
 export function benchmarkChartOptions(
   data: BenchmarkChartData,
   theme: ComparisonChartTheme,
@@ -55,6 +102,8 @@ export function benchmarkChartOptions(
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
   const roomForAllLabels = plotWidth >= fontSize * 22
   const labelLimit = Math.min(18, Math.max(8, Math.floor(plotWidth / (fontSize * 0.66))))
+  const frontier = benchmarkFrontier(data.points)
+  const frontierIDs = new Set(frontier.map((point) => point.id))
   const largest = Math.max(0, ...data.points.map((point) => point.price.blended))
   const narrowAxis = layout.width < 400 || layout.height < 240
   const axisTitleFontSize = Math.min(fontSize, layout.width < 400 ? 12 : 16)
@@ -77,8 +126,7 @@ export function benchmarkChartOptions(
     textStyle: { fontFamily: theme.fontFamily, color: theme.text },
     aria: {
       enabled: true,
-      description:
-        data.points.map(benchmarkPointText).join(" ") || "No benchmarked models with a price.",
+      description: benchmarkDescription(data.points),
       decal: { show: false },
     },
     grid: layout.grid,
@@ -132,7 +180,7 @@ export function benchmarkChartOptions(
             name: point.label,
             value: [point.price.blended, point.benchmark.codingIndex],
             configurationID: point.id,
-            symbol: "circle",
+            symbol: frontierIDs.has(point.id) ? "diamond" : "circle",
             symbolSize: selected ? 14 : 10,
             itemStyle: {
               // Filled: observed for these filters. Hollow: benchmark only.
@@ -153,6 +201,24 @@ export function benchmarkChartOptions(
         }),
         emphasis: { focus: "self" },
         labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
+      },
+      {
+        id: "benchmark-frontier",
+        name: "Benchmark frontier",
+        type: "line",
+        data:
+          frontier.length > 1
+            ? frontier.map((point) => [point.price.blended, point.benchmark.codingIndex])
+            : [],
+        smooth: false,
+        connectNulls: false,
+        showSymbol: false,
+        silent: true,
+        z: 1,
+        lineStyle: { color: theme.accent, width: 2, type: "dashed" },
+        emphasis: { disabled: true },
+        blur: { lineStyle: { opacity: 1 }, endLabel: { opacity: 1 } },
+        endLabel: frontierEndLabel("Benchmark frontier", frontier.length > 1, theme, fontSize),
       },
     ],
   } satisfies EChartsCoreOption
@@ -268,6 +334,7 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
       </Show>
       <p id={descriptionID} style={visuallyHidden}>
         {props.points.map(benchmarkPointText).join(" ")}
+        {benchmarkFrontierText(benchmarkFrontier(props.points))}
       </p>
       <p aria-live="polite" style={visuallyHidden}>
         {announcement()}
@@ -284,6 +351,15 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
               aria-hidden="true"
             />
             {props.observedLabel}
+          </li>
+        </Show>
+        <Show when={benchmarkFrontier(props.points).length > 0}>
+          <li>
+            <span
+              class="lazers-models-chart-key lazers-models-chart-key-frontier"
+              aria-hidden="true"
+            />
+            Frontier
           </li>
         </Show>
         <Show when={props.points.some((point) => !point.observed)}>

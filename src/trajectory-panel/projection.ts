@@ -435,6 +435,8 @@ export type AttemptTimeline = {
     left: number
     width: number
     pointOnly: boolean
+    startRecorded: boolean
+    endRecorded: boolean
     /** Active attempt drawn to the capture time; its end is not recorded. */
     open: boolean
     visible: boolean
@@ -712,6 +714,8 @@ export function buildTimeline(
           left: execution.startedAt === null && execution.endedAt === null ? 0 : left,
           width,
           pointOnly: !open && (execution.startedAt === null || execution.endedAt === null),
+          startRecorded: execution.startedAt !== null,
+          endRecorded: execution.endedAt !== null,
           open,
           visible: execution.startedAt !== null || execution.endedAt !== null,
           basis: execution.timingBasis,

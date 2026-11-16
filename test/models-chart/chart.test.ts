@@ -631,6 +631,11 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(markerScale(originalQwenTransform)).toBe(5)
   expect(markerScale(originalSelectedTransform)).toBe(7)
   expectFrontierEndpoints(chartHost, chart, [points[0]!, originalQwen])
+  expect(chartHost.textContent).toContain("Observed frontier")
+  const dashed = Array.from(chartHost.querySelectorAll("svg path[stroke-dasharray]")).find(
+    (candidate) => candidate.getAttribute("d")?.startsWith("M"),
+  )
+  expect(dashed?.getAttribute("stroke-width")).toBe("2")
 
   const changedQwen = { ...points[1]!, tokensPerAcceptedTask: 26_000 }
   const changedPoints = [points[0]!, changedQwen, points[2]!]
@@ -1541,13 +1546,15 @@ test("benchmark baseline renders its own units, labels the source and travels by
   dom.document.body.append(container)
   const cheap = benchmarkPoint("cheap", "Mini", 30, 0.1, 0.4, false)
   const strong = benchmarkPoint("strong", "Max", 61.25, 2, 8, true)
+  // Dearer and weaker than Max: dominated, so never on the frontier path.
+  const dominated = benchmarkPoint("dominated", "Slow", 50, 2.5, 10, false)
   strong.benchmark.displayName = "Max (High)"
   const selections: string[] = []
   const [selected, setSelected] = browser.createSignal<string | null>(null)
   const dispose = browser.render(
     () =>
       browser.createComponent(browser.BenchmarkChart, {
-        points: [cheap, strong],
+        points: [cheap, dominated, strong],
         gaps: [
           {
             id: "unpriced",
@@ -1580,25 +1587,65 @@ test("benchmark baseline renders its own units, labels the source and travels by
   }
   expect(option.yAxis?.[0]?.name).toBe("Coding Index")
   expect(option.xAxis?.[0]?.name).toContain("USD / 1M tokens")
-  // One series, no frontier line: unlike measures never share the observed Pareto frontier.
-  expect(option.series.map((series) => series.id)).toEqual(["benchmark-baseline"])
+  // The benchmark frontier is its own Pareto line over the plotted benchmark points only;
+  // it never shares membership with the observed frontier.
+  expect(option.series.map((series) => series.id)).toEqual([
+    "benchmark-baseline",
+    "benchmark-frontier",
+  ])
   const values = option.series[0]!.data!.map((datum) => (datum as { value: number[] }).value)
-  expect(values.map(([price]) => price)).toEqual([expect.closeTo(0.175), expect.closeTo(3.5)])
-  expect(values.map(([, codingIndex]) => codingIndex)).toEqual([30, 61.25])
+  expect(values.map(([price]) => price)).toEqual([
+    expect.closeTo(0.175),
+    expect.closeTo(4.375),
+    expect.closeTo(3.5),
+  ])
+  expect(values.map(([, codingIndex]) => codingIndex)).toEqual([30, 50, 61.25])
+
+  const frontierPath = Array.from(host.querySelectorAll("svg path[stroke-dasharray]")).find(
+    (candidate) => candidate.getAttribute("d")?.startsWith("M"),
+  )
+  expect(frontierPath).toBeDefined()
+  const commands = Array.from(
+    frontierPath!.getAttribute("d")!.matchAll(/([ML])\s*([+-]?[\d.]+)\s+([+-]?[\d.]+)/g),
+  ).map((command) => [Number(command[2]), Number(command[3])])
+  const pixel = (price: number, codingIndex: number) =>
+    chart.convertToPixel({ seriesId: "benchmark-baseline" }, [price, codingIndex]) as number[]
+  expect(commands).toHaveLength(2)
+  for (const [at, [price, codingIndex]] of [
+    [0, [cheap.price.blended, 30]],
+    [1, [strong.price.blended, 61.25]],
+  ] as const) {
+    const expected = pixel(price, codingIndex)
+    expect(commands[at]![0]).toBeCloseTo(expected[0]!, 3)
+    expect(commands[at]![1]).toBeCloseTo(expected[1]!, 3)
+  }
+  const slowPixel = pixel(dominated.price.blended, 50)
+  expect(
+    commands.some(
+      ([x, y]) => Math.abs(x! - slowPixel[0]!) < 0.5 && Math.abs(y! - slowPixel[1]!) < 0.5,
+    ),
+  ).toBe(false)
+  expect(frontierPath!.getAttribute("stroke-width")).toBe("2")
+  expect(host.textContent).toContain("Benchmark frontier")
 
   const legend = container.querySelector("[aria-label='Chart mark legend']")!
   expect(legend.textContent).toContain("Observed for UI")
   expect(legend.textContent).toContain("Benchmark only")
+  expect(legend.textContent).toContain("Frontier")
+  expect(container.textContent).toContain(
+    "Benchmark frontier, lowest list price for each higher Coding Index: Mini, Max.",
+  )
   const rows = [...container.querySelectorAll(".lazers-models-comparison-chart-data button")]
   expect(rows.map((row) => row.textContent)).toEqual([
     "Mini · Coding 30 · $0.175 / 1M tokens · OpenRouter",
+    "Slow · Coding 50 · $4.38 / 1M tokens · OpenRouter",
     "Max · Coding 61.3 · $3.5 / 1M tokens · OpenRouter",
     "Unpriced · not plotted, no price",
   ])
-  expect(rows[1]!.getAttribute("aria-label")).toContain("for Max (High)")
-  expect(rows[1]!.getAttribute("aria-label")).toContain("$2 input and $8 output per 1M tokens")
-  expect(rows[1]!.getAttribute("aria-label")).toContain("3 input : 1 output tokens")
-  expect(rows[1]!.getAttribute("aria-label")).not.toMatch(/per (accepted )?task/)
+  expect(rows[2]!.getAttribute("aria-label")).toContain("for Max (High)")
+  expect(rows[2]!.getAttribute("aria-label")).toContain("$2 input and $8 output per 1M tokens")
+  expect(rows[2]!.getAttribute("aria-label")).toContain("3 input : 1 output tokens")
+  expect(rows[2]!.getAttribute("aria-label")).not.toMatch(/per (accepted )?task/)
 
   const plot = host.parentElement!
   const announcement = () => container.querySelector("[aria-live='polite']")?.textContent ?? ""

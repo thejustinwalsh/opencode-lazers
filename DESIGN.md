@@ -118,8 +118,10 @@ summaries/deltas and fetch selected historical detail separately.
 Reference: [trajectory-review-v2](design/trajectory-panel/trajectory-review-v2.png).
 Lead with the task, selected attempt and its model/effort. Show a scrollable
 session timeline with separate tracks for tool calls, recorded file activity
-and checks. Align tracks on the same time axis so successes and failures show
-when they happened. Give each mark a keyboard-accessible selection and show its
+and checks. Give the tracks equal height, distinct theme colors, and the same
+start, end, and line marks. Use red for recorded failures. Collapse
+instantaneous events to a mark at their recorded time. Give each mark a
+keyboard-accessible selection and show its
 details below the split. Keep payloads and secondary activity collapsed.
 Show timing origin, units, coverage and gaps. Separate token categories and
 measurement scope; unknown cost remains unknown. Never expose private reasoning.

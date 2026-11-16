@@ -39,7 +39,6 @@ import {
   neighborMark,
   nextZoom,
   outcomeText,
-  packRows,
   trackTimes,
   ZOOM_LEVELS,
 } from "./tracks.ts"
@@ -177,6 +176,9 @@ function attemptDuration(attempt: TrajectoryAttempt, asOf: number | null) {
     return { ms: asOf - start, open: true }
   return null
 }
+
+const toolEndRecorded = (mark: ToolMark) =>
+  mark.end !== null && (mark.start === null || mark.end >= mark.start) ? "recorded" : "missing"
 
 const outcomeIcon: Record<Outcome, IconName> = {
   succeeded: "circle-check",
@@ -445,8 +447,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     const checks = [...(timeline()?.checks ?? [])]
       .filter((check) => check.visible)
       .sort((a, b) => a.left - b.left || a.checkID.localeCompare(b.checkID))
-    const rows = packRows(checks)
-    return checks.map((check, index) => ({ check, row: rows[index]!, id: check.id }))
+    return checks.map((check) => ({ check, id: check.id }))
   })
   const sameIDs = (left: readonly string[], right: readonly string[]) =>
     left.length === right.length && left.every((id, index) => id === right[index])
@@ -460,7 +461,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   )
   const checkIDs = createMemo(() => checkLane().map((item) => item.id), [], { equals: sameIDs })
   const checkItems = createMemo(() => new Map(checkLane().map((item) => [item.id, item])))
-  const checkRowsUsed = () => Math.max(1, ...checkLane().map((item) => item.row + 1))
   const ticks = createMemo(() => {
     const line = timeline()
     if (!line || line.origin === null || line.durationMs <= 0) return []
@@ -1143,12 +1143,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                               <span class="lazers-trajectory-attempt-number">
                                 {lane().attempt.number}
                               </span>
-                              <span
-                                class="lazers-trajectory-attempt-state"
-                                data-outcome={outcome()}
-                              >
-                                <Ui.Icon name={outcomeIcon[outcome()]} size="small" />
-                              </span>
                               <span class="lazers-trajectory-tool-count">
                                 {detail()?.toolCount.value.toLocaleString() ?? "—"}
                               </span>
@@ -1157,8 +1151,16 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                               <For each={lane().segments}>
                                 {(segment) => (
                                   <span
-                                    class="lazers-trajectory-segment"
+                                    class="lazers-trajectory-segment lazers-trajectory-rail"
                                     data-outcome={outcome()}
+                                    data-start={segment.startRecorded ? "recorded" : "missing"}
+                                    data-end={
+                                      segment.open
+                                        ? "open"
+                                        : segment.endRecorded
+                                          ? "recorded"
+                                          : "missing"
+                                    }
                                     data-failed={lane().attempt.state === "failed"}
                                     data-point={segment.pointOnly}
                                     data-open={segment.open}
@@ -1170,7 +1172,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                     }
                                     style={{
                                       left: `${segment.left}%`,
-                                      width: `${segment.width}%`,
+                                      width: `${segment.pointOnly ? 0 : segment.width}%`,
                                     }}
                                   />
                                 )}
@@ -1237,7 +1239,21 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                 width: item().width > 0.4 ? `${item().width}%` : undefined,
                               }}
                               onClick={() => state.selectEvent(item().id)}
-                            />
+                            >
+                              <Show when={item().kind === "tool"}>
+                                <span
+                                  class="lazers-trajectory-rail"
+                                  aria-hidden="true"
+                                  data-start={
+                                    (item().mark as ToolMark).start !== null
+                                      ? "recorded"
+                                      : "missing"
+                                  }
+                                  data-end={toolEndRecorded(item().mark as ToolMark)}
+                                  data-failed={(item().mark as ToolMark).outcome === "failed"}
+                                />
+                              </Show>
+                            </span>
                           )
                         }}
                       </Index>
@@ -1279,11 +1295,20 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                             data-operation={mark().operation}
                             aria-selected={eventSelected(mark().id)}
                             tabIndex={activeFile() === mark().id ? 0 : -1}
-                            aria-label={`${operationText[mark().operation]} ${mark().paths.join(", ")}${mark().coverage === "partial" ? " (partial)" : ""}, ${at(mark().at)}`}
-                            title={`${operationText[mark().operation]} · ${mark().paths.join(", ")}`}
+                            data-outcome={mark().outcome}
+                            aria-label={`${operationText[mark().operation]} ${mark().paths.join(", ")}${mark().coverage === "partial" ? " (partial)" : ""}, ${outcomeText[mark().outcome]}, ${at(mark().at)}`}
+                            title={`${operationText[mark().operation]} · ${mark().paths.join(", ")} · ${outcomeText[mark().outcome]}`}
                             style={{ left: `${mark().left}%` }}
                             onClick={() => state.selectEvent(mark().id)}
-                          />
+                          >
+                            <span
+                              class="lazers-trajectory-rail"
+                              aria-hidden="true"
+                              data-start="recorded"
+                              data-end="missing"
+                              data-failed={mark().outcome === "failed"}
+                            />
+                          </span>
                         )}
                       </Index>
                     </div>
@@ -1301,7 +1326,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       role="listbox"
                       aria-label={`Checks, ${timeline()?.checks.length ?? 0} recorded`}
                       aria-orientation="horizontal"
-                      style={{ "--trajectory-check-rows": String(checkRowsUsed()) }}
                       onKeyDown={laneKeyDown(checkLane, activeCheck, chooseCheck)}
                       onClick={laneClick(
                         () => checkLane().map((item) => ({ ...item, left: item.check.left })),
@@ -1328,7 +1352,19 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           return (
                             <>
                               <span
-                                class="lazers-trajectory-check-interval"
+                                class="lazers-trajectory-check-interval lazers-trajectory-rail"
+                                data-start={
+                                  timing().status === "missing-start" ||
+                                  timing().status === "missing-endpoints"
+                                    ? "missing"
+                                    : "recorded"
+                                }
+                                data-end={
+                                  timing().status === "known" || timing().status === "missing-start"
+                                    ? "recorded"
+                                    : "missing"
+                                }
+                                data-failed={detailed()?.result === "failed"}
                                 data-check-id={entry().check.checkID}
                                 data-scope={entry().check.scope}
                                 data-result={detailed()?.result ?? "unknown"}
@@ -1339,7 +1375,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                 style={{
                                   left: `${entry().check.left}%`,
                                   width: `${entry().check.width}%`,
-                                  "--trajectory-check-row": String(entry().row),
                                 }}
                               />
                               <Show
@@ -1353,7 +1388,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                   aria-hidden="true"
                                   style={{
                                     left: `${entry().check.endLeft}%`,
-                                    "--trajectory-check-row": String(entry().row),
                                   }}
                                 />
                               </Show>
@@ -1364,19 +1398,18 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                 data-check-id={entry().check.checkID}
                                 data-scope={entry().check.scope}
                                 data-outcome={outcome()}
+                                data-point={entry().check.pointOnly}
                                 data-result={detailed()?.result ?? "unknown"}
                                 aria-selected={selected()}
                                 tabIndex={activeCheck() === entry().id ? 0 : -1}
                                 aria-label={`${name()}, ${detailed()?.result ?? entry().check.state}, ${timingHint(entry().check)}`}
                                 title={`${name()} · ${outcomeText[outcome()]} · ${entry().check.timingBasis}`}
                                 style={{
-                                  left: `${entry().check.left + entry().check.width / 2}%`,
-                                  "--trajectory-check-row": String(entry().row),
+                                  left: `${entry().check.left}%`,
+                                  width: `${entry().check.width}%`,
                                 }}
                                 onClick={() => chooseCheck(entry())}
-                              >
-                                <Ui.Icon name={outcomeIcon[outcome()]} size="small" />
-                              </span>
+                              />
                             </>
                           )
                         }}

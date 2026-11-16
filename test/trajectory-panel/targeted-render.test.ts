@@ -350,6 +350,15 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     ].find((segment) => Number.parseFloat(segment.style.width) > 0)
     expect(measuredSegment).toBeDefined()
     expect(measuredSegment?.dataset.point).toBe("false")
+    expect(container.querySelector(".lazers-trajectory-plot svg")).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-attempt-state")).toBeNull()
+    for (const segment of container.querySelectorAll(".lazers-trajectory-segment"))
+      expect(segment.classList.contains("lazers-trajectory-rail")).toBe(true)
+    for (const mark of container.querySelectorAll(
+      ".lazers-trajectory-lane .lazers-trajectory-mark",
+    ))
+      if (mark.getAttribute("data-kind") !== "gap")
+        expect(mark.querySelector(".lazers-trajectory-rail")).not.toBeNull()
     expect(measuredSegment?.title).toContain("Report model-activity interval:")
     expect(measuredSegment?.title).not.toContain("WORKER_STARTED")
     const attemptOptions = [
@@ -363,7 +372,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     ).toEqual(["failed", "accepted"])
     expect(
       attemptOptions.map((option) =>
-        option.querySelector(".lazers-trajectory-attempt-state")?.getAttribute("data-outcome"),
+        option.querySelector(".lazers-trajectory-segment")?.getAttribute("data-outcome"),
       ),
     ).toEqual(["failed", "succeeded"])
     expect(
