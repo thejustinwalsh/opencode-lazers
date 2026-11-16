@@ -12,12 +12,12 @@ The release was tested with OpenCode Desktop 2.2.6. The plugin SDK and API basel
 
 [`TaskSubmissionSchema`](../../src/task.ts), [`TaskSpecSchema`](../../src/task.ts), and [`PlanInput`](../../src/runner/schema.ts) define task and plan inputs. Keep these task fields explicit:
 
-| Field | Required content |
-| --- | --- |
-| Identity | Stable task ID, specification revision, repository, and starting revision. |
-| Intent | Observable objective, exclusions, constraints, and assumptions. |
-| Scope | Relevant context references and permitted write paths. |
-| Acceptance | Behavioral assertions linked to evidence or an explicit human decision. |
+| Field        | Required content                                                                      |
+| ------------ | ------------------------------------------------------------------------------------- |
+| Identity     | Stable task ID, specification revision, repository, and starting revision.            |
+| Intent       | Observable objective, exclusions, constraints, and assumptions.                       |
+| Scope        | Relevant context references and permitted write paths.                                |
+| Acceptance   | Behavioral assertions linked to evidence or an explicit human decision.               |
 | Requirements | Required capabilities, optional skill suggestions, verification procedures, and risk. |
 
 Keep optional implementation guidance separate from required acceptance. Guidance can name reuse points, known pitfalls, and source references.

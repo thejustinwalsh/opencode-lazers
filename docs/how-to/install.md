@@ -24,9 +24,7 @@ Copy the absolute path from the last command. Add that path to OpenCode's `plugi
 
 ```json
 {
-  "plugins": [
-    "/absolute/path/from-the-last-command/node_modules/opencode-lazers"
-  ]
+  "plugins": ["/absolute/path/from-the-last-command/node_modules/opencode-lazers"]
 }
 ```
 

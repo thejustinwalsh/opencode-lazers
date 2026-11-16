@@ -117,6 +117,26 @@ prototype the mutator and add the test adapter as a separate step. Keep static
 test reach, measured coverage, and mutation results separately labeled. A
 failed baseline cannot establish a mutation score.
 
+### Prototype results
+
+- `cargo check --locked -p fallow-mutation --target wasm32-unknown-unknown`
+  passes at Fallow `v3.41.0` and Rust 1.99. A small Rust binding calls
+  `fallow_mutation::instrument` and returns the instrumented source and mutant
+  list. The resulting module declares zero WebAssembly imports.
+- The same target fails for the static analysis crate group. Cargo traces the
+  first error through `fallow-config → ureq → rustls → ring → getrandom`.
+  Disable the remote config transport in the WebAssembly build first. Then
+  rerun the compile check to find remaining dependencies on the host.
+- Bun ran the instrumented output with a fresh Worker per mutant. A test
+  asserted that the boundary value 10 qualifies. The run found eight mutants:
+  two killed by the assertion, two survived, and four in a function the test
+  did not call. This proves a small custom fixture. It does not qualify the
+  existing project test suite.
+- Importing `bun:test` in a Worker started by a normal Bun application did not
+  enable test registration. The `test()` call reported
+  `Cannot use test outside of the test runner`. Do not describe that Worker
+  adapter as compatible with ordinary Bun tests.
+
 Review OpenCode's host commands separately from dependency packaging.
 `src/runner/artifacts.ts` uses Git and runs configured checks through a shell.
 `src/runner/retained-verification/isolation.ts` uses Bun to install candidate
