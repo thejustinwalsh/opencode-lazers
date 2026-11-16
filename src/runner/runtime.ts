@@ -365,6 +365,13 @@ export type TaskRuntimeOptions = {
   requestTick?: () => Promise<void>
   wakeScheduler?: () => void
   retainedDependencyInstaller?: RetainedDependencyInstaller
+  beforeRetainedCheckBegin?: (input: {
+    operationID: string
+    generation: number
+    phase: "task" | "combined"
+    checkID: string
+    retryAuthorized: boolean
+  }) => Promise<void>
 }
 
 type AdoptionSeed = {
@@ -575,6 +582,7 @@ export class TaskRuntime {
   private readonly requestTick: () => Promise<void>
   private readonly wakeScheduler: (() => void) | undefined
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
+  private readonly beforeRetainedCheckBegin: TaskRuntimeOptions["beforeRetainedCheckBegin"]
   private readonly modelMappingResolver: ModelMappingResolver
   private readonly sourceEpochs = new Map<string, number>()
   private sourceResyncPending = false
@@ -597,6 +605,7 @@ export class TaskRuntime {
     this.requestTick = options.requestTick ?? (() => this.tick())
     this.wakeScheduler = options.wakeScheduler
     this.retainedDependencyInstaller = options.retainedDependencyInstaller
+    this.beforeRetainedCheckBegin = options.beforeRetainedCheckBegin
     this.modelMappingResolver = new ModelMappingResolver(new ModelMappingStore(store.repository))
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
@@ -659,6 +668,7 @@ export class TaskRuntime {
       outcome: (...args) => this.outcome(...args),
       owner: this.owner,
       projectID: this.projectID,
+      beforeRetainedCheckBegin: this.beforeRetainedCheckBegin,
       recoverCancelledRetainedChecks: (...args) => this.recoverCancelledRetainedChecks(...args),
       retainedDependencyInstaller: this.retainedDependencyInstaller,
       retainedRepairCandidateCurrent: (...args) => this.retainedRepairCandidateCurrent(...args),
