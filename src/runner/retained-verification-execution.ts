@@ -96,6 +96,34 @@ function isCurrentRetainedVerification(
   )
 }
 
+function retainedRetryResourcesMatch(
+  current: Array<{ name: string; pathFingerprint: string; state: string }>,
+  prior: unknown,
+  allowLegacyRows: boolean,
+): boolean {
+  if (fingerprint(current) === fingerprint(prior)) return true
+  if (!allowLegacyRows || !Array.isArray(prior)) return false
+  const legacyBindings: Array<{ name: string; pathFingerprint: string; state: string }> = []
+  for (const resource of prior) {
+    if (
+      !isRecord(resource) ||
+      Object.keys(resource).sort().join(",") !== "canonical_path,resource_name,state" ||
+      typeof resource.resource_name !== "string" ||
+      typeof resource.canonical_path !== "string" ||
+      typeof resource.state !== "string"
+    )
+      return false
+    legacyBindings.push({
+      name: resource.resource_name,
+      pathFingerprint: fingerprint(resource.canonical_path),
+      state: resource.state,
+    })
+  }
+  const byName = (left: { name: string }, right: { name: string }) =>
+    left.name.localeCompare(right.name)
+  return fingerprint([...current].sort(byName)) === fingerprint(legacyBindings.sort(byName))
+}
+
 export class RetainedVerificationExecution {
   constructor(
     private readonly runtime: {
@@ -911,6 +939,18 @@ export class RetainedVerificationExecution {
               )
             : undefined
         const interruptedContinuation = authorization?.continuationKind === "interrupted-check"
+        const legacyTimeoutAuthorization = Boolean(
+          authorization !== undefined &&
+          !interruptedContinuation &&
+          authorization.continuationKind === undefined &&
+          authorization.environmentIdentity === undefined &&
+          authorization.planVersion === undefined,
+        )
+        const retryResourcesMatch = retainedRetryResourcesMatch(
+          retryResourceBindings,
+          authorization?.priorResources,
+          legacyTimeoutAuthorization,
+        )
         const planNodes = this.runtime.store.nodes(initial.planID)
         const planAttempts = this.runtime.store.attempts(initial.planID)
         let acceptedArtifactsCurrent = true
@@ -1044,7 +1084,7 @@ export class RetainedVerificationExecution {
           authorization.priorCheckFingerprint !== fingerprint(existing.checkJSON) ||
           authorization.priorReceiptPath !== existing.receiptPath ||
           fingerprint(authorization.priorReceipt) !== fingerprint(previousReceipt) ||
-          fingerprint(retryResourceBindings) !== fingerprint(authorization.priorResources) ||
+          !retryResourcesMatch ||
           retryResources.length === 0 ||
           retryResources.some((resource) => resource.state !== "removed")
         ) {

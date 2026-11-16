@@ -142,6 +142,7 @@ import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./s
 import {
   activeRetainedVerifications,
   authorizeRetainedVerificationCheckRetry,
+  cancelRetainedVerificationCheckRetry,
   createRetainedVerification,
   ensureRetainedVerificationTables,
   latestRetainedVerificationGeneration,
@@ -160,6 +161,7 @@ import {
   startVerificationActivity,
   verificationActivity,
   verificationActivityKey,
+  verificationActivityStartSequence,
   verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
@@ -232,6 +234,7 @@ type PreparedVerificationDeadlineExtension = {
   }
   planBodyFingerprint?: string
   acceptedArtifacts?: Array<{ taskID: string; taskRevision: number; artifact: string }>
+  activityStartSequence?: number
   retained?: {
     operation: RetainedVerification
     check: RetainedVerificationCheck
@@ -914,6 +917,43 @@ export class TaskRuntime {
       return
     const checks = this.store.atomic((db) => retainedVerificationChecks(db, operationID))
     for (const check of checks) {
+      const restoreUnstartedRetry = () => {
+        if (check.state !== "retry-authorized" || !check.receipt) return false
+        return this.store.atomic((db) => {
+          const current = retainedVerification(db, operationID)
+          if (
+            !current ||
+            current.generation !== operation.generation ||
+            current.state !== "cancelled"
+          )
+            return false
+          if (
+            !cancelRetainedVerificationCheckRetry(
+              db,
+              operationID,
+              check.phase,
+              check.checkID,
+              fingerprint(check.receipt),
+            )
+          )
+            return false
+          this.store.record(
+            operation.planID,
+            operation.taskID,
+            "RETAINED_VERIFICATION_CHECK_RETRY_CANCELLED",
+            {
+              operationID,
+              generation: operation.generation,
+              phase: check.phase,
+              checkID: check.checkID,
+              receiptFingerprint: fingerprint(check.receipt),
+              executionStarted: false,
+            },
+          )
+          return true
+        })
+      }
+      if (restoreUnstartedRetry()) continue
       if (check.state === "completed") continue
       // These are durable bindings, not a synthesized successful activity.
       // The disk receipt and isolation witness must independently validate.
@@ -926,6 +966,7 @@ export class TaskRuntime {
         artifact: check.artifact,
         contextPath: check.contextPath,
       })
+      if (restoreUnstartedRetry()) continue
     }
   }
 
@@ -2683,6 +2724,14 @@ export class TaskRuntime {
     )
       throw new Error("Verification deadline owner or plan authorization changed before admission")
     if (retained) {
+      if (
+        prepared.activityStartSequence !== undefined &&
+        verificationActivityStartSequence(this.store.repository.path, plan.id) !==
+          prepared.activityStartSequence
+      )
+        throw new Error(
+          "A verification check started during retained timing continuation admission",
+        )
       const currentOperation = this.store.atomic((db) =>
         retainedVerification(db, retained.operation.id),
       )
@@ -2740,6 +2789,12 @@ export class TaskRuntime {
     const retained = prepared.retained
     const operation = retained?.operation
     const check = retained?.check
+    if (
+      prepared.activityStartSequence !== undefined &&
+      verificationActivityStartSequence(this.store.repository.path, plan.id) !==
+        prepared.activityStartSequence
+    )
+      throw new Error("A verification check started during retained-check continuation admission")
     if (
       !operation ||
       !check ||
@@ -5113,6 +5168,12 @@ export class TaskRuntime {
 
   async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
+    const retainedCheckAdmissionSequence =
+      command.action === "continue-retained-check" ||
+      (command.action === "extend-verification-deadline" &&
+        command.retainedVerificationID !== undefined)
+        ? verificationActivityStartSequence(this.store.repository.path, command.planID)
+        : undefined
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
     if (prior !== undefined) {
       if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
@@ -5279,6 +5340,10 @@ export class TaskRuntime {
       command.action === "continue-retained-check"
         ? await this.prepareRetainedInterruptedCheckContinuation(old, command, caller, ownerSession)
         : undefined
+    if (verificationDeadlineExtension && retainedCheckAdmissionSequence !== undefined)
+      verificationDeadlineExtension.activityStartSequence = retainedCheckAdmissionSequence
+    if (retainedCheckContinuation && retainedCheckAdmissionSequence !== undefined)
+      retainedCheckContinuation.activityStartSequence = retainedCheckAdmissionSequence
     let retainedCheckNativeWorkspaces: string[] | undefined
     if (verificationDeadlineExtension) {
       const confirmedOwner = await this.host.session(caller)

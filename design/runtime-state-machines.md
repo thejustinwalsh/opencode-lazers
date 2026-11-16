@@ -18,7 +18,7 @@ with existing records. No task snapshots or attempt history are replaced.
 | Descendant adoption   | `adoptionMachine`             | `lz_runner_transition('adoption', state, event)`        | Revalidate checks, supply required acceptance, accept or cancel a held operation                                                             |
 | Retained verification | `retainedVerificationMachine` | `lz_runner_transition('retained', state, event)`        | Complete phase checks/acceptance; explicitly continue an exact settled retained check; or cancel a held generation before a fresh generation |
 | Verification resource | `verificationResourceMachine` | `lz_runner_transition('resource', state, event)`        | Confirm native creation/removal; re-observe uncertain resources                                                                              |
-| Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from the operation-bound receipt                                                                        |
+| Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from its bound receipt; restore an unstarted authorized retry on cancellation                           |
 | Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                                                              |
 
 `lifecycleTransition()` resolves the persisted row state through XState and uses
@@ -35,7 +35,9 @@ Initial inserts use each machine's declared initial state. Native observations
 such as `ArchitectSourceResult.state` describe OpenCode results; they are not
 runner transition authority. `verificationCheckMachine` permits a previously
 completed command to become uncertain when subprocess settlement changes;
-command results and cleanup are retained separately.
+command results and cleanup are retained separately. A `retry-authorized` check
+returns to `completed` only when cancellation proves its original receipt and
+resource settlement remain unchanged before execution begins.
 
 ## Deleted-worker cancellation defect
 
