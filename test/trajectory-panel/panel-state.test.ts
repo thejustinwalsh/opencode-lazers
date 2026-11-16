@@ -1208,6 +1208,8 @@ test("a transient continuation failure keeps Load more retryable", async () => {
     await state.loadMoreActivity()
     expect(calls).toHaveLength(3)
     expect(state.data.events.length).toBeGreaterThan(2)
+    expect(state.data.historyError).toBe("")
+    expect(state.data.stale).toBe(false)
   } finally {
     state.close()
     fixture.close()

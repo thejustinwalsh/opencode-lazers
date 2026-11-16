@@ -986,6 +986,7 @@ export class TrajectoryPanelState {
         eventCursor: report.trajectory.nextCursor,
         totalEvents: report.trajectory.totalEvents,
         loadingActivity: false,
+        historyError: "",
       })
     } catch (error) {
       if (
@@ -993,13 +994,15 @@ export class TrajectoryPanelState {
         taskRequest === this.taskRequest &&
         request === this.activityRequest &&
         !signal.aborted
-      )
+      ) {
+        const pageRecaptureRequired = requiresRecapture(error)
         this.update({
           loadingActivity: false,
-          stale: true,
-          pageRecaptureRequired: requiresRecapture(error),
+          stale: this.data.stale || pageRecaptureRequired,
+          pageRecaptureRequired,
           historyError: historyFailureMessage(error),
         })
+      }
     }
   }
 
