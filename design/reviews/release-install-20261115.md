@@ -17,4 +17,5 @@ archive; the rebuild changed only the README.
 
 Local verification: `bun run verify`, the GUI build, `actionlint`, and 143
 WebGPU and Radar packaging tests passed. The GitHub workflow was validated
-locally; this checkout has no GitHub remote and no release was published.
+locally. At the time of this review, this checkout had no GitHub remote and no
+release had been published. The project later published [v0.1.0](https://github.com/thejustinwalsh/opencode-lazers/releases/tag/v0.1.0).
