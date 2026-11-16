@@ -136,6 +136,7 @@ export class RetainedVerificationExecution {
       outcome: TaskRuntime["outcome"]
       owner: TaskRuntime["owner"]
       projectID: TaskRuntime["projectID"]
+      beforeRetainedCheckBegin: TaskRuntime["beforeRetainedCheckBegin"]
       recoverCancelledRetainedChecks: TaskRuntime["recoverCancelledRetainedChecks"]
       retainedDependencyInstaller: TaskRuntime["retainedDependencyInstaller"]
       retainedRepairCandidateCurrent: TaskRuntime["retainedRepairCandidateCurrent"]
@@ -1524,9 +1525,17 @@ export class RetainedVerificationExecution {
       })
       let checkRow: ReturnType<typeof beginRetainedVerificationCheck>
       try {
+        await this.runtime.beforeRetainedCheckBegin?.({
+          operationID: initial.id,
+          generation: initial.generation,
+          phase,
+          checkID: check.id,
+          retryAuthorized: existing?.state === "retry-authorized",
+        })
         checkRow = this.runtime.store.atomic((db) =>
           beginRetainedVerificationCheck(db, {
             operationID: initial.id,
+            generation: initial.generation,
             phase,
             checkID: check.id,
             check: effectiveCheck,

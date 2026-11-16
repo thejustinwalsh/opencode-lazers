@@ -31,6 +31,7 @@ import {
 import { fingerprint } from "../identity.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
+import type { TaskRuntimeOptions } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 import { inspectPlan } from "./inspection.ts"
 import { ProbeRepository } from "../verification/probe/store.ts"
@@ -91,6 +92,7 @@ function fixture(
     candidateContentsCheck?: boolean
     projectBuild?: boolean
     verificationScript?: string
+    beforeRetainedCheckBegin?: TaskRuntimeOptions["beforeRetainedCheckBegin"]
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-reverify-project-"))
@@ -193,7 +195,7 @@ function fixture(
     writeFileSync(
       join(root, "src", "runner", "retained-check.test.ts"),
       [
-        'import { appendFileSync, existsSync, mkdirSync, readFileSync, watch } from "node:fs"',
+        'import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"',
         'import { join } from "node:path"',
         'import { expect, test } from "bun:test"',
         'test("waits for explicit retained-check release", async () => {',
@@ -202,13 +204,8 @@ function fixture(
         "  mkdirSync(home, { recursive: true })",
         '  appendFileSync(join(home, "started"), "started\\n")',
         '  const release = join(home, "release")',
-        "  await new Promise<void>((resolve) => {",
-        "    if (existsSync(release)) return resolve()",
-        "    const watcher = watch(home, (_event, filename) => {",
-        '      if (filename === "release" && existsSync(release)) { watcher.close(); resolve() }',
-        "    })",
-        "    if (existsSync(release)) { watcher.close(); resolve() }",
-        "  })",
+        "  const deadline = Date.now() + 4_000",
+        "  while (!existsSync(release) && Date.now() < deadline) await Bun.sleep(10)",
         "  expect(existsSync(release)).toBe(true)",
         '  expect(readFileSync("result.txt", "utf8")).toContain("retained candidate")',
         "})",
@@ -510,6 +507,7 @@ function fixture(
       ? {}
       : { verificationTimeoutDefaults: options.verificationTimeoutDefaults }),
     retainedDependencyInstaller: options.retainedDependencyInstaller,
+    beforeRetainedCheckBegin: options.beforeRetainedCheckBegin,
   })
   cleanups.push(async () => {
     await runtime.stop()
@@ -721,6 +719,7 @@ async function sourceQuarantinedVerifyingFixture(options: Parameters<typeof fixt
 
 async function reopenSourceQuarantinedFixture(
   f: Awaited<ReturnType<typeof sourceQuarantinedVerifyingFixture>>,
+  options: Pick<TaskRuntimeOptions, "beforeRetainedCheckBegin"> = {},
 ) {
   await f.runtime.stop()
   f.store.atomic((db) =>
@@ -733,6 +732,7 @@ async function reopenSourceQuarantinedFixture(
   const restoreSourceGuard = registerSourceGuard(store, f.attempt.workspace)
   const runtime = new TaskRuntime(store, f.host, "project", undefined, {
     requestTick: () => Promise.resolve(),
+    ...options,
   })
   cleanups.push(async () => {
     await runtime.stop()
@@ -748,7 +748,12 @@ async function reopenSourceQuarantinedFixture(
   }
 }
 
-async function heldInterruptedCombinedFixture(interruptedCheckID: string) {
+async function heldInterruptedCombinedFixture(
+  interruptedCheckID: string,
+  options: {
+    beforeRetainedCheckBegin?: TaskRuntimeOptions["beforeRetainedCheckBegin"]
+  } = {},
+) {
   let f = await sourceQuarantinedVerifyingFixture({
     requestTick: () => Promise.resolve(),
     taskCheckCommand: "true",
@@ -758,6 +763,9 @@ async function heldInterruptedCombinedFixture(interruptedCheckID: string) {
     additionalCombinedChecks: [
       { id: interruptedCheckID, command: "bun test src/runner/retained-check.test.ts" },
     ],
+    ...(options.beforeRetainedCheckBegin === undefined
+      ? {}
+      : { beforeRetainedCheckBegin: options.beforeRetainedCheckBegin }),
   })
   const requested = await f.control.execute(
     retainedVerifyCommand(f, `reserve-interrupted-retained-combined-check-${interruptedCheckID}`),
@@ -787,7 +795,11 @@ async function heldInterruptedCombinedFixture(interruptedCheckID: string) {
   )
   if (!interrupted?.receipt) throw new Error("Interrupted combined check has no durable receipt")
   const originalReceipt = JSON.parse(interrupted.receipt) as CheckReceipt
-  f = await reopenSourceQuarantinedFixture(f)
+  f = await reopenSourceQuarantinedFixture(f, {
+    ...(options.beforeRetainedCheckBegin === undefined
+      ? {}
+      : { beforeRetainedCheckBegin: options.beforeRetainedCheckBegin }),
+  })
   await f.runtime.tick()
   const operation = f.store.atomic((db) => retainedVerification(db, operationID))
   if (operation?.state !== "held")
@@ -990,20 +1002,16 @@ async function waitForRetainedCheckStartFor(
 
 function gatedRetainedCheckScript(): string {
   return [
-    'import { appendFileSync, existsSync, mkdirSync, watch } from "node:fs"',
+    'import { appendFileSync, existsSync, mkdirSync } from "node:fs"',
     'import { join } from "node:path"',
     "if (!process.env.LAZERS_VERIFICATION_SQLITE) process.exit(1)",
     "const home = process.env.HOME!",
     "mkdirSync(home, { recursive: true })",
     'appendFileSync(join(home, "started"), "started\\n")',
     'const release = join(home, "release")',
-    "await new Promise<void>((resolve) => {",
-    "  if (existsSync(release)) return resolve()",
-    "  const watcher = watch(home, (_event, filename) => {",
-    '    if (filename === "release" && existsSync(release)) { watcher.close(); resolve() }',
-    "  })",
-    "  if (existsSync(release)) { watcher.close(); resolve() }",
-    "})",
+    "const deadline = Date.now() + 4_000",
+    "while (!existsSync(release) && Date.now() < deadline) await Bun.sleep(10)",
+    "if (!existsSync(release)) process.exit(1)",
     "",
   ].join("\n")
 }
@@ -3523,6 +3531,152 @@ test("cancelling an unstarted retained retry restores its original receipt acros
   expect(receiptHistoryCount(reopened.store)).toBe(originalHistoryCount)
 }, 180_000)
 
+test("cancellation after retry context creation cannot consume its receipt or start the check", async () => {
+  const checkID = "cancel-after-retry-context-creation"
+  const contextReady = deferred()
+  const releaseBegin = deferred()
+  const targetOperation: { id?: string; generation?: number } = {}
+  const f = await heldInterruptedCombinedFixture(checkID, {
+    beforeRetainedCheckBegin: async (input) => {
+      if (
+        input.operationID === targetOperation.id &&
+        input.generation === targetOperation.generation &&
+        input.phase === "combined" &&
+        input.checkID === checkID &&
+        input.retryAuthorized
+      ) {
+        contextReady.resolve()
+        await releaseBegin.promise
+      }
+    },
+  })
+  const prompts = structuredClone(f.prompts)
+  const created = structuredClone(f.created)
+  targetOperation.id = f.operationID
+  targetOperation.generation = f.operation.generation
+  const originalReceipt = f.interrupted.receipt
+  const originalReceiptPath = f.interrupted.receiptPath
+  if (!originalReceipt || !originalReceiptPath)
+    throw new Error("Interrupted retained check receipt binding is missing")
+  expect(f.originalReceipt).toMatchObject({
+    aborted: true,
+    timedOut: false,
+    stopCause: "cancelled",
+  })
+  let retryStarts = 0
+  const observeRetryStarts = (runtime: TaskRuntime) => {
+    const internals = runtime as unknown as {
+      startCheckActivity(input: { id: string }): unknown
+    }
+    const start = internals.startCheckActivity.bind(runtime)
+    internals.startCheckActivity = (input) => {
+      if (input.id === `retained:${f.operationID}:${f.operation.generation}:combined:${checkID}`)
+        retryStarts++
+      return start(input)
+    }
+  }
+  observeRetryStarts(f.runtime)
+  const receiptHistoryCount = (store: RunnerStore) =>
+    store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            `SELECT COUNT(*) AS count FROM runner_retained_verification_check_receipts
+             WHERE operation_id=? AND phase='combined' AND check_id=?`,
+          )
+          .get(f.operationID, checkID)?.count ?? 0,
+    )
+  const originalHistoryCount = receiptHistoryCount(f.store)
+
+  const continuation = retainedInterruptedCheckContinuationInput(
+    f,
+    f.operation,
+    checkID,
+    "continue-then-cancel-after-context-creation",
+  )
+  expect((await f.control.execute(continuation)).status).toBe(
+    "retained-verification-check-continued",
+  )
+  const advancing = f.runtime.tick()
+  try {
+    await contextReady.promise
+    expect(
+      f.store.atomic((db) =>
+        retainedVerificationChecks(db, f.operationID, "combined").find(
+          (row) => row.checkID === checkID,
+        ),
+      ),
+    ).toMatchObject({ state: "retry-authorized", receipt: originalReceipt })
+
+    const cancel = {
+      requestID: "cancel-retry-after-context-creation",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "cancel-retained-verification" as const,
+      retainedVerificationID: f.operationID,
+      reason: "Cancel after isolated context creation but before retry consumption",
+    }
+    const cancellation = f.control.execute(cancel)
+    await waitForFixtureObservation(
+      f,
+      "retained operation cancellation during post-context admission",
+      () => f.store.atomic((db) => retainedVerification(db, f.operationID))?.state === "cancelled",
+      15_000,
+      () => Promise.resolve(),
+    )
+    expect(
+      f.store.atomic((db) =>
+        retainedVerificationChecks(db, f.operationID, "combined").find(
+          (row) => row.checkID === checkID,
+        ),
+      ),
+    ).toMatchObject({ state: "retry-authorized", receipt: originalReceipt })
+    releaseBegin.resolve()
+    const cancelled = await cancellation
+    await advancing
+    expect(cancelled.status).toBe("retained-verification-cancelled")
+    expect(f.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe("cancelled")
+    expect(
+      f.store.atomic((db) =>
+        retainedVerificationChecks(db, f.operationID, "combined").find(
+          (row) => row.checkID === checkID,
+        ),
+      ),
+    ).toMatchObject({ state: "completed", receipt: originalReceipt, cleanupState: "complete" })
+    expect(readFileSync(originalReceiptPath, "utf8")).toBe(originalReceipt)
+    expect(receiptHistoryCount(f.store)).toBe(originalHistoryCount)
+    expect(retryStarts).toBe(0)
+    expect(await f.control.execute(cancel)).toEqual(cancelled)
+
+    const reopened = await reopenSourceQuarantinedFixture(f)
+    observeRetryStarts(reopened.runtime)
+    await reopened.runtime.tick()
+    expect(await reopened.control.execute(cancel)).toEqual(cancelled)
+    await reopened.runtime.tick()
+    expect(reopened.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe(
+      "cancelled",
+    )
+    expect(
+      reopened.store.atomic((db) =>
+        retainedVerificationChecks(db, f.operationID, "combined").find(
+          (row) => row.checkID === checkID,
+        ),
+      ),
+    ).toMatchObject({ state: "completed", receipt: originalReceipt, cleanupState: "complete" })
+    expect(readFileSync(originalReceiptPath, "utf8")).toBe(originalReceipt)
+    expect(receiptHistoryCount(reopened.store)).toBe(originalHistoryCount)
+    expect(retryStarts).toBe(0)
+    expect(reopened.store.attempts(f.planID)).toEqual([f.originalAttempt])
+    expect(sourceQuarantine(reopened.store, f.attempt.id)).toEqual(f.quarantine)
+    expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
+    expect(f.prompts).toEqual(prompts)
+    expect(f.created).toEqual(created)
+  } finally {
+    releaseBegin.resolve()
+    await advancing.catch(() => undefined)
+  }
+}, 180_000)
+
 test("retained-check admission rejects any check start without interrupting live work", async () => {
   const checkID = "admission-race-interrupted-check"
   const f = await heldInterruptedCombinedFixture(checkID)
@@ -3996,6 +4150,9 @@ test("a source binding change after admission fences publication of retained che
       .query("UPDATE runner_source_quarantines SET request_id=? WHERE attempt_id=?")
       .run("changed-after-admission", f.attempt.id),
   )
+  const activity = await waitForRetainedCheckActivity(f, operationID)
+  writeFileSync(join(contextPath, "home", "release"), "continue\n")
+  await activity.settled
   await waitForFixtureObservation(f, "retained verification authority race hold", () => {
     const row = f.store.atomic((db) =>
       db
@@ -4006,9 +4163,6 @@ test("a source binding change after admission fences publication of retained che
     )
     return Boolean(row && JSON.parse(row.payload).state === "held")
   })
-  writeFileSync(join(contextPath, "home", "release"), "continue\n")
-  const activity = await waitForRetainedCheckActivity(f, operationID)
-  await activity.settled
   await f.runtime.tick()
 
   const operation = f.store.atomic((db) =>
