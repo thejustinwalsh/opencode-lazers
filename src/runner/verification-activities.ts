@@ -20,6 +20,16 @@ type ActivityRegistry = Map<string, VerificationActivity>
 const registryKey = Symbol.for("opencode-lazers.verification-activities.v1")
 const registryHost = globalThis as typeof globalThis & { [registryKey]?: ActivityRegistry }
 const activities = (registryHost[registryKey] ??= new Map())
+type ActivityStartRegistry = Map<string, number>
+const activityStartRegistryKey = Symbol.for("opencode-lazers.verification-activity-starts.v1")
+const activityStartRegistryHost = globalThis as typeof globalThis & {
+  [activityStartRegistryKey]?: ActivityStartRegistry
+}
+const activityStarts = (activityStartRegistryHost[activityStartRegistryKey] ??= new Map())
+
+function activityStartKey(databasePath: string, planID: string): string {
+  return JSON.stringify([canonicalVerificationDatabasePath(databasePath), planID])
+}
 
 export function verificationActivityKey(databasePath: string, id: string): string {
   const database = canonicalVerificationDatabasePath(databasePath)
@@ -37,6 +47,11 @@ export function canonicalVerificationDatabasePath(databasePath: string): string 
 export function verificationActivitiesForDatabase(databasePath: string): VerificationActivity[] {
   const database = canonicalVerificationDatabasePath(databasePath)
   return [...activities.values()].filter((activity) => activity.metadata.databasePath === database)
+}
+
+/** Monotonic per-plan fence, including activities that finish before admission is revalidated. */
+export function verificationActivityStartSequence(databasePath: string, planID: string): number {
+  return activityStarts.get(activityStartKey(databasePath, planID)) ?? 0
 }
 
 export function verificationActivity<T = unknown>(
@@ -84,6 +99,10 @@ export function startVerificationActivity<T>(input: {
     settled: Promise.resolve(),
   }
   activities.set(input.key, activity)
+  if (typeof input.metadata.planID === "string") {
+    const key = activityStartKey(input.databasePath, input.metadata.planID)
+    activityStarts.set(key, (activityStarts.get(key) ?? 0) + 1)
+  }
 
   let settle!: () => void
   activity.settled = new Promise<void>((resolveSettled) => (settle = resolveSettled))

@@ -613,6 +613,46 @@ export function authorizeRetainedVerificationCheckRetry(
   )!
 }
 
+/** Revoke a check retry authorization only while its original completed receipt is still current. */
+export function cancelRetainedVerificationCheckRetry(
+  db: Database,
+  operationID: string,
+  phase: "task" | "combined",
+  checkID: string,
+  receiptFingerprint: string,
+): boolean {
+  ensureRetainedVerificationTables(db)
+  const current = retainedVerificationChecks(db, operationID, phase).find(
+    (check) => check.checkID === checkID,
+  )
+  if (
+    !current ||
+    current.state !== "retry-authorized" ||
+    !current.receipt ||
+    current.cleanupState !== "complete" ||
+    fingerprint(current.receipt) !== receiptFingerprint
+  )
+    return false
+  const unresolvedResources =
+    db
+      .query<{ count: number }, [string, string, string]>(
+        `SELECT COUNT(*) AS count FROM runner_retained_verification_resources
+         WHERE operation_id=? AND phase=? AND check_id=? AND state<>'removed'`,
+      )
+      .get(operationID, phase, checkID)?.count ?? 0
+  if (unresolvedResources !== 0) return false
+  return (
+    db
+      .query(
+        `UPDATE runner_retained_verification_checks
+         SET state=lz_runner_transition('check',state,'completed')
+         WHERE operation_id=? AND phase=? AND check_id=? AND state='retry-authorized'
+           AND receipt=? AND cleanup_state='complete'`,
+      )
+      .run(operationID, phase, checkID, current.receipt).changes === 1
+  )
+}
+
 export function completeRetainedVerificationCheck(
   db: Database,
   operationID: string,
