@@ -129,8 +129,13 @@ failed baseline cannot establish a mutation score.
   `fallow-core` passed `cargo check` for `wasm32-unknown-unknown`. The full
   `fallow-engine` still fails in platform-specific Git path conversion,
   churn-cache path handling, file URLs, and dependency symlinks. Use explicit
-  host inputs for those operations. Report parity and WebAssembly execution
-  of the static scans still need verification.
+  host inputs for those operations.
+- A temporary binding built with `wasm-bindgen 0.2.130` ran
+  `fallow_extract::parse_from_content` and `compute_css_analytics` in Bun.
+  The TypeScript fixture returned one import, one export, and zero parse
+  errors. The CSS fixture returned one rule and two declarations. These
+  in-memory calls establish extraction. The five project-wide report
+  sections still need a host adapter and parity checks.
 - Bun ran the instrumented output with a fresh Worker per mutant. A test
   asserted that the boundary value 10 qualifies. The run found eight mutants:
   two killed by the assertion, two survived, and four in a function the test
