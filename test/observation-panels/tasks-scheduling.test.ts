@@ -563,11 +563,15 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     expect(waitingRow.textContent).not.toContain("Waiting for prerequisite source integration.")
     const waitingBlocker = waitingRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
     expect(waitingBlocker.textContent).toBe("link")
-    // One prerequisite, 100 listed reservation holders and one more the read only counted.
-    expect(waitingBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-1 and 101 more")
-    expect(waitingBlocker.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip).toBe(
-      "Waiting on LZ-1 and 101 more",
+    // One prerequisite, 100 listed reservation holders and one more the read only counted. The
+    // listed prerequisite's own state (held by its worker) names and colors the link.
+    expect(waitingBlocker.getAttribute("aria-label")).toBe(
+      "Open blocker LZ-1, waiting and 101 more",
     )
+    expect(waitingBlocker.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip).toBe(
+      "Waiting on LZ-1 · Waiting and 101 more",
+    )
+    expect(waitingBlocker.dataset.tone).toBe("waiting")
     expect(waitingRow.getAttribute("aria-label")).toContain(
       "Waiting for prerequisite source integration.",
     )

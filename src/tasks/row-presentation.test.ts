@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { ExecutionListRow } from "./execution-list.ts"
 import {
+  isRingGlyph,
   planStateLabel,
   rowBlockers,
   rowHoldReasons,
@@ -37,14 +38,14 @@ const quiet = { blockers: [], blockerTotal: 0 }
 test("scheduled work stays quiet while running, ready and submitted work is named", () => {
   expect(taskRowPresentation(row())).toEqual({
     tone: "scheduled",
-    icon: "status",
+    icon: "ring",
     label: "Queued",
     detail: null,
     ...quiet,
   })
   expect(taskRowPresentation(row({ status: "running" }))).toMatchObject({
     tone: "running",
-    icon: "status-active",
+    icon: "ring-progress",
     label: "Running",
   })
   expect(taskRowPresentation(row({ status: "verifying" })).label).toBe("Verifying")
@@ -149,7 +150,7 @@ test("a dispatch pause applies only to work that has not started and outranks wa
   const dispatchPause = { reason: "Paused until LZ-4 integrates", untilPlans: [] }
   expect(taskRowPresentation(row({ dispatchPause }))).toEqual({
     tone: "paused",
-    icon: "stop",
+    icon: "ring-pause",
     label: "Paused",
     detail: "Paused until LZ-4 integrates",
     ...quiet,
@@ -167,7 +168,8 @@ test("a dispatch pause applies only to work that has not started and outranks wa
 
 test("acceptance, integration, failure and cancellation stay distinct", () => {
   expect(taskRowPresentation(row({ status: "accepted" }))).toMatchObject({
-    icon: "check",
+    tone: "accepted",
+    icon: "circle-check",
     label: "Accepted",
   })
   expect(taskRowPresentation(row({ status: "incorporated" }))).toMatchObject({
@@ -254,4 +256,25 @@ test("plan headings name integration and cleanup, not ordinary progress", () => 
   expect(planStateLabel("cleaning")).toBe("Cleaning up")
   expect(planStateLabel("cleanup-blocked")).toBe("Cleanup blocked")
   expect(planStateLabel("integrated")).toBe("Integrated")
+})
+
+test("every state glyph is a circled mark: host circle icons or Tasks rings, never panel glyphs", () => {
+  const glyph = (change: Partial<ExecutionListRow>) => taskRowPresentation(row(change)).icon
+  expect(glyph({ status: "queued" })).toBe("ring")
+  expect(glyph({ status: "ready" })).toBe("ring-dot")
+  expect(glyph({ status: "running" })).toBe("ring-progress")
+  expect(glyph({ status: "verifying" })).toBe("ring-progress")
+  expect(glyph({ status: "submitted" })).toBe("ring-dashed")
+  expect(glyph({ status: "cancelled" })).toBe("ring-minus")
+  expect(glyph({ dispatchPause: { reason: "Held", untilPlans: [] } })).toBe("ring-pause")
+  expect(glyph({ status: "incorporated" })).toBe("circle-check")
+  expect(glyph({ status: "failed" })).toBe("circle-x")
+  expect(glyph({ waiting: true })).toBe("circle-ban-sign")
+  const statuses = ["queued", "ready", "running", "submitted", "accepted", "failed", "x-unknown"]
+  for (const status of statuses) {
+    const icon = glyph({ status: status as ExecutionListRow["status"] })
+    expect(isRingGlyph(icon) || icon.startsWith("circle-")).toBe(true)
+  }
+  expect(isRingGlyph("circle-check")).toBe(false)
+  expect(isRingGlyph("ring-dot")).toBe(true)
 })

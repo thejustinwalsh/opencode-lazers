@@ -2,7 +2,7 @@ import type { IconName } from "@opencode/plugin/gui"
 import type { CurrentTaskActivity } from "./contract.ts"
 import type { ExecutionListRow } from "./execution-list.ts"
 
-/** Visual family of a task row; each tone pairs a host icon with a theme status color. */
+/** Visual family of a task row; each tone pairs a state glyph with a theme status color. */
 export type TaskTone =
   | "attention"
   | "waiting"
@@ -16,12 +16,35 @@ export type TaskTone =
   | "failed"
   | "cancelled"
 
+/**
+ * Linear-style ring glyphs drawn by Tasks for lifecycle states the host icon set has no circle for.
+ * The host `status` glyphs are stacked panels, which read as layout, not state.
+ */
+export type TaskRingGlyph =
+  "ring" | "ring-dot" | "ring-progress" | "ring-dashed" | "ring-pause" | "ring-minus"
+
+/** A host icon where the host has a circled state mark, otherwise a Tasks ring glyph. */
+export type TaskGlyph = IconName | TaskRingGlyph
+
+const ringGlyphs = new Set<string>([
+  "ring",
+  "ring-dot",
+  "ring-progress",
+  "ring-dashed",
+  "ring-pause",
+  "ring-minus",
+])
+
+export function isRingGlyph(glyph: TaskGlyph): glyph is TaskRingGlyph {
+  return ringGlyphs.has(glyph)
+}
+
 /** A typed task or plan the row is waiting behind; rows link the first one. */
 export type TaskBlocker = { kind: "task" | "plan"; id: string }
 
 export type TaskRowPresentation = {
   tone: TaskTone
-  icon: IconName
+  icon: TaskGlyph
   /** One short word naming the state: the icon's accessible name and tooltip lead. */
   label: string
   /** The recorded source reason behind the state, for its tooltip and accessible description. */
@@ -97,7 +120,7 @@ export function taskRowPresentation(
   const { blockers, blockerTotal } = open ? rowBlockers(row) : { blockers: [], blockerTotal: 0 }
   const state = (
     tone: TaskTone,
-    icon: IconName,
+    icon: TaskGlyph,
     label: string,
     detail: string | null = null,
   ): TaskRowPresentation => ({ tone, icon, label, detail, blockers, blockerTotal })
@@ -110,7 +133,7 @@ export function taskRowPresentation(
       attention,
     )
   if (row.dispatchPause && ["queued", "ready"].includes(status))
-    return state("paused", "stop", "Paused", row.dispatchPause.reason)
+    return state("paused", "ring-pause", "Paused", row.dispatchPause.reason)
   if (
     open &&
     (row.waiting ||
@@ -136,17 +159,17 @@ export function taskRowPresentation(
   }
   switch (status) {
     case "running":
-      return state("running", "status-active", "Running")
+      return state("running", "ring-progress", "Running")
     case "verifying":
-      return state("running", "status-active", "Verifying")
+      return state("running", "ring-progress", "Verifying")
     case "ready":
-      return state("ready", "status", "Ready")
+      return state("ready", "ring-dot", "Ready")
     case "queued":
-      return state("scheduled", "status", "Queued")
+      return state("scheduled", "ring", "Queued")
     case "submitted":
-      return state("submitted", "dash", "Proposed")
+      return state("submitted", "ring-dashed", "Proposed")
     case "accepted":
-      return state("accepted", "check", "Accepted", "Accepted; not yet integrated")
+      return state("accepted", "circle-check", "Accepted", "Accepted; not yet integrated")
     case "incorporated":
       return state("integrated", "circle-check", "Integrated")
     case "failed":
@@ -154,9 +177,9 @@ export function taskRowPresentation(
     case "exhausted":
       return state("failed", "circle-x", "Exhausted", row.reason)
     case "cancelled":
-      return state("cancelled", "minus", "Cancelled")
+      return state("cancelled", "ring-minus", "Cancelled")
     default:
-      return state("scheduled", "status", stateWord(status))
+      return state("scheduled", "ring", stateWord(status))
   }
 }
 
