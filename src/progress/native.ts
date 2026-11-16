@@ -1133,6 +1133,7 @@ export function registerProgress(
           eventSequence: terminal.sequence,
           inputID,
         })
+        workerIdle?.()
         return
       }
       // Native success can be published before the idle marker is visible in context. Keep the

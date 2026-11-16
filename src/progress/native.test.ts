@@ -1060,6 +1060,7 @@ test("idle handoff reminder is concise, persisted, and sent at most once per att
 test("genuine zero-background hook and exact success survive listener disposal and SQLite reopen", async () => {
   const fixture = makeFixture()
   let reopenedRepository: TaskRepository | undefined
+  const wakes: string[] = []
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
     const sessionID = "ses-accepted"
@@ -1071,7 +1072,17 @@ test("genuine zero-background hook and exact success survive listener disposal a
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerProgress(ctx.context, recorder, "project")
+          yield* registerProgress(
+            ctx.context,
+            recorder,
+            "project",
+            undefined,
+            undefined,
+            undefined,
+            () => {
+              wakes.push(nativeIdleBackground(fixture, sessionID).state)
+            },
+          )
           yield* Effect.promise(() =>
             ctx.emitEvent(executionEvent("session.execution.started", sessionID, 700)),
           )
@@ -1095,6 +1106,7 @@ test("genuine zero-background hook and exact success survive listener disposal a
             state: "unknown",
             reason: "Zero-background idle report has no matching confirmed native success",
           })
+          expect(wakes).toEqual([])
           yield* Effect.promise(() =>
             ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 702)),
           )
@@ -1121,6 +1133,7 @@ test("genuine zero-background hook and exact success survive listener disposal a
       workspace: binding.workspace,
     })
     expect(ctx.syntheticCalls()).toBe(0)
+    expect(wakes).toEqual(["observed"])
 
     fixture.repository.close()
     reopenedRepository = new TaskRepository(
