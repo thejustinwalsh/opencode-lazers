@@ -480,6 +480,7 @@ export function beginRetainedVerificationCheck(
   db: Database,
   input: {
     operationID: string
+    generation: number
     phase: "task" | "combined"
     checkID: string
     check: unknown
@@ -504,6 +505,14 @@ export function beginRetainedVerificationCheck(
     .get(input.operationID, input.phase, input.checkID)
   if (current) {
     if (current.state === "retry-authorized") {
+      const operation = retainedVerification(db, input.operationID)
+      const eligibleOperationState = input.phase === "task" ? "task-checks" : "combined-checks"
+      if (
+        !operation ||
+        operation.generation !== input.generation ||
+        operation.state !== eligibleOperationState
+      )
+        throw new Error("Retained retry authorization operation is no longer eligible")
       let priorCheck: unknown
       try {
         priorCheck = JSON.parse(current.checkJSON) as unknown
@@ -527,9 +536,13 @@ export function beginRetainedVerificationCheck(
         .query(
           `UPDATE runner_retained_verification_checks
            SET state=lz_runner_transition('check',state,'intended'),check_json=?,input_fingerprint=?,
-               environment_identity=?,receipt_path=?,receipt=NULL,context_path=?,
-               cleanup_state=lz_runner_transition('cleanup',cleanup_state,'pending'),created_at=?
-           WHERE operation_id=? AND phase=? AND check_id=? AND state='retry-authorized'`,
+                environment_identity=?,receipt_path=?,receipt=NULL,context_path=?,
+                cleanup_state=lz_runner_transition('cleanup',cleanup_state,'pending'),created_at=?
+            WHERE operation_id=? AND phase=? AND check_id=? AND state='retry-authorized'
+              AND EXISTS (
+                SELECT 1 FROM runner_retained_verifications
+                WHERE id=? AND generation=? AND state=?
+              )`,
         )
         .run(
           JSON.stringify(input.check),
@@ -541,6 +554,9 @@ export function beginRetainedVerificationCheck(
           input.operationID,
           input.phase,
           input.checkID,
+          input.operationID,
+          input.generation,
+          eligibleOperationState,
         ).changes
       if (changed !== 1) throw new Error("Retained retry authorization changed before check setup")
       return retainedVerificationChecks(db, input.operationID, input.phase).find(
