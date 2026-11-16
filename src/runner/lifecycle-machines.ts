@@ -214,7 +214,7 @@ export const verificationCheckMachine = defineLifecycle("runner-verification-che
   intended: ["completed", "uncertain"],
   uncertain: ["completed"],
   completed: ["uncertain", "retry-authorized"],
-  "retry-authorized": ["intended"],
+  "retry-authorized": ["intended", "completed"],
 })
 export const verificationCleanupMachine = defineLifecycle(
   "runner-verification-cleanup",

@@ -37,6 +37,42 @@ export function checkSucceeded(
   )
 }
 
+/** A retryable interruption is distinct from a completed test failure or timeout. */
+export function isConclusiveNonTimeoutInterruption(receipt: CheckReceipt): boolean {
+  const processSettled = (cleanup: CheckReceipt["processCleanup"] | undefined) =>
+    Boolean(
+      cleanup &&
+      cleanup.state !== "uncertain" &&
+      cleanup.capability !== "direct-child" &&
+      Number.isSafeInteger(cleanup.rootPID) &&
+      cleanup.rootPID! > 0,
+    )
+  const phases = receipt.phases
+  const interruptedPhase = phases?.at(-1)
+  return Boolean(
+    receipt.aborted === true &&
+    receipt.timedOut === false &&
+    receipt.stopCause === "cancelled" &&
+    receipt.phasesComplete === false &&
+    phases?.length &&
+    processSettled(receipt.processCleanup) &&
+    phases.every((phase) => processSettled(phase.processCleanup)) &&
+    phases
+      .slice(0, -1)
+      .every(
+        (phase) =>
+          phase.exitCode === 0 &&
+          phase.timedOut === false &&
+          phase.aborted !== true &&
+          phase.stopCause == null,
+      ) &&
+    interruptedPhase?.aborted === true &&
+    interruptedPhase.timedOut === false &&
+    interruptedPhase.stopCause === "cancelled" &&
+    interruptedPhase.exitCode === receipt.exitCode,
+  )
+}
+
 export function checkFailureReason(receipt: CheckReceipt) {
   if (receipt.aborted) return `Verification ${receipt.id} was interrupted before completion`
   if (receipt.phasesComplete === false && receipt.exitCode === 0 && !receipt.timedOut)

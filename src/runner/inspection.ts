@@ -532,6 +532,7 @@ function retainedNextSteps(
   operation: RetainedVerificationProjection,
   plan: InspectablePlan,
   nodeStates: ReadonlyMap<string, string>,
+  store: RunnerStore,
 ) {
   const nextSteps: Record<string, unknown>[] = []
   if (operation.recordStatus !== "recorded" || !operation.operationID || !operation.generation)
@@ -554,6 +555,94 @@ function retainedNextSteps(
       generation: operation.generation,
       condition:
         "Conditional: the current same-project Architect and runtime operation/owner fences must still authorize this exact operation.",
+    })
+
+  const interruptedCombinedCheck =
+    operation.checks.find(
+      (check) =>
+        check.phase === "combined" &&
+        check.binding === "matched" &&
+        check.candidateArtifact === operation.combinedArtifact &&
+        check.state === "completed" &&
+        check.receipt === "recorded" &&
+        check.cleanupState === "complete" &&
+        check.result.status === "failed" &&
+        check.result.timedOut === false &&
+        check.result.aborted === true &&
+        check.result.phasesComplete === false &&
+        check.result.stopCause === "cancelled",
+    ) ?? null
+  let combinedCheckIDs: string[] | undefined
+  try {
+    combinedCheckIDs = PlanInput.parse(JSON.parse(plan.body)).verification.map((check) => check.id)
+  } catch {
+    combinedCheckIDs = undefined
+  }
+  const taskCheckIDs = operation.taskID
+    ? store.repository.get(operation.taskID)?.proposal.verification.map((check) => check.id)
+    : undefined
+  const expectedChecks = [
+    ...(taskCheckIDs ?? []).map((checkID) => ({ phase: "task", checkID })),
+    ...(combinedCheckIDs ?? []).map((checkID) => ({ phase: "combined", checkID })),
+  ]
+  const exactCheckSet =
+    !operation.checksTruncated &&
+    taskCheckIDs !== undefined &&
+    combinedCheckIDs !== undefined &&
+    operation.checks.length === expectedChecks.length &&
+    expectedChecks.every((expected) =>
+      operation.checks.some(
+        (check) => check.phase === expected.phase && check.checkID === expected.checkID,
+      ),
+    )
+  const otherChecksPass = expectedChecks.every((expected) => {
+    const check = operation.checks.find(
+      (candidate) => candidate.phase === expected.phase && candidate.checkID === expected.checkID,
+    )
+    if (!check) return false
+    if (check === interruptedCombinedCheck) return true
+    const expectedArtifact =
+      expected.phase === "task" ? operation.candidateArtifact : operation.combinedArtifact
+    return (
+      check.binding === "matched" &&
+      check.candidateArtifact === expectedArtifact &&
+      check.state === "completed" &&
+      check.receipt === "recorded" &&
+      check.cleanupState === "complete" &&
+      check.result.status === "passed" &&
+      check.result.timedOut === false &&
+      check.result.aborted !== true &&
+      check.result.phasesComplete !== false
+    )
+  })
+  if (
+    operation.state === "held" &&
+    operation.planRevision === plan.revision &&
+    ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) &&
+    operation.taskID &&
+    operation.taskRevision &&
+    operation.attemptID &&
+    operation.candidateArtifact &&
+    operation.combinedArtifact &&
+    nodeStates.get(operation.taskID) === "accepted" &&
+    interruptedCombinedCheck &&
+    exactCheckSet &&
+    otherChecksPass
+  )
+    nextSteps.push({
+      action: "continue-retained-check",
+      operationID: operation.operationID,
+      generation: operation.generation,
+      planRevision: operation.planRevision,
+      taskID: operation.taskID,
+      taskRevision: operation.taskRevision,
+      attemptID: operation.attemptID,
+      verificationPhase: "combined",
+      checkID: interruptedCombinedCheck.checkID,
+      artifact: operation.combinedArtifact,
+      reason: "Continue this exact settled combined-check interruption",
+      condition:
+        "Conditional: the current same-project Architect must still match the exact held generation, accepted task and combined candidate; all other checks and owned resources must remain settled. This authorizes only isolated check execution and does not establish original-worker idleness or permit source settlement or cleanup.",
     })
 
   if (
@@ -619,12 +708,13 @@ function decorateRetainedInspection(
   inspection: RetainedVerificationInspection,
   plan: InspectablePlan,
   nodeStates: ReadonlyMap<string, string>,
+  store: RunnerStore,
 ) {
   return {
     ...inspection,
     latest: inspection.latest.map((operation) => ({
       ...operation,
-      nextSteps: retainedNextSteps(operation, plan, nodeStates),
+      nextSteps: retainedNextSteps(operation, plan, nodeStates, store),
     })),
     history: {
       ...inspection.history,
@@ -667,6 +757,7 @@ export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
       projection,
       plan,
       new Map(nodes.map((node) => [node.task_id, node.state])),
+      store,
     )
   }
   if ("view" in input)
@@ -681,6 +772,7 @@ export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
         projection,
         detail.plan,
         new Map(detail.nodes.map((node) => [node.task_id, node.state])),
+        store,
       ),
     }
   }

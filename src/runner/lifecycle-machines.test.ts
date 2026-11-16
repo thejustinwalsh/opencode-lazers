@@ -81,6 +81,7 @@ test("lifecycle transitions reject illegal shortcuts rather than fabricating com
   expect(() => lifecycleTransition("plan", "draft", "integrated")).toThrow()
   expect(() => lifecycleTransition("attempt", "cancelled", "accepted")).toThrow()
   expect(() => lifecycleTransition("effect", "completed", "uncertain")).toThrow()
+  expect(lifecycleTransition("check", "retry-authorized", "completed")).toBe("completed")
   expect(lifecycleTransition("plan", "cleanup-blocked", "integrated")).toBe("integrated")
   expect(lifecycleTransition("attempt", "cancelled", "preparing")).toBe("preparing")
 })
