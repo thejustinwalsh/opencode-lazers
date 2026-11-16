@@ -22,6 +22,9 @@ export type ExecutionListRow = {
     reason: string | null
     waitingOn: string[]
     reservationTaskIDs: string[]
+    reservationTaskCount?: number
+    reservationTaskIDsComplete?: boolean
+    reservationTaskIDsScopeLimited?: boolean
   }
   fork?: ExecutionFork
 }
@@ -135,9 +138,18 @@ function buildScheduledGroups(input: {
           successors: successors.get(node.taskID) ?? [],
           scheduling: {
             decision: node.decision,
-            reason: node.reason,
+            reason: schedulingReason(node, input.scheduling),
             waitingOn: node.waitingOn,
             reservationTaskIDs: node.reservationTaskIDs,
+            ...(node.reservationTaskCount !== undefined
+              ? { reservationTaskCount: node.reservationTaskCount }
+              : {}),
+            ...(node.reservationTaskIDsComplete !== undefined
+              ? { reservationTaskIDsComplete: node.reservationTaskIDsComplete }
+              : {}),
+            ...(node.reservationTaskIDsScopeLimited !== undefined
+              ? { reservationTaskIDsScopeLimited: node.reservationTaskIDsScopeLimited }
+              : {}),
           },
         }
       },
@@ -196,6 +208,39 @@ type RelationshipPlan = {
 }
 
 const terminal = new Set(["accepted", "incorporated", "failed", "exhausted", "cancelled"])
+
+function schedulingReason(node: SchedulingNode, snapshot: SchedulingSnapshot | undefined) {
+  const referencesIncomplete = node.reservationTaskIDsComplete === false
+  const scopeLimited =
+    node.reservationTaskIDsScopeLimited === true && snapshot?.scope.kind === "session"
+  if (!referencesIncomplete && !scopeLimited) return node.reason
+  const count = node.reservationTaskCount ?? node.reservationTaskIDs.length
+  const shown = node.reservationTaskIDs.length
+  const coverage: string[] = []
+  if (referencesIncomplete) {
+    if (!snapshot?.coverage.reservationsComplete) {
+      coverage.push(
+        count > 0
+          ? `At least ${count} blocker task reference${count === 1 ? " is" : "s are"} known; reservation coverage is incomplete.${shown < count ? ` Showing ${shown}.` : ""}`
+          : "Reservation coverage is incomplete; blocker references may be missing.",
+      )
+    } else if (count > shown) {
+      coverage.push(
+        `Showing ${shown} of ${count} blocker task references${snapshot.scope.kind === "session" ? " visible in this session" : ""}.`,
+      )
+    } else {
+      coverage.push("Blocker reference completeness is unavailable.")
+    }
+  }
+  if (scopeLimited)
+    coverage.push(
+      count === 0
+        ? "No blocker references are visible in this session; known blockers outside this scope are not shown."
+        : "Known blockers outside this session scope are not shown.",
+    )
+
+  return [node.reason, ...coverage].filter(Boolean).join(" ")
+}
 
 function adjacency<TNode extends RelationshipNode>(plan: {
   nodes: readonly TNode[]
@@ -435,6 +480,7 @@ function row(
   contextOnly: boolean,
   relations: ReturnType<typeof relationMap>,
   scheduling?: SchedulingNode,
+  schedulingSnapshot?: SchedulingSnapshot,
 ): ExecutionListRow {
   const waiting =
     plan.state !== "cancelled" &&
@@ -458,9 +504,18 @@ function row(
       ? {
           scheduling: {
             decision: scheduling.decision,
-            reason: scheduling.reason,
+            reason: schedulingReason(scheduling, schedulingSnapshot),
             waitingOn: scheduling.waitingOn,
             reservationTaskIDs: scheduling.reservationTaskIDs,
+            ...(scheduling.reservationTaskCount !== undefined
+              ? { reservationTaskCount: scheduling.reservationTaskCount }
+              : {}),
+            ...(scheduling.reservationTaskIDsComplete !== undefined
+              ? { reservationTaskIDsComplete: scheduling.reservationTaskIDsComplete }
+              : {}),
+            ...(scheduling.reservationTaskIDsScopeLimited !== undefined
+              ? { reservationTaskIDsScopeLimited: scheduling.reservationTaskIDsScopeLimited }
+              : {}),
           },
         }
       : {}),
@@ -513,6 +568,7 @@ export function buildExecutionList(input: {
           contextOnly,
           relations,
           scheduleByTask.get(node.taskID),
+          input.scheduling,
         ),
     })
     if (!rootRows.length) continue
@@ -567,9 +623,24 @@ export function buildExecutionList(input: {
           ? {
               scheduling: {
                 decision: scheduleByTask.get(taskID)!.decision,
-                reason: scheduleByTask.get(taskID)!.reason,
+                reason: schedulingReason(scheduleByTask.get(taskID)!, input.scheduling),
                 waitingOn: scheduleByTask.get(taskID)!.waitingOn,
                 reservationTaskIDs: scheduleByTask.get(taskID)!.reservationTaskIDs,
+                ...(scheduleByTask.get(taskID)!.reservationTaskCount !== undefined
+                  ? { reservationTaskCount: scheduleByTask.get(taskID)!.reservationTaskCount }
+                  : {}),
+                ...(scheduleByTask.get(taskID)!.reservationTaskIDsComplete !== undefined
+                  ? {
+                      reservationTaskIDsComplete:
+                        scheduleByTask.get(taskID)!.reservationTaskIDsComplete,
+                    }
+                  : {}),
+                ...(scheduleByTask.get(taskID)!.reservationTaskIDsScopeLimited !== undefined
+                  ? {
+                      reservationTaskIDsScopeLimited:
+                        scheduleByTask.get(taskID)!.reservationTaskIDsScopeLimited,
+                    }
+                  : {}),
               },
             }
           : {}),

@@ -14,6 +14,7 @@ export const SchedulingInput = z.strictObject({
 })
 
 export const SchedulingDecision = z.enum(["eligible", "waiting", "unknown", "not-applicable"])
+export const MAX_SCHEDULING_RESERVATION_REFERENCES = 100
 
 export const SchedulingNode = z.strictObject({
   taskID: z.uuid(),
@@ -27,7 +28,13 @@ export const SchedulingNode = z.strictObject({
   reason: z.string().max(400).nullable(),
   prerequisites: z.array(z.uuid()).max(100),
   waitingOn: z.array(z.uuid()).max(100),
-  reservationTaskIDs: z.array(z.uuid()).max(100),
+  reservationTaskIDs: z.array(z.uuid()).max(MAX_SCHEDULING_RESERVATION_REFERENCES),
+  /** Distinct blocker task IDs known within this scope's captured scheduling facts. */
+  reservationTaskCount: z.int().nonnegative().optional(),
+  /** False when references are bounded or reservation capture is partial. */
+  reservationTaskIDsComplete: z.boolean().optional(),
+  /** True when Session scope omits known blocker IDs outside the visible task set. */
+  reservationTaskIDsScopeLimited: z.boolean().optional(),
 })
 
 export const SchedulingPlan = z.strictObject({

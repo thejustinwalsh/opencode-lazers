@@ -14,6 +14,7 @@ import type { SchedulingReservation } from "../runner/scheduling-selection.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import {
   SchedulingInput,
+  MAX_SCHEDULING_RESERVATION_REFERENCES,
   SchedulingOutput,
   SchedulingSnapshot as SchedulingSnapshotSchema,
 } from "./scheduling-contract.ts"
@@ -376,6 +377,22 @@ async function buildSnapshot(input: {
     scopes: store.effectiveWriteScope(adoption.task_id),
     taskID: adoption.task_id,
   }))
+  const reservationFactsComplete = facts.reservationsComplete && facts.adoptionsComplete
+  const sessionTaskIDs =
+    scope.kind === "session" ? new Set(facts.sessionAssociations?.taskIDs ?? []) : undefined
+  const reservationDetails = (taskIDs: readonly string[], completeFacts: boolean) => {
+    const uniqueTaskIDs = [...new Set(taskIDs)]
+    const scopedTaskIDs = sessionTaskIDs
+      ? uniqueTaskIDs.filter((taskID) => sessionTaskIDs.has(taskID))
+      : uniqueTaskIDs
+    return {
+      reservationTaskIDs: scopedTaskIDs.slice(0, MAX_SCHEDULING_RESERVATION_REFERENCES),
+      reservationTaskCount: scopedTaskIDs.length,
+      reservationTaskIDsComplete:
+        completeFacts && scopedTaskIDs.length <= MAX_SCHEDULING_RESERVATION_REFERENCES,
+      reservationTaskIDsScopeLimited: scopedTaskIDs.length < uniqueTaskIDs.length,
+    }
+  }
   const previouslySelectedReservations: SchedulingReservation[] = []
   const selectedTaskIDs: string[] = []
   let prefixKnown = true
@@ -467,6 +484,10 @@ async function buildSnapshot(input: {
         scopes: store.effectiveWriteScope(attempt.task_id),
         taskID: attempt.task_id,
       }))
+    const knownReservationTaskIDs = new Set([
+      ...activeReservations.map((reservation) => reservation.taskID),
+      ...adoptionReservations.map((reservation) => reservation.taskID),
+    ])
     const scopedReservations: SchedulingReservation[] = [
       ...activeReservations,
       ...adoptionReservations,
@@ -480,16 +501,38 @@ async function buildSnapshot(input: {
       })),
       scopedReservations,
     )
-    selectedTaskIDs.push(...selection.selectedTaskIDs)
+    let reservationUnknown = false
+    if (reservationFactsComplete) selectedTaskIDs.push(...selection.selectedTaskIDs)
     for (const node of candidateNodes) {
       const hold = selection.holds.get(node.taskID)
-      if (hold) {
+      if (reservationFactsComplete) {
+        if (!hold) continue
         node.decision = "waiting"
         node.reason = hold.reason
-        node.reservationTaskIDs = hold.reservationTaskIDs
+        Object.assign(node, reservationDetails(hold.reservationTaskIDs, true))
+        continue
+      }
+
+      const knownBlockers = (hold?.reservationTaskIDs ?? []).filter((taskID) =>
+        knownReservationTaskIDs.has(taskID),
+      )
+      if (knownBlockers.length) {
+        node.decision = "waiting"
+        node.reason = hold?.reason ?? "A captured active reservation blocks this task."
+        Object.assign(node, reservationDetails(knownBlockers, false))
+      } else {
+        node.decision = "unknown"
+        node.reason =
+          "Active reservation coverage is incomplete; task eligibility cannot be established."
+        Object.assign(node, reservationDetails([], false))
+        reservationUnknown = true
+        plan.unknown = true
+        prefixKnown = false
+        selectionComplete = false
+        firstUnknownReason ??= node.reason
       }
     }
-    if (selection.selectedTaskIDs.length) {
+    if (selection.selectedTaskIDs.length && reservationFactsComplete) {
       for (const taskID of selection.selectedTaskIDs)
         previouslySelectedReservations.push({
           shared: plan.workspaceMode === "shared",
@@ -497,7 +540,7 @@ async function buildSnapshot(input: {
           taskID,
         })
       plan.schedule.decision = "eligible"
-    } else if (!candidateNodes.length && plan.unknown) {
+    } else if ((!candidateNodes.length || reservationUnknown) && plan.unknown) {
       plan.schedule.decision = "unknown"
       plan.schedule.reason = firstUnknownReason ?? "Scheduling facts are unavailable."
     } else if (!candidateNodes.length) {
@@ -617,12 +660,28 @@ function scopeSessionSnapshot(
     .map((plan) => ({
       ...plan,
       afterPlans: plan.afterPlans.filter((planID) => planIDs.has(planID)),
-      nodes: plan.nodes.map((node) => ({
-        ...node,
-        prerequisites: node.prerequisites.filter((taskID) => taskIDs.has(taskID)),
-        waitingOn: node.waitingOn.filter((id) => planIDs.has(id) || taskIDs.has(id)),
-        reservationTaskIDs: node.reservationTaskIDs.filter((taskID) => taskIDs.has(taskID)),
-      })),
+      nodes: plan.nodes.map((node) => {
+        const reservationTaskIDs = node.reservationTaskIDs.filter((taskID) => taskIDs.has(taskID))
+        const reservationIDsFenced = reservationTaskIDs.length !== node.reservationTaskIDs.length
+        return {
+          ...node,
+          prerequisites: node.prerequisites.filter((taskID) => taskIDs.has(taskID)),
+          waitingOn: node.waitingOn.filter((id) => planIDs.has(id) || taskIDs.has(id)),
+          reservationTaskIDs,
+          ...(node.reservationTaskIDsComplete !== undefined || reservationIDsFenced
+            ? {
+                reservationTaskIDsComplete:
+                  (node.reservationTaskIDsComplete ?? true) && !reservationIDsFenced,
+              }
+            : {}),
+          ...(node.reservationTaskIDsScopeLimited !== undefined || reservationIDsFenced
+            ? {
+                reservationTaskIDsScopeLimited:
+                  (node.reservationTaskIDsScopeLimited ?? false) || reservationIDsFenced,
+              }
+            : {}),
+        }
+      }),
     }))
   const coveredNodeCount = facts.nodes.filter((node) => planIDs.has(node.plan_id)).length
   const capturedReservationCount =
