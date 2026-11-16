@@ -1839,14 +1839,24 @@ export class RunnerStore {
   }) {
     return this.atomic((db) => {
       const current = db
-        .query<{ plan_id: string; state: string; receipt: string | null }, [string, string]>(
-          `SELECT o.plan_id,o.state,o.receipt FROM runner_outbox o
+        .query<
+          { plan_id: string; state: string; receipt: string | null; latest_receipt: string | null },
+          [string, string]
+        >(
+          `SELECT o.plan_id,o.state,o.receipt,o.receipt -> '$.history[#-1]' AS latest_receipt
+           FROM runner_outbox o
            JOIN runner_plans p ON p.id=o.plan_id
            WHERE o.id=? AND p.project_directory=?
              AND json_extract(o.payload,'$.status')='architect-source-change'`,
         )
         .get(input.outboxID, this.repository.projectDirectory)
       if (!current || current.state !== input.expectedState) return false
+      if (
+        current.state === input.state &&
+        current.latest_receipt !== null &&
+        canonical(JSON.parse(current.latest_receipt)) === canonical(input.receipt)
+      )
+        return false
       const receipt = appendOutboxReceipt(current.receipt, input.receipt)
       const changed = db
         .query(

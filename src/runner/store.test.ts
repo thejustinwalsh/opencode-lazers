@@ -807,6 +807,51 @@ function seedSourceJournal(
   return { renewalID, mappedPlanID, sourceSessionID, successorSessionID }
 }
 
+test("unchanged native source-change observations do not append receipts or transitions", () => {
+  const f = fixture("architect-source-observation-idempotence")
+  const { planID } = f.store.submit(f.input, "owner")
+  const source = seedSourceJournal(f.store, planID, 1, 0)
+  const plan = f.store.plan(planID)!
+  const { notices } = f.store.ensureArchitectSourceChangeNotices({
+    planID,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: plan.owner,
+    expectedPlanVersion: plan.version,
+    projectID: "project",
+  })
+  const notice = notices.find((notice) => notice.sessionID === plan.owner)!
+  const pointer = f.store.architectSourceChangeNoticeRowsByIDs(source.sourceSessionID, [notice])[0]!
+  const receipt = { kind: "native-observation", disposition: "queued-native-input" }
+  const input = {
+    outboxID: pointer.id,
+    expectedState: pointer.state,
+    state: "admitted" as const,
+    receipt,
+    event: "ARCHITECT_SOURCE_CHANGE_QUEUED",
+  }
+  expect(f.store.recordArchitectSourceChangeObservation(input)).toBe(true)
+  expect(
+    f.store.recordArchitectSourceChangeObservation({ ...input, expectedState: "admitted" }),
+  ).toBe(false)
+  expect(
+    f.store.recordArchitectSourceChangeObservation({
+      ...input,
+      expectedState: "admitted",
+      state: "consumed",
+      receipt: { ...receipt, disposition: "native-transcript-consumed" },
+      event: "ARCHITECT_SOURCE_CHANGE_CONSUMED",
+    }),
+  ).toBe(true)
+  const observed = f.store
+    .architectSourceNoticeRows(source.sourceSessionID)
+    .find((row) => row.id === pointer.id)!
+  const history = JSON.parse(observed.receipt!).history
+  expect(
+    history.filter((entry: { disposition?: string }) => entry.disposition === receipt.disposition),
+  ).toHaveLength(1)
+  expect(history.at(-1).disposition).toBe("native-transcript-consumed")
+})
+
 test("source-notice pointer readers materialize only current owners or exact replacement IDs", () => {
   const f = fixture("architect-bounded-source-notice-reads")
   const anchor = f.store.submit(f.input, "owner")
