@@ -22,7 +22,7 @@ not establish acceptance.
 
 ## Read first and current source findings
 
-Follow `AGENTS.md`, `README.md`, `.agents/docs/task-authoring.md`, the pinned
+Follow `AGENTS.md`, [contributor contracts](../docs/reference/contributor-contracts.md), `README.md`, `.agents/docs/task-authoring.md`, the pinned
 `.agents/docs/opencode-api.md`, and the latest `.agents/docs/handoff.md` and
 `.agents/docs/roadmap-execution.md`. Runtime state supersedes timestamped handoffs.
 The source findings below were inspected on 2026-11-01; recheck before editing.

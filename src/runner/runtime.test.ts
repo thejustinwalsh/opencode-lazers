@@ -2474,7 +2474,7 @@ test("scope amendment requires this plan's unfinished task and explicit additive
   expect(f.store.plan(planID)!.version).toBe(1)
 })
 
-test("Architect run, reconcile, and cancel wake the scheduler before periodic reconciliation", async () => {
+test("Architect run, scope amendment, reconcile, and cancel wake the scheduler before periodic reconciliation", async () => {
   const f = fixture({ delayed: true })
   let drained = Promise.withResolvers<void>()
   const registration = sharedScheduler.register(
@@ -2493,7 +2493,7 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
   const runtime = new TaskRuntime(f.store, f.host, "project", undefined, {
     wakeScheduler: () => {
       wakes++
-      expect(f.store.plan(f.receipt.planID)?.state).toBe(wakes === 3 ? "cancelling" : "running")
+      expect(f.store.plan(f.receipt.planID)?.state).toBe(wakes === 4 ? "cancelling" : "running")
       registration.request()
     },
   })
@@ -2512,6 +2512,21 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
     const attempts = f.store.attempts(f.receipt.planID)
     expect(attempts).toHaveLength(1)
     expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+    drained = Promise.withResolvers<void>()
+    const amendment = {
+      ...command,
+      requestID: "architect-scope",
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "amend-scope",
+      taskID: attempts[0]!.task_id,
+      scopeAdditions: ["dependency.test.ts"],
+      reason: "Keep the dependency test in the same attempt.",
+    }
+    const amended = await tool.execute(amendment)
+    expect(await tool.execute(amendment)).toEqual(amended)
+    await drained.promise
+    expect(wakes).toBe(2)
+    expect(f.instructions.get(attempts[0]!.session_id)?.size).toBe(1)
     f.completeWorker(attempts[0]!.session_id)
     drained = Promise.withResolvers<void>()
     await tool.execute({
@@ -2521,7 +2536,7 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
       action: "reconcile",
     })
     await drained.promise
-    expect(wakes).toBe(2)
+    expect(wakes).toBe(3)
     expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
       id: attempts[0]!.id,
       state: "verifying",
@@ -2533,7 +2548,7 @@ test("Architect run, reconcile, and cancel wake the scheduler before periodic re
       expectedVersion: f.store.plan(f.receipt.planID)!.version,
       action: "cancel",
     })
-    expect(wakes).toBe(3)
+    expect(wakes).toBe(4)
     await drained.promise
   } finally {
     await registration.dispose()
@@ -4458,17 +4473,15 @@ async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: stri
 function reopenRuntime(
   f: ReturnType<typeof fixture>,
   verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number },
+  wakeScheduler?: () => void,
 ) {
   const repository = new TaskRepository(f.repository.path, f.root)
   const store = new RunnerStore(repository)
   store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const runtime = new TaskRuntime(
-    store,
-    f.host,
-    "project",
-    undefined,
-    verificationTimeoutDefaults ? { verificationTimeoutDefaults } : {},
-  )
+  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+    verificationTimeoutDefaults,
+    wakeScheduler,
+  })
   cleanup.unshift(async () => {
     await runtime.stop()
     repository.close()
@@ -4483,6 +4496,7 @@ async function prepareInterruptedCombinedCheck(
     reopenTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     interruptedCheckID?: string
     legacyCompletedCheckID?: string
+    wakeScheduler?: () => void
   } = {},
 ) {
   const f = fixture({
@@ -4551,7 +4565,7 @@ async function prepareInterruptedCombinedCheck(
   rmSync(join(payload.workspace, ".lazers-combined-started"), { force: true })
   rmSync(join(payload.workspace, ".lazers-combined-release"), { force: true })
 
-  const reopened = reopenRuntime(f, options.reopenTimeoutDefaults)
+  const reopened = reopenRuntime(f, options.reopenTimeoutDefaults, options.wakeScheduler)
   await drive(reopened.runtime, 4)
   const interrupted = reopened.store
     .effects(f.receipt.planID)
@@ -5233,7 +5247,8 @@ test("integrated combined cleanup accepts a completed legacy check after default
 })
 
 test("registered plan command resumes settled combined verification without replaying accepted workers", async () => {
-  const state = await prepareInterruptedCombinedCheck()
+  let wakes = 0
+  const state = await prepareInterruptedCombinedCheck({ wakeScheduler: () => wakes++ })
   const { f, reopened, interrupted, receiptPath, planID } = state
   const originalReceipt = interrupted.receipt!
   const originalDiskReceipt = readFileSync(receiptPath, "utf8")
@@ -5251,6 +5266,7 @@ test("registered plan command resumes settled combined verification without repl
   const registered = await registeredPlanCommand(reopened.runtime)
   // The caller loses this reply when the owner process is replaced.
   await registered.execute(command)
+  expect(wakes).toBe(1)
   await reopened.runtime.stop()
 
   const replayedRuntime = reopenRuntime(f)
@@ -6139,6 +6155,13 @@ test("an unavailable native inbox cannot be reported as successful supersession"
   expect(
     f.inbox.get("owner")?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID),
   ).toHaveLength(1)
+
+  await f.runtime.tick()
+  await f.runtime.tick()
+  const repeated = (f.store.detail(f.receipt.planID).delivery as typeof rows).find(
+    (row) => JSON.parse(row.payload).status === "task-accepted",
+  )!
+  expect(repeated.receipt).toBe(older.receipt)
 
   f.host.outcomeInbox = listInbox
   await f.runtime.tick()
@@ -14148,6 +14171,30 @@ test("idle-window overrides, busy sessions, unsupported hooks, and pre-create in
     expect(f.events.filter((event) => event.startsWith("update-session:")).length).toBe(0)
     expect(owner.archived).toBe(false)
   }
+})
+
+test("Architect renewal waits for native questions and permissions to clear", async () => {
+  const now = 2_000_000_124_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const owner = f.sessions.get("owner")!
+  owner.pendingForms = 1
+  await f.runtime.tick()
+  owner.pendingForms = 0
+  owner.pendingPermissions = 1
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.events.some((event) => event.startsWith("create-architect:"))).toBe(false)
+  expect(owner.archived).toBe(false)
+
+  owner.pendingPermissions = 0
+  await f.runtime.tick()
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)?.state).toBe("committed")
 })
 
 test("renewal requires an explicit checkpoint and retains queued native inputs by ID", async () => {

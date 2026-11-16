@@ -1,0 +1,11 @@
+# Development-only orchestration. The LAZERS plugin does not load this server.
+[mcp_servers.side-piece]
+command = "npx"
+args = [
+  "--yes",
+  "--package",
+  "https://codeload.github.com/thejustinwalsh/side-piece/tar.gz/e2a2ecd0fdb3674fd22f84144f7eee4f3a7677fb",
+  "side-piece-mcp",
+]
+startup_timeout_sec = 30
+tool_timeout_sec = 3600

@@ -35,6 +35,7 @@ import { privacyStats, safeText } from "../trajectory/privacy.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
+  location?: Pick<ReturnType<typeof OpenCode.make>["location"], "get">
   rpc: ReturnType<typeof OpenCode.make>["rpc"]
   server: Pick<ReturnType<typeof OpenCode.make>["server"], "info">
   form: Pick<ReturnType<typeof OpenCode.make>["form"], "list">
@@ -523,6 +524,7 @@ export function nativeHost(
   repository: TaskRepository,
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost & {
+  ownsCurrentWorkspace(directory: string): Promise<boolean>
   retainedInputID(sessionID: string): Promise<string | undefined>
   readSessionLog(sessionID: string): AsyncIterable<unknown>
 } {
@@ -586,11 +588,28 @@ export function nativeHost(
     },
   })
   const host: RunnerHost & {
+    ownsCurrentWorkspace(directory: string): Promise<boolean>
     retainedInputID(sessionID: string): Promise<string | undefined>
     readSessionLog(sessionID: string): AsyncIterable<unknown>
   } = {
     retainedInputID,
     readSessionLog,
+    async ownsCurrentWorkspace(directory) {
+      const client = await connectedClient()
+      const location = client.location
+      if (!location) return false
+      return runNative(client, async () => {
+        await assertNativeProcess(ctx, client, dependencies)
+        const current = await location.get({
+          location: { directory: AbsolutePath.make(directory) },
+        })
+        return (
+          current.directory === directory &&
+          current.project.id === ctx.location.project.id &&
+          current.project.canonical === repository.projectDirectory
+        )
+      })
+    },
     async workerModel(agentID = "lazers-implementor") {
       const agent = await Effect.runPromise(ctx.agent.get({ agentID: Agent.ID.make(agentID) }))
       return agent.data.model

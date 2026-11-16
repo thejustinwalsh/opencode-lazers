@@ -27,7 +27,7 @@ does not authorize replacing active work or treating existing native gates as me
 
 ## Current foundation
 
-Read `AGENTS.md`, `README.md`, `.agents/docs/task-authoring.md`, the pinned
+Read `AGENTS.md`, [contributor contracts](../docs/reference/contributor-contracts.md), `README.md`, `.agents/docs/task-authoring.md`, the pinned
 `.agents/docs/opencode-api.md`, `.agents/docs/workspace-policy.md`, and the latest
 `.agents/docs/handoff.md` and `.agents/docs/roadmap-execution.md`. Reinspect source
 and runtime state; these entry points were reviewed on 2026-11-01.

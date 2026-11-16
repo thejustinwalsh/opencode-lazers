@@ -46,7 +46,12 @@ export const TaskProposalSchema = z
         "Optional implementation advice grounded in code: reuse points, pitfalls and best practices with source references. Advisory; required outcomes belong in acceptance or constraints.",
       ),
     assumptions: texts,
-    writeScope: z.array(writePath).max(100),
+    writeScope: z
+      .array(writePath)
+      .max(100)
+      .describe(
+        "Use exact file paths or Bun glob patterns. For a directory and its subtree, use dir/**; dir alone does not include its files.",
+      ),
     context: z.array(z.strictObject({ reference: text, revision: text.nullable() })).max(100),
     acceptance: z
       .array(

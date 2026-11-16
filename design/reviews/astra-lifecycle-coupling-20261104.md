@@ -12,7 +12,7 @@ Three facts must stay separate:
 2. **Execution/resource state:** whether the old worker or its children can still write a particular checkout, shared service/profile or other verification resource.
 3. **Cleanup:** whether owned resources have been safely removed. Failure here preserves resources and history; it does not revoke a valid product pass.
 
-This is already the declared contract: `README.md:105–111`; `design/live-product-verification.md:207` explicitly says failed cleanup cannot revoke a product pass, block valid review/integration, trigger implementation repair or require a passed probe to repeat. It also prohibits handing a dirty shared environment to another worker.
+The v0.1.0 contributor reference records the current separation between acceptance and cleanup in [Verification and acceptance](../../docs/reference/contributor-contracts.md#verification-and-acceptance). This dated review also records the earlier product-verification proposal in `design/live-product-verification.md:207`; treat that proposal as design history, not a release guarantee.
 
 ## What source actually enforces
 

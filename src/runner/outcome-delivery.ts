@@ -64,11 +64,14 @@ export class OutcomeDelivery {
     return this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
       const placeholders = expected.map(() => "?").join(",")
       const current = db
-        .query<{ state: string; receipt: string | null }, [string]>(
-          "SELECT state,receipt FROM runner_outbox WHERE id=?",
+        .query<{ state: string; receipt: string | null; latestReceipt: string | null }, [string]>(
+          `SELECT state,receipt,
+                  COALESCE(json_extract(receipt,'$.history[#-1]'), json(receipt)) AS latestReceipt
+           FROM runner_outbox WHERE id=?`,
         )
         .get(message.id)
       if (!current || !expected.includes(current.state)) return false
+      if (state === current.state && current.latestReceipt === JSON.stringify(receipt)) return false
       const nextReceipt = appendOutboxReceipt(current.receipt, receipt)
       const changed = db
         .query(
