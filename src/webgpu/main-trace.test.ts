@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Schema } from "effect"
 import { InferenceTrace, RendererCaptureStatus } from "./ipc.ts"
 import type { RendererArmedCaptureStatus } from "./renderer-armed-capture.ts"
@@ -194,7 +196,7 @@ const makeMainFixture = (write: (entry: LogEntry) => void, withDebugger = false)
   }
   let implementation!: MainAPI
   const ctx = {
-    options: { dataDirectory: `/private/tmp/lazers-main-trace-${crypto.randomUUID()}` },
+    options: { dataDirectory: join(tmpdir(), `lazers-main-trace-${crypto.randomUUID()}`) },
     signal: new AbortController().signal,
     storage: {
       store: (key: string, options: { initial: unknown }) => {
