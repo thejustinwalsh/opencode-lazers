@@ -102,6 +102,13 @@ endpoint to satisfy a rule intended for project servers.
      --target "$CANDIDATE"
    ```
 
+   Use the default base for routine trials. If an earlier trial must be
+   preserved, `launch --base <path>` can use a separate private base under
+   the stable per-user system temporary directory. The path must end in
+   `opencode/lazers-product-verification`. The launcher still checks ownership
+   and reserves that base independently. Use the returned root for inspection
+   and cleanup.
+
    A successful command returns a manifest summary and the owned `root`. Keep
    that exact path as `ROOT`. Setup creates the isolated Desktop/XDG folders, a
    candidate-only plugin redirect, and a global OpenCode config under the root;
