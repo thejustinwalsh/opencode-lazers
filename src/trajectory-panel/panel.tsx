@@ -1162,8 +1162,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                           : "missing"
                                     }
                                     data-failed={lane().attempt.state === "failed"}
-                                    data-point={segment.pointOnly}
-                                    data-open={segment.open}
                                     hidden={!segment.visible}
                                     title={
                                       segment.open

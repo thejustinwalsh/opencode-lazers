@@ -349,7 +349,8 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       ...container.querySelectorAll<HTMLElement>(".lazers-trajectory-segment"),
     ].find((segment) => Number.parseFloat(segment.style.width) > 0)
     expect(measuredSegment).toBeDefined()
-    expect(measuredSegment?.dataset.point).toBe("false")
+    expect(measuredSegment?.dataset.start).toBe("recorded")
+    expect(measuredSegment?.dataset.end).toBe("recorded")
     expect(container.querySelector(".lazers-trajectory-plot svg")).toBeNull()
     expect(container.querySelector(".lazers-trajectory-attempt-state")).toBeNull()
     for (const segment of container.querySelectorAll(".lazers-trajectory-segment"))
