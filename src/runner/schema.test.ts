@@ -287,3 +287,44 @@ test("retained verification requests bind current revisions and cancellation nam
     CommandInput.safeParse({ ...cancellation, retainedVerificationID: undefined }).success,
   ).toBe(false)
 })
+
+test("interrupted retained combined-check continuation binds the full accepted candidate without timing fields", () => {
+  const command = {
+    requestID: "continue-interrupted-retained-combined-check",
+    planID: crypto.randomUUID(),
+    expectedVersion: 7,
+    action: "continue-retained-check" as const,
+    projectID: "project-id",
+    planRevision: 2,
+    taskID: crypto.randomUUID(),
+    taskRevision: 3,
+    attemptID: crypto.randomUUID(),
+    retainedVerificationID: crypto.randomUUID(),
+    retainedGeneration: 1,
+    verificationPhase: "combined" as const,
+    checkID: "combined-check",
+    artifact: "a".repeat(40),
+    reason: "Continue only the settled interrupted combined test",
+  }
+  expect(CommandInput.parse(command)).toEqual(command)
+  for (const field of [
+    "projectID",
+    "planRevision",
+    "taskID",
+    "taskRevision",
+    "attemptID",
+    "retainedVerificationID",
+    "retainedGeneration",
+    "verificationPhase",
+    "checkID",
+    "artifact",
+    "reason",
+  ] as const) {
+    const invalid = { ...command }
+    delete invalid[field]
+    expect(CommandInput.safeParse(invalid).success).toBe(false)
+  }
+  expect(CommandInput.safeParse({ ...command, verificationPhase: "task" }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, hardTimeoutMs: 60_000 }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, inactivityTimeoutMs: 30_000 }).success).toBe(false)
+})

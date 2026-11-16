@@ -2,7 +2,12 @@ import { afterEach, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { checkEnvironment, checkFailureReason, checkSucceeded } from "./checks.ts"
+import {
+  checkEnvironment,
+  checkFailureReason,
+  checkSucceeded,
+  isConclusiveNonTimeoutInterruption,
+} from "./checks.ts"
 import { git, runCheck } from "./artifacts.ts"
 
 const roots: string[] = []
@@ -37,6 +42,106 @@ test("successful commands remain successful with legacy dirty-tree and environme
   expect(checkSucceeded({ ...receipt, exitCode: 1 })).toBe(false)
   expect(checkSucceeded({ ...receipt, timedOut: true })).toBe(false)
   expect(checkSucceeded({ ...receipt, aborted: true })).toBe(false)
+})
+
+test("only a conclusively settled non-timeout interrupted receipt is eligible for explicit continuation", () => {
+  const interrupted = {
+    id: "combined",
+    command: "bun test",
+    cwd: "/candidate",
+    artifact: "a".repeat(40),
+    inputIdentity: "a".repeat(40),
+    environmentIdentity: "environment",
+    startedAt: 1,
+    endedAt: 2,
+    exitCode: 137,
+    timedOut: false,
+    aborted: true,
+    stopCause: "cancelled" as const,
+    phasesComplete: false,
+    processCleanup: {
+      state: "terminated" as const,
+      capability: "process-group" as const,
+      rootPID: 123,
+    },
+    phases: [
+      {
+        command: "bun test",
+        exitCode: 137,
+        timedOut: false,
+        stopCause: "cancelled" as const,
+        aborted: true,
+        stdout: "",
+        stderr: "",
+        environmentIdentity: "environment",
+        processCleanup: {
+          state: "terminated" as const,
+          capability: "process-group" as const,
+          rootPID: 123,
+        },
+      },
+    ],
+    stdout: "",
+    stderr: "",
+  }
+  expect(isConclusiveNonTimeoutInterruption(interrupted)).toBe(true)
+  expect(checkSucceeded(interrupted)).toBe(false)
+  expect(isConclusiveNonTimeoutInterruption({ ...interrupted, timedOut: true })).toBe(false)
+  expect(isConclusiveNonTimeoutInterruption({ ...interrupted, aborted: false })).toBe(false)
+  expect(isConclusiveNonTimeoutInterruption({ ...interrupted, phasesComplete: true })).toBe(false)
+  expect(isConclusiveNonTimeoutInterruption({ ...interrupted, phases: [] })).toBe(false)
+  expect(
+    isConclusiveNonTimeoutInterruption({
+      ...interrupted,
+      phases: undefined,
+    }),
+  ).toBe(false)
+  expect(
+    isConclusiveNonTimeoutInterruption({
+      ...interrupted,
+      phases: interrupted.phases.map((phase) => ({ ...phase, aborted: false, exitCode: 1 })),
+    }),
+  ).toBe(false)
+  expect(
+    isConclusiveNonTimeoutInterruption({
+      ...interrupted,
+      phases: [
+        {
+          ...interrupted.phases[0]!,
+          aborted: false,
+          stopCause: null,
+          exitCode: 1,
+        },
+        ...interrupted.phases,
+      ],
+    }),
+  ).toBe(false)
+  expect(
+    isConclusiveNonTimeoutInterruption({
+      ...interrupted,
+      processCleanup: {
+        state: "uncertain",
+        capability: "process-group",
+        rootPID: 123,
+      },
+    }),
+  ).toBe(false)
+  expect(
+    isConclusiveNonTimeoutInterruption({
+      ...interrupted,
+      processCleanup: {
+        state: "terminated",
+        capability: "direct-child",
+        rootPID: 123,
+      },
+    }),
+  ).toBe(false)
+  expect(
+    isConclusiveNonTimeoutInterruption({
+      ...interrupted,
+      processCleanup: { state: "terminated", capability: "process-group" },
+    }),
+  ).toBe(false)
 })
 
 test("auto-fixing a tracked file produces a real successful receipt without a cleanliness gate", async () => {

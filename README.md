@@ -145,11 +145,18 @@ execution cutoff. Receipts retain the effective policy and whether a check stopp
 for inactivity, the hard backstop or cancellation.
 
 The current Architect can amend an exact settled timeout. Ordinary checks require
-a separate explicit resume; an exact held/cancelled-held retained check can instead
-be continued by the same owner command when operation, generation, candidate,
-phase, check, command, receipt and resource bindings still match. Continuation
-reuses the candidate and acceptance, preserves earlier evidence and resource
-obligations, and never restarts the implementation worker.
+a separate explicit resume. For retained verification, `continue-retained-check`
+also permits the current owner to continue one exact combined check after a
+conclusively settled, non-timeout subprocess interruption. The operation itself
+must remain held (an intentional operation or plan cancellation is not revived),
+and the owner, plan/specification, accepted task, attempt, candidate, phase, check,
+command, environment, prior receipt and resource bindings must still match. It uses
+the unchanged timing limits, preserves the immutable interrupted receipt and prior
+passing evidence, and starts only that isolated check. It does not restart or
+prompt the implementation worker, certify that worker idle, settle the sealed
+source, or authorize source/resource cleanup. Inspect the retained-verification
+projection for the exact supported next step; do not infer eligibility from an
+absent process entry alone.
 
 Completion/failure delivery and Architect decisions are separate from lifecycle transitions. Persist the outcome and evidence before notification, and prevent duplicate or stale notifications/commands from dispatching work twice. Apply configured repair or retry rules without a model call when the response is already defined. Re-enter Architect when the failure requires a new approach, changed dependencies or scope, or a user decision. A reschedule or revised plan must pass admission and retain prior attempts and usage; it does not silently restart a loop.
 

@@ -5,21 +5,21 @@ It contains the existing task, dispatch-control and Architect-source machines an
 the persisted runner lifecycle machines below. State values remain compatible
 with existing records. No task snapshots or attempt history are replaced.
 
-| Domain                | XState definition             | Persisted update path                                   | Recovery / completion                                                                                       |
-| --------------------- | ----------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Task                  | `taskMachine`                 | `RunnerStore.move()`                                    | Reconcile, resume, retry, retained repair/acceptance, cancellation or incorporation                         |
-| Plan                  | `planMachine`                 | `lz_runner_transition('plan', state, event)`            | Owner commands; cleanup probes; integration or cancellation                                                 |
-| Attempt               | `attemptMachine`              | `lz_runner_transition('attempt', state, event)`         | Resume/retry; cancellation preserves the previous attempt and checkout                                      |
-| Effect                | `effectMachine`               | `lz_runner_transition('effect', state, event)`          | Reconcile a native receipt, or record conclusive failure; never replay an unknown side effect               |
-| Dispatch              | `dispatchControlMachine`      | `RunnerStore.setDispatchPause()`                        | Explicit unpause or recorded integration conditions                                                         |
-| Architect source      | `architectSourceMachine`      | `architectSourceTransition()`                           | Prepare, activate or retire                                                                                 |
-| Architect renewal     | `renewalMachine`              | `lz_runner_transition('renewal', state, event)`         | Continue creation/archive, recover input, roll back or defer; retry deferred creation                       |
-| Outcome delivery      | `outboxMachine`               | `lz_runner_transition('outbox', state, event)`          | Observe admission/consumption, reconcile uncertainty, supersede or retarget through existing owner controls |
-| Descendant adoption   | `adoptionMachine`             | `lz_runner_transition('adoption', state, event)`        | Revalidate checks, supply required acceptance, accept or cancel a held operation                            |
-| Retained verification | `retainedVerificationMachine` | `lz_runner_transition('retained', state, event)`        | Complete phase checks/acceptance or cancel a held generation before a fresh generation                      |
-| Verification resource | `verificationResourceMachine` | `lz_runner_transition('resource', state, event)`        | Confirm native creation/removal; re-observe uncertain resources                                             |
-| Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from the operation-bound receipt                                       |
-| Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                             |
+| Domain                | XState definition             | Persisted update path                                   | Recovery / completion                                                                                                                        |
+| --------------------- | ----------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Task                  | `taskMachine`                 | `RunnerStore.move()`                                    | Reconcile, resume, retry, retained repair/acceptance, cancellation or incorporation                                                          |
+| Plan                  | `planMachine`                 | `lz_runner_transition('plan', state, event)`            | Owner commands; cleanup probes; integration or cancellation                                                                                  |
+| Attempt               | `attemptMachine`              | `lz_runner_transition('attempt', state, event)`         | Resume/retry; cancellation preserves the previous attempt and checkout                                                                       |
+| Effect                | `effectMachine`               | `lz_runner_transition('effect', state, event)`          | Reconcile a native receipt, or record conclusive failure; never replay an unknown side effect                                                |
+| Dispatch              | `dispatchControlMachine`      | `RunnerStore.setDispatchPause()`                        | Explicit unpause or recorded integration conditions                                                                                          |
+| Architect source      | `architectSourceMachine`      | `architectSourceTransition()`                           | Prepare, activate or retire                                                                                                                  |
+| Architect renewal     | `renewalMachine`              | `lz_runner_transition('renewal', state, event)`         | Continue creation/archive, recover input, roll back or defer; retry deferred creation                                                        |
+| Outcome delivery      | `outboxMachine`               | `lz_runner_transition('outbox', state, event)`          | Observe admission/consumption, reconcile uncertainty, supersede or retarget through existing owner controls                                  |
+| Descendant adoption   | `adoptionMachine`             | `lz_runner_transition('adoption', state, event)`        | Revalidate checks, supply required acceptance, accept or cancel a held operation                                                             |
+| Retained verification | `retainedVerificationMachine` | `lz_runner_transition('retained', state, event)`        | Complete phase checks/acceptance; explicitly continue an exact settled retained check; or cancel a held generation before a fresh generation |
+| Verification resource | `verificationResourceMachine` | `lz_runner_transition('resource', state, event)`        | Confirm native creation/removal; re-observe uncertain resources                                                                              |
+| Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from the operation-bound receipt                                                                        |
+| Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                                                              |
 
 `lifecycleTransition()` resolves the persisted row state through XState and uses
 `current.can()` and XState's pure `transition()` before returning the next state.
@@ -62,6 +62,31 @@ attempts, followed by cancellation and retry with partial work preserved.
 `store.test.ts` exercises a reopened connection and an illegal persisted update.
 Graph reachability is distinct from satisfying native-resource or user-decision
 prerequisites; recorded unknowns are not converted into successful execution.
+
+## Explicit continuation of an interrupted retained combined check
+
+`continue-retained-check` is a current-owner control for one exact combined check
+in a held retained-verification generation. It qualifies only a completed
+non-timeout interruption receipt whose command phases and process group/tree are
+conclusively settled, whose isolated resources are removed, and whose exact
+accepted task, combined candidate, specification, command, environment, owner and
+source-quarantine bindings still match. It uses the current unchanged timing
+policy. The operation must remain held; subprocess cancellation in a receipt is
+not the same as intentional cancellation of the operation or plan.
+
+Authorization is recorded before the check becomes runnable. Its receipt uses a
+new operation-bound path and is appended to immutable retained-check receipt
+history; it never overwrites the interrupted receipt or prior passing task and
+combined receipts. Recovery runs only the named isolated check and reuses the
+other matching passes. Reopen, exact request replay, concurrent authorization,
+lost replies, stale bindings or late cancellation cannot duplicate execution or
+publish success after the operation fence is lost. This control preserves task
+acceptance and the retained generation/candidate; it does not certify the
+original worker idle, unseal its source, settle quarantine, or authorize cleanup.
+Inspection offers the action only when its recorded check set supports that exact
+next step. Full authorization rechecks ownership, plan/specification and
+candidate inputs, all relevant check receipts, resources, activities, adoptions
+and unresolved effects across the asynchronous admission boundary.
 
 ## Cleanup preconditions do not block retry
 

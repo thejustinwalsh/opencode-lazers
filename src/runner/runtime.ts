@@ -65,7 +65,7 @@ import {
   writeCheckReceipt,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import { checkSucceeded, checkFailureReason } from "./checks.ts"
+import { checkSucceeded, checkFailureReason, isConclusiveNonTimeoutInterruption } from "./checks.ts"
 import { needsMechanicalQualityPreparation } from "./quality-failure.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import {
@@ -230,6 +230,8 @@ type PreparedVerificationDeadlineExtension = {
     payloadFingerprint: string
     receiptFingerprint: string
   }
+  planBodyFingerprint?: string
+  acceptedArtifacts?: Array<{ taskID: string; taskRevision: number; artifact: string }>
   retained?: {
     operation: RetainedVerification
     check: RetainedVerificationCheck
@@ -1921,12 +1923,55 @@ export class TaskRuntime {
     return laterStateChanges.length === 0
   }
 
-  private async prepareRetainedVerificationDeadlineContinuation(
+  private retainedContinuationHasUnrelatedEffects(
+    planID: string,
+    operation: RetainedVerification,
+    task: TaskProposal,
+  ): boolean {
+    return this.store.effects(planID).some((effect) => {
+      if (!["intended", "uncertain"].includes(effect.state)) return false
+      if (
+        !operation.sourceQuarantine ||
+        effect.task_id !== operation.taskID ||
+        effect.attempt_id !== operation.attemptID ||
+        !effect.kind.startsWith("verify:")
+      )
+        return true
+      const checkID = effect.kind.slice("verify:".length)
+      const authored = task.verification.find((candidate) => candidate.id === checkID)
+      if (!authored) return true
+      try {
+        const payload: unknown = JSON.parse(effect.payload)
+        return !(
+          isRecord(payload) &&
+          payload.artifact === operation.artifact &&
+          payload.workspace === operation.originalWorkspace &&
+          isRecord(payload.check) &&
+          payload.check.id === authored.id &&
+          payload.check.command === authored.command
+        )
+      } catch {
+        return true
+      }
+    })
+  }
+
+  private async prepareRetainedVerificationCheckContinuation(
     plan: PlanRow,
     command: PlanCommand,
     caller: string,
     input: ReturnType<typeof PlanInput.parse>,
+    continuation: "timing" | "interrupted" = "timing",
   ): Promise<PreparedVerificationDeadlineExtension> {
+    const ownerEpoch = this.store.planControlEpoch(plan.id)
+    if (
+      continuation === "interrupted" &&
+      (command.action !== "continue-retained-check" ||
+        command.projectID !== this.projectID ||
+        command.planRevision !== plan.revision ||
+        command.verificationPhase !== "combined")
+    )
+      throw new Error("Interrupted continuation does not match the current combined-check control")
     if (
       !command.retainedVerificationID ||
       !command.retainedGeneration ||
@@ -1951,7 +1996,9 @@ export class TaskRuntime {
     if (
       !operation ||
       operation.generation !== command.retainedGeneration ||
-      !["held", "cancelled"].includes(operation.state) ||
+      (continuation === "interrupted"
+        ? operation.state !== "held"
+        : !["held", "cancelled"].includes(operation.state)) ||
       operation.planID !== plan.id ||
       operation.projectID !== this.projectID ||
       operation.projectDirectory !== this.directory ||
@@ -1989,6 +2036,8 @@ export class TaskRuntime {
     )
       throw new Error("Retained repaired candidate authority changed before continuation")
     const phase = command.verificationPhase
+    if (continuation === "interrupted" && phase !== "combined")
+      throw new Error("Interrupted retained-check continuation is limited to a combined check")
     if (
       operation.sourceQuarantine &&
       (attempt.state !== "verifying" ||
@@ -2034,14 +2083,30 @@ export class TaskRuntime {
       throw new Error(
         "Retained timing continuation requires the unchanged exact candidate workspace",
       )
+    if (continuation === "interrupted") {
+      const taskWorkspace = operation.taskWorkspace
+      if (
+        !taskWorkspace ||
+        operation.taskWorkspaceState !== "owned" ||
+        !existsSync(taskWorkspace) ||
+        !nativeWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, taskWorkspace)) ||
+        !gitWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, taskWorkspace)) ||
+        git(taskWorkspace, ["rev-parse", "HEAD"]) !== operation.artifact ||
+        !artifactUnchanged(taskWorkspace, operation.artifact)
+      )
+        throw new Error(
+          "Interrupted retained-check continuation requires the unchanged accepted task candidate",
+        )
+    }
+    let acceptedArtifacts: Array<{ taskID: string; taskRevision: number; artifact: string }> = []
     if (phase === "combined") {
       if (!this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation))
         throw new Error("Combined-check continuation requires the original task acceptance")
-      const artifacts = this.acceptedCombinedArtifacts(plan, input, operation)
+      acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input, operation)
       const currentCombinedArtifact = await combineArtifacts(
         this.directory,
         input.baseCommit,
-        artifacts.map((item) => item.artifact),
+        acceptedArtifacts.map((item) => item.artifact),
       )
       if (currentCombinedArtifact !== operation.combinedArtifact)
         throw new Error("Retained combined candidate no longer matches its accepted task artifacts")
@@ -2102,15 +2167,109 @@ export class TaskRuntime {
     if (
       !receipt ||
       receipt.environmentIdentity !== check.environmentIdentity ||
-      !receipt.timedOut ||
-      receipt.aborted === true ||
-      !["inactivity", "hard-backstop", undefined, null].includes(receipt.stopCause) ||
       !checkResourcesSettled(receipt) ||
-      !exactTimeoutHold
+      (continuation === "timing"
+        ? !receipt.timedOut ||
+          receipt.aborted === true ||
+          !["inactivity", "hard-backstop", undefined, null].includes(receipt.stopCause) ||
+          !exactTimeoutHold
+        : operation.state !== "held" ||
+          !isConclusiveNonTimeoutInterruption(receipt) ||
+          operation.holdReason !== checkFailureReason(receipt))
     )
       throw new Error(
-        "Retained check is not the exact settled timeout failure holding this operation",
+        continuation === "timing"
+          ? "Retained check is not the exact settled timeout failure holding this operation"
+          : "Retained check is not the exact conclusive non-timeout interruption holding this operation",
       )
+    if (continuation === "interrupted") {
+      const taskWorkspace = operation.taskWorkspace
+      const combinedWorkspace = operation.combinedWorkspace
+      if (!taskWorkspace || !combinedWorkspace || !operation.combinedArtifact)
+        throw new Error("Interrupted continuation requires both accepted candidate workspaces")
+      const assertCompletedPhase = (
+        checkPhase: "task" | "combined",
+        authoredChecks: TaskProposal["verification"],
+        workspace: string,
+        artifact: string,
+        interruptedCheckID?: string,
+      ) => {
+        const rows = this.store.atomic((db) =>
+          retainedVerificationChecks(db, operation.id, checkPhase),
+        )
+        if (rows.length !== authoredChecks.length)
+          throw new Error(
+            "Interrupted continuation requires every other phase check to be recorded",
+          )
+        for (const authored of authoredChecks) {
+          const row = rows.find((candidate) => candidate.checkID === authored.id)
+          if (
+            !row ||
+            row.state !== "completed" ||
+            row.cleanupState !== "complete" ||
+            row.workspace !== workspace ||
+            row.artifact !== artifact ||
+            !row.receipt
+          )
+            throw new Error("Interrupted continuation requires conclusive matching phase receipts")
+          let recordedCheck: unknown
+          let rawReceipt: unknown
+          try {
+            recordedCheck = JSON.parse(row.checkJSON) as unknown
+            rawReceipt = JSON.parse(row.receipt) as unknown
+          } catch {
+            throw new Error("Interrupted continuation found an unreadable retained check receipt")
+          }
+          const target = this.verificationTarget(
+            plan,
+            checkPhase,
+            authored,
+            artifact,
+            checkPhase === "task" ? operation.taskID : null,
+            checkPhase === "task" ? operation.taskRevision : null,
+            checkPhase === "task" ? operation.attemptID : null,
+          )
+          const effectiveCheck = effectiveVerificationCheck(
+            authored,
+            this.verificationDeadline(target),
+          )
+          const boundReceipt = this.retainedVerificationExecution.retainedVerificationCheckReceipt(
+            rawReceipt,
+            operation,
+            checkPhase,
+            effectiveCheck,
+            workspace,
+            artifact,
+            row.environmentIdentity,
+          )
+          const exactCheck = isRecord(recordedCheck)
+            ? fingerprint(recordedCheck) === fingerprint(effectiveCheck)
+            : false
+          const resultMatches =
+            boundReceipt !== undefined &&
+            boundReceipt.environmentIdentity === row.environmentIdentity &&
+            checkResourcesSettled(boundReceipt)
+          if (!exactCheck || !resultMatches)
+            throw new Error("Interrupted continuation check input or environment binding changed")
+          if (authored.id === interruptedCheckID) {
+            if (
+              !isConclusiveNonTimeoutInterruption(boundReceipt) ||
+              operation.holdReason !== checkFailureReason(boundReceipt)
+            )
+              throw new Error("Only the exact held non-timeout interrupted check can continue")
+          } else if (!checkSucceeded(boundReceipt) || boundReceipt.inputIdentity !== artifact)
+            throw new Error("Interrupted continuation cannot replay or override a failed check")
+        }
+      }
+      assertCompletedPhase("task", task.proposal.verification, taskWorkspace, operation.artifact)
+      assertCompletedPhase(
+        "combined",
+        input.verification,
+        combinedWorkspace,
+        operation.combinedArtifact,
+        authoredCheck.id,
+      )
+    }
     const resources = this.store.atomic((db) =>
       db
         .query<
@@ -2140,16 +2299,25 @@ export class TaskRuntime {
     if (
       verificationActivitiesForDatabase(this.store.repository.path).some(
         (activity) =>
-          activity.metadata.operationID === operation.id && activity.state === "running",
+          (continuation === "interrupted"
+            ? activity.metadata.planID === plan.id
+            : activity.metadata.operationID === operation.id) && activity.state === "running",
       )
     )
-      throw new Error("A live retained check activity prevents timing continuation")
+      throw new Error("A live verification activity prevents retained-check continuation")
     if (
       this.store
         .atomic((db) => activeRetainedVerifications(db, this.directory, plan.id))
         .some((candidate) => candidate.id !== operation.id)
     )
       throw new Error("A different retained verification authority prevents timing continuation")
+
+    if (continuation === "interrupted") {
+      if (this.store.activeAdoptions(plan.id).length)
+        throw new Error("An active descendant adoption prevents retained-check continuation")
+      if (this.retainedContinuationHasUnrelatedEffects(plan.id, operation, task.proposal))
+        throw new Error("Unrelated unresolved effects prevent retained-check continuation")
+    }
 
     const target: VerificationTimeoutTarget = {
       ...this.verificationTarget(
@@ -2168,15 +2336,75 @@ export class TaskRuntime {
       retainedAttemptID: operation.attemptID,
     }
     const deadline = this.verificationDeadline(target)
-    const requested = requestedVerificationTimeouts(command, deadline)
+    const requested =
+      continuation === "timing"
+        ? requestedVerificationTimeouts(command, deadline)
+        : {
+            inactivityTimeoutMs: deadline.effectiveInactivityTimeoutMs,
+            hardTimeoutMs: deadline.effectiveHardTimeoutMs,
+          }
     return {
       target,
       deadline,
       effectiveInactivityTimeoutMs: requested.inactivityTimeoutMs,
       effectiveHardTimeoutMs: requested.hardTimeoutMs,
-      ownerEpoch: this.store.planControlEpoch(plan.id),
+      ownerEpoch,
+      ...(continuation === "interrupted"
+        ? {
+            planBodyFingerprint: fingerprint(plan.body),
+            acceptedArtifacts,
+          }
+        : {}),
       retained: { operation, check, receipt, resources },
     }
+  }
+
+  private async prepareRetainedInterruptedCheckContinuation(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+  ): Promise<PreparedVerificationDeadlineExtension> {
+    if (
+      command.action !== "continue-retained-check" ||
+      !command.projectID ||
+      !command.planRevision ||
+      command.verificationPhase !== "combined" ||
+      !command.checkID ||
+      !command.artifact ||
+      !command.retainedVerificationID ||
+      !command.retainedGeneration ||
+      !command.taskID ||
+      !command.taskRevision ||
+      !command.attemptID ||
+      !command.reason?.trim() ||
+      command.timeoutMs !== undefined ||
+      command.inactivityTimeoutMs !== undefined ||
+      command.hardTimeoutMs !== undefined
+    )
+      throw new Error("Retained-check continuation requires every exact combined-check binding")
+    if (
+      caller !== plan.owner ||
+      !this.validArchitect(ownerSession) ||
+      ownerSession.id !== plan.owner ||
+      ownerSession.projectID !== this.projectID ||
+      command.projectID !== this.projectID ||
+      command.planRevision !== plan.revision
+    )
+      throw new Error("Retained-check continuation requires the current same-project Architect")
+    if (!["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state))
+      throw new Error("Retained-check continuation cannot revive an intentionally cancelled plan")
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const prepared = await this.prepareRetainedVerificationCheckContinuation(
+      plan,
+      command,
+      caller,
+      input,
+      "interrupted",
+    )
+    if (prepared.retained?.operation.state !== "held")
+      throw new Error("Retained-check continuation requires a held operation, not cancellation")
+    return prepared
   }
 
   private async prepareVerificationDeadlineExtension(
@@ -2237,7 +2465,7 @@ export class TaskRuntime {
 
     const input = PlanInput.parse(JSON.parse(plan.body))
     if (retainedContinuation)
-      return this.prepareRetainedVerificationDeadlineContinuation(plan, command, caller, input)
+      return this.prepareRetainedVerificationCheckContinuation(plan, command, caller, input)
     let target: VerificationTimeoutTarget
     let authoredCheck: TaskProposal["verification"][number] | undefined
     let taskWorkspace: string | undefined
@@ -2500,6 +2728,206 @@ export class TaskRuntime {
       deadline.policyRevision !== prepared.deadline.policyRevision
     )
       throw new Error("Verification deadline amendment history changed before admission")
+  }
+
+  private assertRetainedCheckContinuationCurrent(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    prepared: PreparedVerificationDeadlineExtension,
+    nativeWorkspaces: string[],
+  ): void {
+    const retained = prepared.retained
+    const operation = retained?.operation
+    const check = retained?.check
+    if (
+      !operation ||
+      !check ||
+      !prepared.planBodyFingerprint ||
+      !prepared.acceptedArtifacts ||
+      plan.owner !== caller ||
+      plan.version !== command.expectedVersion ||
+      plan.revision !== operation.planRevision ||
+      !["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
+      command.projectID !== this.projectID ||
+      command.planRevision !== operation.planRevision ||
+      command.verificationPhase !== "combined" ||
+      command.taskID !== operation.taskID ||
+      command.taskRevision !== operation.taskRevision ||
+      command.attemptID !== operation.attemptID ||
+      command.artifact !== operation.combinedArtifact ||
+      command.checkID !== check.checkID ||
+      command.retainedVerificationID !== operation.id ||
+      command.retainedGeneration !== operation.generation ||
+      operation.state !== "held" ||
+      (!operation.sourceQuarantine && operation.planVersion !== plan.version) ||
+      fingerprint(plan.body) !== prepared.planBodyFingerprint ||
+      this.store.planControlEpoch(plan.id) !== prepared.ownerEpoch
+    )
+      throw new Error("Retained-check continuation owner, version or exact binding changed")
+
+    const currentOperation = this.store.atomic((db) => retainedVerification(db, operation.id))
+    const currentCheck = this.store.atomic((db) =>
+      retainedVerificationChecks(db, operation.id, "combined").find(
+        (candidate) => candidate.checkID === check.checkID,
+      ),
+    )
+    if (
+      !currentOperation ||
+      fingerprint(currentOperation) !== fingerprint(operation) ||
+      !currentCheck ||
+      fingerprint(currentCheck) !== fingerprint(check)
+    )
+      throw new Error("Held retained check changed before continuation authorization")
+
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const task = this.store.repository.get(operation.taskID)
+    const node = this.store
+      .nodes(plan.id)
+      .find((candidate) => candidate.task_id === operation.taskID)
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === operation.taskID)
+      .at(-1)
+    if (
+      !task ||
+      task.revision !== operation.taskRevision ||
+      input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
+      task.provenance.projectID !== this.projectID ||
+      task.provenance.projectDirectory !== this.directory ||
+      this.store.repository.taskDisposition(task.id) !== undefined ||
+      !node ||
+      node.state !== "accepted" ||
+      node.artifact !== operation.artifact ||
+      !attempt ||
+      attempt.id !== operation.attemptID ||
+      attempt.session_id !== operation.originalSessionID ||
+      attempt.message_id !== operation.originalMessageID ||
+      realpathSync(attempt.workspace) !== operation.originalWorkspace ||
+      (operation.sourceQuarantine
+        ? attempt.state !== "verifying" ||
+          !this.retainedVerificationExecution.sourceQuarantinePlanVersionCurrent(operation, plan) ||
+          !sourceQuarantineVerificationBindingMatches(this.store, {
+            planID: plan.id,
+            owner: caller,
+            attempt,
+            artifact: operation.artifact,
+            expected: operation.sourceQuarantine,
+          })
+        : attempt.state !== "accepted" || operation.planVersion !== plan.version) ||
+      !this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)
+    )
+      throw new Error("Retained task acceptance or original source binding changed")
+
+    const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input, operation)
+    if (fingerprint(acceptedArtifacts) !== fingerprint(prepared.acceptedArtifacts))
+      throw new Error("Accepted plan inputs changed before retained-check continuation")
+
+    const gitWorkspaces = git(this.directory, ["worktree", "list", "--porcelain"])
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => resolve(line.slice("worktree ".length)))
+    const candidates = [
+      {
+        workspace: operation.taskWorkspace,
+        state: operation.taskWorkspaceState,
+        artifact: operation.artifact,
+      },
+      {
+        workspace: operation.combinedWorkspace,
+        state: operation.combinedWorkspaceState,
+        artifact: operation.combinedArtifact,
+      },
+    ]
+    for (const candidate of candidates) {
+      if (
+        !candidate.workspace ||
+        !candidate.artifact ||
+        candidate.state !== "owned" ||
+        !existsSync(candidate.workspace) ||
+        !nativeWorkspaces.some((workspace) =>
+          samePhysicalWorkspace(workspace, candidate.workspace!),
+        ) ||
+        !gitWorkspaces.some((workspace) =>
+          samePhysicalWorkspace(workspace, candidate.workspace!),
+        ) ||
+        git(candidate.workspace, ["rev-parse", "HEAD"]) !== candidate.artifact ||
+        !artifactUnchanged(candidate.workspace, candidate.artifact)
+      )
+        throw new Error("Retained task or combined candidate changed before continuation")
+    }
+
+    const resources = this.store.atomic((db) =>
+      db
+        .query<{ state: string }, [string, string]>(
+          `SELECT state FROM runner_retained_verification_resources
+           WHERE operation_id=? AND phase='combined' AND check_id=?`,
+        )
+        .all(operation.id, check.checkID),
+    )
+    const outstandingResources = this.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT COUNT(*) AS count FROM runner_retained_verification_resources WHERE operation_id=? AND state<>'removed'",
+          )
+          .get(operation.id)?.count ?? 0,
+    )
+    if (
+      !resources.length ||
+      resources.some((resource) => resource.state !== "removed") ||
+      outstandingResources !== 0
+    )
+      throw new Error("Retained owned-resource settlement changed before continuation")
+    if (
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+      )
+    )
+      throw new Error("A live verification activity prevents retained-check continuation")
+    if (
+      this.store.activeAdoptions(plan.id).length ||
+      this.store
+        .atomic((db) => activeRetainedVerifications(db, this.directory, plan.id))
+        .some((candidate) => candidate.id !== operation.id) ||
+      this.retainedContinuationHasUnrelatedEffects(plan.id, operation, task.proposal)
+    )
+      throw new Error("Unrelated retained work or unresolved effects prevent continuation")
+    const deadline = this.verificationDeadline(prepared.target)
+    if (
+      deadline.effectiveInactivityTimeoutMs !== prepared.deadline.effectiveInactivityTimeoutMs ||
+      deadline.effectiveHardTimeoutMs !== prepared.deadline.effectiveHardTimeoutMs ||
+      deadline.policyRevision !== prepared.deadline.policyRevision
+    )
+      throw new Error("Verification timing changed before retained-check continuation")
+  }
+
+  private async revalidateRetainedCheckContinuation(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    prepared: PreparedVerificationDeadlineExtension,
+    nativeWorkspaces: string[],
+  ) {
+    this.assertRetainedCheckContinuationCurrent(plan, command, caller, prepared, nativeWorkspaces)
+    const operation = prepared.retained!.operation
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const combinedArtifact = await combineArtifacts(
+      this.directory,
+      input.baseCommit,
+      this.acceptedCombinedArtifacts(plan, input, operation).map((item) => item.artifact),
+    )
+    if (combinedArtifact !== operation.combinedArtifact)
+      throw new Error("Combined candidate changed before retained-check continuation")
+    const currentPlan = this.store.plan(plan.id)
+    if (!currentPlan) throw new Error("Plan disappeared during retained-check continuation")
+    this.assertRetainedCheckContinuationCurrent(
+      currentPlan,
+      command,
+      caller,
+      prepared,
+      nativeWorkspaces,
+    )
   }
 
   private settledExtendedTaskTimeouts(plan: PlanRow, attempt: AttemptRow): EffectRow[] {
@@ -4725,6 +5153,7 @@ export class TaskRuntime {
         "verify-retained",
         "cancel-retained-verification",
         "extend-verification-deadline",
+        "continue-retained-check",
         "recover-cleanup",
       ].includes(command.action) ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
@@ -4846,6 +5275,11 @@ export class TaskRuntime {
       command.action === "extend-verification-deadline"
         ? await this.prepareVerificationDeadlineExtension(old, command, caller, ownerSession)
         : undefined
+    const retainedCheckContinuation =
+      command.action === "continue-retained-check"
+        ? await this.prepareRetainedInterruptedCheckContinuation(old, command, caller, ownerSession)
+        : undefined
+    let retainedCheckNativeWorkspaces: string[] | undefined
     if (verificationDeadlineExtension) {
       const confirmedOwner = await this.host.session(caller)
       const confirmedPlan = this.store.plan(old.id)
@@ -4862,6 +5296,29 @@ export class TaskRuntime {
         caller,
         verificationDeadlineExtension,
       )
+      ownerSession = confirmedOwner
+    }
+    if (retainedCheckContinuation) {
+      const [confirmedOwner, nativeWorkspaces] = await Promise.all([
+        this.host.session(caller),
+        this.host.worktrees(),
+      ])
+      const confirmedPlan = this.store.plan(old.id)
+      if (
+        !confirmedPlan ||
+        !this.validArchitect(confirmedOwner) ||
+        confirmedOwner.id !== old.owner ||
+        confirmedOwner.projectID !== this.projectID
+      )
+        throw new Error("Retained-check continuation owner changed during admission")
+      await this.revalidateRetainedCheckContinuation(
+        confirmedPlan,
+        command,
+        caller,
+        retainedCheckContinuation,
+        nativeWorkspaces,
+      )
+      retainedCheckNativeWorkspaces = nativeWorkspaces
       ownerSession = confirmedOwner
     }
     let quarantineAttempt: AttemptRow | undefined
@@ -5341,6 +5798,129 @@ export class TaskRuntime {
           version: this.store.plan(plan.id)!.version,
         }
       }
+      if (command.action === "continue-retained-check") {
+        const prepared = retainedCheckContinuation
+        const nativeWorkspaces = retainedCheckNativeWorkspaces
+        const retained = prepared?.retained
+        if (
+          !prepared ||
+          !nativeWorkspaces ||
+          !retained ||
+          !ownerSession ||
+          !this.validArchitect(ownerSession) ||
+          ownerSession.id !== plan.owner ||
+          ownerSession.projectID !== this.projectID
+        )
+          throw new Error("Retained-check continuation requires the current Architect owner")
+        this.assertRetainedCheckContinuationCurrent(
+          plan,
+          command,
+          caller,
+          prepared,
+          nativeWorkspaces,
+        )
+        const changed = db
+          .query(
+            `UPDATE runner_plans SET version=version+1
+             WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
+               AND state=? AND artifact IS ?`,
+          )
+          .run(
+            plan.id,
+            this.directory,
+            caller,
+            command.expectedVersion,
+            prepared.target.planRevision,
+            plan.state,
+            plan.artifact,
+          ).changes
+        if (changed !== 1)
+          throw new Error("Retained-check plan changed during continuation authorization")
+        const nextPlan = this.store.plan(plan.id)!
+        const continuationID = crypto.randomUUID()
+        const { operation, check, receipt, resources } = retained
+        const current = retainedVerification(db, operation.id)
+        if (
+          !current ||
+          current.generation !== operation.generation ||
+          current.state !== "held" ||
+          fingerprint(current) !== fingerprint(operation)
+        )
+          throw new Error("Held retained verification changed before exact-check continuation")
+        this.store.record(
+          plan.id,
+          operation.taskID,
+          "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
+          {
+            continuationKind: "interrupted-check",
+            continuationID,
+            requestID: command.requestID,
+            owner: caller,
+            ownerEpoch: prepared.ownerEpoch,
+            priorOwner: operation.owner,
+            priorOwnerEpoch: operation.ownerEpoch,
+            planRevision: operation.planRevision,
+            planVersion: nextPlan.version,
+            operationID: operation.id,
+            generation: operation.generation,
+            taskID: operation.taskID,
+            taskRevision: operation.taskRevision,
+            attemptID: operation.attemptID,
+            phase: "combined",
+            checkID: prepared.target.checkID,
+            candidateArtifact: prepared.target.artifact,
+            commandFingerprint: verificationCommandFingerprint(prepared.target.command),
+            environmentIdentity: check.environmentIdentity,
+            planBodyFingerprint: prepared.planBodyFingerprint,
+            combinedInputFingerprint: operation.combinedInputFingerprint,
+            acceptedArtifacts: prepared.acceptedArtifacts,
+            sourceQuarantineFingerprint: fingerprint(operation.sourceQuarantine ?? null),
+            priorReceipt: receipt,
+            priorReceiptFingerprint: fingerprint(check.receipt),
+            priorCheckFingerprint: fingerprint(check.checkJSON),
+            priorCheck: JSON.parse(check.checkJSON) as unknown,
+            priorReceiptPath: check.receiptPath,
+            priorResources: resources.map((resource) => ({
+              name: resource.resource_name,
+              pathFingerprint: fingerprint(resource.canonical_path),
+              state: resource.state,
+            })),
+            reason: command.reason!.trim(),
+          },
+        )
+        saveRetainedVerification(db, {
+          ...current,
+          planVersion: nextPlan.version,
+          owner: caller,
+          ownerEpoch: prepared.ownerEpoch,
+          state: "combined-checks",
+          holdReason: null,
+          updatedAt: this.now(),
+        })
+        authorizeRetainedVerificationCheckRetry(db, {
+          operationID: operation.id,
+          phase: "combined",
+          checkID: prepared.target.checkID,
+          receiptFingerprint: fingerprint(check.receipt),
+        })
+        return {
+          status: "retained-verification-check-continued",
+          planID: plan.id,
+          operationID: operation.id,
+          generation: operation.generation,
+          phase: "combined",
+          taskID: operation.taskID,
+          taskRevision: operation.taskRevision,
+          attemptID: operation.attemptID,
+          artifact: prepared.target.artifact,
+          checkID: prepared.target.checkID,
+          continuationID,
+          inactivityTimeoutMs: prepared.deadline.effectiveInactivityTimeoutMs,
+          hardTimeoutMs: prepared.deadline.effectiveHardTimeoutMs,
+          reason: command.reason!.trim(),
+          version: nextPlan.version,
+        }
+      }
       if (command.action === "extend-verification-deadline") {
         const prepared = verificationDeadlineExtension
         if (
@@ -5460,12 +6040,17 @@ export class TaskRuntime {
               candidateArtifact: prepared.target.artifact,
               commandFingerprint: verificationCommandFingerprint(prepared.target.command),
               amendmentID: amendment.amendmentID,
+              environmentIdentity: check.environmentIdentity,
               priorReceipt: receipt,
               priorReceiptFingerprint: fingerprint(check.receipt),
               priorCheckFingerprint: fingerprint(check.checkJSON),
               priorCheck: JSON.parse(check.checkJSON) as unknown,
               priorReceiptPath: check.receiptPath,
-              priorResources: resources,
+              priorResources: resources.map((resource) => ({
+                name: resource.resource_name,
+                pathFingerprint: fingerprint(resource.canonical_path),
+                state: resource.state,
+              })),
               reason: amendment.reason,
             },
           )
@@ -7020,6 +7605,8 @@ export class TaskRuntime {
       command.action === "verify-retained" ||
       command.action === "cancel-retained-verification" ||
       (command.action === "extend-verification-deadline" &&
+        result?.status === "retained-verification-check-continued") ||
+      (command.action === "continue-retained-check" &&
         result?.status === "retained-verification-check-continued") ||
       command.action === "recover-cleanup" ||
       command.action === "pause" ||

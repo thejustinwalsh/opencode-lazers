@@ -47,11 +47,27 @@ type RetainedCheckProjection = {
   environmentFingerprint: string | null
   reservedAt: number | null
   receipt: "recorded" | "not-recorded" | "unusable"
+  receiptHistory: {
+    available: boolean
+    count: number
+    truncated: boolean
+    entries: Array<{
+      receiptID: string
+      current: boolean
+      status: "passed" | "failed" | "unknown"
+      exitCode: number | null
+      timedOut: boolean | null
+      aborted: boolean | null
+      endedAt: number | null
+    }>
+  }
   evidenceReference: string
   result: {
     status: "passed" | "failed" | "unknown"
     exitCode: number | null
     timedOut: boolean | null
+    aborted: boolean | null
+    phasesComplete: boolean | null
     stopCause: "inactivity" | "hard-backstop" | "cancelled" | null
     startedAt: number | null
     endedAt: number | null
@@ -126,6 +142,7 @@ export type RetainedVerificationInspection = {
   availability: {
     operations: boolean
     checks: boolean
+    receipts: boolean
     resources: boolean
     humanEvidence: boolean
   }
@@ -172,6 +189,21 @@ export function ensureRetainedVerificationTables(db: Database): void {
       created_at INTEGER NOT NULL,
       PRIMARY KEY(operation_id,phase,check_id)
     );
+    CREATE TABLE IF NOT EXISTS runner_retained_verification_check_receipts (
+      operation_id TEXT NOT NULL REFERENCES runner_retained_verifications(id),
+      phase TEXT NOT NULL,
+      check_id TEXT NOT NULL,
+      receipt_path TEXT NOT NULL,
+      check_json TEXT NOT NULL,
+      workspace TEXT NOT NULL,
+      artifact TEXT NOT NULL,
+      input_fingerprint TEXT NOT NULL,
+      environment_identity TEXT NOT NULL,
+      state TEXT NOT NULL,
+      receipt TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY(operation_id,phase,check_id,receipt_path)
+    );
     CREATE TABLE IF NOT EXISTS runner_retained_verification_evidence (
       id TEXT PRIMARY KEY,
       operation_id TEXT NOT NULL REFERENCES runner_retained_verifications(id),
@@ -202,6 +234,15 @@ export function ensureRetainedVerificationTables(db: Database): void {
     );
     CREATE INDEX IF NOT EXISTS runner_retained_verification_resources_active
       ON runner_retained_verification_resources(project_directory,state,canonical_path);
+  `)
+  db.exec(`
+    INSERT OR IGNORE INTO runner_retained_verification_check_receipts(
+      operation_id,phase,check_id,receipt_path,check_json,workspace,artifact,input_fingerprint,
+      environment_identity,state,receipt,created_at
+    )
+    SELECT operation_id,phase,check_id,receipt_path,check_json,workspace,artifact,input_fingerprint,
+      environment_identity,state,receipt,created_at
+    FROM runner_retained_verification_checks WHERE state='completed' AND receipt IS NOT NULL
   `)
 }
 
@@ -387,6 +428,54 @@ export function retainedVerificationChecks(
   return records
 }
 
+export function retainedVerificationCheckReceipts(
+  db: Database,
+  operationID: string,
+  phase: "task" | "combined",
+  checkID: string,
+) {
+  ensureRetainedVerificationTables(db)
+  return db
+    .query<
+      {
+        receiptPath: string
+        checkJSON: string
+        workspace: string
+        artifact: string
+        inputFingerprint: string
+        environmentIdentity: string
+        state: string
+        receipt: string
+        createdAt: number
+      },
+      [string, string, string]
+    >(
+      `SELECT receipt_path AS receiptPath,check_json AS checkJSON,workspace,artifact,
+       input_fingerprint AS inputFingerprint,environment_identity AS environmentIdentity,
+       state,receipt,created_at AS createdAt
+       FROM runner_retained_verification_check_receipts
+       WHERE operation_id=? AND phase=? AND check_id=? ORDER BY created_at,receipt_path LIMIT 101`,
+    )
+    .all(operationID, phase, checkID)
+}
+
+export function retainedVerificationCheckReceiptCount(
+  db: Database,
+  operationID: string,
+  phase: "task" | "combined",
+  checkID: string,
+): number {
+  ensureRetainedVerificationTables(db)
+  return (
+    db
+      .query<{ count: number }, [string, string, string]>(
+        `SELECT COUNT(*) AS count FROM runner_retained_verification_check_receipts
+         WHERE operation_id=? AND phase=? AND check_id=?`,
+      )
+      .get(operationID, phase, checkID)?.count ?? 0
+  )
+}
+
 export function beginRetainedVerificationCheck(
   db: Database,
   input: {
@@ -401,6 +490,7 @@ export function beginRetainedVerificationCheck(
     receiptPath: string
     contextPath: string
     createdAt: number
+    allowUnchangedCheck?: boolean
   },
 ): RetainedVerificationCheck {
   ensureRetainedVerificationTables(db)
@@ -425,7 +515,7 @@ export function beginRetainedVerificationCheck(
         current.workspace !== input.workspace ||
         current.artifact !== input.artifact ||
         current.receipt === null ||
-        fingerprint(priorCheck) === fingerprint(input.check) ||
+        (fingerprint(priorCheck) === fingerprint(input.check) && !input.allowUnchangedCheck) ||
         !isRecord(priorCheck) ||
         !isRecord(input.check) ||
         priorCheck.id !== input.check.id ||
@@ -531,14 +621,26 @@ export function completeRetainedVerificationCheck(
   receipt: unknown,
 ): boolean {
   ensureRetainedVerificationTables(db)
-  return (
-    db
-      .query(
-        `UPDATE runner_retained_verification_checks SET state=lz_runner_transition('check',state,'completed'),receipt=?
-         WHERE operation_id=? AND phase=? AND check_id=? AND state IN ('intended','uncertain')`,
-      )
-      .run(JSON.stringify(receipt), operationID, phase, checkID).changes === 1
-  )
+  const changed = db
+    .query(
+      `UPDATE runner_retained_verification_checks SET state=lz_runner_transition('check',state,'completed'),receipt=?
+       WHERE operation_id=? AND phase=? AND check_id=? AND state IN ('intended','uncertain')`,
+    )
+    .run(JSON.stringify(receipt), operationID, phase, checkID).changes
+  if (changed !== 1) return false
+  db.query(
+    `
+    INSERT OR IGNORE INTO runner_retained_verification_check_receipts(
+      operation_id,phase,check_id,receipt_path,check_json,workspace,artifact,input_fingerprint,
+      environment_identity,state,receipt,created_at
+    )
+    SELECT operation_id,phase,check_id,receipt_path,check_json,workspace,artifact,input_fingerprint,
+      environment_identity,state,receipt,created_at
+    FROM runner_retained_verification_checks
+    WHERE operation_id=? AND phase=? AND check_id=? AND state='completed' AND receipt IS NOT NULL
+  `,
+  ).run(operationID, phase, checkID)
+  return true
 }
 
 export function markRetainedVerificationCheckUncertain(
@@ -811,6 +913,7 @@ type InspectionOperationRow = {
 type InspectionCheckRow = {
   phase: string
   check_id: string
+  receipt_path: string
   artifact: string
   input_fingerprint: string
   environment_identity: string
@@ -909,7 +1012,7 @@ function retainedHistoryCapture(
   planID: string,
   taskIDs: string[],
   watermark: number[],
-  tables: { checks: boolean; resources: boolean; evidence: boolean },
+  tables: { checks: boolean; receipts: boolean; resources: boolean; evidence: boolean },
   requirements: RetainedHumanEvidenceRequirements,
 ): string {
   const hash = createHash("sha256")
@@ -989,6 +1092,29 @@ function retainedHistoryCapture(
              WHERE operations.project_directory=? AND operations.plan_id=?
                AND operations.task_id=? AND operations.generation<=?
              ORDER BY operations.generation,checks.created_at DESC,checks.phase,checks.check_id`,
+          )
+          .iterate(projectDirectory, planID, taskID, generation),
+        count,
+      )
+    if (tables.receipts)
+      appendRetainedCaptureRows(
+        hash,
+        `receipts:${taskID}`,
+        db
+          .query<Record<string, unknown>, [string, string, string, number]>(
+            `SELECT operations.generation,
+               CASE WHEN length(receipts.phase)<=16 THEN receipts.phase ELSE '' END AS phase,
+               CASE WHEN length(receipts.check_id)<=64 THEN receipts.check_id ELSE '' END AS check_id,
+               CASE WHEN length(receipts.receipt_path)<=4096 THEN receipts.receipt_path ELSE '' END AS receipt_path,
+               CASE WHEN length(receipts.state)<=32 THEN receipts.state ELSE '' END AS state,
+               CASE WHEN receipts.receipt IS NULL OR length(receipts.receipt)<=100000
+                 THEN receipts.receipt ELSE NULL END AS receipt,
+               (receipts.receipt IS NOT NULL AND length(receipts.receipt)>100000) AS receipt_too_large
+             FROM runner_retained_verification_check_receipts AS receipts
+             JOIN runner_retained_verifications AS operations ON operations.id=receipts.operation_id
+             WHERE operations.project_directory=? AND operations.plan_id=?
+               AND operations.task_id=? AND operations.generation<=?
+             ORDER BY operations.generation,receipts.phase,receipts.check_id,receipts.created_at,receipts.receipt_path`,
           )
           .iterate(projectDirectory, planID, taskID, generation),
         count,
@@ -1220,7 +1346,7 @@ function operationProjection(
   row: InspectionOperationRow,
   planID: string,
   projectDirectory: string,
-  tables: { checks: boolean; resources: boolean; evidence: boolean },
+  tables: { checks: boolean; receipts: boolean; resources: boolean; evidence: boolean },
   isLatest: boolean,
   requirements: RetainedHumanEvidenceRequirements,
 ): RetainedVerificationProjection {
@@ -1236,6 +1362,7 @@ function operationProjection(
              CASE WHEN length(artifact)<=64 THEN artifact ELSE '' END AS artifact,
              CASE WHEN length(input_fingerprint)<=128 THEN input_fingerprint ELSE '' END AS input_fingerprint,
              CASE WHEN length(environment_identity)<=4096 THEN environment_identity ELSE '' END AS environment_identity,
+             CASE WHEN length(receipt_path)<=4096 THEN receipt_path ELSE '' END AS receipt_path,
              CASE WHEN length(state)<=32 THEN state ELSE '' END AS state,
              CASE WHEN receipt IS NULL OR length(receipt)<=100000 THEN receipt ELSE NULL END AS receipt,
              (receipt IS NOT NULL AND length(receipt)>100000) AS receipt_too_large,
@@ -1322,6 +1449,9 @@ function operationProjection(
         : null
     const timedOut =
       receiptMatches && typeof receipt.timedOut === "boolean" ? receipt.timedOut : null
+    const aborted = receiptMatches && typeof receipt.aborted === "boolean" ? receipt.aborted : null
+    const phasesComplete =
+      receiptMatches && typeof receipt.phasesComplete === "boolean" ? receipt.phasesComplete : null
     const stopCause =
       receiptMatches &&
       (receipt.stopCause === "inactivity" ||
@@ -1377,11 +1507,77 @@ function operationProjection(
     const resultStatus =
       rowState !== "completed" || !receiptMatches
         ? "unknown"
-        : timedOut === true || (exitCode !== null && exitCode !== 0)
+        : timedOut === true ||
+            aborted === true ||
+            phasesComplete === false ||
+            (exitCode !== null && exitCode !== 0)
           ? "failed"
           : timedOut === false && exitCode === 0
             ? "passed"
             : "unknown"
+    const recordedRuns =
+      phase !== null && tables.receipts
+        ? retainedVerificationCheckReceipts(db, operation.id, phase, check.check_id)
+        : []
+    const receiptHistoryCount =
+      phase !== null && tables.receipts
+        ? retainedVerificationCheckReceiptCount(db, operation.id, phase, check.check_id)
+        : 0
+    const receiptHistoryEntries = recordedRuns.slice(0, 100).map((run) => {
+      const historicalCheck = jsonValue(run.checkJSON)
+      const historicalValue = jsonValue(run.receipt)
+      const historicalReceipt = isRecord(historicalValue) ? historicalValue : undefined
+      const receiptBound =
+        run.state === "completed" &&
+        isRecord(historicalCheck) &&
+        historicalCheck.id === check.check_id &&
+        typeof historicalCheck.command === "string" &&
+        historicalReceipt?.id === check.check_id &&
+        historicalReceipt.command === historicalCheck.command &&
+        historicalReceipt.cwd === run.workspace &&
+        historicalReceipt.artifact === expectedArtifact &&
+        run.artifact === expectedArtifact &&
+        historicalReceipt.inputIdentity === expectedArtifact &&
+        historicalReceipt.environmentIdentity === run.environmentIdentity
+      const historicalExitCode =
+        receiptBound &&
+        (historicalReceipt.exitCode === null ||
+          (typeof historicalReceipt.exitCode === "number" &&
+            Number.isSafeInteger(historicalReceipt.exitCode)))
+          ? (historicalReceipt.exitCode as number | null)
+          : null
+      const historicalTimedOut =
+        receiptBound && typeof historicalReceipt.timedOut === "boolean"
+          ? historicalReceipt.timedOut
+          : null
+      const historicalAborted =
+        receiptBound && typeof historicalReceipt.aborted === "boolean"
+          ? historicalReceipt.aborted
+          : null
+      const historicalPhasesComplete =
+        receiptBound && typeof historicalReceipt.phasesComplete === "boolean"
+          ? historicalReceipt.phasesComplete
+          : null
+      const historicalStatus = !receiptBound
+        ? "unknown"
+        : historicalTimedOut === true ||
+            historicalAborted === true ||
+            historicalPhasesComplete === false ||
+            (historicalExitCode !== null && historicalExitCode !== 0)
+          ? "failed"
+          : historicalTimedOut === false && historicalExitCode === 0
+            ? "passed"
+            : "unknown"
+      return {
+        receiptID: fingerprint(run.receiptPath),
+        current: run.receiptPath === check.receipt_path,
+        status: historicalStatus,
+        exitCode: historicalExitCode,
+        timedOut: historicalTimedOut,
+        aborted: historicalAborted,
+        endedAt: receiptBound ? safeTimestamp(historicalReceipt.endedAt) : null,
+      } satisfies RetainedCheckProjection["receiptHistory"]["entries"][number]
+    })
     const outputTruncated =
       receiptMatches &&
       [receipt.stdout, receipt.stderr].some(
@@ -1400,11 +1596,19 @@ function operationProjection(
           : null,
       reservedAt: safeTimestamp(check.created_at),
       receipt: receiptStatus,
+      receiptHistory: {
+        available: tables.receipts,
+        count: receiptHistoryCount,
+        truncated: receiptHistoryCount > 100,
+        entries: receiptHistoryEntries,
+      },
       evidenceReference: `retained-verification:${operation.id}:${operation.generation}:${phase ?? "unknown"}:${checkID}`,
       result: {
         status: resultStatus,
         exitCode,
         timedOut,
+        aborted,
+        phasesComplete,
         stopCause,
         startedAt: validTiming ? receiptStartedAt : null,
         endedAt: validTiming ? receiptEndedAt : null,
@@ -1577,12 +1781,14 @@ export function retainedVerificationsForInspection(
   const operationsAvailable = tablePresent(db, "runner_retained_verifications")
   const tables = {
     checks: tablePresent(db, "runner_retained_verification_checks"),
+    receipts: tablePresent(db, "runner_retained_verification_check_receipts"),
     resources: tablePresent(db, "runner_retained_verification_resources"),
     evidence: tablePresent(db, "runner_retained_verification_evidence"),
   }
   const availability = {
     operations: operationsAvailable,
     checks: tables.checks,
+    receipts: tables.receipts,
     resources: tables.resources,
     humanEvidence: tables.evidence,
   }
@@ -1691,7 +1897,10 @@ export function retainedVerificationsForInspection(
       : null
   return {
     mode: "retained-verifications",
-    status: tables.checks && tables.resources && tables.evidence ? "available" : "partial",
+    status:
+      tables.checks && tables.receipts && tables.resources && tables.evidence
+        ? "available"
+        : "partial",
     planID,
     taskIDs,
     capturedGenerationWatermark: taskIDs.map((taskID, index) => ({
