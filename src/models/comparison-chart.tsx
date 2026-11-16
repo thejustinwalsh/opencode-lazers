@@ -6,6 +6,7 @@ import type { EChartsCoreOption, EChartsType } from "echarts/core"
 import { LabelLayout } from "echarts/features"
 import { SVGRenderer } from "echarts/renderers"
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount } from "solid-js"
+import type { JSX } from "solid-js"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
@@ -74,6 +75,8 @@ export interface ComparisonChartProps extends ComparisonChartData {
   fontFamily?: string
   monoFontFamily?: string
   appearanceVersion?: unknown
+  /** Shown under the empty-state text, e.g. a switch to another comparison. */
+  emptyAction?: JSX.Element
 }
 
 const money = new Intl.NumberFormat("en-US", {
@@ -809,12 +812,18 @@ export function comparisonChartOptions(
   } satisfies EChartsCoreOption
 }
 
+export type ChartOptionsBuilder<Data> = (
+  data: Data,
+  theme: ComparisonChartTheme,
+  layout: ComparisonChartLayout,
+) => EChartsCoreOption
+
 /** Owns exactly one chart and all of its listeners/observers. */
-export class ComparisonChartAdapter {
+export class ComparisonChartAdapter<Data = ComparisonChartData> {
   readonly chart: EChartsType
   private observer?: ResizeObserver
   private active = true
-  private data?: ComparisonChartData
+  private data?: Data
   private theme?: ComparisonChartTheme
   private appliedLayout?: string
   private focused?: string
@@ -829,6 +838,7 @@ export class ComparisonChartAdapter {
   constructor(
     readonly host: HTMLElement,
     private readonly onSelect: (configurationID: string) => void,
+    private readonly buildOptions: ChartOptionsBuilder<Data> = comparisonChartOptions as unknown as ChartOptionsBuilder<Data>,
   ) {
     this.chart = echarts.init(host, undefined, { renderer: "svg" })
     this.chart.on("click", this.click)
@@ -843,7 +853,7 @@ export class ComparisonChartAdapter {
     return !this.active
   }
 
-  update(data: ComparisonChartData, theme: ComparisonChartTheme) {
+  update(data: Data, theme: ComparisonChartTheme) {
     if (!this.active) return false
     this.data = data
     this.theme = theme
@@ -868,7 +878,7 @@ export class ComparisonChartAdapter {
       const layout = comparisonChartResponsiveLayout(width, height, fontSize)
       const key = [layout.width, layout.height, layout.fontSize].join(":")
       if (key !== this.appliedLayout) {
-        this.chart.setOption(comparisonChartOptions(this.data, this.theme, layout), {
+        this.chart.setOption(this.buildOptions(this.data, this.theme, layout), {
           notMerge: true,
         })
         this.appliedLayout = key
@@ -921,7 +931,18 @@ export class ComparisonChartAdapter {
   }
 }
 
-const visuallyHidden = {
+/** Next index for arrow, Home and End travel through an ordered set of chart marks. */
+export function chartKeyStep(length: number, current: number, key: string) {
+  if (!length) return undefined
+  if (key === "Home") return 0
+  if (key === "End") return length - 1
+  if (key === "ArrowRight" || key === "ArrowDown")
+    return current < 0 ? 0 : Math.min(length - 1, current + 1)
+  if (key === "ArrowLeft" || key === "ArrowUp") return Math.max(0, current - 1)
+  return undefined
+}
+
+export const visuallyHidden = {
   position: "absolute",
   width: "1px",
   height: "1px",
@@ -1009,21 +1030,11 @@ export function ComparisonChart(props: ComparisonChartProps) {
       return
     }
     if (!order.length) return
-    const current = order.findIndex(
-      (choice) => choice.configurationID === props.selectedConfigurationID,
+    const next = chartKeyStep(
+      order.length,
+      order.findIndex((choice) => choice.configurationID === props.selectedConfigurationID),
+      event.key,
     )
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? order.length - 1
-          : event.key === "ArrowRight" || event.key === "ArrowDown"
-            ? current < 0
-              ? 0
-              : Math.min(order.length - 1, current + 1)
-            : event.key === "ArrowLeft" || event.key === "ArrowUp"
-              ? Math.max(0, current - 1)
-              : undefined
     if (next === undefined) return
     event.preventDefault()
     const choice = order[next]!
@@ -1075,6 +1086,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
         <p class="lazers-models-chart-empty" role="status">
           {comparisonChartEmptyText(props.points, props.references ?? [])}
         </p>
+        {props.emptyAction}
       </Show>
       <p id={descriptionID} style={visuallyHidden}>
         {comparisonChartDescription(props.points, props.references ?? [])}
