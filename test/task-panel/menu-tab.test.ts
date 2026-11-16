@@ -130,7 +130,6 @@ describe("tasks native affordances", () => {
       title,
       hasRecordedTitle: true,
       state: "running",
-      priority: 0,
       nonterminalCount,
       totalCount,
       rows: [],
@@ -207,7 +206,33 @@ describe("tasks native affordances", () => {
       'aria-label="Retry-safe submission, priority 2, plan cleanup blocked"',
     )
     expect(rendered).toContain(">Cleanup blocked</span>")
-    expect(rendered).toMatch(/Scheduler priority for this plan"[^>]*>P(?:<!--[^>]*-->)*2/)
+    expect(rendered).toMatch(/Scheduler priority for this plan"[^>]*>Priority (?:<!--[^>]*-->)*2/)
+    // A one-task plan keeps its heading when the scheduler records plan prerequisites.
+    const gated = renderToString(() =>
+      createComponent(ExecutionPlanGroupView, {
+        group: {
+          planID: "gated",
+          planVersion: 1,
+          planRevision: 1,
+          title: "Gated single task",
+          hasRecordedTitle: true,
+          nonterminalCount: 1,
+          totalCount: 1,
+          rows: [],
+          priority: 0,
+          planOrder: 2,
+          afterPlans: ["11111111-1111-4111-8111-111111111111"],
+          schedulingReason: "Waiting for prerequisite plans to integrate.",
+        },
+        stateFilter: "open",
+        planTitle: () => "Parent implementation",
+        children: "Visible task",
+      }),
+    )
+    expect(gated).toContain("Gated single task")
+    expect(gated).toMatch(/>Order (?:<!--[^>]*-->)*3/)
+    expect(gated).toContain(">Parent implementation</button>")
+    expect(gated).toContain('title="Waiting for prerequisite plans to integrate."')
   })
 
   test("session.panel menu places Tasks after the native extra-panel entries", () => {

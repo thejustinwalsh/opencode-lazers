@@ -159,6 +159,113 @@
   flex: none;
   font-variant-numeric: tabular-nums;
 }
+.lazers-tasks-plan-order {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  text-align: right;
+}
+/* One line under a plan heading: typed plan links first, then the scheduler's reason, clipped. */
+.lazers-tasks-plan-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px 4px 16px;
+  color: var(--text-weak);
+  font-size: 0.85em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.lazers-tasks-plan-after {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lazers-tasks-plan-reason-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lazers-tasks-schedule-groups {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+.lazers-tasks-schedule-group {
+  min-width: 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-tasks-schedule-heading {
+  margin: 0;
+  padding: 4px 4px 2px;
+  color: var(--text-weak);
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.lazers-tasks-schedule-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 8px 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+}
+.lazers-tasks-schedule-entry:hover {
+  background: var(--surface-base-hover);
+}
+.lazers-tasks-schedule-entry[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--text-strong) 9%, var(--background-base));
+}
+.lazers-tasks-schedule-entry-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lazers-tasks-schedule-entry-meta {
+  flex: none;
+  color: var(--text-weak);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+.lazers-tasks-scheduling-warning {
+  padding: 4px 8px;
+  color: var(--text-weak);
+  font-size: 0.85em;
+}
+/* Inspector: the scheduler's source reason and every recorded reservation holder. */
+.lazers-tasks-node-reason {
+  margin: 0 0 10px;
+  color: var(--text-weak);
+  font-size: 0.88em;
+  line-height: 1.45;
+}
+.lazers-tasks-detail .lazers-tasks-node-reason-text {
+  margin: 0 0 4px;
+}
+.lazers-tasks-node-references {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.lazers-tasks-node-references-more > summary {
+  padding: 2px 0;
+  color: var(--text-weak);
+}
 .lazers-tasks button:focus-visible,
 .lazers-tasks summary:focus-visible,
 .lazers-tasks-separator:focus-visible {
@@ -561,32 +668,6 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
 .lazers-tasks-entry[data-context-only="true"] > .lazers-tasks-row .lazers-tasks-row-title {
   color: var(--text-base);
 }
-.lazers-tasks-badge {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 45%;
-  padding: 0 6px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 4px;
-  color: var(--text-weak);
-  font-size: 0.85em;
-  line-height: 18px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lazers-tasks-badge[data-tone="running"] {
-  color: var(--text-base);
-}
-.lazers-tasks-badge[data-tone="attention"],
-.lazers-tasks-badge[data-tone="waiting"] {
-  border-color: color-mix(in srgb, var(--icon-warning-base) 45%, transparent);
-  color: var(--text-base);
-}
-.lazers-tasks-badge[data-tone="failed"] {
-  border-color: color-mix(in srgb, var(--icon-critical-base) 45%, transparent);
-  color: var(--text-base);
-}
 .lazers-tasks-branches {
   display: grid;
   gap: 2px;
@@ -611,8 +692,30 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
 .lazers-tasks-plan-priority {
   flex: none;
 }
-@container lazers-tasks (max-width: 379px) {
-  .lazers-tasks-badge {
-    max-width: 40%;
-  }
+
+/*
+ * Row status is icons only at every width, so the title alone yields width: the themed state icon
+ * names the state, and a link icon that never shrinks opens the first blocker. Now/Attention match.
+ */
+.lazers-tasks-row-blocker {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--icon-base);
+  cursor: pointer;
+}
+.lazers-tasks-row-blocker:hover,
+.lazers-tasks-row-blocker:focus-visible {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
+.lazers-tasks-row-blocker:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: -2px;
 }

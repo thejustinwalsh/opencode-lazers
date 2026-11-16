@@ -62,8 +62,12 @@ Reference: [tasks-focus-v2](design/task-panel/tasks-focus-v2.png) and the
 
 Use Linear as the reference for a compact, expandable list. Give each task one
 row with a readable title and a copyable project reference. Use theme-aware
-colors, icons and short badges to distinguish running, blocked, scheduled and
-attention states at a glance. Show dependencies in the list tree. Group parallel
+colors and icons to distinguish running, blocked, scheduled and attention states
+at a glance. Row status is colored icons only at every width, including Now and
+Attention rows, so the title keeps the width: the themed state icon names the
+state and a link icon opens the first blocker, each with an accessible name and
+tooltip. Full explanations stay in the inspector. Show dependencies in the list
+tree. Group parallel
 siblings and place sequential work under its actual plan relationships. Expose
 state filters, including completed tasks, and access to historical trajectories.
 Make current work, attention and next eligible work easy to distinguish. Show

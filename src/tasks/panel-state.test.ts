@@ -5,6 +5,8 @@ import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./co
 import type { TopologyResponse } from "../observability/contract.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import type { TaskPanelChange } from "./panel-state.ts"
+import type { SchedulingPage, SchedulingScope } from "./scheduling-contract.ts"
+import { buildExecutionList } from "./execution-list.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -222,6 +224,393 @@ test("native activity events refresh only matching tasks and coalesce repeated n
     expect(state.data.currentActivity[taskB]?.foreground).toBe("inactive")
   } finally {
     state.close()
+  }
+})
+
+test("Tasks panel assembles one paginated scheduling snapshot without changing its numeric observation time", async () => {
+  const state = new TaskPanelState(() => {})
+  const scope: SchedulingScope = { kind: "project", sessionID: "session" }
+  const blockedTaskID = crypto.randomUUID()
+  const blockerTaskIDs = Array.from({ length: 100 }, () => crypto.randomUUID())
+  const base = {
+    schemaVersion: 1 as const,
+    snapshotID: crypto.randomUUID(),
+    repositoryVersion: 7,
+    scope,
+    observedAt: 0,
+    coverage: {
+      status: "complete" as const,
+      planCount: 2,
+      coveredPlanCount: 2,
+      nodeCount: 1,
+      coveredNodeCount: 1,
+      activeReservationCount: 101,
+      reservationsComplete: true,
+      reason: null,
+    },
+    next: { status: "none" as const },
+    selectedTaskIDs: [],
+    selectionComplete: true,
+  }
+  const schedulingPages: SchedulingPage[] = [
+    {
+      ...base,
+      plans: [
+        {
+          planID: crypto.randomUUID(),
+          planVersion: 1,
+          planOrder: 0,
+          priority: 4,
+          title: "First page plan",
+          lifecycle: "running",
+          decision: "waiting",
+          reason: null,
+          afterPlans: [],
+          nodes: [
+            {
+              taskID: blockedTaskID,
+              title: "Blocked task",
+              objective: "Blocked task",
+              ordinal: 0,
+              order: 0,
+              lifecycle: "queued",
+              decision: "waiting",
+              reason: "A conflicting write scope is reserved.",
+              prerequisites: [],
+              waitingOn: [],
+              reservationTaskIDs: blockerTaskIDs,
+              reservationTaskCount: 101,
+              reservationTaskIDsComplete: false,
+            },
+          ],
+          nodesComplete: true,
+        },
+      ],
+      nextCursor: "page-two",
+    },
+    {
+      ...base,
+      plans: [
+        {
+          planID: crypto.randomUUID(),
+          planVersion: 1,
+          planOrder: 1,
+          priority: 0,
+          title: "Second page plan",
+          lifecycle: "running",
+          decision: "waiting",
+          reason: null,
+          afterPlans: [],
+          nodes: [],
+          nodesComplete: true,
+        },
+      ],
+      nextCursor: null,
+    },
+  ]
+  let schedulingCalls = 0
+  const api = transport(async () => page("/project"))
+  api.scheduling = async (input) => {
+    const current = schedulingPages[schedulingCalls++]!
+    if (input.cursor === undefined) expect(current.nextCursor).toBe("page-two")
+    else expect(input.cursor).toBe("page-two")
+    return current
+  }
+  state.connect("scheduling-pages", "/project", api, {}, undefined, scope)
+  await until(() => state.data.scheduling?.plans.length === 2)
+  expect(schedulingCalls).toBe(2)
+  expect(state.data.scheduling?.observedAt).toBe(0)
+  expect(state.data.scheduling?.plans.map((plan) => plan.title)).toEqual([
+    "First page plan",
+    "Second page plan",
+  ])
+  const blockedRow = buildExecutionList({
+    tasks: state.data.tasks,
+    revealTaskIDs: new Set([blockedTaskID]),
+    scheduling: state.data.scheduling,
+  }).plans[0]?.rows.find((row) => row.taskID === blockedTaskID)
+  expect(blockedRow?.scheduling).toMatchObject({
+    reservationTaskCount: 101,
+    reservationTaskIDs: blockerTaskIDs,
+    reservationTaskIDsComplete: false,
+  })
+  expect(blockedRow?.scheduling?.reason).toContain("Showing 100 of 101 blocker task references.")
+  expect(state.data.schedulingError).toBe("")
+  state.close()
+})
+
+test("unrelated progress watermark churn preserves compatible topology grouping and three active workers", async () => {
+  const taskIDs: string[] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
+  const planID = crypto.randomUUID()
+  const scope: SchedulingScope = { kind: "project", sessionID: "session" }
+  const initial = page("/project").tasks[0]!
+  const tasks = taskIDs.map((taskID, ordinal) => ({
+    ...initial,
+    taskID,
+    reference: `LZ-${ordinal + 1}`,
+    status: "running" as const,
+    recordedState: "running" as const,
+    title: `Worker ${ordinal + 1}`,
+    objective: `Worker ${ordinal + 1}`,
+  }))
+  let watermark = 10
+  const state = new TaskPanelState(() => {})
+  const api = transport(async () => ({
+    ...page("/project"),
+    snapshot: watermark,
+    count: tasks.length,
+    tasks,
+  }))
+  api.topology = async () => {
+    // Model an ordinary progress write after the task page, without changing relationships.
+    watermark++
+    return {
+      schemaVersion: 1,
+      projectID: "project",
+      scope: { kind: "project" },
+      observedAt: new Date().toISOString(),
+      boundary: { repositoryVersion: watermark },
+      plans: [
+        {
+          id: planID,
+          revision: 1,
+          version: 1,
+          state: "running",
+          reason: null,
+          title: "Concurrent dependency graph",
+          afterPlans: [],
+          nodes: taskIDs.map((taskID, ordinal) => ({
+            taskID,
+            revision: 1,
+            objective: `Worker ${ordinal + 1}`,
+            ordinal,
+            state: "running",
+            version: 1,
+            reason: null,
+            machineVersion: "test",
+            machineSupported: true,
+            snapshot: null,
+            snapshotMatchesState: true,
+            waitingOn: ordinal ? [taskIDs[ordinal - 1]!] : [],
+          })),
+          dependencies: taskIDs.slice(1).map((taskID, index) => ({
+            prerequisite: taskIDs[index]!,
+            successor: taskID,
+          })),
+        },
+      ],
+      unplannedTasks: [],
+    } as unknown as TopologyResponse
+  }
+  api.scheduling = async () => {
+    // Another unrelated progress write lands between topology and scheduling reads.
+    watermark++
+    const nodes = taskIDs.map((taskID, ordinal) => ({
+      taskID,
+      title: `Worker ${ordinal + 1}`,
+      objective: `Worker ${ordinal + 1}`,
+      ordinal,
+      order: ordinal,
+      lifecycle: "running" as const,
+      decision: "not-applicable" as const,
+      reason: null,
+      prerequisites: ordinal ? [taskIDs[ordinal - 1]!] : [],
+      waitingOn: [],
+      reservationTaskIDs: [],
+    }))
+    return {
+      schemaVersion: 1,
+      snapshotID: crypto.randomUUID(),
+      repositoryVersion: watermark,
+      scope,
+      observedAt: Date.now(),
+      coverage: {
+        status: "complete",
+        planCount: 1,
+        coveredPlanCount: 1,
+        nodeCount: nodes.length,
+        coveredNodeCount: nodes.length,
+        activeReservationCount: 0,
+        reservationsComplete: true,
+        reason: null,
+      },
+      next: { status: "none" },
+      selectedTaskIDs: [],
+      selectionComplete: true,
+      plans: [
+        {
+          planID,
+          planVersion: 1,
+          planOrder: 0,
+          priority: 3,
+          title: "Concurrent dependency graph",
+          lifecycle: "running",
+          decision: "waiting",
+          reason: null,
+          afterPlans: [],
+          nodesComplete: true,
+          nodes,
+        },
+      ],
+      nextCursor: null,
+    }
+  }
+  api.currentActivity = async (requested) => ({
+    activities: requested.map((taskID) => ({
+      taskID,
+      workerSessionID: `worker-${taskIDs.indexOf(taskID) + 1}`,
+      attemptID: crypto.randomUUID(),
+      foreground: "active" as const,
+      unknownReason: null,
+      recordedState: "running" as const,
+      waiting: false,
+      holdReason: null,
+      pendingInput: false,
+      pendingPermissions: 0,
+      pendingForms: 0,
+      outcome: null,
+      observedAt: watermark,
+    })),
+  })
+
+  try {
+    state.connect("concurrent", "/project", api, {}, undefined, scope)
+    await until(
+      () =>
+        !state.data.loading &&
+        taskIDs.every((taskID) => state.data.currentActivity[taskID]?.foreground === "active"),
+    )
+    expect(state.data.topology).toBeDefined()
+    expect(state.data.topologyError).toBe("")
+    expect(state.data.schedulingError).toBe("")
+    const list = buildExecutionList({
+      topology: state.data.topology,
+      tasks: state.data.tasks,
+      scheduling: state.data.scheduling,
+    })
+    expect(list.plans).toHaveLength(1)
+    expect(list.plans[0]?.rows.map((row) => row.taskID)).toEqual(taskIDs)
+    expect(list.plans[0]?.rows[2]?.prerequisites).toEqual([taskIDs[1]!])
+    expect(Object.keys(state.data.currentActivity)).toHaveLength(3)
+    expect(
+      Object.values(state.data.currentActivity).map((activity) => activity.foreground),
+    ).toEqual(["active", "active", "active"])
+  } finally {
+    state.close()
+  }
+})
+
+test("material relationship disagreement and scheduling scope mismatch do not combine groupings", async () => {
+  const taskIDs: string[] = [crypto.randomUUID(), crypto.randomUUID()]
+  const planID = crypto.randomUUID()
+  const scope: SchedulingScope = { kind: "project", sessionID: "session" }
+  const initial = page("/project").tasks[0]!
+  const tasks = taskIDs.map((taskID) => ({ ...initial, taskID }))
+  const state = new TaskPanelState(() => {})
+  const api = transport(async () => ({
+    ...page("/project"),
+    tasks,
+    count: tasks.length,
+    snapshot: 1,
+  }))
+  api.topology = async () =>
+    ({
+      boundary: { repositoryVersion: 2 },
+      scope: { kind: "project" },
+      plans: [
+        {
+          id: planID,
+          revision: 1,
+          version: 1,
+          afterPlans: [],
+          nodes: taskIDs.map((taskID, ordinal) => ({ taskID, ordinal })),
+          dependencies: [{ prerequisite: taskIDs[0], successor: taskIDs[1] }],
+        },
+      ],
+    }) as unknown as TopologyResponse
+  api.scheduling = async () => ({
+    schemaVersion: 1,
+    snapshotID: crypto.randomUUID(),
+    repositoryVersion: 3,
+    scope: { kind: "project", sessionID: "session" },
+    observedAt: 1,
+    coverage: {
+      status: "complete",
+      planCount: 1,
+      coveredPlanCount: 1,
+      nodeCount: 2,
+      coveredNodeCount: 2,
+      activeReservationCount: 0,
+      reservationsComplete: true,
+      reason: null,
+    },
+    next: { status: "none" },
+    selectedTaskIDs: [],
+    selectionComplete: true,
+    plans: [
+      {
+        planID,
+        planVersion: 1,
+        planOrder: 0,
+        priority: 0,
+        title: "Current relationship",
+        lifecycle: "running",
+        decision: "waiting",
+        reason: null,
+        afterPlans: [],
+        nodesComplete: true,
+        nodes: taskIDs.map((taskID, ordinal) => ({
+          taskID,
+          title: taskID,
+          objective: taskID,
+          ordinal,
+          order: ordinal,
+          lifecycle: "queued" as const,
+          decision: "waiting" as const,
+          reason: null,
+          prerequisites: [],
+          waitingOn: [],
+          reservationTaskIDs: [],
+        })),
+      },
+    ],
+    nextCursor: null,
+  })
+  try {
+    state.connect("changed-relationships", "/project", api, {}, undefined, scope)
+    await until(() => !state.data.loading && Boolean(state.data.scheduling))
+    expect(state.data.topology).toBeUndefined()
+    expect(state.data.topologyError).toContain("relationships changed")
+    const list = buildExecutionList({
+      topology: state.data.topology,
+      tasks: state.data.tasks,
+      scheduling: state.data.scheduling,
+    })
+    expect(list.plans).toHaveLength(1)
+    expect(list.plans[0]?.rows[1]?.prerequisites).toEqual([])
+  } finally {
+    state.close()
+  }
+
+  const incompatible = new TaskPanelState(() => {})
+  const wrongScope = transport(async () => ({ ...page("/project"), tasks, count: tasks.length }))
+  wrongScope.topology = async () =>
+    ({
+      boundary: { repositoryVersion: 1 },
+      scope: { kind: "project" },
+      plans: [],
+    }) as unknown as TopologyResponse
+  wrongScope.scheduling = async () => ({
+    ...(await api.scheduling!({ scope, limit: 10 }, new AbortController().signal)),
+    scope: { kind: "session", sessionID: "other-session" },
+  })
+  try {
+    incompatible.connect("wrong-scope", "/project", wrongScope, {}, undefined, scope)
+    await until(() => !incompatible.data.loading && Boolean(incompatible.data.schedulingError))
+    expect(incompatible.data.scheduling).toBeUndefined()
+    expect(incompatible.data.topology).toBeDefined()
+  } finally {
+    incompatible.close()
   }
 })
 
