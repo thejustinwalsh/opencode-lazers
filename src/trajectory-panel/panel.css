@@ -3,6 +3,12 @@
   --trajectory-label: 84px;
   --trajectory-mark: var(--icon-base);
   --trajectory-failed: var(--icon-critical-base);
+  --trajectory-row: 28px;
+  /* One token per row hue; none may resolve to red (failure) or amber (gaps). */
+  --trajectory-hue-attempts: var(--text-interactive-base, var(--text-base));
+  --trajectory-hue-tools: var(--syntax-string, var(--text-base));
+  --trajectory-hue-files: var(--icon-agent-plan-base, var(--text-base));
+  --trajectory-hue-checks: var(--syntax-type, var(--text-strong));
   display: grid;
   grid-template-rows:
     minmax(0, var(--trajectory-visual-fr, 56fr))
@@ -325,7 +331,9 @@
   border-top: 1px solid var(--border-weak-base);
 }
 .lazers-trajectory-attempt {
-  min-height: 32px;
+  --trajectory-hue: var(--trajectory-hue-attempts);
+  box-sizing: border-box;
+  height: var(--trajectory-row);
   border-bottom: 1px solid var(--border-weak-base);
   color: var(--text-base);
   cursor: pointer;
@@ -346,13 +354,107 @@
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
-.lazers-trajectory-attempt-state {
-  display: inline-flex;
-  flex: none;
+.lazers-trajectory-tool-count,
+.lazers-trajectory-lane-count {
+  margin-left: auto;
   color: var(--text-weak);
+  font-variant-numeric: tabular-nums;
 }
-.lazers-trajectory-attempt-state[data-outcome="failed"] {
-  color: var(--trajectory-failed);
+.lazers-trajectory-lane {
+  display: grid;
+  grid-template-columns: var(--trajectory-label) minmax(0, 1fr);
+  align-items: stretch;
+  min-width: 0;
+}
+.lazers-trajectory-label-cell {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px 0 var(--trajectory-inset);
+  overflow: hidden;
+  background: var(--background-base);
+  color: var(--text-weak);
+  font-size: 0.84em;
+  white-space: nowrap;
+}
+.lazers-trajectory-axis {
+  height: 22px;
+  color: var(--text-weak);
+  font-size: 0.76em;
+  font-variant-numeric: tabular-nums;
+}
+.lazers-trajectory-axis-track,
+.lazers-trajectory-track {
+  position: relative;
+  min-width: 0;
+}
+.lazers-trajectory-tick {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.lazers-trajectory-tick:first-child {
+  transform: none;
+}
+.lazers-trajectory-tick:last-child:not(:first-child) {
+  transform: translateX(-100%);
+}
+.lazers-trajectory-gridlines {
+  position: absolute;
+  top: 22px;
+  right: 0;
+  bottom: 0;
+  left: var(--trajectory-label);
+  pointer-events: none;
+}
+.lazers-trajectory-gridlines > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-weak-base);
+}
+.lazers-trajectory-gridlines > .lazers-trajectory-unloaded {
+  right: 0;
+  width: auto;
+  border-left: 1px dashed var(--border-base);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 4px,
+    color-mix(in srgb, var(--text-weak) 10%, transparent) 4px 5px
+  );
+}
+.lazers-trajectory-attempts {
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-trajectory-attempt {
+  --trajectory-hue: var(--trajectory-hue-attempts);
+  box-sizing: border-box;
+  height: var(--trajectory-row);
+  border-bottom: 1px solid var(--border-weak-base);
+  color: var(--text-base);
+  cursor: pointer;
+}
+.lazers-trajectory-attempt:hover,
+.lazers-trajectory-attempt[data-selected="true"] {
+  background: var(--surface-base-hover);
+}
+.lazers-trajectory-attempt:hover .lazers-trajectory-label-cell,
+.lazers-trajectory-attempt[data-selected="true"] .lazers-trajectory-label-cell {
+  background: var(--surface-base-hover);
+}
+.lazers-trajectory-attempt[data-selected="true"] .lazers-trajectory-label-cell {
+  box-shadow: inset 2px 0 0 var(--border-selected);
+}
+.lazers-trajectory-attempt-number {
+  min-width: 1.2em;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
 }
 .lazers-trajectory-tool-count,
 .lazers-trajectory-lane-count {
@@ -385,11 +487,12 @@
   mask-image: linear-gradient(to right, #000 70%, transparent);
 }
 .lazers-trajectory-lane {
-  min-height: 28px;
+  box-sizing: border-box;
+  height: var(--trajectory-row);
   border-bottom: 1px solid var(--border-weak-base);
 }
 .lazers-trajectory-mark-track {
-  min-height: 28px;
+  height: 100%;
   cursor: pointer;
 }
 .lazers-trajectory-lane-empty {
@@ -403,104 +506,113 @@
   pointer-events: none;
 }
 
-/* Marks: shape carries the outcome, colour only reinforces it. */
+.lazers-trajectory-lane[data-track="tools"] {
+  --trajectory-hue: var(--trajectory-hue-tools);
+}
+.lazers-trajectory-lane[data-track="files"] {
+  --trajectory-hue: var(--trajectory-hue-files);
+}
+.lazers-trajectory-lane[data-track="checks"] {
+  --trajectory-hue: var(--trajectory-hue-checks);
+}
+
+/* Rail: one start/end/line grammar for every event; red means recorded failure only. */
+.lazers-trajectory-rail {
+  --rail-color: var(--trajectory-hue, var(--text-base));
+  --rail-cap: 12px;
+  --rail-line: 2px;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.lazers-trajectory-segment,
+.lazers-trajectory-check-interval {
+  z-index: 1;
+}
+.lazers-trajectory-rail[data-failed="true"],
+.lazers-trajectory-check-interval[data-result="failed"] {
+  --rail-color: var(--trajectory-failed);
+}
+.lazers-trajectory-rail {
+  background: linear-gradient(var(--rail-color), var(--rail-color)) center / 100% var(--rail-line)
+    no-repeat;
+}
+.lazers-trajectory-rail[data-end="open"] {
+  background: linear-gradient(to right, var(--rail-color) 60%, transparent) center / 100%
+    var(--rail-line) no-repeat;
+}
+.lazers-trajectory-rail::before,
+.lazers-trajectory-rail::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - var(--rail-cap) / 2);
+  width: 2px;
+  height: var(--rail-cap);
+  border-radius: 1px;
+  background: var(--rail-color);
+}
+.lazers-trajectory-rail::before {
+  left: 0;
+  transform: translateX(-50%);
+}
+.lazers-trajectory-rail::after {
+  left: 100%;
+  transform: translateX(-50%);
+}
+.lazers-trajectory-rail[data-start="missing"]::before,
+.lazers-trajectory-rail[data-end="missing"]::after,
+.lazers-trajectory-rail[data-end="open"]::after {
+  content: none;
+}
+.lazers-trajectory-attempt[data-selected="true"] .lazers-trajectory-rail,
+[aria-selected="true"] > .lazers-trajectory-rail,
+.lazers-trajectory-check-interval[data-selected="true"] {
+  --rail-cap: 16px;
+  --rail-line: 3px;
+  z-index: 2;
+}
+
+/* Marks are transparent hit targets over their rail. */
 .lazers-trajectory-mark {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
-  margin-left: -4px;
+  width: 12px;
+  margin-left: -6px;
   border-radius: 2px;
   cursor: pointer;
 }
 .lazers-trajectory-mark[data-span="true"] {
-  min-width: 8px;
   margin-left: 0;
 }
-.lazers-trajectory-mark::before {
-  content: "";
-  position: absolute;
-  top: 7px;
-  bottom: 7px;
-  left: 3px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--trajectory-mark);
+.lazers-trajectory-mark > .lazers-trajectory-rail {
+  left: 50%;
+  width: 0;
 }
-.lazers-trajectory-mark[data-span="true"]::after {
-  content: "";
-  position: absolute;
-  top: calc(50% - 1px);
-  right: 0;
-  left: 3px;
-  height: 2px;
-  background: color-mix(in srgb, var(--trajectory-mark) 55%, transparent);
-}
-.lazers-trajectory-mark[data-outcome="failed"]::before {
-  top: calc(50% - 4px);
-  bottom: auto;
+.lazers-trajectory-mark[data-span="true"] > .lazers-trajectory-rail {
   left: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 0;
-  background:
-    linear-gradient(45deg, transparent 40%, var(--trajectory-failed) 40% 60%, transparent 60%),
-    linear-gradient(-45deg, transparent 40%, var(--trajectory-failed) 40% 60%, transparent 60%);
+  width: 100%;
 }
-.lazers-trajectory-mark[data-outcome="failed"][data-span="true"]::after {
-  background: color-mix(in srgb, var(--trajectory-failed) 55%, transparent);
-}
-.lazers-trajectory-mark[data-outcome="running"]::before {
-  top: calc(50% - 4px);
-  bottom: auto;
-  left: 0;
-  width: 8px;
-  height: 8px;
-  box-sizing: border-box;
-  border: 1.5px solid var(--trajectory-mark);
-  border-radius: 50%;
-  background: transparent;
-}
-.lazers-trajectory-mark[data-outcome="unknown"]::before {
-  top: calc(50% - 3px);
-  bottom: auto;
-  height: 6px;
+.lazers-trajectory-file-mark[data-operation="read"] > .lazers-trajectory-rail {
   opacity: 0.6;
 }
-.lazers-trajectory-mark[data-kind="gap"]::before,
-.lazers-trajectory-mark[data-kind="gap"][data-outcome]::before {
+.lazers-trajectory-mark:hover,
+.lazers-trajectory-check-marker:hover {
+  background: color-mix(in srgb, var(--trajectory-hue) 14%, transparent);
+}
+/* Gaps and compactions are context, not events: warning-hue full-height line. */
+.lazers-trajectory-mark[data-kind="gap"]::before {
+  content: "";
+  position: absolute;
   top: 2px;
   bottom: 2px;
-  left: 3px;
+  left: 5px;
   width: 0;
-  height: auto;
-  border: 0;
   border-left: 2px dashed var(--icon-warning-base);
-  border-radius: 0;
-  background: none;
-  opacity: 1;
 }
 .lazers-trajectory-mark[data-kind="gap"][data-outcome="compaction"]::before {
   border-left-style: dotted;
-}
-.lazers-trajectory-file-mark::before,
-.lazers-trajectory-file-mark[data-operation]::before {
-  top: calc(50% - 3.5px);
-  bottom: auto;
-  left: 0.5px;
-  width: 7px;
-  height: 7px;
-  box-sizing: border-box;
-  border: 1.5px solid var(--trajectory-mark);
-  border-radius: 1px;
-  background: transparent;
-}
-.lazers-trajectory-file-mark[data-operation="edit"]::before {
-  background: var(--trajectory-mark);
-}
-.lazers-trajectory-file-mark[data-operation="patch"]::before {
-  background: var(--trajectory-mark);
-  transform: rotate(45deg) scale(0.85);
 }
 .lazers-trajectory-mark[aria-selected="true"] {
   z-index: 2;
@@ -508,62 +620,36 @@
   box-shadow: 0 0 0 1px var(--border-selected);
 }
 
-/* Checks: overlapping intervals pack into sub-rows. */
-.lazers-trajectory-checks .lazers-trajectory-mark-track {
-  min-height: calc(var(--trajectory-check-rows, 1) * 20px + 8px);
-}
-.lazers-trajectory-check-interval {
-  position: absolute;
-  z-index: 1;
-  top: calc(var(--trajectory-check-row, 0) * 20px + 13px);
-  height: 3px;
-  border-radius: 2px;
-  background: var(--trajectory-mark);
-}
-.lazers-trajectory-check-interval[data-result="failed"] {
-  background: var(--trajectory-failed);
-}
+/* Checks: all intervals share one baseline and overdraw; the selected one is raised. */
 .lazers-trajectory-check-interval[data-invalid="true"] {
-  background: var(--icon-warning-base);
-}
-.lazers-trajectory-check-interval[data-point="true"] {
   width: 0 !important;
-}
-.lazers-trajectory-check-interval[data-selected="true"]:not([data-point="true"]) {
-  top: calc(var(--trajectory-check-row, 0) * 20px + 12px);
-  height: 5px;
 }
 .lazers-trajectory-check-endpoint {
   position: absolute;
   z-index: 1;
-  top: calc(var(--trajectory-check-row, 0) * 20px + 11px);
-  width: 6px;
-  height: 6px;
+  top: calc(50% - 6px);
+  width: 2px;
+  height: 12px;
   transform: translateX(-50%);
-  border: 1px solid var(--background-base);
-  border-radius: 50%;
+  border-radius: 1px;
   background: var(--icon-warning-base);
+  pointer-events: none;
 }
 .lazers-trajectory-check-marker {
   position: absolute;
   z-index: 2;
-  top: calc(var(--trajectory-check-row, 0) * 20px + 4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  height: 20px;
-  margin-left: -12px;
-  border-radius: 4px;
-  color: var(--text-weak);
+  top: 0;
+  bottom: 0;
+  min-width: 12px;
+  border-radius: 2px;
   cursor: pointer;
 }
-.lazers-trajectory-check-marker[data-outcome="failed"] {
-  color: var(--trajectory-failed);
+.lazers-trajectory-check-marker[data-point="true"] {
+  margin-left: -6px;
 }
 .lazers-trajectory-check-marker[aria-selected="true"] {
   z-index: 3;
-  background: color-mix(in srgb, var(--border-selected) 28%, var(--background-base));
+  background: color-mix(in srgb, var(--border-selected) 28%, transparent);
   box-shadow: 0 0 0 1px var(--border-selected);
 }
 .lazers-trajectory-coverage-line {
