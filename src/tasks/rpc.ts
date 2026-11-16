@@ -9,6 +9,7 @@ import { resolve, isAbsolute } from "node:path"
 import type { CurrentActivityTarget, TaskReads } from "./read.ts"
 import { CurrentActivityInput, CurrentActivityOutput, Tasks } from "./contract.ts"
 import type { CurrentTaskActivity } from "./contract.ts"
+import { SchedulingInput, SchedulingOutput, TasksScheduling } from "./scheduling-contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 import type { HostSession } from "../runner/host.ts"
 import { revisionPublishers } from "../database-events.ts"
@@ -261,6 +262,73 @@ export function registerTaskReads(
             return runtime.startTask(input)
           },
           catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+        }).pipe(Effect.orDie),
+    })
+    yield* ctx.rpc.register(TasksScheduling, {
+      read: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            signal.throwIfAborted()
+            const request = SchedulingInput.parse(input)
+            const sessionService = ctx.session
+            if (!sessionService) throw new Error("Task scheduling scope is unavailable")
+            const readScope = async (authorize: boolean) => {
+              let actor
+              try {
+                actor = await Effect.runPromise(
+                  sessionService
+                    .get({ sessionID: Session.ID.make(request.scope.sessionID) })
+                    .pipe(
+                      Effect.catch((error) =>
+                        typeof error === "object" &&
+                        error !== null &&
+                        "_tag" in error &&
+                        error._tag === "SessionNotFoundError"
+                          ? Effect.succeed(null)
+                          : Effect.fail(error),
+                      ),
+                    ),
+                )
+              } catch {
+                throw new Error("Task scheduling scope is unavailable")
+              }
+              if (
+                !actor ||
+                actor.id !== request.scope.sessionID ||
+                actor.projectID !== runtime.projectID ||
+                actor.time.archived !== undefined ||
+                !actor.agent
+              )
+                throw new Error("Task scheduling scope is unavailable")
+              if (authorize)
+                await Effect.runPromise(
+                  ctx.permission.assert({
+                    sessionID: Session.ID.make(actor.id),
+                    agent: Agent.ID.make(actor.agent),
+                    action: "read",
+                    resources: [reads.repository.projectDirectory],
+                  }),
+                )
+              return actor
+            }
+
+            const initialScope = await readScope(true)
+            signal.throwIfAborted()
+            const result = await runtime.readScheduling(request)
+            signal.throwIfAborted()
+            const currentScope = await readScope(false)
+            signal.throwIfAborted()
+            if (
+              currentScope.id !== initialScope.id ||
+              currentScope.projectID !== initialScope.projectID ||
+              currentScope.location.directory !== initialScope.location.directory ||
+              currentScope.agent !== initialScope.agent ||
+              currentScope.time.archived !== initialScope.time.archived
+            )
+              throw new Error("Task scheduling scope changed during the read")
+            return SchedulingOutput.parse(result)
+          },
+          catch: () => new Error("Task scheduling read is unavailable"),
         }).pipe(Effect.orDie),
     })
     if (ctx.tool)

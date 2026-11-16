@@ -2209,9 +2209,10 @@ test("task integration records a reviewed landing without finalizing the plan or
   f.completeWorker(first.session_id)
   await drive(f.runtime, 3)
   const node = f.store.nodes(planID)[0]!
-  const second = f.store.attempts(planID)[1]!
+  const successorTaskID = f.tasks[1]!.id
   expect(node.state).toBe("accepted")
-  expect(second.state).toBe("running")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.execution(successorTaskID)?.waitingOn).toEqual([node.task_id])
   const command = {
     requestID: "land-first",
     planID,
@@ -2226,7 +2227,7 @@ test("task integration records a reviewed landing without finalizing the plan or
   await expect(f.runtime.command({ ...command, expectedVersion: 1 }, "owner")).rejects.toThrow(
     "Stale plan version",
   )
-  await expect(f.runtime.command({ ...command, taskID: second.task_id }, "owner")).rejects.toThrow(
+  await expect(f.runtime.command({ ...command, taskID: successorTaskID }, "owner")).rejects.toThrow(
     "accepted task",
   )
   await expect(f.runtime.command({ ...command, artifact: f.base }, "owner")).rejects.toThrow(
@@ -2237,6 +2238,7 @@ test("task integration records a reviewed landing without finalizing the plan or
   )
   await expect(f.runtime.command(command, "owner")).rejects.toThrow()
   git(f.root, ["merge", "--ff-only", node.artifact!])
+  expect(f.store.attempts(planID)).toHaveLength(1)
   const before = structuredClone({
     plan: f.store.plan(planID),
     nodes: f.store.nodes(planID),
@@ -2256,12 +2258,15 @@ test("task integration records a reviewed landing without finalizing the plan or
   expect([...f.sessions]).toEqual(before.sessions)
   expect(f.events).toEqual(before.events)
   expect(existsSync(first.workspace)).toBe(true)
-  expect(existsSync(second.workspace)).toBe(true)
+  expect(f.store.execution(successorTaskID)?.waitingOn).toEqual([])
   expect(
     f.store
       .activity(planID, node.task_id)
       .filter((event) => event.event === "TASK_INTEGRATION_RECORDED"),
   ).toHaveLength(1)
+  await f.runtime.tick()
+  expect(f.store.attempts(planID)).toHaveLength(2)
+  expect(f.store.attempts(planID)[1]!.base_commit).toBe(git(f.root, ["rev-parse", "HEAD"]))
 })
 
 test("scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it", async () => {
@@ -4575,7 +4580,7 @@ async function acceptPlan(
   await drive(f.runtime, 2)
   const attempt = f.store.attempts(planID)[0]!
   f.completeWorker(attempt.session_id)
-  await drive(f.runtime, 6)
+  await driveWithTaskSourceLandings(f, 6, planID)
   const plan = f.store.plan(planID)!
   expect(plan.state).toBe("accepted")
   return { plan, attempt }
@@ -4605,6 +4610,63 @@ function includeArtifact(f: ReturnType<typeof fixture>, artifact: string) {
     "--no-ff",
     artifact,
   ])
+}
+async function integrateTaskSource(
+  f: ReturnType<typeof fixture>,
+  planID: string,
+  taskID: string,
+  runtime: TaskRuntime = f.runtime,
+  requestID = `land-task-${planID}-${taskID}`,
+) {
+  const node = f.store.nodes(planID).find((candidate) => candidate.task_id === taskID)
+  if (node?.state !== "accepted" || !node.artifact)
+    throw new Error(`Expected accepted task source to integrate: ${taskID}`)
+  includeArtifact(f, node.artifact)
+  const plan = f.store.plan(planID)!
+  return runtime.command(
+    {
+      requestID,
+      planID,
+      expectedVersion: plan.version,
+      action: "integrated",
+      taskID,
+      artifact: node.artifact,
+      targetBranch: git(f.root, ["branch", "--show-current"]),
+      reason: "Review and land prerequisite task source for its dependent",
+    },
+    "owner",
+  )
+}
+async function driveWithTaskSourceLandings(
+  f: ReturnType<typeof fixture>,
+  count = 16,
+  planID: string = f.receipt.planID,
+  runtime: TaskRuntime = f.runtime,
+) {
+  for (let iteration = 0; iteration < count; iteration++) {
+    await runtime.tick()
+    const plan = f.store.plan(planID)
+    if (plan?.state === "accepted") break
+    if (!plan || plan.state !== "running") continue
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const nodes = f.store.nodes(plan.id)
+    const successorsWaiting = new Set(
+      input.dependencies
+        .filter((edge) => {
+          const successor = nodes.find((node) => node.task_id === edge.successor)
+          return successor && ["queued", "ready"].includes(successor.state)
+        })
+        .map((edge) => edge.prerequisite),
+    )
+    for (const taskID of successorsWaiting) {
+      const prerequisite = nodes.find((node) => node.task_id === taskID)
+      if (
+        prerequisite?.state === "accepted" &&
+        !f.store.latestTransition(plan.id, taskID, "TASK_INTEGRATION_RECORDED")
+      )
+        await integrateTaskSource(f, plan.id, taskID, runtime)
+    }
+  }
 }
 async function recordPlanIntegration(
   f: ReturnType<typeof fixture>,
@@ -4723,7 +4785,7 @@ async function failSecondSharedTask(f: ReturnType<typeof fixture>) {
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   const attempts = f.store.attempts(f.receipt.planID)
   const predecessor = attempts.find((attempt) => attempt.task_id === f.tasks[0]!.id)!
   const failed = attempts.find((attempt) => attempt.task_id === f.tasks[1]!.id)!
@@ -4791,7 +4853,7 @@ test("real Git worktrees execute a dependency graph, verify combined content and
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime, 16)
+  await driveWithTaskSourceLandings(f)
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   expect(f.store.nodes(f.receipt.planID).map((n) => n.state)).toEqual(["accepted", "accepted"])
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
@@ -4800,7 +4862,13 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   const plan = f.store.plan(f.receipt.planID)!
   expect(git(f.root, ["show", `${plan.artifact}:a.txt`])).toBe("a")
   expect(git(f.root, ["show", `${plan.artifact}:b.txt`])).toBe("b")
-  expect(git(f.root, ["rev-parse", "HEAD"])).toBe(f.base)
+  expect(git(f.root, ["rev-parse", "HEAD"])).toBe(
+    f.store.latestTransition<{ head: string }>(
+      f.receipt.planID,
+      f.tasks[0]!.id,
+      "TASK_INTEGRATION_RECORDED",
+    )!.head,
+  )
   expect(readFileSync(join(f.root, "dirty-sentinel.txt"), "utf8")).toBe("preserve me")
   expect(
     f.inbox
@@ -5663,10 +5731,17 @@ test("whole-plan cancellation interrupts busy siblings while retaining uncertain
 test("independent isolated Git branches overlap and combined verification includes every artifact", async () => {
   const f = fixture({ independent: true, delayed: true })
   await runPlan(f)
+  const projection = await f.runtime.readScheduling({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 100,
+  })
+  expect(projection.selectedTaskIDs).toEqual(f.tasks.map((task) => task.id))
+  expect(projection.next).toMatchObject({ status: "known", candidate: { taskID: f.tasks[0]!.id } })
   await f.runtime.tick()
 
   const attempts = f.store.attempts(f.receipt.planID)
   expect(attempts).toHaveLength(2)
+  expect(attempts.map((attempt) => attempt.task_id)).toEqual(projection.selectedTaskIDs)
   expect(new Set(attempts.map((attempt) => attempt.workspace)).size).toBe(2)
   expect(attempts.every((attempt) => attempt.base_commit === f.base)).toBe(true)
   expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
@@ -5740,6 +5815,11 @@ test("dependencies wait for accepted inputs and wildcard ancestor scopes seriali
   ])
   const predecessor = dependent.store.attempts(dependent.receipt.planID)[0]!
   dependent.completeWorker(predecessor.session_id)
+  await settleVerification(dependent.runtime)
+  await dependent.runtime.tick()
+  expect(dependent.store.attempts(dependent.receipt.planID)).toHaveLength(1)
+  expect(dependent.store.nodes(dependent.receipt.planID)[1]!.state).toBe("queued")
+  await integrateTaskSource(dependent, dependent.receipt.planID, dependent.tasks[0]!.id)
   await settleVerification(dependent.runtime)
   expect(dependent.store.attempts(dependent.receipt.planID)).toHaveLength(2)
   const successor = dependent.store.attempts(dependent.receipt.planID)[1]!
@@ -6894,27 +6974,31 @@ test("repairing one parallel branch retains its failed check and usage while its
   ])
 })
 
-test("missing and permission-denied skill suggestions never block admission or dispatch", async () => {
-  for (const skillSuggestions of [
-    [],
-    ["missing-skill — Optional but not installed"],
-    ["denied-skill — Optional and may not be permitted"],
-  ]) {
-    const f = fixture({ skillSuggestions })
-    await f.runtime.command(
-      { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
-      "owner",
-    )
-    await drive(f.runtime)
-    expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
-    for (const attempt of f.store.attempts(f.receipt.planID)) {
-      expectNoSkillBody(attempt.policy)
-      expect(
-        JSON.parse(JSON.parse(attempt.policy).context).specification.requirements.skills,
-      ).toEqual(skillSuggestions)
+test(
+  "missing and permission-denied skill suggestions never block admission or dispatch",
+  { timeout: 20_000 },
+  async () => {
+    for (const skillSuggestions of [
+      [],
+      ["missing-skill — Optional but not installed"],
+      ["denied-skill — Optional and may not be permitted"],
+    ]) {
+      const f = fixture({ skillSuggestions })
+      await f.runtime.command(
+        { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+        "owner",
+      )
+      await driveWithTaskSourceLandings(f)
+      expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+      for (const attempt of f.store.attempts(f.receipt.planID)) {
+        expectNoSkillBody(attempt.policy)
+        expect(
+          JSON.parse(JSON.parse(attempt.policy).context).specification.requirements.skills,
+        ).toEqual(skillSuggestions)
+      }
     }
-  }
-})
+  },
+)
 
 test("repair handoffs do not copy legacy skill bodies into a new attempt", async () => {
   const f = fixture({ fail: true, repair: true, skillSuggestions: ["sqlite — Optional helper"] })
@@ -7096,7 +7180,7 @@ test("plan evidence binds to the accepted combination and remains separate from 
     { requestID: "run", planID: plan.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime, 10)
+  await driveWithTaskSourceLandings(f, 10, plan.planID)
   expect(f.store.plan(plan.planID)!.reason).toContain("native:human")
   expect(f.store.nodes(plan.planID).every((node) => node.state === "accepted")).toBe(true)
   const artifact = await combineArtifacts(
@@ -7370,7 +7454,7 @@ test("historical guessed token caps do not stop useful work and stopped attempts
   const receipt = await f.runtime.command(command, "owner")
   expect(await f.runtime.command(command, "owner")).toEqual(receipt)
   expect(f.store.attempts(f.receipt.planID)[0]!.token_count).toBe(65941)
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)[0]!.policy).toBe(historicalPolicy)
   const sameTask = f.store.attempts(f.receipt.planID).filter((a) => a.task_id === attempt.task_id)
@@ -7389,7 +7473,7 @@ test("runtime retains the actual directory returned by the host worktree strateg
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
   expect(
     f.store.attempts(f.receipt.planID).every((attempt) => attempt.workspace.endsWith("-2")),
@@ -7628,10 +7712,12 @@ test("retry requeues a cancelled unstarted successor in the admitted graph and w
   expect(f.store.nodes(planID).find((node) => node.task_id === predecessorID)?.state).toBe(
     "accepted",
   )
-  expect(f.store.execution(successorID)?.waitingOn).toEqual([])
+  expect(f.store.execution(successorID)?.waitingOn).toEqual([predecessorID])
   expect(
     f.store.attempts(planID).filter((attempt) => attempt.task_id === successorID),
   ).toHaveLength(0)
+  await integrateTaskSource(f, planID, predecessorID)
+  expect(f.store.execution(successorID)?.waitingOn).toEqual([])
 
   f.completeWorker(blockerAttempt.session_id)
   await settleVerification(f.runtime)
@@ -8025,7 +8111,7 @@ test("serial shared children commit in the current checkout without creating wor
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID).every((attempt) => attempt.workspace === f.root)).toBe(
     true,
@@ -8115,7 +8201,7 @@ test("a shared node's first attempt starts at reviewed HEAD, not an older accept
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const reopened = new TaskRuntime(f.store, f.host, "project")
   cleanup.push(() => reopened.stop())
-  await drive(reopened)
+  await driveWithTaskSourceLandings(f, 16, f.receipt.planID, reopened)
   const predecessorArtifact = f.store.attempts(f.receipt.planID)[0]!.artifact
   expect(reviewedHead).not.toBe("")
   expect(reviewedHead).not.toBe(predecessorArtifact)
@@ -8325,7 +8411,7 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   const artifact = f.store.plan(f.receipt.planID)!.artifact!
   const request = (key: string) => ({
     requestID: key,
@@ -8654,7 +8740,7 @@ test("scheduler retires an integrated worker with a missing historical idle repo
 test("cleanup preserves current activity and unknown holds but accepts authoritative worker absence", async () => {
   const f = fixture({ commit: true })
   await runPlan(f)
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   const plan = f.store.plan(f.receipt.planID)!
   const artifact = plan.artifact!
   const attempt = f.store.attempts(plan.id)[0]!
@@ -9251,7 +9337,7 @@ test("explicit Luna Max worker selection preserves the stronger Architect model 
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
   expect(JSON.parse(f.store.plan(f.receipt.planID)!.model!)).toEqual(model)
   for (const attempt of f.store.attempts(f.receipt.planID)) {
@@ -9267,7 +9353,7 @@ test("cleanup preserves clean worktrees with commits outside the reviewed integr
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-  await drive(f.runtime)
+  await driveWithTaskSourceLandings(f)
   const artifact = f.store.plan(f.receipt.planID)!.artifact!
   git(f.root, ["merge", "--ff-only", artifact])
   const worktree = f.store.attempts(f.receipt.planID)[0]!.workspace
@@ -9345,10 +9431,22 @@ test("priority orders conflicting plans without rejecting their overlapping scop
   )
   await runPlan(f, f.receipt.planID, "priority-run-a")
   await runPlan(f, later.planID, "priority-run-b")
+  const projection = await f.runtime.readScheduling({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 100,
+  })
+  expect(projection.next).toMatchObject({
+    status: "known",
+    candidate: { planID: later.planID, taskID: b.id, priority: 10, planOrder: 0 },
+  })
+  expect(projection.selectedTaskIDs).toEqual([b.id])
   await f.runtime.tick()
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
   const attempt = f.store.attempts(later.planID)[0]!
   expect(attempt).toBeDefined()
+  expect(projection.selectedTaskIDs).toEqual(
+    f.store.plans().flatMap((plan) => f.store.attempts(plan.id).map((row) => row.task_id)),
+  )
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
   const updated = await f.runtime.command(
     {
@@ -9364,6 +9462,48 @@ test("priority orders conflicting plans without rejecting their overlapping scop
   expect(updated).toMatchObject({ status: "scheduled" })
   expect(f.store.attempts(later.planID)).toHaveLength(1)
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+})
+
+test("runtime dispatch matches scheduling projection for submission ties and shared ordinal order", async () => {
+  const f = fixture({
+    shared: true,
+    independent: true,
+    delayed: true,
+    taskFiles: [
+      { name: "first", path: "first.ts" },
+      { name: "second", path: "second.ts" },
+    ],
+  })
+  const laterTask = f.createTask("later", "later.ts")
+  const later = f.store.submit(
+    { ...f.inputFor([laterTask], { requestID: "tied-submission" }), priority: 0 },
+    "owner",
+  )
+  await runPlan(f, f.receipt.planID, "run-tied-first")
+  await runPlan(f, later.planID, "run-tied-later")
+
+  const projection = await f.runtime.readScheduling({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 100,
+  })
+  expect(projection.next).toMatchObject({
+    status: "known",
+    candidate: {
+      planID: f.receipt.planID,
+      taskID: f.tasks[0]!.id,
+      priority: 0,
+      planOrder: 0,
+      ordinal: 0,
+    },
+  })
+  expect(projection.selectedTaskIDs).toEqual([f.tasks[0]!.id])
+
+  await f.runtime.tick()
+  const actual = f.store
+    .plans()
+    .flatMap((plan) => f.store.attempts(plan.id).map((attempt) => attempt.task_id))
+  expect(actual).toEqual(projection.selectedTaskIDs)
+  expect(actual).toEqual([f.tasks[0]!.id])
 })
 
 test("afterPlans dispatches from combined integration while prerequisite cleanup is still pending", async () => {
@@ -9385,6 +9525,14 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       "owner",
     )
     await runPlan(f, child.planID, `run-child-${childPriority}`)
+    expect(
+      (
+        await f.runtime.readScheduling({
+          scope: { kind: "project", sessionID: "owner" },
+          limit: 100,
+        })
+      ).next,
+    ).toEqual({ status: "none" })
     const accepted = await acceptPlan(f, parentID)
     expect(new TaskReads(f.repository).get({ taskID: childTask.id })).toMatchObject({
       recordedState: "queued",
@@ -9398,6 +9546,14 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     includeArtifact(f, accepted.plan.artifact!)
     await recordPlanIntegration(f, parentID, { recordTaskLanding: true })
     expect(f.store.plan(parentID)!.state).toBe("cleaning")
+    const projection = await f.runtime.readScheduling({
+      scope: { kind: "project", sessionID: "owner" },
+      limit: 100,
+    })
+    expect(projection.next).toMatchObject({
+      status: "known",
+      candidate: { planID: child.planID, taskID: childTask.id },
+    })
 
     const observations: { parentState: string; workspace: string; source: string }[] = []
     const originalPrompt = f.host.prompt
@@ -9424,7 +9580,96 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     expect(childAttempt.workspace).toBe(observations[0]!.workspace)
     expect(childAttempt.workspace).not.toBe(accepted.attempt.workspace)
     expect(childAttempt.base_commit).toBe(accepted.plan.artifact!)
+    expect(projection.selectedTaskIDs).toEqual([childTask.id])
   }
+})
+
+test("task dependencies dispatch only after durable source integration and use its fresh descendant baseline", async () => {
+  const f = fixture({ delayed: true, commit: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const prerequisiteTaskID = f.store.nodes(f.receipt.planID)[0]!.task_id
+  const firstAttempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(firstAttempt.session_id)
+  await drive(f.runtime, 6)
+
+  const predecessor = f.store.nodes(f.receipt.planID)[0]!
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.store.execution(f.tasks[1]!.id)?.waitingOn).toEqual([prerequisiteTaskID])
+  const beforeLanding = await f.runtime.readScheduling({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 100,
+  })
+  expect(beforeLanding.next).toEqual({ status: "none" })
+  expect(beforeLanding.plans[0]?.nodes[1]).toMatchObject({
+    taskID: f.tasks[1]!.id,
+    decision: "waiting",
+    waitingOn: [prerequisiteTaskID],
+  })
+
+  const artifact = predecessor.artifact!
+  includeArtifact(f, artifact)
+  const landingVersion = f.store.plan(f.receipt.planID)!.version
+  await f.runtime.command(
+    {
+      requestID: "land-task-prerequisite",
+      planID: f.receipt.planID,
+      expectedVersion: landingVersion,
+      action: "integrated",
+      taskID: predecessor.task_id,
+      artifact,
+      targetBranch: "main",
+      reason: "Review and land the accepted prerequisite task source",
+    },
+    "owner",
+  )
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "Newer integrated baseline",
+  ])
+  const baseline = git(f.root, ["rev-parse", "HEAD"])
+  expect(baseline).not.toBe(artifact)
+
+  // A receipt alone is not authority: moving the reviewed branch behind its
+  // recorded integration head invalidates the fresh ancestry proof.
+  git(f.root, ["update-ref", "refs/heads/main", f.base])
+  const promptsBefore = f.events.filter((event) => event.startsWith("prompt:")).length
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptsBefore)
+  git(f.root, ["update-ref", "refs/heads/main", baseline])
+
+  const afterLanding = await f.runtime.readScheduling({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 100,
+  })
+  expect(afterLanding.next).toMatchObject({
+    status: "known",
+    candidate: { taskID: f.tasks[1]!.id },
+  })
+  const originalPrompt = f.host.prompt
+  f.host.prompt = async (input) => {
+    const dependent = f.store
+      .attempts(f.receipt.planID)
+      .find((attempt) => attempt.task_id === f.tasks[1]!.id)
+    expect(dependent?.base_commit).toBe(baseline)
+    expect(git(input.directory, ["rev-parse", "HEAD"])).toBe(baseline)
+    expect(readFileSync(join(input.directory, "a.txt"), "utf8")).toBe("a")
+    await originalPrompt(input)
+  }
+  await f.runtime.tick()
+
+  const attempts = f.store.attempts(f.receipt.planID)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[1]?.task_id).toBe(f.tasks[1]!.id)
+  expect(attempts[1]?.base_commit).toBe(baseline)
 })
 
 test("afterPlans rejects a legacy cleanup snapshot after durable prerequisite cancellation", async () => {

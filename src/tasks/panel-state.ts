@@ -10,6 +10,87 @@ import type {
   TaskSummary,
 } from "./contract.ts"
 import type { TopologyResponse } from "../observability/contract.ts"
+import { SchedulingSnapshot as SchedulingSnapshotSchema } from "./scheduling-contract.ts"
+import type {
+  SchedulingInput,
+  SchedulingPage,
+  SchedulingScope,
+  SchedulingSnapshot,
+} from "./scheduling-contract.ts"
+
+function sameIDs(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
+function relationshipsMatch(
+  topology: TopologyResponse,
+  scheduling: SchedulingSnapshot,
+  visibleTaskIDs: readonly string[],
+) {
+  if (topology.scope.kind !== scheduling.scope.kind) return false
+  if (
+    topology.scope.kind === "session" &&
+    scheduling.scope.kind === "session" &&
+    topology.scope.sessionID !== scheduling.scope.sessionID
+  )
+    return false
+
+  const topologyByTask = new Map<string, (typeof topology.plans)[number]>()
+  const schedulingByTask = new Map<string, (typeof scheduling.plans)[number]>()
+  const topologyPlanByID = new Map(topology.plans.map((plan) => [plan.id, plan]))
+  const schedulingPlanByID = new Map(scheduling.plans.map((plan) => [plan.planID, plan]))
+  for (const plan of topology.plans) {
+    for (const node of plan.nodes) {
+      if (topologyByTask.has(node.taskID)) return false
+      topologyByTask.set(node.taskID, plan)
+    }
+  }
+  for (const plan of scheduling.plans) {
+    for (const node of plan.nodes) {
+      if (schedulingByTask.has(node.taskID)) return false
+      schedulingByTask.set(node.taskID, plan)
+    }
+  }
+
+  const comparedPlans = new Set<string>()
+  for (const taskID of visibleTaskIDs) {
+    const topologyPlan = topologyByTask.get(taskID)
+    const schedulingPlan = schedulingByTask.get(taskID)
+    if (!topologyPlan && !schedulingPlan) continue
+    if (!topologyPlan || !schedulingPlan || topologyPlan.id !== schedulingPlan.planID) return false
+    comparedPlans.add(topologyPlan.id)
+  }
+
+  for (const planID of comparedPlans) {
+    const topologyPlan = topologyPlanByID.get(planID)!
+    const schedulingPlan = schedulingPlanByID.get(planID)!
+    if (!schedulingPlan.nodesComplete) return false
+    if (!sameIDs(topologyPlan.afterPlans, schedulingPlan.afterPlans)) return false
+
+    const topologyNodes = topologyPlan.nodes.toSorted((left, right) => left.ordinal - right.ordinal)
+    const schedulingNodes = schedulingPlan.nodes.toSorted(
+      (left, right) => left.ordinal - right.ordinal,
+    )
+    if (
+      topologyNodes.length !== schedulingNodes.length ||
+      topologyNodes.some(
+        (node, index) =>
+          node.taskID !== schedulingNodes[index]?.taskID ||
+          node.ordinal !== schedulingNodes[index]?.ordinal,
+      )
+    )
+      return false
+
+    const topologyEdges = topologyPlan.dependencies
+      .map((edge) => `${edge.prerequisite}:${edge.successor}`)
+      .toSorted()
+    const schedulingEdges = schedulingNodes
+      .flatMap((node) => node.prerequisites.map((prerequisite) => `${prerequisite}:${node.taskID}`))
+      .toSorted()
+    if (!sameIDs(topologyEdges, schedulingEdges)) return false
+  }
+  return true
+}
 
 export type TaskPanelChange = {
   projectDirectory: string
@@ -22,6 +103,7 @@ export interface TaskTransport {
   query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
   topology?(signal: AbortSignal): Promise<TopologyResponse>
+  scheduling?(input: SchedulingInput, signal: AbortSignal): Promise<SchedulingPage>
   currentActivity?(taskIDs: string[], signal: AbortSignal): Promise<CurrentActivityOutput>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
@@ -33,6 +115,8 @@ export interface PanelData {
   page?: TaskPage
   topology?: TopologyResponse
   topologyError?: string
+  scheduling?: SchedulingSnapshot
+  schedulingError: string
   currentActivity: Record<string, CurrentTaskActivity>
   activityError: string
   detail?: TaskDetail
@@ -47,6 +131,7 @@ const blank = (key = ""): PanelData => ({
   tasks: [],
   currentActivity: {},
   activityError: "",
+  schedulingError: "",
   linkedDetails: {},
   loading: true,
   stale: false,
@@ -65,6 +150,7 @@ export class TaskPanelState {
   private activityRequest = 0
   private transport?: TaskTransport
   private query: TaskQuery = {}
+  private schedulingScope?: SchedulingScope
   private project = ""
   private retry?: ReturnType<typeof setTimeout>
   private activityRefreshTimer?: ReturnType<typeof setTimeout>
@@ -80,6 +166,39 @@ export class TaskPanelState {
     string,
     Promise<Extract<TaskDetail, { status: "found" }> | undefined>
   >()
+
+  private async readScheduling(
+    scope: SchedulingScope,
+    signal: AbortSignal,
+    isCurrent: () => boolean,
+  ): Promise<SchedulingSnapshot> {
+    const transport = this.transport
+    if (!transport?.scheduling) throw new Error("Scheduling read is unavailable")
+    const first = await transport.scheduling({ scope, limit: 100 }, signal)
+    if (!isCurrent() || signal.aborted) throw new Error("Scheduling read was superseded")
+    const sameScope = (page: SchedulingPage) =>
+      page.scope.kind === scope.kind && page.scope.sessionID === scope.sessionID
+    if (!sameScope(first)) throw new Error("Scheduling response belongs to another scope")
+    const plans = [...first.plans]
+    let page = first
+    const cursors = new Set<string>()
+    while (page.nextCursor) {
+      if (cursors.has(page.nextCursor)) throw new Error("Scheduling cursor did not advance")
+      cursors.add(page.nextCursor)
+      page = await transport.scheduling({ scope, cursor: page.nextCursor, limit: 100 }, signal)
+      if (!isCurrent() || signal.aborted) throw new Error("Scheduling read was superseded")
+      if (
+        page.snapshotID !== first.snapshotID ||
+        page.repositoryVersion !== first.repositoryVersion ||
+        !sameScope(page)
+      )
+        throw new Error("Scheduling pages changed during the read")
+      plans.push(...page.plans)
+      if (plans.length > 1_000) throw new Error("Scheduling page bound was exceeded")
+    }
+    const { nextCursor: _nextCursor, ...snapshot } = first
+    return SchedulingSnapshotSchema.parse({ ...snapshot, plans })
+  }
 
   constructor(
     private readonly changed: (data: PanelData) => void,
@@ -106,11 +225,13 @@ export class TaskPanelState {
     transport: TaskTransport,
     query: TaskQuery,
     selectedID?: string,
+    schedulingScope?: SchedulingScope,
   ) {
     this.close()
     this.controller = new AbortController()
     this.transport = transport
     this.query = query
+    this.schedulingScope = schedulingScope
     this.project = project
     this.data = blank(key)
     this.update({ selectedID })
@@ -282,6 +403,8 @@ export class TaskPanelState {
       let tasks: TaskSummary[] = []
       let topology: TopologyResponse | undefined
       let topologyError = ""
+      let scheduling = this.data.scheduling
+      let schedulingError = ""
       for (let attempt = 0; attempt < 3; attempt++) {
         const first = await transport.query({ ...this.query, cursor: undefined }, signal)
         if (generation !== this.generation || request !== this.listRequest) return
@@ -289,18 +412,17 @@ export class TaskPanelState {
           throw new Error("Task response belongs to another project")
         topology = undefined
         topologyError = ""
+        let topologyBoundaryMatches = true
         if (transport.topology) {
           try {
             const observed = await transport.topology(signal)
             if (signal.aborted || generation !== this.generation || request !== this.listRequest)
               return
             if (observed.boundary.repositoryVersion !== first.snapshot) {
-              if (attempt < 2) continue
-              topologyError =
-                "Execution topology changed during the task read. Showing ungrouped tasks."
-            } else {
-              topology = observed
+              topologyBoundaryMatches = false
+              if ((!transport.scheduling || !this.schedulingScope) && attempt < 2) continue
             }
+            topology = observed
           } catch (error) {
             if (signal.aborted || generation !== this.generation) return
             const message = panelErrorMessage(error, "")
@@ -330,6 +452,49 @@ export class TaskPanelState {
         if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
         if (!topology && transport.topology && !topologyError)
           topologyError = "Execution topology is unavailable. Showing ungrouped tasks."
+        let schedulingReadSucceeded = false
+        if (this.schedulingScope) {
+          try {
+            scheduling = await this.readScheduling(
+              this.schedulingScope,
+              signal,
+              () => generation === this.generation && request === this.listRequest,
+            )
+            schedulingReadSucceeded = true
+          } catch {
+            if (generation !== this.generation || request !== this.listRequest || signal.aborted)
+              return
+            schedulingError = "Scheduling is unavailable or stale. Refresh to confirm Next."
+          }
+        } else {
+          schedulingError = "Scheduling scope is unavailable."
+        }
+        if (topology && schedulingReadSucceeded && scheduling) {
+          if (
+            !relationshipsMatch(
+              topology,
+              scheduling,
+              tasks.map((task) => task.taskID),
+            )
+          ) {
+            topology = undefined
+            topologyError =
+              "Execution relationships changed during the read. Showing scheduling-backed groups."
+          }
+        } else if (topology && !topologyBoundaryMatches) {
+          topology = undefined
+          topologyError =
+            "Execution topology changed during the task read. Showing ungrouped tasks."
+        }
+        if (
+          !topology &&
+          schedulingReadSucceeded &&
+          topologyError.includes("Showing ungrouped tasks.")
+        )
+          topologyError = topologyError.replace(
+            "Showing ungrouped tasks.",
+            "Showing scheduling-backed groups where covered.",
+          )
         break
       }
       if (!page) throw new Error("Could not read a stable task snapshot")
@@ -339,6 +504,8 @@ export class TaskPanelState {
         page,
         topology,
         topologyError,
+        scheduling,
+        schedulingError,
         loading: false,
         stale: !transport.online(),
         error: "",

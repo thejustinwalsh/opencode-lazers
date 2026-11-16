@@ -219,6 +219,92 @@
   flex: none;
   font-variant-numeric: tabular-nums;
 }
+.lazers-tasks-plan-order {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  text-align: right;
+}
+.lazers-tasks-plan-reason,
+.lazers-tasks-schedule-reason {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 6px;
+  min-width: 0;
+  padding: 0 12px 5px;
+  color: var(--text-weak);
+  font-size: 0.76em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.lazers-tasks-schedule-groups {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 8px;
+  padding: 0 8px;
+}
+.lazers-tasks-schedule-group {
+  min-width: 0;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-weak);
+}
+.lazers-tasks-schedule-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 4px 4px;
+  color: var(--text-weak);
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.lazers-tasks-schedule-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+}
+.lazers-tasks-schedule-entry:hover,
+.lazers-tasks-schedule-entry:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+.lazers-tasks-schedule-entry-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lazers-tasks-schedule-entry-meta {
+  flex: none;
+  color: var(--text-weak);
+  font-size: 0.78em;
+  white-space: nowrap;
+}
+.lazers-tasks-scheduling-warning {
+  padding: 4px 12px;
+  color: var(--icon-warning-base);
+  font-size: 0.8em;
+}
+.lazers-tasks-node-reason {
+  padding: 0 10px 6px 34px;
+}
+.lazers-tasks-node-reason .lazers-tasks-dependency-ref {
+  margin-left: 3px;
+}
 .lazers-tasks-entry {
   min-width: 0;
 }

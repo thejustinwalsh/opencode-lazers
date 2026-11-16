@@ -1,5 +1,6 @@
 import type { TopologyResponse } from "../observability/contract.ts"
 import type { TaskSummary } from "./contract.ts"
+import type { SchedulingNode, SchedulingPlan, SchedulingSnapshot } from "./scheduling-contract.ts"
 
 type Plan = TopologyResponse["plans"][number]
 type Node = Plan["nodes"][number]
@@ -25,6 +26,12 @@ export type ExecutionListRow = {
     state: string
     waiting: boolean
   }>
+  scheduling?: {
+    decision: SchedulingNode["decision"]
+    reason: string | null
+    waitingOn: string[]
+    reservationTaskIDs: string[]
+  }
   fork?: ExecutionFork
 }
 
@@ -44,12 +51,17 @@ export type ExecutionFork = {
 export type ExecutionPlanGroup = {
   planID: string
   planVersion: number
-  planRevision: number
+  planRevision?: number
   title: string
   hasRecordedTitle: boolean
   nonterminalCount: number
   totalCount: number
   rows: ExecutionListRow[]
+  priority?: number
+  planOrder?: number
+  schedulingDecision?: SchedulingPlan["decision"]
+  schedulingReason?: string | null
+  afterPlans?: string[]
 }
 
 export type ExecutionList = {
@@ -58,15 +70,146 @@ export type ExecutionList = {
   topologyAvailable: boolean
 }
 
+function buildScheduledGroups(input: {
+  tasks: TaskSummary[]
+  search?: string
+  revealTaskIDs?: ReadonlySet<string>
+  scheduling?: SchedulingSnapshot
+}): ExecutionList {
+  const summaries = new Map(input.tasks.map((task) => [task.taskID, task]))
+  const plans = input.scheduling?.plans ?? []
+  const planByTask = new Map<string, SchedulingPlan>()
+  const nodeByTask = new Map<string, SchedulingNode>()
+  const successors = new Map<string, string[]>()
+  for (const plan of plans) {
+    for (const node of plan.nodes) {
+      planByTask.set(node.taskID, plan)
+      nodeByTask.set(node.taskID, node)
+      for (const prerequisite of node.prerequisites)
+        successors.set(prerequisite, [...(successors.get(prerequisite) ?? []), node.taskID])
+    }
+  }
+
+  const visible = new Set([...summaries.keys(), ...(input.revealTaskIDs ?? [])])
+  const contextual = new Set(
+    [...(input.revealTaskIDs ?? [])].filter((taskID) => !summaries.has(taskID)),
+  )
+  if (input.search?.trim()) {
+    for (const taskID of summaries.keys()) {
+      const plan = planByTask.get(taskID)
+      if (!plan) continue
+      const pending = [...(nodeByTask.get(taskID)?.prerequisites ?? [])]
+      while (pending.length) {
+        const prerequisite = pending.pop()!
+        if (!nodeByTask.has(prerequisite) || visible.has(prerequisite)) continue
+        visible.add(prerequisite)
+        contextual.add(prerequisite)
+        pending.push(...(nodeByTask.get(prerequisite)?.prerequisites ?? []))
+      }
+    }
+  }
+
+  const rendered = new Set<string>()
+  const groups = plans.flatMap((plan) => {
+    const nodes = plan.nodes.toSorted((left, right) => left.ordinal - right.ordinal)
+    const dependencies = nodes.flatMap((node) =>
+      node.prerequisites.map((prerequisite) => ({ prerequisite, successor: node.taskID })),
+    )
+    const rows = composePlanRows({
+      nodes,
+      dependencies,
+      visible,
+      contextual,
+      searching: Boolean(input.search?.trim()),
+      rendered,
+      makeRow: (node, contextOnly) => {
+        const summary = summaries.get(node.taskID)
+        const reason = node.reason ?? summary?.reason ?? null
+        const waiting =
+          !terminal.has(node.lifecycle) &&
+          (node.decision === "waiting" || node.lifecycle === "blocked")
+        return {
+          taskID: node.taskID,
+          title: summary?.objective ?? node.title,
+          status: summary?.recordedState ?? summary?.status ?? node.lifecycle,
+          reason,
+          waiting,
+          holdReason: waiting ? reason : null,
+          ordinal: node.ordinal,
+          ...((summary?.reference ?? node.reference)
+            ? { reference: summary?.reference ?? node.reference }
+            : {}),
+          contextOnly,
+          prerequisites: node.prerequisites,
+          successors: successors.get(node.taskID) ?? [],
+          scheduling: {
+            decision: node.decision,
+            reason: node.reason,
+            waitingOn: node.waitingOn,
+            reservationTaskIDs: node.reservationTaskIDs,
+          },
+        }
+      },
+    })
+    if (!rows.length) return []
+    return [
+      {
+        planID: plan.planID,
+        planVersion: plan.planVersion,
+        title: plan.title,
+        hasRecordedTitle: true,
+        nonterminalCount: nodes.filter((node) => !terminal.has(node.lifecycle)).length,
+        totalCount: nodes.length,
+        rows,
+        priority: plan.priority,
+        planOrder: plan.planOrder,
+        schedulingDecision: plan.decision,
+        schedulingReason: plan.reason,
+        afterPlans: plan.afterPlans,
+      },
+    ]
+  })
+
+  const unplanned = input.tasks.flatMap((task, ordinal) => {
+    if (nodeByTask.has(task.taskID)) return []
+    return [
+      {
+        taskID: task.taskID,
+        title: task.objective,
+        status: task.recordedState ?? task.status,
+        reason: task.reason,
+        waiting: false,
+        holdReason: null,
+        ordinal,
+        ...(task.reference ? { reference: task.reference } : {}),
+        contextOnly: false,
+        prerequisites: [],
+        successors: [],
+      },
+    ]
+  })
+  return { topologyAvailable: false, plans: groups, unplanned }
+}
+
 type ForkBlock = {
   rootID: string
   joinID: string
   branches: string[][]
 }
 
+type RelationshipNode = { taskID: string; ordinal: number }
+type RelationshipEdge = { prerequisite: string; successor: string }
+type RelationshipPlan = {
+  nodes: readonly RelationshipNode[]
+  dependencies: readonly RelationshipEdge[]
+}
+
 const terminal = new Set(["accepted", "incorporated", "failed", "exhausted", "cancelled"])
 
-function adjacency(plan: Plan) {
+function adjacency<TNode extends RelationshipNode>(plan: {
+  nodes: readonly TNode[]
+  dependencies: readonly RelationshipEdge[]
+}) {
   const nodes = [...plan.nodes].toSorted((left, right) => left.ordinal - right.ordinal)
   const order = new Map(nodes.map((node) => [node.taskID, node.ordinal]))
   const outgoing = new Map<string, string[]>()
@@ -99,7 +242,7 @@ function reachableFrom(start: string, outgoing: Map<string, string[]>) {
 }
 
 /** Find only fork blocks whose branches are disjoint, linear paths to one nearest join. */
-function forkBlocks(plan: Plan): ForkBlock[] {
+function forkBlocks(plan: RelationshipPlan): ForkBlock[] {
   const { nodes, order, outgoing, incoming } = adjacency(plan)
   const reachability = new Map<string, Set<string>>()
   const reachable = (id: string) => {
@@ -192,6 +335,88 @@ function forkBlocks(plan: Plan): ForkBlock[] {
   return blocks
 }
 
+function composePlanRows<TNode extends RelationshipNode>(input: {
+  nodes: readonly TNode[]
+  dependencies: readonly RelationshipEdge[]
+  visible: ReadonlySet<string>
+  contextual: ReadonlySet<string>
+  searching: boolean
+  rendered: Set<string>
+  makeRow: (node: TNode, contextOnly: boolean) => ExecutionListRow
+}) {
+  const plan = { nodes: input.nodes, dependencies: input.dependencies }
+  const { nodes } = adjacency(plan)
+  const blocks = forkBlocks(plan)
+  const contextual = new Set(input.contextual)
+  const activeBlocks = blocks.filter((block) => {
+    if (
+      input.rendered.has(block.rootID) ||
+      input.rendered.has(block.joinID) ||
+      block.branches.some((path) => path.some((id) => input.rendered.has(id)))
+    )
+      return false
+    const descendantsVisible = block.branches.some((path) =>
+      path.some((id) => input.visible.has(id)),
+    )
+    const rootVisible = input.visible.has(block.rootID)
+    if (!descendantsVisible && !rootVisible) return false
+    if (!rootVisible && descendantsVisible) contextual.add(block.rootID)
+    if (input.searching) {
+      for (const path of block.branches) {
+        const lastVisible = path.reduce(
+          (last, id, index) => (input.visible.has(id) ? index : last),
+          -1,
+        )
+        if (lastVisible >= 0)
+          for (const id of path.slice(0, lastVisible))
+            if (!input.visible.has(id)) contextual.add(id)
+      }
+    }
+    return true
+  })
+
+  const branchOwner = new Map<string, ForkBlock>()
+  for (const block of activeBlocks)
+    for (const path of block.branches) for (const id of path) branchOwner.set(id, block)
+
+  const planRows = new Map<string, ExecutionListRow>()
+  for (const node of nodes) {
+    if (
+      input.rendered.has(node.taskID) ||
+      (!input.visible.has(node.taskID) && !contextual.has(node.taskID))
+    )
+      continue
+    input.rendered.add(node.taskID)
+    planRows.set(node.taskID, input.makeRow(node, contextual.has(node.taskID)))
+  }
+
+  return nodes.flatMap((node) => {
+    const taskRow = planRows.get(node.taskID)
+    if (!taskRow || branchOwner.has(node.taskID)) return []
+    const block = activeBlocks.find((candidate) => candidate.rootID === node.taskID)
+    if (block) {
+      const forkID = `${block.rootID}:${block.branches.map((path) => path[0]).join(",")}`
+      taskRow.fork = {
+        id: forkID,
+        joinID: block.joinID,
+        branches: block.branches.map((path) => {
+          const rows = path.flatMap((id) => {
+            const branchRow = planRows.get(id)
+            return branchRow ? [branchRow] : []
+          })
+          return {
+            id: path[0]!,
+            taskIDs: rows.map((branchRow) => branchRow.taskID),
+            rows,
+            hiddenCount: path.length - rows.length,
+          }
+        }),
+      }
+    }
+    return [taskRow]
+  })
+}
+
 function relationMap(topology: TopologyResponse) {
   const prerequisites = new Map<string, string[]>()
   const successors = new Map<string, string[]>()
@@ -261,6 +486,7 @@ function row(
   summary: TaskSummary | undefined,
   contextOnly: boolean,
   relations: ReturnType<typeof relationMap>,
+  scheduling?: SchedulingNode,
 ): ExecutionListRow {
   const dependencyTasks = relations.dependencyTasks.get(node.taskID) ?? []
   const waiting =
@@ -293,6 +519,16 @@ function row(
     contextOnly,
     prerequisites: relations.prerequisites.get(node.taskID) ?? [],
     successors: relations.successors.get(node.taskID) ?? [],
+    ...(scheduling
+      ? {
+          scheduling: {
+            decision: scheduling.decision,
+            reason: scheduling.reason,
+            waitingOn: scheduling.waitingOn,
+            reservationTaskIDs: scheduling.reservationTaskIDs,
+          },
+        }
+      : {}),
   }
 }
 
@@ -305,28 +541,17 @@ export function buildExecutionList(input: {
   tasks: TaskSummary[]
   search?: string
   revealTaskIDs?: ReadonlySet<string>
+  scheduling?: SchedulingSnapshot
 }): ExecutionList {
   const summaryByID = new Map(input.tasks.map((task) => [task.taskID, task]))
+  const scheduleByPlan = new Map(input.scheduling?.plans.map((plan) => [plan.planID, plan]) ?? [])
+  const scheduleByTask = new Map(
+    input.scheduling?.plans.flatMap((plan) =>
+      plan.nodes.map((node) => [node.taskID, node] as const),
+    ) ?? [],
+  )
   if (!input.topology) {
-    return {
-      topologyAvailable: false,
-      plans: [],
-      unplanned: input.tasks.map((task, ordinal) => ({
-        taskID: task.taskID,
-        title: task.objective,
-        status: task.recordedState ?? task.status,
-        reason: task.reason,
-        waiting: false,
-        holdReason: null,
-        ordinal,
-        ...(task.reference ? { reference: task.reference } : {}),
-        sourcePlan: task.sourcePlan,
-        dispatchPause: task.dispatchPause,
-        contextOnly: false,
-        prerequisites: [],
-        successors: [],
-      })),
-    }
+    return buildScheduledGroups(input)
   }
 
   const topology = input.topology
@@ -351,70 +576,22 @@ export function buildExecutionList(input: {
   })
   for (const plan of plans) {
     const { nodes } = adjacency(plan)
-    const blocks = forkBlocks(plan)
-    const contextual = new Set(
-      [...(input.revealTaskIDs ?? [])].filter((id) => !summaryByID.has(id)),
-    )
-    const activeBlocks = blocks.filter((block) => {
-      if (
-        rendered.has(block.rootID) ||
-        rendered.has(block.joinID) ||
-        block.branches.some((path) => path.some((id) => rendered.has(id)))
-      )
-        return false
-      const descendantsVisible = block.branches.some((path) => path.some((id) => visible.has(id)))
-      const rootVisible = visible.has(block.rootID)
-      if (!descendantsVisible && !rootVisible) return false
-      if (!rootVisible && descendantsVisible) contextual.add(block.rootID)
-      if (searching) {
-        for (const path of block.branches) {
-          const lastVisible = path.reduce((last, id, index) => (visible.has(id) ? index : last), -1)
-          if (lastVisible >= 0)
-            for (const id of path.slice(0, lastVisible)) if (!visible.has(id)) contextual.add(id)
-        }
-      }
-      return true
-    })
-
-    const branchOwner = new Map<string, ForkBlock>()
-    for (const block of activeBlocks)
-      for (const path of block.branches) for (const id of path) branchOwner.set(id, block)
-
-    const planRows = new Map<string, ExecutionListRow>()
-    for (const node of nodes) {
-      if (rendered.has(node.taskID) || (!visible.has(node.taskID) && !contextual.has(node.taskID)))
-        continue
-      rendered.add(node.taskID)
-      planRows.set(
-        node.taskID,
-        row(plan, node, summaryByID.get(node.taskID), contextual.has(node.taskID), relations),
-      )
-    }
-
-    const rootRows = nodes.flatMap((node) => {
-      const taskRow = planRows.get(node.taskID)
-      if (!taskRow || branchOwner.has(node.taskID)) return []
-      const block = activeBlocks.find((candidate) => candidate.rootID === node.taskID)
-      if (block) {
-        const forkID = `${block.rootID}:${block.branches.map((path) => path[0]).join(",")}`
-        taskRow.fork = {
-          id: forkID,
-          joinID: block.joinID,
-          branches: block.branches.map((path) => {
-            const rows = path.flatMap((id) => {
-              const branchRow = planRows.get(id)
-              return branchRow ? [branchRow] : []
-            })
-            return {
-              id: path[0]!,
-              taskIDs: rows.map((branchRow) => branchRow.taskID),
-              rows,
-              hiddenCount: path.length - rows.length,
-            }
-          }),
-        }
-      }
-      return [taskRow]
+    const rootRows = composePlanRows({
+      nodes,
+      dependencies: plan.dependencies,
+      visible,
+      contextual: new Set([...(input.revealTaskIDs ?? [])].filter((id) => !summaryByID.has(id))),
+      searching,
+      rendered,
+      makeRow: (node, contextOnly) =>
+        row(
+          plan,
+          node,
+          summaryByID.get(node.taskID),
+          contextOnly,
+          relations,
+          scheduleByTask.get(node.taskID),
+        ),
     })
     if (!rootRows.length) continue
 
@@ -423,17 +600,28 @@ export function buildExecutionList(input: {
       planID: plan.id,
       planVersion: plan.version,
       planRevision: plan.revision,
-      title: plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
-      hasRecordedTitle: plan.title !== null,
+      title: scheduleByPlan.get(plan.id)?.title ?? plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
+      hasRecordedTitle: plan.title !== null || Boolean(scheduleByPlan.get(plan.id)?.title),
       nonterminalCount,
       totalCount: nodes.length,
-      rows: rootRows.toSorted((left, right) => {
-        const running = (row: ExecutionListRow): boolean =>
-          !row.waiting &&
-          (["running", "verifying"].includes(row.status) ||
-            Boolean(row.fork?.branches.some((branch) => branch.rows.some(running))))
-        return Number(running(right)) - Number(running(left)) || left.ordinal - right.ordinal
-      }),
+      rows: scheduleByPlan.has(plan.id)
+        ? rootRows
+        : rootRows.toSorted((left, right) => {
+            const running = (row: ExecutionListRow): boolean =>
+              !row.waiting &&
+              (["running", "verifying"].includes(row.status) ||
+                Boolean(row.fork?.branches.some((branch) => branch.rows.some(running))))
+            return Number(running(right)) - Number(running(left)) || left.ordinal - right.ordinal
+          }),
+      ...(scheduleByPlan.get(plan.id)
+        ? {
+            priority: scheduleByPlan.get(plan.id)!.priority,
+            planOrder: scheduleByPlan.get(plan.id)!.planOrder,
+            schedulingDecision: scheduleByPlan.get(plan.id)!.decision,
+            schedulingReason: scheduleByPlan.get(plan.id)!.reason,
+            afterPlans: scheduleByPlan.get(plan.id)!.afterPlans,
+          }
+        : {}),
     })
   }
 
@@ -463,6 +651,16 @@ export function buildExecutionList(input: {
         contextOnly: !summary,
         prerequisites: relations.prerequisites.get(taskID) ?? [],
         successors: relations.successors.get(taskID) ?? [],
+        ...(scheduleByTask.get(taskID)
+          ? {
+              scheduling: {
+                decision: scheduleByTask.get(taskID)!.decision,
+                reason: scheduleByTask.get(taskID)!.reason,
+                waitingOn: scheduleByTask.get(taskID)!.waitingOn,
+                reservationTaskIDs: scheduleByTask.get(taskID)!.reservationTaskIDs,
+              },
+            }
+          : {}),
       },
     ]
   })
