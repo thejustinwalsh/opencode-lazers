@@ -45,6 +45,17 @@ question, a review or integration, or a hold that needs judgement:
 - If the task has no Architect, or its Architect is gone, the scheduler
   creates a new Architect session with the plan context.
 
+**Routing is cache-aware.** The scheduler reuses the owning Architect only
+when its prompt cache is likely warm: its last model activity falls within
+`architectCacheWindowMs`, which defaults to 5 minutes. That is the common floor
+of advertised cache lifetimes: Anthropic's default TTL is 5 minutes, OpenAI's
+cached prefixes survive about 5 to 10 minutes of inactivity, and OpenRouter
+follows the underlying provider. The owner is also reused when its context is
+small, below `architectReuseMaxContextTokens` (default 32k). Otherwise the
+scheduler starts a fresh Architect seeded from the continuity checkpoint and
+the plan context, because a cache miss on a large context costs too much. This
+single decision replaces the separate renewal machinery.
+
 The Architect plans and decides. The scheduler executes and routes. Neither
 waits on the other except where a task actually needs judgement.
 
