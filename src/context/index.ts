@@ -28,6 +28,7 @@ import {
   type RepositorySnapshotWorker,
   type RepositorySnapshotRequest,
 } from "./repository-snapshots.ts"
+import { projectIdsJSON, sameProject } from "../project-key.ts"
 
 type FileRecord = { path: string; stamp: string; content: string; outline: string; bytes: number }
 type Snapshot = {
@@ -513,9 +514,9 @@ export class ProjectIndex {
       if (publication) {
         const row = db
           .query<{ workspace: string; snapshot_id: string }, [string, string, string]>(
-            "SELECT workspace,snapshot_id FROM context_publications WHERE project_id=? AND project_directory=? AND owner_session=?",
+            "SELECT workspace,snapshot_id FROM context_publications WHERE project_id IN (SELECT value FROM json_each(?)) AND project_directory=? AND owner_session=?",
           )
-          .get(this.projectID, this.projectDirectory, publication.ownerSessionID)
+          .get(projectIdsJSON(this.projectID), this.projectDirectory, publication.ownerSessionID)
         if (!row || row.workspace !== publication.workspace) throw new WorkspaceIndexUnavailable()
         workspace = row.workspace
         expectedSnapshotID = row.snapshot_id
@@ -578,7 +579,7 @@ export class ProjectIndex {
     if (
       !session ||
       session.id !== id ||
-      session.projectID !== this.projectID ||
+      !sameProject(session.projectID, this.projectID) ||
       (session.agent !== undefined && session.agent !== agent)
     )
       return false

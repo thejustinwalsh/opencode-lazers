@@ -188,6 +188,7 @@ import {
   retainedProcedurePlan,
   retainedProjectIdentity,
 } from "./retained-verification/procedure.ts"
+import { sameProject } from "../project-key.ts"
 
 const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
@@ -1665,7 +1666,7 @@ export class TaskRuntime {
       attempt.id !== command.attemptID ||
       task.revision !== command.taskRevision ||
       input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== this.directory ||
       this.store.repository.taskDisposition(task.id)
     )
@@ -2079,7 +2080,7 @@ export class TaskRuntime {
       attempt.id !== operation.attemptID ||
       task.revision !== operation.taskRevision ||
       input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== this.directory ||
       this.store.repository.taskDisposition(task.id) !== undefined ||
       attempt.session_id !== operation.originalSessionID ||
@@ -2559,7 +2560,7 @@ export class TaskRuntime {
         node.state !== "verifying" ||
         task.revision !== command.taskRevision ||
         input.nodes.find((candidate) => candidate.taskID === task.id)?.revision !== task.revision ||
-        task.provenance.projectID !== this.projectID ||
+        !sameProject(task.provenance.projectID, this.projectID) ||
         task.provenance.projectDirectory !== this.directory ||
         this.store.repository.taskDisposition(task.id) !== undefined ||
         attempt.artifact !== command.artifact ||
@@ -2877,7 +2878,7 @@ export class TaskRuntime {
       !task ||
       task.revision !== operation.taskRevision ||
       input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== this.directory ||
       this.store.repository.taskDisposition(task.id) !== undefined ||
       !node ||
@@ -3379,7 +3380,7 @@ export class TaskRuntime {
       latest.state !== "cancelled" ||
       node.state !== "cancelled" ||
       task.revision !== admitted?.revision ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== this.directory ||
       this.store.repository.taskDisposition(task.id)
     )
@@ -3855,7 +3856,7 @@ export class TaskRuntime {
       !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
       !admitted ||
       admitted.revision !== task.revision ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== this.directory ||
       this.store.repository.taskDisposition(task.id)
     )
@@ -4059,7 +4060,7 @@ export class TaskRuntime {
       !["running", "verifying"].includes(latest.state) ||
       node.state !== latest.state ||
       task.revision !== proposalNode.revision ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== this.directory
     )
       throw new Error(
@@ -4983,7 +4984,7 @@ export class TaskRuntime {
         !isCommitID(node.artifact) ||
         !task ||
         task.revision !== specification.revision ||
-        task.provenance.projectID !== this.projectID ||
+        !sameProject(task.provenance.projectID, this.projectID) ||
         task.provenance.projectDirectory !== this.directory ||
         this.store.repository.taskDisposition(taskID) !== undefined ||
         !attempt ||
@@ -5799,7 +5800,7 @@ export class TaskRuntime {
           node.artifact !== retainedRepair.artifact ||
           attempt.artifact !== retainedRepair.artifact ||
           input.nodes.find((item) => item.taskID === task.id)?.revision !== task.revision ||
-          task.provenance.projectID !== this.projectID ||
+          !sameProject(task.provenance.projectID, this.projectID) ||
           task.provenance.projectDirectory !== this.directory ||
           this.store.repository.taskDisposition(task.id)
         )
@@ -6574,7 +6575,7 @@ export class TaskRuntime {
           !proposedNode ||
           !task ||
           task.revision !== proposedNode.revision ||
-          task.provenance.projectID !== this.projectID ||
+          !sameProject(task.provenance.projectID, this.projectID) ||
           task.provenance.projectDirectory !== this.directory ||
           !attempt ||
           attempt.id !== command.attemptID ||
@@ -8161,7 +8162,7 @@ export class TaskRuntime {
         const ownership = this.outcomeDelivery.ownership(current)
         if (
           !ownership ||
-          ownership.lazersProjectID !== this.projectID ||
+          !sameProject(ownership.lazersProjectID, this.projectID) ||
           ownership.lazersProjectDirectory !== this.directory ||
           ownership.lazersStatus !== "architect-source-change"
         )
@@ -8349,7 +8350,7 @@ export class TaskRuntime {
       const ownership = this.outcomeDelivery.ownership(replacement)
       if (
         !ownership ||
-        ownership.lazersProjectID !== this.projectID ||
+        !sameProject(ownership.lazersProjectID, this.projectID) ||
         ownership.lazersProjectDirectory !== this.directory ||
         ownership.lazersSessionID !== notice.sessionID ||
         ownership.lazersStatus !== "architect-source-change"
