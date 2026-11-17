@@ -26,6 +26,12 @@ formatting or fixable lint failures.
 
 Write atomic Conventional Commits (`type(scope): summary`), one coherent
 change per commit. Never add AI attribution or `Co-Authored-By` trailers.
+Commit only as the workspace's configured git identity: pass no
+`-c user.name`/`-c user.email`, `--author`, `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
+overrides and no fake dates. Keep signing as configured; never disable it with
+`commit.gpgsign=false` or `--no-gpg-sign`. Signatures make commit SHAs
+non-reproducible, so runtime code must memoize or compare tree OID plus ordered
+parents, never rely on recomputing an identical commit SHA.
 The remote is `github`; push `main` there when work is done and its checks
 pass. Do not rebase or rewrite recorded history: the runtime stores commit
 SHAs in integration proofs and plan artifacts, so reconcile with merges.

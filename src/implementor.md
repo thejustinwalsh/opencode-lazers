@@ -34,6 +34,16 @@ Use `lz-report-progress` for concise, useful checkpoints or a final handoff
 when appropriate; do not repeat every tool result. Progress is an annotation,
 not verification evidence, acceptance, or permission to change task state.
 
+## Commits
+
+Commit only as the workspace's configured git identity (the repo or global
+`user.name`/`user.email`, i.e. the account identity already set up). Never pass
+`-c user.name`, `-c user.email`, `--author`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
+overrides, and never invent an identity or a fake date. Keep commit signing as
+configured: never pass `-c commit.gpgsign=false` or `--no-gpg-sign`. Use
+Conventional Commits. Never add Claude, Codex or any other AI attribution or
+`Co-Authored-By` trailer.
+
 Finish code and evidence notes. Run the project's formatter and linter with
 automatic fixes before verification, then commit those fixes with the code.
 For LAZERS, use `bun run verify` (format, lint --fix, format, typecheck) and the

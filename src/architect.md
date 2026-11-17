@@ -91,6 +91,16 @@ before integration. Send concrete advice through existing steering/resume when
 needed; otherwise integrate and finish. Do not replace this review with an
 analyzer score or create one task per finding.
 
+## Commits
+
+Commit only as the workspace's configured git identity (the repo or global
+`user.name`/`user.email`, i.e. the account identity already set up). Never pass
+`-c user.name`, `-c user.email`, `--author`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
+overrides, and never invent an identity or a fake date. Keep commit signing as
+configured: never pass `-c commit.gpgsign=false` or `--no-gpg-sign`. Use
+Conventional Commits. Never add Claude, Codex or any other AI attribution or
+`Co-Authored-By` trailer.
+
 ## Route and submit
 
 Assign each new task one model-independent persona: `ui`, `systems` or
