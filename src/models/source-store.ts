@@ -1,4 +1,6 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { acquireSharedConnection } from "../storage.ts"
+import type { SharedConnection } from "../storage.ts"
 import {
   ENDPOINT_PRICING_PRODUCTS,
   EndpointPricingProductIDSchema,
@@ -82,15 +84,19 @@ type EndpointPricingSnapshotRow = {
 /** Project-scoped, append-only source snapshots and separately mutable refresh state. */
 export class ModelEvidenceStore {
   private readonly db: Database
+  private shared: SharedConnection | undefined
 
   constructor(
     path: string,
     readonly projectDirectory: string,
   ) {
-    this.db = new Database(path, { create: true, strict: true })
+    // Shares the process-wide write connection (SQLITE_BUSY_TIMEOUT_MS, WAL, change hooks).
+    const shared = acquireSharedConnection(path)
+    this.shared = shared
+    this.db = shared.db
     try {
-      this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON")
-      this.db.exec(`
+      shared.once("model-evidence", (db) =>
+        db.exec(`
         CREATE TABLE IF NOT EXISTS model_evidence_snapshots (
           snapshot_id TEXT PRIMARY KEY,
           project_directory TEXT NOT NULL,
@@ -147,9 +153,10 @@ export class ModelEvidenceStore {
           http_status INTEGER,
           PRIMARY KEY(project_directory, product_id)
         );
-      `)
+      `),
+      )
     } catch (error) {
-      this.db.close()
+      shared.release()
       throw error
     }
   }
@@ -630,7 +637,8 @@ export class ModelEvidenceStore {
   }
 
   close(): void {
-    this.db.close()
+    this.shared?.release()
+    this.shared = undefined
   }
 }
 
@@ -648,12 +656,14 @@ export type ModelEvidenceComparisonSnapshotSelection = Record<ModelEvidenceSourc
 /** Read-only, project-scoped snapshot access for comparison projections. */
 export class ModelEvidenceReadStore {
   private readonly db: Database
+  private shared: SharedConnection | undefined
 
   constructor(
     path: string,
     readonly projectDirectory: string,
   ) {
-    this.db = new Database(path, { readonly: true, strict: true })
+    this.shared = acquireSharedConnection(path, "readonly")
+    this.db = this.shared.db
   }
 
   readComparisonSources(
@@ -801,6 +811,7 @@ export class ModelEvidenceReadStore {
   }
 
   close(): void {
-    this.db.close()
+    this.shared?.release()
+    this.shared = undefined
   }
 }
