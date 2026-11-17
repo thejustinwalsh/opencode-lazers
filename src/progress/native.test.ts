@@ -211,7 +211,7 @@ test("F-S3-1 the existing native stream invalidates source caches on activity an
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerProgress(ctx.context, recorder, "project", undefined, undefined, (id) => {
+          yield* registerProgress(ctx.context, recorder, "project", (id) => {
             seen.push(id)
           })
           yield* Effect.promise(() =>
@@ -248,8 +248,6 @@ test.each(["session.idle", "session.execution.failed", "session.execution.interr
               ctx.context,
               recorder,
               "project",
-              undefined,
-              undefined,
               (id) => {
                 if (id) wakes.push(id)
               },
@@ -803,17 +801,9 @@ test("the idle hook stores no idle report: it wakes the scheduler and reminds on
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerProgress(
-            ctx.context,
-            recorder,
-            "project",
-            undefined,
-            undefined,
-            undefined,
-            () => {
-              wakes++
-            },
-          )
+          yield* registerProgress(ctx.context, recorder, "project", undefined, () => {
+            wakes++
+          })
           yield* Effect.sleep(5)
           const idle = ctx.idle()!
           // A positive background list never requests a handoff, but still wakes the scheduler.

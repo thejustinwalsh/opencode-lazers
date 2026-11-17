@@ -56,9 +56,6 @@ const NATIVE_EVENT_TYPES = [
 const HANDOFF_REMINDER =
   "Provide only any remaining concise handoff: changes, checks/artifact/commit, blockers, or judgment needed from the plan owner. Do not repeat recorded facts, claim acceptance, or alter task state."
 
-type NativeSessionLogReader = (
-  sessionID: string,
-) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -221,9 +218,6 @@ export function registerProgress(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
   projectID: string,
-  /** Retained for call-site compatibility; idle lineage is no longer reconstructed. */
-  _retainedInputID?: (sessionID: string) => Promise<string | undefined>,
-  _readSessionLog?: NativeSessionLogReader,
   sourceChanged?: (sessionID?: string) => void,
   workerIdle?: () => void,
 ) {

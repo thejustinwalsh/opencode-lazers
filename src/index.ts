@@ -86,8 +86,6 @@ export default Plugin.define({
         ctx,
         progress,
         projectID,
-        core.host.retainedInputID,
-        core.host.readSessionLog,
         (sessionID) => runtime.observeArchitectSourceEvent(sessionID),
         () => core.wake(),
       )
