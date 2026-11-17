@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tasks — recommended</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.list { padding: 0 6px; }
+.row { display: grid; grid-template-columns: 20px 22px auto minmax(0,1fr) auto; align-items: center; column-gap: 6px; height: 30px; padding: 0 8px 0 4px; border-radius: 6px; position: relative; }
+.row[data-sel] { background: var(--surface-base-hover); }
+.row .dz { width: 20px; height: 24px; display: inline-flex; align-items: center; justify-content: center; color: var(--icon-base); border-radius: 5px; }
+.row .p { font-family: var(--mono); font-size: 11px; color: var(--text-weak); text-align: right; }
+.row .p[data-top] { color: var(--text-strong); }
+.row .ref { font-family: var(--mono); font-size: 11.5px; color: var(--text-weak); width: 46px; }
+.row .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-strong); }
+.row[data-done] .t { color: var(--text-base); }
+.row .sig { display: inline-flex; align-items: center; gap: 6px; }
+.row .sig .lk { color: var(--icon-base); opacity: .8; }
+.row .sig .el { font-family: var(--mono); font-size: 11px; color: var(--text-weak); }
+.row[data-depth="1"] { padding-left: 24px; }
+.row[data-depth="2"] { padding-left: 44px; }
+.row[data-depth]::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; border-left: 1px solid var(--border-base); }
+.row[data-depth="2"]::after { content: ""; position: absolute; left: 33px; top: 0; bottom: 0; border-left: 1px solid var(--border-base); }
+.row[data-depth] .t { color: var(--text-base); }
+.count { font-size: 12px; color: var(--text-weak); }
+.insp { padding: 12px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+.insp .top { display: flex; align-items: center; gap: 8px; }
+.insp .top .sp { flex: 1; }
+.insp h3 { margin: 0; font-size: 14.5px; line-height: 1.35; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.meta { color: var(--text-weak); font-size: 12px; }
+.meta b { color: var(--text-base); font-weight: 400; }
+.why { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-base); padding: 7px 10px; border-radius: 7px; background: var(--surface-base); }
+.why .i { margin-top: 1px; }
+.goal { color: var(--text-strong); font-size: 13px; margin: 0; }
+.dw { font-size: 12px; color: var(--text-weak); margin: 2px 0 -2px; }
+.crit { display: grid; grid-template-columns: 14px 1fr; gap: 8px; font-size: 12.5px; color: var(--text-base); }
+.crit i.bx, .crit .bx { width: 12px; height: 12px; border: 1.25px solid var(--icon-base); border-radius: 3px; margin-top: 3px; }
+.key { display: grid; grid-template-columns: 18px 76px 1fr; row-gap: 7px; column-gap: 8px; align-items: center; font-size: 12px; padding: 12px 14px; }
+.key .n { color: var(--text-strong); }
+.key .d { color: var(--text-weak); }
+.sec { font-size: 11px; color: var(--text-weak); padding: 10px 14px 0; letter-spacing: .02em; }
+</style>
+<script src="icons.js"></script>
+</head>
+<body>
+<div class="stage">
+
+  <!-- A: default -->
+  <div class="col" style="width:500px">
+    <div class="cap"><b>Tasks</b> · 500 px · State: Open · one row expanded</div>
+    <div class="panel">
+      <div data-tabs="Tasks"></div>
+      <div class="hdr">
+        <h2>Tasks</h2><span class="count">23 open · 4 running</span><span class="sp"></span>
+        <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
+        <span class="ctl">Open<i data-i="chev-d" class="s"></i></span>
+        <span class="iconbtn"><i data-i="search"></i></span>
+      </div>
+      <div class="list" id="listA"></div>
+      <div class="split" style="margin-top:6px"></div>
+      <div class="insp">
+        <div class="top">
+          <span class="mono weak">LZ-232</span>
+          <i data-i="ring-clock" class="warn"></i><span class="warn" style="font-size:12px">Waiting</span>
+          <span class="sp"></span>
+          <span class="btn ghost">Open Architect</span><span class="iconbtn"><i data-i="more"></i></span>
+        </div>
+        <h3>Automatically continue eligible interrupted implementation workers after service restart</h3>
+        <div class="meta"><b>Priority 1</b> · <b>Recover interrupted workers without replay</b> · step 1</div>
+        <div class="why"><i data-i="ring-clock" class="warn"></i><span>Worker was interrupted by the service restart. Resumes when the runtime confirms the session is idle. <span class="weak">Details</span></span></div>
+        <p class="goal">Automatically continue eligible interrupted implementation workers after service restart.</p>
+        <div class="dw">Done when</div>
+        <div class="crit"><span class="bx"></span><span>A real runtime process-replacement regression stays stopped until one explicit resume for the exact latest interrupted running attempt.</span></div>
+        <div class="crit"><span class="bx"></span><span>Eligible workers continue once without replaying completed tool calls.</span></div>
+        <div class="crit"><span class="bx"></span><span>Ineligible attempts stay stopped and name the reason.</span></div>
+        <div style="margin-top:4px">
+          <div class="disc"><i data-i="chev-r" class="s"></i>Details</div>
+          <div class="disc"><i data-i="chev-r" class="s"></i>Activity<span class="n">6 events</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B: narrow, All filter open -->
+  <div class="col" style="width:360px">
+    <div class="cap"><b>Narrow</b> · 360 px · State: All · filter menu</div>
+    <div class="panel" style="position:relative">
+      <div data-tabs="Tasks"></div>
+      <div class="hdr">
+        <h2>Tasks</h2><span class="count">112</span><span class="sp"></span>
+        <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
+        <span class="ctl on">All<i data-i="chev-d" class="s"></i></span>
+        <span class="iconbtn"><i data-i="search"></i></span>
+      </div>
+      <div class="menu" style="right:44px; top:84px; width:190px">
+        <div>Open<span class="n">23</span></div>
+        <div>Queued<span class="n">6</span></div>
+        <div>Running<span class="n">4</span></div>
+        <div>Blocked / waiting<span class="n">9</span></div>
+        <div>Paused<span class="n">4</span></div>
+        <hr>
+        <div>Accepted<span class="n">31</span></div>
+        <div>Integrated<span class="n">52</span></div>
+        <div>Failed<span class="n">2</span></div>
+        <div>Cancelled<span class="n">4</span></div>
+        <hr>
+        <div data-on><i data-i="check" class="s"></i>All<span class="n">112</span></div>
+      </div>
+      <div class="list" id="listB"></div>
+    </div>
+  </div>
+
+  <!-- C: states -->
+  <div class="col" style="width:340px">
+    <div class="cap"><b>States</b> · reconnecting keeps content · glyph set</div>
+    <div class="stack">
+      <div class="panel" style="flex:0 0 316px">
+        <div data-tabs="Tasks"></div>
+        <div class="hdr" style="padding-bottom:4px">
+          <h2>Tasks</h2><span class="count">23 open</span><span class="sp"></span>
+          <span class="ctl">Open<i data-i="chev-d" class="s"></i></span>
+          <span class="iconbtn"><i data-i="search"></i></span>
+        </div>
+        <div class="banner"><i data-i="wifi" class="s warn"></i><span>Reconnecting · as of 5:54 PM</span><span class="sp"></span><a>Retry</a></div>
+        <div class="list" id="listC" style="opacity:.62"></div>
+      </div>
+      <div class="panel">
+        <div class="sec">STATE GLYPHS · shape carries the state, color only reinforces</div>
+        <div class="key">
+          <i data-i="ring-dashed" class="weak"></i><span class="n">Proposed</span><span class="d">neutral</span>
+          <i data-i="ring" class="base"></i><span class="n">Queued</span><span class="d">neutral</span>
+          <i data-i="ring-dot" class="strong"></i><span class="n">Ready</span><span class="d">strong neutral</span>
+          <i data-i="ring-progress" class="blue"></i><span class="n">Running</span><span class="d">interactive blue</span>
+          <i data-i="ring-pause" class="base"></i><span class="n">Paused</span><span class="d">neutral</span>
+          <i data-i="ring-clock" class="warn"></i><span class="n">Waiting</span><span class="d">warning</span>
+          <i data-i="ban" class="warn"></i><span class="n">Blocked</span><span class="d">warning</span>
+          <i data-i="ring-alert" class="warn"></i><span class="n">Needs you</span><span class="d">warning</span>
+          <i data-i="ring-check" class="base"></i><span class="n">Accepted</span><span class="d">neutral outline — not integrated yet</span>
+          <i data-i="disc-check" class="ok"></i><span class="n">Integrated</span><span class="d">the only green · filled</span>
+          <i data-i="ring-x" class="crit"></i><span class="n">Failed</span><span class="d">critical</span>
+          <i data-i="ring-minus" class="weak"></i><span class="n">Cancelled</span><span class="d">weak</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const row = (r) => `<div class="row"${r.sel ? " data-sel" : ""}${r.depth ? ` data-depth="${r.depth}"` : ""}${r.done ? " data-done" : ""}>
+  <span class="dz">${r.x ? `<i data-i="${r.x === "open" ? "chev-d" : "chev-r"}" class="s"></i>` : ""}</span>
+  <span class="p"${r.p === 1 ? " data-top" : ""}>${r.depth ? "" : (r.p || "")}</span>
+  <span class="ref">${r.ref}</span><span class="t">${r.t}</span>
+  <span class="sig">${r.el ? `<span class="el">${r.el}</span>` : ""}${r.lk ? '<i data-i="link" class="s lk"></i>' : ""}<i data-i="${r.g}" class="${r.c}"></i></span></div>`
+const A = [
+  { p: 1, ref: "LZ-232", t: "Automatically continue eligible interrupted implementation workers after restart", g: "ring-clock", c: "warn", sel: 1 },
+  { p: 1, ref: "LZ-234", t: "Correct Tasks heading regression coverage for the approved disclosure", g: "ring-pause", c: "base" },
+  { p: 2, ref: "LZ-219", t: "Make combined verification recoverable when its final receipt is lost", g: "ring-pause", c: "base", x: "open", lk: 1 },
+  { depth: 1, ref: "LZ-233", t: "Recover retained-check resource settlement after final-receipt loss", g: "ring-pause", c: "base", x: "open" },
+  { depth: 2, ref: "LZ-221", t: "Recover completed retained worker candidates across native restart", g: "ring-pause", c: "base" },
+  { depth: 1, ref: "LZ-211", t: "Repair the preserved LZ-182 scheduling read and Tasks waiting state", g: "disc-check", c: "ok" },
+  { p: 3, ref: "LZ-233", t: "Recover retained-check resource settlement after final-receipt loss", g: "ring-pause", c: "base", x: 1, lk: 1 },
+  { p: 4, ref: "LZ-221", t: "Recover completed retained worker candidates across native restart", g: "ring-pause", c: "base", x: 1, lk: 1 },
+  { p: 5, ref: "LZ-222", t: "Recover explicitly authorized cleanup through the reviewed native path", g: "ring-clock", c: "warn" },
+  { p: 20, ref: "LZ-99", t: "Allow explicit same-attempt resume of a post-restart interrupted worker", g: "ring-progress", c: "blue", el: "12m" },
+  { p: 20, ref: "LZ-146", t: "Restore the live Models Compare panel to the approved compact layout", g: "ring-progress", c: "blue", el: "4m" },
+  { p: 21, ref: "LZ-142", t: "Use the accepted persona route decision during real TaskRuntime dispatch", g: "ring-clock", c: "warn" },
+  { p: 22, ref: "LZ-200", t: "Deliver one canonical-project concurrency limit shared by all sessions", g: "ban", c: "warn", x: 1, lk: 1 },
+]
+const B = [
+  { p: 1, ref: "LZ-232", t: "Automatically continue eligible interrupted workers", g: "ring-clock", c: "warn" },
+  { p: 1, ref: "LZ-234", t: "Correct Tasks heading regression coverage", g: "ring-pause", c: "base" },
+  { p: 2, ref: "LZ-219", t: "Make combined verification recoverable", g: "ring-pause", c: "base", x: 1, lk: 1 },
+  { p: 20, ref: "LZ-99", t: "Allow explicit same-attempt resume", g: "ring-progress", c: "blue", el: "12m", sel: 1 },
+  { p: 20, ref: "LZ-146", t: "Restore the live Models Compare panel", g: "ring-progress", c: "blue", el: "4m" },
+  { p: 22, ref: "LZ-200", t: "Deliver one canonical-project concurrency limit", g: "ban", c: "warn", x: 1, lk: 1 },
+  { p: 24, ref: "LZ-141", t: "Make the Models Assignments tab edit exact routes", g: "ring", c: "base" },
+  { ref: "LZ-139", t: "Restore authorized task/attempt trajectory", g: "ring-dashed", c: "weak" },
+  { p: 3, ref: "LZ-207", t: "Make project verification use generous inactivity", g: "ring-check", c: "base", done: 1 },
+  { p: 3, ref: "LZ-206", t: "Allow the current Architect owner to verify", g: "ring-check", c: "base", done: 1 },
+  { p: 4, ref: "LZ-204", t: "Allow isolated retained verification", g: "ring-check", c: "base", done: 1 },
+  { p: 2, ref: "LZ-211", t: "Repair the preserved LZ-182 scheduling read", g: "disc-check", c: "ok", done: 1 },
+  { p: 5, ref: "LZ-185", t: "Use durable canonical-project sibling storage", g: "disc-check", c: "ok", done: 1 },
+  { p: 6, ref: "LZ-154", t: "Provide a normal Architect control", g: "disc-check", c: "ok", done: 1, x: 1 },
+  { p: 6, ref: "LZ-137", t: "Set lz-attach-task-advice native registration", g: "disc-check", c: "ok", done: 1 },
+  { p: 7, ref: "LZ-127", t: "Prevent a live execution-start event from losing", g: "disc-check", c: "ok", done: 1 },
+  { p: 9, ref: "LZ-118", t: "Reject a stale lease after owner transfer", g: "ring-x", c: "crit", done: 1 },
+  { ref: "LZ-104", t: "Close zero-accepted contract validation", g: "ring-minus", c: "weak", done: 1 },
+  { p: 8, ref: "LZ-100", t: "Provide a stable Models decision-read contract", g: "disc-check", c: "ok", done: 1 },
+  { p: 8, ref: "LZ-114", t: "Preserve known route allocation", g: "disc-check", c: "ok", done: 1 },
+  { p: 9, ref: "LZ-117", t: "Let genuine native worker idle evidence survive", g: "disc-check", c: "ok", done: 1 },
+  { p: 9, ref: "LZ-107", t: "Close zero-accepted contract validation and tooltip", g: "disc-check", c: "ok", done: 1 },
+  { p: 9, ref: "LZ-136", t: "Allow an owner-authorized reconciliation", g: "disc-check", c: "ok", done: 1 },
+  { p: 10, ref: "LZ-116", t: "Expose bounded reconstruction diagnostics", g: "disc-check", c: "ok", done: 1 },
+]
+window.build = () => {
+  listA.innerHTML = A.slice(0, 10).map(row).join("")
+  listB.innerHTML = B.map(row).join("")
+  listC.innerHTML = A.filter((r) => !r.depth).slice(0, 7).map((r) => row({ ...r, sel: 0, x: r.x ? 1 : 0 })).join("")
+}
+</script>
+</body>
+</html>

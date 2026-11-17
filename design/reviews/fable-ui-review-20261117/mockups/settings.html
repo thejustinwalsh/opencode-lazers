@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings and indicators — recommended</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.page { background: var(--background-app); border: 1px solid var(--border-weak-base); border-radius: 10px; flex: 1; min-height: 0; display: grid; grid-template-columns: 190px 1fr; overflow: hidden; }
+.nav { padding: 18px 10px; border-right: 1px solid var(--border-weak-base); font-size: 12.5px; color: var(--text-base); display: flex; flex-direction: column; gap: 2px; }
+.nav span { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; }
+.nav span[data-on] { background: var(--tab-active); color: var(--text-strong); }
+.nav .i { color: var(--icon-base); }
+.nav .gapy { height: 10px; }
+.body { padding: 20px 28px; overflow: hidden; }
+.body h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.body .lede { color: var(--text-weak); font-size: 12.5px; margin: 2px 0 14px; }
+.grp { border-top: 1px solid var(--border-weak-base); padding: 12px 0 10px; }
+.grp h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.grp h2 .st { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--text-weak); }
+.rowx { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 16px; min-height: 30px; font-size: 12.5px; }
+.rowx .d { color: var(--text-weak); font-size: 12px; margin-left: 8px; }
+.rowx.sub { padding-left: 14px; }
+.sw { width: 28px; height: 16px; border-radius: 9px; background: var(--border-base); position: relative; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #c9ccd2; }
+.sw[data-on] { background: #dfe2e8; }
+.sw[data-on]::after { left: 14px; background: #0c0f14; }
+.sel { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 10px; border: 1px solid var(--border-base); border-radius: 6px; background: var(--surface-base); color: var(--text-strong); font-size: 12.5px; min-width: 190px; justify-content: space-between; }
+.sel .i { color: var(--icon-base); }
+.inp { height: 28px; padding: 0 10px; border: 1px solid var(--border-base); border-radius: 6px; background: var(--surface-base); color: var(--text-strong); font: 12px var(--mono); display: inline-flex; align-items: center; min-width: 90px; justify-content: flex-end; }
+.side .card { background: var(--background-base); border: 1px solid var(--border-weak-base); border-radius: 10px; padding: 12px 14px; }
+.bar { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 10px; background: var(--background-app); border: 1px solid var(--border-weak-base); border-radius: 8px; font-size: 12.5px; }
+.bar .ttl { color: var(--text-strong); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .sp { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 7px; border-radius: 6px; color: var(--text-base); font-size: 12px; white-space: nowrap; }
+.pill.hov { background: var(--surface-base-hover); }
+.pill svg { flex: none; }
+.lbl { font-size: 11px; color: var(--text-weak); margin: 12px 0 6px; letter-spacing: .02em; }
+.states { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; font-size: 12px; color: var(--text-weak); }
+.tip { background: #14171d; border: 1px solid var(--border-base); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--text-base); box-shadow: 0 12px 32px rgba(0,0,0,.5); line-height: 1.55; }
+.tip b { color: var(--text-strong); font-weight: 500; }
+</style>
+<script src="icons.js"></script>
+</head>
+<body>
+<div class="stage">
+  <div class="col" style="width:800px">
+    <div class="cap"><b>Settings</b> · one LAZERS page · budget folded in · compact rows</div>
+    <div class="page">
+      <div class="nav">
+        <span><i data-i="back" class="s"></i>Back to app</span><div class="gapy"></div>
+        <span><i data-i="search" class="s"></i>Search</span><div class="gapy"></div>
+        <span><i data-i="hex" class="s"></i>Providers</span>
+        <span><i data-i="diamond" class="s"></i>Models</span>
+        <span><i data-i="tasks" class="s"></i>Extensions</span>
+        <span><i data-i="file" class="s"></i>Projects</span>
+        <span><i data-i="branch" class="s"></i>Worktrees</span><div class="gapy"></div>
+        <span><i data-i="gear" class="s"></i>Preferences</span>
+        <span><i data-i="eye" class="s"></i>Appearance</span>
+        <span><i data-i="terminal" class="s"></i>Shortcuts</span>
+        <span data-on><i data-i="hex" class="s"></i>LAZERS</span>
+        <span><i data-i="sidebar" class="s"></i>Server</span>
+      </div>
+      <div class="body">
+        <h1>LAZERS</h1>
+        <div class="lede">Architect, tasks and panels work without local inference. Everything below is optional.</div>
+
+        <div class="grp">
+          <h2>Local inference<span class="st">LFM3 loaded · 2.1 GB on GPU</span></h2>
+          <div class="rowx"><span>Run local models on this device<span class="d">Off releases GPU memory; downloads are kept</span></span><span class="sw" data-on></span></div>
+          <div class="rowx sub"><span>Local questions<span class="d">for agents and the test panel</span></span><span class="sw" data-on></span></div>
+          <div class="rowx sub"><span>System One decisions<span class="d">typed decisions API</span></span><span class="sw" data-on></span></div>
+          <div class="rowx sub"><span>Task review<span class="d">advisory check before submission · needs decisions</span></span><span class="sw" data-on></span></div>
+          <div class="rowx sub"><span>Dictation<span class="d">microphone button and push-to-talk</span></span><span class="sw" data-on></span></div>
+          <div class="rowx sub"><span>Read aloud<span class="d">speaker button and speech</span></span><span class="sw" data-on></span></div>
+        </div>
+
+        <div class="grp">
+          <div class="rowx"><span>Keep model loaded<span class="d">Never unloading avoids the reload wait</span></span><span class="sel">Always<i data-i="chev-d" class="s"></i></span></div>
+          <div class="rowx" style="margin-top:6px"><span>Voice<span class="d">used by Read aloud</span></span><span style="display:flex;gap:6px"><span class="btn"><i data-i="play" class="s"></i>Preview</span><span class="sel">British English · female<i data-i="chev-d" class="s"></i></span></span></div>
+          <div class="rowx" style="margin-top:6px"><span>Downloaded models<span class="d">3.4 GB</span></span><span class="btn"><i data-i="trash" class="s"></i>Remove</span></div>
+        </div>
+
+        <div class="grp">
+          <h2>Provider usage in the session header</h2>
+          <div class="rowx"><span>Show usage ring<span class="d">read-only; never limits or reroutes</span></span><span class="sw" data-on></span></div>
+          <div class="rowx" style="margin-top:4px"><span>Provider</span><span class="sel">OpenRouter<i data-i="chev-d" class="s"></i></span></div>
+          <div class="rowx" style="margin-top:6px"><span>Weekly budget<span class="d">week starts Sunday, local time</span></span><span class="inp">$ 300</span></div>
+        </div>
+
+        <div class="grp" style="padding-bottom:0">
+          <div class="disc" style="border:0;height:24px"><i data-i="chev-r" class="s"></i>Advanced diagnostics<span class="n">GPU, model identity, renderer capture</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col side" style="width:420px">
+    <div class="cap"><b>Session header</b> · indicators sized to host controls</div>
+    <div class="stack">
+      <div class="card">
+        <div class="bar">
+          <span class="weak" style="white-space:nowrap">opencode-lazers /</span><span class="ttl">&nbsp;LAZERS roadmap…</span><span class="sp"></span>
+          <span class="pill hov"><span>LFM3</span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="1.5" opacity=".35"/><path d="M6.9 10.2l2.2 2.2 4-4.6" fill="none" stroke="#b6bac2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="pill"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2"/><circle cx="10" cy="10" r="7.25" fill="none" stroke="#b6bac2" stroke-width="2" stroke-dasharray="19 100" pathLength="100" transform="rotate(-90 10 10)" stroke-linecap="round"/></svg><span>$58</span></span>
+          <span class="pill"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2"/><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="2" stroke-dasharray="34 100" pathLength="100" transform="rotate(-90 10 10)"/></svg><span>81k</span></span>
+          <span class="iconbtn"><i data-i="sidebar"></i></span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin:6px 96px 0 0"><div class="tip"><b>OpenRouter · $58 of $300 this week</b><br>Credits $41 · BYOK $17<br>Resets Sun 12:00 AM</div></div>
+      </div>
+
+      <div class="card" style="flex:1">
+        <div class="lbl" style="margin-top:0">LOCAL INFERENCE · 26 px control, name + state glyph</div>
+        <div class="states">
+          <span class="pill"><span>LFM3</span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="1.5" opacity=".35"/><path d="M10 6l3.4 4-3.4 4-3.4-4z" fill="none" stroke="#8b9099" stroke-width="1.4" stroke-linejoin="round"/></svg></span><span>Unloaded · loads on next request</span>
+          <span class="pill"><span>LFM3</span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="1.5" opacity=".35"/><path d="M10 2.75a7.25 7.25 0 017.25 7.25" fill="none" stroke="#8fcbf7" stroke-width="1.7" stroke-linecap="round"/></svg></span><span>Loading</span>
+          <span class="pill"><span>LFM3</span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="1.5" opacity=".35"/><path d="M6.9 10.2l2.2 2.2 4-4.6" fill="none" stroke="#b6bac2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Available · neutral, never green</span>
+          <span class="pill"><span>LFM3</span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8fcbf7" stroke-width="1.5"/><path d="M10 5.5a4.5 4.5 0 010 9z" fill="#8fcbf7"/></svg></span><span>Working</span>
+          <span class="pill"><span>LFM3</span><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#f47c7c" stroke-width="1.5"/><path d="M10 6.3v4.4M10 13.4h.01" fill="none" stroke="#f47c7c" stroke-width="1.6" stroke-linecap="round"/></svg></span><span>Error · reason in tooltip and Settings</span>
+        </div>
+        <div class="lbl">PROVIDER USAGE · ring + amount</div>
+        <div class="states">
+          <span class="pill"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2"/><circle cx="10" cy="10" r="7.25" fill="none" stroke="#b6bac2" stroke-width="2" stroke-dasharray="19 100" pathLength="100" transform="rotate(-90 10 10)" stroke-linecap="round"/></svg><span>$58</span></span><span>Under budget · neutral</span>
+          <span class="pill"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2"/><circle cx="10" cy="10" r="7.25" fill="none" stroke="#f0b48a" stroke-width="2" stroke-dasharray="86 100" pathLength="100" transform="rotate(-90 10 10)" stroke-linecap="round"/></svg><span class="warn">$258</span></span><span>Above 80 % · warning</span>
+          <span class="pill"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#f47c7c" stroke-width="2"/></svg><span class="crit">$312</span></span><span>Over budget · critical</span>
+          <span class="pill"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2" stroke-dasharray="3 3"/></svg></span><span>No reading yet · ring only, no “—”</span>
+        </div>
+        <div class="lbl">COMPACT HEADER · names drop, glyphs stay</div>
+        <div class="bar" style="width:240px">
+          <span class="ttl">LAZERS roadmap…</span><span class="sp"></span>
+          <span class="pill" style="padding:0 5px"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="1.5" opacity=".35"/><path d="M6.9 10.2l2.2 2.2 4-4.6" fill="none" stroke="#b6bac2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="pill" style="padding:0 5px"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2"/><circle cx="10" cy="10" r="7.25" fill="none" stroke="#b6bac2" stroke-width="2" stroke-dasharray="19 100" pathLength="100" transform="rotate(-90 10 10)"/></svg></span>
+          <span class="pill" style="padding:0 5px"><svg width="16" height="16" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="#2a2e37" stroke-width="2"/><circle cx="10" cy="10" r="7.25" fill="none" stroke="#8b9099" stroke-width="2" stroke-dasharray="34 100" pathLength="100" transform="rotate(-90 10 10)"/></svg></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
