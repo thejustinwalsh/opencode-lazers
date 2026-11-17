@@ -1838,6 +1838,8 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
         {
           assignmentFingerprint: string
           fingerprint: string
+          light?: string
+          fullVerifiedAt?: number
           progressFingerprint: string
           revision: number
         }
