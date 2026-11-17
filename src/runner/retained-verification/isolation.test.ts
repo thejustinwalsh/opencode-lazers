@@ -1,3 +1,4 @@
+import { assertNoSymlinks, assertOwnedDependencyTree } from "./isolation.ts"
 import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { execFileSync } from "node:child_process"
@@ -318,7 +319,7 @@ test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
     expect(`${privateDependency.dev}:${privateDependency.ino}`).not.toBe(
       `${sourceDependency.dev}:${sourceDependency.ino}`,
     )
-    expect(observeRetainedCheckContext(context)).toBe(true)
+    expect(await observeRetainedCheckContext(context)).toBe(true)
 
     const witness = retainedCheckIsolationWitness(context)
     const receipt = await runCheck(canonicalCandidate, artifact, check, receiptPath, {
@@ -357,12 +358,12 @@ test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
       procedurePlan: procedure.plan,
     }
     expect(
-      observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, expected),
+      await observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, expected),
     ).toBe(true)
     expect(
       new Set(context.resources.map((resource) => `${resource.device}:${resource.inode}`)).size,
     ).toBe(context.resources.length)
-    removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, expected)
+    await removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, expected)
     expect(existsSync(context.directory)).toBe(false)
     expect(existsSync(join(canonicalCandidate, "node_modules"))).toBe(false)
     if (context.procedureBinding.temporaryDirectoryLink)
@@ -493,7 +494,7 @@ test("another project executes a new scoped target against its committed depende
   )
   expect(receipt.exitCode, receipt.stderr).toBe(0)
   expect(receipt).not.toHaveProperty("unchanged")
-  expect(observeRetainedCheckContext(context)).toBe(true)
+  expect(await observeRetainedCheckContext(context)).toBe(true)
   expect(readFileSync(join(oldProfile, "candidate"), "utf8")).toBe("old\n")
   expect(readFileSync(join(root, "bun.lock")).equals(baselineLock)).toBe(true)
   expect(readFileSync(join(root, "package.json")).equals(baselineManifest)).toBe(true)
@@ -505,7 +506,7 @@ test("another project executes a new scoped target against its committed depende
     "candidate\n",
   )
   expect(
-    observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
+    await observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
       operationID: context.operationID,
       generation: context.generation,
       phase: context.phase,
@@ -527,7 +528,7 @@ test("another project executes a new scoped target against its committed depende
   } finally {
     privateDB.close()
   }
-  removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
+  await removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
     operationID: context.operationID,
     generation: context.generation,
     phase: context.phase,
@@ -670,7 +671,7 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
     )
     expect(missingScript.exitCode).not.toBe(0)
     expect(missingScript.stderr).toContain("not-declared")
-    removeRetainedCheckContext(permitted)
+    await removeRetainedCheckContext(permitted)
     expect(existsSync(join(state, `retained-${rejectedOperation}-1`))).toBe(false)
     const context = await createRetainedCheckContext({
       rootDirectory: state,
@@ -707,11 +708,11 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
       expect(existsSync(join(context.environment.HOME!, "post-build-ran"))).toBe(false)
       expect(existsSync(join(candidate, "dist/fixture-build.txt"))).toBe(false)
       expect(readFileSync(join(oldProfile, "build.txt"), "utf8")).toBe("old profile\n")
-      expect(observeRetainedCheckContext(context)).toBe(true)
+      expect(await observeRetainedCheckContext(context)).toBe(true)
     } else {
       expect(receipt.exitCode, receipt.stderr).toBe(0)
       expect(receipt).not.toHaveProperty("unchanged")
-      expect(observeRetainedCheckContext(context)).toBe(true)
+      expect(await observeRetainedCheckContext(context)).toBe(true)
       expect(readFileSync(join(oldProfile, "build.txt"), "utf8")).toBe("old profile\n")
       expect(readFileSync(join(candidate, "dist", "fixture-build.txt"), "utf8")).toBe(
         "built candidate\n",
@@ -732,7 +733,7 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
       }
     }
     expect(
-      observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
+      await observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
         operationID: context.operationID,
         generation: context.generation,
         phase: context.phase,
@@ -746,7 +747,7 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
         procedurePlan: procedure.plan,
       }),
     ).toBe(true)
-    removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
+    await removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
       operationID: context.operationID,
       generation: context.generation,
       phase: context.phase,
@@ -842,4 +843,34 @@ test("project procedure bindings cover authored and newly scoped Bun targets", (
   expect(retainedProcedurePlan("bun run build:fixture && echo unbound")).toMatchObject({
     status: "supported",
   })
+})
+
+test("isolation verification of a large tree yields to the event loop in short slices", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-isolation-walk-"))
+  try {
+    for (let directory = 0; directory < 300; directory++) {
+      const path = join(root, "node_modules", `pkg-${directory}`, "lib")
+      mkdirSync(path, { recursive: true })
+      for (let file = 0; file < 20; file++) writeFileSync(join(path, `f${file}.js`), "x")
+    }
+    let last = performance.now()
+    let worstSlice = 0
+    let beats = 0
+    const timer = setInterval(() => {
+      const now = performance.now()
+      worstSlice = Math.max(worstSlice, now - last)
+      last = now
+      beats++
+    }, 1)
+    try {
+      await assertOwnedDependencyTree(join(root, "node_modules"))
+      await assertNoSymlinks(root)
+    } finally {
+      clearInterval(timer)
+    }
+    expect(beats).toBeGreaterThan(5)
+    expect(worstSlice).toBeLessThan(50)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
