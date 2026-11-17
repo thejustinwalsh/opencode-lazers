@@ -19,7 +19,7 @@ import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
 import { panelErrorMessage } from "./panel-error.ts"
 import { registerDictation } from "./webgpu/dictation.tsx"
 import { audioFilePCM16 } from "./webgpu/audio.ts"
-import { DEFAULT_VOICE } from "./webgpu/speech.ts"
+import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
 import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
@@ -27,18 +27,21 @@ import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
 import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rpc.ts"
-import {
-  DEFAULT_MODEL_KEEP_ALIVE_MS,
-  defaultFeatures,
-  featureEnabled,
-  usesGPU,
-} from "./webgpu/features.ts"
+import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
+
+const NEVER_UNLOAD_MS = -1
+/** "Never" only for -1; any other persisted value is shown exactly. */
+const keepAliveLabel = (ms: number | undefined) => {
+  if (ms === undefined || ms === NEVER_UNLOAD_MS) return "Never"
+  if (ms % 60_000 === 0) return ms === 60_000 ? "1 minute" : `${ms / 60_000} minutes`
+  return ms % 1_000 === 0 ? `${ms / 1_000} seconds` : `${ms} ms`
+}
 
 const formatBytes = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(2)} GB`
 
@@ -56,8 +59,11 @@ export default Plugin.define({
           Schema.isBetween({ minimum: -1, maximum: 86_400_000 }),
         ),
       }),
-      { keepAliveMs: DEFAULT_MODEL_KEEP_ALIVE_MS },
+      { keepAliveMs: NEVER_UNLOAD_MS },
     ),
+    voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
+      selected: DEFAULT_VOICE,
+    }),
   },
   async main(ctx) {
     const cleanupInference = await setupMain(ctx)
@@ -222,8 +228,8 @@ export default Plugin.define({
     onCleanup(() => clearInterval(settingsTimer))
     const runtime = createInferenceRuntime(
       ctx,
-      () => ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS,
-      () => DEFAULT_VOICE,
+      () => ctx.stores.runtime.value?.keepAliveMs,
+      () => ctx.stores.voice.value?.selected ?? DEFAULT_VOICE,
       features,
     )
     registerDictation(ctx, runtime)
@@ -491,16 +497,29 @@ export default Plugin.define({
               </div>
               <p>Local features load models on demand and share GPU memory.</p>
               <Ui.Menu
-                label={`Unload when idle: ${(ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 60_000 ? "1 minute" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 300_000 ? "5 minutes" : (ctx.stores.runtime.value?.keepAliveMs ?? DEFAULT_MODEL_KEEP_ALIVE_MS) === 900_000 ? "15 minutes" : "Never"}`}
+                label={`Unload when idle: ${keepAliveLabel(ctx.stores.runtime.value?.keepAliveMs)}`}
                 trigger="button"
                 items={[
-                  { label: "Never", value: -1 },
-                  { label: "After 1 minute", value: DEFAULT_MODEL_KEEP_ALIVE_MS },
+                  { label: "Never (default)", value: NEVER_UNLOAD_MS },
+                  { label: "After 1 minute", value: 60_000 },
                   { label: "After 5 minutes", value: 300_000 },
                   { label: "After 15 minutes", value: 900_000 },
                 ].map((item) => ({
                   label: item.label,
                   onSelect: () => ctx.stores.runtime.set({ keepAliveMs: item.value }),
+                }))}
+              />
+            </section>
+            <section aria-labelledby="lazers-voice-title">
+              <h2 id="lazers-voice-title">Voice</h2>
+              <p>Read aloud speaks with this language and gender.</p>
+              <Ui.Menu
+                label={`Voice: ${VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label}`}
+                trigger="button"
+                disabled={!enabled("readAloud")}
+                items={voiceKeys.map((key) => ({
+                  label: `${VOICES[key].label}${key === DEFAULT_VOICE ? " (default)" : ""}`,
+                  onSelect: () => ctx.stores.voice.set({ selected: key }),
                 }))}
               />
             </section>

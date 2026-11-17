@@ -1,4 +1,6 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { acquireSharedConnection } from "../storage.ts"
+
 import {
   TaskCorrectionInspection,
   TaskCorrectionRecord,
@@ -187,7 +189,8 @@ export function inspectTaskCorrections(
 
 /** Open only an existing database in SELECT-only mode; never create or migrate it. */
 export function openReadOnlyTaskCorrections(path: string, projectDirectory: string) {
-  const db = new Database(path, { readonly: true, strict: true })
+  const shared = acquireSharedConnection(path, "readonly")
+  const db = shared.db
   try {
     return {
       read() {
@@ -197,11 +200,11 @@ export function openReadOnlyTaskCorrections(path: string, projectDirectory: stri
         return inspectTaskCorrections(readTaskCorrections(db, projectDirectory), taskID)
       },
       close() {
-        db.close()
+        shared.release()
       },
     }
   } catch (error) {
-    db.close()
+    shared.release()
     throw error
   }
 }

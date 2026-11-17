@@ -410,7 +410,7 @@ export class LiveReadStore {
       journal: "unavailable",
     }
     try {
-      const source = connection.store.atomic((db) => {
+      const source = connection.store.read((db) => {
         signal.throwIfAborted()
         const revisionAvailable = tableExists(db, metrics, "observation_revisions")
         const runnerRevision = revisionIfAvailable(
@@ -595,7 +595,7 @@ export class LiveReadStore {
       journal: "unavailable",
     }
     try {
-      const source = connection.store.atomic((db) => {
+      const source = connection.store.read((db) => {
         signal.throwIfAborted()
         const revisionAvailable = tableExists(db, metrics, "observation_revisions")
         const runnerRevision = revisionIfAvailable(
@@ -679,7 +679,7 @@ export class LiveReadStore {
       })
 
       signal.throwIfAborted()
-      const latestRevision = connection.store.atomic((db) => {
+      const latestRevision = connection.store.read((db) => {
         const available = tableExists(db, metrics, "observation_revisions")
         return revisionIfAvailable(db, metrics, available, this.projectDirectory)
       })

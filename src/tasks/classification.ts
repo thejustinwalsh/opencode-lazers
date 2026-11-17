@@ -1,4 +1,6 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { acquireSharedConnection } from "../storage.ts"
+
 import { TaskClassificationAnnotationRecord } from "../task-classification.ts"
 import type {
   TaskClassificationRevision,
@@ -113,18 +115,19 @@ export function readTaskClassification(
 
 /** Open only an existing database in SELECT-only mode; never create or migrate it. */
 export function openReadOnlyTaskClassifications(path: string, projectDirectory: string) {
-  const db = new Database(path, { readonly: true, strict: true })
+  const shared = acquireSharedConnection(path, "readonly")
+  const db = shared.db
   try {
     return {
       read(taskID: string) {
         return readTaskClassification(db, projectDirectory, taskID)
       },
       close() {
-        db.close()
+        shared.release()
       },
     }
   } catch (error) {
-    db.close()
+    shared.release()
     throw error
   }
 }

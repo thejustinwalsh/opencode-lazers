@@ -3,20 +3,15 @@ import {
   constants,
   closeSync,
   existsSync,
-  fstatSync,
-  lstatSync,
   mkdirSync,
   openSync,
   opendirSync,
-  readFileSync,
-  readSync,
   realpathSync,
   readdirSync,
-  renameSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs"
+import { lstat, open, realpath, rename, stat as fsStat, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative } from "node:path"
 import { Worker } from "node:worker_threads"
 import ignore from "ignore"
@@ -92,31 +87,31 @@ export class WorkspaceIndexUnavailable extends Error {
 }
 
 /** Reads at most maxFile+1 bytes. Rejects symlinks and changed inode/metadata. */
-function readSource(root: string, path: string): string {
+async function readSource(root: string, path: string): Promise<string> {
   if (isAbsolute(path) || path.split("/").some((p) => p === ".." || p === "."))
     throw new Error("Invalid source path")
   let parent = root
   for (const part of path.split("/")) {
     parent = join(parent, part)
-    if (lstatSync(parent).isSymbolicLink()) throw new Error("Symlink source is excluded")
+    if ((await lstat(parent)).isSymbolicLink()) throw new Error("Symlink source is excluded")
   }
   const absolute = join(root, path)
-  const actual = realpathSync(absolute)
+  const actual = await realpath(absolute)
   if (relative(root, actual).startsWith("..") || isAbsolute(relative(root, actual)))
     throw new Error("Source escaped workspace")
-  const fd = openSync(absolute, constants.O_RDONLY | constants.O_NOFOLLOW)
+  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
-    const before = fstatSync(fd)
+    const before = await handle.stat()
     if (!before.isFile() || before.size > maxFile) throw new Error("Source exceeds per-file bound")
     const bytes = Buffer.alloc(Math.min(maxFile + 1, before.size + 1))
     let offset = 0
     while (offset < bytes.length) {
-      const n = readSync(fd, bytes, offset, bytes.length - offset, null)
-      if (!n) break
-      offset += n
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, null)
+      if (!bytesRead) break
+      offset += bytesRead
     }
-    const after = fstatSync(fd),
-      linked = lstatSync(absolute)
+    const after = await handle.stat(),
+      linked = await lstat(absolute)
     if (
       offset > maxFile ||
       after.size !== offset ||
@@ -124,15 +119,33 @@ function readSource(root: string, path: string): string {
       before.mtimeMs !== after.mtimeMs ||
       before.ino !== linked.ino ||
       before.dev !== linked.dev ||
-      realpathSync(absolute) !== actual
+      (await realpath(absolute)) !== actual
     )
       throw new Error("Source changed while collecting")
     const value = bytes.subarray(0, offset)
     if (value.includes(0)) throw new Error("Binary source is excluded")
     return new TextDecoder("utf-8", { fatal: true }).decode(value)
   } finally {
-    closeSync(fd)
+    await handle.close()
   }
+}
+
+/** JSON.stringify of a snapshot that yields between file records (up to 64 MiB). */
+async function stringifySnapshot(snapshot: Snapshot): Promise<string> {
+  const { files, ...header } = snapshot
+  const head = JSON.stringify(header)
+  const parts: string[] = []
+  let size = 0
+  for (const [index, file] of files.entries()) {
+    const text = JSON.stringify(file)
+    parts.push(text)
+    size += text.length
+    if (index % 64 === 63 || size > 1024 * 1024) {
+      size = 0
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+  }
+  return `${head.slice(0, -1)},"files":[${parts.join(",")}]}`
 }
 
 export class ProjectIndex {
@@ -245,11 +258,11 @@ export class ProjectIndex {
     const cache = join(this.cacheDirectory, filename)
     const temporary = `${cache}.${crypto.randomUUID()}.tmp`
     try {
-      const text = JSON.stringify(snapshot)
+      const text = await stringifySnapshot(snapshot)
       const size = Buffer.byteLength(text)
       if (size > 64 * 1024 * 1024) throw new Error("Snapshot exceeds 64 MiB")
-      writeFileSync(temporary, text, { flag: "wx", mode: 0o600 })
-      renameSync(temporary, cache)
+      await writeFile(temporary, text, { flag: "wx", mode: 0o600 })
+      await rename(temporary, cache)
       this.evict()
       this.assertCacheCapacity(size, filename)
       this.repository.atomic((db) => {
@@ -343,7 +356,7 @@ export class ProjectIndex {
               throw new Error("Cannot establish permitted project ignore policy")
             rules.push({
               base: path ? `${path}/` : "",
-              rules: ignore().add(readSource(this.root, name)),
+              rules: ignore().add(await readSource(this.root, name)),
             })
           }
         }
@@ -413,7 +426,7 @@ export class ProjectIndex {
             if (!entry.isFile() || !(await this.allow(name, principal, this.root))) continue
             let content: string
             try {
-              content = readSource(this.root, name)
+              content = await readSource(this.root, name)
             } catch {
               continue
             }
@@ -421,7 +434,7 @@ export class ProjectIndex {
             total += bytes
             if (selected.length >= 5000 || total > 32 * 1024 * 1024)
               throw new Error("Project source exceeds 5,000 files/32 MiB; narrow indexing policy")
-            const stat = statSync(join(this.root, name))
+            const stat = await fsStat(join(this.root, name))
             selected.push({
               path: name,
               content,
@@ -503,44 +516,63 @@ export class ProjectIndex {
     })
   }
 
-  private loadSnapshot(publication?: { ownerSessionID: string; workspace: string }): Snapshot {
+  private async loadSnapshot(publication?: {
+    ownerSessionID: string
+    workspace: string
+  }): Promise<Snapshot> {
     // The immediate transaction is a lock, not a snapshot write. Hold it until
     // the immutable bytes are read so another process cannot evict that file.
-    const { file, workspace, cacheID, expectedSnapshotID, text } = this.repository.atomic((db) => {
-      let file: string,
-        workspace = this.root,
-        cacheID = this.cacheID,
-        expectedSnapshotID: string | undefined
-      if (publication) {
-        const row = db
-          .query<{ workspace: string; snapshot_id: string }, [string, string, string]>(
-            "SELECT workspace,snapshot_id FROM context_publications WHERE project_id IN (SELECT value FROM json_each(?)) AND project_directory=? AND owner_session=?",
-          )
-          .get(projectIdsJSON(this.projectID), this.projectDirectory, publication.ownerSessionID)
-        if (!row || row.workspace !== publication.workspace) throw new WorkspaceIndexUnavailable()
-        workspace = row.workspace
-        expectedSnapshotID = row.snapshot_id
-        const identity = db
-          .query<{ id: string }, [string]>("SELECT id FROM context_workspaces WHERE workspace=?")
-          .get(workspace)
-        if (!identity) throw new WorkspaceIndexUnavailable()
-        cacheID = identity.id
-        file = `${identity.id}-${expectedSnapshotID}.json`
-      } else {
-        const row = db
-          .query<{ file: string }, [string, string]>(
-            "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
-          )
-          .get(this.root, workspaceSelection)
-        if (!row) throw new WorkspaceIndexUnavailable()
-        file = row.file
-      }
-      if (!snapshotFilename.test(file)) throw new Error("Invalid cached snapshot path")
-      const cache = join(this.cacheDirectory, file)
-      if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
-      if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
-      return { file, workspace, cacheID, expectedSnapshotID, text: readFileSync(cache, "utf8") }
-    })
+    // The descriptor opened inside the lock pins the immutable bytes even if
+    // another process evicts the file; they are read after the lock is released.
+    const { file, workspace, cacheID, expectedSnapshotID, descriptor } = this.repository.atomic(
+      (db) => {
+        let file: string,
+          workspace = this.root,
+          cacheID = this.cacheID,
+          expectedSnapshotID: string | undefined
+        if (publication) {
+          const row = db
+            .query<{ workspace: string; snapshot_id: string }, [string, string, string]>(
+              "SELECT workspace,snapshot_id FROM context_publications WHERE project_id IN (SELECT value FROM json_each(?)) AND project_directory=? AND owner_session=?",
+            )
+            .get(projectIdsJSON(this.projectID), this.projectDirectory, publication.ownerSessionID)
+          if (!row || row.workspace !== publication.workspace) throw new WorkspaceIndexUnavailable()
+          workspace = row.workspace
+          expectedSnapshotID = row.snapshot_id
+          const identity = db
+            .query<{ id: string }, [string]>("SELECT id FROM context_workspaces WHERE workspace=?")
+            .get(workspace)
+          if (!identity) throw new WorkspaceIndexUnavailable()
+          cacheID = identity.id
+          file = `${identity.id}-${expectedSnapshotID}.json`
+        } else {
+          const row = db
+            .query<{ file: string }, [string, string]>(
+              "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
+            )
+            .get(this.root, workspaceSelection)
+          if (!row) throw new WorkspaceIndexUnavailable()
+          file = row.file
+        }
+        if (!snapshotFilename.test(file)) throw new Error("Invalid cached snapshot path")
+        const cache = join(this.cacheDirectory, file)
+        if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
+        if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
+        return {
+          file,
+          workspace,
+          cacheID,
+          expectedSnapshotID,
+          descriptor: openSync(cache, constants.O_RDONLY),
+        }
+      },
+    )
+    let text: string
+    try {
+      text = await Bun.file(descriptor).text()
+    } finally {
+      closeSync(descriptor)
+    }
     const stored = JSON.parse(text) as Snapshot
     if (
       stored.version !== 2 ||
@@ -616,12 +648,12 @@ export class ProjectIndex {
     const publication = await this.publicationFor(principal)
     if (publication) {
       try {
-        return this.loadSnapshot(publication)
+        return await this.loadSnapshot(publication)
       } catch (error) {
         if (!(error instanceof WorkspaceIndexUnavailable)) throw error
       }
     }
-    return this.loadSnapshot()
+    return await this.loadSnapshot()
   }
 
   private selectedFiles(snapshot: Snapshot, paths: string[]) {

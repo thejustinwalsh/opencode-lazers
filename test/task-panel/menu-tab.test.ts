@@ -18,16 +18,16 @@ afterAll(() => vite.close())
 const { setupTaskPanel, verificationTimingSummary } = (await vite.ssrLoadModule(
   "/src/tasks/panel.tsx",
 )) as typeof import("../../src/tasks/panel.tsx")
-const { ExecutionPlanHeading } = (await vite.ssrLoadModule(
-  "/src/tasks/execution-list-view.tsx",
-)) as typeof import("../../src/tasks/execution-list-view.tsx")
 const disposers: Array<() => void> = []
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose()
 })
-const { planHeaded } = (await vite.ssrLoadModule(
+const virtualRows = (await vite.ssrLoadModule(
   "/src/tasks/virtual-rows.ts",
 )) as typeof import("../../src/tasks/virtual-rows.ts")
+const { taskSequencing, taskRowPresentation } = (await vite.ssrLoadModule(
+  "/src/tasks/row-presentation.ts",
+)) as typeof import("../../src/tasks/row-presentation.ts")
 const Icon = (props: { name: string; size?: string }) => `icon:${props.name}:${props.size}`
 
 type Contribution = { registry: unknown; value: Record<string, unknown> }
@@ -125,123 +125,29 @@ describe("tasks native affordances", () => {
     expect(mixed).toContain("Legacy timeout (historical): 4s (not used for execution)")
   })
 
-  test("plan nonterminal counts stay distinct from native activity", () => {
-    const group = (title: string, nonterminalCount: number, totalCount: number) => ({
-      planID: title,
-      planVersion: 1,
-      planRevision: 1,
-      title,
-      hasRecordedTitle: true,
-      state: "running",
-      nonterminalCount,
-      totalCount,
-      rows: [],
+  test("the task list has no plan headings; sequencing and state are icon-only signals", () => {
+    const base = {
+      taskID: "t",
+      title: "Task",
+      status: "queued",
+      reason: null,
+      waiting: false,
+      holdReason: null,
+      ordinal: 0,
+      contextOnly: false,
+      prerequisites: [],
+      successors: [],
+    }
+    expect("planHeaded" in virtualRows).toBe(false)
+    expect(taskSequencing(base)).toMatchObject({ kind: "parallel", label: "Parallel-eligible" })
+    expect(taskSequencing({ ...base, prerequisites: ["a", "b"] })).toMatchObject({
+      kind: "sequenced",
+      label: "Sequenced",
+      detail: "Runs after 2 dependencies",
     })
-    const treeItemProps = { setSize: 1, posInSet: 1, tabIndex: -1, onKeyDown: () => {} }
-    const renderGroup = (
-      title: string,
-      nonterminalCount: number,
-      totalCount: number,
-      stateFilter: "open" | "completed" | "cancelled",
-    ) => {
-      const value = group(title, nonterminalCount, totalCount)
-      return planHeaded(value)
-        ? renderToString(() =>
-            createComponent(ExecutionPlanHeading, {
-              group: value,
-              stateFilter,
-              collapsed: false,
-              onToggle: () => {},
-              ...treeItemProps,
-            }),
-          )
-        : ""
-    }
-
-    const open = renderGroup("Open plan", 1, 2, "open")
-    expect(open).toContain('aria-label="Open plan, 1 remaining of 2 tasks in this plan"')
-    expect(open).toContain(">1/2 remaining</span>")
-    expect(open).toContain('aria-expanded="true"')
-    // The heading is the plan's tree item; its rows are the level-2 items that follow it.
-    expect(open).toContain('role="treeitem"')
-    expect(open).toContain('aria-level="1"')
-
-    // An untitled plan gets no heading item in the flat list.
-    expect(
-      planHeaded({ ...group("Placeholder plan", 1, 1), hasRecordedTitle: false } as never),
-    ).toBe(false)
-
-    const completed = renderGroup("Completed plan", 0, 2, "completed")
-    expect(completed).toContain('aria-label="Completed plan"')
-    expect(completed).not.toContain(">0/2 remaining</span>")
-
-    const cancelled = renderGroup("Cancelled plan", 1, 2, "cancelled")
-    expect(cancelled).toContain('aria-label="Cancelled plan"')
-    expect(cancelled).not.toContain(">1/2 remaining</span>")
-
-    // A one-task plan is its task: no heading competes with the row's own title.
-    const single = renderGroup("Single task plan", 1, 1, "open")
-    expect(single).toBe("")
-  })
-
-  test("plan headings show recorded priority and integration or cleanup state", () => {
-    const treeItemProps = { setSize: 1, posInSet: 1, tabIndex: -1, onKeyDown: () => {} }
-    const rendered = renderToString(() =>
-      createComponent(ExecutionPlanHeading, {
-        collapsed: false,
-        onToggle: () => {},
-        ...treeItemProps,
-        group: {
-          planID: "cleanup",
-          planVersion: 1,
-          planRevision: 1,
-          title: "Retry-safe submission",
-          hasRecordedTitle: true,
-          state: "cleanup-blocked",
-          priority: 2,
-          nonterminalCount: 0,
-          totalCount: 3,
-          rows: [],
-        },
-        stateFilter: "all",
-      }),
-    )
-    expect(rendered).toContain('class="lazers-tasks-plan"')
-    expect(rendered).toContain(
-      'aria-label="Retry-safe submission, priority 2, plan cleanup blocked"',
-    )
-    expect(rendered).toContain(">Cleanup blocked</span>")
-    expect(rendered).toMatch(/Scheduler priority for this plan"[^>]*>Priority (?:<!--[^>]*-->)*2/)
-    // A one-task plan keeps its heading when the scheduler records plan prerequisites.
-    const gatedGroup = {
-      planID: "gated",
-      planVersion: 1,
-      planRevision: 1,
-      title: "Gated single task",
-      hasRecordedTitle: true,
-      nonterminalCount: 1,
-      totalCount: 1,
-      rows: [],
-      priority: 0,
-      planOrder: 2,
-      afterPlans: ["11111111-1111-4111-8111-111111111111"],
-      schedulingReason: "Waiting for prerequisite plans to integrate.",
-    }
-    expect(planHeaded(gatedGroup)).toBe(true)
-    const gated = renderToString(() =>
-      createComponent(ExecutionPlanHeading, {
-        group: gatedGroup,
-        stateFilter: "open",
-        collapsed: false,
-        onToggle: () => {},
-        ...treeItemProps,
-        planTitle: () => "Parent implementation",
-      }),
-    )
-    expect(gated).toContain("Gated single task")
-    expect(gated).toMatch(/>Order (?:<!--[^>]*-->)*3/)
-    expect(gated).toContain(">Parent implementation</button>")
-    expect(gated).toContain('title="Waiting for prerequisite plans to integrate."')
+    // The state icon keeps its accessible name; plan lifecycle never decorates a row.
+    expect(taskRowPresentation({ ...base, status: "running" }).label).toBe("Running")
+    expect(taskRowPresentation({ ...base, status: "failed" }).label).toBe("Failed")
   })
 
   test("session.panel menu places Tasks after the native extra-panel entries", () => {

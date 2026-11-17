@@ -435,16 +435,16 @@ function commitAll(root: string, message: string): string {
   return git(root, ["rev-parse", "HEAD"])
 }
 
-test("commit ancestry distinguishes non-ancestor evidence from unavailable Git state", () => {
+test("commit ancestry distinguishes non-ancestor evidence from unavailable Git state", async () => {
   const root = initRepository("lazers-commit-ancestry-")
   try {
     writeFileSync(join(root, "base.txt"), "base")
     const base = commitAll(root, "base")
     writeFileSync(join(root, "next.txt"), "next")
     const next = commitAll(root, "next")
-    expect(commitIsAncestor(root, base, next)).toBe(true)
-    expect(commitIsAncestor(root, next, base)).toBe(false)
-    expect(() => commitIsAncestor(root, "f".repeat(40), next)).toThrow(
+    expect(await commitIsAncestor(root, base, next)).toBe(true)
+    expect(await commitIsAncestor(root, next, base)).toBe(false)
+    await expect(commitIsAncestor(root, "f".repeat(40), next)).rejects.toThrow(
       "git merge-base --is-ancestor failed",
     )
   } finally {
@@ -487,37 +487,37 @@ function treeHasPath(root: string, tree: string, path: string): boolean {
   }
 }
 
-test("artifact evidence accepts regular files and non-empty workspace-contained directories", () => {
+test("artifact evidence accepts regular files and non-empty workspace-contained directories", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-artifact-evidence-"))
   try {
     const lz37 = join(root, ".agents", "docs", "evidence", "037-artifact-evidence")
     mkdirSync(lz37, { recursive: true })
     writeFileSync(join(lz37, "verification.md"), "")
-    expect(artifactExists(root, ".agents/docs/evidence/037-artifact-evidence")).toBe(true)
-    expect(artifactExists(root, ".agents/docs/evidence/037-artifact-evidence/")).toBe(true)
+    expect(await artifactExists(root, ".agents/docs/evidence/037-artifact-evidence")).toBe(true)
+    expect(await artifactExists(root, ".agents/docs/evidence/037-artifact-evidence/")).toBe(true)
     expect(
-      artifactExists(root, ".agents/docs/evidence/037-artifact-evidence/verification.md"),
+      await artifactExists(root, ".agents/docs/evidence/037-artifact-evidence/verification.md"),
     ).toBe(true)
 
     const nested = join(root, "nested", "one", "two")
     mkdirSync(nested, { recursive: true })
     writeFileSync(join(nested, "empty.txt"), "")
-    expect(artifactExists(root, "nested")).toBe(true)
-    expect(artifactExists(root, "nested/")).toBe(true)
-    expect(artifactExists(root, "nested/one/two/empty.txt")).toBe(true)
+    expect(await artifactExists(root, "nested")).toBe(true)
+    expect(await artifactExists(root, "nested/")).toBe(true)
+    expect(await artifactExists(root, "nested/one/two/empty.txt")).toBe(true)
 
     mkdirSync(join(root, "empty"))
     mkdirSync(join(root, "empty-tree", "nested"), { recursive: true })
-    expect(artifactExists(root, "empty")).toBe(false)
-    expect(artifactExists(root, "empty-tree")).toBe(false)
-    expect(artifactExists(root, "missing")).toBe(false)
-    expect(artifactExists(root, "")).toBe(false)
+    expect(await artifactExists(root, "empty")).toBe(false)
+    expect(await artifactExists(root, "empty-tree")).toBe(false)
+    expect(await artifactExists(root, "missing")).toBe(false)
+    expect(await artifactExists(root, "")).toBe(false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("artifact evidence never uses paths outside the workspace or follows symlinks", () => {
+test("artifact evidence never uses paths outside the workspace or follows symlinks", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-artifact-safe-"))
   const outside = mkdtempSync(join(tmpdir(), "lazers-artifact-outside-"))
   try {
@@ -536,23 +536,23 @@ test("artifact evidence never uses paths outside the workspace or follows symlin
     symlinkSync(outsideFile, join(mixedTree, "external.txt"))
     writeFileSync(join(mixedTree, "local.txt"), "")
 
-    expect(artifactExists(root, "ancestor-link/proof.txt")).toBe(false)
-    expect(artifactExists(root, "leaf-link")).toBe(false)
-    expect(artifactExists(root, "linked-tree")).toBe(false)
-    expect(artifactExists(root, "linked-directory-tree")).toBe(false)
-    expect(artifactExists(root, "mixed-tree")).toBe(true)
-    expect(artifactExists(root, outsideFile)).toBe(false)
-    expect(artifactExists(root, "../outside/proof.txt")).toBe(false)
-    expect(artifactExists(root, "https://example.invalid/proof.txt")).toBe(false)
-    expect(artifactExists(root, "file:/outside/proof.txt")).toBe(false)
-    expect(artifactExists(root, "C:/outside/proof.txt")).toBe(false)
-    expect(artifactExists(root, "\\\\server\\share\\proof.txt")).toBe(false)
+    expect(await artifactExists(root, "ancestor-link/proof.txt")).toBe(false)
+    expect(await artifactExists(root, "leaf-link")).toBe(false)
+    expect(await artifactExists(root, "linked-tree")).toBe(false)
+    expect(await artifactExists(root, "linked-directory-tree")).toBe(false)
+    expect(await artifactExists(root, "mixed-tree")).toBe(true)
+    expect(await artifactExists(root, outsideFile)).toBe(false)
+    expect(await artifactExists(root, "../outside/proof.txt")).toBe(false)
+    expect(await artifactExists(root, "https://example.invalid/proof.txt")).toBe(false)
+    expect(await artifactExists(root, "file:/outside/proof.txt")).toBe(false)
+    expect(await artifactExists(root, "C:/outside/proof.txt")).toBe(false)
+    expect(await artifactExists(root, "\\\\server\\share\\proof.txt")).toBe(false)
 
     const specialTree = join(root, "special-tree")
     mkdirSync(specialTree)
     const fifo = join(specialTree, "pipe")
     expect(spawnSync("mkfifo", [fifo]).status).toBe(0)
-    expect(artifactExists(root, "special-tree")).toBe(false)
+    expect(await artifactExists(root, "special-tree")).toBe(false)
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(outside, { recursive: true, force: true })
@@ -883,21 +883,23 @@ test("combined artifact comparison uses tree OID and ordered parents, not the co
     // A re-signed or re-authored recompute: new SHA, same tree and parents.
     const recomputed = sibling([first, second], tree, "different signature and author")
     expect(recomputed).not.toBe(stored)
-    expect(combinedArtifactsMatch(root, recomputed, stored)).toBe(true)
-    expect(canonicalCombinedArtifact(root, recomputed, [undefined, stored])).toBe(stored)
+    expect(await combinedArtifactsMatch(root, recomputed, stored)).toBe(true)
+    expect(await canonicalCombinedArtifact(root, recomputed, [undefined, stored])).toBe(stored)
 
     // Different tree is rejected.
     const otherTree = git(root, ["rev-parse", `${first}^{tree}`])
-    expect(combinedArtifactsMatch(root, sibling([first, second], otherTree), stored)).toBe(false)
+    expect(await combinedArtifactsMatch(root, sibling([first, second], otherTree), stored)).toBe(
+      false,
+    )
     // Different parent order is rejected.
-    expect(combinedArtifactsMatch(root, sibling([second, first]), stored)).toBe(false)
+    expect(await combinedArtifactsMatch(root, sibling([second, first]), stored)).toBe(false)
     // Unreadable commit is a failure.
-    expect(combinedArtifactsMatch(root, "0".repeat(40), stored)).toBe(false)
+    expect(await combinedArtifactsMatch(root, "0".repeat(40), stored)).toBe(false)
     // Rewritten parents match through the mapping.
     const map = (parent: string) =>
       parent === first ? "first" : parent === second ? "second" : parent
     const rewritten = sibling([second, first].toReversed())
-    expect(combinedArtifactsMatch(root, rewritten, stored, map)).toBe(true)
+    expect(await combinedArtifactsMatch(root, rewritten, stored, map)).toBe(true)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

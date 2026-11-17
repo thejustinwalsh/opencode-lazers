@@ -623,8 +623,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     // One tree item per task, one visual line each: no stacked meta, hold or dependency lines.
     expect(container.querySelector('[role="tree"]')).not.toBeNull()
     expect(heldRow.getAttribute("role")).toBe("treeitem")
-    // The row sits under its plan's heading, a level-1 tree item.
-    expect(heldRow.getAttribute("aria-level")).toBe("2")
+    // Every task is a top-level tree item; there are no plan headings.
+    expect(heldRow.getAttribute("aria-level")).toBe("1")
     expect(heldRow.querySelectorAll(":scope > *")).toHaveLength(1)
     expect(container.querySelector(".lazers-tasks-row-dependencies")).toBeNull()
     expect(container.querySelector(".lazers-tasks-row-hold")).toBeNull()
@@ -713,16 +713,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(activeRow.getAttribute("aria-label")).toContain("Input pending · Approval pending")
     // Native attention outranks the hold in the row's icon; the hold stays in the inspector.
     expect(rowPart(ids.active, ".lazers-tasks-state")?.getAttribute("data-tone")).toBe("attention")
-    // A worker asking for input leads Attention and leaves Now, though it is foreground-active.
-    const attentionEntries = [
-      ...container.querySelectorAll<HTMLElement>('[data-scheduling-group="attention"]'),
-    ]
-    expect(attentionEntries[0]?.dataset.schedulingTaskId).toBe(ids.active)
-    expect(
-      container.querySelector(
-        `[data-scheduling-group="now"][data-scheduling-task-id="${ids.active}"]`,
-      ),
-    ).toBeNull()
+    // Attention is the row's own state icon; there is no separate Now or Attention section.
+    expect(container.querySelector("[data-scheduling-group]")).toBeNull()
     expect(rowPart(ids.active, ".lazers-tasks-state")?.getAttribute("aria-label")).toBe("Input")
     expect(tooltip(rowPart(ids.active, ".lazers-tasks-state"))).toBe(
       "Input · Input pending · Approval pending",
@@ -735,9 +727,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       "Additional hold: retain the audit trail",
     )
     expect(unknownRow.querySelector(".lazers-tasks-row-blocker")).toBeNull()
-    expect(container.querySelector(".lazers-tasks-plan-heading")?.textContent).toContain(
-      "remaining",
-    )
+    expect(container.querySelector(".lazers-tasks-plan-heading")).toBeNull()
     expect(container.querySelector(".lazers-tasks-inspector-state")?.textContent).toBe("Waiting")
     const inspectorPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
     const inspectorText = inspectorPane.textContent ?? ""
@@ -879,68 +869,31 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => !activityDetails().open)
 
-    // Parallel branches hang from their fork root; Right/Left expand, enter, leave and collapse.
-    const forkRow = row(ids.forkRoot)!
-    expect(forkRow.getAttribute("aria-expanded")).toBe("false")
-    expect(forkRow.getAttribute("aria-label")).toContain("2 parallel branches")
-    expect(row(ids.branchA)).toBeNull()
-    expect(row(ids.join)?.getAttribute("aria-level")).toBe("2")
-    forkRow.focus()
-    key(forkRow, "ArrowRight")
-    await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "true")
-    // Branch rows are flat siblings of their fork root, one level deeper, drawn on a branch rail.
-    expect(row(ids.forkRoot)!.querySelector('[role="group"]')).toBeNull()
-    expect(row(ids.forkRoot)!.querySelector("[data-task-id]")).toBeNull()
-    expect(row(ids.branchA)!.getAttribute("data-depth")).toBe("1")
-    expect(row(ids.branchB)!.getAttribute("data-depth")).toBe("1")
-    expect(row(ids.branchA)!.getAttribute("data-branch-first")).toBe("true")
-    expect(row(ids.branchB)!.getAttribute("data-branch-first")).toBe("true")
-    expect(row(ids.branchA)!.getAttribute("aria-setsize")).toBe("2")
-    expect([ids.branchA, ids.branchB].map((id) => row(id)!.getAttribute("aria-posinset"))).toEqual([
-      "1",
-      "2",
-    ])
-    expect(row(ids.join)?.getAttribute("aria-setsize")).toBe("2")
-    expect(row(ids.branchA)?.getAttribute("aria-level")).toBe("3")
-    expect(row(ids.branchB)?.getAttribute("aria-level")).toBe("3")
-    expect(
-      Object.values(
-        (taskStore.value as { projects: Record<string, { collapsedForks?: object }> }).projects[
-          projectDirectory
-        ]?.collapsedForks ?? {},
-      ),
-    ).toContain(false)
-    key(row(ids.forkRoot)!, "ArrowRight")
+    // A task with dependencies is a collapsed accordion; its dependency tree opens beneath it.
+    const branchRow = row(ids.branchA)!
+    expect(row(ids.forkRoot)?.hasAttribute("aria-expanded")).toBe(false)
+    expect(row(ids.forkRoot)?.getAttribute("aria-label")).toContain("parallel-eligible")
+    expect(branchRow.getAttribute("aria-expanded")).toBe("false")
+    expect(branchRow.getAttribute("aria-level")).toBe("1")
+    expect(branchRow.getAttribute("aria-label")).toContain("sequenced")
+    const dependencyKey = `task:${ids.branchA}>${ids.forkRoot}`
+    const dependencyRow = () =>
+      container.querySelector<HTMLElement>(`[data-item-key="${dependencyKey}"]`)
+    expect(dependencyRow()).toBeNull()
+    branchRow.focus()
+    key(branchRow, "ArrowRight")
+    await until(() => row(ids.branchA)?.getAttribute("aria-expanded") === "true")
+    expect(dependencyRow()!.getAttribute("data-depth")).toBe("1")
+    expect(dependencyRow()!.getAttribute("aria-level")).toBe("2")
+    expect(dependencyRow()!.getAttribute("aria-setsize")).toBe("1")
+    key(row(ids.branchA)!, "ArrowRight")
+    await until(() => dependencyRow()?.getAttribute("aria-selected") === "true")
+    expect(dependencyRow()!.ownerDocument.activeElement).toBe(dependencyRow())
+    key(dependencyRow()!, "ArrowLeft")
     await until(() => row(ids.branchA)?.getAttribute("aria-selected") === "true")
-    expect(row(ids.branchA)!.ownerDocument.activeElement).toBe(row(ids.branchA))
-    key(row(ids.branchA)!, "ArrowDown")
-    await until(() => row(ids.branchB)?.getAttribute("aria-selected") === "true")
-    key(row(ids.branchB)!, "ArrowLeft")
-    await until(() => row(ids.forkRoot)?.getAttribute("aria-selected") === "true")
-    key(row(ids.forkRoot)!, "ArrowLeft")
-    await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "false")
-    expect(row(ids.branchA)).toBeNull()
-    const branchAttention = () =>
-      container.querySelector<HTMLButtonElement>(
-        `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.branchA}"]`,
-      )
-    // Attention mounts a bounded window of its holds; its pager reaches the rest.
-    for (let page = 0; page < 10 && !branchAttention(); page++) {
-      expect(
-        container.querySelectorAll('[data-scheduling-group="attention"]').length,
-      ).toBeLessThanOrEqual(5)
-      const more = [
-        ...container.querySelectorAll<HTMLButtonElement>(
-          '[aria-label="Attention"] .lazers-tasks-schedule-pager button',
-        ),
-      ].find((button) => button.textContent === "More")
-      more!.click()
-      await until(() => true)
-    }
-    expect(branchAttention()).not.toBeNull()
-    branchAttention()!.click()
-    await until(() => row(ids.branchA)?.getAttribute("aria-selected") === "true")
-    expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
+    key(row(ids.branchA)!, "ArrowLeft")
+    await until(() => row(ids.branchA)?.getAttribute("aria-expanded") === "false")
+    expect(dependencyRow()).toBeNull()
     row(ids.unknown)!.click()
     await until(() => row(ids.unknown)?.getAttribute("aria-selected") === "true")
     // Scroll restoration applies once the reselected detail mounts; scroll only after that.

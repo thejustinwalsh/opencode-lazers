@@ -57,17 +57,17 @@ import {
   attentionLabel,
   distinctReasons,
   isRingGlyph,
-  rowHeld,
   rowHoldReasons,
   taskRowPresentation,
+  planStateLabel,
   taskRowBlocker,
+  taskSequencing,
   taskStateTooltip,
 } from "./row-presentation.ts"
-import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
-import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
+import { buildExecutionList } from "./execution-list.ts"
+import type { ExecutionListRow } from "./execution-list.ts"
 import type { TaskBlocker, TaskGlyph, TaskRowPresentation } from "./row-presentation.ts"
 import { TaskRing } from "./state-glyph.tsx"
-import { ExecutionPlanHeading } from "./execution-list-view.tsx"
 import {
   LOADER_HEIGHT,
   anchoredScrollTop,
@@ -75,22 +75,12 @@ import {
   estimateItemSize,
   flattenExecutionList,
   itemIndex,
+  listedRows,
   navigationTarget,
-  planHeaded,
-  planKey,
-  planOfTask,
   taskIndex,
   taskItems,
-  taskKey,
-  treeItems,
 } from "./virtual-rows.ts"
-import type {
-  NavigationKey,
-  TreeItem,
-  VirtualItem,
-  VirtualPlanItem,
-  VirtualTaskItem,
-} from "./virtual-rows.ts"
+import type { NavigationKey, VirtualItem, VirtualTaskItem } from "./virtual-rows.ts"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
@@ -119,7 +109,6 @@ const View = Schema.Struct({
     ]),
   ),
   history: Schema.optionalKey(Schema.Boolean),
-  collapsedForks: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   revealTaskID: Schema.optionalKey(Schema.String),
 })
 const initial: typeof View.Type = {
@@ -130,7 +119,6 @@ const initial: typeof View.Type = {
   listScroll: 0,
   detailScroll: 0,
   history: false,
-  collapsedForks: {},
   revealTaskID: "",
 }
 export const taskStores = {
@@ -182,12 +170,6 @@ const VIRTUAL_OVERSCAN = 8
  * list. Measured from the viewport, never from rows pinned to stay mounted for focus.
  */
 const LOAD_MORE_WITHIN = 10
-/** Now or Attention entries mounted at once; the rest stay reachable by keyboard and a pager. */
-const SIGNAL_WINDOW = 5
-type SignalGroup = "now" | "attention"
-type SignalWindow = { start: number; rows: ExecutionListRow[]; total: number }
-/** Lifecycles a dispatch pause holds back. */
-const pausableStates = new Set(["queued", "ready"])
 /** Bounded wait for a scrolled-to row to mount before giving up on focusing it. */
 const FOCUS_ATTEMPTS = 10
 
@@ -257,23 +239,10 @@ function TaskPanel(
   const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
   const [copyStatus, setCopyStatus] = createSignal("")
   const [revealedTaskIDs, setRevealedTaskIDs] = createSignal<Set<string>>(new Set())
-  const [temporarilyExpandedForks, setTemporarilyExpandedForks] = createSignal<Set<string>>(
-    new Set(),
-  )
-  const [temporarilyCollapsedForks, setTemporarilyCollapsedForks] = createSignal<Set<string>>(
-    new Set(),
-  )
-  /** Plans whose heading is collapsed; per view, never persisted. */
-  const [collapsedPlans, setCollapsedPlans] = createSignal<Set<string>>(new Set())
-  /** Where the tree starts inside the scrolling list, below Now/Attention/Next and notes. */
+  /** Item keys of expanded dependency accordions; per view, never persisted. Default collapsed. */
+  const [expandedKeys, setExpandedKeys] = createSignal<ReadonlySet<string>>(new Set())
+  /** Where the tree starts inside the scrolling list, below the notes. */
   const [treeOffset, setTreeOffset] = createSignal(0)
-  /** First entry of each signal group's mounted window (clamped where read). */
-  const [signalStarts, setSignalStarts] = createSignal<Record<SignalGroup, number>>({
-    now: 0,
-    attention: 0,
-  })
-  const setSignalStart = (group: SignalGroup, start: number) =>
-    setSignalStarts((current) => ({ ...current, [group]: Math.max(0, start) }))
   /** The tree item holding focus while focus is inside the tree; it stays mounted. */
   const [focusedTreeKey, setFocusedTreeKey] = createSignal<string>()
   const feedback = new StartFeedback(setStartFeedback)
@@ -283,7 +252,6 @@ function TaskPanel(
   let header: HTMLElement | undefined
   let list: HTMLDivElement | undefined
   let tree: HTMLDivElement | undefined
-  let head: HTMLDivElement | undefined
   let separator: HTMLDivElement | undefined
   let detail: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
@@ -449,22 +417,15 @@ function TaskPanel(
         ])
       : ""
   }
-  /** The entry holding focus while focus is in Now/Attention/Next, and its place in the list. */
-  let focusedSignal: { group: SignalGroup | "next"; taskID: string; index: number } | undefined
-  // Per-view disclosure and signal windows start over only for another view (scope, filter,
-  // search, session, project). A transient gap with no view (a reconnect) keeps them for its return.
+  // Disclosure starts over only for another view (scope, filter, search, session, project). A
+  // transient gap with no view (a reconnect) keeps it for its return.
   let revealIdentity = ""
   createEffect(() => {
     const key = expectedKey()
     if (!key || key === revealIdentity) return
     revealIdentity = key
     setRevealedTaskIDs(new Set<string>())
-    setTemporarilyExpandedForks(new Set<string>())
-    setTemporarilyCollapsedForks(new Set<string>())
-    setCollapsedPlans(new Set<string>())
-    setSignalStarts({ now: 0, attention: 0 })
-    // A focused entry belonged to the old view; do not chase its task into this one.
-    focusedSignal = undefined
+    setExpandedKeys(new Set<string>())
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
@@ -484,191 +445,25 @@ function TaskPanel(
       .find((node) => node.taskID === taskID)
   const schedulingPlan = (planID: string | undefined) =>
     planID ? schedulingPlans().find((plan) => plan.planID === planID) : undefined
-  /**
-   * Every row in the model, including branches of collapsed forks: Now and Attention membership
-   * must not depend on what is expanded. Selecting an entry reveals its fork.
-   */
-  const signalEntries = createMemo(() => {
-    const model = executionList()
-    const rows: ExecutionListRow[] = []
-    const planStates = new Map<string, string>()
-    const planIDs = new Map<string, string>()
-    const visit = (taskRow: ExecutionListRow, group?: ExecutionPlanGroup) => {
-      rows.push(taskRow)
-      if (group) planIDs.set(taskRow.taskID, group.planID)
-      if (group?.state) planStates.set(taskRow.taskID, group.state)
-      for (const branch of taskRow.fork?.branches ?? [])
-        for (const child of branch.rows) visit(child, group)
-    }
-    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow, group)
-    rows.push(...model.unplanned)
-    return { rows, planStates, planIDs }
-  })
-  const signalRows = () => signalEntries().rows
-  /** A native input/approval request on an open task: it asks the person now. */
-  const asksForAttention = (row: ExecutionListRow) =>
-    taskRowPresentation(row, visible()?.currentActivity[row.taskID]).tone === "attention"
-  /** Foreground work; a worker blocked on the person moves to Attention instead. */
-  const nowRows = createMemo(() =>
-    signalRows().filter(
-      (row) =>
-        visible()?.currentActivity[row.taskID]?.foreground === "active" && !asksForAttention(row),
-    ),
-  )
-  /**
-   * Native input/approval requests lead Attention (they ask the person now, even while the worker is
-   * foreground), then recorded holds, then manual dispatch pauses. Routine waits on prerequisites,
-   * reservations or scheduler order are not holds: they stay in the planned tree. A paused plan is
-   * one entry, its first paused task, carrying the plan's paused count. Membership only reads
-   * recorded state; it never reorders work.
-   */
-  const attentionEntries = createMemo(() => {
-    const { rows, planStates, planIDs } = signalEntries()
-    const held = (row: ExecutionListRow) => {
-      const activity = visible()?.currentActivity[row.taskID]
-      return activity?.foreground !== "active" && rowHeld(row, activity, planStates.get(row.taskID))
-    }
-    const listed = [
-      ...rows.filter(asksForAttention),
-      ...rows.filter((row) => !asksForAttention(row) && held(row)),
-    ]
-    const listedIDs = new Set(listed.map((row) => row.taskID))
-    // Group only when the execution plan identity is known.
-    const pauses = new Map<string, { row: ExecutionListRow; count: number }>()
-    for (const row of rows) {
-      if (
-        !row.dispatchPause ||
-        row.dispatchPause.untilPlans.length > 0 ||
-        !pausableStates.has(row.status) ||
-        listedIDs.has(row.taskID)
-      )
-        continue
-      const key = planIDs.get(row.taskID) ?? row.dispatchPausePlanID ?? row.taskID
-      const entry = pauses.get(key)
-      if (entry) entry.count++
-      else pauses.set(key, { row, count: 1 })
-    }
-    const paused = new Map([...pauses.values()].map((entry) => [entry.row.taskID, entry.count]))
-    return { rows: [...listed, ...[...pauses.values()].map((entry) => entry.row)], paused }
-  })
-  const attentionRows = () => attentionEntries().rows
-  /** A short mounted slice of a signal group, never every entry. */
-  const signalWindow = (rows: ExecutionListRow[], requested: number): SignalWindow => {
-    const start = Math.max(0, Math.min(requested, rows.length - SIGNAL_WINDOW))
-    return { start, rows: rows.slice(start, start + SIGNAL_WINDOW), total: rows.length }
-  }
-  const nowWindow = createMemo(() => signalWindow(nowRows(), signalStarts().now))
-  const attentionWindow = createMemo(() => signalWindow(attentionRows(), signalStarts().attention))
-  const windows: Record<SignalGroup, Accessor<SignalWindow>> = {
-    now: nowWindow,
-    attention: attentionWindow,
-  }
-  const signalTabStopTaskID = () => nowWindow().rows[0]?.taskID ?? attentionWindow().rows[0]?.taskID
-  const nextStatus = () => {
-    const value = visible()
-    if (!value?.scheduling || value.schedulingError || value.stale)
-      return { status: "unknown" as const }
-    return value.scheduling.next
-  }
-  const nextCandidate = () => {
-    const next = nextStatus()
-    return next.status === "known" ? next.candidate : undefined
-  }
   const openPrerequisitePlan = (planID: string) => {
     const firstTask = schedulingPlan(planID)?.nodes.toSorted((a, b) => a.ordinal - b.ordinal)[0]
     if (firstTask) selectTask(firstTask.taskID)
   }
-  const forkPreferenceKey = (planID: string, forkID: string) => {
-    const value = current()
-    return JSON.stringify([
-      value?.server,
-      value?.project,
-      value?.session,
-      prefs().scope,
-      planID,
-      forkID,
-    ])
-  }
-  const forkExpanded = (group: ExecutionPlanGroup, row: ExecutionListRow) => {
-    if (!row.fork) return false
-    const key = forkPreferenceKey(group.planID, row.fork.id)
-    const saved = (prefs().collapsedForks ?? {})[key] === false
-    const searchReveal = Boolean(
-      prefs().search &&
-      row.fork.branches.some((branch) => branch.rows.some((child) => !child.contextOnly)),
-    )
-    if (prefs().search && temporarilyCollapsedForks().has(key)) return false
-    return saved || searchReveal || temporarilyExpandedForks().has(key)
-  }
   const revealTask = (taskID: string) => {
     setRevealedTaskIDs((current) => new Set([...current, taskID]))
-    const group = buildExecutionList({
-      topology: visible()?.topology,
-      tasks: visible()?.tasks ?? [],
-      scheduling: visible()?.scheduling,
-      search: prefs().search,
-      revealTaskIDs: new Set([taskID]),
-    })
-    const fork = selectForkForTask(group.plans, taskID)
-    if (fork) {
-      const key = forkPreferenceKey(fork.planID, fork.forkID)
-      if (prefs().search) {
-        setTemporarilyExpandedForks((current) => new Set([...current, key]))
-        setTemporarilyCollapsedForks((current) => {
-          const next = new Set(current)
-          next.delete(key)
-          return next
-        })
-      } else {
-        save({ collapsedForks: { ...(prefs().collapsedForks ?? {}), [key]: false } })
-      }
-    }
-    const planID = planOfTask(executionList(), taskID) ?? planOfTask(group, taskID)
-    if (planID && collapsedPlans().has(planID))
-      setCollapsedPlans((current) => {
-        const next = new Set(current)
-        next.delete(planID)
-        return next
-      })
     queueMicrotask(() => scrollToTask(taskID))
   }
-  const togglePlan = (planID: string) =>
-    setCollapsedPlans((current) => {
-      const next = new Set(current)
-      if (!next.delete(planID)) next.add(planID)
-      return next
-    })
   const selectTask = (taskID: string) => {
     revealTask(taskID)
     void state.select(taskID)
   }
-  const toggleFork = (group: ExecutionPlanGroup, row: ExecutionListRow) => {
-    if (!row.fork) return
-    const key = forkPreferenceKey(group.planID, row.fork.id)
-    const expanded = forkExpanded(group, row)
-    if (prefs().search) {
-      const nextExpanded = !expanded
-      setTemporarilyExpandedForks((current) => {
-        const next = new Set(current)
-        if (nextExpanded) next.add(key)
-        else next.delete(key)
-        return next
-      })
-      setTemporarilyCollapsedForks((current) => {
-        const next = new Set(current)
-        if (nextExpanded) next.delete(key)
-        else next.add(key)
-        return next
-      })
-    } else {
-      save({ collapsedForks: { ...(prefs().collapsedForks ?? {}), [key]: expanded } })
-    }
-    setTemporarilyExpandedForks((current) => {
+  const setExpanded = (key: string, expanded: boolean) =>
+    setExpandedKeys((current) => {
       const next = new Set(current)
-      if (!prefs().search) next.delete(key)
+      if (expanded) next.add(key)
+      else next.delete(key)
       return next
     })
-  }
   let handledReveal = ""
   createEffect(() => {
     const taskID = prefs().revealTaskID ?? ""
@@ -863,42 +658,31 @@ function TaskPanel(
       if (!hasReference) void state.resolveLinked(taskID)
     }
   })
+  /** Every row the model knows, listed or reachable only as a dependency. */
   const rowValues = createMemo(() => {
     const model = executionList()
-    const rows: ExecutionListRow[] = []
-    const visit = (taskRow: ExecutionListRow, group?: ExecutionPlanGroup) => {
-      rows.push(taskRow)
-      if (!group || !taskRow.fork || !forkExpanded(group, taskRow)) return
-      for (const branch of taskRow.fork.branches)
-        for (const child of branch.rows) visit(child, group)
-    }
-    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow, group)
-    rows.push(...model.unplanned)
-    return rows
+    return [...listedRows(model), ...model.related]
   })
   /** The whole list as one flat sequence; only a window of it is ever mounted. */
   const hasMore = () => Boolean(visible()?.page?.nextCursor)
   const items = createMemo(() =>
     flattenExecutionList({
       model: executionList(),
-      collapsedPlans: collapsedPlans(),
-      forkExpanded,
+      expanded: expandedKeys(),
       hasMore: hasMore(),
     }),
   )
   const itemByKey = createMemo(() => new Map(items().map((item) => [item.key, item])))
   /**
-   * The tree's one tab stop: the selected row; with that row inside a collapsed plan, its heading;
-   * otherwise the first task row, else the first heading (every plan collapsed). It is always a
-   * listed item, and the range extractor keeps it mounted.
+   * The tree's one tab stop: the selected row, else the first row. It is always a listed item, and
+   * the range extractor keeps it mounted.
    */
   const treeTabStop = createMemo(() => {
     const current = items()
     const selectedID = visible()?.selectedID
-    if (selectedID && taskIndex(current, selectedID) >= 0) return taskKey(selectedID)
-    const planID = selectedID ? planOfTask(executionList(), selectedID) : undefined
-    if (planID && itemIndex(current, planKey(planID)) >= 0) return planKey(planID)
-    return (taskItems(current)[0] ?? treeItems(current)[0])?.key
+    if (selectedID && taskIndex(current, selectedID) >= 0)
+      return current[taskIndex(current, selectedID)]!.key
+    return taskItems(current)[0]?.key
   })
   /** Last item index inside the viewport (no overscan, no pins); -1 before layout. */
   const [viewportEnd, setViewportEnd] = createSignal(-1)
@@ -947,8 +731,7 @@ function TaskPanel(
         : []
     })
   })
-  const planTabIndex = (key: string) => (key === treeTabStop() ? 0 : -1)
-  const rowTabIndex = (taskID: string) => (taskKey(taskID) === treeTabStop() ? 0 : -1)
+  const rowTabIndex = (key: string) => (key === treeTabStop() ? 0 : -1)
   const openSourcePlan = async (source: NonNullable<ExecutionListRow["sourcePlan"]>) => {
     try {
       const files = props.screen.file
@@ -963,9 +746,9 @@ function TaskPanel(
   }
   const renderGlyph = (glyph: TaskGlyph) =>
     isRingGlyph(glyph) ? <TaskRing glyph={glyph} /> : <Ui.Icon name={glyph} size="small" />
-  /** A listed task's row state (collapsed forks included); tasks outside the list stay neutral. */
+  /** A known task's row state; tasks outside the model stay neutral. */
   const listedPresentation = (taskID: string): TaskRowPresentation | undefined => {
-    const listed = signalRows().find((row) => row.taskID === taskID)
+    const listed = rowValues().find((row) => row.taskID === taskID)
     return listed
       ? taskRowPresentation(listed, visible()?.currentActivity[taskID], relationLabel)
       : undefined
@@ -974,14 +757,12 @@ function TaskPanel(
     const taskRow = () => item().row
     const expandable = () => item().expandable
     const expanded = () => item().expanded
-    const toggle = () => {
-      const group = item().group
-      if (group) toggleFork(group, taskRow())
-    }
+    const toggle = () => setExpanded(item().key, !expanded())
     const currentActivity = () => visible()?.currentActivity[taskRow().taskID]
     const presentation = createMemo(() =>
       taskRowPresentation(taskRow(), currentActivity(), relationLabel),
     )
+    const sequencing = createMemo(() => taskSequencing(taskRow()))
     const waiting = () =>
       taskRow().waiting ||
       currentActivity()?.waiting === true ||
@@ -993,7 +774,6 @@ function TaskPanel(
     const accessibleDescription = () => {
       const activity = currentActivity()
       const reasons = rowHoldReasons(taskRow(), activity)
-      const branches = taskRow().fork?.branches.length ?? 0
       return [
         ...(taskRow().reference ? [taskRow().reference] : []),
         taskTitle(taskRow().title),
@@ -1023,7 +803,7 @@ function TaskPanel(
           : []),
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
-        ...(expandable() ? [`${branches} parallel branch${branches === 1 ? "" : "es"}`] : []),
+        sequencing().label.toLowerCase(),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
@@ -1035,15 +815,14 @@ function TaskPanel(
         data-item-key={item().key}
         data-context-only={taskRow().contextOnly}
         data-depth={item().depth}
-        data-branch-first={item().branch?.first}
-        data-branch-last={item().branch?.last}
+        style={{ "--task-depth": item().depth }}
         aria-level={item().level}
         aria-setsize={item().setSize}
         aria-posinset={item().posInSet}
         aria-selected={taskRow().taskID === visible()?.selectedID}
         aria-expanded={expandable() ? expanded() : undefined}
         aria-label={accessibleDescription()}
-        tabIndex={rowTabIndex(taskRow().taskID)}
+        tabIndex={rowTabIndex(item().key)}
         onKeyDown={(event) => rowKey(event, item(), toggle)}
         onClick={(event) => {
           event.stopPropagation()
@@ -1058,7 +837,7 @@ function TaskPanel(
             <span
               class="lazers-tasks-disclosure"
               aria-hidden="true"
-              title={expanded() ? "Collapse parallel work" : "Expand parallel work"}
+              title={expanded() ? "Collapse dependencies" : "Expand dependencies"}
               onClick={(event) => {
                 event.stopPropagation()
                 toggle()
@@ -1067,18 +846,6 @@ function TaskPanel(
               <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
             </span>
           </Show>
-          <Ui.Tooltip value={taskStateTooltip(presentation())}>
-            <span
-              class="lazers-tasks-state"
-              data-state={taskRow().status}
-              data-waiting={waiting()}
-              data-tone={presentation().tone}
-              role="img"
-              aria-label={presentation().label}
-            >
-              {renderGlyph(presentation().icon)}
-            </span>
-          </Ui.Tooltip>
           <Show when={taskRow().reference}>
             {(reference) => (
               <span
@@ -1090,9 +857,36 @@ function TaskPanel(
             )}
           </Show>
           <span class="lazers-tasks-row-title">{taskTitle(taskRow().title)}</span>
-          <Show when={taskRowBlocker(presentation())}>
-            {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
-          </Show>
+          <span class="lazers-tasks-row-signals">
+            <Show when={taskRowBlocker(presentation())}>
+              {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
+            </Show>
+            <Ui.Tooltip value={`${sequencing().label} · ${sequencing().detail}`}>
+              <span
+                class="lazers-tasks-sequence"
+                data-sequence={sequencing().kind}
+                role="img"
+                aria-label={sequencing().label}
+              >
+                <Ui.Icon
+                  name={sequencing().kind === "sequenced" ? "arrow-right" : "split"}
+                  size="small"
+                />
+              </span>
+            </Ui.Tooltip>
+            <Ui.Tooltip value={taskStateTooltip(presentation())}>
+              <span
+                class="lazers-tasks-state"
+                data-state={taskRow().status}
+                data-waiting={waiting()}
+                data-tone={presentation().tone}
+                role="img"
+                aria-label={presentation().label}
+              >
+                {renderGlyph(presentation().icon)}
+              </span>
+            </Ui.Tooltip>
+          </span>
         </div>
       </div>
     )
@@ -1129,64 +923,6 @@ function TaskPanel(
           <Ui.Icon name="link" size="small" />
         </button>
       </Ui.Tooltip>
-    )
-  }
-  /**
-   * One Now or Attention entry. Mounted per task ID (see `Keyed` below), reading the latest row,
-   * so a refresh that rebuilds the list never replaces a focused button.
-   */
-  const renderSignalRow = (item: Accessor<ExecutionListRow>, label: "Now" | "Attention") => {
-    const taskID = item().taskID
-    const taskRow = () => item()
-    const activity = () => visible()?.currentActivity[taskID]
-    const presentation = () => taskRowPresentation(taskRow(), activity(), relationLabel)
-    const reason = () => rowHoldReasons(taskRow(), activity()).join("; ")
-    const waiting = () =>
-      Boolean(
-        taskRow().waiting || activity()?.waiting || taskRow().scheduling?.decision === "waiting",
-      )
-    const selected = () => taskID === visible()?.selectedID
-    /** Paused tasks of the plan this entry stands for (Attention pause entries only). */
-    const paused = () => (label === "Attention" ? attentionEntries().paused.get(taskID) : undefined)
-    const pauseText = () => {
-      const count = paused()
-      const pause = taskRow().dispatchPause
-      if (count === undefined || !pause) return ""
-      return `, paused${pause.reason ? `: ${pause.reason}` : ""}${count > 1 ? `, ${count} paused tasks in this plan` : ""}`
-    }
-    return (
-      <div class="lazers-tasks-schedule-entry" data-selected={selected()}>
-        <button
-          type="button"
-          class="lazers-tasks-schedule-select"
-          data-scheduling-task-id={taskID}
-          data-scheduling-group={label.toLowerCase()}
-          aria-pressed={selected()}
-          data-paused-count={paused()}
-          aria-label={`${label}: ${taskTitle(taskRow().title)}, recorded lifecycle ${taskRow().status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${pauseText()}${!pauseText() && waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
-          tabIndex={taskID === signalTabStopTaskID() ? 0 : -1}
-          onKeyDown={signalKey}
-          onClick={() => selectFromClick(taskID)}
-        >
-          <span
-            class="lazers-tasks-state"
-            data-state={taskRow().status}
-            data-waiting={waiting()}
-            data-tone={presentation().tone}
-            aria-hidden="true"
-            title={taskStateTooltip(presentation())}
-          >
-            {renderGlyph(presentation().icon)}
-          </span>
-          <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow().title)}</span>
-          <Show when={(paused() ?? 0) > 1}>
-            <span class="lazers-tasks-schedule-entry-meta">{paused()} paused</span>
-          </Show>
-        </button>
-        <Show when={label === "Attention" && taskRowBlocker(presentation())}>
-          {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
-        </Show>
-      </div>
     )
   }
   const copyTaskLink = async () => {
@@ -1255,6 +991,52 @@ function TaskPanel(
       : undefined
   }
   const selectedReservations = () => selectedScheduling()?.reservationTaskIDs ?? []
+  /** Priority, plan and order of the selected task's plan; detail only, never a list decoration. */
+  const selectedPlanFacts = () => {
+    const taskID = visible()?.selectedID
+    if (!taskID) return undefined
+    const planID = selectedExecution()?.planID
+    const scheduled =
+      schedulingPlans().find((plan) => plan.planID === planID) ??
+      schedulingPlans().find((plan) => plan.nodes.some((node) => node.taskID === taskID))
+    const topology = visible()?.topology?.plans.find(
+      (plan) => plan.id === (planID ?? scheduled?.planID),
+    )
+    if (scheduled)
+      return {
+        title: scheduled.title,
+        priority: scheduled.priority,
+        planOrder: scheduled.planOrder,
+        step: scheduled.nodes.find((node) => node.taskID === taskID)?.ordinal,
+        state: planStateLabel(scheduled.lifecycle),
+      }
+    if (topology)
+      return {
+        title: topology.title ?? `Plan ${topology.id.slice(0, 8)}`,
+        priority: topology.priority ?? 0,
+        planOrder: topology.queuePosition,
+        step: topology.nodes.find((node) => node.taskID === taskID)?.ordinal,
+        state: planStateLabel(topology.state),
+      }
+    return undefined
+  }
+  const selectedSequencing = () => {
+    const row = selectedRow()
+    return taskSequencing(
+      row ?? {
+        taskID: visible()?.selectedID ?? "",
+        title: "",
+        status: "",
+        reason: null,
+        waiting: false,
+        holdReason: null,
+        ordinal: 0,
+        contextOnly: false,
+        prerequisites: [...selectedRelations().prerequisites, ...selectedRelations().waitingOn],
+        successors: [],
+      },
+    )
+  }
   const renderSchedulingReference = (taskID: string) => (
     <button
       type="button"
@@ -1372,44 +1154,15 @@ function TaskPanel(
     }
     attempt(FOCUS_ATTEMPTS)
   }
-  const focusTaskRow = (taskID: string) => focusItem(taskKey(taskID))
-  const moveTo = (taskID: string) => {
-    selectTask(taskID)
-    focusTaskRow(taskID)
+  const focusTaskRow = (taskID: string) => {
+    const index = taskIndex(items(), taskID)
+    if (index >= 0) focusItem(items()[index]!.key)
   }
-  /** Task rows take selection with focus; a plan heading only takes focus. */
-  const goTo = (target: TreeItem | undefined) => {
-    if (target?.kind === "task") moveTo(target.row.taskID)
-    else if (target) focusItem(target.key)
-  }
-  const planKeyDown = (
-    event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
-    item: VirtualPlanItem,
-  ) => {
-    // Keys from the heading's own controls (prerequisite plan links) stay theirs.
-    if (event.target !== event.currentTarget) return
-    switch (event.key) {
-      case "ArrowUp":
-      case "ArrowDown":
-      case "Home":
-      case "End":
-        event.preventDefault()
-        goTo(navigationTarget(items(), item.key, event.key))
-        return
-      case "ArrowRight":
-        event.preventDefault()
-        if (item.collapsed) togglePlan(item.group.planID)
-        else goTo(navigationTarget(items(), item.key, "ArrowRight"))
-        return
-      case "ArrowLeft":
-        event.preventDefault()
-        if (!item.collapsed) togglePlan(item.group.planID)
-        return
-      case "Enter":
-      case " ":
-        event.preventDefault()
-        togglePlan(item.group.planID)
-    }
+  /** Task rows take selection with focus. */
+  const goTo = (target: VirtualTaskItem | undefined) => {
+    if (!target) return
+    selectTask(target.row.taskID)
+    focusItem(target.key)
   }
   const rowKey = (
     event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
@@ -1445,154 +1198,17 @@ function TaskPanel(
         selectTask(taskID)
     }
   }
-  type SignalEntry = ReturnType<typeof signalSequence>[number]
-  /** Slide the entry's window to it and focus it; the list's own scroll follows native focus. */
-  const focusSignal = (target: SignalEntry) => {
-    if (target.group !== "next") {
-      const shown = windows[target.group]()
-      const position = signalSequence()
-        .filter((entry) => entry.group === target.group)
-        .findIndex((entry) => entry.taskID === target.taskID)
-      if (position < shown.start) setSignalStart(target.group, position)
-      else if (position >= shown.start + SIGNAL_WINDOW)
-        setSignalStart(target.group, position - SIGNAL_WINDOW + 1)
-    }
-    head
-      ?.querySelector<HTMLButtonElement>(
-        `[data-scheduling-group="${target.group}"][data-scheduling-task-id="${target.taskID}"]`,
-      )
-      ?.focus()
-  }
-  const signalOf = (element: Element | null) => {
-    const button = element?.closest<HTMLElement>("[data-scheduling-task-id]")
-    const { schedulingGroup: group, schedulingTaskId: taskID } = button?.dataset ?? {}
-    if (!group || !taskID) return undefined
-    const index = signalSequence().findIndex(
-      (entry) => entry.group === group && entry.taskID === taskID,
-    )
-    return index < 0 ? undefined : { ...signalSequence()[index]!, index }
-  }
-  // A refresh can move the focused entry's task to another group (an answered request becomes
-  // Now work), outside that group's window, or out of the list; its button then leaves the page
-  // with focus. Focus follows the task to its new entry, else takes the entry now at its place,
-  // else the tree's tab stop. Selection does not change.
-  createEffect(() => {
-    void signalSequence()
-    void nowWindow()
-    void attentionWindow()
-    queueMicrotask(() => {
-      const lost = focusedSignal
-      // With no view (a reconnect in progress) the list is not empty, only absent: wait for it.
-      if (!lost || !head || !visible() || visible()!.loading) return
-      const active = head.ownerDocument.activeElement
-      if (active && head.contains(active)) {
-        focusedSignal = signalOf(active) ?? focusedSignal
-        return
-      }
-      if (active && active !== head.ownerDocument.body) return
-      const sequence = signalSequence()
-      const target =
-        sequence.find((entry) => entry.taskID === lost.taskID) ??
-        sequence[Math.min(lost.index, sequence.length - 1)]
-      if (target) focusSignal(target)
-      else {
-        focusedSignal = undefined
-        const stop = treeTabStop()
-        if (stop) focusItem(stop)
-      }
-    })
-  })
-  /** Now, Attention and Next entries in list order, unmounted window entries included. */
-  const signalSequence = () => [
-    ...nowRows().map((row) => ({ group: "now" as const, taskID: row.taskID })),
-    ...attentionRows().map((row) => ({ group: "attention" as const, taskID: row.taskID })),
-    ...(nextCandidate() ? [{ group: "next" as const, taskID: nextCandidate()!.taskID }] : []),
-  ]
-  /**
-   * Now/Attention/Next entries form one short list above the tree; Down from the last enters it.
-   * Now and Attention mount a window of their entries. Keys walk the whole list in model order and
-   * slide the target's window to it, so every entry is reachable and order holds across groups.
-   */
-  const signalKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
-    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
-    event.preventDefault()
-    const sequence = signalSequence()
-    const { schedulingGroup, schedulingTaskId } = event.currentTarget.dataset
-    const index = sequence.findIndex(
-      (entry) => entry.group === schedulingGroup && entry.taskID === schedulingTaskId,
-    )
-    if (event.key === "ArrowDown" && index === sequence.length - 1) {
-      const first = taskItems(items())[0]
-      if (first) moveTo(first.row.taskID)
-      else goTo(treeItems(items())[0])
-      return
-    }
-    const target =
-      sequence[
-        event.key === "Home"
-          ? 0
-          : event.key === "End"
-            ? sequence.length - 1
-            : Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1))
-      ]
-    if (!target) return
-    focusSignal(target)
-    keepFocusFor = JSON.stringify([expectedKey(), target.taskID])
-    // Select only: revealing and scrolling the tree are for explicit entry (click, Enter, Down
-    // from the last entry). The list stays put under the focused entry.
-    void state.select(target.taskID)
-  }
-  /** Range and stepping for a signal group with more entries than its window mounts. */
-  const renderSignalPager = (group: SignalGroup, label: string) => {
-    const shown = windows[group]
-    return (
-      <Show when={shown().total > SIGNAL_WINDOW}>
-        <div class="lazers-tasks-schedule-pager" role="group" aria-label={`More ${label}`}>
-          <span class="lazers-tasks-schedule-pager-range" aria-live="polite">
-            {shown().start + 1}–{shown().start + shown().rows.length} of {shown().total}
-          </span>
-          <Ui.Button
-            variant="ghost"
-            disabled={shown().start === 0}
-            onClick={() => setSignalStart(group, shown().start - SIGNAL_WINDOW)}
-          >
-            Previous
-          </Ui.Button>
-          <Ui.Button
-            variant="ghost"
-            disabled={shown().start + shown().rows.length >= shown().total}
-            onClick={() => setSignalStart(group, shown().start + SIGNAL_WINDOW)}
-          >
-            More
-          </Ui.Button>
-        </div>
-      </Show>
-    )
-  }
   const stateLabel = (state: NonNullable<typeof initial.state>) => {
     if (state === "failed") return "Failed / exhausted"
     if (state === "blocked") return "Blocked / waiting"
     return state[0]!.toUpperCase() + state.slice(1)
   }
   let focusedSelection = ""
-  /**
-   * A selection made by a Now/Attention/Next arrow key: focus stays on the entry while its details
-   * load, so the next key keeps walking the list. Clicks and the exit key still go to the row.
-   */
-  let keepFocusFor = ""
-  /** A click (or Enter) on a Now/Attention/Next entry: select it and take focus to its row. */
-  const selectFromClick = (taskID: string) => {
-    keepFocusFor = ""
-    // Re-arm for a task already selected from the keyboard; its details load again.
-    focusedSelection = ""
-    selectTask(taskID)
-  }
   createEffect(() => {
     const selectedID = visible()?.selectedID
     const key = selectionKey()
     if (!selectedID || visible()?.detail?.status !== "found" || key === focusedSelection) return
     focusedSelection = key
-    if (key === keepFocusFor) return
     queueMicrotask(() => {
       if (selectionKey() !== key) return
       focusTaskRow(selectedID)
@@ -1610,14 +1226,9 @@ function TaskPanel(
     )
   }
   let listObserver: ResizeObserver | undefined
-  // Everything above the tree scrolls with it: keep the virtualizer's origin on the tree's top.
+  // Notes above the tree scroll with it: keep the virtualizer's origin on the tree's top.
   createEffect(() => {
     visible()
-    void nowWindow().rows.length
-    void nowWindow().total
-    void attentionWindow().rows.length
-    void attentionWindow().total
-    nextStatus()
     void items().length
     void scope.error
     queueMicrotask(measureTreeOffset)
@@ -1717,7 +1328,6 @@ function TaskPanel(
     onCleanup(() => observer.disconnect())
     listObserver = new ResizeObserver(measureTreeOffset)
     if (list) listObserver.observe(list)
-    if (head) listObserver.observe(head)
     onCleanup(() => listObserver?.disconnect())
   })
   // Hold the last fitted value while a view loads so the divider does not jump to its minimum.
@@ -1726,8 +1336,8 @@ function TaskPanel(
     const value = visible()
     if (!value || value.loading) return previous
     return contentSplit({
-      rows: rowValues().length,
-      headings: executionList().plans.filter(planHeaded).length,
+      rows: listedRows(executionList()).length,
+      headings: 0,
       extra: 16 + (value.page?.nextCursor ? LOADER_HEIGHT : 0),
       available: paneHeight(),
     })
@@ -1935,8 +1545,8 @@ function TaskPanel(
         <Show when={visible() && !visible()?.topology && !visible()?.topologyError}>
           <div class="lazers-tasks-note" role="status">
             {visible()?.scheduling && !visible()?.schedulingError
-              ? "Execution topology unavailable. Showing scheduling-backed groups where covered."
-              : "Execution topology unavailable. Showing tasks without grouping."}
+              ? "Execution topology unavailable. Showing scheduling-backed tasks where covered."
+              : "Execution topology unavailable. Showing tasks without dependency detail."}
           </div>
         </Show>
         <Show
@@ -1962,7 +1572,7 @@ function TaskPanel(
                 }
               >
                 <Show
-                  when={rowValues().length || value().scheduling}
+                  when={listedRows(executionList()).length}
                   fallback={
                     <div class="lazers-tasks-note">
                       {prefs().search
@@ -1974,119 +1584,9 @@ function TaskPanel(
                   }
                 >
                   <div
-                    class="lazers-tasks-schedule-groups"
-                    ref={(element) => {
-                      head = element
-                      listObserver?.observe(element)
-                    }}
-                    onFocusIn={(event) => {
-                      focusedSignal = signalOf(event.target as Element) ?? focusedSignal
-                    }}
-                    onFocusOut={(event) => {
-                      // A button removed by a refresh blurs while detached; the guard above
-                      // moves focus on. Anything else is the person leaving the list.
-                      if (!(event.target as Element).isConnected) return
-                      const next = event.relatedTarget
-                      if (!(next instanceof Node) || !event.currentTarget.contains(next))
-                        focusedSignal = undefined
-                    }}
-                  >
-                    <Show when={nowWindow().total}>
-                      <section class="lazers-tasks-schedule-group" aria-label="Now">
-                        <h3 class="lazers-tasks-schedule-heading">
-                          Now
-                          <span class="lazers-tasks-schedule-count">{nowWindow().total}</span>
-                        </h3>
-                        <Keyed each={nowWindow().rows} by={(row) => row.taskID}>
-                          {(taskRow) => renderSignalRow(taskRow, "Now")}
-                        </Keyed>
-                        {renderSignalPager("now", "Now")}
-                      </section>
-                    </Show>
-                    <Show when={attentionWindow().total}>
-                      <section class="lazers-tasks-schedule-group" aria-label="Attention">
-                        <h3 class="lazers-tasks-schedule-heading">
-                          Attention
-                          <span class="lazers-tasks-schedule-count">{attentionWindow().total}</span>
-                        </h3>
-                        <Keyed each={attentionWindow().rows} by={(row) => row.taskID}>
-                          {(taskRow) => renderSignalRow(taskRow, "Attention")}
-                        </Keyed>
-                        {renderSignalPager("attention", "Attention")}
-                      </section>
-                    </Show>
-                    <Show when={value().scheduling || value().schedulingError}>
-                      <section class="lazers-tasks-schedule-group" aria-label="Next">
-                        <h3 class="lazers-tasks-schedule-heading">Next</h3>
-                        <Show
-                          when={nextCandidate()}
-                          fallback={
-                            <div class="lazers-tasks-scheduling-warning" role="status">
-                              {nextStatus().status === "none"
-                                ? "No eligible task is currently selected."
-                                : "Next is unknown; scheduling coverage is unavailable or incomplete."}
-                            </div>
-                          }
-                        >
-                          {(candidate) => {
-                            const presentation = () =>
-                              listedPresentation(candidate().taskID) ?? {
-                                tone: "ready" as const,
-                                icon: "ring-dot" as const,
-                                label: "Eligible",
-                              }
-                            const order = () =>
-                              `Priority ${candidate().priority} · plan ${candidate().planOrder + 1}, step ${candidate().ordinal + 1}`
-                            return (
-                              <div
-                                class="lazers-tasks-schedule-entry"
-                                data-selected={candidate().taskID === value().selectedID}
-                              >
-                                <button
-                                  type="button"
-                                  class="lazers-tasks-schedule-select"
-                                  data-scheduling-task-id={candidate().taskID}
-                                  data-scheduling-group="next"
-                                  aria-label={`Next: ${candidate().reference ?? candidate().taskID.slice(0, 8)} ${taskTitle(candidate().title)}, priority ${candidate().priority}, plan order ${candidate().planOrder + 1}, node order ${candidate().ordinal + 1}`}
-                                  aria-pressed={candidate().taskID === value().selectedID}
-                                  tabIndex={
-                                    rowValues().some((row) => row.taskID === candidate().taskID)
-                                      ? -1
-                                      : 0
-                                  }
-                                  onKeyDown={signalKey}
-                                  onClick={() => selectFromClick(candidate().taskID)}
-                                >
-                                  <span
-                                    class="lazers-tasks-state"
-                                    data-tone={presentation().tone}
-                                    aria-hidden="true"
-                                  >
-                                    {renderGlyph(presentation().icon)}
-                                  </span>
-                                  <span class="lazers-tasks-schedule-entry-title">
-                                    {taskTitle(candidate().title)}
-                                  </span>
-                                  <span
-                                    class="lazers-tasks-schedule-entry-meta"
-                                    title={order()}
-                                    style={{ "font-family": ctx.appearance.font("mono") }}
-                                  >
-                                    P{candidate().priority}
-                                  </span>
-                                </button>
-                              </div>
-                            )
-                          }}
-                        </Show>
-                      </section>
-                    </Show>
-                  </div>
-                  <div
                     class="lazers-tasks-tree"
                     role="tree"
                     aria-label={`${stateLabel(stateFilter())} tasks`}
-                    data-forks={rowValues().some((row) => Boolean(row.fork))}
                     style={{ height: `${virtualizer.getTotalSize()}px` }}
                     ref={(element) => {
                       tree = element
@@ -2116,34 +1616,6 @@ function TaskPanel(
                             switch (virtual().item.kind) {
                               case "task":
                                 return renderTaskRow(current as Accessor<VirtualTaskItem>)
-                              case "plan": {
-                                const plan = () =>
-                                  current() as Extract<VirtualItem, { kind: "plan" }>
-                                return (
-                                  <ExecutionPlanHeading
-                                    group={plan().group}
-                                    stateFilter={stateFilter()}
-                                    collapsed={plan().collapsed}
-                                    setSize={plan().setSize}
-                                    posInSet={plan().posInSet}
-                                    tabIndex={planTabIndex(plan().key)}
-                                    onToggle={() => togglePlan(plan().group.planID)}
-                                    onKeyDown={(event) => planKeyDown(event, plan())}
-                                    onOpenPlan={openPrerequisitePlan}
-                                    planTitle={(planID) => schedulingPlan(planID)?.title}
-                                  />
-                                )
-                              }
-                              case "note":
-                                return (
-                                  <div class="lazers-tasks-branch-note" role="none">
-                                    {
-                                      (current() as Extract<VirtualItem, { kind: "note" }>)
-                                        .hiddenCount
-                                    }{" "}
-                                    more not in this page or filter
-                                  </div>
-                                )
                               case "loader":
                                 return (
                                   <div class="lazers-tasks-loader" role="status">
@@ -2313,6 +1785,32 @@ function TaskPanel(
               <h3 class="lazers-tasks-title" title={task().proposal.objective}>
                 {taskTitle(task().proposal.objective)}
               </h3>
+              <dl class="lazers-tasks-scheduling-facts" aria-label="Scheduling facts">
+                <Show when={selectedPlanFacts()}>
+                  {(facts) => (
+                    <>
+                      <dt>Priority</dt>
+                      <dd>{facts().priority > 0 ? facts().priority : "None"}</dd>
+                      <dt>Plan</dt>
+                      <dd>
+                        {facts().title}
+                        <Show when={facts().state}>{(label) => <> · {label()}</>}</Show>
+                      </dd>
+                      <Show when={facts().planOrder !== undefined}>
+                        <dt>Order</dt>
+                        <dd>
+                          Plan {facts().planOrder! + 1}
+                          <Show when={facts().step !== undefined}>, step {facts().step! + 1}</Show>
+                        </dd>
+                      </Show>
+                    </>
+                  )}
+                </Show>
+                <dt>Sequencing</dt>
+                <dd>
+                  {selectedSequencing().label} · {selectedSequencing().detail}
+                </dd>
+              </dl>
               <Show when={selectedExecution()?.dispatchPause}>
                 {(pause) => (
                   <p class="lazers-tasks-blocker" data-kind="pause" title={pause().reason}>

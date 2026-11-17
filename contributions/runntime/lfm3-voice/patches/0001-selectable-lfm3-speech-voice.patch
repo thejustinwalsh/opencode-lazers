@@ -1,0 +1,226 @@
+From a3718c80f959b8e86d1b2abf056fb578f532aeb9 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <contact.me@thejustinwalsh.com>
+Date: Tue, 17 Nov 2026 16:58:15 -0500
+Subject: [PATCH] feat(zoo): selectable LFM3 speech voice
+
+Add Lfm3SpeechOptions.voice ({ language?, gender? }) and a lower-level
+systemPrompt override. Default remains American English, female.
+---
+ packages/runntime/src/zoo/index.ts            |  1 +
+ .../runntime/src/zoo/lfm3/audio/prompts.ts    | 39 ++++++++++++++--
+ packages/runntime/src/zoo/tasks/audio/lfm3.ts | 28 ++++++++++-
+ .../test/zoo/lfm3/audio/prompts.test.ts       | 46 +++++++++++++++++++
+ 4 files changed, 108 insertions(+), 6 deletions(-)
+
+diff --git a/packages/runntime/src/zoo/index.ts b/packages/runntime/src/zoo/index.ts
+index b03f77e..d1a9cff 100644
+--- a/packages/runntime/src/zoo/index.ts
++++ b/packages/runntime/src/zoo/index.ts
+@@ -63,6 +63,7 @@ export {
+   type Lfm3SpeechGeneration,
+   type Lfm3SpeechOptions,
+   type Lfm3SpeechResult,
++  type Lfm3SpeechVoice,
+   type Lfm3TranscriptionOptions,
+ } from './tasks/audio/lfm3.ts';
+ 
+diff --git a/packages/runntime/src/zoo/lfm3/audio/prompts.ts b/packages/runntime/src/zoo/lfm3/audio/prompts.ts
+index d3c9b08..765796d 100644
+--- a/packages/runntime/src/zoo/lfm3/audio/prompts.ts
++++ b/packages/runntime/src/zoo/lfm3/audio/prompts.ts
+@@ -11,9 +11,36 @@ export function lfm3TranscriptionMessages(): readonly Lfm3Message[] {
+   ];
+ }
+ 
+-export function lfm3SpeechMessages(text: string): readonly Lfm3Message[] {
++/** Typed voice selection for LFM3 text-to-speech. Omitted fields use the default voice. */
++export interface Lfm3SpeechVoice {
++  /** Spoken language or dialect as plain English, for example "British English". Defaults to "American English". */
++  readonly language?: string;
++  /** Voice gender. Defaults to "female". */
++  readonly gender?: 'female' | 'male';
++}
++
++/** Selection of the TTS system instruction: an explicit prompt wins over a typed voice. */
++export interface Lfm3SpeechPromptOptions {
++  readonly voice?: Lfm3SpeechVoice;
++  readonly systemPrompt?: string;
++}
++
++/** Builds the TTS system instruction, e.g. "Perform TTS in British English using a female voice." */
++export function lfm3SpeechSystemPrompt(options: Lfm3SpeechPromptOptions = {}): string {
++  if (options.systemPrompt !== undefined) return options.systemPrompt;
++  const { voice } = options;
++  if (!voice || (voice.language === undefined && voice.gender === undefined)) {
++    return LFM3_TTS_SYSTEM_PROMPT;
++  }
++  return `Perform TTS in ${voice.language ?? 'American English'} using a ${voice.gender ?? 'female'} voice.`;
++}
++
++export function lfm3SpeechMessages(
++  text: string,
++  options: Lfm3SpeechPromptOptions = {},
++): readonly Lfm3Message[] {
+   return [
+-    { role: 'system', content: LFM3_TTS_SYSTEM_PROMPT },
++    { role: 'system', content: lfm3SpeechSystemPrompt(options) },
+     { role: 'user', content: text },
+   ];
+ }
+@@ -22,8 +49,12 @@ export function encodeLfm3TranscriptionPrompt(tokenizer: Lfm3Tokenizer): number[
+   return tokenizer.encodeChat(lfm3TranscriptionMessages());
+ }
+ 
+-export function encodeLfm3SpeechPrompt(tokenizer: Lfm3Tokenizer, text: string): number[] {
+-  const prompt = tokenizer.encodeChat(lfm3SpeechMessages(text));
++export function encodeLfm3SpeechPrompt(
++  tokenizer: Lfm3Tokenizer,
++  text: string,
++  options: Lfm3SpeechPromptOptions = {},
++): number[] {
++  const prompt = tokenizer.encodeChat(lfm3SpeechMessages(text, options));
+   const audioStartPositions = prompt.flatMap((token, index) =>
+     token === tokenizer.audioStartId ? [index] : [],
+   );
+diff --git a/packages/runntime/src/zoo/tasks/audio/lfm3.ts b/packages/runntime/src/zoo/tasks/audio/lfm3.ts
+index cf17d7a..c74d2d9 100644
+--- a/packages/runntime/src/zoo/tasks/audio/lfm3.ts
++++ b/packages/runntime/src/zoo/tasks/audio/lfm3.ts
+@@ -30,7 +30,11 @@ import {
+ } from '../../lfm3/audio/model.ts';
+ import { LFM3 } from '../../lfm3/model.ts';
+ import { LiquidCodecStream } from '../../lfm3/audio/codec.ts';
+-import { encodeLfm3SpeechPrompt, encodeLfm3TranscriptionPrompt } from '../../lfm3/audio/prompts.ts';
++import {
++  encodeLfm3SpeechPrompt,
++  encodeLfm3TranscriptionPrompt,
++  type Lfm3SpeechVoice,
++} from '../../lfm3/audio/prompts.ts';
+ import {
+   LFM3_AUDIO_MAX_SECONDS,
+   LFM3_AUDIO_SAMPLE_RATE,
+@@ -69,9 +73,15 @@ export interface Lfm3SpeechOptions {
+   readonly depthPasses?: number;
+   /** Reproducible codebook order and sampling when supplied. */
+   readonly seed?: number;
++  /** Voice to speak with. Defaults to American English, female. */
++  readonly voice?: Lfm3SpeechVoice;
++  /** Complete TTS system instruction; overrides `voice` when supplied. */
++  readonly systemPrompt?: string;
+   readonly signal?: AbortSignal;
+ }
+ 
++export type { Lfm3SpeechVoice };
++
+ /** Final samples and generation accounting for one speech response. */
+ export interface Lfm3SpeechResult {
+   readonly samples: Float32Array;
+@@ -496,7 +506,7 @@ export async function createLfm3Audio(
+       const temperature = validateTemperature(options.temperature, depthSampling.temperature);
+       const depthPasses = validateDepthPasses(options.depthPasses);
+       const sampler = createLfm3DepthSampler(options.seed ?? randomSeed());
+-      const prompt = encodeLfm3SpeechPrompt(liveBackbone.tokenizer, text);
++      const prompt = encodeLfm3SpeechPrompt(liveBackbone.tokenizer, text, options);
+       let languageCache: Awaited<ReturnType<Lfm3Backbone['forwardTokens']>>['cache'] | undefined;
+       let codecCache: Lfm3AudioDecoderCache | undefined;
+       let hidden: Float32Array | undefined;
+@@ -861,6 +871,7 @@ function validateSpeechOptions(
+   validateSpeechFrameLimit(options.maxAudioFrames);
+   validateTemperature(options.temperature, sampling.temperature);
+   validateDepthPasses(options.depthPasses);
++  validateSpeechVoice(options);
+   if (
+     options.seed !== undefined &&
+     (!Number.isSafeInteger(options.seed) || options.seed < 0 || options.seed > 0xffff_ffff)
+@@ -869,6 +880,19 @@ function validateSpeechOptions(
+   }
+ }
+ 
++function validateSpeechVoice(options: Lfm3SpeechOptions): void {
++  const { voice, systemPrompt } = options;
++  if (systemPrompt !== undefined && !systemPrompt.trim()) {
++    throw new RunntimeError('INVALID_ARGUMENT', 'systemPrompt must not be empty');
++  }
++  if (voice?.language !== undefined && !voice.language.trim()) {
++    throw new RunntimeError('INVALID_ARGUMENT', 'voice.language must not be empty');
++  }
++  if (voice?.gender !== undefined && voice.gender !== 'female' && voice.gender !== 'male') {
++    throw new RunntimeError('INVALID_ARGUMENT', 'voice.gender must be "female" or "male"');
++  }
++}
++
+ function checkAborted(signal: AbortSignal): void {
+   if (signal.aborted) {
+     throw new RunntimeError('EXECUTION_FAILED', 'LFM3 audio operation aborted', {
+diff --git a/packages/runntime/test/zoo/lfm3/audio/prompts.test.ts b/packages/runntime/test/zoo/lfm3/audio/prompts.test.ts
+index 0ddb965..036ef12 100644
+--- a/packages/runntime/test/zoo/lfm3/audio/prompts.test.ts
++++ b/packages/runntime/test/zoo/lfm3/audio/prompts.test.ts
+@@ -3,6 +3,7 @@ import { createLfm3Tokenizer } from '../../../../src/zoo/lfm3/tokenizer.ts';
+ import {
+   encodeLfm3SpeechPrompt,
+   encodeLfm3TranscriptionPrompt,
++  lfm3SpeechSystemPrompt,
+ } from '../../../../src/zoo/lfm3/audio/prompts.ts';
+ 
+ const SPECIAL_TOKENS = [
+@@ -15,6 +16,9 @@ const SPECIAL_TOKENS = [
+   ['<|text_end|>', 125_014],
+   ['Perform ASR in English.', 500],
+   ['Perform TTS in American English using a female voice.', 501],
++  ['Perform TTS in British English using a female voice.', 507],
++  ['Perform TTS in American English using a male voice.', 508],
++  ['Speak slowly.', 509],
+   ['The quick brown fox jumps over the lazy dog.', 502],
+   ['<think></think>', 503],
+   ['system\n', 504],
+@@ -86,4 +90,46 @@ describe('LFM3 audio prompt framing', () => {
+       /misplaced audio-start token/,
+     );
+   });
++
++  it('keeps the default prompt unchanged when no voice is selected', () => {
++    expect(lfm3SpeechSystemPrompt()).toBe('Perform TTS in American English using a female voice.');
++    expect(lfm3SpeechSystemPrompt({ voice: {} })).toBe(
++      'Perform TTS in American English using a female voice.',
++    );
++  });
++
++  it('builds the system instruction from a typed voice', () => {
++    expect(lfm3SpeechSystemPrompt({ voice: { language: 'British English' } })).toBe(
++      'Perform TTS in British English using a female voice.',
++    );
++    expect(lfm3SpeechSystemPrompt({ voice: { gender: 'male' } })).toBe(
++      'Perform TTS in American English using a male voice.',
++    );
++    const tokenizer = tokenizerFixture();
++    const text = 'The quick brown fox jumps over the lazy dog.';
++    expect(
++      encodeLfm3SpeechPrompt(tokenizer, text, {
++        voice: { language: 'British English', gender: 'female' },
++      }),
++    ).toEqual([
++      124_894, 124_899, 504, 507, 124_900, 124_899, 505, 502, 124_900, 124_899, 506, 503, 125_012,
++    ]);
++  });
++
++  it('lets an explicit systemPrompt override the voice', () => {
++    expect(
++      lfm3SpeechSystemPrompt({
++        voice: { language: 'British English' },
++        systemPrompt: 'Speak slowly.',
++      }),
++    ).toBe('Speak slowly.');
++    const tokenizer = tokenizerFixture();
++    expect(
++      encodeLfm3SpeechPrompt(tokenizer, 'The quick brown fox jumps over the lazy dog.', {
++        systemPrompt: 'Speak slowly.',
++      }),
++    ).toEqual([
++      124_894, 124_899, 504, 509, 124_900, 124_899, 505, 502, 124_900, 124_899, 506, 503, 125_012,
++    ]);
++  });
+ });
+-- 
+2.54.0
+

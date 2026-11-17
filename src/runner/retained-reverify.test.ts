@@ -6430,10 +6430,15 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
             "notes",
             "patch-id",
             "remote",
+            "ls-files",
+            "worktree",
             "rev-parse",
           ])
           const replayed = spawn.mock.calls.filter(([argument]) => {
             const cmd = (argument as { cmd?: string[] }).cmd
+            // Full-fidelity status observations (untracked included) are read-only probes.
+            if (cmd?.[0] === "git" && cmd[1] === "status" && cmd.includes("--untracked-files=all"))
+              return false
             return !(cmd?.[0] === "git" && identityStamping.has(cmd[1] ?? ""))
           })
           expect(replayed).toHaveLength(1)
@@ -6443,7 +6448,23 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
               cwd: f.attempt.workspace,
             }),
           )
-        } else expect(spawn).not.toHaveBeenCalled()
+        } else {
+          // Read-only Git observations are not a check replay.
+          const readOnly = new Set([
+            "worktree",
+            "status",
+            "rev-parse",
+            "merge-base",
+            "diff",
+            "ls-files",
+          ])
+          expect(
+            spawn.mock.calls.filter(([argument]) => {
+              const cmd = (argument as { cmd?: string[] }).cmd
+              return !(cmd?.[0] === "git" && readOnly.has(cmd[1] ?? ""))
+            }),
+          ).toHaveLength(0)
+        }
         expect(verificationActivitiesForDatabase(repository.path)).toHaveLength(0)
       } finally {
         spawn.mockRestore()

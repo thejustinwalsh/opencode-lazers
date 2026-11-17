@@ -44,7 +44,7 @@ function pressEnter(dom: Window, element: HTMLButtonElement) {
   if (!event.defaultPrevented) element.click()
 }
 
-test("registered Tasks renders authoritative Now, Attention and Next with navigable priority/dependency reasons", async () => {
+test("registered Tasks lists priority-sorted task rows with scheduling reasons and priority in the inspector", async () => {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
   const uninstallLayout = installTasksLayout(dom)
@@ -312,7 +312,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
               taskID: ids.next,
               reference: references.get(ids.next),
               title: names[ids.next],
-              priority: 9,
+              priority: 1,
               planOrder: 0,
               ordinal: 0,
               order: 0,
@@ -325,7 +325,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
           planID: targetPlanID,
           planVersion: 1,
           planOrder: 0,
-          priority: 9,
+          priority: 1,
           title: "Higher-priority target plan",
           lifecycle: "running",
           decision: schedulingUnknown ? "unknown" : "eligible",
@@ -355,7 +355,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
           planID: parentPlanID,
           planVersion: 1,
           planOrder: 1,
-          priority: 4,
+          priority: 2,
           title: "Parent implementation with an unusually long prerequisite plan title",
           lifecycle: "running",
           decision: "waiting",
@@ -524,7 +524,8 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     const css = registrations.find(
       (entry) => typeof entry.value === "string" && entry.value.includes(".lazers-tasks {"),
     )?.value as string | undefined
-    expect(css).toContain(".lazers-tasks-schedule-group")
+    expect(css).toContain(".lazers-tasks-row-signals")
+    expect(css).not.toContain(".lazers-tasks-schedule-group")
     const style = browserDocument.createElement("style")
     style.textContent = css ?? ""
     browserDocument.head.append(style)
@@ -533,92 +534,49 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     browserDocument.body.append(container)
     mounted = host.mountTaskPanel(panel!, context, session, container)
 
-    await until(() => container.querySelector('[data-scheduling-group="next"]') !== null)
+    await until(() => container.querySelector('[role="treeitem"]') !== null)
     const row = (taskID: string) =>
       container.querySelector<HTMLElement>(`[role="treeitem"][data-task-id="${taskID}"]`)
-    expect(container.querySelector('[aria-label="Now"]')?.textContent).toContain(
-      "Foreground active work",
-    )
-    // A queued task waiting on its running prerequisite is routine: it stays in the planned tree,
-    // not in Attention.
-    expect(container.querySelector('[aria-label="Attention"]')).toBeNull()
-    expect(row(ids.waiting)).not.toBeNull()
-    expect(container.querySelector('[aria-label="Next"]')?.textContent).toContain(
-      "Backend-selected next task",
-    )
+    // One flat list of task rows sorted by priority (1 first): the target plan outranks its
+    // prerequisite plan, so its task leads. No Now, Attention or Next sections, no plan headings.
+    await until(() => container.querySelectorAll('[role="treeitem"]').length === 3)
     expect(
-      container.querySelector<HTMLButtonElement>('[data-scheduling-group="next"]')?.dataset
-        .schedulingTaskId,
-    ).toBe(ids.next)
+      [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')].map(
+        (item) => item.dataset.taskId,
+      ),
+    ).toEqual([ids.next, ids.active, ids.waiting])
+    expect(container.querySelector(".lazers-tasks-schedule-groups")).toBeNull()
+    expect(container.querySelector("[data-scheduling-group]")).toBeNull()
+    expect(container.querySelector(".lazers-tasks-plan")).toBeNull()
+    expect(container.querySelector('[role="tree"]')?.textContent).not.toContain("Priority")
     expect(row(ids.active)?.getAttribute("aria-label")).toContain(
       "observed foreground activity active",
     )
     expect(row(ids.active)?.getAttribute("aria-label")).toContain("waiting")
-    expect(container.querySelectorAll(".lazers-tasks-schedule-group")).toHaveLength(2)
-    // Now entries carry the colored state icon and no status word.
-    for (const group of ["now"]) {
-      const entry = container.querySelector<HTMLElement>(`[data-scheduling-group="${group}"]`)!
-      const state = entry.querySelector<HTMLElement>(".lazers-tasks-state")!
-      expect(state.dataset.tone).toBeTruthy()
-      expect(state.title).toBeTruthy()
-      expect(entry.querySelector(".lazers-tasks-badge")).toBeNull()
-    }
+    // The waiting task depends on the active one: a collapsed accordion, sequenced.
+    expect(row(ids.waiting)?.getAttribute("aria-expanded")).toBe("false")
+    expect(row(ids.waiting)?.getAttribute("aria-label")).toContain("sequenced")
+    // The target plan waits for the parent plan, so its task has dependencies too.
+    expect(row(ids.next)?.getAttribute("aria-expanded")).toBe("false")
 
-    const targetGroup = [...container.querySelectorAll<HTMLElement>(".lazers-tasks-plan")].find(
-      (element) => element.textContent?.includes("Higher-priority target plan"),
-    )!
-    expect(targetGroup.textContent).toContain("Priority 9")
-    expect(targetGroup.textContent).toContain("Order 1")
-    const planHeading = targetGroup.querySelector<HTMLElement>(".lazers-tasks-plan-heading")!
-    const planHeadingTitle = planHeading.querySelector<HTMLElement>(".lazers-tasks-plan-title")!
-    const planHeadingOrder = planHeading.querySelector<HTMLElement>(".lazers-tasks-plan-order")!
-    const planDetails = targetGroup.querySelector<HTMLDetailsElement>(".lazers-tasks-plan-details")!
-    const planDetailsToggle = planDetails.querySelector<HTMLElement>("summary")!
+    // Priority, order and plan live in the inspector.
+    row(ids.next)!.click()
+    await until(() => row(ids.next)?.getAttribute("aria-selected") === "true")
+    const facts = () =>
+      container.querySelector<HTMLElement>(".lazers-tasks-detail .lazers-tasks-scheduling-facts")
+        ?.textContent ?? ""
+    await until(() => facts().includes("Higher-priority target plan"))
+    expect(facts()).toContain("Priority1")
+    expect(facts()).toContain("Plan 1, step 1")
     const parentPlanTitle = "Parent implementation with an unusually long prerequisite plan title"
-    expect(planHeading.textContent).not.toContain("Prerequisite plans are integrated")
-    expect(planHeading.textContent).not.toContain(parentPlanTitle)
-    expect(getComputedStyle(planHeading).boxSizing).toBe("border-box")
-    expect(targetGroup.querySelector(".lazers-tasks-plan-reason")).toBeNull()
-    expect(planDetailsToggle.getAttribute("aria-label")).toBe(
-      "Scheduling details for Higher-priority target plan",
-    )
-    expect(planDetails.open).toBe(false)
-    for (const width of [360, 420]) {
-      container.style.width = `${width}px`
-      const titleStyle = getComputedStyle(planHeadingTitle)
-      expect(titleStyle.whiteSpace).toBe("nowrap")
-      expect(titleStyle.overflow).toBe("hidden")
-      expect(titleStyle.textOverflow).toBe("ellipsis")
-      expect(getComputedStyle(planHeadingOrder).flexWrap).toBe("nowrap")
-    }
-    const targetExpanded = targetGroup.getAttribute("aria-expanded")
-    expect(targetExpanded).toBe("true")
-    planDetailsToggle.focus()
-    expect(planDetailsToggle.ownerDocument.activeElement).toBe(planDetailsToggle)
-    pressEnter(dom, planDetailsToggle as HTMLButtonElement)
-    await until(() => planDetails.open)
-    expect(planDetails.textContent).toContain(
-      "Prerequisite plans are integrated in the selected source after the scheduler verifies the full source history.",
-    )
-    expect(targetGroup.getAttribute("aria-expanded")).toBe(targetExpanded)
-    expect(planDetails.querySelector(".lazers-tasks-plan-prerequisite-summary")?.textContent).toBe(
-      "Known prerequisite plans",
-    )
-    const planPrerequisite = planDetails.querySelector<HTMLButtonElement>(
-      ".lazers-tasks-plan-prerequisite-links button",
-    )!
-    expect(planPrerequisite.getAttribute("aria-label")).toContain(parentPlanID)
+    // The scheduler's plan reason and prerequisite plans are reachable from the inspector.
+    const planPrerequisite = [
+      ...container.querySelectorAll<HTMLButtonElement>(".lazers-tasks-detail button"),
+    ].find((button) => button.getAttribute("aria-label")?.includes("Open prerequisite"))!
     expect(planPrerequisite.textContent).toBe(parentPlanTitle)
-    expect(getComputedStyle(planPrerequisite).maxWidth).toBe("100%")
-    expect(getComputedStyle(planPrerequisite).overflowWrap).toBe("anywhere")
-    planPrerequisite.focus()
-    expect(planPrerequisite.ownerDocument.activeElement).toBe(planPrerequisite)
     planPrerequisite.click()
     await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
-    expect(
-      container.querySelector(`.lazers-tasks-plan[data-plan-id="${parentPlanID}"]`),
-    ).not.toBeNull()
-    expect(targetGroup.getAttribute("aria-expanded")).toBe(targetExpanded)
+    await until(() => facts().includes("Priority2"))
 
     // The scheduler's recorded wait sets the row's state icon; the link icon opens the blocker,
     // and the machine reason stays out of the row.
@@ -687,15 +645,10 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       type: "rpc.lazers.tasks.changed",
       data: { projectDirectory, version },
     })
-    await until(
-      () =>
-        queryCalls > callsBefore &&
-        container.querySelector('[data-scheduling-group="next"]') === null,
-    )
-    expect(container.querySelector('[aria-label="Next"]')?.textContent).toContain("Next is unknown")
-    expect(container.querySelector('[aria-label="Next"]')?.textContent).not.toContain(
-      "Backend-selected next task",
-    )
+    await until(() => queryCalls > callsBefore)
+    // Unknown scheduling never invents a Next entry; the list keeps its rows.
+    expect(container.querySelector('[aria-label="Next"]')).toBeNull()
+    expect(row(ids.waiting)).not.toBeNull()
     expect(opened).toHaveLength(0)
   } finally {
     mounted?.dispose()
@@ -711,7 +664,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
   }
 })
 
-test("keyboard navigation reveals a held scheduling-backed fork when topology is unavailable", async () => {
+test("keyboard navigation reaches a held task and its related dependency when topology is unavailable", async () => {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
   const browserDocument = dom.document as unknown as Document
@@ -901,7 +854,7 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
         planID: forkPlanID,
         planVersion: 1,
         planOrder: 1,
-        priority: 9,
+        priority: 1,
         title: "Parallel plan",
         lifecycle: "running",
         decision: "waiting",
@@ -1088,17 +1041,37 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
 
     const row = (taskID: string) =>
       container.querySelector<HTMLElement>(`[role="treeitem"][data-task-id="${taskID}"]`)
-    const signal = () =>
-      container.querySelector<HTMLButtonElement>(
-        `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.heldAttention}"]`,
+    await until(() => topologyCalls > 0 && row(ids.heldAttention) !== null)
+    const stop = () =>
+      [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
+        (item) => item.tabIndex === 0,
       )
-    await until(() => topologyCalls > 0 && signal() !== null)
-    expect(row(ids.heldChild)).toBeNull()
-    expect(signal()?.tabIndex).toBe(0)
-    for (let attempt = 0; attempt < 100 && browserDocument.activeElement !== signal(); attempt++)
+    expect(stop()).toBeDefined()
+    expect(container.querySelector("[data-scheduling-group]")).toBeNull()
+    for (
+      let attempt = 0;
+      attempt < 100 && browserDocument.activeElement !== (stop() ?? null);
+      attempt++
+    )
       pressTab(dom)
-    expect(browserDocument.activeElement).toBe(signal())
-    pressEnter(dom, signal()!)
+    expect(browserDocument.activeElement).toBe(stop() ?? null)
+    // Arrow keys walk the flat rows in order until the held task takes selection and focus.
+    for (
+      let attempt = 0;
+      attempt < 20 && browserDocument.activeElement !== row(ids.heldAttention);
+      attempt++
+    ) {
+      const active = browserDocument.activeElement as unknown as HTMLElement
+      active.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }) as unknown as Event,
+      )
+      await new Promise<void>((resolve) => setTimeout(resolve, 20))
+    }
+    expect(browserDocument.activeElement).toBe(row(ids.heldAttention))
     await until(() => row(ids.heldAttention)?.getAttribute("aria-selected") === "true")
     await until(() => detailRequests.includes(ids.heldAttention))
 
@@ -1119,30 +1092,12 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
     pressEnter(dom, relatedTask()!)
     await until(() => row(ids.heldChild)?.getAttribute("aria-selected") === "true")
     await until(() => browserDocument.activeElement === row(ids.heldChild))
-    expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
-    expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("3")
+    // Every task is a top-level row: following a relation never expands anything.
+    expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("1")
     const planWait = [...container.querySelectorAll(".lazers-tasks-dependencies")].find((element) =>
       element.textContent?.includes("Plan waits for"),
     )
     expect(planWait?.textContent).toContain("showing 1 of 2 prerequisite plans")
-    const forkPlanHeading = container.querySelector<HTMLElement>(
-      `.lazers-tasks-plan[data-plan-id="${forkPlanID}"]`,
-    )!
-    const forkPlanDetails = forkPlanHeading.querySelector<HTMLDetailsElement>(
-      ".lazers-tasks-plan-details",
-    )!
-    const forkPlanExpanded = forkPlanHeading.getAttribute("aria-expanded")
-    forkPlanDetails.querySelector<HTMLElement>("summary")!.click()
-    await until(() => forkPlanDetails.open)
-    expect(
-      forkPlanDetails.querySelector(".lazers-tasks-plan-prerequisite-summary")?.textContent,
-    ).toBe("Showing 1 of 2 prerequisite plans.")
-    expect(
-      forkPlanDetails
-        .querySelector<HTMLButtonElement>(".lazers-tasks-plan-prerequisite-links button")
-        ?.getAttribute("aria-label"),
-    ).toContain(attentionPlanID)
-    expect(forkPlanHeading.getAttribute("aria-expanded")).toBe(forkPlanExpanded)
     expect(topologyCalls).toBeGreaterThan(0)
   } finally {
     mounted?.dispose()

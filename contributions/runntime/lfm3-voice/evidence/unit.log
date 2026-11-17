@@ -1,0 +1,9 @@
+
+ RUN  v5.0.4 /Users/tjw/Documents/ChatGPT/runntime/packages/runntime
+
+
+ Test Files  60 passed (60)
+      Tests  1193 passed (1193)
+   Start at  17:00:38
+   Duration  2.90s (import 55%, tests 30%, transform 14%, worker 1%)
+
