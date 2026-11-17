@@ -6,8 +6,8 @@ import { planStateLabel } from "./row-presentation.ts"
 /**
  * A titled plan's heading: a top-level tree item that collapses its rows (aria-level 2 siblings that
  * follow it), plus scheduler facts (priority, plan order, prerequisites). It is one item of the flat
- * virtual list; its rows are hidden when collapsed. The scheduling reason stays one line here; the
- * inspector carries the full text.
+ * virtual list; its rows are hidden when collapsed. The heading stays one line; full scheduling
+ * details are available from its inline disclosure.
  */
 export function ExecutionPlanHeading(props: {
   group: ExecutionPlanGroup
@@ -23,8 +23,25 @@ export function ExecutionPlanHeading(props: {
 }) {
   const remaining = () => ["open", "queued", "running", "blocked"].includes(props.stateFilter)
   const afterPlans = () => props.group.afterPlans ?? []
+  const hasPrerequisiteDetails = () =>
+    afterPlans().length > 0 ||
+    props.group.afterPlansCount !== undefined ||
+    props.group.afterPlansComplete !== undefined
+  const hasSchedulingDetails = () =>
+    Boolean(props.group.schedulingReason) || hasPrerequisiteDetails()
   const planState = () => planStateLabel(props.group.state)
   const planName = (planID: string) => props.planTitle?.(planID) ?? `Plan ${planID.slice(0, 8)}`
+  const prerequisiteSummary = () => {
+    const count = afterPlans().length
+    if (props.group.afterPlansComplete === true)
+      return count ? "Prerequisite plans" : "No prerequisite plans."
+    if (props.group.afterPlansComplete === false) {
+      return props.group.afterPlansCount === undefined
+        ? `${count} known prerequisite plans; additional plans may be unavailable.`
+        : `Showing ${count} of ${props.group.afterPlansCount} prerequisite plans.`
+    }
+    return count ? "Known prerequisite plans" : "No prerequisite plans are listed."
+  }
   return (
     <div
       class="lazers-tasks-plan"
@@ -52,10 +69,16 @@ export function ExecutionPlanHeading(props: {
         title={props.collapsed ? "Expand plan" : "Collapse plan"}
         onClick={() => props.onToggle()}
       >
-        <span>{props.group.title}</span>
+        <span class="lazers-tasks-plan-title" title={props.group.title}>
+          {props.group.title}
+        </span>
         <span class="lazers-tasks-plan-order">
           <Show when={planState()}>
-            {(label) => <span class="lazers-tasks-plan-state">{label()}</span>}
+            {(label) => (
+              <span class="lazers-tasks-plan-state" title={`Plan ${label().toLowerCase()}`}>
+                {label()}
+              </span>
+            )}
           </Show>
           <Show when={props.group.priority !== undefined}>
             <span title="Scheduler priority for this plan">Priority {props.group.priority}</span>
@@ -64,43 +87,52 @@ export function ExecutionPlanHeading(props: {
             <span title="Scheduler plan order">Order {props.group.planOrder! + 1}</span>
           </Show>
           <Show when={remaining() && props.group.totalCount > 1}>
-            <span>
+            <span title="Tasks remaining in this plan">
               {props.group.nonterminalCount}/{props.group.totalCount} remaining
             </span>
           </Show>
         </span>
       </div>
-      <Show when={props.group.schedulingReason || afterPlans().length}>
-        <div class="lazers-tasks-plan-reason">
-          <Show when={afterPlans().length}>
-            <span class="lazers-tasks-plan-after">
-              <span>After </span>
-              <For each={afterPlans()}>
-                {(planID, index) => (
-                  <>
-                    {index() ? ", " : ""}
-                    <button
-                      type="button"
-                      class="lazers-tasks-dependency-ref"
-                      aria-label={`Open prerequisite plan ${planName(planID)} (${planID})`}
-                      title={planID}
-                      onClick={() => props.onOpenPlan?.(planID)}
-                    >
-                      {planName(planID)}
-                    </button>
-                  </>
-                )}
-              </For>
-            </span>
-          </Show>
-          <Show when={props.group.schedulingReason}>
-            {(reason) => (
-              <span class="lazers-tasks-plan-reason-text" title={reason()}>
-                {reason()}
-              </span>
-            )}
-          </Show>
-        </div>
+      <Show when={hasSchedulingDetails()}>
+        <details class="lazers-tasks-plan-details">
+          <summary
+            aria-label={`Scheduling details for ${props.group.title}`}
+            title="Scheduling details"
+          >
+            <span aria-hidden="true">i</span>
+          </summary>
+          <div class="lazers-tasks-plan-details-panel">
+            <Show when={props.group.schedulingReason}>
+              {(reason) => <p class="lazers-tasks-plan-details-reason">{reason()}</p>}
+            </Show>
+            <Show when={hasPrerequisiteDetails()}>
+              <div
+                class="lazers-tasks-plan-prerequisites"
+                role="group"
+                aria-label="Prerequisite plans"
+              >
+                <p class="lazers-tasks-plan-prerequisite-summary">{prerequisiteSummary()}</p>
+                <Show when={afterPlans().length}>
+                  <div class="lazers-tasks-plan-prerequisite-links">
+                    <For each={afterPlans()}>
+                      {(planID) => (
+                        <button
+                          type="button"
+                          class="lazers-tasks-dependency-ref"
+                          aria-label={`Open prerequisite plan ${planName(planID)} (${planID})`}
+                          title={planID}
+                          onClick={() => props.onOpenPlan?.(planID)}
+                        >
+                          {planName(planID)}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </Show>
+          </div>
+        </details>
       </Show>
     </div>
   )

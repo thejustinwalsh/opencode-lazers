@@ -142,66 +142,118 @@
   font-weight: 500;
 }
 .lazers-tasks-plan {
+  position: relative;
   min-width: 0;
   margin: 8px 0 0;
 }
 .lazers-tasks-plan-heading {
   display: flex;
   width: 100%;
+  box-sizing: border-box;
   border: 0;
   background: transparent;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px 8px 4px 4px;
-  color: var(--text-weak);
-  font-size: 0.85em;
-}
-.lazers-tasks-plan-heading > span:first-child {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lazers-tasks-plan-heading > span:not(:first-child) {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-.lazers-tasks-plan-order {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px 8px;
-  text-align: right;
-}
-/* One line under a plan heading: typed plan links first, then the scheduler's reason, clipped. */
-.lazers-tasks-plan-reason {
-  display: flex;
-  align-items: baseline;
   gap: 6px;
   min-width: 0;
-  padding: 0 8px 4px 16px;
+  padding: 8px 36px 4px 4px;
   color: var(--text-weak);
   font-size: 0.85em;
-  line-height: 1.4;
-  white-space: nowrap;
 }
-.lazers-tasks-plan-after {
-  flex: none;
-  max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lazers-tasks-plan-reason-text {
+.lazers-tasks-plan-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+}
+.lazers-tasks-plan-order {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  min-width: 0;
+  max-width: 58%;
+  overflow: hidden;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Keep the tree heading compact; open details only when the scheduler facts are requested. */
+.lazers-tasks-plan-details {
+  min-width: 0;
+}
+.lazers-tasks-plan-details > summary {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-weak);
+  cursor: pointer;
+  list-style: none;
+}
+.lazers-tasks-plan-details > summary::-webkit-details-marker {
+  display: none;
+}
+.lazers-tasks-plan-details > summary::marker {
+  content: "";
+}
+.lazers-tasks-plan-details > summary > span {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 0.78em;
+  font-weight: 600;
+  line-height: 1;
+}
+.lazers-tasks-plan-details > summary:hover {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
+.lazers-tasks-plan-details-panel {
+  max-height: min(18rem, 45vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0 8px 4px 16px;
+  padding: 8px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 4px;
+  background: var(--background-base);
+  color: var(--text-base);
+  font-size: 0.85em;
+  line-height: 1.45;
+}
+.lazers-tasks-plan-details-reason,
+.lazers-tasks-plan-prerequisite-summary {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+.lazers-tasks-plan-prerequisite-summary {
+  color: var(--text-weak);
+}
+.lazers-tasks-plan-prerequisite-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.lazers-tasks-plan-prerequisite-links > .lazers-tasks-dependency-ref {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 /*
  * Now / Attention / Next: one compact block above the tree, closed by a single hairline. Section
