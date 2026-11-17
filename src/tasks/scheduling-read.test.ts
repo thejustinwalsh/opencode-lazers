@@ -1,3 +1,4 @@
+import { priorityFromHigherFirst } from "../../test/legacy-priority.ts"
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -60,7 +61,7 @@ function fixture() {
         requestID: `request-${name}`,
         title: `Plan ${name}`,
         objective: `Implement ${name}`,
-        priority,
+        priority: priorityFromHigherFirst(priority),
         ...(afterPlans.length ? { afterPlans } : {}),
         baseCommit,
         workspaceMode: "isolated",

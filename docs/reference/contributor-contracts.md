@@ -20,6 +20,10 @@ The release was tested with OpenCode Desktop 2.2.6. The plugin SDK and API basel
 | Acceptance   | Behavioral assertions linked to evidence or an explicit human decision.               |
 | Requirements | Required capabilities, optional skill suggestions, verification procedures, and risk. |
 
+Plan `priority` is an integer of at least 0: 1 is the top priority, larger integers are lower, up to 2147483647, and 0 or omitted means none, which sorts after every prioritized plan. Scheduling, the Tasks list and observation reads order through `comparePriority` and `planPrioritySortSQL` in [`priority.ts`](../../src/runner/priority.ts); ties keep plan submission order, then node ordinal. The `priority` schema-module migration converted legacy higher-is-first values into dense ranks and recorded each legacy value in `runner_priority_migration`.
+
+The Tasks panel lists tasks as flat rows sorted by that order. A task with dependencies is a collapsed accordion whose expansion lists its dependency tree beneath it; priority, order, plan, reasons and prerequisites appear in the inspector, not on the row.
+
 Keep optional implementation guidance separate from required acceptance. Guidance can name reuse points, known pitfalls, and source references.
 
 The runtime keeps versioned task specifications and plan dependency edges. Reject duplicate task IDs, missing dependencies, cycles, and undefined integration order. Serialize overlapping write scopes. Use a single task for one coherent result unless independent value, useful parallelism, or material risk justifies a split.

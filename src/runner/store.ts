@@ -10,6 +10,7 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
+import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
 import { canonical, fingerprint } from "../identity.ts"
@@ -1241,6 +1242,7 @@ export class RunnerStore {
         ensureArchitectSourceJournalRevisions(db)
       },
     )
+    installPrioritySchema(repository)
     // An older still-loaded plugin can recreate its table after the generation was installed.
     if (
       repository.read((db) =>
@@ -1355,7 +1357,7 @@ export class RunnerStore {
     return this.atomic((db) =>
       db
         .query<PlanRow, [string]>(
-          "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY COALESCE(json_extract(body, '$.priority'),0) DESC,rowid LIMIT 1000",
+          `SELECT * FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
         )
         .all(this.repository.projectDirectory),
     )
@@ -1379,16 +1381,24 @@ export class RunnerStore {
         db
           .query<Candidate, (string | number)[]>(
             `SELECT *,${queueRank} AS queue_rank,
-           COALESCE(json_extract(body,'$.priority'),0) AS priority,rowid AS sequence
+           ${planPrioritySortSQL("body")} AS priority,rowid AS sequence
            FROM runner_plans WHERE project_directory=?
            ${states.length ? `AND state NOT IN (${states.map(() => "?").join(",")})` : ""}
-           ${cursor ? `AND (${queueRank},COALESCE(json_extract(body,'$.priority'),0),-rowid) < (?,?,?)` : ""}
-           ORDER BY queue_rank DESC,priority DESC,rowid LIMIT 1000`,
+           ${cursor ? `AND (${queueRank}<? OR (${queueRank}=? AND (${planPrioritySortSQL("body")}>? OR (${planPrioritySortSQL("body")}=? AND rowid>?))))` : ""}
+           ORDER BY queue_rank DESC,priority ASC,rowid LIMIT 1000`,
           )
           .all(
             this.repository.projectDirectory,
             ...states,
-            ...(cursor ? [cursor.queue_rank, cursor.priority, -cursor.sequence] : []),
+            ...(cursor
+              ? [
+                  cursor.queue_rank,
+                  cursor.queue_rank,
+                  cursor.priority,
+                  cursor.priority,
+                  cursor.sequence,
+                ]
+              : []),
           ),
       )
       yield* page
@@ -1431,7 +1441,7 @@ export class RunnerStore {
              AND (o.state IN ('pending','sending','uncertain','admitted','delivered')
                OR json_extract(o.payload,'$.closeoutReminder')=1)
            )
-           ORDER BY p.state='cleanup-blocked' DESC,COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid`,
+           ORDER BY p.state='cleanup-blocked' DESC,${planPrioritySortSQL("p.body")},p.rowid`,
         )
         .all(this.repository.projectDirectory)
         .map(({ id }) => id),
@@ -3997,7 +4007,7 @@ export class RunnerStore {
         .query<AttemptRow, [string]>(
           `SELECT a.* FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
            WHERE a.project_directory=? AND a.state IN ('preparing','running','verifying')
-           ORDER BY COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid,a.started_at,a.number`,
+           ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number`,
         )
         .all(this.repository.projectDirectory),
     )
@@ -4072,7 +4082,7 @@ export class RunnerStore {
            FROM runner_plans p
            LEFT JOIN runner_dispatch_controls c ON c.plan_id=p.id AND c.state='paused'
            WHERE p.project_directory=?
-           ORDER BY priority DESC,p.rowid LIMIT ?`,
+           ORDER BY ${prioritySortSQL("priority")},p.rowid LIMIT ?`,
         )
         .all(directory, maxPlans)
       const nodes = db
@@ -4081,7 +4091,7 @@ export class RunnerStore {
              SELECT id,rowid AS sequence,
                COALESCE(json_extract(body,'$.priority'),0) AS priority
              FROM runner_plans WHERE project_directory=?
-             ORDER BY priority DESC,rowid LIMIT ${maxPlans}
+             ORDER BY ${prioritySortSQL("priority")},rowid LIMIT ${maxPlans}
            )
            SELECT n.*,p.sequence,p.priority,t.body AS task_body,r.reference,
              (SELECT tr.payload FROM runner_transitions tr
@@ -4090,7 +4100,7 @@ export class RunnerStore {
            FROM runner_nodes n JOIN selected_plans p ON p.id=n.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=n.task_id
            LEFT JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
-           ORDER BY p.priority DESC,p.sequence,n.ordinal LIMIT ?`,
+           ORDER BY ${prioritySortSQL("p.priority")},p.sequence,n.ordinal LIMIT ?`,
         )
         .all(directory, directory, maxNodes + 1)
       if (nodes.length > maxNodes) nodes.pop()
@@ -4121,7 +4131,7 @@ export class RunnerStore {
            JOIN tasks t ON t.project_directory=? AND t.id=a.task_id
            LEFT JOIN runner_source_quarantines q ON q.attempt_id=a.id
            WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')
-           ORDER BY COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid,a.started_at,a.number LIMIT ?`,
+           ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number LIMIT ?`,
         )
         .all(directory, directory, maxReservations + 1)
       const totalReservationCount = db

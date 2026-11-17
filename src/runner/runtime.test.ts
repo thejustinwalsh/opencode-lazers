@@ -9585,7 +9585,7 @@ test("priority orders conflicting plans without rejecting their overlapping scop
       planID: later.planID,
       expectedVersion: f.store.plan(later.planID)!.version,
       action: "schedule",
-      priority: -1,
+      priority: 0,
       reason: "Let another plan take precedence after this worker finishes",
     },
     "owner",
@@ -9638,7 +9638,7 @@ test("runtime dispatch matches scheduling projection for submission ties and sha
 })
 
 test("afterPlans dispatches from combined integration while prerequisite cleanup is still pending", async () => {
-  for (const childPriority of [10, -10]) {
+  for (const childPriority of [10, 0]) {
     const f = fixture({
       independent: true,
       delayed: true,

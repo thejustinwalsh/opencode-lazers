@@ -1,3 +1,4 @@
+import { priorityFromHigherFirst } from "../../test/legacy-priority.ts"
 import { expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Location } from "@opencode/plugin/effect"
@@ -813,7 +814,7 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
         requestID: `request-${name}`,
         title: `Plan ${name}`,
         objective: `Implement ${name}`,
-        priority,
+        priority: priorityFromHigherFirst(priority),
         ...(afterPlans.length ? { afterPlans } : {}),
         baseCommit,
         workspaceMode: "isolated",

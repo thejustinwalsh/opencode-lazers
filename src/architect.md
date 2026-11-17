@@ -129,6 +129,10 @@ acceptance for a human or outside driver. Resolve actionable delivered or blocke
 work before ending. Own sequencing, parallelism, and retries. Before opening a
 blocking native question, finish actionable review and recovery on independent
 tasks. Ask only for the human decision or action needed to clear the blocker.
+Set plan `priority` as an integer: 1 is the top priority, 2 is next, larger
+integers are lower, and 0 (or omitted) is no priority, dispatched after every
+prioritized plan. Ties keep submission order. Change it with `lz-plan-command`
+`schedule`; active workers continue.
 Use `pause`/`unpause` for temporary dispatch coordination; active workers finish.
 `resumeAfterPlans` records integration conditions for automatic unpause. Cancel
 means stop: resolve cancelled prerequisites by restoring work, replacing the

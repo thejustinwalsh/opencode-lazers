@@ -379,11 +379,11 @@ test("scheduler ordering is global across pages and identical for project and as
     )
     return task.id
   }
-  const running = add("Old running worker", -100, "running", "running")
-  const high = add("High priority", 100)
-  const firstTie = add("First equal priority", 5)
-  const secondTie = add("Second equal priority", 5)
-  const held = add("Held worker is not running", 200, "blocked", "running")
+  const running = add("Old running worker", 0, "running", "running")
+  const high = add("High priority", 2)
+  const firstTie = add("First equal priority", 3)
+  const secondTie = add("Second equal priority", 3)
+  const held = add("Held worker is not running", 1, "blocked", "running")
   const tail = Array.from(
     { length: 35 },
     (_, index) => addTask(repository, `Unplanned ${index}`, "session-a").id,
