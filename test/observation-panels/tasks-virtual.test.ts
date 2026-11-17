@@ -974,6 +974,18 @@ test("collapsing a plan keeps the fitted split; plan headings are level-1 tree i
       expect(alpha.getAttribute("aria-posinset")).toBe("1")
       expect(alpha.getAttribute("aria-setsize")).toBe("2")
       expect(alpha.getAttribute("aria-expanded")).toBe("true")
+      expect(alpha.querySelector(".lazers-tasks-plan-reason")).toBeNull()
+      expect(alpha.querySelector<HTMLDetailsElement>(".lazers-tasks-plan-details")?.open).toBe(
+        false,
+      )
+      const title = alpha.querySelector<HTMLElement>(".lazers-tasks-plan-title")!
+      const order = alpha.querySelector<HTMLElement>(".lazers-tasks-plan-order")!
+      for (const width of [360, 420]) {
+        h.container.style.width = `${width}px`
+        expect(getComputedStyle(title).whiteSpace).toBe("nowrap")
+        expect(getComputedStyle(title).textOverflow).toBe("ellipsis")
+        expect(getComputedStyle(order).flexWrap).toBe("nowrap")
+      }
       expect(h.row(h.alpha[0]!)?.getAttribute("aria-level")).toBe("2")
       // Left from a plan row reaches its heading, whose own keys collapse and expand it.
       const doc = h.container.ownerDocument
@@ -983,6 +995,9 @@ test("collapsing a plan keeps the fitted split; plan headings are level-1 tree i
       h.key(plan("Alpha plan")!, "ArrowLeft")
       await until(() => plan("Alpha plan")?.getAttribute("aria-expanded") === "false")
       expect(h.row(h.alpha[0]!)).toBeNull()
+      expect(
+        plan("Alpha plan")?.querySelector<HTMLDetailsElement>(".lazers-tasks-plan-details")?.open,
+      ).toBe(false)
       await settle()
       // Collapsing reveals no new content: the divider stays where the listed content put it.
       expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
@@ -995,6 +1010,7 @@ test("collapsing a plan keeps the fitted split; plan headings are level-1 tree i
       expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
     },
     { paneHeight: 1000 },
+    { alphaPaused: true, scheduling: true },
   )
 })
 

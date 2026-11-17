@@ -224,7 +224,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
           version: 1,
           state: "running",
           reason: null,
-          title: "Parent implementation",
+          title: "Parent implementation with an unusually long prerequisite plan title",
           afterPlans: [],
           nodes: [
             {
@@ -331,7 +331,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
           decision: schedulingUnknown ? "unknown" : "eligible",
           reason: schedulingUnknown
             ? "Scheduling facts unavailable."
-            : "Prerequisite plans are integrated in the selected source.",
+            : "Prerequisite plans are integrated in the selected source after the scheduler verifies the full source history.",
           afterPlans: [parentPlanID],
           nodesComplete: true,
           nodes: [
@@ -356,7 +356,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
           planVersion: 1,
           planOrder: 1,
           priority: 4,
-          title: "Parent implementation",
+          title: "Parent implementation with an unusually long prerequisite plan title",
           lifecycle: "running",
           decision: "waiting",
           reason: "No task is currently dispatchable.",
@@ -569,15 +569,56 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     )!
     expect(targetGroup.textContent).toContain("Priority 9")
     expect(targetGroup.textContent).toContain("Order 1")
-    expect(targetGroup.textContent).toContain("Prerequisite plans are integrated")
-    const planPrerequisite = targetGroup.querySelector<HTMLButtonElement>(
-      ".lazers-tasks-plan-reason button",
+    const planHeading = targetGroup.querySelector<HTMLElement>(".lazers-tasks-plan-heading")!
+    const planHeadingTitle = planHeading.querySelector<HTMLElement>(".lazers-tasks-plan-title")!
+    const planHeadingOrder = planHeading.querySelector<HTMLElement>(".lazers-tasks-plan-order")!
+    const planDetails = targetGroup.querySelector<HTMLDetailsElement>(".lazers-tasks-plan-details")!
+    const planDetailsToggle = planDetails.querySelector<HTMLElement>("summary")!
+    const parentPlanTitle = "Parent implementation with an unusually long prerequisite plan title"
+    expect(planHeading.textContent).not.toContain("Prerequisite plans are integrated")
+    expect(planHeading.textContent).not.toContain(parentPlanTitle)
+    expect(getComputedStyle(planHeading).boxSizing).toBe("border-box")
+    expect(targetGroup.querySelector(".lazers-tasks-plan-reason")).toBeNull()
+    expect(planDetailsToggle.getAttribute("aria-label")).toBe(
+      "Scheduling details for Higher-priority target plan",
+    )
+    expect(planDetails.open).toBe(false)
+    for (const width of [360, 420]) {
+      container.style.width = `${width}px`
+      const titleStyle = getComputedStyle(planHeadingTitle)
+      expect(titleStyle.whiteSpace).toBe("nowrap")
+      expect(titleStyle.overflow).toBe("hidden")
+      expect(titleStyle.textOverflow).toBe("ellipsis")
+      expect(getComputedStyle(planHeadingOrder).flexWrap).toBe("nowrap")
+    }
+    const targetExpanded = targetGroup.getAttribute("aria-expanded")
+    expect(targetExpanded).toBe("true")
+    planDetailsToggle.focus()
+    expect(planDetailsToggle.ownerDocument.activeElement).toBe(planDetailsToggle)
+    pressEnter(dom, planDetailsToggle as HTMLButtonElement)
+    await until(() => planDetails.open)
+    expect(planDetails.textContent).toContain(
+      "Prerequisite plans are integrated in the selected source after the scheduler verifies the full source history.",
+    )
+    expect(targetGroup.getAttribute("aria-expanded")).toBe(targetExpanded)
+    expect(planDetails.querySelector(".lazers-tasks-plan-prerequisite-summary")?.textContent).toBe(
+      "Known prerequisite plans",
+    )
+    const planPrerequisite = planDetails.querySelector<HTMLButtonElement>(
+      ".lazers-tasks-plan-prerequisite-links button",
     )!
     expect(planPrerequisite.getAttribute("aria-label")).toContain(parentPlanID)
+    expect(planPrerequisite.textContent).toBe(parentPlanTitle)
+    expect(getComputedStyle(planPrerequisite).maxWidth).toBe("100%")
+    expect(getComputedStyle(planPrerequisite).overflowWrap).toBe("anywhere")
     planPrerequisite.focus()
     expect(planPrerequisite.ownerDocument.activeElement).toBe(planPrerequisite)
     planPrerequisite.click()
     await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
+    expect(
+      container.querySelector(`.lazers-tasks-plan[data-plan-id="${parentPlanID}"]`),
+    ).not.toBeNull()
+    expect(targetGroup.getAttribute("aria-expanded")).toBe(targetExpanded)
 
     // The scheduler's recorded wait sets the row's state icon; the link icon opens the blocker,
     // and the machine reason stays out of the row.
@@ -1084,6 +1125,24 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
       element.textContent?.includes("Plan waits for"),
     )
     expect(planWait?.textContent).toContain("showing 1 of 2 prerequisite plans")
+    const forkPlanHeading = container.querySelector<HTMLElement>(
+      `.lazers-tasks-plan[data-plan-id="${forkPlanID}"]`,
+    )!
+    const forkPlanDetails = forkPlanHeading.querySelector<HTMLDetailsElement>(
+      ".lazers-tasks-plan-details",
+    )!
+    const forkPlanExpanded = forkPlanHeading.getAttribute("aria-expanded")
+    forkPlanDetails.querySelector<HTMLElement>("summary")!.click()
+    await until(() => forkPlanDetails.open)
+    expect(
+      forkPlanDetails.querySelector(".lazers-tasks-plan-prerequisite-summary")?.textContent,
+    ).toBe("Showing 1 of 2 prerequisite plans.")
+    expect(
+      forkPlanDetails
+        .querySelector<HTMLButtonElement>(".lazers-tasks-plan-prerequisite-links button")
+        ?.getAttribute("aria-label"),
+    ).toContain(attentionPlanID)
+    expect(forkPlanHeading.getAttribute("aria-expanded")).toBe(forkPlanExpanded)
     expect(topologyCalls).toBeGreaterThan(0)
   } finally {
     mounted?.dispose()
