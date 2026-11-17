@@ -41,8 +41,12 @@ type Fixture = {
   active?: number
   /** The Architect paused dispatch of the Alpha plan. */
   alphaPaused?: boolean
+  /** Alpha's first task is ready under a conditional dispatch pause. */
+  readyConditionalPause?: boolean
   dependencyPause?: boolean
   betaPaused?: boolean
+  /** Task list and detail reads do not identify a task's execution plan. */
+  withoutPlanIdentity?: boolean
   /** The topology read fails: Tasks falls back to the scheduling read (if any). */
   topologyUnavailable?: boolean
   /** Serve a scheduling read covering Alpha and Beta. */
@@ -197,20 +201,26 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   const activeCount = fixture.active ?? 0
   const active = new Set(alpha.slice(0, activeCount))
   const requests = new Set(alpha.slice(activeCount, activeCount + (fixture.requests ?? 0)))
+  const blocked = new Set([beta.a, beta.join])
+  const alphaPaused = Boolean(fixture.alphaPaused || fixture.readyConditionalPause)
   const pause = {
     reason: "Paused by Architect for review",
-    untilPlans: fixture.dependencyPause ? [uuid(9555)] : [],
+    untilPlans: fixture.dependencyPause || fixture.readyConditionalPause ? [uuid(9555)] : [],
   }
+  const stateOf = (taskID: string) =>
+    blocked.has(taskID)
+      ? "blocked"
+      : fixture.readyConditionalPause && taskID === alpha[0]
+        ? "ready"
+        : "queued"
   const paused = (taskID: string) =>
     Boolean(
-      stateOf(taskID) === "queued" &&
-      ((fixture.alphaPaused && alpha.includes(taskID)) ||
+      ["queued", "ready"].includes(stateOf(taskID)) &&
+      ((alphaPaused && alpha.includes(taskID)) ||
         (fixture.betaPaused && betaTasks.includes(taskID))),
     )
   let queuePagesOpen = !fixture.queuePagesClosed
-  const blocked = new Set([beta.a, beta.join])
   const referenceOf = (taskID: string) => `LZ-${[...names.keys()].indexOf(taskID) + 1}`
-  const stateOf = (taskID: string) => (blocked.has(taskID) ? "blocked" : "queued")
   const summary = (taskID: string) => ({
     taskID,
     reference: referenceOf(taskID),
@@ -218,7 +228,12 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     status: stateOf(taskID),
     recordedState: stateOf(taskID),
     ...(paused(taskID)
-      ? { dispatchPause: pause, dispatchPausePlanID: uuid(alpha.includes(taskID) ? 9001 : 9002) }
+      ? {
+          dispatchPause: pause,
+          ...(!fixture.withoutPlanIdentity
+            ? { dispatchPausePlanID: uuid(alpha.includes(taskID) ? 9001 : 9002) }
+            : {}),
+        }
       : {}),
     reason: null,
     classification: {
@@ -334,8 +349,8 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         priority: 0,
         title: "Alpha plan",
         lifecycle: "running",
-        decision: fixture.alphaPaused ? "waiting" : "eligible",
-        reason: fixture.alphaPaused ? pause.reason : null,
+        decision: alphaPaused ? "waiting" : "eligible",
+        reason: alphaPaused ? pause.reason : null,
         afterPlans: [],
         nodesComplete: true,
         nodes: alpha.map((taskID, index) =>
@@ -384,7 +399,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         reason: null,
         title: "Alpha plan",
         afterPlans: [],
-        ...(fixture.alphaPaused ? { dispatchPause: pause } : {}),
+        ...(alphaPaused ? { dispatchPause: pause } : {}),
         nodes: alpha.map(node),
         dependencies: fixture.alphaChain
           ? alpha.slice(1).map((successor, index) => ({ prerequisite: alpha[index]!, successor }))
@@ -463,15 +478,19 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     advice: null,
     reference: referenceOf(taskID),
     recordedState: stateOf(taskID),
-    execution: {
-      ...(paused(taskID) ? { dispatchPause: pause } : {}),
-      planID: uuid(9001),
-      taskID,
-      state: stateOf(taskID),
-      version: 1,
-      reason: null,
-      waitingOn: [],
-    },
+    ...(!fixture.withoutPlanIdentity
+      ? {
+          execution: {
+            ...(paused(taskID) ? { dispatchPause: pause } : {}),
+            planID: uuid(alpha.includes(taskID) ? 9001 : 9002),
+            taskID,
+            state: stateOf(taskID),
+            version: 1,
+            reason: null,
+            waitingOn: [],
+          },
+        }
+      : {}),
     attempts: [],
     activity: [],
   })
@@ -655,6 +674,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     rowTop,
     taskStore,
     projectDirectory,
+    pause,
   }
 }
 
@@ -1214,6 +1234,7 @@ function signals(h: Awaited<ReturnType<typeof mountPanel>>) {
 /** One paused plan is one actionable Attention entry; its rows keep the pause marker. */
 async function expectPausedPlan(h: Awaited<ReturnType<typeof mountPanel>>) {
   const s = signals(h)
+  expect(h.pause.untilPlans).toEqual([])
   await until(() => Boolean(s.entry("attention", h.alpha[0]!)))
   await settle()
   // Two blocked Beta tasks, then the paused plan once: not 60 entries, and no routine waits.
@@ -1352,7 +1373,37 @@ test("a prerequisite pause remains in the tree without an Attention entry", asyn
   )
 })
 
-test("equal pause reasons keep distinct Attention entries without topology or scheduling", async () => {
+test("a ready conditional pause stays in the planned tree without an Attention entry", async () => {
+  await withPanel(
+    async (h) => {
+      const s = signals(h)
+      const taskID = h.alpha[0]!
+      await until(
+        () =>
+          h.topologyCalls() > 0 &&
+          s.tone(taskID) === "paused" &&
+          s.count("Attention") !== undefined,
+      )
+      await settle()
+      const row = h.row(taskID)!
+      const state = row.querySelector<HTMLElement>(
+        ":scope > .lazers-tasks-row .lazers-tasks-state",
+      )!
+      expect(h.pause.untilPlans).toEqual([uuid(9555)])
+      expect(state.dataset.state).toBe("ready")
+      expect(state.dataset.tone).toBe("paused")
+      expect(row.getAttribute("aria-level")).toBe("2")
+      expect(row.getAttribute("aria-posinset")).toBe("1")
+      expect(row.getAttribute("aria-setsize")).toBe("60")
+      expect(s.entry("attention", taskID)).toBeNull()
+      expect(s.count("Attention")).toBe("2")
+    },
+    {},
+    { readyConditionalPause: true },
+  )
+})
+
+test("equal pause reasons keep distinct known-plan Attention entries without topology or scheduling", async () => {
   await withPanel(
     async (h) => {
       await until(() => h.topologyCalls() > 0 && Boolean(h.attention(h.alpha[0]!)))
@@ -1363,5 +1414,46 @@ test("equal pause reasons keep distinct Attention entries without topology or sc
     },
     {},
     { alphaPaused: true, betaPaused: true, topologyUnavailable: true },
+  )
+})
+
+test("manual pauses without plan identity remain separate and actionable", async () => {
+  await withPanel(
+    async (h) => {
+      const s = signals(h)
+      const alphaPause = h.alpha[0]!
+      await until(
+        () =>
+          h.topologyCalls() > 0 &&
+          s.count("Attention") === "64" &&
+          Boolean(s.entry("attention", alphaPause)) &&
+          Boolean(s.entry("attention", h.alpha[1]!)),
+      )
+      await settle()
+      expect(h.pause.untilPlans).toEqual([])
+      expect(s.entry("attention", alphaPause)?.dataset.pausedCount).toBe("1")
+      expect(s.entry("attention", h.alpha[1]!)?.dataset.pausedCount).toBe("1")
+
+      s.entry("attention", alphaPause)!.click()
+      await until(() => h.row(alphaPause)?.getAttribute("aria-selected") === "true")
+
+      // The other plan's entry is outside the mounted window but remains keyboard-reachable.
+      const first = s.entry("attention", h.beta.a)!
+      h.key(first, "End")
+      await until(() => s.entry("attention", h.beta.b)?.getAttribute("aria-pressed") === "true")
+      h.key(s.entry("attention", h.beta.b)!, "ArrowUp")
+      await until(() => s.entry("attention", h.beta.root)?.getAttribute("aria-pressed") === "true")
+      const betaPause = s.entry("attention", h.beta.root)!
+      expect(betaPause.dataset.pausedCount).toBe("1")
+      betaPause.click()
+      await until(() => h.row(h.beta.root)?.getAttribute("aria-selected") === "true")
+    },
+    {},
+    {
+      alphaPaused: true,
+      betaPaused: true,
+      topologyUnavailable: true,
+      withoutPlanIdentity: true,
+    },
   )
 })
