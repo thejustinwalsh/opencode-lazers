@@ -37,9 +37,17 @@ function deferred(): Deferred {
 
 /** Fixture variations; the defaults reproduce the original list. */
 type Fixture = {
+  /** The first N Alpha tasks have a foreground-active worker (Now). */
+  active?: number
+  /** The Architect paused dispatch of the Alpha plan. */
+  alphaPaused?: boolean
+  /** The topology read fails: Tasks falls back to the scheduling read (if any). */
+  topologyUnavailable?: boolean
+  /** Serve a scheduling read covering Alpha and Beta. */
+  scheduling?: boolean
   /** Alpha's tasks form one dependency chain: every task after the first waits on the one before. */
   alphaChain?: boolean
-  /** The first N Alpha tasks have a worker asking for input (a genuine request of the person). */
+  /** The N Alpha tasks after the active ones have a worker asking for input (a genuine request). */
   requests?: number
   /** Further titled two-task plans after Beta. */
   extraPlans?: number
@@ -184,7 +192,12 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     title: `Gamma ${index + 1} plan`,
     tasks: [make(`Gamma ${index + 1} a`), make(`Gamma ${index + 1} b`)],
   }))
-  const requests = new Set(alpha.slice(0, fixture.requests ?? 0))
+  const activeCount = fixture.active ?? 0
+  const active = new Set(alpha.slice(0, activeCount))
+  const requests = new Set(alpha.slice(activeCount, activeCount + (fixture.requests ?? 0)))
+  const pause = { reason: "Paused by Architect for review", untilPlans: [] as string[] }
+  const paused = (taskID: string) =>
+    Boolean(fixture.alphaPaused && alpha.includes(taskID) && stateOf(taskID) === "queued")
   let queuePagesOpen = !fixture.queuePagesClosed
   const blocked = new Set([beta.a, beta.join])
   const referenceOf = (taskID: string) => `LZ-${[...names.keys()].indexOf(taskID) + 1}`
@@ -195,6 +208,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     revision: 1,
     status: stateOf(taskID),
     recordedState: stateOf(taskID),
+    ...(paused(taskID) ? { dispatchPause: pause } : {}),
     reason: null,
     classification: {
       revision: 1,
@@ -262,7 +276,83 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     snapshotMatchesState: true,
     waitingOn: [],
   })
-  const topology = async () => ({
+  let topologyCalls = 0
+  const topology = async () => {
+    topologyCalls++
+    if (fixture.topologyUnavailable) throw new Error("fixture topology unavailable")
+    return topologyResponse()
+  }
+  const schedulingNode = (taskID: string, ordinal: number, prerequisites: string[]) => ({
+    taskID,
+    reference: referenceOf(taskID),
+    title: names.get(taskID)!,
+    objective: names.get(taskID)!,
+    ordinal,
+    order: ordinal,
+    lifecycle: stateOf(taskID),
+    decision: paused(taskID) || prerequisites.length ? "waiting" : "eligible",
+    reason: paused(taskID) ? pause.reason : null,
+    prerequisites,
+    waitingOn: prerequisites,
+    reservationTaskIDs: [],
+  })
+  const schedulingRead = async (input: { scope: { kind: string; sessionID: string } }) => ({
+    schemaVersion: 1,
+    snapshotID: uuid(7001),
+    repositoryVersion: snapshot,
+    scope: input.scope,
+    observedAt: 1,
+    coverage: {
+      status: "complete",
+      planCount: 2,
+      coveredPlanCount: 2,
+      nodeCount: alpha.length + betaTasks.length,
+      coveredNodeCount: alpha.length + betaTasks.length,
+      activeReservationCount: 0,
+      reservationsComplete: true,
+      reason: null,
+    },
+    next: { status: "none" },
+    selectedTaskIDs: [],
+    selectionComplete: true,
+    plans: [
+      {
+        planID: uuid(9001),
+        planVersion: 1,
+        planOrder: 0,
+        priority: 0,
+        title: "Alpha plan",
+        lifecycle: "running",
+        decision: fixture.alphaPaused ? "waiting" : "eligible",
+        reason: fixture.alphaPaused ? pause.reason : null,
+        afterPlans: [],
+        nodesComplete: true,
+        nodes: alpha.map((taskID, index) =>
+          schedulingNode(taskID, index, fixture.alphaChain && index ? [alpha[index - 1]!] : []),
+        ),
+      },
+      {
+        planID: uuid(9002),
+        planVersion: 1,
+        planOrder: 1,
+        priority: 0,
+        title: "Beta plan",
+        lifecycle: "running",
+        decision: "waiting",
+        reason: null,
+        afterPlans: [],
+        nodesComplete: true,
+        nodes: [
+          schedulingNode(beta.root, 0, []),
+          schedulingNode(beta.a, 1, [beta.root]),
+          schedulingNode(beta.b, 2, [beta.root]),
+          schedulingNode(beta.join, 3, [beta.a, beta.b]),
+        ],
+      },
+    ],
+    nextCursor: null,
+  })
+  const topologyResponse = () => ({
     schemaVersion: 1,
     projectID,
     scope: { kind: "session", sessionID: ownerSessionID },
@@ -283,6 +373,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         reason: null,
         title: "Alpha plan",
         afterPlans: [],
+        ...(fixture.alphaPaused ? { dispatchPause: pause } : {}),
         nodes: alpha.map(node),
         dependencies: fixture.alphaChain
           ? alpha.slice(1).map((successor, index) => ({ prerequisite: alpha[index]!, successor }))
@@ -327,7 +418,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
       taskID,
       workerSessionID: null,
       attemptID: null,
-      foreground: "inactive",
+      foreground: active.has(taskID) ? "active" : "inactive",
       unknownReason: null,
       recordedState: stateOf(taskID),
       waiting: false,
@@ -362,6 +453,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     reference: referenceOf(taskID),
     recordedState: stateOf(taskID),
     execution: {
+      ...(paused(taskID) ? { dispatchPause: pause } : {}),
       planID: uuid(9001),
       taskID,
       state: stateOf(taskID),
@@ -397,7 +489,11 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   const client = {
     location: { get: async () => ({ project: { canonical: projectDirectory, id: projectID } }) },
     rpc: (contract: { id?: string }) =>
-      contract.id === "lazers.observability" ? { topology } : rpc,
+      contract.id === "lazers.observability"
+        ? { topology }
+        : contract.id === "lazers.tasks.scheduling" && fixture.scheduling
+          ? { read: schedulingRead }
+          : rpc,
     event,
   }
   const taskStore = host.createReactiveStore({ projects: {} })
@@ -534,6 +630,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
       queuePagesOpen = true
     },
     extraPlans,
+    topologyCalls: () => topologyCalls,
     announceChange,
     reorderQueueTop,
     list,
@@ -1081,5 +1178,153 @@ test("an all-collapsed tree keeps a mounted tab stop and keeps a focused heading
     },
     {},
     { extraPlans: 30 },
+  )
+})
+
+/** Attention, Now and tree probes shared by the signal tests below. */
+function signals(h: Awaited<ReturnType<typeof mountPanel>>) {
+  const entries = (group: string) => [
+    ...h.container.querySelectorAll<HTMLButtonElement>(`[data-scheduling-group="${group}"]`),
+  ]
+  const entry = (group: string, taskID: string) =>
+    h.container.querySelector<HTMLButtonElement>(
+      `[data-scheduling-group="${group}"][data-scheduling-task-id="${taskID}"]`,
+    )
+  const count = (label: string) =>
+    h.container.querySelector(`[aria-label="${label}"] .lazers-tasks-schedule-count`)?.textContent
+  const tone = (taskID: string) =>
+    h
+      .row(taskID)
+      ?.querySelector(":scope > .lazers-tasks-row .lazers-tasks-state")
+      ?.getAttribute("data-tone")
+  return { entries, entry, count, tone }
+}
+
+/** One paused plan is one actionable Attention entry; its rows keep the pause marker. */
+async function expectPausedPlan(h: Awaited<ReturnType<typeof mountPanel>>) {
+  const s = signals(h)
+  await until(() => Boolean(s.entry("attention", h.alpha[0]!)))
+  await settle()
+  // Two blocked Beta tasks, then the paused plan once: not 60 entries, and no routine waits.
+  expect(s.count("Attention")).toBe("3")
+  expect(s.entries("attention").map((entry) => entry.dataset.schedulingTaskId)).toEqual([
+    h.beta.a,
+    h.beta.join,
+    h.alpha[0],
+  ])
+  const pauseEntry = s.entry("attention", h.alpha[0]!)!
+  expect(pauseEntry.dataset.pausedCount).toBe("60")
+  expect(pauseEntry.textContent).toContain("60 paused")
+  expect(pauseEntry.getAttribute("aria-label")).toContain(
+    "paused: Paused by Architect for review, 60 paused tasks in this plan",
+  )
+  expect(pauseEntry.querySelector(".lazers-tasks-state")?.getAttribute("data-tone")).toBe("paused")
+  // The tree marks every paused row; a routine wait under the pause is not promoted.
+  for (const index of [0, 3, 7]) expect(s.tone(h.alpha[index]!)).toBe("paused")
+  expect(s.entry("attention", h.alpha[3]!)).toBeNull()
+  // The entry is actionable: it selects the task and the inspector names the pause.
+  pauseEntry.click()
+  await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
+  await until(() =>
+    Boolean(
+      h.container
+        .querySelector('.lazers-tasks-detail [data-kind="pause"]')
+        ?.textContent?.includes("Paused by Architect for review"),
+    ),
+  )
+}
+
+test("a manual dispatch pause is one actionable Attention entry for its plan", async () => {
+  await withPanel(expectPausedPlan, {}, { alphaPaused: true, alphaChain: true })
+})
+
+test("without topology, the scheduling fallback keeps the pause marker and its Attention entry", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.topologyCalls() > 0)
+      await expectPausedPlan(h)
+      // The plan groups come from the scheduling read, not topology.
+      expect(h.container.textContent).toContain("Showing scheduling-backed groups")
+    },
+    {},
+    { alphaPaused: true, alphaChain: true, topologyUnavailable: true, scheduling: true },
+  )
+})
+
+test("without topology or scheduling, ungrouped paused tasks keep their marker and one entry", async () => {
+  await withPanel(
+    async (h) => {
+      const s = signals(h)
+      await until(() => h.topologyCalls() > 0 && Boolean(s.entry("attention", h.alpha[0]!)))
+      await settle()
+      expect(s.count("Attention")).toBe("3")
+      expect(s.entry("attention", h.alpha[0]!)?.dataset.pausedCount).toBe("60")
+      for (const index of [0, 5]) expect(s.tone(h.alpha[index]!)).toBe("paused")
+      expect(s.entry("attention", h.alpha[5]!)).toBeNull()
+    },
+    {},
+    { alphaPaused: true, topologyUnavailable: true },
+  )
+})
+
+test("Now mounts a bounded window of active work; keys reach every entry across Now and Attention", async () => {
+  await withPanel(
+    async (h) => {
+      // Eight foreground workers, then two asking for input, then two blocked tasks.
+      const s = signals(h)
+      await until(
+        () => Boolean(s.entry("now", h.alpha[0]!)) && Boolean(s.entry("attention", h.beta.join)),
+      )
+      await settle()
+      const now = h.alpha.slice(0, 8)
+      const attention = [h.alpha[8]!, h.alpha[9]!, h.beta.a, h.beta.join]
+      expect(s.count("Now")).toBe("8")
+      expect(s.entries("now").length).toBe(5)
+      expect(s.entries("now")[0]!.tabIndex).toBe(0)
+      expect(
+        h.container.querySelector('[aria-label="Now"] .lazers-tasks-schedule-pager')?.textContent,
+      ).toContain("1–5 of 8")
+      const sequence = [
+        ...now.map((taskID) => ["now", taskID] as const),
+        ...attention.map((taskID) => ["attention", taskID] as const),
+      ]
+      const pressed = ([group, taskID]: readonly [string, string]) =>
+        s.entry(group, taskID)?.getAttribute("aria-pressed") === "true"
+      // Down walks Now, slides its window, then crosses into Attention in order.
+      let current = s.entries("now")[0]!
+      for (const target of sequence.slice(1)) {
+        h.key(current, "ArrowDown")
+        await until(() => pressed(target))
+        expect(s.entries("now").length).toBeLessThanOrEqual(5)
+        expect(s.entries("attention").length).toBeLessThanOrEqual(5)
+        current = s.entry(target[0], target[1])!
+      }
+      // Up from Attention's first entry reaches Now's last, its window slid to the end.
+      h.key(s.entry("attention", h.alpha[8]!)!, "ArrowUp")
+      await until(() => pressed(["now", now.at(-1)!]))
+      // Home reaches Now's first entry; its window slides back.
+      h.key(s.entry("now", now.at(-1)!)!, "Home")
+      await until(() => pressed(["now", now[0]!]))
+      expect(s.entries("now")[0]?.dataset.schedulingTaskId).toBe(now[0])
+      // End reaches the last Attention entry; Down from there enters the tree.
+      h.key(s.entry("now", now[0]!)!, "End")
+      await until(() => pressed(["attention", h.beta.join]))
+      h.key(s.entry("attention", h.beta.join)!, "ArrowDown")
+      await until(() => h.container.ownerDocument.activeElement === h.row(h.alpha[0]!))
+      // The Now pager reaches every active entry without a keyboard.
+      const more = () =>
+        [
+          ...h.container.querySelectorAll<HTMLButtonElement>(
+            '[aria-label="Now"] .lazers-tasks-schedule-pager button',
+          ),
+        ].find((button) => button.textContent === "More")!
+      const seen = new Set(s.entries("now").map((entry) => entry.dataset.schedulingTaskId))
+      more().click()
+      await settle()
+      for (const entry of s.entries("now")) seen.add(entry.dataset.schedulingTaskId)
+      expect([...seen].toSorted()).toEqual(now.toSorted())
+    },
+    {},
+    { active: 8, requests: 2 },
   )
 })

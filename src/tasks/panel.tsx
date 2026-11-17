@@ -182,8 +182,12 @@ const VIRTUAL_OVERSCAN = 8
  * list. Measured from the viewport, never from rows pinned to stay mounted for focus.
  */
 const LOAD_MORE_WITHIN = 10
-/** Attention entries mounted at once; the rest stay reachable by keyboard and its pager. */
-const ATTENTION_WINDOW = 5
+/** Now or Attention entries mounted at once; the rest stay reachable by keyboard and a pager. */
+const SIGNAL_WINDOW = 5
+type SignalGroup = "now" | "attention"
+type SignalWindow = { start: number; rows: ExecutionListRow[]; total: number }
+/** Lifecycles a dispatch pause holds back. */
+const pausableStates = new Set(["queued", "ready"])
 /** Bounded wait for a scrolled-to row to mount before giving up on focusing it. */
 const FOCUS_ATTEMPTS = 10
 
@@ -263,8 +267,13 @@ function TaskPanel(
   const [collapsedPlans, setCollapsedPlans] = createSignal<Set<string>>(new Set())
   /** Where the tree starts inside the scrolling list, below Now/Attention/Next and notes. */
   const [treeOffset, setTreeOffset] = createSignal(0)
-  /** First Attention entry in its mounted window (clamped where read). */
-  const [attentionStart, setAttentionStart] = createSignal(0)
+  /** First entry of each signal group's mounted window (clamped where read). */
+  const [signalStarts, setSignalStarts] = createSignal<Record<SignalGroup, number>>({
+    now: 0,
+    attention: 0,
+  })
+  const setSignalStart = (group: SignalGroup, start: number) =>
+    setSignalStarts((current) => ({ ...current, [group]: Math.max(0, start) }))
   /** The tree item holding focus while focus is inside the tree; it stays mounted. */
   const [focusedTreeKey, setFocusedTreeKey] = createSignal<string>()
   const feedback = new StartFeedback(setStartFeedback)
@@ -433,7 +442,7 @@ function TaskPanel(
     setTemporarilyExpandedForks(new Set<string>())
     setTemporarilyCollapsedForks(new Set<string>())
     setCollapsedPlans(new Set<string>())
-    setAttentionStart(0)
+    setSignalStarts({ now: 0, attention: 0 })
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
@@ -461,50 +470,73 @@ function TaskPanel(
     const model = executionList()
     const rows: ExecutionListRow[] = []
     const planStates = new Map<string, string>()
-    const visit = (taskRow: ExecutionListRow, planState?: string) => {
+    const planIDs = new Map<string, string>()
+    const visit = (taskRow: ExecutionListRow, group?: ExecutionPlanGroup) => {
       rows.push(taskRow)
-      if (planState) planStates.set(taskRow.taskID, planState)
+      if (group) planIDs.set(taskRow.taskID, group.planID)
+      if (group?.state) planStates.set(taskRow.taskID, group.state)
       for (const branch of taskRow.fork?.branches ?? [])
-        for (const child of branch.rows) visit(child, planState)
+        for (const child of branch.rows) visit(child, group)
     }
-    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow, group.state)
+    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow, group)
     rows.push(...model.unplanned)
-    return { rows, planStates }
+    return { rows, planStates, planIDs }
   })
   const signalRows = () => signalEntries().rows
   /** A native input/approval request on an open task: it asks the person now. */
   const asksForAttention = (row: ExecutionListRow) =>
     taskRowPresentation(row, visible()?.currentActivity[row.taskID]).tone === "attention"
   /** Foreground work; a worker blocked on the person moves to Attention instead. */
-  const nowRows = () =>
+  const nowRows = createMemo(() =>
     signalRows().filter(
       (row) =>
         visible()?.currentActivity[row.taskID]?.foreground === "active" && !asksForAttention(row),
-    )
+    ),
+  )
   /**
    * Native input/approval requests lead Attention (they ask the person now, even while the worker is
-   * foreground), then recorded holds. Routine waits on prerequisites, reservations or scheduler
-   * order are not holds: they stay in the planned tree. Membership only reads recorded state; it
-   * never reorders work.
+   * foreground), then recorded holds, then manual dispatch pauses. Routine waits on prerequisites,
+   * reservations or scheduler order are not holds: they stay in the planned tree. A paused plan is
+   * one entry, its first paused task, carrying the plan's paused count. Membership only reads
+   * recorded state; it never reorders work.
    */
-  const attentionRows = createMemo(() => {
-    const { rows, planStates } = signalEntries()
+  const attentionEntries = createMemo(() => {
+    const { rows, planStates, planIDs } = signalEntries()
     const held = (row: ExecutionListRow) => {
       const activity = visible()?.currentActivity[row.taskID]
       return activity?.foreground !== "active" && rowHeld(row, activity, planStates.get(row.taskID))
     }
-    return [
+    const listed = [
       ...rows.filter(asksForAttention),
       ...rows.filter((row) => !asksForAttention(row) && held(row)),
     ]
+    const listedIDs = new Set(listed.map((row) => row.taskID))
+    // Without a plan (no topology or scheduling read), the pause itself identifies its plan.
+    const pauses = new Map<string, { row: ExecutionListRow; count: number }>()
+    for (const row of rows) {
+      if (!row.dispatchPause || !pausableStates.has(row.status) || listedIDs.has(row.taskID))
+        continue
+      const key = planIDs.get(row.taskID) ?? `pause:${JSON.stringify(row.dispatchPause)}`
+      const entry = pauses.get(key)
+      if (entry) entry.count++
+      else pauses.set(key, { row, count: 1 })
+    }
+    const paused = new Map([...pauses.values()].map((entry) => [entry.row.taskID, entry.count]))
+    return { rows: [...listed, ...[...pauses.values()].map((entry) => entry.row)], paused }
   })
-  /** The mounted slice of Attention: a short window over every entry, never all of them. */
-  const attentionWindow = createMemo(() => {
-    const rows = attentionRows()
-    const start = Math.max(0, Math.min(attentionStart(), rows.length - ATTENTION_WINDOW))
-    return { start, rows: rows.slice(start, start + ATTENTION_WINDOW), total: rows.length }
-  })
-  const signalTabStopTaskID = () => nowRows()[0]?.taskID ?? attentionWindow().rows[0]?.taskID
+  const attentionRows = () => attentionEntries().rows
+  /** A short mounted slice of a signal group, never every entry. */
+  const signalWindow = (rows: ExecutionListRow[], requested: number): SignalWindow => {
+    const start = Math.max(0, Math.min(requested, rows.length - SIGNAL_WINDOW))
+    return { start, rows: rows.slice(start, start + SIGNAL_WINDOW), total: rows.length }
+  }
+  const nowWindow = createMemo(() => signalWindow(nowRows(), signalStarts().now))
+  const attentionWindow = createMemo(() => signalWindow(attentionRows(), signalStarts().attention))
+  const windows: Record<SignalGroup, Accessor<SignalWindow>> = {
+    now: nowWindow,
+    attention: attentionWindow,
+  }
+  const signalTabStopTaskID = () => nowWindow().rows[0]?.taskID ?? attentionWindow().rows[0]?.taskID
   const nextStatus = () => {
     const value = visible()
     if (!value?.scheduling || value.schedulingError || value.stale)
@@ -1079,6 +1111,14 @@ function TaskPanel(
     const waiting = () =>
       Boolean(taskRow.waiting || activity()?.waiting || taskRow.scheduling?.decision === "waiting")
     const selected = () => taskRow.taskID === visible()?.selectedID
+    /** Paused tasks of the plan this entry stands for (Attention pause entries only). */
+    const paused = () =>
+      label === "Attention" ? attentionEntries().paused.get(taskRow.taskID) : undefined
+    const pauseText = () => {
+      const count = paused()
+      if (count === undefined || !taskRow.dispatchPause) return ""
+      return `, paused${taskRow.dispatchPause.reason ? `: ${taskRow.dispatchPause.reason}` : ""}${count > 1 ? `, ${count} paused tasks in this plan` : ""}`
+    }
     return (
       <div class="lazers-tasks-schedule-entry" data-selected={selected()}>
         <button
@@ -1087,7 +1127,8 @@ function TaskPanel(
           data-scheduling-task-id={taskRow.taskID}
           data-scheduling-group={label.toLowerCase()}
           aria-pressed={selected()}
-          aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
+          data-paused-count={paused()}
+          aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${pauseText()}${!pauseText() && waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
           tabIndex={taskRow.taskID === signalTabStopTaskID() ? 0 : -1}
           onKeyDown={signalKey}
           onClick={() => selectTask(taskRow.taskID)}
@@ -1103,6 +1144,9 @@ function TaskPanel(
             {renderGlyph(presentation().icon)}
           </span>
           <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow.title)}</span>
+          <Show when={(paused() ?? 0) > 1}>
+            <span class="lazers-tasks-schedule-entry-meta">{paused()} paused</span>
+          </Show>
         </button>
         <Show when={label === "Attention" && taskRowBlocker(presentation())}>
           {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
@@ -1366,58 +1410,82 @@ function TaskPanel(
         selectTask(taskID)
     }
   }
+  /** Now, Attention and Next entries in list order, unmounted window entries included. */
+  const signalSequence = () => [
+    ...nowRows().map((row) => ({ group: "now" as const, taskID: row.taskID })),
+    ...attentionRows().map((row) => ({ group: "attention" as const, taskID: row.taskID })),
+    ...(nextCandidate() ? [{ group: "next" as const, taskID: nextCandidate()!.taskID }] : []),
+  ]
   /**
    * Now/Attention/Next entries form one short list above the tree; Down from the last enters it.
-   * Attention mounts a window of its entries: stepping past either edge of the window slides it, so
-   * every entry is reachable and the list order holds across groups.
+   * Now and Attention mount a window of their entries. Keys walk the whole list in model order and
+   * slide the target's window to it, so every entry is reachable and order holds across groups.
    */
   const signalKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
     event.preventDefault()
-    const shown = attentionWindow()
-    const currentID = event.currentTarget.dataset.schedulingTaskId
-    const group = event.currentTarget.dataset.schedulingGroup
-    const entries = () => [
-      ...(list?.querySelectorAll<HTMLButtonElement>("[data-scheduling-task-id]") ?? []),
-    ]
-    const focusEntry = (entry: HTMLButtonElement | undefined) => {
-      entry?.focus()
-      const id = entry?.dataset.schedulingTaskId
-      if (id) selectTask(id)
-    }
-    if (group === "attention" && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      const step = event.key === "ArrowDown" ? 1 : -1
-      const position = shown.rows.findIndex((row) => row.taskID === currentID) + step
-      const target = attentionRows()[shown.start + position]
-      if (target && (position < 0 || position >= shown.rows.length)) {
-        setAttentionStart(shown.start + step)
-        focusEntry(
-          entries().find(
-            (entry) =>
-              entry.dataset.schedulingGroup === "attention" &&
-              entry.dataset.schedulingTaskId === target.taskID,
-          ),
-        )
-        return
-      }
-    }
-    if (event.key === "Home") setAttentionStart(0)
-    if (event.key === "End") setAttentionStart(Math.max(0, shown.total - ATTENTION_WINDOW))
-    const listed = entries()
-    const index = listed.indexOf(event.currentTarget)
-    if (event.key === "ArrowDown" && index === listed.length - 1) {
+    const sequence = signalSequence()
+    const { schedulingGroup, schedulingTaskId } = event.currentTarget.dataset
+    const index = sequence.findIndex(
+      (entry) => entry.group === schedulingGroup && entry.taskID === schedulingTaskId,
+    )
+    if (event.key === "ArrowDown" && index === sequence.length - 1) {
       const first = taskItems(items())[0]
       if (first) moveTo(first.row.taskID)
       else goTo(treeItems(items())[0])
       return
     }
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? listed.length - 1
-          : Math.max(0, Math.min(listed.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
-    focusEntry(listed[next])
+    const target =
+      sequence[
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? sequence.length - 1
+            : Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1))
+      ]
+    if (!target) return
+    if (target.group !== "next") {
+      const shown = windows[target.group]()
+      const position = sequence
+        .filter((entry) => entry.group === target.group)
+        .findIndex((entry) => entry.taskID === target.taskID)
+      if (position < shown.start) setSignalStart(target.group, position)
+      else if (position >= shown.start + SIGNAL_WINDOW)
+        setSignalStart(target.group, position - SIGNAL_WINDOW + 1)
+    }
+    list
+      ?.querySelector<HTMLButtonElement>(
+        `[data-scheduling-group="${target.group}"][data-scheduling-task-id="${target.taskID}"]`,
+      )
+      ?.focus()
+    selectTask(target.taskID)
+  }
+  /** Range and stepping for a signal group with more entries than its window mounts. */
+  const renderSignalPager = (group: SignalGroup, label: string) => {
+    const shown = windows[group]
+    return (
+      <Show when={shown().total > SIGNAL_WINDOW}>
+        <div class="lazers-tasks-schedule-pager" role="group" aria-label={`More ${label}`}>
+          <span class="lazers-tasks-schedule-pager-range" aria-live="polite">
+            {shown().start + 1}–{shown().start + shown().rows.length} of {shown().total}
+          </span>
+          <Ui.Button
+            variant="ghost"
+            disabled={shown().start === 0}
+            onClick={() => setSignalStart(group, shown().start - SIGNAL_WINDOW)}
+          >
+            Previous
+          </Ui.Button>
+          <Ui.Button
+            variant="ghost"
+            disabled={shown().start + shown().rows.length >= shown().total}
+            onClick={() => setSignalStart(group, shown().start + SIGNAL_WINDOW)}
+          >
+            More
+          </Ui.Button>
+        </div>
+      </Show>
+    )
   }
   const stateLabel = (state: NonNullable<typeof initial.state>) => {
     if (state === "failed") return "Failed / exhausted"
@@ -1450,7 +1518,8 @@ function TaskPanel(
   // Everything above the tree scrolls with it: keep the virtualizer's origin on the tree's top.
   createEffect(() => {
     visible()
-    void nowRows().length
+    void nowWindow().rows.length
+    void nowWindow().total
     void attentionWindow().rows.length
     void attentionWindow().total
     nextStatus()
@@ -1816,13 +1885,16 @@ function TaskPanel(
                       listObserver?.observe(element)
                     }}
                   >
-                    <Show when={nowRows().length}>
+                    <Show when={nowWindow().total}>
                       <section class="lazers-tasks-schedule-group" aria-label="Now">
                         <h3 class="lazers-tasks-schedule-heading">
                           Now
-                          <span class="lazers-tasks-schedule-count">{nowRows().length}</span>
+                          <span class="lazers-tasks-schedule-count">{nowWindow().total}</span>
                         </h3>
-                        <For each={nowRows()}>{(taskRow) => renderSignalRow(taskRow, "Now")}</For>
+                        <For each={nowWindow().rows}>
+                          {(taskRow) => renderSignalRow(taskRow, "Now")}
+                        </For>
+                        {renderSignalPager("now", "Now")}
                       </section>
                     </Show>
                     <Show when={attentionWindow().total}>
@@ -1834,42 +1906,7 @@ function TaskPanel(
                         <For each={attentionWindow().rows}>
                           {(taskRow) => renderSignalRow(taskRow, "Attention")}
                         </For>
-                        <Show when={attentionWindow().total > ATTENTION_WINDOW}>
-                          <div
-                            class="lazers-tasks-schedule-pager"
-                            role="group"
-                            aria-label="More Attention"
-                          >
-                            <span class="lazers-tasks-schedule-pager-range" aria-live="polite">
-                              {attentionWindow().start + 1}–
-                              {attentionWindow().start + attentionWindow().rows.length} of{" "}
-                              {attentionWindow().total}
-                            </span>
-                            <Ui.Button
-                              variant="ghost"
-                              disabled={attentionWindow().start === 0}
-                              onClick={() =>
-                                setAttentionStart(
-                                  Math.max(0, attentionWindow().start - ATTENTION_WINDOW),
-                                )
-                              }
-                            >
-                              Previous
-                            </Ui.Button>
-                            <Ui.Button
-                              variant="ghost"
-                              disabled={
-                                attentionWindow().start + attentionWindow().rows.length >=
-                                attentionWindow().total
-                              }
-                              onClick={() =>
-                                setAttentionStart(attentionWindow().start + ATTENTION_WINDOW)
-                              }
-                            >
-                              More
-                            </Ui.Button>
-                          </div>
-                        </Show>
+                        {renderSignalPager("attention", "Attention")}
                       </section>
                     </Show>
                     <Show when={value().scheduling || value().schedulingError}>

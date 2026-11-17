@@ -123,6 +123,11 @@ function buildScheduledGroups(input: {
   const rendered = new Set<string>()
   const groups = plans.flatMap((plan) => {
     const nodes = plan.nodes.toSorted((left, right) => left.ordinal - right.ordinal)
+    // A dispatch pause belongs to the plan; the task page reports it on each listed task. Without
+    // topology it is the only record of the pause, so it marks every queued or ready row.
+    const pause = nodes
+      .map((node) => summaries.get(node.taskID)?.dispatchPause)
+      .find((value) => value !== undefined)
     const dependencies = nodes.flatMap((node) =>
       node.prerequisites.map((prerequisite) => ({ prerequisite, successor: node.taskID })),
     )
@@ -139,14 +144,16 @@ function buildScheduledGroups(input: {
         const waiting =
           !terminal.has(node.lifecycle) &&
           (node.decision === "waiting" || node.lifecycle === "blocked")
+        const status = summary?.recordedState ?? summary?.status ?? node.lifecycle
         return {
           taskID: node.taskID,
           title: summary?.objective ?? node.title,
-          status: summary?.recordedState ?? summary?.status ?? node.lifecycle,
+          status,
           reason,
           waiting,
           holdReason: waiting ? reason : null,
           ordinal: node.ordinal,
+          ...(pause && pausable.has(status) ? { dispatchPause: pause } : {}),
           ...((summary?.reference ?? node.reference)
             ? { reference: summary?.reference ?? node.reference }
             : {}),
@@ -214,6 +221,9 @@ function buildScheduledGroups(input: {
         holdReason: null,
         ordinal,
         ...(task.reference ? { reference: task.reference } : {}),
+        ...(task.dispatchPause && pausable.has(task.recordedState ?? task.status)
+          ? { dispatchPause: task.dispatchPause }
+          : {}),
         contextOnly: false,
         prerequisites: [],
         successors: [],
@@ -237,6 +247,8 @@ type RelationshipPlan = {
 }
 
 const terminal = new Set(["accepted", "incorporated", "failed", "exhausted", "cancelled"])
+/** Lifecycles a dispatch pause holds back; started or finished work is not paused. */
+const pausable = new Set(["queued", "ready"])
 
 function schedulingReason(node: SchedulingNode, snapshot: SchedulingSnapshot | undefined) {
   const referencesIncomplete = node.reservationTaskIDsComplete === false

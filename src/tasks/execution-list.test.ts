@@ -682,3 +682,32 @@ test("dispatch pause applies to queued rows while active workers remain running"
   expect(rows.find((row) => row.taskID === b)?.dispatchPause).toBeUndefined()
   expect(rows[0]!.taskID).toBe(b)
 })
+
+test("without topology, a dispatch pause still marks queued and ready rows", () => {
+  const [a, b, c, d] = [id(1), id(2), id(3), id(4)]
+  const pause = { reason: "Coordinate release", untilPlans: [] }
+  const tasks = summaries([a, b, c, d]).map((task, index) => ({
+    ...task,
+    // The task page reports the plan's pause on queued work; one listed row is already running.
+    status: index === 1 ? ("running" as const) : ("ready" as const),
+    ...(index === 0 ? { dispatchPause: pause } : {}),
+  }))
+  const nodes = [
+    { taskID: a, ordinal: 0 },
+    { taskID: b, ordinal: 1, state: "running" },
+    { taskID: c, ordinal: 2 },
+  ]
+  // Scheduling-backed groups: the plan's pause marks every queued or ready row of that plan.
+  const grouped = buildExecutionList({
+    tasks: tasks.slice(0, 3),
+    scheduling: scheduling(nodes, []),
+  })
+  const rows = grouped.plans[0]!.rows
+  expect(rows.find((row) => row.taskID === a)?.dispatchPause).toEqual(pause)
+  expect(rows.find((row) => row.taskID === c)?.dispatchPause).toEqual(pause)
+  expect(rows.find((row) => row.taskID === b)?.dispatchPause).toBeUndefined()
+  // Ungrouped (no scheduling either): each task keeps the pause the task page reported.
+  const ungrouped = buildExecutionList({ tasks: [tasks[0]!, tasks[3]!] })
+  expect(ungrouped.unplanned.find((row) => row.taskID === a)?.dispatchPause).toEqual(pause)
+  expect(ungrouped.unplanned.find((row) => row.taskID === d)?.dispatchPause).toBeUndefined()
+})
