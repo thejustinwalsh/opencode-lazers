@@ -77,7 +77,7 @@ function history(sessionID: string, sequences: number[], nextCursor: string | nu
     })),
     nextCursor,
     limits: {},
-    coverage: { hasMore: nextCursor !== null },
+    coverage: { hasMore: nextCursor !== null, payloadTruncated: false, journal: "available" },
   } as unknown as LiveHistoryResponse
 }
 
@@ -270,3 +270,165 @@ test.each([false, true])(
     }
   },
 )
+
+const sequences = (data: RadarMonitorData) => data.history?.items.map((item) => item.sequence)
+
+test("live head refresh merges by sequence without cancelling or rewinding the older-page drain", async () => {
+  const older = deferred<LiveHistoryResponse>()
+  const cursors: (string | undefined)[] = []
+  let tailSignal: AbortSignal | undefined
+  let heads = 0
+  const fake = fakeTransport({
+    history: (sessionID, cursor, signal) => {
+      cursors.push(cursor)
+      if (cursor === "before-20") {
+        tailSignal = signal
+        return older.promise
+      }
+      heads++
+      if (heads > 1) return Promise.resolve(history(sessionID, [40, 30], "fresh-before-30"))
+      const first = history(sessionID, [30, 20], "before-20")
+      first.items[0] = { ...first.items[0]!, status: "running" }
+      return Promise.resolve(first)
+    },
+  })
+  const state = new RadarMonitorState(() => {})
+  state.connect("project-key", "project", projectScope, fake.transport, false)
+  try {
+    await until(() => Boolean(state.data.live))
+    state.selectSession("ses-worker")
+    await until(() => state.data.history?.items.length === 2)
+
+    state.loadMoreHistory()
+    await until(() => tailSignal !== undefined)
+    expect(state.data.historyLoading).toBe(true)
+
+    // A live event re-reads the newest page while the older page is still in flight.
+    fake.emit(2)
+    await until(() => state.data.history?.items[0]?.sequence === 40)
+    expect(tailSignal!.aborted).toBe(false)
+    expect(sequences(state.data)).toEqual([40, 30, 20])
+    expect(state.data.history?.items.find((item) => item.sequence === 30)?.status).toBe("succeeded")
+    expect(state.data.history?.nextCursor).toBe("before-20")
+    expect(state.data.history?.coverage.hasMore).toBe(true)
+    expect(state.data.historyLoading).toBe(true)
+
+    const tail = history("ses-worker", [10], null)
+    tail.coverage.payloadTruncated = true
+    older.resolve(tail)
+    await until(() => state.data.history?.items.length === 4)
+    expect(sequences(state.data)).toEqual([40, 30, 20, 10])
+    expect(state.data.history?.nextCursor).toBeNull()
+    expect(state.data.history?.coverage).toMatchObject({ hasMore: false, payloadTruncated: true })
+    expect(state.data.historyLoading).toBe(false)
+
+    // A later head page must not resurrect a cursor or hide the truncated older page.
+    const exhausted = state.data.history
+    fake.emit(3)
+    await until(() => state.data.history !== exhausted)
+    expect(state.data.history?.nextCursor).toBeNull()
+    expect(state.data.history?.coverage).toMatchObject({ hasMore: false, payloadTruncated: true })
+    state.loadMoreHistory()
+    await Bun.sleep(2)
+    expect(cursors.filter((cursor) => cursor !== undefined)).toEqual(["before-20"])
+  } finally {
+    state.close()
+  }
+})
+
+test("a moved journal restarts the older-page read from a fresh head past loaded rows", async () => {
+  const cursors: (string | undefined)[] = []
+  let heads = 0
+  const fake = fakeTransport({
+    history: async (sessionID, cursor) => {
+      cursors.push(cursor)
+      if (cursor === "before-20")
+        throw {
+          name: "RPCError",
+          data: { reason: "changed-during-read", recovery: "restart" },
+        }
+      if (cursor === "fresh-before-40") return history(sessionID, [30, 20], "fresh-before-20")
+      if (cursor === "fresh-before-20") return history(sessionID, [10], null)
+      heads++
+      return heads === 1
+        ? history(sessionID, [30, 20], "before-20")
+        : history(sessionID, [50, 40], "fresh-before-40")
+    },
+  })
+  const state = new RadarMonitorState(() => {})
+  state.connect("project-key", "project", projectScope, fake.transport, false)
+  try {
+    await until(() => Boolean(state.data.live))
+    state.selectSession("ses-worker")
+    await until(() => state.data.history?.items.length === 2)
+    state.loadMoreHistory()
+    await until(() => state.data.history?.nextCursor === null)
+    expect(sequences(state.data)).toEqual([50, 40, 30, 20, 10])
+    expect(state.data.historyError).toBe("")
+    expect(cursors).toEqual([
+      undefined,
+      "before-20",
+      undefined,
+      "fresh-before-40",
+      "fresh-before-20",
+    ])
+  } finally {
+    state.close()
+  }
+})
+
+test("a non-contiguous head and a selection change fence stale older pages", async () => {
+  const olderA = deferred<LiveHistoryResponse>()
+  const olderB = deferred<LiveHistoryResponse>()
+  const tailSignals: AbortSignal[] = []
+  let heads = 0
+  const fake = fakeTransport({
+    history: (sessionID, cursor, signal) => {
+      if (cursor) {
+        tailSignals.push(signal!)
+        return tailSignals.length === 1 ? olderA.promise : olderB.promise
+      }
+      if (sessionID === "ses-other") return Promise.resolve(history(sessionID, [7]))
+      heads++
+      return Promise.resolve(
+        heads === 1
+          ? history(sessionID, [30, 20], "before-20")
+          : history(sessionID, [90, 80], "before-80"),
+      )
+    },
+  })
+  const state = new RadarMonitorState(() => {})
+  state.connect("project-key", "project", projectScope, fake.transport, false)
+  try {
+    await until(() => Boolean(state.data.live))
+    state.selectSession("ses-worker")
+    await until(() => state.data.history?.items.length === 2)
+
+    // More new rows than one page: the gap is not hidden behind the old cursor.
+    state.loadMoreHistory()
+    await until(() => tailSignals.length === 1)
+    fake.emit(2)
+    await until(() => state.data.history?.items[0]?.sequence === 90)
+    expect(tailSignals[0]!.aborted).toBe(true)
+    expect(sequences(state.data)).toEqual([90, 80])
+    expect(state.data.history?.nextCursor).toBe("before-80")
+    expect(state.data.historyLoading).toBe(false)
+    olderA.resolve(history("ses-worker", [10], null))
+    await Bun.sleep(2)
+    expect(sequences(state.data)).toEqual([90, 80])
+
+    // A late older page for the previous selection never lands in the new selection.
+    state.loadMoreHistory()
+    await until(() => tailSignals.length === 2)
+    state.selectSession("ses-other")
+    await until(() => state.data.history?.sessionID === "ses-other")
+    expect(tailSignals[1]!.aborted).toBe(true)
+    olderB.resolve(history("ses-worker", [10], null))
+    await Bun.sleep(2)
+    expect(state.data.selectedSessionID).toBe("ses-other")
+    expect(sequences(state.data)).toEqual([7])
+    expect(state.data.historyLoading).toBe(false)
+  } finally {
+    state.close()
+  }
+})
