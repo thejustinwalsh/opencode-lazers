@@ -71,6 +71,8 @@ export type ExecutionPlanGroup = {
   schedulingDecision?: SchedulingPlan["decision"]
   schedulingReason?: string | null
   afterPlans?: string[]
+  afterPlansCount?: number
+  afterPlansComplete?: boolean
 }
 
 export type ExecutionList = {
@@ -192,6 +194,10 @@ function buildScheduledGroups(input: {
         schedulingDecision: plan.decision,
         schedulingReason: plan.reason,
         afterPlans: plan.afterPlans,
+        ...(plan.afterPlansCount !== undefined ? { afterPlansCount: plan.afterPlansCount } : {}),
+        ...(plan.afterPlansComplete !== undefined
+          ? { afterPlansComplete: plan.afterPlansComplete }
+          : {}),
       },
     ]
   })

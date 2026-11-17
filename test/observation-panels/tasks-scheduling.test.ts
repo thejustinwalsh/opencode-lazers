@@ -863,7 +863,9 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
         lifecycle: "running",
         decision: "waiting",
         reason: "A parallel branch is held.",
-        afterPlans: [],
+        afterPlans: [attentionPlanID],
+        afterPlansCount: 2,
+        afterPlansComplete: false,
         nodesComplete: true,
         nodes: [
           node({
@@ -1077,6 +1079,10 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
     await until(() => browserDocument.activeElement === row(ids.heldChild))
     expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
     expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("2")
+    const planWait = [...container.querySelectorAll(".lazers-tasks-dependencies")].find((element) =>
+      element.textContent?.includes("Plan waits for"),
+    )
+    expect(planWait?.textContent).toContain("showing 1 of 2 prerequisite plans")
     await until(() => scrollTargets.slice(priorScrolls).includes(ids.heldChild))
     expect(topologyCalls).toBeGreaterThan(0)
   } finally {
