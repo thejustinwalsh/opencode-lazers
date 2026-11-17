@@ -116,6 +116,13 @@ head/tail live reconciliation and large-list rendering, including Diagnostics.
 Keep compact summaries distinct from the complete browsable collections; retain
 explicit unavailable native coverage rather than inventing telemetry.
 
+Concrete live-interaction coverage includes a head tick while page three is
+in flight, followed by exhaustion without repeated pages or cursor rewind.
+Retain the landed head/tail repair rather than reopening its old implementation.
+A selected session temporarily absent from the newest inventory page must not
+unmount a still-valid inspector or reset History expansion; an actual scope
+change or authoritative invalidation clears that selection appropriately.
+
 ## Trajectory complete progressive history
 
 One feature worker owns pageable task choices and selected history from actual
@@ -124,6 +131,12 @@ track/activity rendering, complete continuation, live-event reconciliation and
 large-list/mark rendering. Preserve privacy, event identities, selection and
 honest native-context/recording gaps. Coordinate shared observability files after
 Radar rather than creating competing producer writers.
+
+Keep `workerProgress.truncated` and `recoveryGaps` visible in coverage even after
+the acquisition cursor is exhausted: loaded-all and recorded-complete are not
+synonyms. As earlier/later event pages extend `trackTimes`, preserve the selected
+event/time and visual time/scroll anchor. Exercise these interactions at narrow
+regular-Desktop widths after source integration.
 
 ## Models complete collections and truthful analytics
 
@@ -156,9 +169,13 @@ just that uncertain fixtures remain linear.
 ## Integration order and combined acceptance
 
 1. Review Auditor's report and settle common cursor/live-merge contracts.
-2. Finish existing LZ-216; Tasks streaming follows that integrated interface.
-3. Radar and Models can proceed independently once shared contract ownership and
-   the Tasks query interface are fixed; serialize overlapping observability edits.
+2. Finish existing LZ-224 and LZ-216, then the preserved LZ-226 connected
+   qualification. Per the user's later priority, new overlapping Tasks streaming
+   waits for that qualification rather than competing with its walkthrough.
+3. Radar and Models have separate feature lanes. Coordinate Radar's shared
+   observation reader after existing LZ-139; Models follows the LZ-146
+   presentation and LZ-216 query-interface integrations. Scope reservations still
+   serialize other overlapping writers; they are not bypassed by these lanes.
 4. Integrate Trajectory streaming after Radar's shared producer edits; then idle
    compression uses the resulting coverage/domain contract.
 5. Architect composes retained commits, runs proportional combined checks and
