@@ -309,7 +309,6 @@ export function nativeHost(
 ): RunnerHost & {
   ownsCurrentWorkspace(directory: string): Promise<boolean>
   retainedInputID(sessionID: string): Promise<string | undefined>
-  readSessionLog(sessionID: string): AsyncIterable<unknown>
 } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
@@ -353,24 +352,11 @@ export function nativeHost(
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
   }
-  const readSessionLog = (sessionID: string): AsyncIterable<unknown> => ({
-    [Symbol.asyncIterator]: async function* () {
-      const client = await connectedClient()
-      try {
-        yield* client.experimental.session.log({ sessionID, follow: false })
-      } catch (error) {
-        invalidate(client)
-        throw error
-      }
-    },
-  })
   const host: RunnerHost & {
     ownsCurrentWorkspace(directory: string): Promise<boolean>
     retainedInputID(sessionID: string): Promise<string | undefined>
-    readSessionLog(sessionID: string): AsyncIterable<unknown>
   } = {
     retainedInputID,
-    readSessionLog,
     async ownsCurrentWorkspace(directory) {
       const client = await connectedClient()
       const location = client.location
@@ -672,6 +658,8 @@ export function nativeHost(
         runningShells,
         activeChildren,
         ...(idleAt ? { idleAt } : {}),
+        // Last model activity: request start or completion, whichever is later.
+        ...(Math.max(busyAt, idleAt) > 0 ? { activityAt: Math.max(busyAt, idleAt) } : {}),
         outcome,
         model: latest.model,
         usage: {
