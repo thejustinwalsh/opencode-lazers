@@ -1256,6 +1256,19 @@ export class RunnerStore {
       return run(db)
     })
   }
+  atomicAsync<T>(run: (db: Database) => T, options?: { deadlineMs?: number }): Promise<T> {
+    return this.repository.atomicAsync((db) => {
+      registerLifecycleTransitions(db)
+      return run(db)
+    }, options)
+  }
+  /** Pure reads: deferred snapshot, never waits on writers. */
+  read<T>(run: (db: Database) => T): T {
+    return this.repository.read((db) => {
+      registerLifecycleTransitions(db)
+      return run(db)
+    })
+  }
   plan(id: string) {
     return this.atomic((db) =>
       db

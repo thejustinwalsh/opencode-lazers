@@ -14,6 +14,9 @@ export function openReadOnlyTrajectoryStore(path: string, projectDirectory: stri
       atomic<T>(run: (db: Database) => T): T {
         return db.transaction(() => run(db)).deferred()
       },
+      read<T>(run: (db: Database) => T): T {
+        return db.transaction(() => run(db)).deferred()
+      },
       get(id: string) {
         const row = db
           .query<{ body: string }, [string, string]>(

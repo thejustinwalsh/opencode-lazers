@@ -57,6 +57,32 @@ export function taskDatabasePath(dataDirectory?: string): string {
   return join(directory, "tasks.sqlite")
 }
 
+/**
+ * SQLite lock-wait budget per statement on the plugin's connections. The plugin
+ * shares the single-threaded OpenCode service, and a lock wait inside SQLite
+ * blocks the whole event loop, so waits are kept short and contention is
+ * retried asynchronously (`atomicAsync`) instead of slept on in SQLite.
+ */
+export const SQLITE_BUSY_TIMEOUT_MS = 50
+/** Default total budget for `atomicAsync` contention retries. */
+export const ATOMIC_ASYNC_DEADLINE_MS = 5_000
+
+/** Thrown by `atomicAsync` when a write lock could not be acquired before its deadline. */
+export class StorageBusyError extends Error {
+  constructor(
+    readonly attempts: number,
+    readonly waitedMs: number,
+    options?: { cause?: unknown },
+  ) {
+    super(`LAZERS database stayed locked for ${waitedMs}ms across ${attempts} attempts`, options)
+    this.name = "StorageBusyError"
+  }
+}
+
+export function isSqliteBusy(error: unknown): boolean {
+  return error instanceof SQLiteError && /^SQLITE_(BUSY|LOCKED)/.test(error.code ?? "")
+}
+
 export class TaskRepository {
   private connection: Database | undefined
   private readonly listeners = new Set<() => void>()
@@ -85,28 +111,24 @@ export class TaskRepository {
   private open(): Database {
     const db = new Database(this.path, { create: true, strict: true })
     try {
-      db.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON")
+      db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys = ON`)
       const version = () =>
         db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
       const initial = version()
       if (initial > 8) throw new Error(`Unsupported LAZERS database version ${initial}`)
-      // SQLite can fail a concurrent first WAL transition immediately despite
-      // busy_timeout. Retry only connection configuration, never a task write.
-      const deadline = Date.now() + 5_000
-      for (;;) {
-        try {
-          db.exec("PRAGMA journal_mode = WAL")
-          break
-        } catch (error) {
-          if (
-            !(error instanceof SQLiteError) ||
-            error.code !== "SQLITE_BUSY" ||
-            Date.now() >= deadline
-          )
-            throw error
-          Bun.sleepSync(10)
+      // WAL is persistent: once any connection has switched, later opens skip the
+      // write-locking pragma. A concurrent first transition can fail immediately
+      // despite busy_timeout; make a few bounded attempts (each waits at most
+      // SQLITE_BUSY_TIMEOUT_MS) and never sleep the thread between them.
+      if (db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal")
+        for (let attempt = 1; ; attempt++) {
+          try {
+            db.exec("PRAGMA journal_mode = WAL")
+            break
+          } catch (error) {
+            if (!isSqliteBusy(error) || attempt >= 3) throw error
+          }
         }
-      }
       if (initial < 8)
         db.transaction(() => {
           const current = version()
@@ -269,14 +291,48 @@ export class TaskRepository {
     }
   }
 
-  /** Server-side domain services share transactions, never expose SQL to agents/RPC. */
+  /**
+   * Server-side domain services share transactions, never expose SQL to agents/RPC.
+   *
+   * Synchronous write transaction (BEGIN IMMEDIATE). It fails fast with
+   * SQLITE_BUSY after SQLITE_BUSY_TIMEOUT_MS instead of sleeping the event loop.
+   * Callers that can await should migrate to `atomicAsync`; pure reads use `read`.
+   */
   atomic<T>(run: (db: Database) => T): T {
     return this.db.transaction(() => run(this.db)).immediate()
   }
 
-  /** Single-statement reads do not acquire a write reservation. */
+  /**
+   * Write transaction that yields to the event loop while the database is
+   * locked by another writer. Retries only SQLITE_BUSY with bounded backoff
+   * and throws `StorageBusyError` after `deadlineMs`. `run` may execute more
+   * than once (a failed attempt is rolled back), so keep side effects inside the
+   * database.
+   */
+  async atomicAsync<T>(
+    run: (db: Database) => T,
+    options: { deadlineMs?: number } = {},
+  ): Promise<T> {
+    const started = Date.now()
+    const deadline = started + (options.deadlineMs ?? ATOMIC_ASYNC_DEADLINE_MS)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return this.atomic(run)
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error
+        const now = Date.now()
+        if (now >= deadline) throw new StorageBusyError(attempt, now - started, { cause: error })
+        await Bun.sleep(Math.min(5 * 2 ** Math.min(attempt - 1, 6), 250, deadline - now))
+      }
+    }
+  }
+
+  /**
+   * Read-only access on a DEFERRED transaction: one consistent WAL snapshot, no
+   * write reservation, so it never waits on writers.
+   */
   read<T>(run: (db: Database) => T): T {
-    return run(this.db)
+    return this.db.transaction(() => run(this.db)).deferred()
   }
 
   /** Module upgrades are transactional; current generations need no write transaction. */
