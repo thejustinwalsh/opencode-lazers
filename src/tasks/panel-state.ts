@@ -146,6 +146,7 @@ export class TaskPanelState {
   private activityController?: AbortController
   private generation = 0
   private listRequest = 0
+  private requestedMore: TaskPage | undefined
   private detailRequest = 0
   private activityRequest = 0
   private transport?: TaskTransport
@@ -542,14 +543,31 @@ export class TaskPanelState {
           this.retryDelayMs = 1_000
           this.flushCurrentActivity()
         }
+        this.announceIdle()
       }
     }
   }
 
-  async more() {
-    const cursor = this.data.page?.nextCursor
+  /**
+   * Readers that wait for the in-flight read to end (the next page near the end of the list) only
+   * re-run on a data change; announce the end of the read as one.
+   */
+  private announceIdle() {
+    if (!this.refreshing) this.update({})
+  }
+
+  /**
+   * Request the page after the current one. `key` is the view the caller is showing: a request
+   * for another filter/scope is ignored. Each page object is requested at most once, so a page that
+   * failed to load never spins; a refresh yields a new page object and re-arms it.
+   */
+  async more(key: string) {
+    const page = this.data.page
+    const cursor = page?.nextCursor
     const transport = this.transport
-    if (!cursor || !transport || this.refreshing) return
+    if (!cursor || !transport || this.refreshing || this.data.key !== key) return
+    if (this.requestedMore === page) return
+    this.requestedMore = page
     this.refreshing = true
     const generation = this.generation
     const request = ++this.listRequest
@@ -583,6 +601,7 @@ export class TaskPanelState {
           void this.refresh()
         } else if (this.data.error) this.retryRead(generation)
         else this.flushCurrentActivity()
+        this.announceIdle()
       }
     }
   }

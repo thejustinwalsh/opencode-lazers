@@ -1356,3 +1356,76 @@ test.each([
     state.close()
   }
 })
+
+test("more(key) ignores another view's key and requests each page object once", async () => {
+  const first = { ...page("/project"), nextCursor: "page-two" }
+  const second = { ...page("/project"), nextCursor: null }
+  const calls: Array<string | undefined> = []
+  const pending = deferred<TaskPage>()
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "view-a",
+      "/project",
+      transport(async (input) => {
+        calls.push(input.cursor)
+        return input.cursor ? pending.promise : first
+      }),
+      {},
+    )
+    await until(() => state.data.page === first && !state.data.loading)
+    await tick()
+    // A request carrying a stale filter key never reaches the transport.
+    await state.more("view-b")
+    expect(calls).toEqual([undefined])
+    // The same page object is requested once, however often the view asks.
+    const requests = [state.more("view-a"), state.more("view-a"), state.more("view-a")]
+    await until(() => calls.length === 2)
+    pending.resolve(second)
+    await Promise.all(requests)
+    expect(calls).toEqual([undefined, "page-two"])
+    expect(state.data.page).toBe(second)
+    expect(state.data.tasks).toHaveLength(2)
+    // No next page: nothing more to ask for.
+    await state.more("view-a")
+    expect(calls).toHaveLength(2)
+  } finally {
+    state.close()
+  }
+})
+
+test("a page that failed to load is not requested again until a refresh yields a new page", async () => {
+  const first = { ...page("/project"), nextCursor: "page-two" }
+  const calls: Array<string | undefined> = []
+  let failMore = true
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "view-a",
+      "/project",
+      transport(async (input) => {
+        calls.push(input.cursor)
+        if (input.cursor && failMore) throw new Error("page two unavailable")
+        return input.cursor ? { ...page("/project"), nextCursor: null } : { ...first }
+      }),
+      {},
+    )
+    await until(() => state.data.page?.nextCursor === "page-two" && !state.data.loading)
+    await tick()
+    await state.more("view-a")
+    expect(state.data.error).toContain("page two unavailable")
+    const attempts = calls.filter((cursor) => cursor === "page-two").length
+    await state.more("view-a")
+    await state.more("view-a")
+    expect(calls.filter((cursor) => cursor === "page-two")).toHaveLength(attempts)
+    // A refresh replaces the page object, which re-arms the request.
+    failMore = false
+    await state.refresh()
+    await until(() => !state.data.error && state.data.page?.nextCursor === "page-two")
+    await tick()
+    await state.more("view-a")
+    expect(state.data.page?.nextCursor).toBeNull()
+  } finally {
+    state.close()
+  }
+})

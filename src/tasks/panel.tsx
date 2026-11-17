@@ -11,6 +11,7 @@ import {
   usePanel,
 } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
+import { createVirtualizer, defaultRangeExtractor } from "@tanstack/solid-virtual"
 import { Schema } from "effect"
 import {
   For,
@@ -23,6 +24,7 @@ import {
   createUniqueId,
   onCleanup,
   onMount,
+  untrack,
 } from "solid-js"
 import type { Accessor, JSX } from "solid-js"
 import type { TaskProposal } from "../task.ts"
@@ -64,7 +66,18 @@ import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
 import type { TaskBlocker, TaskGlyph, TaskRowPresentation } from "./row-presentation.ts"
 import { TaskRing } from "./state-glyph.tsx"
-import { ExecutionPlanGroupView } from "./execution-list-view.tsx"
+import { ExecutionPlanHeading } from "./execution-list-view.tsx"
+import {
+  LOADER_HEIGHT,
+  anchoredScrollTop,
+  estimateItemSize,
+  flattenExecutionList,
+  navigationTarget,
+  planOfTask,
+  taskIndex,
+  taskItems,
+} from "./virtual-rows.ts"
+import type { NavigationKey, VirtualItem, VirtualTaskItem } from "./virtual-rows.ts"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
@@ -149,6 +162,13 @@ function objectiveExtendsTitle(objective: string) {
   return taskTitle(objective) !== objective.trim().replace(/\s+/g, " ")
 }
 
+/** Rows rendered beyond the viewport on each side. */
+const VIRTUAL_OVERSCAN = 8
+/** Request the next page once the last rendered item is this close to the end of the list. */
+const LOAD_MORE_WITHIN = 10
+/** Bounded wait for a scrolled-to row to mount before giving up on focusing it. */
+const FOCUS_ATTEMPTS = 10
+
 const terminalLifecycleStates = new Set([
   "accepted",
   "incorporated",
@@ -156,6 +176,33 @@ const terminalLifecycleStates = new Set([
   "exhausted",
   "cancelled",
 ])
+
+type VirtualRow = { key: string; index: number; offset: number; item: VirtualItem }
+
+/** Absolutely positioned slot for one virtual item; the virtualizer measures it once mounted. */
+function VirtualItemView(props: {
+  virtual: Accessor<VirtualRow>
+  measure: (element: HTMLDivElement | null) => void
+  render: (item: Accessor<VirtualItem>) => JSX.Element
+}) {
+  let element: HTMLDivElement | undefined
+  onMount(() => props.measure(element!))
+  onCleanup(() => queueMicrotask(() => props.measure(null)))
+  return (
+    <div
+      class="lazers-tasks-virtual-item"
+      role="none"
+      ref={(value) => {
+        element = value
+      }}
+      data-index={props.virtual().index}
+      data-kind={props.virtual().item.kind}
+      style={{ transform: `translateY(${props.virtual().offset}px)` }}
+    >
+      {untrack(() => props.render(() => props.virtual().item))}
+    </div>
+  )
+}
 
 function TaskPanel(
   props: PanelProps & {
@@ -193,12 +240,18 @@ function TaskPanel(
   const [temporarilyCollapsedForks, setTemporarilyCollapsedForks] = createSignal<Set<string>>(
     new Set(),
   )
+  /** Plans whose heading is collapsed; per view, never persisted. */
+  const [collapsedPlans, setCollapsedPlans] = createSignal<Set<string>>(new Set())
+  /** Where the tree starts inside the scrolling list, below Now/Attention/Next and notes. */
+  const [treeOffset, setTreeOffset] = createSignal(0)
   const feedback = new StartFeedback(setStartFeedback)
   const listRestore = new ScrollRestoration()
   const detailRestore = new ScrollRestoration()
   let root: HTMLDivElement | undefined
   let header: HTMLElement | undefined
   let list: HTMLDivElement | undefined
+  let tree: HTMLDivElement | undefined
+  let head: HTMLDivElement | undefined
   let separator: HTMLDivElement | undefined
   let detail: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
@@ -356,6 +409,7 @@ function TaskPanel(
     setRevealedTaskIDs(new Set<string>())
     setTemporarilyExpandedForks(new Set<string>())
     setTemporarilyCollapsedForks(new Set<string>())
+    setCollapsedPlans(new Set<string>())
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
@@ -474,7 +528,21 @@ function TaskPanel(
         save({ collapsedForks: { ...(prefs().collapsedForks ?? {}), [key]: false } })
       }
     }
+    const planID = planOfTask(executionList(), taskID) ?? planOfTask(group, taskID)
+    if (planID && collapsedPlans().has(planID))
+      setCollapsedPlans((current) => {
+        const next = new Set(current)
+        next.delete(planID)
+        return next
+      })
+    queueMicrotask(() => scrollToTask(taskID))
   }
+  const togglePlan = (planID: string) =>
+    setCollapsedPlans((current) => {
+      const next = new Set(current)
+      if (!next.delete(planID)) next.add(planID)
+      return next
+    })
   const selectTask = (taskID: string) => {
     revealTask(taskID)
     void state.select(taskID)
@@ -517,8 +585,10 @@ function TaskPanel(
     if (!value || value.loading || handledReveal === taskID) return
     handledReveal = taskID
     save({ revealTaskID: "" })
-    if (value.selectedID === taskID) revealTask(taskID)
-    else selectTask(taskID)
+    if (value.selectedID === taskID) {
+      revealTask(taskID)
+      focusTaskRow(taskID)
+    } else selectTask(taskID)
   })
   createEffect(() => {
     const value = visible()
@@ -708,10 +778,62 @@ function TaskPanel(
     rows.push(...model.unplanned)
     return rows
   })
+  /** The whole list as one flat sequence; only a window of it is ever mounted. */
+  const hasMore = () => Boolean(visible()?.page?.nextCursor)
+  const items = createMemo(() =>
+    flattenExecutionList({
+      model: executionList(),
+      collapsedPlans: collapsedPlans(),
+      forkExpanded,
+      hasMore: hasMore(),
+    }),
+  )
+  const itemByKey = createMemo(() => new Map(items().map((item) => [item.key, item])))
   const focusTaskID = createMemo(() => {
-    const rows = rowValues()
+    const rows = taskItems(items())
     const selectedID = visible()?.selectedID
-    return rows.some((row) => row.taskID === selectedID) ? selectedID : rows[0]?.taskID
+    return rows.some((item) => item.row.taskID === selectedID) ? selectedID : rows[0]?.row.taskID
+  })
+  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    get count() {
+      return items().length
+    },
+    getScrollElement: () => list ?? null,
+    get estimateSize() {
+      const current = items()
+      return (index: number) => (current[index] ? estimateItemSize(current[index]!) : 0)
+    },
+    // A new closure per item list: keys may change without the count changing.
+    get getItemKey() {
+      const current = items()
+      return (index: number) => current[index]?.key ?? index
+    },
+    get scrollMargin() {
+      return treeOffset()
+    },
+    overscan: VIRTUAL_OVERSCAN,
+    // The tabbable row stays mounted so Tab can always enter the tree.
+    get rangeExtractor() {
+      const current = items()
+      const id = focusTaskID()
+      const pinned = id ? taskIndex(current, id) : -1
+      return (range: Parameters<typeof defaultRangeExtractor>[0]) => {
+        const indexes = defaultRangeExtractor(range)
+        return pinned >= 0 && !indexes.includes(pinned)
+          ? [...indexes, pinned].toSorted((left, right) => left - right)
+          : indexes
+      }
+    },
+  })
+  const virtualRows = createMemo(() => {
+    const byKey = itemByKey()
+    const margin = treeOffset()
+    return virtualizer.getVirtualItems().flatMap((virtual) => {
+      const item = byKey.get(String(virtual.key))
+      return item
+        ? [{ key: item.key, index: virtual.index, offset: virtual.start - margin, item }]
+        : []
+    })
   })
   const rowTabIndex = (taskID: string) => {
     return taskID === focusTaskID() ? 0 : -1
@@ -737,15 +859,13 @@ function TaskPanel(
       ? taskRowPresentation(listed, visible()?.currentActivity[taskID], relationLabel)
       : undefined
   }
-  const renderTaskRow = (
-    taskRow: Accessor<ExecutionListRow>,
-    group?: Accessor<ExecutionPlanGroup>,
-    depth = 0,
-  ): JSX.Element => {
-    const expandable = () => Boolean(group && taskRow().fork)
-    const expanded = () => Boolean(group && taskRow().fork && forkExpanded(group(), taskRow()))
+  const renderTaskRow = (item: Accessor<VirtualTaskItem>): JSX.Element => {
+    const taskRow = () => item().row
+    const expandable = () => item().expandable
+    const expanded = () => item().expanded
     const toggle = () => {
-      if (group) toggleFork(group(), taskRow())
+      const group = item().group
+      if (group) toggleFork(group, taskRow())
     }
     const currentActivity = () => visible()?.currentActivity[taskRow().taskID]
     const presentation = createMemo(() =>
@@ -802,14 +922,17 @@ function TaskPanel(
         role="treeitem"
         data-task-id={taskRow().taskID}
         data-context-only={taskRow().contextOnly}
-        aria-level={depth + 1}
+        data-depth={item().depth}
+        data-branch-first={item().branch?.first}
+        data-branch-last={item().branch?.last}
+        aria-level={item().depth + 1}
+        aria-setsize={item().setSize}
+        aria-posinset={item().posInSet}
         aria-selected={taskRow().taskID === visible()?.selectedID}
         aria-expanded={expandable() ? expanded() : undefined}
         aria-label={accessibleDescription()}
         tabIndex={rowTabIndex(taskRow().taskID)}
-        onKeyDown={(event) =>
-          rowKey(event, { expandable: expandable(), expanded: expanded(), toggle })
-        }
+        onKeyDown={(event) => rowKey(event, item(), toggle)}
         onClick={(event) => {
           event.stopPropagation()
           selectTask(taskRow().taskID)
@@ -859,28 +982,6 @@ function TaskPanel(
             {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
           </Show>
         </div>
-        <Show when={expandable() && expanded()}>
-          <div
-            class="lazers-tasks-branches"
-            role="group"
-            aria-label={`Parallel work after ${taskTitle(taskRow().title)}`}
-          >
-            <Keyed each={taskRow().fork?.branches ?? []} by={(branch) => branch.id}>
-              {(branch) => (
-                <div class="lazers-tasks-branch" role="none">
-                  <Keyed each={branch().rows} by={(child) => child.taskID}>
-                    {(child) => renderTaskRow(child, group, depth + 1)}
-                  </Keyed>
-                  <Show when={branch().hiddenCount > 0}>
-                    <div class="lazers-tasks-branch-note" role="none">
-                      {branch().hiddenCount} more not in this page or filter
-                    </div>
-                  </Show>
-                </div>
-              )}
-            </Keyed>
-          </div>
-        </Show>
       </div>
     )
   }
@@ -1118,55 +1219,67 @@ function TaskPanel(
       feedback.finish(ticket)
     }
   }
-  /** Rows the person can currently see, in visual order; collapsed plan bodies are skipped. */
-  const treeItems = () =>
-    [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].filter(
-      (item) => !item.parentElement?.closest("details:not([open])"),
+  const rowElement = (taskID: string) =>
+    [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].find(
+      (element) => element.dataset.taskId === taskID,
     )
-  const focusRow = (item: HTMLElement | null | undefined) => {
-    if (!item) return
-    item.focus()
-    const id = item.dataset.taskId
-    if (id) selectTask(id)
+  /** Bring a task's row into the viewport; offscreen rows are not mounted, so go by the model. */
+  const scrollToTask = (taskID: string) => {
+    const index = taskIndex(items(), taskID)
+    if (index >= 0) virtualizer.scrollToIndex(index, { align: "auto" })
+  }
+  let focusRequest = 0
+  /** Scroll to a task, then focus its row once the virtualizer has mounted it. */
+  const focusTaskRow = (taskID: string) => {
+    const request = ++focusRequest
+    const attempt = (remaining: number) => {
+      if (request !== focusRequest || taskIndex(items(), taskID) < 0) return
+      scrollToTask(taskID)
+      const element = rowElement(taskID)
+      if (element) element.focus({ preventScroll: true })
+      else if (remaining > 0) requestAnimationFrame(() => attempt(remaining - 1))
+    }
+    attempt(FOCUS_ATTEMPTS)
+  }
+  const moveTo = (taskID: string) => {
+    selectTask(taskID)
+    focusTaskRow(taskID)
   }
   const rowKey = (
     event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
-    fork: { expandable: boolean; expanded: boolean; toggle(): void },
+    item: VirtualTaskItem,
+    toggle: () => void,
   ) => {
-    // Nested tree items bubble their keys through each ancestor item.
+    // Keys from the row's own controls (the blocker link) stay theirs.
     if (event.target !== event.currentTarget) return
-    const rows = treeItems()
-    const index = rows.indexOf(event.currentTarget)
+    const taskID = item.row.taskID
+    const go = (key: NavigationKey) => {
+      const target = navigationTarget(items(), taskID, key)
+      if (target) moveTo(target)
+    }
     switch (event.key) {
       case "ArrowUp":
       case "ArrowDown":
       case "Home":
-      case "End": {
+      case "End":
         event.preventDefault()
-        const next =
-          event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? rows.length - 1
-              : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
-        focusRow(rows[next])
+        go(event.key)
         return
-      }
       case "ArrowRight":
         event.preventDefault()
-        if (!fork.expandable) return
-        if (!fork.expanded) fork.toggle()
-        else focusRow(rows[index + 1])
+        if (!item.expandable) return
+        if (!item.expanded) toggle()
+        else go("ArrowRight")
         return
       case "ArrowLeft":
         event.preventDefault()
-        if (fork.expandable && fork.expanded) fork.toggle()
-        else focusRow(event.currentTarget.parentElement?.closest<HTMLElement>("[role=treeitem]"))
+        if (item.expandable && item.expanded) toggle()
+        else go("ArrowLeft")
         return
       case "Enter":
       case " ":
         event.preventDefault()
-        if (event.currentTarget.dataset.taskId) selectTask(event.currentTarget.dataset.taskId)
+        selectTask(taskID)
     }
   }
   /** Now/Attention/Next entries form one short list above the tree; Down from the last enters it. */
@@ -1178,7 +1291,8 @@ function TaskPanel(
     ]
     const index = entries.indexOf(event.currentTarget)
     if (event.key === "ArrowDown" && index === entries.length - 1) {
-      focusRow(treeItems()[0])
+      const first = taskItems(items())[0]
+      if (first) moveTo(first.row.taskID)
       return
     }
     const next =
@@ -1204,12 +1318,89 @@ function TaskPanel(
     focusedSelection = key
     queueMicrotask(() => {
       if (selectionKey() !== key) return
-      const row = [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].find(
-        (item) => item.dataset.taskId === selectedID,
-      )
-      row?.scrollIntoView({ block: "nearest" })
-      row?.focus({ preventScroll: true })
+      focusTaskRow(selectedID)
     })
+  })
+  const measureTreeOffset = () => {
+    if (!list || !tree) return
+    setTreeOffset(
+      Math.max(
+        0,
+        Math.round(
+          tree.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop,
+        ),
+      ),
+    )
+  }
+  let listObserver: ResizeObserver | undefined
+  // Everything above the tree scrolls with it: keep the virtualizer's origin on the tree's top.
+  createEffect(() => {
+    visible()
+    void nowRows().length
+    void attentionRows().length
+    nextStatus()
+    void items().length
+    void scope.error
+    queueMicrotask(measureTreeOffset)
+  })
+  /**
+   * First item intersecting the viewport top and how far its start (measured from the tree's top,
+   * so growth of the header above the tree is not an anchor move) sits below it.
+   */
+  let anchor: { key: string; offset: number } | undefined
+  let anchorView = ""
+  let anchorKeys: readonly string[] = []
+  const captureAnchor = () => {
+    if (!list) return
+    const top = list.scrollTop
+    // From the layout, not the mounted window: a jump scroll fires before the window follows it.
+    const first = virtualizer.getVirtualItemForOffset(top)
+    anchor = first
+      ? { key: String(first.key), offset: first.start - treeOffset() - top }
+      : undefined
+  }
+  // Rows inserted or removed above the viewport (refresh) must not move what the person reads.
+  // Within one view only; a new view restores its own saved scroll.
+  createEffect(() => {
+    const current = items()
+    const view = expectedKey()
+    untrack(() => {
+      if (!list) return
+      if (view !== anchorView) {
+        anchorView = view
+        anchorKeys = current.map((item) => item.key)
+        anchor = undefined
+        return
+      }
+      // Only a change of the key sequence moves rows; refreshed values and prefs writes do not.
+      if (
+        anchorKeys.length === current.length &&
+        anchorKeys.every((key, index) => key === current[index]!.key)
+      )
+        return
+      anchorKeys = current.map((item) => item.key)
+      const keys = new Map(current.map((item, index) => [item.key, index]))
+      const top = anchoredScrollTop(
+        anchor,
+        (key) => {
+          const index = keys.get(key)
+          const start =
+            index === undefined ? undefined : virtualizer.measurementsCache[index]?.start
+          return start === undefined ? undefined : start - treeOffset()
+        },
+        list.scrollTop,
+      )
+      if (top !== undefined) list.scrollTop = top
+      captureAnchor()
+    })
+  })
+  // The next page loads as the end of the list comes into range; each page is requested once.
+  createEffect(() => {
+    const value = visible()
+    const last = virtualRows().at(-1)
+    if (!value || value.loading || !value.page?.nextCursor || !last) return
+    if (last.index < items().length - 1 - LOAD_MORE_WITHIN) return
+    void state.more(expectedKey())
   })
   const measure = () => {
     if (!root) return
@@ -1221,22 +1412,26 @@ function TaskPanel(
   }
   onMount(() => {
     measure()
+    measureTreeOffset()
     if (typeof ResizeObserver === "undefined" || !root) return
     const observer = new ResizeObserver(measure)
     observer.observe(root)
     if (header) observer.observe(header)
     onCleanup(() => observer.disconnect())
+    listObserver = new ResizeObserver(measureTreeOffset)
+    if (list) listObserver.observe(list)
+    if (head) listObserver.observe(head)
+    onCleanup(() => listObserver?.disconnect())
   })
   // Hold the last fitted value while a view loads so the divider does not jump to its minimum.
   const autoSplit = createMemo<number>((previous) => {
     const value = visible()
     if (!value || value.loading) return previous
-    const model = executionList()
+    const current = items()
     return contentSplit({
-      rows: rowValues().length,
-      headings: model.plans.filter((group) => group.hasRecordedTitle && group.totalCount > 1)
-        .length,
-      extra: 16 + (value.page?.nextCursor ? 36 : 0),
+      rows: taskItems(current).length,
+      headings: current.filter((item) => item.kind === "plan").length,
+      extra: 16 + (value.page?.nextCursor ? LOADER_HEIGHT : 0),
       available: paneHeight(),
     })
   }, SPLIT_DEFAULT)
@@ -1401,6 +1596,7 @@ function TaskPanel(
           list = element
         }}
         onScroll={(event) => {
+          captureAnchor()
           if (listRestore.restored(expectedKey()))
             save({ listScroll: event.currentTarget.scrollTop })
         }}
@@ -1480,7 +1676,13 @@ function TaskPanel(
                     </div>
                   }
                 >
-                  <div class="lazers-tasks-schedule-groups">
+                  <div
+                    class="lazers-tasks-schedule-groups"
+                    ref={(element) => {
+                      head = element
+                      listObserver?.observe(element)
+                    }}
+                  >
                     <Show when={nowRows().length}>
                       <section class="lazers-tasks-schedule-group" aria-label="Now">
                         <h3 class="lazers-tasks-schedule-heading">
@@ -1573,30 +1775,63 @@ function TaskPanel(
                     role="tree"
                     aria-label={`${stateLabel(stateFilter())} tasks`}
                     data-forks={rowValues().some((row) => Boolean(row.fork))}
+                    style={{ height: `${virtualizer.getTotalSize()}px` }}
+                    ref={(element) => {
+                      tree = element
+                    }}
                   >
-                    <Keyed each={executionList().plans} by={(group) => group.planID}>
-                      {(group) => (
-                        <ExecutionPlanGroupView
-                          group={group()}
-                          stateFilter={stateFilter()}
-                          onOpenPlan={openPrerequisitePlan}
-                          planTitle={(planID) => schedulingPlan(planID)?.title}
-                        >
-                          <Keyed each={group().rows} by={(taskRow) => taskRow.taskID}>
-                            {(taskRow) => renderTaskRow(taskRow, group)}
-                          </Keyed>
-                        </ExecutionPlanGroupView>
+                    <Keyed each={virtualRows()} by={(virtual) => virtual.key}>
+                      {(virtual) => (
+                        <VirtualItemView
+                          virtual={virtual}
+                          measure={virtualizer.measureElement}
+                          render={(item) => {
+                            const current = () => item()
+                            switch (virtual().item.kind) {
+                              case "task":
+                                return renderTaskRow(current as Accessor<VirtualTaskItem>)
+                              case "plan": {
+                                const plan = () =>
+                                  current() as Extract<VirtualItem, { kind: "plan" }>
+                                return (
+                                  <ExecutionPlanHeading
+                                    group={plan().group}
+                                    stateFilter={stateFilter()}
+                                    collapsed={plan().collapsed}
+                                    onToggle={() => togglePlan(plan().group.planID)}
+                                    onOpenPlan={openPrerequisitePlan}
+                                    planTitle={(planID) => schedulingPlan(planID)?.title}
+                                  />
+                                )
+                              }
+                              case "note":
+                                return (
+                                  <div class="lazers-tasks-branch-note" role="none">
+                                    {
+                                      (current() as Extract<VirtualItem, { kind: "note" }>)
+                                        .hiddenCount
+                                    }{" "}
+                                    more not in this page or filter
+                                  </div>
+                                )
+                              case "loader":
+                                return (
+                                  <div class="lazers-tasks-loader" role="status">
+                                    <Show
+                                      when={!value().error}
+                                      fallback="Could not load more tasks."
+                                    >
+                                      <Ui.Loader size="small" />
+                                      Loading more tasks…
+                                    </Show>
+                                  </div>
+                                )
+                            }
+                          }}
+                        />
                       )}
                     </Keyed>
-                    <Keyed each={executionList().unplanned} by={(taskRow) => taskRow.taskID}>
-                      {(taskRow) => renderTaskRow(taskRow)}
-                    </Keyed>
                   </div>
-                  <Show when={value().page?.nextCursor}>
-                    <Ui.Button variant="ghost" onClick={() => void state.more()}>
-                      Load more
-                    </Ui.Button>
-                  </Show>
                 </Show>
               </Show>
             </>

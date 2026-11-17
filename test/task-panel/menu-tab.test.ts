@@ -18,13 +18,16 @@ afterAll(() => vite.close())
 const { setupTaskPanel, verificationTimingSummary } = (await vite.ssrLoadModule(
   "/src/tasks/panel.tsx",
 )) as typeof import("../../src/tasks/panel.tsx")
-const { ExecutionPlanGroupView } = (await vite.ssrLoadModule(
+const { ExecutionPlanHeading } = (await vite.ssrLoadModule(
   "/src/tasks/execution-list-view.tsx",
 )) as typeof import("../../src/tasks/execution-list-view.tsx")
 const disposers: Array<() => void> = []
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose()
 })
+const { planHeaded } = (await vite.ssrLoadModule(
+  "/src/tasks/virtual-rows.ts",
+)) as typeof import("../../src/tasks/virtual-rows.ts")
 const Icon = (props: { name: string; size?: string }) => `icon:${props.name}:${props.size}`
 
 type Contribution = { registry: unknown; value: Record<string, unknown> }
@@ -139,52 +142,48 @@ describe("tasks native affordances", () => {
       nonterminalCount: number,
       totalCount: number,
       stateFilter: "open" | "completed" | "cancelled",
-    ) =>
-      renderToString(() =>
-        createComponent(ExecutionPlanGroupView, {
-          group: group(title, nonterminalCount, totalCount),
-          stateFilter,
-          children: "Visible task",
-        }),
-      )
+    ) => {
+      const value = group(title, nonterminalCount, totalCount)
+      return planHeaded(value)
+        ? renderToString(() =>
+            createComponent(ExecutionPlanHeading, {
+              group: value,
+              stateFilter,
+              collapsed: false,
+              onToggle: () => {},
+            }),
+          )
+        : ""
+    }
 
     const open = renderGroup("Open plan", 1, 2, "open")
     expect(open).toContain('aria-label="Open plan, 1 remaining of 2 tasks in this plan"')
     expect(open).toContain(">1/2 remaining</span>")
-    expect(open).toContain("Visible task")
-    expect(open).toContain("<details open>")
+    expect(open).toContain('aria-expanded="true"')
 
-    const unnamed = renderToString(() =>
-      createComponent(ExecutionPlanGroupView, {
-        group: { ...group("Placeholder plan", 1, 1), hasRecordedTitle: false },
-        stateFilter: "open",
-        children: "Standalone task",
-      }),
-    )
-    expect(unnamed).not.toContain("Placeholder plan")
-    expect(unnamed).not.toContain("<summary")
-    expect(unnamed).toContain("Standalone task")
+    // An untitled plan gets no heading item in the flat list.
+    expect(
+      planHeaded({ ...group("Placeholder plan", 1, 1), hasRecordedTitle: false } as never),
+    ).toBe(false)
 
     const completed = renderGroup("Completed plan", 0, 2, "completed")
     expect(completed).toContain('aria-label="Completed plan"')
     expect(completed).not.toContain(">0/2 remaining</span>")
-    expect(completed).toContain("Visible task")
 
     const cancelled = renderGroup("Cancelled plan", 1, 2, "cancelled")
     expect(cancelled).toContain('aria-label="Cancelled plan"')
     expect(cancelled).not.toContain(">1/2 remaining</span>")
-    expect(cancelled).toContain("Visible task")
 
     // A one-task plan is its task: no heading competes with the row's own title.
     const single = renderGroup("Single task plan", 1, 1, "open")
-    expect(single).not.toContain("Single task plan")
-    expect(single).not.toContain("<summary")
-    expect(single).toContain("Visible task")
+    expect(single).toBe("")
   })
 
   test("plan headings show recorded priority and integration or cleanup state", () => {
     const rendered = renderToString(() =>
-      createComponent(ExecutionPlanGroupView, {
+      createComponent(ExecutionPlanHeading, {
+        collapsed: false,
+        onToggle: () => {},
         group: {
           planID: "cleanup",
           planVersion: 1,
@@ -198,35 +197,37 @@ describe("tasks native affordances", () => {
           rows: [],
         },
         stateFilter: "all",
-        children: "Visible task",
       }),
     )
-    expect(rendered).toContain('role="group"')
+    expect(rendered).toContain('class="lazers-tasks-plan"')
     expect(rendered).toContain(
       'aria-label="Retry-safe submission, priority 2, plan cleanup blocked"',
     )
     expect(rendered).toContain(">Cleanup blocked</span>")
     expect(rendered).toMatch(/Scheduler priority for this plan"[^>]*>Priority (?:<!--[^>]*-->)*2/)
     // A one-task plan keeps its heading when the scheduler records plan prerequisites.
+    const gatedGroup = {
+      planID: "gated",
+      planVersion: 1,
+      planRevision: 1,
+      title: "Gated single task",
+      hasRecordedTitle: true,
+      nonterminalCount: 1,
+      totalCount: 1,
+      rows: [],
+      priority: 0,
+      planOrder: 2,
+      afterPlans: ["11111111-1111-4111-8111-111111111111"],
+      schedulingReason: "Waiting for prerequisite plans to integrate.",
+    }
+    expect(planHeaded(gatedGroup)).toBe(true)
     const gated = renderToString(() =>
-      createComponent(ExecutionPlanGroupView, {
-        group: {
-          planID: "gated",
-          planVersion: 1,
-          planRevision: 1,
-          title: "Gated single task",
-          hasRecordedTitle: true,
-          nonterminalCount: 1,
-          totalCount: 1,
-          rows: [],
-          priority: 0,
-          planOrder: 2,
-          afterPlans: ["11111111-1111-4111-8111-111111111111"],
-          schedulingReason: "Waiting for prerequisite plans to integrate.",
-        },
+      createComponent(ExecutionPlanHeading, {
+        group: gatedGroup,
         stateFilter: "open",
+        collapsed: false,
+        onToggle: () => {},
         planTitle: () => "Parent implementation",
-        children: "Visible task",
       }),
     )
     expect(gated).toContain("Gated single task")

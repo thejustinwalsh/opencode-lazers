@@ -5,6 +5,7 @@ import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { validProposal } from "../proposal.ts"
+import { installTasksLayout } from "./virtual-layout.ts"
 
 function until(predicate: () => boolean) {
   return (async () => {
@@ -17,6 +18,7 @@ function until(predicate: () => boolean) {
 test("registered Tasks panel separates lifecycle, foreground activity and holds with working filters", async () => {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
+  const uninstallLayout = installTasksLayout(dom)
   const browserDocument = dom.document as unknown as Document
   const globalNames = [
     "window",
@@ -645,10 +647,11 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     ).toHaveLength(1)
     const heldBlocker = heldRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
     expect(heldBlocker.textContent).toBe("link")
-    // LZ-8 is on a later query page, so the link names it without a state and stays neutral.
-    expect(heldBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-8")
-    expect(tooltip(heldBlocker)).toBe("Waiting on LZ-8")
-    expect(heldBlocker.dataset.tone).toBeUndefined()
+    // LZ-8 is on a later query page until the list's end comes into range and that page loads on
+    // its own; once listed, the link names its state and takes its tone.
+    await until(() => heldBlocker.getAttribute("aria-label") === "Open blocker LZ-8, waiting")
+    expect(tooltip(heldBlocker)).toBe("Waiting on LZ-8 · Waiting")
+    expect(heldBlocker.dataset.tone).toBe("waiting")
     // Not a tab stop: the tree keeps one roving stop and the inspector lists blockers by keyboard.
     expect(heldBlocker.tabIndex).toBe(-1)
     expect(getComputedStyle(heldBlocker).flexShrink).toBe("0")
@@ -662,11 +665,12 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(tasksCSS).not.toContain("@container lazers-tasks (max-width")
     expect(tasksCSS).not.toContain(".lazers-tasks-row-blocker-name")
     expect(heldRow.getAttribute("aria-label")).toContain("waiting on LZ-8 (queued)")
-    // Row icons add no tab stops: the tree keeps exactly one roving stop, on a tree item.
+    // Row icons add no tab stops: the tree keeps exactly one roving stop, on a tree item. Plan
+    // headings are their own collapse buttons and are the only other stops.
     const tree = container.querySelector<HTMLElement>('[role="tree"]')!
-    const tabStops = [
-      ...tree.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]"),
-    ].filter((element) => element.tabIndex >= 0)
+    const tabStops = [...tree.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]")]
+      .filter((element) => element.tabIndex >= 0)
+      .filter((element) => !element.classList.contains("lazers-tasks-plan-heading"))
     expect(tabStops).toHaveLength(1)
     expect(tabStops[0]!.getAttribute("role")).toBe("treeitem")
     expect(tree.querySelectorAll(".lazers-tasks-state[tabindex]")).toHaveLength(0)
@@ -883,9 +887,19 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     forkRow.focus()
     key(forkRow, "ArrowRight")
     await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "true")
-    const branches = row(ids.forkRoot)!.querySelector('[role="group"]')!
-    expect(branches.getAttribute("aria-label")).toBe("Parallel work after Prepare parallel checks")
-    expect(branches.querySelectorAll(".lazers-tasks-branch")).toHaveLength(2)
+    // Branch rows are flat siblings of their fork root, one level deeper, drawn on a branch rail.
+    expect(row(ids.forkRoot)!.querySelector('[role="group"]')).toBeNull()
+    expect(row(ids.forkRoot)!.querySelector("[data-task-id]")).toBeNull()
+    expect(row(ids.branchA)!.getAttribute("data-depth")).toBe("1")
+    expect(row(ids.branchB)!.getAttribute("data-depth")).toBe("1")
+    expect(row(ids.branchA)!.getAttribute("data-branch-first")).toBe("true")
+    expect(row(ids.branchB)!.getAttribute("data-branch-first")).toBe("true")
+    expect(row(ids.branchA)!.getAttribute("aria-setsize")).toBe("2")
+    expect([ids.branchA, ids.branchB].map((id) => row(id)!.getAttribute("aria-posinset"))).toEqual([
+      "1",
+      "2",
+    ])
+    expect(row(ids.join)?.getAttribute("aria-setsize")).toBe("2")
     expect(row(ids.branchA)?.getAttribute("aria-level")).toBe("2")
     expect(row(ids.branchB)?.getAttribute("aria-level")).toBe("2")
     expect(
@@ -969,26 +983,24 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     }
     await chooseFilter("Queued")
     await until(() => queryCalls.at(-1)?.state === "queued" && Boolean(row(ids.queuedOne)))
-    expect(row(ids.queuedTwo)).toBeNull()
+    // There is no Load more control: the end of the list is in range, so pages two and three
+    // request themselves, once each, with their own cursors.
+    await until(
+      () => queryCalls.at(-1)?.cursor === "queued-page-three" && Boolean(row(ids.queuedFour)),
+    )
+    expect(row(ids.queuedTwo)).not.toBeNull()
+    expect(row(ids.queuedThree)).not.toBeNull()
+    const queuedCursors = queryCalls
+      .filter((call) => call.state === "queued")
+      .map((call) => call.cursor)
+    expect(queuedCursors).toEqual([undefined, "queued-page-two", "queued-page-three"])
     expect(
       [...container.querySelectorAll<HTMLButtonElement>("button")].some(
         (button) => button.textContent === "Load more",
       ),
-    ).toBe(true)
-    const clickLoadMore = () =>
-      [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "Load more")!
-        .click()
-    clickLoadMore()
-    await until(
-      () => queryCalls.at(-1)?.cursor === "queued-page-two" && Boolean(row(ids.queuedThree)),
-    )
-    expect(row(ids.queuedTwo)).not.toBeNull()
-    expect(row(ids.queuedFour)).toBeNull()
-    clickLoadMore()
-    await until(
-      () => queryCalls.at(-1)?.cursor === "queued-page-three" && Boolean(row(ids.queuedFour)),
-    )
+    ).toBe(false)
+    // The last page leaves no loader behind.
+    await until(() => !container.textContent?.includes("Loading more tasks"))
 
     await chooseFilter("Running")
     await until(() => queryCalls.at(-1)?.state === "running" && Boolean(row(ids.held)))
@@ -1043,6 +1055,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       if (descriptor) Object.defineProperty(globalThis, name, descriptor)
       else Reflect.deleteProperty(globalThis, name)
     }
+    uninstallLayout()
     dom.happyDOM.abort()
   }
 })

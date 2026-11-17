@@ -143,10 +143,16 @@
 }
 .lazers-tasks-plan {
   min-width: 0;
-  margin: 4px 0 8px;
+  margin: 8px 0 0;
 }
 .lazers-tasks-plan-heading {
   display: flex;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
@@ -607,10 +613,7 @@
   align-items: center;
   gap: 8px;
 }
-summary.lazers-tasks-plan-heading {
-  cursor: pointer;
-}
-summary.lazers-tasks-plan-heading::before {
+.lazers-tasks-plan-heading::before {
   content: "›";
   display: inline-block;
   flex: none;
@@ -618,11 +621,39 @@ summary.lazers-tasks-plan-heading::before {
   text-align: center;
   color: var(--text-weak);
 }
-details[open] > summary.lazers-tasks-plan-heading::before {
+.lazers-tasks-plan-heading[aria-expanded="true"]::before {
   transform: rotate(90deg);
 }
-summary.lazers-tasks-plan-heading::-webkit-details-marker {
-  display: none;
+.lazers-tasks-plan-heading:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: -2px;
+}
+
+/*
+ * The tree is a spacer of the full list height; only a window of items is mounted, each absolutely
+ * positioned by the virtualizer. Rows keep their 32px line; the branch rail is drawn per row.
+ */
+.lazers-tasks-tree {
+  position: relative;
+  min-width: 0;
+}
+/* flow-root keeps child margins inside the slot so its measured height includes them. */
+.lazers-tasks-virtual-item {
+  display: flow-root;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-width: 0;
+}
+.lazers-tasks-loader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  color: var(--text-weak);
+  font-size: 0.85em;
 }
 
 /* Task tree: one 32px line per task; parallel branches hang from their fork on separate rules. */
@@ -740,25 +771,22 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
 .lazers-tasks-entry[data-context-only="true"] > .lazers-tasks-row .lazers-tasks-row-title {
   color: var(--text-base);
 }
-.lazers-tasks-branches {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
+/* Rows hanging from a fork sit on a rail; consecutive rows join it, branches start 2px apart. */
+.lazers-tasks-entry[data-depth="1"] {
   margin-left: 18px;
-}
-.lazers-tasks-branch {
-  min-width: 0;
   padding-left: 4px;
   border-left: 1px solid var(--border-weak-base);
+  border-radius: 0 4px 4px 0;
+}
+.lazers-tasks-entry[data-branch-first="true"] {
+  margin-top: 2px;
 }
 .lazers-tasks-branch-note {
-  padding: 2px 8px 6px 28px;
+  margin-left: 18px;
+  padding: 2px 8px 6px 32px;
+  border-left: 1px solid var(--border-weak-base);
   color: var(--text-weak);
   font-size: 0.85em;
-}
-.lazers-tasks-plan + .lazers-tasks-entry,
-.lazers-tasks-entry + .lazers-tasks-plan {
-  margin-top: 8px;
 }
 .lazers-tasks-plan-state,
 .lazers-tasks-plan-priority {
