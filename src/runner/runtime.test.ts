@@ -17280,3 +17280,28 @@ test("project timing configuration overrides legacy task and combined timeout me
       },
     })
 })
+
+test("a verification effect with no receipt is superseded and its check re-runs on reconcile", async () => {
+  const f = await retainedSourceFixture()
+  const planID = f.receipt.planID
+  expect(f.store.plan(planID)!.state).toBe("blocked")
+  const result = (await f.runtime.command(
+    {
+      requestID: "reconcile-uncertain-verification",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )) as { status: string }
+  // The uncertain effect is a verification: reconcile no longer refuses.
+  expect(result.status).toBe("reconciling")
+  await drive(f.runtime, 4)
+  const verifications = f.store.effects(planID).filter((effect) => effect.kind === "verify:content")
+  const original = verifications.find((effect) => effect.id === f.effectID)!
+  expect(original.state).toBe("failed")
+  expect(JSON.parse(original.receipt!)).toMatchObject({ superseded: true })
+  expect(
+    f.store.activity(planID, original.task_id).some((event) => event.event === "EFFECT_SUPERSEDED"),
+  ).toBe(true)
+})

@@ -565,6 +565,21 @@ type CleanupAuditDiagnostics = {
   >
 }
 
+/** Verification effects only read the candidate; a missing receipt means run the check again. */
+export function isRerunnableEffect(kind: string): boolean {
+  return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
+}
+
+/** A re-runnable effect that was replaced for lack of a receipt; it no longer holds anything. */
+function effectSuperseded(effect: EffectRow): boolean {
+  if (effect.state !== "failed" || !effect.receipt) return false
+  try {
+    return (JSON.parse(effect.receipt) as { superseded?: unknown }).superseded === true
+  } catch {
+    return false
+  }
+}
+
 export function architectIdleWindowMs(value: unknown): number {
   if (value === undefined) return DEFAULT_ARCHITECT_IDLE_WINDOW_MS
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
@@ -7645,7 +7660,11 @@ export class TaskRuntime {
               }
             }
             if (
-              this.store.effects(plan.id).some((e) => ["intended", "uncertain"].includes(e.state))
+              this.store
+                .effects(plan.id)
+                .some(
+                  (e) => ["intended", "uncertain"].includes(e.state) && !isRerunnableEffect(e.kind),
+                )
             )
               return {
                 status: "blocked",
@@ -9750,12 +9769,27 @@ export class TaskRuntime {
     payload: unknown,
     fence: number,
   ): EffectRow {
-    const id = fingerprint({ planID, taskID, attemptID, kind, payload })
+    const baseID = fingerprint({ planID, taskID, attemptID, kind, payload })
     return this.store.fenced(this.owner, fence, (db) => {
+      let id = baseID
       const existing = db
         .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?")
-        .get(id)
-      if (existing) throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
+        .get(baseID)
+      if (existing) {
+        // A verification effect is re-runnable: once its earlier run was
+        // superseded (no receipt), the same check runs again on the candidate.
+        if (!isRerunnableEffect(kind))
+          throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
+        const runs = db
+          .query<{ id: string; state: string }, [string, string, string]>(
+            "SELECT id,state FROM runner_effects WHERE plan_id=? AND kind=? AND payload=?",
+          )
+          .all(planID, kind, JSON.stringify(payload))
+          .filter((row) => row.id === baseID || row.id.startsWith(`${baseID}:`))
+        if (runs.some((row) => row.state !== "failed"))
+          throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
+        id = `${baseID}:${runs.length}`
+      }
       db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,?)").run(
         id,
         planID,
@@ -9780,6 +9814,22 @@ export class TaskRuntime {
       this.store.record(effect.plan_id, effect.task_id, "EFFECT_COMPLETED", {
         effectID: effect.id,
         kind: effect.kind,
+      })
+    })
+  }
+  /** A re-runnable effect with no receipt is replaced, not left uncertain. */
+  private supersedeEffect(effect: EffectRow, reason: string, fence: number) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+        )
+        .run(JSON.stringify({ superseded: true, reason }), effect.id).changes
+      if (changed !== 1) return
+      this.store.record(effect.plan_id, effect.task_id, "EFFECT_SUPERSEDED", {
+        effectID: effect.id,
+        kind: effect.kind,
+        reason,
       })
     })
   }
@@ -13226,6 +13276,7 @@ export class TaskRuntime {
     }
     const existing = this.store.effects(plan.id).findLast((effect) => {
       if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
+      if (effectSuperseded(effect)) return false
       const recorded = JSON.parse(effect.payload)
       if (
         recorded.messageID !== attempt.message_id ||
@@ -13519,6 +13570,7 @@ export class TaskRuntime {
         .toReversed()
         .find((e) => {
           if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
+          if (effectSuperseded(e)) return false
           const payload = JSON.parse(e.payload) as {
             artifact?: unknown
             identity?: unknown
@@ -14070,6 +14122,7 @@ export class TaskRuntime {
       }
       const existing = this.store.effects(plan.id).find((e) => {
         if (e.kind !== `graph-verify:${check.id}`) return false
+        if (effectSuperseded(e)) return false
         try {
           const payload = JSON.parse(e.payload) as {
             artifact?: unknown
@@ -14571,6 +14624,11 @@ export class TaskRuntime {
           )
           return
         }
+      }
+      if (isRerunnableEffect(effect.kind)) {
+        this.supersedeEffect(effect, "No receipt was recorded; the check re-runs", fence)
+        this.tickRequested = true
+        return
       }
       if (effect.state !== "uncertain")
         this.uncertain(
