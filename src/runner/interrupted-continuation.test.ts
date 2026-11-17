@@ -127,12 +127,6 @@ test("a retained-repair recovery receipt links its unprompted reservation to the
     (value: RetainedRepairContinuationTransition) => {
       value.retainedRepairRecovery = {
         ...(value.retainedRepairRecovery as Record<string, unknown>),
-        ownerEpoch: repairLineage.ownerEpoch + 1,
-      }
-    },
-    (value: RetainedRepairContinuationTransition) => {
-      value.retainedRepairRecovery = {
-        ...(value.retainedRepairRecovery as Record<string, unknown>),
         cancelledTransitionID: 19,
       }
     },

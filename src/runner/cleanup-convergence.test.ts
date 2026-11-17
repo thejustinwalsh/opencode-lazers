@@ -245,7 +245,9 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
       outcome: "succeeded",
       model: { providerID: "openai", id: "test-model" },
     }
-    const sessionByID = (id: string) => (id === sessionID ? session : ownerSession)
+    const intruderSession = { ...ownerSession, id: "ses-intruder", agent: "lazers-implementor" }
+    const sessionByID = (id: string) =>
+      id === sessionID ? session : id === "ses-intruder" ? intruderSession : ownerSession
     const messages = [
       { id: assignedMessageID, type: "user", time: { created: now }, text: "Implement" },
       {
@@ -453,7 +455,7 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
     await expect(
       runtime.command(
         {
-          requestID: "recover-cleanup-non-owner",
+          requestID: "recover-cleanup-non-architect",
           planID,
           expectedVersion: reopenedStore.plan(planID)!.version,
           action: "recover-cleanup",
@@ -461,11 +463,11 @@ test("owner-authorized cleanup recovery revalidates settlement and preserves unc
           attemptID,
           artifact,
           targetBranch: "main",
-          reason: "This non-owner request must not authorize cleanup.",
+          reason: "This non-Architect request must not authorize cleanup.",
         },
         "ses-intruder",
       ),
-    ).rejects.toThrow("Only the plan owner may change execution")
+    ).rejects.toThrow("A live Architect session of this project must command the plan")
     await runtime.command(
       {
         requestID: "recover-cleanup-convergence-plan",

@@ -666,54 +666,6 @@ test("retained repair follows multiple continuations before reassignment without
   expect(f.prompts).toHaveLength(2)
 })
 
-test("A to B to A owner reassignment fences the deferred retained-repair prompt", async () => {
-  const f = fixture()
-  await accept(f)
-  const prior = f.store.attempts(f.planID)[0]!
-  const repair = await f.runtime.command(retainedRepairCommand(f), "owner")
-  const requestedEpoch = f.store.planControlEpoch(f.planID)
-  const owner = f.sessions.get("owner")!
-  f.sessions.set("owner-b", { ...structuredClone(owner), id: "owner-b" })
-
-  await f.runtime.command(
-    {
-      requestID: "reassign-repair-away",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "reassign",
-      targetSessionID: "owner-b",
-      reason: "Exercise the deferred repair authorization fence.",
-    },
-    "owner",
-  )
-  await f.runtime.command(
-    {
-      requestID: "reassign-repair-back",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "reassign",
-      targetSessionID: "owner",
-      reason: "Return to the original owner without restoring its authorization epoch.",
-    },
-    "owner-b",
-  )
-
-  expect(f.store.plan(f.planID)).toMatchObject({ state: "running", owner: "owner" })
-  expect(f.store.planControlEpoch(f.planID)).toBeGreaterThan(requestedEpoch)
-  expect(f.prompts).toHaveLength(1)
-  await f.runtime.tick()
-
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.attempts(f.planID)[0]).toMatchObject({
-    id: prior.id,
-    state: "preparing",
-    session_id: prior.session_id,
-  })
-  expect(f.prompts).toHaveLength(1)
-  expect(f.store.effects(f.planID).filter((effect) => effect.kind === "prompt")).toHaveLength(1)
-  expect(repair).toMatchObject({ status: "retained-repair-requested", attemptID: prior.id })
-})
-
 test("A to B to A during retained-repair admission rejects before reservation", async () => {
   const f = fixture({ repairOwnerAdmissionRace: true })
   await accept(f)

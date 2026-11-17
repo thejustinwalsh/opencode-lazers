@@ -78,6 +78,12 @@ export const PlanInput = z
         "Optional concise Architect-authored label; preserve verbatim and do not derive from objective.",
       ),
     objective: z.string().trim().min(1).max(8000),
+    draft: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true only to save the plan without admitting it. Submitting a plan otherwise admits it, and the scheduler runs its tasks; run an explicit draft later with lz-plan-command run.",
+      ),
     priority: PlanPriority.optional().describe(PRIORITY_DESCRIPTION),
     afterPlans: z
       .array(z.uuid())

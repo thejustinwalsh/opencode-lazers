@@ -400,7 +400,6 @@ export class WorktreeCleanup {
       authorization.sessionID === attempt.session_id &&
       authorization.assignedMessageID === attempt.message_id &&
       authorization.owner === plan.owner &&
-      authorization.ownerEpoch === this.runtime.store.planControlEpoch(plan.id) &&
       authorization.requestID.length > 0 &&
       authorization.reason.trim().length > 0 &&
       ["worktree", "worktree-recovery"].includes(source.kind) &&
@@ -501,7 +500,6 @@ export class WorktreeCleanup {
         authorization: {
           requestID: authorization.requestID,
           owner: authorization.owner,
-          ownerEpoch: authorization.ownerEpoch,
           taskID: authorization.taskID,
           attemptID: authorization.attemptID,
           artifact: authorization.artifact,

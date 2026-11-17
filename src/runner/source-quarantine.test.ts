@@ -256,14 +256,6 @@ test("retained verification binding requires the exact sealed guarded source and
     expect(
       sourceQuarantineVerificationBinding(store, {
         planID: attempt.plan_id,
-        owner: "owner",
-        attempt,
-        artifact: attempt.artifact,
-      }),
-    ).toBeUndefined()
-    expect(
-      sourceQuarantineVerificationBinding(store, {
-        planID: attempt.plan_id,
         owner: "foreign-owner",
         attempt,
         artifact: attempt.artifact,

@@ -308,7 +308,7 @@ test("explicit resume continues a stopped failed attempt with its history and re
   ).toBe(true)
 })
 
-test("failed-attempt resume preserves authorization, owner, and uncertain-effect guards", async () => {
+test("failed-attempt resume preserves authorization, live-Architect, and uncertain-effect guards", async () => {
   const f = fixture()
   const attempt = await leaveFailedAttempt(f)
   const version = f.store.plan(f.planID)!.version
@@ -321,7 +321,9 @@ test("failed-attempt resume preserves authorization, owner, and uncertain-effect
     reason: "Continue only after guards pass",
   }
 
-  await expect(f.runtime.command(command, "other")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(command, "other")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   await expect(
     f.runtime.command(
       { ...command, requestID: "resume-stale", expectedVersion: version - 1 },
@@ -332,7 +334,7 @@ test("failed-attempt resume preserves authorization, owner, and uncertain-effect
   f.sessions.get("owner")!.archived = true
   await expect(
     f.runtime.command({ ...command, requestID: "resume-owner-unavailable" }, "owner"),
-  ).rejects.toThrow("Owner unavailable")
+  ).rejects.toThrow("A live Architect session of this project must command the plan")
   f.sessions.get("owner")!.archived = false
 
   const promptEffect = f.store.effects(f.planID).find((effect) => effect.kind === "prompt")!

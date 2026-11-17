@@ -114,10 +114,9 @@ export class AdoptionExecution {
   private async validateAdoption(planID: string, adoption: AdoptionRow) {
     const plan = this.runtime.store.plan(planID)
     if (!plan || plan.state !== "blocked") throw new Error("Adoption plan is no longer blocked")
-    if (plan.owner !== adoption.owner) throw new Error("Descendant adoption owner changed")
     const owner = await this.runtime.host.session(plan.owner)
-    if (!this.runtime.validArchitect(owner) || owner.id !== adoption.owner)
-      throw new Error("Descendant adoption owner is missing, stale, or foreign")
+    if (!this.runtime.validArchitect(owner))
+      throw new Error("Descendant adoption needs a live Architect of this project")
     const input = PlanInput.parse(JSON.parse(plan.body))
     const task = this.runtime.store.repository.get(adoption.task_id)
     const node = this.runtime.store
@@ -851,7 +850,6 @@ export class AdoptionExecution {
         !currentPlan ||
         currentPlan.state !== "blocked" ||
         currentPlan.version !== context.plan.version ||
-        currentPlan.owner !== context.plan.owner ||
         !["pending", "task-checks", "combined-checks"].includes(current.state) ||
         !currentNode ||
         currentNode.state !== adoption!.node_state ||

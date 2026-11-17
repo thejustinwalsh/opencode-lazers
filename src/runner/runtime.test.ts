@@ -36,7 +36,9 @@ import type {
   HostSession,
   RunnerHost,
 } from "./host.ts"
-import { DEFAULT_ARCHITECT_IDLE_WINDOW_MS, TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
+import { DEFAULT_ARCHITECT_CACHE_WINDOW_MS } from "./architect-routing.ts"
+import { UNCERTAIN_EFFECT_RECEIPT_SCHEMA } from "./startup-recovery.ts"
+import { TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
 import { RunnerStore, type AttemptRow } from "./store.ts"
 import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
 import { PlanInput } from "./schema.ts"
@@ -497,6 +499,7 @@ function fixture(
         : [])
     return {
       requestID: config.requestID ?? "plan-request",
+      draft: true as const,
       objective: `Implement ${files.map((file) => file.name).join(" and ")}`,
       ...(options.workerAgent ? { workerAgent: options.workerAgent } : {}),
       workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
@@ -674,7 +677,26 @@ async function retainedSourceFixture() {
     db.query(
       "UPDATE runner_plans SET state='blocked',reason='Retained check is uncertain' WHERE id=?",
     ).run(f.receipt.planID)
-    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'uncertain',?,NULL,0)").run(
+    // An uncertain check without a receipt re-runs; a durable interrupted receipt keeps it uncertain.
+    const receiptPath = join(f.root, "retained-check.json")
+    const verification = f.tasks[0]!.proposal.verification[0]!
+    const interrupted = {
+      id: verification.id,
+      command: verification.command,
+      cwd: attempt.workspace,
+      artifact,
+      inputIdentity: "retained-check",
+      environmentIdentity: "retained-check",
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: null,
+      timedOut: false,
+      aborted: true,
+      stdout: "",
+      stderr: "",
+    }
+    writeFileSync(receiptPath, JSON.stringify(interrupted))
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'uncertain',?,?,0)").run(
       effectID,
       f.receipt.planID,
       attempt.task_id,
@@ -683,9 +705,14 @@ async function retainedSourceFixture() {
       JSON.stringify({
         workspace: attempt.workspace,
         artifact,
-        check: f.tasks[0]!.proposal.verification[0],
+        check: verification,
         identity: "retained-check",
-        receiptPath: join(f.root, "missing-retained-check.json"),
+        receiptPath,
+      }),
+      JSON.stringify({
+        schema: UNCERTAIN_EFFECT_RECEIPT_SCHEMA,
+        error: "Verification was interrupted before completion",
+        result: { check: interrupted },
       }),
     )
   })
@@ -1863,7 +1890,9 @@ test("source quarantine recovers lost archive replies after reopen without inven
     expect(sourceQuarantine(store, f.retained.id)?.hold_reason).toBeNull()
     expect(sourceQuarantine(store, f.retained.id)?.phase).toBe("sealed")
     expect(archives).toBe(1)
-    expect(store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!.receipt).toBeNull()
+    expect(
+      JSON.parse(store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!.receipt!),
+    ).toMatchObject({ error: "Verification was interrupted before completion" })
     expect(
       sourceReservationExcluded(store, store.attempts(f.receipt.planID)[0]!, { mode: "isolated" }),
     ).toBe(true)
@@ -1889,7 +1918,7 @@ test("source quarantine rejects missing enforcement, active writers, stale versi
     "Stale plan version",
   )
   await expect(f.runtime.command(f.command(), "another-owner")).rejects.toThrow(
-    "Only the plan owner",
+    "A live Architect session of this project must command the plan",
   )
   const metadata = f.worker.metadata
   f.worker.metadata = { lazersAttemptID: "replacement" }
@@ -2167,7 +2196,9 @@ test("task integration records a reviewed landing without finalizing the plan or
     targetBranch: "main",
     reason: "Reviewed accepted task and passing checks.",
   }
-  await expect(f.runtime.command(command, "other")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(command, "other")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   await expect(f.runtime.command({ ...command, expectedVersion: 1 }, "owner")).rejects.toThrow(
     "Stale plan version",
   )
@@ -2291,7 +2322,9 @@ test("scope amendments preserve the specification and recover dependency edits i
     scopeAdditions: ["escape.txt"],
     reason: "The existing implementation needs this dependency file.",
   }
-  await expect(f.runtime.command(command, "other-owner")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(command, "other-owner")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   await expect(
     f.runtime.command({ ...command, expectedVersion: version - 1 }, "owner"),
   ).rejects.toThrow("Stale plan version")
@@ -2706,37 +2739,16 @@ test("run authorizes and validates the original command before creating a contin
         },
         kind === "foreign" ? "not-the-owner" : "owner",
       ),
-    ).rejects.toThrow(kind === "foreign" ? "Only the plan owner" : "Stale plan version")
+    ).rejects.toThrow(
+      kind === "foreign"
+        ? "A live Architect session of this project must command the plan"
+        : "Stale plan version",
+    )
     expect(f.store.plan(before.id)).toEqual(before)
     expect(f.store.continuation(before.id)).toBeNull()
     expect(f.events).toEqual([])
     expect(f.store.attempts(before.id)).toHaveLength(0)
   }
-})
-
-test("continued run retains original caller/version replay identity across concurrent calls and restart", async () => {
-  const f = fixture({ shared: true })
-  f.sessions.get("owner")!.agent = "build"
-  const input = {
-    requestID: "continued-run",
-    planID: f.receipt.planID,
-    expectedVersion: 1,
-    action: "run",
-  }
-  const results = await Promise.all([
-    f.runtime.command(input, "owner"),
-    f.runtime.command(input, "owner"),
-  ])
-  expect(results[0]).toEqual(results[1])
-  expect(await f.runtime.command(input, "owner")).toEqual(results[0])
-  const reopened = new TaskRuntime(f.store, f.host, "project")
-  cleanup.push(() => reopened.stop())
-  expect(await reopened.command(input, "owner")).toEqual(results[0])
-  await expect(reopened.command(input, "not-the-owner")).rejects.toThrow("identity conflict")
-  await expect(reopened.command({ ...input, reason: "changed" }, "owner")).rejects.toThrow(
-    "identity conflict",
-  )
-  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
 })
 
 test("Start admits an existing queued plan, keeps its selected worker route and respects dependencies", async () => {
@@ -2762,117 +2774,6 @@ test("Start admits an existing queued plan, keeps its selected worker route and 
   })
   expect(again.planID).toBe(result.planID)
   expect(f.store.attempts(result.planID)).toHaveLength(1)
-})
-
-test("continued run recovers a crash before its receipt without changing caller identity", async () => {
-  const f = fixture({ shared: true })
-  f.sessions.get("owner")!.agent = "build"
-  const input = {
-    requestID: "crashed-run",
-    planID: f.receipt.planID,
-    expectedVersion: 1,
-    action: "run",
-  }
-  const command = f.store.command.bind(f.store)
-  f.store.command = () => {
-    throw new Error("Injected pre-receipt crash")
-  }
-  await expect(f.runtime.command(input, "owner")).rejects.toThrow("Injected")
-  expect(f.store.plan(f.receipt.planID)).toMatchObject({
-    owner: "owner",
-    version: 1,
-    state: "draft",
-  })
-  f.store.command = command
-  const reopened = new TaskRuntime(f.store, f.host, "project")
-  cleanup.push(() => reopened.stop())
-  const result = await reopened.command(input, "owner")
-  expect(result).toMatchObject({ status: "running" })
-  expect(await reopened.command(input, "owner")).toEqual(result)
-  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
-})
-
-test("a concurrent reassignment cannot be overwritten by continuation completion", async () => {
-  const f = fixture({ shared: true })
-  f.sessions.get("owner")!.agent = "build"
-  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner", agent: "architect" })
-  const create = f.host.createArchitect
-  f.host.createArchitect = async (input) => {
-    await create(input)
-    await f.runtime.command(
-      {
-        requestID: "reassign-during-create",
-        planID: f.receipt.planID,
-        expectedVersion: 1,
-        action: "reassign",
-        targetSessionID: "new-owner",
-        reason: "Explicit ownership change",
-      },
-      "owner",
-    )
-  }
-  const input = {
-    requestID: "racing-run",
-    planID: f.receipt.planID,
-    expectedVersion: 1,
-    action: "run",
-  }
-  await expect(f.runtime.command(input, "owner")).rejects.toThrow("Stale plan version")
-  expect(f.store.plan(f.receipt.planID)).toMatchObject({
-    owner: "new-owner",
-    version: 2,
-    state: "draft",
-  })
-  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
-  await expect(f.runtime.command({ ...input, expectedVersion: 2 }, "owner")).rejects.toThrow(
-    "Only the plan owner",
-  )
-})
-
-test("Start cannot adopt a stale continuation after an explicit owner round trip", async () => {
-  const f = fixture({ shared: true })
-  f.sessions.get("owner")!.agent = "build"
-  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner", agent: "architect" })
-  const create = f.host.createArchitect
-  f.host.createArchitect = async (input) => {
-    await create(input)
-    await f.runtime.command(
-      {
-        requestID: "owner-away",
-        planID: f.receipt.planID,
-        expectedVersion: 1,
-        action: "reassign",
-        targetSessionID: "new-owner",
-        reason: "Explicit move",
-      },
-      "owner",
-    )
-    f.sessions.get("owner")!.agent = "architect"
-    await f.runtime.command(
-      {
-        requestID: "owner-back",
-        planID: f.receipt.planID,
-        expectedVersion: 2,
-        action: "reassign",
-        targetSessionID: "owner",
-        reason: "Explicit restore",
-      },
-      "new-owner",
-    )
-  }
-  const input = { taskID: f.tasks[0]!.id, revision: 1 as const, sessionID: "owner" }
-  await expect(f.runtime.startTask(input)).rejects.toThrow("Stale plan version")
-  expect(f.store.plan(f.receipt.planID)).toMatchObject({
-    owner: "owner",
-    version: 3,
-    state: "draft",
-  })
-  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
-  expect(await f.runtime.startTask(input)).toMatchObject({
-    planID: f.receipt.planID,
-    state: "running",
-  })
-  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
 })
 
 test("a lost continuation-create response is reconciled by stable native session ID", async () => {
@@ -4117,7 +4018,6 @@ async function acceptedRetainedRepairFixture() {
     operationID: string
     messageID: string
     owner: string
-    ownerEpoch: number
   }>(planID, task.id)!
   return {
     f,
@@ -5399,7 +5299,7 @@ test("combined verification resume rejects wrong authority, changed candidates a
   const originalReceipt = interrupted.receipt!
 
   await expect(reopened.runtime.command(command("wrong-owner"), "foreign")).rejects.toThrow(
-    "Only the plan owner",
+    "A live Architect session of this project must command the plan",
   )
   await expect(
     reopened.runtime.command(
@@ -5409,7 +5309,7 @@ test("combined verification resume rejects wrong authority, changed candidates a
   ).rejects.toThrow("Stale plan version")
   f.sessions.get("owner")!.projectID = "foreign-project"
   await expect(reopened.runtime.command(command("wrong-project"), "owner")).rejects.toThrow(
-    "current same-project Architect",
+    "A live Architect session of this project must command the plan",
   )
   f.sessions.get("owner")!.projectID = "project"
 
@@ -7914,13 +7814,9 @@ test("unstarted recovery rejects unauthorized, stale, missing, archived and fore
     await expect(
       f.runtime.command(recovery, denial === "unauthorized" ? "not-the-owner" : "owner"),
     ).rejects.toThrow(
-      denial === "unauthorized"
-        ? "Only the plan owner"
-        : denial === "stale"
-          ? "Stale plan version"
-          : denial === "foreign"
-            ? "Foreign owner session"
-            : "Owner unavailable",
+      denial === "stale"
+        ? "Stale plan version"
+        : "A live Architect session of this project must command the plan",
     )
     expect(f.store.plan(planID)).toEqual(beforePlan)
     expect(f.store.nodes(planID).find((node) => node.task_id === taskID)).toEqual(beforeNode)
@@ -7960,10 +7856,12 @@ test("unstarted recovery rechecks the plan version after owner lookup races with
   const originalSession = f.host.session
   let announceLookup!: () => void
   let releaseLookup!: () => void
+  let gated = false
   const lookupStarted = new Promise<void>((resolve) => (announceLookup = resolve))
   const lookupGate = new Promise<void>((resolve) => (releaseLookup = resolve))
   f.host.session = async (id, options) => {
-    if (id === "owner") {
+    if (id === "owner" && !gated) {
+      gated = true
       announceLookup()
       await lookupGate
     }
@@ -7981,7 +7879,7 @@ test("unstarted recovery rechecks the plan version after owner lookup races with
       targetSessionID: "new-owner",
       reason: "Explicitly change the plan owner",
     },
-    "owner",
+    "new-owner",
   )
   releaseLookup()
   await expect(pendingRecovery).rejects.toThrow("Stale plan version")
@@ -9248,9 +9146,13 @@ test("cleanup audit publication rejects a concurrent plan-version change", async
   const sampleStarted = new Promise<void>((resolve) => (started = resolve))
   const sampleGate = new Promise<void>((resolve) => (release = resolve))
   const originalSession = f.host.session
+  let sampled = false
   f.host.session = async (id, options) => {
-    started()
-    await sampleGate
+    if (!sampled) {
+      sampled = true
+      started()
+      await sampleGate
+    }
     return originalSession(id, options)
   }
   const auditInput = {
@@ -9679,190 +9581,6 @@ test("task dependencies dispatch only after durable source integration and use i
   expect(attempts[1]?.base_commit).toBe(baseline)
 })
 
-test("afterPlans rejects a legacy cleanup snapshot after durable prerequisite cancellation", async () => {
-  const f = fixture({
-    independent: true,
-    delayed: true,
-    commit: true,
-    taskFiles: [{ name: "a", path: "a.txt" }],
-  })
-  const { parentID, child } = await prepareAfterPlanDependency(f, "legacy-cancelled-prerequisite")
-  await f.runtime.command(
-    {
-      requestID: "cancel-integrated-prerequisite",
-      planID: parentID,
-      expectedVersion: f.store.plan(parentID)!.version,
-      action: "cancel",
-    },
-    "owner",
-  )
-  await f.runtime.tick()
-  expect(f.store.plan(parentID)?.state).toBe("cancelled")
-
-  // An older persisted view can still report cleanup-blocked. The durable
-  // cancellation transition must invalidate its earlier acceptance/integration.
-  f.store.atomic((db) => {
-    db.query(
-      "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=?",
-    ).run("Legacy cleanup-blocked snapshot", parentID)
-  })
-  const promptsBefore = f.events.filter((event) => event.startsWith("prompt:")).length
-  await f.runtime.tick()
-
-  expect(f.store.attempts(child.planID)).toHaveLength(0)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(promptsBefore)
-})
-
-test("afterPlans cleanup cannot publish over cancellation or reuse the historical integration proof", async () => {
-  const f = fixture({
-    independent: true,
-    delayed: true,
-    commit: true,
-    taskFiles: [{ name: "a", path: "a.txt" }],
-  })
-  const { parentID, child, accepted } = await prepareAfterPlanDependency(
-    f,
-    "cancel-cleanup",
-    0,
-    true,
-  )
-  const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
-  writeFileSync(sentinel, "still owned")
-  const originalWorktrees = f.host.worktrees
-  let firstInventory = true
-  let enter!: () => void
-  let release!: () => void
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve
-  })
-  const blocked = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  f.host.worktrees = async () => {
-    if (firstInventory) {
-      firstInventory = false
-      enter()
-      await blocked
-    }
-    return originalWorktrees()
-  }
-
-  const cleanup = f.runtime.tick()
-  await entered
-  await f.runtime.command(
-    {
-      requestID: "cancel-during-cleanup",
-      planID: parentID,
-      expectedVersion: f.store.plan(parentID)!.version,
-      action: "cancel",
-    },
-    "owner",
-  )
-  release()
-  await cleanup
-
-  expect(f.store.plan(parentID)?.state).toBe("cancelling")
-  expect(f.store.plan(parentID)?.artifact).toBe(accepted.plan.artifact)
-  expect(
-    f.store.latestTransition<{ artifact?: string }>(parentID, null, "INTEGRATION_RECORDED")
-      ?.artifact,
-  ).toBe(accepted.plan.artifact!)
-  expect(f.store.attempts(child.planID)).toHaveLength(0)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  expect(existsSync(accepted.attempt.workspace)).toBe(true)
-  expect(readFileSync(sentinel, "utf8")).toBe("still owned")
-  expect(await f.host.worktrees()).toContain(accepted.attempt.workspace)
-
-  await f.runtime.tick()
-  expect(f.store.plan(parentID)?.state).toBe("cancelled")
-  expect(f.store.attempts(child.planID)).toHaveLength(0)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-})
-
-test("afterPlans invalidation during child worktree creation keeps the owned workspace and suppresses prompt admission", async () => {
-  const f = fixture({
-    independent: true,
-    delayed: true,
-    commit: true,
-    taskFiles: [{ name: "a", path: "a.txt" }],
-  })
-  const { parentID, child, accepted } = await prepareAfterPlanDependency(
-    f,
-    "cancel-worktree",
-    10,
-    true,
-  )
-  const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
-  writeFileSync(sentinel, "still owned")
-  const originalWorktree = f.host.worktree
-  let enter!: () => void
-  let release!: () => void
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve
-  })
-  const blocked = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  f.host.worktree = async (input) => {
-    if (input.base === accepted.plan.artifact) {
-      enter()
-      await blocked
-    }
-    return originalWorktree(input)
-  }
-
-  // Arrange this specific admission race before cleanup-first scheduling ends the parent.
-  const runnablePlans = f.store.runnablePlans.bind(f.store)
-  const dispatchOrder = spyOn(f.store, "runnablePlans").mockImplementation(function* (terminal) {
-    yield* [...runnablePlans(terminal)].sort(
-      (left, right) => Number(right.id === child.planID) - Number(left.id === child.planID),
-    )
-  })
-  const dispatch = f.runtime.tick()
-  try {
-    await Promise.race([
-      entered,
-      dispatch.then(() => {
-        throw new Error("Dispatch ended before child worktree admission")
-      }),
-    ])
-    dispatchOrder.mockRestore()
-    expect(f.store.plan(parentID)?.state).toBe("cleaning")
-    await f.runtime.command(
-      {
-        requestID: "cancel-parent-during-child-worktree",
-        planID: parentID,
-        expectedVersion: f.store.plan(parentID)!.version,
-        action: "cancel",
-      },
-      "owner",
-    )
-  } finally {
-    dispatchOrder.mockRestore()
-    release()
-    await dispatch
-  }
-
-  const attempt = f.store.attempts(child.planID)[0]!
-  expect(f.store.attempts(child.planID)).toHaveLength(1)
-  expect(attempt.state).toBe("preparing")
-  expect(attempt.base_commit).toBe(accepted.plan.artifact!)
-  expect(existsSync(attempt.workspace)).toBe(true)
-  expect(f.store.effects(child.planID).find((effect) => effect.kind === "worktree")?.state).toBe(
-    "completed",
-  )
-  expect(f.store.effects(child.planID).some((effect) => effect.kind === "session")).toBe(false)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  expect(readFileSync(sentinel, "utf8")).toBe("still owned")
-  expect(await f.host.worktrees()).toContain(accepted.attempt.workspace)
-  expect(await f.host.worktrees()).toContain(attempt.workspace)
-
-  await drive(f.runtime, 2)
-  expect(f.store.attempts(child.planID)).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  expect(existsSync(attempt.workspace)).toBe(true)
-})
-
 test("cancelling a child during session creation prevents prompt intent and preserves owned resources", async () => {
   const f = fixture({
     independent: true,
@@ -10230,116 +9948,6 @@ test("afterPlans requires the integrated change in selected HEAD; the recorded i
       expect(f.store.attempts(child.planID)).toHaveLength(1)
     }
   }
-})
-
-test("every afterPlans prerequisite needs genuine fresh acceptance and integration after cancellation", async () => {
-  const f = fixture({ independent: true, delayed: true, commit: true, startOnly: true })
-  const parentA = f.store.submit(f.inputFor([f.tasks[0]!], { requestID: "parent-a" }), "owner")
-  const parentB = f.store.submit(f.inputFor([f.tasks[1]!], { requestID: "parent-b" }), "owner")
-  const childTask = f.createTask("c", "c.txt")
-  const child = f.store.submit(
-    {
-      ...f.inputFor([childTask], { requestID: "all-prerequisites" }),
-      afterPlans: [parentA.planID, parentB.planID],
-      priority: 10,
-    },
-    "owner",
-  )
-  await runPlan(f, child.planID, "run-all-prerequisites")
-  await acceptAndIntegratePlan(f, parentA.planID)
-  await acceptAndIntegratePlan(f, parentB.planID)
-
-  const beforeCancel = f.store.plan(parentB.planID)!
-  await f.runtime.command(
-    {
-      requestID: "cancel-integrated-parent",
-      planID: parentB.planID,
-      expectedVersion: beforeCancel.version,
-      action: "cancel",
-    },
-    "owner",
-  )
-  await f.runtime.tick()
-  expect(f.store.plan(parentB.planID)!.state).toBe("cancelled")
-  expect(f.store.attempts(child.planID)).toHaveLength(0)
-  const transitionID = (event: string) =>
-    f.store.atomic(
-      (db) =>
-        db
-          .query<{ id: number }, [string, string]>(
-            "SELECT id FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event=? ORDER BY id DESC LIMIT 1",
-          )
-          .get(parentB.planID, event)?.id ?? 0,
-    )
-  const cancellationID = transitionID("CANCEL_REQUESTED")
-
-  f.store.atomic((db) => {
-    db.query(
-      "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=?",
-    ).run("Legacy cleanup snapshot after cancellation", parentB.planID)
-  })
-  await f.runtime.tick()
-  expect(f.store.attempts(child.planID)).toHaveLength(0)
-
-  // Re-enter explicit reconciliation from a recovered blocked snapshot. The
-  // runtime must produce new combined-check evidence before dependent work resumes.
-  f.store.atomic((db) => {
-    db.query("UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=?").run(
-      "Recovered prerequisite requires fresh verification",
-      parentB.planID,
-    )
-  })
-  await f.runtime.command(
-    {
-      requestID: "reconcile-cancelled-prerequisite",
-      planID: parentB.planID,
-      expectedVersion: f.store.plan(parentB.planID)!.version,
-      action: "reconcile",
-    },
-    "owner",
-  )
-  await drive(f.runtime, 6)
-  const refreshed = f.store.plan(parentB.planID)!
-  expect(refreshed.state).toBe("accepted")
-  const refreshedArtifact = refreshed.artifact
-  if (!refreshedArtifact) throw new Error("Expected refreshed prerequisite artifact")
-  const accepted = f.store.latestTransition<{ artifact: string; checks: CheckReceipt[] }>(
-    parentB.planID,
-    null,
-    "PLAN_ACCEPTED",
-  )!
-  expect(accepted.artifact).toBe(refreshedArtifact)
-  expect(accepted.checks.length).toBeGreaterThan(0)
-  expect(accepted.checks.every((check) => check.exitCode === 0 && !check.timedOut)).toBe(true)
-  const acceptanceID = transitionID("PLAN_ACCEPTED")
-  expect(acceptanceID).toBeGreaterThan(cancellationID)
-  includeArtifact(f, refreshedArtifact)
-  await f.runtime.command(
-    {
-      requestID: "fresh-integrated-parent-after-reacceptance",
-      planID: parentB.planID,
-      expectedVersion: refreshed.version,
-      action: "integrated",
-      artifact: refreshedArtifact,
-      targetBranch: "main",
-      reason: "Review the freshly verified combined source after cancellation recovery",
-    },
-    "owner",
-  )
-  expect(transitionID("INTEGRATION_RECORDED")).toBeGreaterThan(acceptanceID)
-  await f.runtime.tick()
-  const childAttempt = f.store.attempts(child.planID)[0]!
-  expect(childAttempt).toBeDefined()
-  const integration = f.store.latestTransition<{ head: string }>(
-    parentB.planID,
-    null,
-    "INTEGRATION_RECORDED",
-  )
-  if (!integration?.head) throw new Error("Expected refreshed prerequisite integration head")
-  expect(childAttempt.base_commit).toBe(integration.head)
-  expect(git(childAttempt.workspace, ["rev-parse", "HEAD"])).not.toBe(childAttempt.base_commit)
-  expect(readFileSync(join(childAttempt.workspace, "a.txt"), "utf8")).toBe("a")
-  expect(readFileSync(join(childAttempt.workspace, "b.txt"), "utf8")).toBe("b")
 })
 
 test("valid afterPlans integration does not bypass shared-checkout admission", async () => {
@@ -11721,7 +11329,7 @@ test.each(["new-input", "new-execution"] as const)(
     })
     f.host.session = async (id, options) => {
       const snapshot = await originalSession(id, options)
-      if (id === "owner" && !options?.messages && ++ownerReads === 2) {
+      if (id === "owner" && !options?.messages && ++ownerReads === 3) {
         signalOwnerRead()
         await ownerReadGate
       }
@@ -11785,7 +11393,7 @@ test("a changed current attempt during native review observation rejects the sta
   })
   f.host.session = async (id, options) => {
     const snapshot = await originalSession(id, options)
-    if (id === "owner" && !options?.messages && ++ownerReads === 2) {
+    if (id === "owner" && !options?.messages && ++ownerReads === 3) {
       signalOwnerRead()
       await ownerReadGate
     }
@@ -12215,7 +11823,6 @@ test("retained repair continuation preserves authority across process replacemen
       schema: "lazers-retained-repair-continuation/v1",
       operationID: repair.operationID,
       owner: "owner",
-      ownerEpoch: repair.ownerEpoch,
     },
     usageRetained: true,
   })
@@ -12341,7 +11948,6 @@ test("a pre-existing retained-repair fence failure recovers the exact cancelled 
       failedMessageID: failedReservation.message_id,
       interruptedInputID: repair.messageID,
       owner: "owner",
-      ownerEpoch: repair.ownerEpoch,
     },
     usageRetained: true,
   })
@@ -12377,7 +11983,7 @@ test("retained repair recovery preserves dirty progress that changes during nati
   const originalSession = state.f.host.session
   let ownerReads = 0
   state.f.host.session = async (sessionID, options) => {
-    if (sessionID === "owner" && ++ownerReads === 2) writeFileSync(path, "new useful progress\n")
+    if (sessionID === "owner" && ++ownerReads === 3) writeFileSync(path, "new useful progress\n")
     return originalSession(sessionID, options)
   }
   try {
@@ -12613,7 +12219,7 @@ test("registered retained-repair recovery rejects a native input that changes be
   const originalSession = state.f.host.session
   let ownerReads = 0
   state.f.host.session = async (sessionID, options) => {
-    if (sessionID === "owner" && ++ownerReads === 2) {
+    if (sessionID === "owner" && ++ownerReads === 3) {
       ownerRead.resolve()
       await releaseOwnerRead.promise
     }
@@ -13526,6 +13132,14 @@ async function prepareIdleArchitect(f: ReturnType<typeof fixture>, now: number, 
   const owner = f.sessions.get("owner")!
   owner.busy = false
   owner.idleAt = now - idleFor
+  // Renewal is judged only for plans awaiting an Architect; its tokens are unknown, so a cold cache is large.
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Awaiting Architect judgement' WHERE id=?",
+      )
+      .run(f.receipt.planID),
+  )
   await f.runtime.recordArchitectContinuity(owner.id, {
     decisions: ["Keep the existing approved implementation direction."],
     unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
@@ -14080,6 +13694,7 @@ test("reconciliation keeps separate current-owner pointers and receipts for mult
   })
   firstOwnerSession.busy = false
   firstOwnerSession.idleAt = now - 1_000
+  firstOwnerSession.tokens = null
   await f.runtime.tick()
   const secondRenewal = f.store.architectRenewalForPlan(f.receipt.planID)!
   expect(secondRenewal.state).toBe("committed")
@@ -14253,8 +13868,8 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
     now: () => now,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
-  expect(architectIdleWindowMs(undefined)).toBe(30 * 60 * 1000)
-  expect(DEFAULT_ARCHITECT_IDLE_WINDOW_MS).toBe(30 * 60 * 1000)
+  expect(architectIdleWindowMs(undefined)).toBe(5 * 60 * 1000)
+  expect(DEFAULT_ARCHITECT_CACHE_WINDOW_MS).toBe(5 * 60 * 1000)
   expect(() => architectIdleWindowMs(0)).toThrow("positive integer")
   const attempt = await prepareIdleArchitect(f, now, 0)
   const owner = f.sessions.get("owner")!
@@ -14263,14 +13878,14 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
     decisions: ["Keep the existing approved implementation direction."],
     unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
   })
-  owner.idleAt = now - DEFAULT_ARCHITECT_IDLE_WINDOW_MS + 1
+  owner.idleAt = now - DEFAULT_ARCHITECT_CACHE_WINDOW_MS + 1
 
   await f.runtime.tick()
   expect(f.store.architectRenewalsNeedingRecovery()).toHaveLength(0)
   expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(0)
   expect(owner.archived).toBe(false)
 
-  owner.idleAt = now - DEFAULT_ARCHITECT_IDLE_WINDOW_MS
+  owner.idleAt = now - DEFAULT_ARCHITECT_CACHE_WINDOW_MS
   const peer = new TaskRuntime(f.store, f.host, "project", undefined, {
     architectPromptHook: true,
     now: () => now,
@@ -14518,6 +14133,13 @@ test("one successor receives every live plan owned by the same Architect", async
   const attempts = [f.store.attempts(f.receipt.planID)[0]!, f.store.attempts(planB.planID)[0]!]
   expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
   f.sessions.get("owner")!.idleAt = now - 5_000
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Awaiting Architect judgement' WHERE owner='owner'",
+      )
+      .run(),
+  )
 
   await f.runtime.tick()
 
@@ -14984,6 +14606,7 @@ test("generated renewal notifications are authenticated and do not form A-to-B-t
   expect(f.inbox.get(middle.id)).toHaveLength(1)
 
   middle.idleAt = now - 1_000
+  middle.tokens = null
   await f.runtime.tick()
   const second = f.store.architectRenewalForSource(middle.id)!
 
@@ -15027,7 +14650,7 @@ test("a retired Architect predecessor cannot reclaim a transferred plan through 
   }
 
   await expect(f.runtime.command(reassign, "owner")).rejects.toThrow(
-    "retired Architect predecessor",
+    "A live Architect session of this project must command the plan",
   )
   expect(f.store.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
   await f.runtime.command(
@@ -16293,7 +15916,7 @@ test("archived owners leave unresolved plans with a durable wake even after thei
   }
 })
 
-test("cancelled prerequisites block transitive dependents once, survive restart and clear after replanning", async () => {
+test("a cancelled prerequisite drops its edge once, survives restart and leaves transitive dependents waiting on their own prerequisite", async () => {
   const f = fixture({ delayed: true, shared: true })
   const parentTask = f.createTask("parent")
   const parent = f.store.submit(f.inputFor([parentTask], { requestID: "cancel-root" }), "owner")
@@ -16326,59 +15949,38 @@ test("cancelled prerequisites block transitive dependents once, survive restart 
     "owner",
   )
   await drive(f.runtime, 3)
-  const reference = f.repository.referenceFor(parentTask.id)!
-  for (const id of [f.receipt.planID, leaf.planID]) {
-    expect(f.store.plan(id)).toMatchObject({
-      state: "blocked",
-      reason: `Prerequisite cancelled: ${reference}`,
-    })
-    expect(f.store.nodes(id).every((node) => node.state === "blocked")).toBe(true)
-    expect(f.store.attempts(id)).toHaveLength(0)
-  }
-  expect(f.notifications.some((notice) => notice.text.includes(reference) && notice.resume)).toBe(
-    true,
-  )
+  // The cancelled edge is dropped from the dependent, which is not held.
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.body).afterPlans).toEqual([])
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({ state: "running", reason: null })
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  // The transitive dependent still waits on its own, unfinished prerequisite.
+  expect(JSON.parse(f.store.plan(leaf.planID)!.body).afterPlans).toEqual([f.receipt.planID])
+  expect(f.store.plan(leaf.planID)!.state).toBe("running")
+  expect(f.store.attempts(leaf.planID)).toHaveLength(0)
   const records = () =>
     f.store.atomic(
       (db) =>
         db
           .query<{ n: number }, [string]>(
-            "SELECT count(*) AS n FROM runner_transitions WHERE plan_id=? AND event='DEPENDENCY_CANCELLATION'",
+            "SELECT count(*) AS n FROM runner_transitions WHERE plan_id=? AND event='DEPENDENCY_EDGE_DROPPED'",
           )
           .get(f.receipt.planID)!.n,
     )
-  const before = records()
+  expect(records()).toBe(1)
   await f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const reopened = new TaskRuntime(f.store, f.host, "project")
   try {
     await drive(reopened, 3)
-    expect(records()).toBe(before)
-    await reopened.command(
-      {
-        requestID: "replace-root",
-        action: "schedule",
-        planID: f.receipt.planID,
-        expectedVersion: f.store.plan(f.receipt.planID)!.version,
-        afterPlans: [],
-        reason: "Feature scope no longer needs cancelled producer",
-      },
-      "owner",
-    )
-    await drive(reopened, 3)
-    expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
-    expect(f.store.plan(f.receipt.planID)!.reason).toBeNull()
-    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
-    expect(f.store.plan(leaf.planID)!.state).toBe("running")
-    expect(f.store.attempts(leaf.planID)).toHaveLength(0)
+    expect(records()).toBe(1)
     expect(f.store.plan(parent.planID)!.state).toBe("cancelled")
-    expect(JSON.parse(f.store.plan(leaf.planID)!.body).afterPlans).toEqual([f.receipt.planID])
+    expect(f.store.attempts(leaf.planID)).toHaveLength(0)
   } finally {
     await reopened.stop()
   }
 })
 
-test("cancelled same-plan prerequisites block their descendants while independent work dispatches", async () => {
+test("cancelled same-plan prerequisites no longer hold their descendants", async () => {
   const original = fixture({
     startOnly: true,
     delayed: true,
@@ -16404,13 +16006,16 @@ test("cancelled same-plan prerequisites block their descendants while independen
   await f.runtime.tick()
   expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual([
     "cancelled",
-    "blocked",
+    "running",
     "running",
   ])
   expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
-  expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.task_id)).toEqual([
-    f.tasks[2]!.id,
-  ])
+  expect(
+    f.store
+      .attempts(f.receipt.planID)
+      .map((attempt) => attempt.task_id)
+      .sort(),
+  ).toEqual([f.tasks[1]!.id, f.tasks[2]!.id].sort())
 })
 
 test("dispatch pause lets active work finish and unpause admits the next task", async () => {
@@ -16531,11 +16136,10 @@ test("pause conditions cannot silently wait on cancellation or create a coordina
     "owner",
   )
   await drive(f.runtime, 3)
-  expect(f.store.plan(f.receipt.planID)).toMatchObject({
-    state: "blocked",
-    reason: `Prerequisite cancelled: ${f.repository.referenceFor(prerequisiteTask.id)}`,
-  })
-  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  // The cancelled prerequisite is dropped from the pause condition and the plan stays running.
+  expect(f.store.dispatchPause(f.receipt.planID)?.untilPlans ?? []).not.toContain(
+    prerequisite.planID,
+  )
   await f.runtime.command(
     {
       requestID: "clear-pause",
@@ -16548,29 +16152,6 @@ test("pause conditions cannot silently wait on cancellation or create a coordina
   await drive(f.runtime, 2)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
-})
-
-test("cancellation propagation stops at an already integrated dependency", () => {
-  const f = fixture({ shared: true })
-  const rootTask = f.createTask("root")
-  const root = f.store.submit(f.inputFor([rootTask], { requestID: "old-root" }), "owner")
-  const middleTask = f.createTask("middle")
-  const middle = f.store.submit(
-    { ...f.inputFor([middleTask], { requestID: "integrated-middle" }), afterPlans: [root.planID] },
-    "owner",
-  )
-  f.store.revisePlan(
-    f.store.plan(f.receipt.planID)!,
-    PlanInput.parse({ ...f.input, afterPlans: [middle.planID] }),
-    "TEST_SCHEDULE",
-    {},
-  )
-  // Exercise historical lifecycle facts; this does not fabricate runtime acceptance.
-  f.store.atomic((db) => {
-    db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(root.planID)
-    db.query("UPDATE runner_plans SET state='integrated' WHERE id=?").run(middle.planID)
-  })
-  expect(f.store.cancelledDependencyPlans(f.receipt.planID)).toEqual([])
 })
 
 test("pause does not invalidate a verification that is already in flight", async () => {
@@ -16727,7 +16308,6 @@ test("an authorized same-worker resume retires its superseded held verification 
       planRevision: plan.revision,
       planVersion: plan.version,
       owner: "owner",
-      ownerEpoch: f.store.planControlEpoch(planID),
       taskID: attempt.task_id,
       taskRevision: 1,
       attemptID: attempt.id,
@@ -16895,7 +16475,9 @@ test(
     await expect(
       f.runtime.command({ ...extend, timeoutMs: 1_000, inactivityTimeoutMs: 1_000 }, "owner"),
     ).rejects.toThrow("strictly larger")
-    await expect(f.runtime.command(extend, "foreign-owner")).rejects.toThrow("Only the plan owner")
+    await expect(f.runtime.command(extend, "foreign-owner")).rejects.toThrow(
+      "A live Architect session of this project must command the plan",
+    )
     const activeProbe = deferred<void>()
     const activeIdentity = "deadline-extension-active-check-probe"
     const activeActivity = startVerificationActivity({
@@ -17285,6 +16867,11 @@ test("a verification effect with no receipt is superseded and its check re-runs 
   const f = await retainedSourceFixture()
   const planID = f.receipt.planID
   expect(f.store.plan(planID)!.state).toBe("blocked")
+  // Drop the durable interrupted receipt: with none recorded, the check is re-runnable.
+  rmSync(join(f.root, "retained-check.json"), { force: true })
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_effects SET receipt=NULL WHERE id=?").run(f.effectID),
+  )
   const result = (await f.runtime.command(
     {
       requestID: "reconcile-uncertain-verification",
@@ -17302,6 +16889,140 @@ test("a verification effect with no receipt is superseded and its check re-runs 
   expect(original.state).toBe("failed")
   expect(JSON.parse(original.receipt!)).toMatchObject({ superseded: true })
   expect(
-    f.store.activity(planID, original.task_id).some((event) => event.event === "EFFECT_SUPERSEDED"),
+    f.store
+      .activity(planID, original.task_id!)
+      .some((event) => event.event === "EFFECT_SUPERSEDED"),
   ).toBe(true)
+})
+
+function withoutDraft<T extends { draft?: unknown }>(input: T): Omit<T, "draft"> {
+  const { draft: _draft, ...rest } = input
+  return rest
+}
+
+test("submitting a plan admits it; only an explicit draft waits for run", async () => {
+  const f = fixture({ startOnly: true })
+  const admitted = (await f.runtime.submitPlan(
+    withoutDraft(f.inputFor(f.tasks.slice(0, 1), { requestID: "submit-admit" })),
+    "owner",
+  )) as { planID: string }
+  expect(f.store.plan(admitted.planID)!.state).toBe("running")
+  expect(f.store.latestTransition(admitted.planID, null, "ADMITTED")).toBeDefined()
+
+  const drafted = (await f.runtime.submitPlan(
+    { ...f.inputFor(f.tasks.slice(1), { requestID: "submit-draft" }), draft: true },
+    "owner",
+  )) as { planID: string }
+  await f.runtime.tick()
+  expect(f.store.plan(drafted.planID)!.state).toBe("draft")
+  await f.runtime.command(
+    {
+      requestID: "run-explicit-draft",
+      planID: drafted.planID,
+      expectedVersion: f.store.plan(drafted.planID)!.version,
+      action: "run",
+    },
+    "owner",
+  )
+  expect(f.store.plan(drafted.planID)!.state).toBe("running")
+})
+
+test("a draft that was never explicitly drafted is admitted by the scheduler", async () => {
+  const f = fixture({ startOnly: true })
+  const { planID } = f.store.submit(
+    withoutDraft(f.inputFor(f.tasks.slice(0, 1), { requestID: "legacy-draft" })),
+    "owner",
+  )
+  expect(f.store.plan(planID)!.state).toBe("draft")
+  await drive(f.runtime, 2)
+  expect(f.store.plan(planID)!.state).not.toBe("draft")
+})
+
+test("any live Architect of the project may command a plan and is adopted as owner", async () => {
+  const f = fixture()
+  const planID = f.receipt.planID
+  f.sessions.set("successor", { ...structuredClone(f.sessions.get("owner")!), id: "successor" })
+  await f.runtime.command(
+    { requestID: "run-by-successor", planID, expectedVersion: 1, action: "run" },
+    "successor",
+  )
+  const plan = f.store.plan(planID)!
+  expect(plan.owner).toBe("successor")
+  expect(plan.state).toBe("running")
+  expect(f.store.latestTransition(planID, null, "OWNER_ADOPTED")).toBeDefined()
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "pause-by-stranger",
+        planID,
+        expectedVersion: plan.version,
+        action: "pause",
+        reason: "A session that is not an Architect cannot command",
+      },
+      "not-a-session",
+    ),
+  ).rejects.toThrow("live Architect session")
+})
+
+test("a missing owner is replaced by a fresh Architect and the routing reason is recorded", async () => {
+  const f = fixture()
+  const planID = f.receipt.planID
+  await runPlan(f)
+  f.sessions.get("owner")!.archived = true
+  await drive(f.runtime, 2)
+  const routed = f.store.latestTransition<{ reason: string; action: string }>(
+    planID,
+    null,
+    "ARCHITECT_ROUTED",
+  )
+  expect(routed).toMatchObject({ reason: "missing", action: "fresh" })
+  expect(f.store.plan(planID)!.owner).not.toBe("owner")
+})
+
+test("a cancelled prerequisite plan drops its edge, notifies the Architect and does not hold dependents", async () => {
+  const f = fixture({ startOnly: true, independent: true })
+  const first = f.store.submit(
+    f.inputFor(f.tasks.slice(0, 1), { requestID: "prerequisite" }),
+    "owner",
+  )
+  const second = f.store.submit(
+    { ...f.inputFor(f.tasks.slice(1), { requestID: "dependent" }), afterPlans: [first.planID] },
+    "owner",
+  )
+  await runPlan(f, first.planID, "run-prerequisite")
+  await f.runtime.command(
+    {
+      requestID: "cancel-prerequisite",
+      planID: first.planID,
+      expectedVersion: f.store.plan(first.planID)!.version,
+      action: "cancel",
+      reason: "Cancel the prerequisite",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 6)
+  expect(f.store.plan(first.planID)!.state).toBe("cancelled")
+  await runPlan(f, second.planID, "run-dependent")
+  await drive(f.runtime, 6)
+  const dependent = f.store.plan(second.planID)!
+  expect(JSON.parse(dependent.body).afterPlans).toEqual([])
+  expect(dependent.reason ?? "").not.toContain("Prerequisite cancelled")
+  const dropped = f.store.latestTransition<{ planPrerequisites: string[] }>(
+    second.planID,
+    null,
+    "DEPENDENCY_EDGE_DROPPED",
+  )
+  expect(dropped?.planPrerequisites).toEqual([first.planID])
+})
+
+test("Start from a non-Architect session admits the plan without an Architect command", async () => {
+  const f = fixture({ startOnly: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  f.sessions.get("owner")!.agent = "build"
+  const result = await f.runtime.startTask({
+    taskID: f.tasks[0]!.id,
+    revision: 1,
+    sessionID: "owner",
+  })
+  expect(result.status).toBe("started")
+  expect(f.store.plan(result.planID)!.state).toBe("running")
 })

@@ -537,181 +537,6 @@ test("retained repair generations remain task-bound and the latest plan operatio
   })
 })
 
-test("plan control epochs change on owner/cancellation controls but ignore task activity", () => {
-  const f = fixture("plan-control-epoch-store")
-  const plan = f.store.submit(f.input, "owner")
-  const taskID = f.input.nodes[0]!.taskID
-  const initial = f.store.planControlEpoch(plan.planID)
-
-  f.store.record(plan.planID, taskID, "RETAINED_REPAIR_REQUESTED", { operationID: "repair" })
-  expect(f.store.planControlEpoch(plan.planID)).toBe(initial)
-
-  f.store.record(plan.planID, null, "OWNER_REASSIGNED", { from: "owner", to: "other" })
-  const away = f.store.planControlEpoch(plan.planID)
-  expect(away).toBeGreaterThan(initial)
-  f.store.record(plan.planID, null, "OWNER_REASSIGNED", { from: "other", to: "owner" })
-  const returned = f.store.planControlEpoch(plan.planID)
-  expect(returned).toBeGreaterThan(away)
-
-  f.store.record(plan.planID, null, "CANCEL_REQUESTED", { caller: "owner" })
-  expect(f.store.planControlEpoch(plan.planID)).toBeGreaterThan(returned)
-})
-
-test("owner-transfer evidence is exact, plan-scoped and time-bounded", () => {
-  const f = fixture("plan-owner-transfer-evidence")
-  const plan = f.store.submit(f.input, "owner")
-  const sourceTask = f.store.repository.get(f.input.nodes[0]!.taskID)!
-  const otherTask = f.store.repository.insert({
-    ...structuredClone(sourceTask),
-    id: crypto.randomUUID(),
-  })
-  const otherPlan = f.store.submit(
-    {
-      ...f.input,
-      requestID: "other-owner-transfer-plan",
-      nodes: [{ taskID: otherTask.id, revision: 1 }],
-      integrationOrder: [otherTask.id],
-    },
-    "owner",
-  )
-  const taskID = f.input.nodes[0]!.taskID
-  const predecessor = f.store.plan(plan.planID)!.owner
-  const successor = "successor"
-
-  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
-    from: "unrelated-predecessor",
-    to: successor,
-  })
-  f.store.record(plan.planID, taskID, "OWNER_REASSIGNED", {
-    from: predecessor,
-    to: successor,
-  })
-  f.store.record(otherPlan.planID, null, "OWNER_REASSIGNED", {
-    from: predecessor,
-    to: successor,
-  })
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, predecessor, successor, 0)).toBe(false)
-
-  f.store.record(plan.planID, null, "OWNER_CONTINUED", {
-    from: predecessor,
-    to: successor,
-    renewalID: "renewal-evidence",
-  })
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, predecessor, successor, 0)).toBe(true)
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, predecessor, successor, Date.now() + 1000)).toBe(
-    false,
-  )
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, successor, predecessor, 0)).toBe(false)
-})
-
-test("owner-transfer evidence follows an ordered same-plan continuation and reassignment path", () => {
-  const f = fixture("ordered-plan-owner-transfer-evidence")
-  const plan = f.store.submit(f.input, "owner")
-  const originalOwner = "original-owner"
-  const renewedOwner = "renewed-owner"
-  const successor = "current-owner"
-
-  // A later edge cannot prove a path before its predecessor has transferred.
-  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
-    from: renewedOwner,
-    to: successor,
-  })
-  f.store.record(plan.planID, null, "OWNER_CONTINUED", {
-    from: originalOwner,
-    to: renewedOwner,
-  })
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, originalOwner, successor, 0)).toBe(false)
-
-  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
-    from: renewedOwner,
-    to: successor,
-  })
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, originalOwner, successor, 0)).toBe(true)
-  expect(f.store.hasPlanOwnerTransfer(plan.planID, successor, originalOwner, 0)).toBe(false)
-})
-
-function seedSourceJournal(
-  store: RunnerStore,
-  planID: string,
-  inputCount: number,
-  resultCount: number,
-) {
-  const renewalID = crypto.randomUUID()
-  const mappedPlanID = crypto.randomUUID()
-  const sourceSessionID = "ses_retained_architect_predecessor"
-  const successorSessionID = "ses_current_architect_owner"
-  store.atomic((db) => {
-    db.query(
-      `INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body,model,reason,artifact)
-       SELECT ?,project_directory,owner,revision,version,state,body,model,reason,artifact
-       FROM runner_plans WHERE id=?`,
-    ).run(mappedPlanID, planID)
-    db.query(
-      `INSERT INTO runner_architect_renewals(
-         id,anchor_plan_id,previous_session_id,successor_session_id,directory,model,idle_at,
-         generation,state,handoff_message_id,started_at
-       ) VALUES(?,?,?,?,?,?,?,?,'committed',?,?)`,
-    ).run(
-      renewalID,
-      planID,
-      sourceSessionID,
-      successorSessionID,
-      "/project",
-      "{}",
-      100,
-      2,
-      "msg_handoff",
-      200,
-    )
-    const mapping = db.query(
-      "INSERT INTO runner_architect_renewal_plans(renewal_id,plan_id,prior_continuation,transferred) VALUES(?,?,NULL,1)",
-    )
-    mapping.run(renewalID, planID)
-    mapping.run(renewalID, mappedPlanID)
-    db.query(
-      `INSERT INTO runner_architect_sources(
-         session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
-       ) VALUES(?,?,?,?,?,?,'active',?)`,
-    ).run(sourceSessionID, renewalID, planID, "native-history-cursor", 9, 12, 300)
-
-    const inputInsert = db.query(
-      `INSERT INTO runner_architect_inputs(
-         session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
-         metadata_json,last_seen_sweep,referenced_revision,updated_at
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-    )
-    for (let index = 0; index < inputCount; index++) {
-      const id = `msg_input_${String(index).padStart(4, "0")}`
-      const disposition = ["pending", "steering", "delivered", "unknown"][index % 4]!
-      inputInsert.run(
-        sourceSessionID,
-        id,
-        400 + index,
-        renewalID,
-        "user",
-        disposition === "steering" ? "steer" : null,
-        disposition,
-        JSON.stringify({ privateBodyCanary: "ORIGINAL_MESSAGE_BODY" }),
-        9,
-        1,
-        400 + index,
-      )
-    }
-
-    const resultInsert = db.query(
-      `INSERT INTO runner_architect_source_results(
-         session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
-         tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
-      ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,1,?)`,
-    )
-    for (let index = 0; index < resultCount; index++) {
-      const id = `msg_result_${String(index).padStart(4, "0")}`
-      resultInsert.run(sourceSessionID, renewalID, id, `fingerprint-${index}`, 800 + index)
-    }
-  })
-  return { renewalID, mappedPlanID, sourceSessionID, successorSessionID }
-}
-
 test("unchanged native source-change observations do not append receipts or transitions", () => {
   const f = fixture("architect-source-observation-idempotence")
   const { planID } = f.store.submit(f.input, "owner")
@@ -1971,3 +1796,85 @@ test("runner XState transitions survive a reopened database connection", () => {
   ).toThrow("Invalid plan transition")
   expect(f.store.plan(receipt.planID)?.state).toBe("running")
 })
+
+function seedSourceJournal(
+  store: RunnerStore,
+  planID: string,
+  inputCount: number,
+  resultCount: number,
+) {
+  const renewalID = crypto.randomUUID()
+  const mappedPlanID = crypto.randomUUID()
+  const sourceSessionID = "ses_retained_architect_predecessor"
+  const successorSessionID = "ses_current_architect_owner"
+  store.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body,model,reason,artifact)
+       SELECT ?,project_directory,owner,revision,version,state,body,model,reason,artifact
+       FROM runner_plans WHERE id=?`,
+    ).run(mappedPlanID, planID)
+    db.query(
+      `INSERT INTO runner_architect_renewals(
+         id,anchor_plan_id,previous_session_id,successor_session_id,directory,model,idle_at,
+         generation,state,handoff_message_id,started_at
+       ) VALUES(?,?,?,?,?,?,?,?,'committed',?,?)`,
+    ).run(
+      renewalID,
+      planID,
+      sourceSessionID,
+      successorSessionID,
+      "/project",
+      "{}",
+      100,
+      2,
+      "msg_handoff",
+      200,
+    )
+    const mapping = db.query(
+      "INSERT INTO runner_architect_renewal_plans(renewal_id,plan_id,prior_continuation,transferred) VALUES(?,?,NULL,1)",
+    )
+    mapping.run(renewalID, planID)
+    mapping.run(renewalID, mappedPlanID)
+    db.query(
+      `INSERT INTO runner_architect_sources(
+         session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
+       ) VALUES(?,?,?,?,?,?,'active',?)`,
+    ).run(sourceSessionID, renewalID, planID, "native-history-cursor", 9, 12, 300)
+
+    const inputInsert = db.query(
+      `INSERT INTO runner_architect_inputs(
+         session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
+         metadata_json,last_seen_sweep,referenced_revision,updated_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (let index = 0; index < inputCount; index++) {
+      const id = `msg_input_${String(index).padStart(4, "0")}`
+      const disposition = ["pending", "steering", "delivered", "unknown"][index % 4]!
+      inputInsert.run(
+        sourceSessionID,
+        id,
+        400 + index,
+        renewalID,
+        "user",
+        disposition === "steering" ? "steer" : null,
+        disposition,
+        JSON.stringify({ privateBodyCanary: "ORIGINAL_MESSAGE_BODY" }),
+        9,
+        1,
+        400 + index,
+      )
+    }
+
+    const resultInsert = db.query(
+      `INSERT INTO runner_architect_source_results(
+         session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
+         tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
+      ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,1,?)`,
+    )
+    for (let index = 0; index < resultCount; index++) {
+      const id = `msg_result_${String(index).padStart(4, "0")}`
+      resultInsert.run(sourceSessionID, renewalID, id, `fingerprint-${index}`, 800 + index)
+    }
+  })
+  return { renewalID, mappedPlanID, sourceSessionID, successorSessionID }
+}

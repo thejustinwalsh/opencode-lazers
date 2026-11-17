@@ -2349,50 +2349,6 @@ test("registered verify-retained accepts a reassigned owner after reopen without
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
 }, 60_000)
 
-test.each(["missing", "contradictory"] as const)(
-  "sealed source verification rejects %s owner continuity",
-  async (continuity) => {
-    const f = await sourceQuarantinedVerifyingFixture()
-    const changed = f.store.atomic(
-      (db) =>
-        db
-          .query(
-            "UPDATE runner_plans SET owner='owner2',version=version+1 WHERE id=? AND owner='owner'",
-          )
-          .run(f.planID).changes,
-    )
-    expect(changed).toBe(1)
-    if (continuity === "contradictory") {
-      // Simulate conflicting orphaned history without changing the current plan owner.
-      f.store.record(f.planID, null, "OWNER_REASSIGNED", { from: "owner", to: "unrelated" })
-      f.store.record(f.planID, null, "OWNER_REASSIGNED", { from: "owner", to: "owner2" })
-    }
-    const control = await registeredPlanCommand(f.runtime, "owner2")
-    const request = retainedVerifyCommand(f, `deny-${continuity}-source-owner-continuity`)
-    await expect(control.execute(request)).rejects.toThrow(
-      "exact sealed source-quarantined verifying candidate",
-    )
-    expect(
-      f.store.atomic(
-        (db) =>
-          db
-            .query<{ n: number }, [string]>(
-              "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
-            )
-            .get(f.planID)?.n,
-      ),
-    ).toBe(0)
-    expect(f.store.plan(f.planID)?.owner).toBe("owner2")
-    expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
-    expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
-      f.originalAttempt,
-    )
-    expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(f.quarantine)
-    expect(f.prompts).toHaveLength(1)
-    expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
-  },
-)
-
 test("stopped-plan verify-retained binds and accepts a sealed quarantined candidate only in isolation", async () => {
   const f = await sourceQuarantinedVerifyingFixture({})
   const reason = "Operator retained the sealed source hold for explicit candidate verification"
@@ -2520,8 +2476,8 @@ test("the current owner continues an exact cancelled-held retained task timeout 
     }),
   ).rejects.toThrow("exact candidate workspace")
   await expect(
-    f.runtime.command({ ...continuation, requestID: "reject-foreign-owner" }, "owner2"),
-  ).rejects.toThrow("Only the plan owner")
+    f.runtime.command({ ...continuation, requestID: "reject-foreign-caller" }, "foreign-session"),
+  ).rejects.toThrow("A live Architect session of this project must command the plan")
   await expect(
     f.control.execute({
       ...continuation,
@@ -2803,7 +2759,7 @@ test("reopened pre-LZ210 timeout authorization accepts its historical resource r
   expect(readFileSync(startsPath, "utf8")).toBe("retry\n")
 }, 180_000)
 
-test.each(["owner", "receipt", "resources"] as const)(
+test.each(["receipt", "resources"] as const)(
   "reopened pre-LZ210 timeout authorization rejects a tampered %s binding",
   async (binding) => {
     const f = await sourceQuarantinedVerifyingFixture({
@@ -2842,7 +2798,6 @@ test.each(["owner", "receipt", "resources"] as const)(
     )
     await f.control.execute(continuation)
     const tampered = legacyTimeoutAuthorization(f, operationID, "task", failedCheck.checkID)
-    if (binding === "owner") tampered.owner = "different-owner"
     if (binding === "receipt") {
       const receipt = tampered.priorReceipt as Record<string, unknown>
       tampered.priorReceipt = { ...receipt, exitCode: 0 }
@@ -5264,7 +5219,7 @@ test("stale, wrong-candidate, wrong-attempt and foreign-owner requests launch no
   ).rejects.toThrow("latest original attempt")
   await expect(
     f.runtime.command({ ...base, requestID: "foreign-caller" }, "foreign-session"),
-  ).rejects.toThrow("Only the plan owner")
+  ).rejects.toThrow("A live Architect session of this project must command the plan")
   expect(f.worktreeCreations).toHaveLength(worktreeCount)
   expect(
     f.store.atomic(

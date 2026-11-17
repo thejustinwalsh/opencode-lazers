@@ -10,6 +10,7 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
+import { retireHumanEvidenceGate } from "./retire-gates.ts"
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
@@ -1237,6 +1238,8 @@ export class RunnerStore {
         installChangeIdentity(db)
         ensureObservationRevision(db)
         ensureArchitectSourceJournalRevisions(db)
+        // Generation 6: the human-evidence gate is retired; move its blocked plans on.
+        retireHumanEvidenceGate(db)
       },
     )
     installPrioritySchema(repository)
@@ -1320,48 +1323,6 @@ export class RunnerStore {
         pause,
       })
     })
-  }
-  cancelledDependencyPlans(planID: string) {
-    return this.read((db) =>
-      db
-        .query<
-          { planID: string; taskID: string; reference: string; state: string },
-          [string, string]
-        >(
-          `WITH RECURSIVE edges(owner,dependency) AS (
-        SELECT p.id,edge.value FROM runner_plans p,json_each(p.body,'$.afterPlans') edge
-          WHERE p.project_directory=?2 AND p.state NOT IN ('cleaning','cleanup-blocked','integrated')
-        UNION SELECT p.id,edge.value FROM runner_dispatch_controls c
-          JOIN runner_plans p ON p.id=c.plan_id,json_each(c.until_plans) edge
-          WHERE p.project_directory=?2 AND c.state='paused'
-      ), ancestors(id) AS (
-        SELECT dependency FROM edges WHERE owner=?1
-        UNION SELECT e.dependency FROM ancestors a JOIN edges e ON e.owner=a.id
-      ) SELECT p.id AS planID,n.task_id AS taskID,r.reference,p.state
-        FROM ancestors a JOIN runner_plans p ON p.id=a.id JOIN runner_nodes n ON n.plan_id=p.id
-        JOIN task_references r ON r.project_directory=p.project_directory AND r.task_id=n.task_id
-        WHERE p.project_directory=?2 AND p.state IN ('cancelling','cancelled') ORDER BY p.id,n.ordinal
-      `,
-        )
-        .all(planID, this.repository.projectDirectory),
-    )
-  }
-  cancelledDependencyNodes(planID: string) {
-    return this.read((db) =>
-      db
-        .query<{ taskID: string; rootID: string; reference: string }, [string, string, string]>(
-          `
-      WITH RECURSIVE affected(root,task) AS (
-        SELECT d.prerequisite,d.successor FROM runner_dependencies d JOIN runner_nodes n
-          ON n.plan_id=d.plan_id AND n.task_id=d.prerequisite WHERE d.plan_id=? AND n.state='cancelled'
-        UNION SELECT a.root,d.successor FROM affected a JOIN runner_dependencies d ON d.prerequisite=a.task WHERE d.plan_id=?
-      ) SELECT a.task AS taskID,a.root AS rootID,r.reference FROM affected a
-      JOIN task_references r ON r.task_id=a.root AND r.project_directory=(SELECT project_directory FROM runner_plans WHERE id=?)
-      ORDER BY a.task,a.root
-    `,
-        )
-        .all(planID, planID, planID),
-    )
   }
   plans() {
     return this.read((db) =>
@@ -3424,6 +3385,22 @@ export class RunnerStore {
       this.record(planID, null, "OWNER_CONTINUED", { from: expectedOwner, to: nextOwner })
     return changed
   }
+  /** Advisory ownership: a live Architect that commands the plan becomes its owner. The plan version is unchanged. */
+  adoptPlanOwner(planID: string, expectedOwner: string, nextOwner: string) {
+    const changed = this.atomic(
+      (db) =>
+        db
+          .query("UPDATE runner_plans SET owner=? WHERE id=? AND project_directory=? AND owner=?")
+          .run(nextOwner, planID, this.repository.projectDirectory, expectedOwner).changes === 1,
+    )
+    if (changed)
+      this.record(planID, null, "OWNER_ADOPTED", {
+        from: expectedOwner,
+        to: nextOwner,
+        reason: "command-from-live-architect",
+      })
+    return changed
+  }
   retargetOutbox(input: {
     id: string
     expectedState: string
@@ -3793,49 +3770,6 @@ export class RunnerStore {
             .get(planID, taskID),
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
-  }
-  /** Confirms an ordered plan-level owner-transfer path after the retained attempt began. */
-  hasPlanOwnerTransfer(planID: string, previousOwner: string, currentOwner: string, after: number) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
-    if (!previousOwner || !currentOwner || previousOwner === currentOwner) return false
-    return this.read(
-      (db) =>
-        db
-          .query<{ payload: string }, [string, number]>(
-            `SELECT payload FROM runner_transitions
-           WHERE plan_id=? AND task_id IS NULL AND created_at>=?
-             AND event IN ('OWNER_REASSIGNED','OWNER_CONTINUED')
-           ORDER BY id`,
-          )
-          .all(planID, after)
-          .reduce((owner, transition) => {
-            try {
-              const payload = JSON.parse(transition.payload) as {
-                from?: unknown
-                to?: unknown
-              }
-              return payload.from === owner && typeof payload.to === "string" && payload.to
-                ? payload.to
-                : owner
-            } catch {
-              return owner
-            }
-          }, previousOwner) === currentOwner,
-    )
-  }
-  /** High-water mark for plan-level owner/cancellation changes, excluding task activity. */
-  planControlEpoch(planID: string): number {
-    return this.read(
-      (db) =>
-        db
-          .query<{ epoch: number }, [string]>(
-            `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
-             WHERE plan_id=? AND task_id IS NULL AND event IN (
-               'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
-             )`,
-          )
-          .get(planID)!.epoch,
-    )
   }
   move(planID: string, taskID: string, event: string, reason: string | null = null) {
     return this.atomic((db) => {

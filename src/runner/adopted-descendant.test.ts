@@ -1138,7 +1138,9 @@ test("revoking a mistaken supplemental scope restores adoption without changing 
     scopeRemovals: ["parallel-ui.txt"],
     reason: "Restore the task's actual authority",
   }
-  await expect(f.runtime.command(removal, "foreign-owner")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(removal, "foreign-owner")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   await expect(
     f.runtime.command({ ...removal, expectedVersion: removal.expectedVersion - 1 }, "owner"),
   ).rejects.toThrow("Stale plan version")
@@ -1355,7 +1357,7 @@ test("changed verification command input invalidates completed adoption receipts
   expect(f.events.filter((event) => /^(create|prompt):/.test(event))).toHaveLength(2)
 }, 15_000)
 
-test("owner-session loss after verification holds instead of publishing acceptance", async () => {
+test("owner-session loss after verification is replaced by a fresh Architect and acceptance still publishes", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -1371,12 +1373,25 @@ test("owner-session loss after verification holds instead of publishing acceptan
     db.query("UPDATE runner_outbox SET state='consumed' WHERE plan_id=?").run(f.planID),
   )
   f.sessions.get("owner")!.archived = true
+  f.host.createArchitect = async (input) => {
+    f.sessions.set(input.id, {
+      ...structuredClone(f.sessions.get("owner")!),
+      id: input.id,
+      archived: false,
+      metadata: {
+        lazersContinuation: true,
+        lazersPlanID: input.planID,
+        ...(input.planIDs ? { lazersPlanIDs: input.planIDs } : {}),
+        lazersSourceSessionID: input.sourceSessionID,
+      },
+    })
+  }
   writeFileSync(f.graphRelease, "go\n")
   await f.runtime.tick()
-  await waitForAdoptionState(f, requested.adoptionID, "held")
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  // Depends on the adoption fix: owner replacement must not bump the plan version.
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
+  expect(f.store.plan(f.planID)?.owner).not.toBe("owner")
+  expect(f.sessions.get(f.store.plan(f.planID)!.owner)?.agent).toBe("architect")
 })
 
 test("candidate index changes during combined verification invalidate publication", async () => {
@@ -1436,7 +1451,9 @@ test("dirty candidates, wrong bindings, foreign owners, and worker controls fail
   await expect(f.runtime.command({ ...good, artifact: f.base }, "owner")).rejects.toThrow(
     "exact latest attempt and task result",
   )
-  await expect(f.runtime.command(good, "foreign-owner")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(good, "foreign-owner")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   const worker = f.sessions.get(attempt.session_id)!
   const workerMetadata = worker.metadata
   worker.metadata = { ...worker.metadata, lazersAttemptID: "replaced-attempt" }

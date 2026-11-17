@@ -98,6 +98,8 @@ export type HostSession = {
   /** Reported idle-hook background work only; never a complete quiescence inventory. */
   background?: HostBackgroundObservation
   idleAt?: number
+  /** Last model activity: assistant completion or request start. Preferred over `idleAt` for cache warmth. */
+  activityAt?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   model?: ModelPolicy
   usage?: {

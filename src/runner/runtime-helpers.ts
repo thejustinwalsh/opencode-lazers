@@ -37,7 +37,6 @@ export type CleanupRecoveryAuthorization = {
   sessionID: string
   assignedMessageID: string
   owner: string
-  ownerEpoch: number
   targetBranch: string
   requestID: string
   reason: string

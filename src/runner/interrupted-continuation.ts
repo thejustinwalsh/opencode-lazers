@@ -46,7 +46,6 @@ export function resolveRetainedRepairInputLineage(input: {
   originalMessageID: string
   assignedMessageID: string
   owner: string
-  ownerEpoch: number
   allowLegacyReceipt: boolean
   transitions: readonly RetainedRepairContinuationTransition[]
 }): RetainedRepairInputLineage {
@@ -109,8 +108,6 @@ export function resolveRetainedRepairInputLineage(input: {
         recovery.failedMessageID !== currentMessageID ||
         recovery.interruptedInputID !== receipt.terminalInputID ||
         recovery.interruptedInputID !== receipt.interruptedInputID ||
-        recovery.owner !== input.owner ||
-        recovery.ownerEpoch !== input.ownerEpoch ||
         !Number.isSafeInteger(recovery.blockedTransitionID) ||
         !Number.isSafeInteger(recovery.cancelledTransitionID) ||
         !Number.isSafeInteger(recovery.failedResumeTransitionID) ||
@@ -138,9 +135,7 @@ export function resolveRetainedRepairInputLineage(input: {
       if (
         marker
           ? marker.schema !== "lazers-retained-repair-continuation/v1" ||
-            marker.operationID !== input.operationID ||
-            marker.owner !== input.owner ||
-            marker.ownerEpoch !== input.ownerEpoch
+            marker.operationID !== input.operationID
           : !input.allowLegacyReceipt
       )
         return {

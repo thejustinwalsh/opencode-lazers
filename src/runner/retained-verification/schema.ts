@@ -29,7 +29,8 @@ export const RetainedVerificationSchema = z.strictObject({
   planRevision: z.int().positive(),
   planVersion: z.int().positive(),
   owner: z.string().min(1).max(200),
-  ownerEpoch: z.int().nonnegative(),
+  /** Retired: older operations carry it; it no longer binds anything. */
+  ownerEpoch: z.int().nonnegative().optional(),
   taskID: z.uuid(),
   taskRevision: z.int().positive(),
   attemptID: z.uuid(),

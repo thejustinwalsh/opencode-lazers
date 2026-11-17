@@ -244,10 +244,8 @@ export class RetainedVerificationExecution {
       return Boolean(
         plan &&
         planIsCurrent &&
-        plan.owner === current.owner &&
         plan.revision === current.planRevision &&
         planVersionCurrent &&
-        this.runtime.store.planControlEpoch(plan.id) === current.ownerEpoch &&
         task &&
         task.revision === current.taskRevision &&
         sameProject(task.provenance.projectID, this.runtime.projectID) &&
@@ -877,7 +875,6 @@ export class RetainedVerificationExecution {
             continuationKind?: unknown
             continuationID?: unknown
             owner?: unknown
-            ownerEpoch?: unknown
             planRevision?: unknown
             planVersion?: unknown
             operationID?: unknown
@@ -1081,10 +1078,9 @@ export class RetainedVerificationExecution {
           !previousBoundReceipt ||
           !checkResourcesSettled(previousBoundReceipt) ||
           previousBoundReceipt.environmentIdentity !== existing.environmentIdentity ||
-          authorization?.owner !== initial.owner ||
-          authorization.ownerEpoch !== initial.ownerEpoch ||
+          !authorization ||
           authorization.planRevision !== initial.planRevision ||
-          authorization?.operationID !== initial.id ||
+          authorization.operationID !== initial.id ||
           authorization.generation !== initial.generation ||
           authorization.taskID !== initial.taskID ||
           authorization.taskRevision !== initial.taskRevision ||
@@ -2621,8 +2617,6 @@ export class RetainedVerificationExecution {
           ? !this.sourceQuarantinePlanVersionCurrent(current, currentPlan, db)
           : currentPlan.version !== initial.planVersion) ||
         currentPlan.revision !== initial.planRevision ||
-        currentPlan.owner !== initial.owner ||
-        this.runtime.store.planControlEpoch(currentPlan.id) !== initial.ownerEpoch ||
         (current.sourceQuarantine
           ? !sourceQuarantineCurrent
           : !["blocked", "accepted", "cleanup-blocked"].includes(currentPlan.state)) ||
@@ -2782,9 +2776,6 @@ export class RetainedVerificationExecution {
       const deferredTaskPhase = operation.state === "task-accepted"
       if (
         !this.runtime.validArchitect(owner) ||
-        owner.id !== plan.owner ||
-        operation.owner !== plan.owner ||
-        operation.ownerEpoch !== this.runtime.store.planControlEpoch(plan.id) ||
         operation.planRevision !== plan.revision ||
         (!deferredTaskPhase &&
           (operation.sourceQuarantine
@@ -2985,8 +2976,6 @@ export class RetainedVerificationExecution {
           currentPlan.state !== "running" ||
           currentPlan.version !== plan.version ||
           currentPlan.revision !== deferredOperation.planRevision ||
-          currentPlan.owner !== deferredOperation.owner ||
-          this.runtime.store.planControlEpoch(currentPlan.id) !== deferredOperation.ownerEpoch ||
           !sourceAuthorityCurrent ||
           !input.integrationOrder.every((taskID) => {
             const before = byTask.get(taskID)
@@ -3166,8 +3155,6 @@ export class RetainedVerificationExecution {
           ? !this.sourceQuarantinePlanVersionCurrent(current, currentPlan, db)
           : currentPlan.version !== operation.planVersion) ||
         currentPlan.revision !== operation.planRevision ||
-        currentPlan.owner !== operation.owner ||
-        this.runtime.store.planControlEpoch(currentPlan.id) !== operation.ownerEpoch ||
         !sourceAuthorityCurrent ||
         !currentTask ||
         currentTask.revision !== operation.taskRevision ||
