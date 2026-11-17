@@ -638,6 +638,11 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     extraPlans,
     topologyCalls: () => topologyCalls,
     detailCalls,
+    /** The worker's input request is answered; it keeps working (Now) or goes idle. */
+    resolveRequest: (taskID: string, keepsWorking: boolean) => {
+      requests.delete(taskID)
+      if (keepsWorking) active.add(taskID)
+    },
     nameOf: (taskID: string) => names.get(taskID)!,
     announceChange,
     reorderQueueTop,
@@ -1364,7 +1369,7 @@ test("arrowing through Now and Attention keeps focus on the entries while detail
         )
         await settle()
         expect(doc.activeElement).toBe(s.entry(group, taskID))
-        expect(h.row(taskID)?.getAttribute("aria-selected")).toBe("true")
+        expect(s.entry(group, taskID)?.getAttribute("aria-pressed")).toBe("true")
       }
       // Up and Home stay in the list too.
       h.key(doc.activeElement as HTMLElement, "ArrowUp")
@@ -1419,5 +1424,81 @@ test("an unchanged refresh keeps the focused Now or Attention button and its foc
     },
     {},
     { active: 2, requests: 2 },
+  )
+})
+
+test("signal keys select without revealing or scrolling the tree; Enter and clicks still do", async () => {
+  await withPanel(async (h) => {
+    // Attention: Beta's two blocked tasks, inside a collapsed fork 60 rows down the tree.
+    const s = signals(h)
+    await until(() => Boolean(s.entry("attention", h.beta.join)))
+    await settle()
+    const doc = h.container.ownerDocument
+    const title = () => h.container.querySelector(".lazers-tasks-detail .lazers-tasks-title")
+    h.scrollTo(0)
+    s.entry("attention", h.beta.a)!.focus()
+    for (const [key, taskID] of [
+      ["ArrowDown", h.beta.join],
+      ["ArrowUp", h.beta.a],
+      ["End", h.beta.join],
+      ["Home", h.beta.a],
+    ] as const) {
+      h.key(doc.activeElement as HTMLElement, key)
+      await until(
+        () => h.detailCalls.at(-1) === taskID && title()?.textContent === h.nameOf(taskID),
+      )
+      await settle()
+      // The list did not move: the focused entry stays where the person is looking.
+      expect(h.list().scrollTop).toBe(0)
+      expect(doc.activeElement).toBe(s.entry("attention", taskID))
+      // The tree was not opened to the task: Beta's fork stays collapsed (its branch row unlisted).
+      // A selected join may stay mounted offscreen as the pinned tab stop; nothing scrolled to it.
+      expect(h.row(h.beta.root)).toBeNull()
+      expect(h.row(h.beta.a)).toBeNull()
+    }
+    // Enter (a click on the button) is explicit entry: reveal the branch row in its fork, scroll
+    // to it and focus it.
+    s.entry("attention", h.beta.a)!.click()
+    await until(() => doc.activeElement === h.row(h.beta.a))
+    expect(h.list().scrollTop).toBeGreaterThan(ROW * 40)
+    expect(h.row(h.beta.root)?.getAttribute("aria-expanded")).toBe("true")
+  })
+})
+
+test("a focused Attention request that resolves keeps focus on a visible signal", async () => {
+  await withPanel(
+    async (h) => {
+      // Now: six workers (window shows five). Attention: two requests, two blocked tasks.
+      const s = signals(h)
+      await until(() => Boolean(s.entry("attention", h.alpha[7]!)))
+      await settle()
+      const doc = h.container.ownerDocument
+      const refresh = async () => {
+        const reads = h.queryCalls.length
+        h.announceChange()
+        await until(() => h.queryCalls.length > reads)
+        await settle()
+        await settle()
+      }
+      // The request is answered and the worker keeps going: the task moves to Now, past the
+      // mounted Now window. Focus follows it there; the window slides to show it.
+      s.entry("attention", h.alpha[7]!)!.focus()
+      h.resolveRequest(h.alpha[7]!, true)
+      await refresh()
+      expect(s.count("Now")).toBe("7")
+      expect(s.entry("attention", h.alpha[7]!)).toBeNull()
+      expect(doc.activeElement).toBe(s.entry("now", h.alpha[7]!))
+      // A request answered with no further signal: focus takes the entry that took its place.
+      s.entry("attention", h.alpha[6]!)!.focus()
+      h.resolveRequest(h.alpha[6]!, false)
+      await refresh()
+      expect(s.count("Attention")).toBe("2")
+      expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
+      // Keys continue from the recovered focus.
+      h.key(doc.activeElement as HTMLElement, "ArrowDown")
+      await until(() => doc.activeElement === s.entry("attention", h.beta.join))
+    },
+    {},
+    { active: 6, requests: 2 },
   )
 })
