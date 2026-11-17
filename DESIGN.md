@@ -24,6 +24,10 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
   Each opens as a closable tab with an appropriate host icon. Never force a closed
   panel back open. Preserve session-local selection, filters, split and scroll;
   task data can be scoped to the session or its project.
+- Stream the full result for the current scope and filters in database pages.
+  Render the first page as soon as it arrives and continue loading in the
+  background until the cursor is exhausted. Merge live updates as pages arrive.
+  Virtualize large lists and timelines where rendering slows interaction.
 - Lists/visualizations sit **above** a selected-item inspector, separated by a
   horizontal resizable divider, including at wide widths. Each region scrolls
   independently. Keep useful content visible before requiring scroll.
@@ -125,6 +129,10 @@ keyboard-accessible selection and show its
 details below the split. Keep payloads and secondary activity collapsed.
 Show timing origin, units, coverage and gaps. Separate token categories and
 measurement scope; unknown cost remains unknown. Never expose private reasoning.
+Compress long idle spans on the shared timeline axis so recorded activity stays
+close together. Mark each compressed interval and preserve actual timestamps
+and durations in the inspector. Keep recording gaps distinct from known idle
+time and keep all tracks aligned through zoom and scrolling.
 
 ## Models
 
