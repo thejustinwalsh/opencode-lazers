@@ -1,3 +1,4 @@
+import { section, timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
@@ -94,7 +95,7 @@ export function registerObservability(
 ) {
   return Effect.gen(function* () {
     const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
-    const rpc = yield* ctx.rpc.register(Observability, {
+    const rpc = yield* timedRpc(ctx.rpc).register(Observability, {
       snapshot: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -342,7 +343,7 @@ export function registerObservability(
 
     const listen = Effect.forever(
       Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
-        Effect.sync(() => tracker.native(event)),
+        Effect.sync(() => section(`event:${event.type}`, () => tracker.native(event))),
       ).pipe(
         Effect.match({
           onFailure: () => {

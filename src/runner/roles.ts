@@ -1,3 +1,4 @@
+import { timedHooks } from "../diagnostics/stall-probe.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import auditSource from "../auditor.md" with { type: "text" }
 import { Model } from "@opencode/schema/model"
@@ -91,14 +92,14 @@ export function registerWorker(
           )
           .get(sessionID),
       )
-    yield* ctx.session.hook("context", (context) =>
+    yield* timedHooks(ctx.session, "session").hook("context", (context) =>
       Effect.sync(() => {
         if (!attempt(context.sessionID)) return
         for (const tool of Object.keys(context.tools))
           if (delegationTool(tool)) delete context.tools[tool]
       }),
     )
-    yield* ctx.tool.hook("execute.before", (call) =>
+    yield* timedHooks(ctx.tool, "tool").hook("execute.before", (call) =>
       Effect.suspend(() => {
         const quarantineError = sourceQuarantineToolError(store, call.sessionID, call.tool)
         if (quarantineError) return Effect.fail(new Tool.Error({ message: quarantineError }))
@@ -120,7 +121,7 @@ export function registerWorker(
         return Effect.void
       }),
     )
-    yield* ctx.permission.hook("evaluate", (request) =>
+    yield* timedHooks(ctx.permission, "permission").hook("evaluate", (request) =>
       Effect.sync(() => {
         // Code Mode fetch is an extension, so it does not enter the tool hook.
         if (request.action === "webfetch" && quarantinedSession(store, request.sessionID)) {
@@ -129,7 +130,7 @@ export function registerWorker(
         }
       }),
     )
-    yield* ctx.session.hook("retry", (retry) =>
+    yield* timedHooks(ctx.session, "session").hook("retry", (retry) =>
       Effect.sync(() => {
         const owned = attempt(retry.sessionID)
         if (!owned) return

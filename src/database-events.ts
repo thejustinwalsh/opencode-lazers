@@ -1,3 +1,4 @@
+import { section } from "./diagnostics/stall-probe.ts"
 import { realpathSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 
@@ -39,7 +40,7 @@ export class DatabaseChangeHub {
       group.pending = undefined
       for (const listener of group.listeners) {
         try {
-          listener.changed()
+          section("dbchanges:listener", () => listener.changed())
         } catch (error) {
           try {
             listener.failed(error instanceof Error ? error : new Error(String(error)))
@@ -97,7 +98,7 @@ export class RevisionPublisherHub {
       const created = group
       created.unsubscribe = this.changes.subscribe(
         path,
-        () => this.publishRevision(created),
+        () => section("dbchanges:publishRevision", () => this.publishRevision(created)),
         () => this.retryRevision(created),
       )
     }

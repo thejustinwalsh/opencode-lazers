@@ -1,3 +1,4 @@
+import { timedRpc } from "../../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { dirname, join, resolve } from "node:path"
@@ -590,7 +591,7 @@ export function registerNativeInteraction(ctx: Pick<Plugin.Context, "rpc" | "app
     version: ctx.app.version,
   })
   return Effect.gen(function* () {
-    yield* ctx.rpc.register(NativeInteraction, {
+    yield* timedRpc(ctx.rpc).register(NativeInteraction, {
       attach: (input) =>
         Effect.sync(() => {
           broker.attach(input)

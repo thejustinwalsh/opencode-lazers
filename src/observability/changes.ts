@@ -1,3 +1,4 @@
+import { section } from "../diagnostics/stall-probe.ts"
 import { createHmac, randomBytes, randomUUID } from "node:crypto"
 import { realpathSync, statSync } from "node:fs"
 import type { Database } from "bun:sqlite"
@@ -506,6 +507,10 @@ export class ObservationChangeTracker {
   }
 
   initialize(publish?: (change: ObservationChange) => void) {
+    section("changes:initialize", () => this.initializeTracker(publish))
+  }
+
+  private initializeTracker(publish?: (change: ObservationChange) => void) {
     if (publish) {
       const key = JSON.stringify([
         realpathSync(this.repository.path),
@@ -557,6 +562,10 @@ export class ObservationChangeTracker {
   }
 
   refreshSource() {
+    section("changes:refreshSource", () => this.refreshSourceNow())
+  }
+
+  private refreshSourceNow() {
     const state = this.state
     if (state.refreshTimer) {
       clearTimeout(state.refreshTimer)

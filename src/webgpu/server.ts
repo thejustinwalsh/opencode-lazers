@@ -1,3 +1,4 @@
+import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { InferenceBroker, RendererOwnershipLost, failed } from "./broker.ts"
@@ -109,7 +110,7 @@ export function registerLocalInference(
         return { ok: false as const, error: String(error) }
       }
     }
-    yield* ctx.rpc.register(LocalInference, {
+    yield* timedRpc(ctx.rpc).register(LocalInference, {
       settings: () => Effect.promise(async (signal) => (await worker()).settings({}, { signal })),
       configure: (input) =>
         Effect.promise(async (signal) => (await worker()).configure(input, { signal })),
@@ -162,7 +163,7 @@ export function registerLocalInference(
           }
         }),
     })
-    const rendererRegistration = yield* ctx.rpc.register(RendererInference, {
+    const rendererRegistration = yield* timedRpc(ctx.rpc).register(RendererInference, {
       settings: () => Effect.sync(policy.read),
       configure: (input) =>
         Effect.promise(() => policy.configure(input)).pipe(

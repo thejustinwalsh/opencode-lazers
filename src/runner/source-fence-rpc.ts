@@ -1,3 +1,4 @@
+import { timedRpc } from "../diagnostics/stall-probe.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
@@ -28,7 +29,7 @@ export function registerSourceFence(
   store: RunnerStore,
   guard: SourceGuardRegistration,
 ) {
-  return ctx.rpc.register(SourceFence, {
+  return timedRpc(ctx.rpc).register(SourceFence, {
     status: () =>
       Effect.sync(() => {
         if (!sourceGuardMatches(store, ctx.location.directory, guard.registrationID))

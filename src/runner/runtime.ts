@@ -1,3 +1,4 @@
+import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import {
   changeDispatchPause,
   changeSchedule,
@@ -789,7 +790,7 @@ export class TaskRuntime {
     if (this.identityStamping) return this.identityStamping
     if (!force && this.now() - this.identityStampedAt < 30_000) return Promise.resolve()
     this.identityStampedAt = this.now()
-    const running: Promise<void> = (async () => {
+    const running: Promise<void> = sectionAsync("stampIdentity", async () => {
       try {
         if (!this.notesConfigured) {
           await ensureNotesConfig(this.directory)
@@ -806,7 +807,7 @@ export class TaskRuntime {
       } catch {
         // Identity is derived, additive data; the next call repairs any gap.
       }
-    })().finally(() => {
+    }).finally(() => {
       if (this.identityStamping === running) this.identityStamping = undefined
     })
     this.identityStamping = running
@@ -10295,7 +10296,7 @@ export class TaskRuntime {
       }
       return
     }
-    const current = this.runTick()
+    const current = sectionAsync("tick", () => this.runTick())
     this.tickPromise = current
     try {
       await current
@@ -10315,7 +10316,7 @@ export class TaskRuntime {
     run: () => void | Promise<void>,
   ) {
     try {
-      await run()
+      await sectionAsync("tick:plan", async () => run())
     } catch (error) {
       this.store.fenced(this.owner, fence, () => {
         if (!this.store.plan(planID)) return
@@ -10491,10 +10492,10 @@ export class TaskRuntime {
     this.running = true
     let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
     try {
-      const fence = this.store.claim(this.owner)
+      const fence = section("tick:claim", () => this.store.claim(this.owner))
       if (fence === null) return
       if (this.sourceResyncPending) this.observeArchitectSourceEvent()
-      this.flushSourceInvalidations()
+      section("tick:flushSourceInvalidations", () => this.flushSourceInvalidations())
       let heartbeatFailed = false
       let heartbeatError: unknown
       heartbeat = sharedScheduler.register(
@@ -10512,9 +10513,13 @@ export class TaskRuntime {
         10000,
       )
       // A lease only selects a reconciler; it never proves an old side effect stopped.
-      for (const renewal of this.store.architectRenewalsNeedingRecovery()) {
+      for (const renewal of section("tick:architectRenewals", () =>
+        this.store.architectRenewalsNeedingRecovery(),
+      )) {
         try {
-          await this.continueArchitectRenewal(renewal, fence)
+          await sectionAsync("tick:continueArchitectRenewal", () =>
+            this.continueArchitectRenewal(renewal, fence),
+          )
         } catch (error) {
           // A recorded native recovery failure stays retryable without blocking
           // dispatch for plans outside that renewal.
@@ -10529,10 +10534,14 @@ export class TaskRuntime {
         }
       }
       if (heartbeatFailed) throw heartbeatError
-      await this.reconcileArchitectSources(fence)
-      await this.advanceSourceQuarantines(fence)
-      const retainedOperations = this.store.atomic((db) =>
-        activeRetainedVerifications(db, this.directory),
+      await sectionAsync("tick:reconcileArchitectSources", () =>
+        this.reconcileArchitectSources(fence),
+      )
+      await sectionAsync("tick:advanceSourceQuarantines", () =>
+        this.advanceSourceQuarantines(fence),
+      )
+      const retainedOperations = section("tick:activeRetained", () =>
+        this.store.atomic((db) => activeRetainedVerifications(db, this.directory)),
       )
       for (const operation of retainedOperations) {
         if (operation.state === "held" || this.retainedVerificationRuns.has(operation.id)) continue
@@ -10583,7 +10592,9 @@ export class TaskRuntime {
         }
         void running.then(finished, finished)
       }
-      const terminalCleanupPlanIDs = this.store.terminalCleanupPlanIDs()
+      const terminalCleanupPlanIDs = section("tick:terminalCleanupPlanIDs", () =>
+        this.store.terminalCleanupPlanIDs(),
+      )
       for (const planID of terminalCleanupPlanIDs) {
         await this.reconcilePlan(planID, fence, "cleanup", async () => {
           const plan = this.store.plan(planID)
@@ -10597,8 +10608,12 @@ export class TaskRuntime {
         })
         if (heartbeatFailed) throw heartbeatError
       }
-      await this.retainedVerificationExecution.reconcileTerminalRetainedVerifications(fence)
-      for (const planID of this.store.closeoutReviewPlanIDs()) {
+      await sectionAsync("tick:reconcileTerminalRetained", () =>
+        this.retainedVerificationExecution.reconcileTerminalRetainedVerifications(fence),
+      )
+      for (const planID of section("tick:closeoutReviewPlanIDs", () =>
+        this.store.closeoutReviewPlanIDs(),
+      )) {
         const plan = this.store.plan(planID)!
         this.outcome(
           planID,
@@ -10613,7 +10628,9 @@ export class TaskRuntime {
       }
       const waits: Parameters<TaskRuntime["requestQueueReview"]>[0] = []
       let closeoutDelivered = false
-      for (const candidate of this.store.runnablePlans(terminal)) {
+      for (const candidate of section("tick:runnablePlans", () =>
+        this.store.runnablePlans(terminal),
+      )) {
         if (!closeoutDelivered && candidate.queue_rank === 0) {
           await this.outcomeDelivery.deliver(fence, true)
           closeoutDelivered = true
@@ -10647,7 +10664,7 @@ export class TaskRuntime {
             )
           )
             return
-          const wait = await this.step(plan, fence)
+          const wait = await sectionAsync("tick:step", () => this.step(plan, fence))
           if (wait) waits.push(wait)
         })
         if (heartbeatFailed) throw heartbeatError
@@ -10662,7 +10679,7 @@ export class TaskRuntime {
           this.retainedVerificationExecution.notifyHeldRetainedVerification(operation.id, fence),
         )
       }
-      await this.outcomeDelivery.deliver(fence)
+      await sectionAsync("tick:deliver", () => this.outcomeDelivery.deliver(fence))
     } finally {
       await heartbeat?.dispose()
       this.running = false

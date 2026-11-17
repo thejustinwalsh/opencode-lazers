@@ -1,3 +1,4 @@
+import { timedHooks, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
@@ -629,7 +630,7 @@ export function registerProgress(
       }),
     )
 
-    yield* ctx.tool.hook("execute.after", (call) =>
+    yield* timedHooks(ctx.tool, "tool").hook("execute.after", (call) =>
       Effect.promise(async () => {
         if (!(await toolScope.owns(call.sessionID))) return
         try {
@@ -648,7 +649,7 @@ export function registerProgress(
       }),
     )
 
-    yield* ctx.tool.hook("execute.before", (call) =>
+    yield* timedHooks(ctx.tool, "tool").hook("execute.before", (call) =>
       Effect.promise(async () => {
         if (!(await toolScope.owns(call.sessionID))) return
         try {
@@ -1037,7 +1038,7 @@ export function registerProgress(
         await remindIfEmpty()
       }
     }
-    yield* ctx.session.hook("experimental.idle", (idle) =>
+    yield* timedHooks(ctx.session, "session").hook("experimental.idle", (idle) =>
       Effect.tryPromise({
         try: () => observeIdleHook(idle),
         catch: (error) => new Error(safeError(error, privacyStats())),
@@ -1288,7 +1289,7 @@ export function registerProgress(
         refreshUnknownStartFences()
         return Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
           Effect.tryPromise({
-            try: () => observeNativeEvent(event),
+            try: () => sectionAsync(`event:${event.type}`, () => observeNativeEvent(event)),
             catch: (error) => new Error(safeError(error, privacyStats())),
           }).pipe(Effect.catch(() => Effect.void)),
         ).pipe(
