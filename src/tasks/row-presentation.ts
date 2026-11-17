@@ -89,11 +89,15 @@ export function rowBlockers(row: ExecutionListRow) {
   const plans = [...new Set(row.scheduling?.waitingOnPlans ?? [])]
   const enumerated = row.scheduling?.reservationTaskIDs.length ?? 0
   const unlisted = Math.max(0, (row.scheduling?.reservationTaskCount ?? enumerated) - enumerated)
+  const unlistedPlans = Math.max(
+    0,
+    (row.scheduling?.waitingOnPlansCount ?? plans.length) - plans.length,
+  )
   const blockers: TaskBlocker[] = [
     ...tasks.map((id) => ({ kind: "task" as const, id })),
     ...plans.map((id) => ({ kind: "plan" as const, id })),
   ]
-  return { blockers, blockerTotal: blockers.length + unlisted }
+  return { blockers, blockerTotal: blockers.length + unlisted + unlistedPlans }
 }
 
 /** Native attention requests are the only states that ask the person for something now. */

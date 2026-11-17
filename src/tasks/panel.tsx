@@ -416,6 +416,7 @@ function TaskPanel(
       ...rows.filter((row) => !asksForAttention(row) && held(row)),
     ]
   }
+  const signalTabStopTaskID = () => nowRows()[0]?.taskID ?? attentionRows()[0]?.taskID
   const nextStatus = () => {
     const value = visible()
     if (!value?.scheduling || value.schedulingError || value.stale)
@@ -457,6 +458,7 @@ function TaskPanel(
     const group = buildExecutionList({
       topology: visible()?.topology,
       tasks: visible()?.tasks ?? [],
+      scheduling: visible()?.scheduling,
       search: prefs().search,
       revealTaskIDs: new Set([taskID]),
     })
@@ -934,7 +936,7 @@ function TaskPanel(
           data-scheduling-group={label.toLowerCase()}
           aria-pressed={selected()}
           aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
-          tabIndex={-1}
+          tabIndex={taskRow.taskID === signalTabStopTaskID() ? 0 : -1}
           onKeyDown={signalKey}
           onClick={() => selectTask(taskRow.taskID)}
         >

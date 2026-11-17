@@ -9,6 +9,7 @@ import { RunnerStore } from "../runner/store.ts"
 import { buildExecutionList } from "./execution-list.ts"
 import { SchedulingOutput } from "./scheduling-contract.ts"
 import { TaskSchedulingRead } from "./scheduling-read.ts"
+import { taskRowPresentation } from "./row-presentation.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -785,6 +786,39 @@ test("a conditional pause keeps dispatch waiting until the prerequisite source i
   })
   const ready = await read.read({ scope, limit: 100 })
   expect(ready.next).toMatchObject({ status: "known", candidate: { taskID: child.task.id } })
+})
+
+test("more than 100 waiting plan references remain bounded, counted, and navigable", async () => {
+  const f = fixture()
+  const prerequisites = Array.from(
+    { length: 101 },
+    (_, index) => f.create(`many-prerequisite-${index}`, -1).plan.planID,
+  )
+  const dependent = f.create("many-prerequisite-dependent", 100, false, prerequisites)
+  const page = SchedulingOutput.parse(
+    await new TaskSchedulingRead(f.store, () => 95).read({
+      scope: { kind: "project", sessionID: "owner" },
+      limit: 100,
+    }),
+  )
+  const node = page.plans[0]?.nodes.find((candidate) => candidate.taskID === dependent.task.id)
+  expect(node).toMatchObject({
+    decision: "waiting",
+    waitingOnPlans: prerequisites.slice(0, 100),
+    waitingOnPlansCount: 101,
+    waitingOnPlansComplete: false,
+  })
+
+  const { nextCursor: _nextCursor, ...snapshot } = page
+  const list = buildExecutionList({
+    tasks: [],
+    revealTaskIDs: new Set([dependent.task.id]),
+    scheduling: snapshot,
+  })
+  const row = list.plans[0]?.rows.find((candidate) => candidate.taskID === dependent.task.id)
+  expect(row?.scheduling?.waitingOnPlans).toEqual(prerequisites.slice(0, 100))
+  expect(row?.scheduling?.reason).toContain("Showing 100 of 101 prerequisite plan references.")
+  expect(taskRowPresentation(row!).blockerTotal).toBe(101)
 })
 
 test("an unknown resume condition leaves Next unknown", async () => {

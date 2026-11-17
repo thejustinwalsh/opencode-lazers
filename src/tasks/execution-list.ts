@@ -31,6 +31,8 @@ export type ExecutionListRow = {
     reason: string | null
     waitingOn: string[]
     waitingOnPlans?: string[]
+    waitingOnPlansCount?: number
+    waitingOnPlansComplete?: boolean
     reservationTaskIDs: string[]
     reservationTaskCount?: number
     reservationTaskIDsComplete?: boolean
@@ -154,6 +156,12 @@ function buildScheduledGroups(input: {
             reason: schedulingReason(node, input.scheduling),
             waitingOn: node.waitingOn,
             waitingOnPlans: node.waitingOnPlans,
+            ...(node.waitingOnPlansCount !== undefined
+              ? { waitingOnPlansCount: node.waitingOnPlansCount }
+              : {}),
+            ...(node.waitingOnPlansComplete !== undefined
+              ? { waitingOnPlansComplete: node.waitingOnPlansComplete }
+              : {}),
             reservationTaskIDs: node.reservationTaskIDs,
             ...(node.reservationTaskCount !== undefined
               ? { reservationTaskCount: node.reservationTaskCount }
@@ -226,13 +234,14 @@ const terminal = new Set(["accepted", "incorporated", "failed", "exhausted", "ca
 
 function schedulingReason(node: SchedulingNode, snapshot: SchedulingSnapshot | undefined) {
   const referencesIncomplete = node.reservationTaskIDsComplete === false
+  const planReferencesIncomplete = node.waitingOnPlansComplete === false
   const scopeLimited =
     node.reservationTaskIDsScopeLimited === true && snapshot?.scope.kind === "session"
-  if (!referencesIncomplete && !scopeLimited) return node.reason
-  const count = node.reservationTaskCount ?? node.reservationTaskIDs.length
-  const shown = node.reservationTaskIDs.length
+  if (!referencesIncomplete && !planReferencesIncomplete && !scopeLimited) return node.reason
   const coverage: string[] = []
   if (referencesIncomplete) {
+    const count = node.reservationTaskCount ?? node.reservationTaskIDs.length
+    const shown = node.reservationTaskIDs.length
     if (!snapshot?.coverage.reservationsComplete) {
       coverage.push(
         count > 0
@@ -247,14 +256,23 @@ function schedulingReason(node: SchedulingNode, snapshot: SchedulingSnapshot | u
       coverage.push("Blocker reference completeness is unavailable.")
     }
   }
-  if (scopeLimited)
+  if (planReferencesIncomplete) {
+    const count = node.waitingOnPlansCount ?? node.waitingOnPlans?.length ?? 0
+    const shown = node.waitingOnPlans?.length ?? 0
+    coverage.push(
+      `Showing ${shown} of ${count} prerequisite plan references${snapshot?.scope.kind === "session" ? " visible in this session" : ""}.`,
+    )
+  }
+  if (scopeLimited) {
+    const count = node.reservationTaskCount ?? node.reservationTaskIDs.length
     coverage.push(
       count === 0
         ? "No blocker references are visible in this session; known blockers outside this scope are not shown."
         : "Known blockers outside this session scope are not shown.",
     )
+  }
 
-  return [node.reason, ...coverage].filter(Boolean).join(" ")
+  return [node.reason, ...coverage].filter((part): part is string => Boolean(part)).join(" ")
 }
 
 function adjacency<TNode extends RelationshipNode>(plan: {
@@ -578,6 +596,12 @@ function row(
             reason: schedulingReason(scheduling, schedulingSnapshot),
             waitingOn: scheduling.waitingOn,
             waitingOnPlans: scheduling.waitingOnPlans,
+            ...(scheduling.waitingOnPlansCount !== undefined
+              ? { waitingOnPlansCount: scheduling.waitingOnPlansCount }
+              : {}),
+            ...(scheduling.waitingOnPlansComplete !== undefined
+              ? { waitingOnPlansComplete: scheduling.waitingOnPlansComplete }
+              : {}),
             reservationTaskIDs: scheduling.reservationTaskIDs,
             ...(scheduling.reservationTaskCount !== undefined
               ? { reservationTaskCount: scheduling.reservationTaskCount }
@@ -722,6 +746,16 @@ export function buildExecutionList(input: {
                 reason: schedulingReason(scheduleByTask.get(taskID)!, input.scheduling),
                 waitingOn: scheduleByTask.get(taskID)!.waitingOn,
                 waitingOnPlans: scheduleByTask.get(taskID)!.waitingOnPlans,
+                ...(scheduleByTask.get(taskID)!.waitingOnPlansCount !== undefined
+                  ? {
+                      waitingOnPlansCount: scheduleByTask.get(taskID)!.waitingOnPlansCount,
+                    }
+                  : {}),
+                ...(scheduleByTask.get(taskID)!.waitingOnPlansComplete !== undefined
+                  ? {
+                      waitingOnPlansComplete: scheduleByTask.get(taskID)!.waitingOnPlansComplete,
+                    }
+                  : {}),
                 reservationTaskIDs: scheduleByTask.get(taskID)!.reservationTaskIDs,
                 ...(scheduleByTask.get(taskID)!.reservationTaskCount !== undefined
                   ? { reservationTaskCount: scheduleByTask.get(taskID)!.reservationTaskCount }
