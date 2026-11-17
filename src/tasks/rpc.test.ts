@@ -9,8 +9,11 @@ import type { Plugin } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { validProposal } from "../../test/proposal.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
+import { git } from "../runner/artifacts.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 import type { HostSession } from "../runner/host.ts"
+import { registerSourceGuard } from "../runner/source-quarantine.ts"
+import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { Tasks } from "./contract.ts"
 import type { StartTaskInput, StartTaskResult } from "./contract.ts"
@@ -19,7 +22,8 @@ import { registerTaskReads } from "./rpc.ts"
 import { recordTaskAdvice } from "./advice.ts"
 import { taskInstructions } from "./instructions.ts"
 import { registerTaskTools } from "../tools.ts"
-import { TasksScheduling } from "./scheduling-contract.ts"
+import { SchedulingOutput, TasksScheduling } from "./scheduling-contract.ts"
+import { TaskSchedulingRead } from "./scheduling-read.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -760,6 +764,289 @@ test("scheduling RPC authorizes exact live project scope before facts and observ
     await expect(Effect.runPromise(read!(input), { signal: during.signal })).rejects.toThrow()
     expect(readCount).toBe(2)
   } finally {
+    repository.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("registered scheduling RPC tracks live source guards and bounds large plan waits", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-scheduling-guard-rpc-"))
+  git(directory, ["init", "--initial-branch=main"])
+  git(directory, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "base",
+  ])
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), directory)
+  const store = new RunnerStore(repository)
+  const baseCommit = git(directory, ["rev-parse", "HEAD"])
+  const sessionID = "ses_scheduling_guard_owner"
+  const create = (
+    name: string,
+    priority: number,
+    afterPlans: string[] = [],
+    writeScope = [`${name}.ts`],
+  ) => {
+    const task = repository.insert({
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      revision: 1,
+      status: "submitted",
+      createdAt: new Date().toISOString(),
+      provenance: {
+        projectID: "project",
+        projectDirectory: directory,
+        workspaceDirectory: directory,
+        sessionID,
+        startingRevision: { kind: "git", commit: baseCommit },
+      },
+      proposal: { ...validProposal(), objective: name, writeScope },
+    })
+    const plan = store.submit(
+      {
+        requestID: `request-${name}`,
+        title: `Plan ${name}`,
+        objective: `Implement ${name}`,
+        priority,
+        ...(afterPlans.length ? { afterPlans } : {}),
+        baseCommit,
+        workspaceMode: "isolated",
+        nodes: [{ taskID: task.id, revision: 1 }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: [],
+        acceptance: [
+          { id: "done", assertion: "Done", evidence: [{ kind: "human", decision: "review" }] },
+        ],
+      },
+      sessionID,
+    )
+    store.atomic((db) => {
+      db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID)
+      repository.changed()
+    })
+    return { task, plan }
+  }
+
+  let unregisterGuard: (() => void) | undefined
+  let releaseProof = () => {}
+  const pendingReads: Promise<unknown>[] = []
+  try {
+    const prerequisites = Array.from(
+      { length: 101 },
+      (_, index) => create(`waiting-prerequisite-${index}`, -100).plan.planID,
+    )
+    const dependent = create("waiting-on-101-plans", 100, prerequisites)
+    const parent = create("integrated-proof-parent", -200)
+    const proofChild = create("integrated-proof-child", 5, [parent.plan.planID])
+    store.atomic((db) => {
+      db.query("UPDATE runner_plans SET state='cleaning',artifact=? WHERE id=?").run(
+        baseCommit,
+        parent.plan.planID,
+      )
+      db.query("UPDATE runner_nodes SET state='accepted',artifact=? WHERE plan_id=?").run(
+        baseCommit,
+        parent.plan.planID,
+      )
+      db.query(
+        `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+         VALUES(?,NULL,3,'PLAN_ACCEPTED',?,1),(?,NULL,3,'INTEGRATION_RECORDED',?,2)`,
+      ).run(
+        parent.plan.planID,
+        JSON.stringify({ artifact: baseCommit }),
+        parent.plan.planID,
+        JSON.stringify({
+          artifact: baseCommit,
+          head: baseCommit,
+          branch: "main",
+          reason: "reviewed",
+        }),
+      )
+      repository.changed()
+    })
+    const reserved = create("source-reservation", -300, [], ["shared.ts"])
+    const winner = create("guarded-next", 50, [], ["shared.ts"])
+    const fallback = create("fallback-next", 40, [], ["fallback.ts"])
+    const workspace = join(directory, ".source-quarantine-worktree")
+    const attemptID = crypto.randomUUID()
+    const attemptSession = "ses_sealed_source_attempt"
+    const messageID = "message-sealed-source-attempt"
+    repository.atomic((db) => {
+      db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?").run(
+        reserved.plan.planID,
+        reserved.task.id,
+      )
+      db.query(
+        `INSERT INTO runner_attempts
+         (id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,'running',?)`,
+      ).run(
+        attemptID,
+        reserved.plan.planID,
+        directory,
+        reserved.task.id,
+        1,
+        attemptSession,
+        messageID,
+        workspace,
+        baseCommit,
+        JSON.stringify({ workspaceMode: "isolated" }),
+        1,
+      )
+      db.query(
+        `INSERT INTO runner_source_quarantines
+         (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,
+          phase,hold_reason,review_input_json,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?, 'sealed',NULL,NULL,?,?)`,
+      ).run(
+        attemptID,
+        reserved.plan.planID,
+        attemptSession,
+        messageID,
+        "owner",
+        workspace,
+        "request-sealed-source",
+        "Review retained source",
+        1,
+        1,
+      )
+      repository.changed()
+    })
+    unregisterGuard = registerSourceGuard(store, workspace)
+
+    let proofStartedResolve!: () => void
+    const proofStarted = new Promise<void>((resolve) => {
+      proofStartedResolve = resolve
+    })
+    let deferred = false
+    const proofGate = new Promise<void>((resolve) => {
+      releaseProof = resolve
+    })
+    let branchReads = 0
+    let secondBranchResolver!: () => void
+    const secondBranchRead = new Promise<void>((resolve) => {
+      secondBranchResolver = resolve
+    })
+
+    let activeRead = new TaskSchedulingRead(store, () => 100)
+    const runtime = {
+      projectID: "project",
+      host: { session: async () => null },
+      readScheduling: (input: Parameters<TaskSchedulingRead["read"]>[0]) => activeRead.read(input),
+    } as unknown as TaskRuntime
+    const methods = new Map<
+      string,
+      Record<string, (input: unknown) => Effect.Effect<unknown, never>>
+    >()
+    const context = {
+      rpc: {
+        register: (
+          contract: unknown,
+          registered: Record<string, (input: unknown) => Effect.Effect<unknown, never>>,
+        ) => {
+          const id = (contract as { id?: string }).id
+          if (id) methods.set(id, registered)
+          return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+        },
+      },
+      permission: { assert: () => Effect.void },
+      session: {
+        get: ({ sessionID: requested }: { sessionID: string }) =>
+          Effect.succeed({
+            id: requested,
+            projectID: "project",
+            agent: "architect",
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            time: { created: 1, updated: 1 },
+            location: { directory },
+          }),
+      },
+    } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session">
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerTaskReads(context, new TaskReads(repository), runtime)
+        }),
+      ),
+    )
+    const read = methods.get(TasksScheduling.id)?.read
+    expect(read).toBeDefined()
+    const input = { scope: { kind: "project" as const, sessionID }, limit: 100 }
+
+    const beforeReadVersion = repository.version()
+    const beforeReadHead = git(directory, ["rev-parse", "HEAD"])
+    const initial = SchedulingOutput.parse(await Effect.runPromise(read!(input)))
+    expect(initial.next).toMatchObject({
+      status: "known",
+      candidate: { taskID: winner.task.id },
+    })
+    const waitingNode = initial.plans
+      .find((plan) => plan.planID === dependent.plan.planID)
+      ?.nodes.find((node) => node.taskID === dependent.task.id)
+    expect(waitingNode).toMatchObject({
+      waitingOnPlans: prerequisites.slice(0, 100),
+      waitingOnPlansCount: 101,
+      waitingOnPlansComplete: false,
+    })
+
+    activeRead = new TaskSchedulingRead(
+      store,
+      () => 101,
+      {},
+      async (path, args) => {
+        if (args[0] === "branch") {
+          branchReads++
+          if (branchReads === 2) secondBranchResolver()
+        }
+        if (args[0] === "merge-base" && !deferred) {
+          deferred = true
+          proofStartedResolve()
+          await proofGate
+        }
+        return git(path, args)
+      },
+    )
+    const firstPending = Effect.runPromise(read!(input))
+    pendingReads.push(firstPending)
+    await proofStarted
+    const unchangedVersion = repository.version()
+    const unchangedHead = git(directory, ["rev-parse", "HEAD"])
+    unregisterGuard()
+    unregisterGuard = undefined
+    expect(repository.version()).toBe(unchangedVersion)
+    expect(git(directory, ["rev-parse", "HEAD"])).toBe(unchangedHead)
+
+    const secondPending = Effect.runPromise(read!(input))
+    pendingReads.push(secondPending)
+    await secondBranchRead
+    for (let attempt = 0; attempt < 20 && activeRead.workCounts.projectionBuilds < 2; attempt++)
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(activeRead.workCounts.projectionBuilds).toBe(2)
+
+    releaseProof()
+    const [firstPage, secondPage] = await Promise.all([firstPending, secondPending])
+    const firstRefreshed = SchedulingOutput.parse(firstPage)
+    const secondRefreshed = SchedulingOutput.parse(secondPage)
+    expect(firstRefreshed.next).toMatchObject({
+      status: "known",
+      candidate: { taskID: fallback.task.id },
+    })
+    expect(secondRefreshed.next).toEqual(firstRefreshed.next)
+    const repeated = SchedulingOutput.parse(await Effect.runPromise(read!(input)))
+    expect(repeated.next).toEqual(firstRefreshed.next)
+    expect(repository.version()).toBe(beforeReadVersion)
+    expect(git(directory, ["rev-parse", "HEAD"])).toBe(beforeReadHead)
+    expect(proofChild.plan.planID).not.toBe(parent.plan.planID)
+  } finally {
+    releaseProof()
+    unregisterGuard?.()
+    await Promise.allSettled(pendingReads)
     repository.close()
     rmSync(directory, { recursive: true, force: true })
   }

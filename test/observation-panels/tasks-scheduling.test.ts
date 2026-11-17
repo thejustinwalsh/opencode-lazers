@@ -14,6 +14,35 @@ function until(predicate: () => boolean) {
   })()
 }
 
+function pressTab(dom: Window) {
+  const document = dom.document as unknown as Document
+  const active = document.activeElement as unknown as HTMLElement | null
+  const event = new dom.window.KeyboardEvent("keydown", {
+    key: "Tab",
+    bubbles: true,
+    cancelable: true,
+  })
+  active?.dispatchEvent(event as unknown as Event)
+  if (event.defaultPrevented) return
+  const stops = (
+    Array.from(
+      document.querySelectorAll("button, a[href], input, select, textarea, summary, [tabindex]"),
+    ) as unknown as HTMLElement[]
+  ).filter((element) => element.tabIndex >= 0 && !element.hasAttribute("disabled"))
+  const index = stops.indexOf(active!)
+  stops[index < 0 ? 0 : (index + 1) % stops.length]?.focus()
+}
+
+function pressEnter(dom: Window, element: HTMLButtonElement) {
+  const event = new dom.window.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  })
+  element.dispatchEvent(event as unknown as Event)
+  if (!event.defaultPrevented) element.click()
+}
+
 test("registered Tasks renders authoritative Now, Attention and Next with navigable priority/dependency reasons", async () => {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
@@ -624,6 +653,438 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     mounted?.dispose()
     disposeSetup?.()
     await rm(outputDirectory, { recursive: true, force: true })
+    for (const name of globalNames) {
+      const descriptor = previousGlobals.get(name)
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else Reflect.deleteProperty(globalThis, name)
+    }
+    dom.happyDOM.abort()
+  }
+})
+
+test("keyboard navigation reveals a held scheduling-backed fork when topology is unavailable", async () => {
+  const dom = new Window({ url: "http://localhost" })
+  Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
+  const browserDocument = dom.document as unknown as Document
+  const globalNames = [
+    "window",
+    "document",
+    "Node",
+    "Element",
+    "HTMLElement",
+    "HTMLButtonElement",
+    "HTMLDivElement",
+    "Document",
+    "DocumentFragment",
+    "Text",
+    "Event",
+    "MouseEvent",
+    "KeyboardEvent",
+    "PointerEvent",
+    "MutationObserver",
+    "customElements",
+    "navigator",
+    "location",
+    "getComputedStyle",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+  ] as const
+  const previousGlobals = new Map<string, PropertyDescriptor | undefined>()
+  for (const name of globalNames) {
+    previousGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: (dom as unknown as Record<string, unknown>)[name],
+    })
+  }
+
+  const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
+  const entry = fileURLToPath(new URL("../task-panel/fixtures/tasks-dom-entry.ts", import.meta.url))
+  const outputDirectory = fileURLToPath(
+    new URL("../../node_modules/.cache/tasks-scheduling-navigation-test", import.meta.url),
+  )
+  const inferenceRuntimeModule = "\0lazers-test-unused-inference-runtime"
+  let disposeSetup: (() => void) | undefined
+  let mounted: { dispose(): void } | undefined
+  const scrollTargets: string[] = []
+  const scrollPrototype = dom.window.HTMLElement.prototype
+  const scrollDescriptor = Object.getOwnPropertyDescriptor(scrollPrototype, "scrollIntoView")
+  Object.defineProperty(scrollPrototype, "scrollIntoView", {
+    configurable: true,
+    value(this: HTMLElement) {
+      if (this.dataset.taskId) scrollTargets.push(this.dataset.taskId)
+    },
+  })
+  try {
+    await rm(outputDirectory, { recursive: true, force: true })
+    await mkdir(outputDirectory, { recursive: true })
+    await build({
+      configFile: false,
+      resolve: { conditions: ["browser", "development", "module"] },
+      define: { __LAZERS_RADAR_WORKER_SOURCE__: JSON.stringify("") },
+      plugins: [
+        solid(),
+        {
+          name: "test-unused-inference-runtime",
+          enforce: "pre",
+          resolveId(source, importer) {
+            if (source !== "./webgpu/runtime.ts" || importer !== guiRoot) return
+            return inferenceRuntimeModule
+          },
+          load(id) {
+            if (id === inferenceRuntimeModule)
+              return `export function createInferenceRuntime() { throw new Error("unused") }`
+          },
+        },
+      ],
+      build: {
+        outDir: outputDirectory,
+        emptyOutDir: true,
+        minify: false,
+        lib: { entry, formats: ["es"], fileName: "tasks-scheduling-navigation-test" },
+        rolldownOptions: { output: { codeSplitting: false } },
+      },
+    })
+    const host = await import(
+      pathToFileURL(`${outputDirectory}/tasks-scheduling-navigation-test.js`).href
+    )
+    const projectID = "tasks-scheduling-navigation-project"
+    const projectDirectory = "/workspace/tasks-scheduling-navigation"
+    const sessionID = "ses-tasks-scheduling-navigation"
+    const ids = {
+      heldAttention: "11111111-1111-4111-8111-111111111111",
+      forkRoot: "22222222-2222-4222-8222-222222222222",
+      heldChild: "33333333-3333-4333-8333-333333333333",
+      otherChild: "44444444-4444-4444-8444-444444444444",
+      join: "55555555-5555-4555-8555-555555555555",
+    }
+    const attentionPlanID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    const forkPlanID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    const names = {
+      [ids.heldAttention]: "Review the held fork task",
+      [ids.forkRoot]: "Prepare parallel work",
+      [ids.heldChild]: "Held parallel branch",
+      [ids.otherChild]: "Other parallel branch",
+      [ids.join]: "Join parallel work",
+    }
+    const proposal = validProposal()
+    const taskSpec = (taskID: string) => ({
+      schemaVersion: 1,
+      id: taskID,
+      revision: 1,
+      status: "submitted",
+      createdAt: "2026-11-05T00:00:00.000Z",
+      proposal: { ...proposal, objective: names[taskID as keyof typeof names] },
+      provenance: {
+        projectID,
+        projectDirectory,
+        workspaceDirectory: projectDirectory,
+        sessionID,
+        startingRevision: { kind: "unborn" },
+      },
+    })
+    const classification = {
+      revision: 1,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+      provenance: {
+        kind: "embedded",
+        sessionID,
+        createdAt: "2026-11-05T00:00:00.000Z",
+      },
+    }
+    const reference = (taskID: string) =>
+      taskID === ids.heldChild ? undefined : `LZ-${Object.values(ids).indexOf(taskID) + 1}`
+    const summary = (taskID: string) => ({
+      taskID,
+      ...(reference(taskID) ? { reference: reference(taskID) } : {}),
+      revision: 1,
+      status: "queued",
+      recordedState: "queued",
+      reason: null,
+      classification,
+      title: names[taskID as keyof typeof names],
+      objective: names[taskID as keyof typeof names],
+      createdAt: "2026-11-05T00:00:00.000Z",
+      sessionID,
+      matches: [],
+    })
+    const node = (input: {
+      taskID: string
+      ordinal: number
+      decision: "eligible" | "waiting"
+      prerequisites: string[]
+      waitingOn: string[]
+      reason: string | null
+    }) => ({
+      taskID: input.taskID,
+      ...(reference(input.taskID) ? { reference: reference(input.taskID) } : {}),
+      title: names[input.taskID as keyof typeof names],
+      objective: names[input.taskID as keyof typeof names],
+      ordinal: input.ordinal,
+      order: input.ordinal,
+      lifecycle: "queued",
+      decision: input.decision,
+      reason: input.reason,
+      prerequisites: input.prerequisites,
+      waitingOn: input.waitingOn,
+      reservationTaskIDs: [],
+    })
+    const plans = [
+      {
+        planID: attentionPlanID,
+        planVersion: 1,
+        planOrder: 0,
+        priority: 10,
+        title: "Review plan",
+        lifecycle: "running",
+        decision: "waiting",
+        reason: "Waiting for the held parallel task.",
+        afterPlans: [],
+        nodesComplete: true,
+        nodes: [
+          node({
+            taskID: ids.heldAttention,
+            ordinal: 0,
+            decision: "waiting",
+            prerequisites: [],
+            waitingOn: [ids.heldChild],
+            reason: "Waiting for the held parallel task.",
+          }),
+        ],
+      },
+      {
+        planID: forkPlanID,
+        planVersion: 1,
+        planOrder: 1,
+        priority: 9,
+        title: "Parallel plan",
+        lifecycle: "running",
+        decision: "waiting",
+        reason: "A parallel branch is held.",
+        afterPlans: [],
+        nodesComplete: true,
+        nodes: [
+          node({
+            taskID: ids.forkRoot,
+            ordinal: 0,
+            decision: "eligible",
+            prerequisites: [],
+            waitingOn: [],
+            reason: null,
+          }),
+          node({
+            taskID: ids.heldChild,
+            ordinal: 1,
+            decision: "waiting",
+            prerequisites: [ids.forkRoot],
+            waitingOn: [ids.forkRoot],
+            reason: "Waiting for review.",
+          }),
+          node({
+            taskID: ids.otherChild,
+            ordinal: 2,
+            decision: "eligible",
+            prerequisites: [ids.forkRoot],
+            waitingOn: [],
+            reason: null,
+          }),
+          node({
+            taskID: ids.join,
+            ordinal: 3,
+            decision: "waiting",
+            prerequisites: [ids.heldChild, ids.otherChild],
+            waitingOn: [ids.heldChild, ids.otherChild],
+            reason: "Waiting for both parallel branches.",
+          }),
+        ],
+      },
+    ]
+    const schedule = async () => ({
+      schemaVersion: 1,
+      snapshotID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      repositoryVersion: 1,
+      scope: { kind: "session", sessionID },
+      observedAt: 1,
+      coverage: {
+        status: "complete",
+        planCount: plans.length,
+        coveredPlanCount: plans.length,
+        nodeCount: Object.keys(ids).length,
+        coveredNodeCount: Object.keys(ids).length,
+        activeReservationCount: 0,
+        reservationsComplete: true,
+        reason: null,
+      },
+      next: { status: "none" },
+      selectedTaskIDs: [],
+      selectionComplete: true,
+      plans,
+      nextCursor: null,
+    })
+    let topologyCalls = 0
+    const detailRequests: string[] = []
+    const detail = async ({ taskID }: { taskID: string }) => {
+      detailRequests.push(taskID)
+      const planID = taskID === ids.heldAttention ? attentionPlanID : forkPlanID
+      const waitingOn = taskID === ids.heldAttention ? [ids.heldChild] : []
+      const value = summary(taskID)
+      return {
+        status: "found",
+        task: taskSpec(taskID),
+        classification: value.classification,
+        classificationHistory: [value.classification],
+        advice: null,
+        ...(reference(taskID) ? { reference: reference(taskID) } : {}),
+        recordedState: "queued",
+        execution: {
+          planID,
+          taskID,
+          state: "queued",
+          version: 1,
+          reason: null,
+          waitingOn,
+        },
+        attempts: [],
+        activity: [],
+      }
+    }
+    const rpc = {
+      query: async () => ({
+        projectDirectory,
+        snapshot: 1,
+        count: Object.keys(ids).length,
+        tasks: Object.values(ids).map(summary),
+        nextCursor: null,
+        serverTime: "2026-11-05T00:00:00.000Z",
+      }),
+      get: detail,
+      currentActivity: async () => ({ activities: [] }),
+      start: async () => ({ status: "existing", planID: attentionPlanID, state: "running" }),
+    }
+    const client = {
+      location: {
+        get: async () => ({ project: { canonical: projectDirectory, id: projectID } }),
+      },
+      rpc: (contract: { id?: string }) =>
+        contract.id === "lazers.observability"
+          ? {
+              topology: async () => {
+                topologyCalls++
+                throw new Error("fixture topology unavailable")
+              },
+            }
+          : contract.id === "lazers.tasks.scheduling"
+            ? { read: schedule }
+            : rpc,
+      event: { subscribe: () => (async function* () {})() },
+    }
+    const registrations: Array<{ token: unknown; value: unknown }> = []
+    const taskStore = host.createReactiveStore({ projects: {} })
+    const context = {
+      id: "lazers",
+      app: { platform: "web" },
+      signal: new AbortController().signal,
+      ui: (() => {
+        const ui = host.createTestUI() as Record<string, unknown>
+        ui.IconButton = (props: { label: string; onClick?: () => void; disabled?: boolean }) => {
+          const button = browserDocument.createElement("button")
+          button.textContent = props.label
+          button.setAttribute("aria-label", props.label)
+          button.addEventListener("click", () => props.onClick?.())
+          if (props.disabled) button.disabled = true
+          return button
+        }
+        ui.Markdown = (props: { text: string }) => {
+          const span = browserDocument.createElement("span")
+          span.textContent = props.text
+          return span
+        }
+        ui.Code = (props: { content: string }) => {
+          const pre = browserDocument.createElement("pre")
+          pre.textContent = props.content
+          return pre
+        }
+        return ui
+      })(),
+      appearance: { mode: () => "dark", font: () => "monospace" },
+      add: (token: unknown, value: unknown) => registrations.push({ token, value }),
+      sessions: { current: () => session, list: () => [session] },
+      layout: { open: () => {} },
+      stores: {
+        taskView: () => taskStore,
+        modelsView: () => host.createReactiveStore({ projects: {} }),
+        trajectoryView: () => host.createReactiveStore({ projects: {} }),
+      },
+      links: { open: () => {} },
+      system: { copy: async () => {} },
+      servers: { get: () => ({ connected: true, client }) },
+    }
+    const session = {
+      id: sessionID,
+      location: { directory: projectDirectory },
+      directory: projectDirectory,
+      server: { id: "tasks-scheduling-navigation-server", connected: true, client },
+    }
+    disposeSetup = host.setupGui(host.gui, context)
+    const panel = host.taskPanelRegistration(registrations)
+    expect(panel).toBeDefined()
+    const css = registrations.find(
+      (entry) => typeof entry.value === "string" && entry.value.includes(".lazers-tasks {"),
+    )?.value as string | undefined
+    const style = browserDocument.createElement("style")
+    style.textContent = css ?? ""
+    browserDocument.head.append(style)
+    const container = browserDocument.createElement("main")
+    container.style.width = "360px"
+    browserDocument.body.append(container)
+    mounted = host.mountTaskPanel(panel!, context, session, container)
+
+    const row = (taskID: string) =>
+      container.querySelector<HTMLElement>(`[role="treeitem"][data-task-id="${taskID}"]`)
+    const signal = () =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.heldAttention}"]`,
+      )
+    await until(() => topologyCalls > 0 && signal() !== null)
+    expect(row(ids.heldChild)).toBeNull()
+    expect(signal()?.tabIndex).toBe(0)
+    for (let attempt = 0; attempt < 100 && browserDocument.activeElement !== signal(); attempt++)
+      pressTab(dom)
+    expect(browserDocument.activeElement).toBe(signal())
+    pressEnter(dom, signal()!)
+    await until(() => row(ids.heldAttention)?.getAttribute("aria-selected") === "true")
+    await until(() => detailRequests.includes(ids.heldAttention))
+
+    const relatedTask = () =>
+      container.querySelector<HTMLButtonElement>(
+        '.lazers-tasks-detail .lazers-tasks-dependencies-visible button[aria-label^="Open related task"]',
+      )
+    await until(() => relatedTask() !== null)
+    for (
+      let attempt = 0;
+      attempt < 100 && browserDocument.activeElement !== relatedTask();
+      attempt++
+    )
+      pressTab(dom)
+    expect(browserDocument.activeElement).toBe(relatedTask())
+    expect(relatedTask()?.textContent).toBe(ids.heldChild.slice(0, 8))
+
+    const priorScrolls = scrollTargets.length
+    pressEnter(dom, relatedTask()!)
+    await until(() => row(ids.heldChild)?.getAttribute("aria-selected") === "true")
+    await until(() => browserDocument.activeElement === row(ids.heldChild))
+    expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
+    expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("2")
+    await until(() => scrollTargets.slice(priorScrolls).includes(ids.heldChild))
+    expect(topologyCalls).toBeGreaterThan(0)
+  } finally {
+    mounted?.dispose()
+    disposeSetup?.()
+    await rm(outputDirectory, { recursive: true, force: true })
+    if (scrollDescriptor) Object.defineProperty(scrollPrototype, "scrollIntoView", scrollDescriptor)
+    else Reflect.deleteProperty(scrollPrototype, "scrollIntoView")
     for (const name of globalNames) {
       const descriptor = previousGlobals.get(name)
       if (descriptor) Object.defineProperty(globalThis, name, descriptor)

@@ -14,6 +14,7 @@ import type { SchedulingReservation } from "../runner/scheduling-selection.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import {
   SchedulingInput,
+  MAX_SCHEDULING_PLAN_REFERENCES,
   MAX_SCHEDULING_RESERVATION_REFERENCES,
   SchedulingOutput,
   SchedulingSnapshot as SchedulingSnapshotSchema,
@@ -140,6 +141,7 @@ type PlanSourceResult = {
   reason: string | null
 }
 type BuiltProjection = { snapshot: SchedulingSnapshot; cacheable: boolean }
+type ReservationExclusions = ReadonlyMap<string, boolean>
 
 const safeReason = (value: unknown): string | null => {
   if (typeof value !== "string") return null
@@ -249,6 +251,7 @@ async function buildSnapshot(input: {
   scope: SchedulingScope
   observedAt: number
   branch: SchedulingBranch
+  reservationExclusions: ReservationExclusions
   provePlan: (
     prerequisites: readonly string[],
     rows: SchedulingFactSnapshot["planIntegrations"],
@@ -261,7 +264,8 @@ async function buildSnapshot(input: {
     head: string,
   ) => Promise<ProofResult<IntegrationDecision>>
 }): Promise<BuiltProjection> {
-  const { store, facts, scope, observedAt, branch, provePlan, proveTask } = input
+  const { store, facts, scope, observedAt, branch, reservationExclusions, provePlan, proveTask } =
+    input
   const directory = store.repository.projectDirectory
   let cacheable = true
   const projected: ProjectedPlan[] = await Promise.all(
@@ -410,6 +414,8 @@ async function buildSnapshot(input: {
       reservationTaskIDsScopeLimited: scopedTaskIDs.length < uniqueTaskIDs.length,
     }
   }
+  const sessionPlanIDs =
+    scope.kind === "session" ? new Set(facts.sessionAssociations?.planIDs ?? []) : undefined
   const previouslySelectedReservations: SchedulingReservation[] = []
   const selectedTaskIDs: string[] = []
   let prefixKnown = true
@@ -440,7 +446,16 @@ async function buildSnapshot(input: {
       for (const node of plan.nodes) {
         if (["queued", "ready"].includes(node.lifecycle)) {
           node.reason = plan.schedule.reason
-          if (plan.waitingPlanIDs.length) node.waitingOnPlans = plan.waitingPlanIDs
+          if (plan.waitingPlanIDs.length) {
+            const waitingPlanIDs = [...new Set(plan.waitingPlanIDs)].filter(
+              (planID) => !sessionPlanIDs || sessionPlanIDs.has(planID),
+            )
+            if (waitingPlanIDs.length) {
+              node.waitingOnPlans = waitingPlanIDs.slice(0, MAX_SCHEDULING_PLAN_REFERENCES)
+              node.waitingOnPlansCount = waitingPlanIDs.length
+              node.waitingOnPlansComplete = waitingPlanIDs.length <= MAX_SCHEDULING_PLAN_REFERENCES
+            }
+          }
         }
       }
       continue
@@ -495,7 +510,9 @@ async function buildSnapshot(input: {
     }
 
     const activeReservations = facts.reservations
-      .filter((attempt) => !sourceReservationExcluded(store, attempt, { mode: plan.workspaceMode }))
+      .filter(
+        (attempt) => plan.workspaceMode !== "isolated" || !reservationExclusions.get(attempt.id),
+      )
       .map((attempt) => ({
         shared: attempt.workspace === directory,
         scopes: store.effectiveWriteScope(attempt.task_id),
@@ -914,6 +931,7 @@ export class TaskSchedulingRead {
     facts: SchedulingFactSnapshot,
     scope: SchedulingScope,
     branch: SchedulingBranch,
+    reservationExclusions: ReservationExclusions,
   ): Promise<BuiltProjection> {
     this.work.projectionBuilds++
     return buildSnapshot({
@@ -922,6 +940,7 @@ export class TaskSchedulingRead {
       scope,
       observedAt: this.now(),
       branch,
+      reservationExclusions,
       provePlan: (prerequisites, rows, head) => this.planProof(prerequisites, rows, head),
       proveTask: (currentBranch, prerequisites, rows, head) =>
         this.taskProof(currentBranch, prerequisites, rows, head),
@@ -936,7 +955,19 @@ export class TaskSchedulingRead {
     let branch = initialBranch
     const semanticBasis = schedulingBasis(facts)
     for (let attempt = 0; attempt < 2; attempt++) {
-      const key = JSON.stringify([scopeKey(scope), semanticBasis, branch])
+      const reservationExclusions = new Map(
+        facts.reservations.map((reservation) => [
+          reservation.id,
+          sourceReservationExcluded(this.store, reservation, { mode: "isolated" }),
+        ]),
+      )
+      const reservationAuthority = JSON.stringify(
+        facts.reservations.map((reservation) => [
+          reservation.id,
+          reservationExclusions.get(reservation.id) ?? false,
+        ]),
+      )
+      const key = JSON.stringify([scopeKey(scope), semanticBasis, branch, reservationAuthority])
       const cached = this.projections.get(key)
       if (cached) {
         this.work.projectionCacheHits++
@@ -947,10 +978,18 @@ export class TaskSchedulingRead {
       const pending = this.projectionInFlight.get(key)
       if (pending) {
         this.work.projectionCoalesced++
-        return (await pending).snapshot
+        const result = await pending
+        const currentAuthority = JSON.stringify(
+          facts.reservations.map((reservation) => [
+            reservation.id,
+            sourceReservationExcluded(this.store, reservation, { mode: "isolated" }),
+          ]),
+        )
+        if (currentAuthority !== reservationAuthority) continue
+        return result.snapshot
       }
       const proofEvaluations = this.work.proofEvaluations
-      const building = this.buildProjection(facts, scope, branch)
+      const building = this.buildProjection(facts, scope, branch, reservationExclusions)
       this.projectionInFlight.set(key, building)
       try {
         const built = await building
@@ -961,6 +1000,13 @@ export class TaskSchedulingRead {
             continue
           }
         }
+        const currentAuthority = JSON.stringify(
+          facts.reservations.map((reservation) => [
+            reservation.id,
+            sourceReservationExcluded(this.store, reservation, { mode: "isolated" }),
+          ]),
+        )
+        if (currentAuthority !== reservationAuthority) continue
         if (built.cacheable) {
           this.projections.set(key, built.snapshot)
           while (this.projections.size > MAX_CACHED_PROJECTIONS) {
