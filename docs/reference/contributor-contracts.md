@@ -38,7 +38,7 @@ The runtime owns plan admission, dispatch, dependencies, verification, configure
 
 `lz-submit-task` saves a task but does not dispatch it. A submission needs a caller-chosen `idempotencyKey` with 1–200 characters and at least one non-whitespace character. Key comparison does not trim, fold case, or normalize Unicode. Reuse the exact key and validated content after an ambiguous result to recover the original task. A different valid payload with the same key conflicts. Object key order does not change content identity; array order and values do. Keys are unique within a canonical repository; a new key creates a new logical task. Permission checks run before replay or conflict lookup. See [`src/tools.ts`](../../src/tools.ts) and [`src/submission.ts`](../../src/submission.ts).
 
-`lz-submit-plan` saves a plan. `lz-plan-command` requests `run` separately. The runtime admits and dispatches that plan only after authorization and validation. The Tasks panel's **Start** action uses the same runtime path.
+`lz-submit-plan` admits a plan: the scheduler runs its tasks with no separate Architect `run`. Base-commit and model-route preflight remain. Pass `draft: true` only to save a plan without admitting it; `lz-plan-command` `run` admits an explicit draft. The Tasks panel's **Start** action uses the same runtime path.
 
 ## Routes and workers
 
@@ -56,7 +56,16 @@ For audit and refactor tasks, `workerAgent: "auditor"` selects Auditor. [`src/ru
 
 [`src/runner/verification-timeout.ts`](../../src/runner/verification-timeout.ts) sets the default 15-minute inactivity allowance and 60-minute hard backstop. Project and per-check settings can override both. Real standard output or standard error resets the inactivity allowance.
 
-The runtime records check commands, outcomes, timestamps, and observed environment. A failed check may trigger one configured repair attempt. Resume and retry keep earlier attempts and usage. Acceptance records required checks and reviewed decisions. Integration remains a separate action.
+The runtime records check commands, outcomes, timestamps, and observed environment. A failed check may trigger one configured repair attempt. Resume and retry keep earlier attempts and usage. Acceptance records required checks and the Architect's reviewed decision. There is no human-evidence gate; `kind: "human"` evidence in stored tasks is ignored. Integration remains a separate action.
+
+## Ownership, routing and holds
+
+- The plan owner is advisory. Any live Architect session of the project may issue commands and is adopted as owner. Do not add owner-equality or owner-epoch authorizations.
+- Work that needs judgement routes through `routeArchitect()` ([`architect-routing.ts`](../../src/runner/architect-routing.ts)). Reuse the owner while its prompt cache is likely warm (`architectCacheWindowMs`, default five minutes) or its context is small (`architectReuseMaxContextTokens`, default 32,000 tokens); otherwise create a fresh Architect seeded by the continuity checkpoint. Record the decision as `ARCHITECT_ROUTED` with reason `warm`, `small-context`, `cold-large` or `missing`.
+- A hold exists only for real, unrecoverable loss that is directly observable, and it advertises an action that unblocks it. Register its reason family in [`hold-actions.ts`](../../src/runner/hold-actions.ts).
+- A verification effect (`verify:`, `graph-verify:`, `mechanical-fix`) with no receipt is superseded and re-run. Keep the effect journal for prompt, session and worktree effects.
+- A cancelled prerequisite drops its edge and notifies the Architect; it does not hold dependents.
+- Classify every new machine state and event in [`lifecycle-dead-ends.test.ts`](../../src/runner/lifecycle-dead-ends.test.ts). A non-terminal state needs an observable or Architect-action exit.
 
 Architect decides whether later changes need another check. Metadata drift alone does not revoke a passing result. Cleanup failures stay visible and retryable; they do not erase accepted work or its evidence.
 
