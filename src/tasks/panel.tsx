@@ -54,6 +54,7 @@ import {
 import {
   attentionLabel,
   distinctReasons,
+  isRingGlyph,
   rowHoldReasons,
   taskRowPresentation,
   taskRowBlocker,
@@ -61,7 +62,8 @@ import {
 } from "./row-presentation.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
-import type { TaskBlocker } from "./row-presentation.ts"
+import type { TaskBlocker, TaskGlyph, TaskRowPresentation } from "./row-presentation.ts"
+import { TaskRing } from "./state-glyph.tsx"
 import { ExecutionPlanGroupView } from "./execution-list-view.tsx"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
@@ -373,17 +375,47 @@ function TaskPanel(
       .find((node) => node.taskID === taskID)
   const schedulingPlan = (planID: string | undefined) =>
     planID ? schedulingPlans().find((plan) => plan.planID === planID) : undefined
+  /**
+   * Every row in the model, including branches of collapsed forks: Now and Attention membership
+   * must not depend on what is expanded. Selecting an entry reveals its fork.
+   */
+  const signalRows = createMemo(() => {
+    const model = executionList()
+    const rows: ExecutionListRow[] = []
+    const visit = (taskRow: ExecutionListRow) => {
+      rows.push(taskRow)
+      for (const branch of taskRow.fork?.branches ?? [])
+        for (const child of branch.rows) visit(child)
+    }
+    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow)
+    rows.push(...model.unplanned)
+    return rows
+  })
+  /** A native input/approval request on an open task: it asks the person now. */
+  const asksForAttention = (row: ExecutionListRow) =>
+    taskRowPresentation(row, visible()?.currentActivity[row.taskID]).tone === "attention"
+  /** Foreground work; a worker blocked on the person moves to Attention instead. */
   const nowRows = () =>
-    rowValues().filter((row) => visible()?.currentActivity[row.taskID]?.foreground === "active")
-  const attentionRows = () =>
-    rowValues().filter((row) => {
-      if (visible()?.currentActivity[row.taskID]?.foreground === "active") return false
-      return (
-        row.waiting ||
+    signalRows().filter(
+      (row) =>
+        visible()?.currentActivity[row.taskID]?.foreground === "active" && !asksForAttention(row),
+    )
+  /**
+   * Native input/approval requests lead Attention (they ask the person now, even while the worker is
+   * foreground), then recorded waits. Membership only reads recorded state; it never reorders work.
+   */
+  const attentionRows = () => {
+    const held = (row: ExecutionListRow) =>
+      visible()?.currentActivity[row.taskID]?.foreground !== "active" &&
+      (row.waiting ||
         visible()?.currentActivity[row.taskID]?.waiting === true ||
-        row.scheduling?.decision === "waiting"
-      )
-    })
+        row.scheduling?.decision === "waiting")
+    const rows = signalRows()
+    return [
+      ...rows.filter(asksForAttention),
+      ...rows.filter((row) => !asksForAttention(row) && held(row)),
+    ]
+  }
   const signalTabStopTaskID = () => nowRows()[0]?.taskID ?? attentionRows()[0]?.taskID
   const nextStatus = () => {
     const value = visible()
@@ -698,6 +730,15 @@ function TaskPanel(
       setCopyStatus("Could not open plan.")
     }
   }
+  const renderGlyph = (glyph: TaskGlyph) =>
+    isRingGlyph(glyph) ? <TaskRing glyph={glyph} /> : <Ui.Icon name={glyph} size="small" />
+  /** A listed task's row state (collapsed forks included); tasks outside the list stay neutral. */
+  const listedPresentation = (taskID: string): TaskRowPresentation | undefined => {
+    const listed = signalRows().find((row) => row.taskID === taskID)
+    return listed
+      ? taskRowPresentation(listed, visible()?.currentActivity[taskID], relationLabel)
+      : undefined
+  }
   const renderTaskRow = (
     taskRow: Accessor<ExecutionListRow>,
     group?: Accessor<ExecutionPlanGroup>,
@@ -802,7 +843,7 @@ function TaskPanel(
               role="img"
               aria-label={presentation().label}
             >
-              <Ui.Icon name={presentation().icon} size="small" />
+              {renderGlyph(presentation().icon)}
             </span>
           </Ui.Tooltip>
           <Show when={taskRow().reference}>
@@ -856,14 +897,18 @@ function TaskPanel(
         ? (schedulingPlan(blocker.id)?.title ?? `Plan ${blocker.id.slice(0, 8)}`)
         : relationLabel(blocker.id)
     const more = () => (total > 1 ? ` and ${total - 1} more` : "")
+    // The link takes the blocker's own state color, so a failed or running prerequisite reads at once.
+    const state = () => (blocker.kind === "task" ? listedPresentation(blocker.id) : undefined)
+    const stateSuffix = () => (state() ? ` · ${state()!.label}` : "")
     return (
-      <Ui.Tooltip value={`Waiting on ${name()}${more()}`}>
+      <Ui.Tooltip value={`Waiting on ${name()}${stateSuffix()}${more()}`}>
         <button
           type="button"
           class="lazers-tasks-row-blocker"
           data-blocker-kind={blocker.kind}
+          data-tone={state()?.tone}
           tabIndex={-1}
-          aria-label={`Open blocker ${name()}${more()}`}
+          aria-label={`Open blocker ${name()}${state() ? `, ${state()!.label.toLowerCase()}` : ""}${more()}`}
           onClick={(event) => {
             event.stopPropagation()
             if (blocker.kind === "plan") openPrerequisitePlan(blocker.id)
@@ -881,30 +926,36 @@ function TaskPanel(
     const reason = () => rowHoldReasons(taskRow, activity()).join("; ")
     const waiting = () =>
       Boolean(taskRow.waiting || activity()?.waiting || taskRow.scheduling?.decision === "waiting")
+    const selected = () => taskRow.taskID === visible()?.selectedID
     return (
-      <button
-        type="button"
-        class="lazers-tasks-schedule-entry"
-        data-scheduling-task-id={taskRow.taskID}
-        data-scheduling-group={label.toLowerCase()}
-        aria-pressed={taskRow.taskID === visible()?.selectedID}
-        aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
-        tabIndex={taskRow.taskID === signalTabStopTaskID() ? 0 : -1}
-        onKeyDown={signalKey}
-        onClick={() => selectTask(taskRow.taskID)}
-      >
-        <span
-          class="lazers-tasks-state"
-          data-state={taskRow.status}
-          data-waiting={waiting()}
-          data-tone={presentation().tone}
-          aria-hidden="true"
-          title={taskStateTooltip(presentation())}
+      <div class="lazers-tasks-schedule-entry" data-selected={selected()}>
+        <button
+          type="button"
+          class="lazers-tasks-schedule-select"
+          data-scheduling-task-id={taskRow.taskID}
+          data-scheduling-group={label.toLowerCase()}
+          aria-pressed={selected()}
+          aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
+          tabIndex={taskRow.taskID === signalTabStopTaskID() ? 0 : -1}
+          onKeyDown={signalKey}
+          onClick={() => selectTask(taskRow.taskID)}
         >
-          <Ui.Icon name={presentation().icon} size="small" />
-        </span>
-        <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow.title)}</span>
-      </button>
+          <span
+            class="lazers-tasks-state"
+            data-state={taskRow.status}
+            data-waiting={waiting()}
+            data-tone={presentation().tone}
+            aria-hidden="true"
+            title={taskStateTooltip(presentation())}
+          >
+            {renderGlyph(presentation().icon)}
+          </span>
+          <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow.title)}</span>
+        </button>
+        <Show when={label === "Attention" && taskRowBlocker(presentation())}>
+          {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
+        </Show>
+      </div>
     )
   }
   const copyTaskLink = async () => {
@@ -1434,13 +1485,19 @@ function TaskPanel(
                   <div class="lazers-tasks-schedule-groups">
                     <Show when={nowRows().length}>
                       <section class="lazers-tasks-schedule-group" aria-label="Now">
-                        <h3 class="lazers-tasks-schedule-heading">Now</h3>
+                        <h3 class="lazers-tasks-schedule-heading">
+                          Now
+                          <span class="lazers-tasks-schedule-count">{nowRows().length}</span>
+                        </h3>
                         <For each={nowRows()}>{(taskRow) => renderSignalRow(taskRow, "Now")}</For>
                       </section>
                     </Show>
                     <Show when={attentionRows().length}>
                       <section class="lazers-tasks-schedule-group" aria-label="Attention">
-                        <h3 class="lazers-tasks-schedule-heading">Attention</h3>
+                        <h3 class="lazers-tasks-schedule-heading">
+                          Attention
+                          <span class="lazers-tasks-schedule-count">{attentionRows().length}</span>
+                        </h3>
                         <For each={attentionRows()}>
                           {(taskRow) => renderSignalRow(taskRow, "Attention")}
                         </For>
@@ -1459,38 +1516,66 @@ function TaskPanel(
                             </div>
                           }
                         >
-                          {(candidate) => (
-                            <button
-                              type="button"
-                              class="lazers-tasks-schedule-entry"
-                              data-scheduling-task-id={candidate().taskID}
-                              data-scheduling-group="next"
-                              aria-label={`Next: ${candidate().reference ?? candidate().taskID.slice(0, 8)} ${taskTitle(candidate().title)}, priority ${candidate().priority}, plan order ${candidate().planOrder + 1}, node order ${candidate().ordinal + 1}`}
-                              aria-pressed={candidate().taskID === value().selectedID}
-                              tabIndex={
-                                rowValues().some((row) => row.taskID === candidate().taskID)
-                                  ? -1
-                                  : 0
+                          {(candidate) => {
+                            const presentation = () =>
+                              listedPresentation(candidate().taskID) ?? {
+                                tone: "ready" as const,
+                                icon: "ring-dot" as const,
+                                label: "Eligible",
                               }
-                              onKeyDown={signalKey}
-                              onClick={() => selectTask(candidate().taskID)}
-                            >
-                              <Ui.Icon name="chevron-right" size="small" />
-                              <span class="lazers-tasks-schedule-entry-title">
-                                {candidate().reference ?? candidate().taskID.slice(0, 8)} ·{" "}
-                                {taskTitle(candidate().title)}
-                              </span>
-                              <span class="lazers-tasks-schedule-entry-meta">
-                                P{candidate().priority} · #{candidate().planOrder + 1}.
-                                {candidate().ordinal + 1}
-                              </span>
-                            </button>
-                          )}
+                            const order = () =>
+                              `Priority ${candidate().priority} · plan ${candidate().planOrder + 1}, step ${candidate().ordinal + 1}`
+                            return (
+                              <div
+                                class="lazers-tasks-schedule-entry"
+                                data-selected={candidate().taskID === value().selectedID}
+                              >
+                                <button
+                                  type="button"
+                                  class="lazers-tasks-schedule-select"
+                                  data-scheduling-task-id={candidate().taskID}
+                                  data-scheduling-group="next"
+                                  aria-label={`Next: ${candidate().reference ?? candidate().taskID.slice(0, 8)} ${taskTitle(candidate().title)}, priority ${candidate().priority}, plan order ${candidate().planOrder + 1}, node order ${candidate().ordinal + 1}`}
+                                  aria-pressed={candidate().taskID === value().selectedID}
+                                  tabIndex={
+                                    rowValues().some((row) => row.taskID === candidate().taskID)
+                                      ? -1
+                                      : 0
+                                  }
+                                  onKeyDown={signalKey}
+                                  onClick={() => selectTask(candidate().taskID)}
+                                >
+                                  <span
+                                    class="lazers-tasks-state"
+                                    data-tone={presentation().tone}
+                                    aria-hidden="true"
+                                  >
+                                    {renderGlyph(presentation().icon)}
+                                  </span>
+                                  <span class="lazers-tasks-schedule-entry-title">
+                                    {taskTitle(candidate().title)}
+                                  </span>
+                                  <span
+                                    class="lazers-tasks-schedule-entry-meta"
+                                    title={order()}
+                                    style={{ "font-family": ctx.appearance.font("mono") }}
+                                  >
+                                    P{candidate().priority}
+                                  </span>
+                                </button>
+                              </div>
+                            )
+                          }}
                         </Show>
                       </section>
                     </Show>
                   </div>
-                  <div role="tree" aria-label={`${stateLabel(stateFilter())} tasks`}>
+                  <div
+                    class="lazers-tasks-tree"
+                    role="tree"
+                    aria-label={`${stateLabel(stateFilter())} tasks`}
+                    data-forks={rowValues().some((row) => Boolean(row.fork))}
+                  >
                     <Keyed each={executionList().plans} by={(group) => group.planID}>
                       {(group) => (
                         <ExecutionPlanGroupView
@@ -1587,7 +1672,7 @@ function TaskPanel(
                   data-tone={selectedPresentation().tone}
                   aria-hidden="true"
                 >
-                  <Ui.Icon name={selectedPresentation().icon} size="small" />
+                  {renderGlyph(selectedPresentation().icon)}
                 </span>
                 <span
                   class="lazers-tasks-inspector-state"
@@ -1668,7 +1753,17 @@ function TaskPanel(
                 }
               >
                 <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
-                  <Ui.Icon name="link" size="small" />
+                  <span
+                    class="lazers-tasks-dependency-icon"
+                    data-tone={
+                      selectedRelations().waitingOn[0]
+                        ? listedPresentation(selectedRelations().waitingOn[0]!)?.tone
+                        : undefined
+                    }
+                    aria-hidden="true"
+                  >
+                    <Ui.Icon name="link" size="small" />
+                  </span>
                   <span>Waiting on</span>
                   <For each={selectedRelations().waitingOn}>
                     {(taskID, index) => (

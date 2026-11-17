@@ -645,8 +645,10 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     ).toHaveLength(1)
     const heldBlocker = heldRow.querySelector<HTMLButtonElement>(".lazers-tasks-row-blocker")!
     expect(heldBlocker.textContent).toBe("link")
+    // LZ-8 is on a later query page, so the link names it without a state and stays neutral.
     expect(heldBlocker.getAttribute("aria-label")).toBe("Open blocker LZ-8")
     expect(tooltip(heldBlocker)).toBe("Waiting on LZ-8")
+    expect(heldBlocker.dataset.tone).toBeUndefined()
     // Not a tab stop: the tree keeps one roving stop and the inspector lists blockers by keyboard.
     expect(heldBlocker.tabIndex).toBe(-1)
     expect(getComputedStyle(heldBlocker).flexShrink).toBe("0")
@@ -706,6 +708,16 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(activeRow.getAttribute("aria-label")).toContain("Input pending · Approval pending")
     // Native attention outranks the hold in the row's icon; the hold stays in the inspector.
     expect(rowPart(ids.active, ".lazers-tasks-state")?.getAttribute("data-tone")).toBe("attention")
+    // A worker asking for input leads Attention and leaves Now, though it is foreground-active.
+    const attentionEntries = [
+      ...container.querySelectorAll<HTMLElement>('[data-scheduling-group="attention"]'),
+    ]
+    expect(attentionEntries[0]?.dataset.schedulingTaskId).toBe(ids.active)
+    expect(
+      container.querySelector(
+        `[data-scheduling-group="now"][data-scheduling-task-id="${ids.active}"]`,
+      ),
+    ).toBeNull()
     expect(rowPart(ids.active, ".lazers-tasks-state")?.getAttribute("aria-label")).toBe("Input")
     expect(tooltip(rowPart(ids.active, ".lazers-tasks-state"))).toBe(
       "Input · Input pending · Approval pending",
@@ -893,6 +905,13 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     key(row(ids.forkRoot)!, "ArrowLeft")
     await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "false")
     expect(row(ids.branchA)).toBeNull()
+    const branchAttention = container.querySelector<HTMLButtonElement>(
+      `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.branchA}"]`,
+    )
+    expect(branchAttention).not.toBeNull()
+    branchAttention!.click()
+    await until(() => row(ids.branchA)?.getAttribute("aria-selected") === "true")
+    expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
     row(ids.unknown)!.click()
     await until(() => row(ids.unknown)?.getAttribute("aria-selected") === "true")
     // Scroll restoration applies once the reselected detail mounts; scroll only after that.

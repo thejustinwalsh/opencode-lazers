@@ -14,6 +14,13 @@
   color: var(--text-strong);
   background: var(--background-base);
   container: lazers-tasks / inline-size;
+  /* Left inset of every state icon in the list (signal entries and tree rows share the column). */
+  --task-icon-inset: 8px;
+  /* Status tones: the host's stronger warning/success steps keep 3:1 against light surfaces too. */
+  --task-tone-running: var(--text-interactive-base, var(--icon-interactive-base));
+  --task-tone-warning: var(--icon-warning-active, var(--icon-warning-base));
+  --task-tone-success: var(--icon-success-active, var(--icon-success-base));
+  --task-tone-critical: var(--icon-critical-base);
 }
 .lazers-tasks button,
 .lazers-tasks input {
@@ -76,7 +83,7 @@
   background: var(--icon-base);
 }
 .lazers-tasks-dot[data-stale="true"] {
-  background: var(--icon-warning-base);
+  background: var(--task-tone-warning);
 }
 .lazers-tasks-list,
 .lazers-tasks-detail {
@@ -128,10 +135,10 @@
   background: var(--icon-success-base);
 }
 .lazers-tasks-activity-indicator[data-state="unknown"] {
-  background: var(--icon-warning-base);
+  background: var(--task-tone-warning);
 }
 .lazers-tasks-waiting {
-  color: var(--icon-warning-base);
+  color: var(--task-tone-warning);
   font-weight: 500;
 }
 .lazers-tasks-plan {
@@ -190,43 +197,62 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/*
+ * Now / Attention / Next: one compact block above the tree, closed by a single hairline. Section
+ * labels share the plan heading's inset; entry icons share the tree's icon column.
+ */
 .lazers-tasks-schedule-groups {
   display: grid;
-  gap: 4px;
-  margin: 0 0 8px;
+  gap: 2px;
+  margin: 0 0 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-weak-base);
 }
 .lazers-tasks-schedule-group {
   min-width: 0;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border-weak-base);
 }
 .lazers-tasks-schedule-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   margin: 0;
-  padding: 4px 4px 2px;
+  padding: 6px 8px 0 var(--task-icon-inset);
   color: var(--text-weak);
   font-size: 0.85em;
   font-weight: 500;
 }
+.lazers-tasks-schedule-count {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
 .lazers-tasks-schedule-entry {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
   min-width: 0;
-  min-height: 28px;
-  padding: 0 8px 0 4px;
-  border: 0;
+  min-height: 32px;
+  padding-right: 4px;
   border-radius: 4px;
-  background: transparent;
-  color: var(--text-base);
-  text-align: left;
-  cursor: pointer;
 }
 .lazers-tasks-schedule-entry:hover {
   background: var(--surface-base-hover);
 }
-.lazers-tasks-schedule-entry[aria-pressed="true"] {
+.lazers-tasks-schedule-entry[data-selected="true"] {
   background: color-mix(in srgb, var(--text-strong) 9%, var(--background-base));
+}
+.lazers-tasks-schedule-select {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 4px 0 var(--task-icon-inset);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-strong);
+  text-align: left;
+  cursor: pointer;
 }
 .lazers-tasks-schedule-entry-title {
   flex: 1 1 auto;
@@ -239,6 +265,7 @@
   flex: none;
   color: var(--text-weak);
   font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .lazers-tasks-scheduling-warning {
@@ -375,7 +402,7 @@
   text-transform: capitalize;
 }
 .lazers-tasks-inspector-state[data-waiting="true"] {
-  color: var(--icon-warning-base);
+  color: var(--task-tone-warning);
 }
 .lazers-tasks-current-activity {
   display: flex;
@@ -515,7 +542,25 @@
 .lazers-tasks-dependencies-visible {
   align-items: center;
   margin-top: 0;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
+}
+/* The inspector's link icon takes the first blocker's state color, matching the row's link. */
+.lazers-tasks-dependencies-visible > .lazers-tasks-dependency-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--icon-base);
+}
+.lazers-tasks-dependency-icon[data-tone="running"] {
+  color: var(--task-tone-running);
+}
+.lazers-tasks-dependency-icon:is([data-tone="waiting"], [data-tone="attention"]) {
+  color: var(--task-tone-warning);
+}
+.lazers-tasks-dependency-icon[data-tone="failed"] {
+  color: var(--task-tone-critical);
+}
+.lazers-tasks-dependency-icon[data-tone="accepted"] {
+  color: var(--task-tone-success);
 }
 .lazers-tasks-dependencies + .lazers-tasks-objective {
   margin-top: 8px;
@@ -592,7 +637,7 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
   gap: 8px;
   min-width: 0;
   min-height: 32px;
-  padding: 0 8px 0 0;
+  padding: 0 4px 0 0;
   border-radius: 4px;
   color: var(--text-strong);
   cursor: pointer;
@@ -616,6 +661,11 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
   height: 28px;
   margin-right: -4px;
 }
+/* Without parallel work no row can expand, so the disclosure column gives its width to titles. */
+.lazers-tasks-tree:not([data-forks="true"]) .lazers-tasks-disclosure-spacer {
+  width: 0;
+  margin-right: calc(var(--task-icon-inset) - 8px);
+}
 .lazers-tasks-disclosure {
   border-radius: 4px;
   color: var(--text-weak);
@@ -632,26 +682,48 @@ summary.lazers-tasks-plan-heading::-webkit-details-marker {
   height: 16px;
   color: var(--icon-base);
 }
-.lazers-tasks-state[data-tone="running"],
-.lazers-tasks-inspector-icon[data-tone="running"] {
+/* One tone map for row, signal, inspector and blocker-link icons; the glyph carries the state too. */
+:is(
+  .lazers-tasks-state,
+  .lazers-tasks-inspector-icon,
+  .lazers-tasks-row-blocker
+)[data-tone="running"] {
+  color: var(--task-tone-running);
+}
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="ready"] {
   color: var(--text-strong);
 }
 .lazers-tasks-state[data-tone="attention"],
 .lazers-tasks-state[data-tone="waiting"],
-.lazers-tasks-inspector-icon[data-tone="attention"],
-.lazers-tasks-inspector-icon[data-tone="waiting"] {
-  color: var(--icon-warning-base);
+:is(.lazers-tasks-inspector-icon, .lazers-tasks-row-blocker)[data-tone="attention"],
+:is(.lazers-tasks-inspector-icon, .lazers-tasks-row-blocker)[data-tone="waiting"] {
+  color: var(--task-tone-warning);
 }
-.lazers-tasks-state[data-tone="failed"],
-.lazers-tasks-inspector-icon[data-tone="failed"] {
-  color: var(--icon-critical-base);
+:is(
+  .lazers-tasks-state,
+  .lazers-tasks-inspector-icon,
+  .lazers-tasks-row-blocker
+)[data-tone="failed"] {
+  color: var(--task-tone-critical);
 }
-.lazers-tasks-state[data-tone="integrated"],
-.lazers-tasks-state[data-tone="cancelled"] {
+:is(
+  .lazers-tasks-state,
+  .lazers-tasks-inspector-icon,
+  .lazers-tasks-row-blocker
+)[data-tone="accepted"] {
+  color: var(--task-tone-success);
+}
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="integrated"],
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="cancelled"] {
   color: var(--text-weak);
 }
+.lazers-tasks-ring {
+  display: block;
+}
+/* A fixed reference column keeps titles on one left edge across LZ-9 … LZ-999. */
 .lazers-tasks-row-reference {
   flex: none;
+  min-width: 6ch;
   color: var(--text-weak);
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
