@@ -37,6 +37,15 @@ export function TaskRing(props: { glyph: TaskRingGlyph }) {
         <Match when={props.glyph === "ring-minus"}>
           <path d="M6.75 10h6.5" stroke="currentColor" stroke-width="1.5" />
         </Match>
+        <Match when={props.glyph === "ring-clock"}>
+          <path
+            d="M10 6v4l2.75 1.75"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </Match>
       </Switch>
     </svg>
   )

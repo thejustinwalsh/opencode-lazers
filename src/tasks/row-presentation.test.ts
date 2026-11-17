@@ -86,7 +86,7 @@ test("waiting rows keep a short state; reasons move to the detail, blockers stay
     ),
   ).toEqual({
     tone: "waiting",
-    icon: "circle-ban-sign",
+    icon: "ring-clock",
     label: "Waiting",
     detail: "Waiting on LZ-8 (queued), LZ-9 (running)",
     blockers: [
@@ -269,7 +269,8 @@ test("every state glyph is a circled mark: host circle icons or Tasks rings, nev
   expect(glyph({ dispatchPause: { reason: "Held", untilPlans: [] } })).toBe("ring-pause")
   expect(glyph({ status: "incorporated" })).toBe("circle-check")
   expect(glyph({ status: "failed" })).toBe("circle-x")
-  expect(glyph({ waiting: true })).toBe("circle-ban-sign")
+  expect(glyph({ waiting: true })).toBe("ring-clock")
+  expect(glyph({ status: "blocked" })).toBe("circle-ban-sign")
   const statuses = ["queued", "ready", "running", "submitted", "accepted", "failed", "x-unknown"]
   for (const status of statuses) {
     const icon = glyph({ status: status as ExecutionListRow["status"] })

@@ -21,7 +21,7 @@ export type TaskTone =
  * The host `status` glyphs are stacked panels, which read as layout, not state.
  */
 export type TaskRingGlyph =
-  "ring" | "ring-dot" | "ring-progress" | "ring-dashed" | "ring-pause" | "ring-minus"
+  "ring" | "ring-dot" | "ring-progress" | "ring-dashed" | "ring-pause" | "ring-minus" | "ring-clock"
 
 /** A host icon where the host has a circled state mark, otherwise a Tasks ring glyph. */
 export type TaskGlyph = IconName | TaskRingGlyph
@@ -33,6 +33,7 @@ const ringGlyphs = new Set<string>([
   "ring-dashed",
   "ring-pause",
   "ring-minus",
+  "ring-clock",
 ])
 
 export function isRingGlyph(glyph: TaskGlyph): glyph is TaskRingGlyph {
@@ -169,7 +170,9 @@ export function taskRowPresentation(
         : status === "blocked"
           ? row.reason
           : null
-    return state("waiting", "circle-ban-sign", status === "blocked" ? "Blocked" : "Waiting", detail)
+    return status === "blocked"
+      ? state("waiting", "circle-ban-sign", "Blocked", detail)
+      : state("waiting", "ring-clock", "Waiting", detail)
   }
   switch (status) {
     case "running":
