@@ -111,3 +111,43 @@ bun run verify && bun test src/runner src/tasks src/observability/topology.test.
 The native work-lifetime producer/consumer and the LZ-154/196/native-idle holds
 are separate work. This plan grants neither dispatch nor native activation for
 them, and creates no cross-project dependency edge.
+
+## Remaining connected qualification
+
+On2026-11-17 Justin explicitly chose to separate unfinished connected
+qualification from LZ-214's already-landed implementation. This section governs
+that split; it does not claim the original task accepted or erase its history.
+
+Implementation2379304 and the related reviewed211/218/Opus corrections are
+already ancestors of main. Preserve those commits, the original attempt and
+passing check receipts. Stop the old implementation attempt through supported
+controls without replaying it, then link a narrow testing task for the remaining
+full qualification. Its write scope is evidence/reporting only, not broad Tasks
+source. Existing LZ-216 immediate filters and LZ-224 compact headings may proceed
+against reviewed landed source without being held by that evidence reservation.
+
+The replacement testing outcome owns the still-unfinished connected acceptance
+above: actual regular-Desktop narrow/default/wide observations; authoritative
+Now/Attention/Next and priority/dependency agreement; filters/search/scope and
+completed/history navigation; selection/keyboard focus and independent scroll;
+and error recovery with retained rows. Genuine observed activity is required for
+activity claims; unavailable data cannot be manufactured into a pass. Pair native
+observations with the existing automated contract/regression receipts, using
+fresh focused checks when source changes justify them. Retain candidate/GUI,
+action/fact and screenshot provenance and identify historical-only evidence.
+The parent retains final source/interaction and required screenshot review.
+
+Use the regular OpenCode instance. The external driver operates it; Architect
+owns tasking, source integration and validation. This supersedes the historical
+separate-profile runbook authorization above: no isolated Desktop launch or
+reopen, copied private data, fabricated workflow facts or service interruption is
+authorized. No routine product-acceptance decision is delegated to the human.
+
+The full-qualification release condition remains mandatory. Rebind current
+LZ-214 dependent plans to the replacement qualification plan through supported
+scheduling with their owners, retaining original logical links in history and
+all unrelated prerequisites. Preserve the original cancelled LZ-182's five
+logical dependency relationships. A stopped implementation attempt or source
+ancestry alone must not release those consumers. Qualification follows integrated
+LZ-224 and LZ-216 so the regular-instance walkthrough covers their final coherent
+Tasks presentation and query identity without repeated moving-base trials.
