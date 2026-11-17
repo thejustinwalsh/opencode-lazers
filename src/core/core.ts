@@ -26,6 +26,7 @@ import { TaskRepository, taskDatabasePath } from "../storage.ts"
 import { nativeTrajectoryHost } from "../trajectory/native.ts"
 import { InferenceBroker } from "../webgpu/broker.ts"
 import type { CapabilityHub } from "./capabilities.ts"
+import { moduleGeneration } from "./generation.ts"
 import { acquireCore } from "./registry.ts"
 import type { CoreHandle } from "./registry.ts"
 
@@ -64,6 +65,8 @@ export type LazersCoreInfo = {
   projectDirectory: string
   directory: string
   options: Plugin.Context["options"]
+  /** Loaded-code stamp; defaults to this module graph's generation. Tests inject one. */
+  generation?: string
 }
 
 function canonical(path: string) {
@@ -74,12 +77,13 @@ function canonical(path: string) {
   }
 }
 
-/** Database realpath + canonical project root + OpenCode project id. */
+/** Code generation + database realpath + canonical project root + OpenCode project id. */
 export function coreKey(
-  info: Pick<LazersCoreInfo, "dataDirectory" | "projectID" | "projectDirectory">,
+  info: Pick<LazersCoreInfo, "dataDirectory" | "projectID" | "projectDirectory" | "generation">,
 ) {
   return JSON.stringify([
     "core",
+    info.generation ?? moduleGeneration(),
     canonical(taskDatabasePath(info.dataDirectory)),
     canonical(info.projectDirectory),
     info.projectID,
