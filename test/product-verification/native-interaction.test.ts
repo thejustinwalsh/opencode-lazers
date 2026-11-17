@@ -92,6 +92,34 @@ const modifiedKeyOperation: NativeOperation = {
 }
 
 describe("owned native interaction broker", () => {
+  test("continues past the old trial limit and remembers completed IDs without retaining all payloads", () => {
+    const { value } = broker()
+    const adapterID = "adapter-1"
+    value.attach({ binding, adapterID, windows: [windowRef] })
+    const requestID = (index: number) =>
+      `8fc30312-7715-4a1a-a12f-${String(index).padStart(12, "0")}`
+    const result = { delivery: "delivered", screenshotBase64: "AA==" } as const
+    for (let index = 0; index < 270; index++) {
+      const id = requestID(index)
+      expect(value.enqueue({ binding, requestID: id, operation: snapshotOperation }).state).toBe(
+        "queued",
+      )
+      expect(value.poll({ binding, adapterID, windows: [windowRef] })?.requestID).toBe(id)
+      value.complete({ binding, adapterID, requestID: id, result })
+    }
+    expect(value.result(binding, requestID(0))).toEqual({
+      state: "completed",
+      result: deliveredResult,
+    })
+    expect(value.result(binding, requestID(269))).toEqual({ state: "completed", result })
+    expect(
+      value.enqueue({ binding, requestID: requestID(0), operation: snapshotOperation }),
+    ).toEqual({
+      state: "existing",
+    })
+    expect(value.poll({ binding, adapterID, windows: [windowRef] })).toBeNull()
+  })
+
   test("requires the exact owned service, root, version and adapter generation", () => {
     const { value } = broker()
     expect(() =>

@@ -14,7 +14,7 @@ import {
 import type { AudioObservationEvent } from "./audio-fixture-contract.ts"
 
 const HOST_FRESH_MS = 2_000
-const MAX_REQUESTS = 256
+const RETAINED_RESULT_PAYLOADS = 256
 
 type NativeRequest = {
   requestID: string
@@ -73,6 +73,7 @@ export class NativeInteractionBroker {
   private host?: HostRecord
   private readonly retiredAdapters = new Set<string>()
   private readonly requests = new Map<string, RequestRecord>()
+  private readonly resultPayloads: RequestRecord[] = []
   private readonly audio = new Map<string, AudioRecord>()
   private activeRequest?: string
   private ambiguous = false
@@ -158,9 +159,6 @@ export class NativeInteractionBroker {
     if (this.ambiguous) throw new Error("An ambiguous native action blocks further interaction")
     if (this.activeRequest !== undefined) {
       throw new Error("A native interaction is already pending; inspect it without replay")
-    }
-    if (this.requests.size >= MAX_REQUESTS) {
-      throw new Error("Native interaction history is full; start a new owned trial")
     }
     if (
       input.operation.kind === "key" &&
@@ -285,6 +283,14 @@ export class NativeInteractionBroker {
     }
     record.state = "completed"
     record.result = input.result
+    if (input.result.snapshot !== undefined || input.result.screenshotBase64 !== undefined) {
+      this.resultPayloads.push(record)
+      if (this.resultPayloads.length > RETAINED_RESULT_PAYLOADS) {
+        const oldest = this.resultPayloads.shift()!
+        const { snapshot: _snapshot, screenshotBase64: _screenshot, ...receipt } = oldest.result!
+        oldest.result = receipt
+      }
+    }
     this.activeRequest = undefined
     if (input.result.delivery === "ambiguous") this.ambiguous = true
   }
