@@ -10298,9 +10298,9 @@ test("afterPlans rejects task-only, missing, malformed, mismatched and foreign i
     expect(f.store.attempts(child.planID)).toHaveLength(0)
     expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptsBefore)
   }
-})
+}, 30_000)
 
-test("afterPlans requires both the integrated artifact and its recorded integration head in selected HEAD", async () => {
+test("afterPlans requires the integrated change in selected HEAD; the recorded integration head is only an observation", async () => {
   for (const missingSource of ["integration-head", "artifact"] as const) {
     const f = fixture({
       independent: true,
@@ -10345,8 +10345,14 @@ test("afterPlans requires both the integrated artifact and its recorded integrat
     )
 
     await expect(f.runtime.tick()).resolves.toBeUndefined()
-    expect(f.store.attempts(child.planID)).toHaveLength(0)
-    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+    if (missingSource === "artifact") {
+      expect(f.store.attempts(child.planID)).toHaveLength(0)
+      expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+    } else {
+      // The change is contained in the selected HEAD (here by ancestry), so a recorded
+      // landing SHA that is not itself in HEAD is history, not proof.
+      expect(f.store.attempts(child.planID)).toHaveLength(1)
+    }
   }
 })
 

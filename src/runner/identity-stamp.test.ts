@@ -24,16 +24,16 @@ function legacyDatabase(input: { base: string; artifact: string; descendant: str
   const path = join(directory, "tasks.sqlite")
   const db = new Database(path)
   db.exec(`
-    CREATE TABLE runner_plans (id TEXT PRIMARY KEY, body TEXT NOT NULL, artifact TEXT);
+    CREATE TABLE runner_plans (id TEXT PRIMARY KEY, project_directory TEXT, body TEXT NOT NULL, artifact TEXT);
     CREATE TABLE runner_nodes (plan_id TEXT, task_id TEXT, artifact TEXT);
     CREATE TABLE runner_attempts (id TEXT PRIMARY KEY, plan_id TEXT, task_id TEXT, number INTEGER,
       base_commit TEXT NOT NULL, artifact TEXT);
-    CREATE TABLE runner_evidence (id TEXT PRIMARY KEY, artifact TEXT NOT NULL);
-    CREATE TABLE runner_adoptions (id TEXT PRIMARY KEY, old_artifact TEXT NOT NULL,
+    CREATE TABLE runner_evidence (id TEXT PRIMARY KEY, plan_id TEXT, artifact TEXT NOT NULL);
+    CREATE TABLE runner_adoptions (id TEXT PRIMARY KEY, plan_id TEXT, old_artifact TEXT NOT NULL,
       descendant_commit TEXT NOT NULL, combined_artifact TEXT NOT NULL, landing_head TEXT NOT NULL,
       reviewed_baseline TEXT NOT NULL DEFAULT '');
   `)
-  db.query("INSERT INTO runner_plans VALUES('plan',?,?)").run(
+  db.query("INSERT INTO runner_plans VALUES('plan','/project',?,?)").run(
     JSON.stringify({ baseCommit: input.base }),
     input.artifact,
   )
@@ -46,8 +46,8 @@ function legacyDatabase(input: { base: string; artifact: string; descendant: str
     input.base,
     missing,
   )
-  db.query("INSERT INTO runner_evidence VALUES('evidence',?)").run(input.artifact)
-  db.query("INSERT INTO runner_adoptions VALUES('adoption',?,?,?,?,'')").run(
+  db.query("INSERT INTO runner_evidence VALUES('evidence','plan',?)").run(input.artifact)
+  db.query("INSERT INTO runner_adoptions VALUES('adoption','plan',?,?,?,?,'')").run(
     input.artifact,
     input.descendant,
     input.artifact,

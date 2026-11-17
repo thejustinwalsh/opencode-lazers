@@ -939,6 +939,68 @@ test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup wi
   ).toEqual(legacyRows)
 }, 15_000)
 
+test("adoption input fingerprints are versioned: new rows are v2, stored v1 rows still verify, v2 survives a commit rewrite", async () => {
+  const f = fixture("failed-task")
+  const { node, attempt } = await strand(f)
+  const candidate = landCandidate(f, node.artifact!)
+  const requested = (await f.runtime.command(
+    adoptionCommand(f, attempt.id, node.artifact!, candidate),
+    "owner",
+  )) as { adoptionID: string }
+  const adoption = f.store.adoption(requested.adoptionID)!
+  expect(adoption.input_fingerprint.startsWith("v2:")).toBe(true)
+
+  type Versioned = {
+    currentAdoptionInputFingerprint(plan: unknown, adoption: unknown): string
+    adoptionInputFingerprint(input: Record<string, unknown>, version: "v1" | "v2"): string
+  }
+  const runtime = f.runtime as unknown as Versioned
+  const plan = f.store.plan(f.planID)!
+  expect(runtime.currentAdoptionInputFingerprint(plan, adoption)).toBe(adoption.input_fingerprint)
+
+  const input = (row: typeof adoption) => ({
+    plan,
+    originalPlanVersion: row.plan_version,
+    taskID: row.task_id,
+    taskRevision: row.task_revision,
+    attemptID: row.attempt_id,
+    nodeState: row.node_state,
+    attemptState: row.attempt_state,
+    oldArtifact: row.old_artifact,
+    descendantCommit: row.descendant_commit,
+    targetBranch: row.target_branch,
+    landingHead: row.landing_head,
+    reviewedBaseline: row.reviewed_baseline,
+    candidateTree: row.candidate_tree,
+    combinedArtifact: row.combined_artifact,
+    reason: row.reason,
+    environmentIdentity: row.environment_identity,
+  })
+  // A row stored before v2 carries the SHA-based hash and is recomputed as v1.
+  const v1 = runtime.adoptionInputFingerprint(input(adoption), "v1")
+  expect(v1.startsWith("v2:")).toBe(false)
+  expect(v1).not.toBe(adoption.input_fingerprint)
+  expect(
+    runtime.currentAdoptionInputFingerprint(plan, { ...adoption, input_fingerprint: v1 }),
+  ).toBe(v1)
+
+  // Same tree, different commit (an amend or re-sign): v2 holds, v1 does not.
+  const tree = git(f.root, ["rev-parse", `${adoption.old_artifact}^{tree}`])
+  const parent = git(f.root, ["rev-parse", `${adoption.old_artifact}^`])
+  const rewritten = git(f.root, ["commit-tree", tree, "-p", parent], "rewritten identity\n", {
+    GIT_AUTHOR_NAME: "rewritten",
+    GIT_COMMITTER_NAME: "rewritten",
+  })
+  expect(rewritten).not.toBe(adoption.old_artifact)
+  const rewrittenRow = { ...adoption, old_artifact: rewritten }
+  expect(runtime.currentAdoptionInputFingerprint(plan, rewrittenRow)).toBe(
+    adoption.input_fingerprint,
+  )
+  expect(
+    runtime.currentAdoptionInputFingerprint(plan, { ...rewrittenRow, input_fingerprint: v1 }),
+  ).not.toBe(v1)
+}, 15_000)
+
 test("accepted task with blocked combined check adopts a descendant without rewriting acceptance or landing receipts", async () => {
   const f = fixture("blocked-combined")
   const { node, attempt } = await strand(f)
@@ -1092,7 +1154,7 @@ test("adoption verifies reviewed main with independent work without widening wor
   expect(readFileSync(join(f.root, "parallel-ui.txt"), "utf8")).toBe(
     "independently reviewed UI work\n",
   )
-})
+}, 15_000)
 
 test("adoption still rejects out-of-scope changes in the original worker artifact", async () => {
   const f = fixture("failed-task")

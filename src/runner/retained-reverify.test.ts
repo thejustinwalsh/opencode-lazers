@@ -6420,7 +6420,23 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
         if (action === "cancel" && kind === "valid") {
           // Terminal cleanup now uses main's async read-only dirty-tree probe.
           // Allow that exact probe, but still forbid replaying any check process.
-          expect(spawn).toHaveBeenCalledTimes(1)
+          // Read-only change-identity probes (tree, patch-id, notes, containment) are not a check replay.
+          const identityStamping = new Set([
+            "config",
+            "diff",
+            "log",
+            "merge-base",
+            "merge-tree",
+            "notes",
+            "patch-id",
+            "remote",
+            "rev-parse",
+          ])
+          const replayed = spawn.mock.calls.filter(([argument]) => {
+            const cmd = (argument as { cmd?: string[] }).cmd
+            return !(cmd?.[0] === "git" && identityStamping.has(cmd[1] ?? ""))
+          })
+          expect(replayed).toHaveLength(1)
           expect(spawn).toHaveBeenCalledWith(
             expect.objectContaining({
               cmd: ["git", "status", "--porcelain"],

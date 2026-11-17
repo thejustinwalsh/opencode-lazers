@@ -27,19 +27,19 @@ const recorder = () => {
   const calls: string[][] = []
   return {
     calls,
-    git: (_directory: string, args: string[]) => {
+    git: async (_directory: string, args: string[]) => {
       calls.push(args)
       return args[0] === "rev-parse" ? baseline : ""
     },
   }
 }
 
-test("valid integration retains every Git check for dispatch and selected-baseline proof", () => {
+test("valid integration proves the artifact in the baseline for dispatch and selected-baseline proof", async () => {
   for (const state of ["cleaning", "cleanup-blocked", "integrated"]) {
     for (const selected of [undefined, baseline]) {
       const probe = recorder()
       expect(
-        evaluatePrerequisiteIntegration(
+        await evaluatePrerequisiteIntegration(
           directory,
           ["parent"],
           [{ ...row(), state }],
@@ -50,15 +50,13 @@ test("valid integration retains every Git check for dispatch and selected-baseli
       expect(probe.calls).toEqual([
         ...(selected === undefined ? [["rev-parse", "HEAD"]] : []),
         ["rev-parse", `${baseline}^{commit}`],
-        ["merge-base", "--is-ancestor", artifact, head],
-        ["merge-base", "--is-ancestor", head, baseline],
         ["merge-base", "--is-ancestor", artifact, baseline],
       ])
     }
   }
 })
 
-test("all durable evidence is validated before starting any Git process", () => {
+test("all durable evidence is validated before starting any Git process", async () => {
   const invalid: Partial<PrerequisiteIntegrationRow>[] = [
     { project_directory: "/foreign" },
     { plan_id: "foreign" },
@@ -99,36 +97,48 @@ test("all durable evidence is validated before starting any Git process", () => 
   for (const change of invalid) {
     const probe = recorder()
     expect(
-      evaluatePrerequisiteIntegration(directory, ["parent"], [{ ...row(), ...change }], probe.git),
+      await evaluatePrerequisiteIntegration(
+        directory,
+        ["parent"],
+        [{ ...row(), ...change }],
+        probe.git,
+      ),
     ).toBeUndefined()
     expect(probe.calls).toEqual([])
   }
   const probe = recorder()
   expect(
-    evaluatePrerequisiteIntegration(
+    await evaluatePrerequisiteIntegration(
       directory,
       ["parent", "second"],
       [row(), { ...row(), plan_id: "second", accepted_id: null }],
       probe.git,
     ),
   ).toBeUndefined()
-  expect(evaluatePrerequisiteIntegration(directory, ["parent"], [], probe.git)).toBeUndefined()
   expect(
-    evaluatePrerequisiteIntegration(directory, ["parent", "parent"], [row(), row()], probe.git),
+    await evaluatePrerequisiteIntegration(directory, ["parent"], [], probe.git),
+  ).toBeUndefined()
+  expect(
+    await evaluatePrerequisiteIntegration(
+      directory,
+      ["parent", "parent"],
+      [row(), row()],
+      probe.git,
+    ),
   ).toBeUndefined()
   expect(probe.calls).toEqual([])
 })
 
-test("changed evidence and ancestry are rechecked on every decision without a cached pass", () => {
+test("changed evidence and ancestry are rechecked on every decision without a cached pass", async () => {
   const current = row()
   const probe = recorder()
-  expect(evaluatePrerequisiteIntegration(directory, ["parent"], [current], probe.git)).toBe(
+  expect(await evaluatePrerequisiteIntegration(directory, ["parent"], [current], probe.git)).toBe(
     baseline,
   )
   current.invalidation_id = current.accepted_id
   probe.calls.length = 0
   expect(
-    evaluatePrerequisiteIntegration(directory, ["parent"], [current], probe.git),
+    await evaluatePrerequisiteIntegration(directory, ["parent"], [current], probe.git),
   ).toBeUndefined()
   expect(probe.calls).toEqual([])
   current.accepted_id = 5
@@ -141,23 +151,28 @@ test("changed evidence and ancestry are rechecked on every decision without a ca
     branch: "changed",
     reason: "fresh integration",
   })
-  expect(evaluatePrerequisiteIntegration(directory, ["parent"], [current], probe.git)).toBe(
+  expect(await evaluatePrerequisiteIntegration(directory, ["parent"], [current], probe.git)).toBe(
     baseline,
   )
-  expect(probe.calls[2]).toEqual(["merge-base", "--is-ancestor", current.artifact, head])
-  for (let failAt = 0; failAt < 5; failAt++) {
+  expect(probe.calls[2]).toEqual(["merge-base", "--is-ancestor", current.artifact, baseline])
+  for (let failAt = 0; failAt < 3; failAt++) {
     let calls = 0
     expect(
-      evaluatePrerequisiteIntegration(directory, ["parent"], [current], (_directory, args) => {
-        if (calls++ === failAt) throw new Error("Git evidence unavailable")
-        return args[0] === "rev-parse" ? baseline : ""
-      }),
+      await evaluatePrerequisiteIntegration(
+        directory,
+        ["parent"],
+        [current],
+        async (_directory, args) => {
+          if (calls++ === failAt) throw new Error("Git evidence unavailable")
+          return args[0] === "rev-parse" ? baseline : ""
+        },
+      ),
     ).toBeUndefined()
     expect(calls).toBe(failAt + 1)
   }
 })
 
-test("task prerequisites require a current recorded landing and fresh artifact/head ancestry", () => {
+test("task prerequisites require a current recorded landing and fresh artifact containment", async () => {
   const taskID = "task-a"
   const currentBranch = "main"
   const integratedHead = "d".repeat(40)
@@ -171,16 +186,22 @@ test("task prerequisites require a current recorded landing and fresh artifact/h
     integration_payload: JSON.stringify({ artifact, branch: currentBranch, head: integratedHead }),
   })
   const gitCalls: string[][] = []
-  const successfulGit = (_directory: string, args: string[]) => {
+  const successfulGit = async (_directory: string, args: string[]) => {
     gitCalls.push(args)
     if (args[0] === "rev-parse") return baseline
     return ""
   }
   expect(
-    evaluateTaskPrerequisiteIntegration(directory, currentBranch, [taskID], [], successfulGit),
+    await evaluateTaskPrerequisiteIntegration(
+      directory,
+      currentBranch,
+      [taskID],
+      [],
+      successfulGit,
+    ),
   ).toMatchObject({ status: "waiting" })
   expect(
-    evaluateTaskPrerequisiteIntegration(
+    await evaluateTaskPrerequisiteIntegration(
       directory,
       currentBranch,
       [taskID],
@@ -191,8 +212,6 @@ test("task prerequisites require a current recorded landing and fresh artifact/h
   ).toEqual({ status: "ready", baseline })
   expect(gitCalls).toEqual([
     ["rev-parse", `${baseline}^{commit}`],
-    ["merge-base", "--is-ancestor", artifact, integratedHead],
-    ["merge-base", "--is-ancestor", integratedHead, baseline],
     ["merge-base", "--is-ancestor", artifact, baseline],
   ])
   for (const modified of [
@@ -207,19 +226,21 @@ test("task prerequisites require a current recorded landing and fresh artifact/h
   ]) {
     gitCalls.length = 0
     expect(
-      evaluateTaskPrerequisiteIntegration(
-        directory,
-        currentBranch,
-        [taskID],
-        [modified as TaskPrerequisiteIntegrationRow],
-        successfulGit,
-        baseline,
+      (
+        await evaluateTaskPrerequisiteIntegration(
+          directory,
+          currentBranch,
+          [taskID],
+          [modified as TaskPrerequisiteIntegrationRow],
+          successfulGit,
+          baseline,
+        )
       ).status,
     ).toBe("waiting")
     expect(gitCalls).toEqual([])
   }
   expect(
-    evaluateTaskPrerequisiteIntegration(
+    await evaluateTaskPrerequisiteIntegration(
       directory,
       currentBranch,
       [taskID, taskID],
