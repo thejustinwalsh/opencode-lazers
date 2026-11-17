@@ -762,7 +762,6 @@ function TaskPanel(
     const presentation = createMemo(() =>
       taskRowPresentation(taskRow(), currentActivity(), relationLabel),
     )
-    const sequencing = createMemo(() => taskSequencing(taskRow()))
     const waiting = () =>
       taskRow().waiting ||
       currentActivity()?.waiting === true ||
@@ -803,7 +802,6 @@ function TaskPanel(
           : []),
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
-        sequencing().label.toLowerCase(),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
@@ -861,19 +859,6 @@ function TaskPanel(
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
             </Show>
-            <Ui.Tooltip value={`${sequencing().label} · ${sequencing().detail}`}>
-              <span
-                class="lazers-tasks-sequence"
-                data-sequence={sequencing().kind}
-                role="img"
-                aria-label={sequencing().label}
-              >
-                <Ui.Icon
-                  name={sequencing().kind === "sequenced" ? "arrow-right" : "split"}
-                  size="small"
-                />
-              </span>
-            </Ui.Tooltip>
             <Ui.Tooltip value={taskStateTooltip(presentation())}>
               <span
                 class="lazers-tasks-state"
@@ -911,7 +896,6 @@ function TaskPanel(
           type="button"
           class="lazers-tasks-row-blocker"
           data-blocker-kind={blocker.kind}
-          data-tone={state()?.tone}
           tabIndex={-1}
           aria-label={`Open blocker ${name()}${state() ? `, ${state()!.label.toLowerCase()}` : ""}${more()}`}
           onClick={(event) => {
@@ -1834,15 +1818,7 @@ function TaskPanel(
                 }
               >
                 <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
-                  <span
-                    class="lazers-tasks-dependency-icon"
-                    data-tone={
-                      selectedRelations().waitingOn[0]
-                        ? listedPresentation(selectedRelations().waitingOn[0]!)?.tone
-                        : undefined
-                    }
-                    aria-hidden="true"
-                  >
+                  <span class="lazers-tasks-dependency-icon" aria-hidden="true">
                     <Ui.Icon name="link" size="small" />
                   </span>
                   <span>Waiting on</span>

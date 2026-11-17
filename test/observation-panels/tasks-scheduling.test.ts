@@ -553,9 +553,9 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
       "observed foreground activity active",
     )
     expect(row(ids.active)?.getAttribute("aria-label")).toContain("waiting")
-    // The waiting task depends on the active one: a collapsed accordion, sequenced.
+    // The waiting task depends on the active one: a collapsed accordion.
     expect(row(ids.waiting)?.getAttribute("aria-expanded")).toBe("false")
-    expect(row(ids.waiting)?.getAttribute("aria-label")).toContain("sequenced")
+    expect(row(ids.waiting)?.querySelector(".lazers-tasks-sequence")).toBeNull()
     // The target plan waits for the parent plan, so its task has dependencies too.
     expect(row(ids.next)?.getAttribute("aria-expanded")).toBe("false")
 
@@ -602,7 +602,7 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
     expect(waitingBlocker.closest<HTMLElement>(".fixture-tooltip")?.dataset.tooltip).toBe(
       "Waiting on LZ-1 · Waiting and 101 more",
     )
-    expect(waitingBlocker.dataset.tone).toBe("waiting")
+    expect(waitingBlocker.dataset.tone).toBeUndefined()
     expect(waitingRow.getAttribute("aria-label")).toContain(
       "Waiting for prerequisite source integration.",
     )

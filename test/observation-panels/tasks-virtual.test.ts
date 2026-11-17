@@ -956,31 +956,29 @@ test("arrow keys, Home and End walk rows that are not mounted", async () => {
   })
 })
 
-test("rows end in icon-only signals: sequencing and state, each with an accessible label", async () => {
+test("rows end in icon-only signals: a neutral link icon and the state icon, with no sequencing icon", async () => {
   await withPanel(
     async (h) => {
       await until(() => Boolean(h.row(h.beta.root)))
-      const labels = (taskID: string) => {
-        const entry = h.row(taskID)!
-        return {
-          sequence: entry.querySelector(".lazers-tasks-sequence")?.getAttribute("aria-label"),
-          state: entry.querySelector(".lazers-tasks-state")?.getAttribute("aria-label"),
-          order: [...entry.querySelectorAll(".lazers-tasks-row > *")]
-            .map((el) => el.className)
-            .filter((name) => /disclosure|reference|title|signals/u.test(name))
-            .map((name) => /disclosure|reference|title|signals/u.exec(name)![0]),
-        }
+      const entry = (taskID: string) => h.row(taskID)!
+      // No sequencing icon, tooltip or label anywhere in a row.
+      for (const taskID of [h.alpha[0]!, h.beta.root, h.beta.join]) {
+        expect(entry(taskID).querySelector(".lazers-tasks-sequence")).toBeNull()
+        expect(entry(taskID).getAttribute("aria-label")).not.toMatch(/sequenced|parallel/iu)
       }
-      expect(labels(h.alpha[0]!)).toMatchObject({ sequence: "Parallel-eligible", state: "Queued" })
-      expect(labels(h.beta.root)).toMatchObject({ sequence: "Parallel-eligible" })
-      expect(labels(h.beta.join)).toMatchObject({ sequence: "Sequenced" })
+      expect(
+        entry(h.alpha[0]!).querySelector(".lazers-tasks-state")?.getAttribute("aria-label"),
+      ).toBe("Queued")
+      // Link icons are neutral: no tone attribute that could select a status color.
+      for (const link of h.container.querySelectorAll(".lazers-tasks-row-blocker"))
+        expect((link as HTMLElement).dataset.tone).toBeUndefined()
       // Signals sit last, after the title; the glyphs are icons, not text.
-      expect(labels(h.alpha[0]!).order.at(-1)).toBe("signals")
-      const signalText = h
-        .row(h.alpha[0]!)!
-        .querySelector(".lazers-tasks-row-signals")!.textContent!
-      expect(signalText).not.toMatch(/Queued|Parallel|Sequenced/u)
-      expect(h.row(h.beta.join)?.getAttribute("aria-label")).toContain("sequenced")
+      const order = [...entry(h.alpha[0]!).querySelectorAll(".lazers-tasks-row > *")].map(
+        (el) => el.className,
+      )
+      expect(order.at(-1)).toContain("signals")
+      const signalText = entry(h.alpha[0]!).querySelector(".lazers-tasks-row-signals")!.textContent!
+      expect(signalText).not.toMatch(/Queued/u)
     },
     {},
     { prioritized: true },

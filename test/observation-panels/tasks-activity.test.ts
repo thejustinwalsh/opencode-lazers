@@ -551,7 +551,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         typeof entry.value === "string" &&
         entry.value.includes(".lazers-tasks {"),
     )?.value as string | undefined
-    expect(tasksCSS).toContain('.lazers-tasks-state[data-tone="waiting"]')
+    expect(tasksCSS).toContain(
+      '.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="waiting"]',
+    )
     expect(tasksCSS).not.toContain(".lazers-tasks-badge")
     expect(tasksCSS).toContain("container: lazers-tasks / inline-size")
     expect(tasksCSS).toContain(".lazers-tasks-activity-indicator")
@@ -652,7 +654,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     // its own; once listed, the link names its state and takes its tone.
     await until(() => heldBlocker.getAttribute("aria-label") === "Open blocker LZ-8, waiting")
     expect(tooltip(heldBlocker)).toBe("Waiting on LZ-8 · Waiting")
-    expect(heldBlocker.dataset.tone).toBe("waiting")
+    expect(heldBlocker.dataset.tone).toBeUndefined()
     // Not a tab stop: the tree keeps one roving stop and the inspector lists blockers by keyboard.
     expect(heldBlocker.tabIndex).toBe(-1)
     expect(getComputedStyle(heldBlocker).flexShrink).toBe("0")
@@ -872,10 +874,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     // A task with dependencies is a collapsed accordion; its dependency tree opens beneath it.
     const branchRow = row(ids.branchA)!
     expect(row(ids.forkRoot)?.hasAttribute("aria-expanded")).toBe(false)
-    expect(row(ids.forkRoot)?.getAttribute("aria-label")).toContain("parallel-eligible")
+    expect(row(ids.forkRoot)?.querySelector(".lazers-tasks-sequence")).toBeNull()
     expect(branchRow.getAttribute("aria-expanded")).toBe("false")
     expect(branchRow.getAttribute("aria-level")).toBe("1")
-    expect(branchRow.getAttribute("aria-label")).toContain("sequenced")
     const dependencyKey = `task:${ids.branchA}>${ids.forkRoot}`
     const dependencyRow = () =>
       container.querySelector<HTMLElement>(`[data-item-key="${dependencyKey}"]`)

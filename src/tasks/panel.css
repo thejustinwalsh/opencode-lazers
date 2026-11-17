@@ -132,7 +132,7 @@
   background: var(--text-weak);
 }
 .lazers-tasks-activity-indicator[data-state="active"] {
-  background: var(--icon-success-base);
+  background: var(--task-tone-running);
 }
 .lazers-tasks-activity-indicator[data-state="unknown"] {
   background: var(--task-tone-warning);
@@ -417,23 +417,11 @@
   margin-top: 0;
   margin-bottom: 6px;
 }
-/* The inspector's link icon takes the first blocker's state color, matching the row's link. */
+/* The inspector's link icon is informational: plain foreground, never a status color. */
 .lazers-tasks-dependencies-visible > .lazers-tasks-dependency-icon {
   display: inline-grid;
   place-items: center;
   color: var(--icon-base);
-}
-.lazers-tasks-dependency-icon[data-tone="running"] {
-  color: var(--task-tone-running);
-}
-.lazers-tasks-dependency-icon:is([data-tone="waiting"], [data-tone="attention"]) {
-  color: var(--task-tone-warning);
-}
-.lazers-tasks-dependency-icon[data-tone="failed"] {
-  color: var(--task-tone-critical);
-}
-.lazers-tasks-dependency-icon[data-tone="accepted"] {
-  color: var(--task-tone-success);
 }
 .lazers-tasks-dependencies + .lazers-tasks-objective {
   margin-top: 8px;
@@ -559,38 +547,29 @@
   height: 16px;
   color: var(--icon-base);
 }
-/* One tone map for row, signal, inspector and blocker-link icons; the glyph carries the state too. */
-:is(
-  .lazers-tasks-state,
-  .lazers-tasks-inspector-icon,
-  .lazers-tasks-row-blocker
-)[data-tone="running"] {
+/*
+ * State icons carry the status colors; sequencing and link icons never do. Green (success) is
+ * reserved for completed work that succeeded (integrated). Accepted work awaiting integration is neutral.
+ */
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="running"] {
   color: var(--task-tone-running);
 }
 :is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="ready"] {
   color: var(--text-strong);
 }
-.lazers-tasks-state[data-tone="attention"],
-.lazers-tasks-state[data-tone="waiting"],
-:is(.lazers-tasks-inspector-icon, .lazers-tasks-row-blocker)[data-tone="attention"],
-:is(.lazers-tasks-inspector-icon, .lazers-tasks-row-blocker)[data-tone="waiting"] {
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="attention"],
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="waiting"] {
   color: var(--task-tone-warning);
 }
-:is(
-  .lazers-tasks-state,
-  .lazers-tasks-inspector-icon,
-  .lazers-tasks-row-blocker
-)[data-tone="failed"] {
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="failed"] {
   color: var(--task-tone-critical);
 }
-:is(
-  .lazers-tasks-state,
-  .lazers-tasks-inspector-icon,
-  .lazers-tasks-row-blocker
-)[data-tone="accepted"] {
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="integrated"] {
   color: var(--task-tone-success);
 }
-:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="integrated"],
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="accepted"] {
+  color: var(--text-base);
+}
 :is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="cancelled"] {
   color: var(--text-weak);
 }
@@ -624,23 +603,12 @@
   border-left: 1px solid var(--border-weak-base);
   border-radius: 0 4px 4px 0;
 }
-/* Right-hand signals: blocker link, sequencing and state, icon only and never shrunk. */
+/* Right-hand signals: blocker link and state, icon only and never shrunk. */
 .lazers-tasks-row-signals {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 8px;
-}
-.lazers-tasks-sequence {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  color: var(--text-weak);
-}
-.lazers-tasks-sequence[data-sequence="parallel"] {
-  color: var(--task-tone-success);
 }
 
 /*
