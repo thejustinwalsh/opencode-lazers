@@ -1,3 +1,4 @@
+import { MAX_PRIORITY, NO_PRIORITY } from "./priority.ts"
 import { z } from "zod"
 import { WorkerAgent } from "./worker-agent.ts"
 import { TaskProposalSchema } from "../task.ts"
@@ -62,6 +63,10 @@ export const ArchitectContinuityInput = z
       })
   })
 export type ArchitectContinuityInput = z.infer<typeof ArchitectContinuityInput>
+/** 1 is the top priority; 0 is none; larger integers are lower, up to the maximum integer. */
+const PlanPriority = z.int().min(NO_PRIORITY).max(MAX_PRIORITY)
+const PRIORITY_DESCRIPTION =
+  "Dispatch priority: 1 is the top priority, 2 is next, and larger integers are lower (up to 2147483647). 0 or omitted means no priority and dispatches after every prioritized plan. Equal priority preserves submission order. Active workers continue."
 export const PlanInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),
@@ -73,12 +78,7 @@ export const PlanInput = z
         "Optional concise Architect-authored label; preserve verbatim and do not derive from objective.",
       ),
     objective: z.string().trim().min(1).max(8000),
-    priority: z
-      .int()
-      .optional()
-      .describe(
-        "Higher values dispatch first; equal priority preserves submission order. Active workers continue.",
-      ),
+    priority: PlanPriority.optional().describe(PRIORITY_DESCRIPTION),
     afterPlans: z
       .array(z.uuid())
       .optional()
@@ -209,7 +209,7 @@ export const CommandInput = z
       .max(2000)
       .describe("Brief user-facing explanation; keep detailed evidence in linked notes.")
       .optional(),
-    priority: z.int().optional(),
+    priority: PlanPriority.optional().describe(PRIORITY_DESCRIPTION),
     afterPlans: z.array(z.uuid()).optional(),
     resumeAfterPlans: z
       .array(z.uuid())

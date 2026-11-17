@@ -134,19 +134,6 @@ function scheduling(
   }
 }
 
-function renderedIDs(list: ReturnType<typeof buildExecutionList>) {
-  return [
-    ...list.plans.flatMap((group) => [
-      ...group.rows.map((row) => row.taskID),
-      ...group.rows.flatMap(
-        (row) =>
-          row.fork?.branches.flatMap((branch) => branch.rows.map((child) => child.taskID)) ?? [],
-      ),
-    ]),
-    ...list.unplanned.map((row) => row.taskID),
-  ]
-}
-
 test("chains keep admitted ordinals without implying parallel work and preserve off-page prerequisites", () => {
   const a = id(1)
   const b = id(2)
@@ -166,7 +153,6 @@ test("chains keep admitted ordinals without implying parallel work and preserve 
     tasks: summaries([c, a, b]),
   })
   expect(result.plans[0]?.rows.map((row) => row.taskID)).toEqual([a, b, c])
-  expect(result.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
 
   const paged = buildExecutionList({
     topology: topology(
@@ -185,257 +171,6 @@ test("chains keep admitted ordinals without implying parallel work and preserve 
   expect(paged.plans[0]?.rows.map((row) => row.taskID)).toEqual([c])
   expect(paged.plans[0]?.rows[0]?.prerequisites).toEqual([b])
   expect(paged.plans[0]).toMatchObject({ nonterminalCount: 2, totalCount: 3 })
-})
-
-test("a diamond is one real expandable fork and its shared join stays on the root lane", () => {
-  const [root, left, right, join] = [id(1), id(2), id(3), id(4)]
-  const result = buildExecutionList({
-    topology: topology(
-      [
-        { taskID: root, ordinal: 0 },
-        { taskID: left, ordinal: 1 },
-        { taskID: right, ordinal: 2 },
-        { taskID: join, ordinal: 3 },
-      ],
-      [
-        [root, left],
-        [root, right],
-        [left, join],
-        [right, join],
-      ],
-    ),
-    tasks: summaries([root, left, right, join]),
-  })
-  const group = result.plans[0]!
-  expect(group.rows.map((row) => row.taskID)).toEqual([root, join])
-  expect(group.rows[0]?.fork?.joinID).toBe(join)
-  expect(group.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([[left], [right]])
-  expect(new Set(renderedIDs(result)).size).toBe(4)
-  expect(renderedIDs(result)).toHaveLength(4)
-
-  const searched = buildExecutionList({
-    topology: topology(
-      [
-        { taskID: root, ordinal: 0 },
-        { taskID: left, ordinal: 1 },
-        { taskID: right, ordinal: 2 },
-        { taskID: join, ordinal: 3 },
-      ],
-      [
-        [root, left],
-        [root, right],
-        [left, join],
-        [right, join],
-      ],
-    ),
-    tasks: summaries([left]),
-    search: "Task",
-  })
-  expect(searched.plans[0]?.rows[0]).toMatchObject({ taskID: root, contextOnly: true })
-  expect(searched.plans[0]?.rows[0]?.fork?.branches).toMatchObject([
-    { taskIDs: [left] },
-    { taskIDs: [], hiddenCount: 1 },
-  ])
-})
-
-test("scheduling-only fallback preserves flat chains and expandable diamond forks", () => {
-  const [root, left, right, join] = [id(1), id(2), id(3), id(4)]
-  const nodes = [root, left, right, join].map((taskID, ordinal) => ({ taskID, ordinal }))
-  const diamondEdges: Array<[string, string]> = [
-    [root, left],
-    [root, right],
-    [left, join],
-    [right, join],
-  ]
-  const complete = buildExecutionList({
-    tasks: summaries([root, left, right, join]),
-    scheduling: scheduling(nodes, diamondEdges),
-  })
-  expect(complete.plans[0]?.rows.map((row) => row.taskID)).toEqual([root, join])
-  expect(complete.plans[0]?.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([
-    [left],
-    [right],
-  ])
-  expect(new Set(renderedIDs(complete)).size).toBe(4)
-
-  const filtered = buildExecutionList({
-    tasks: summaries([left]),
-    search: "Task",
-    scheduling: scheduling(nodes, diamondEdges),
-  })
-  expect(filtered.plans[0]?.rows[0]).toMatchObject({ taskID: root, contextOnly: true })
-  expect(filtered.plans[0]?.rows[0]?.fork?.branches).toMatchObject([
-    { taskIDs: [left] },
-    { taskIDs: [], hiddenCount: 1 },
-  ])
-
-  const chain = buildExecutionList({
-    tasks: summaries([join, left, root]),
-    scheduling: scheduling(
-      [root, left, join].map((taskID, ordinal) => ({ taskID, ordinal })),
-      [
-        [root, left],
-        [left, join],
-      ],
-    ),
-  })
-  expect(chain.plans[0]?.rows.map((row) => row.taskID)).toEqual([root, left, join])
-  expect(chain.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
-})
-
-test("disjoint forks remain separate and an overlapping cross-edge is never forced into a tree", () => {
-  const [rootA, a1, a2, joinA, rootB, b1, b2, joinB] = [
-    id(1),
-    id(2),
-    id(3),
-    id(4),
-    id(5),
-    id(6),
-    id(7),
-    id(8),
-  ]
-  const disjoint = buildExecutionList({
-    topology: topology(
-      [rootA, a1, a2, joinA, rootB, b1, b2, joinB].map((taskID, ordinal) => ({
-        taskID,
-        ordinal,
-      })),
-      [
-        [rootA, a1],
-        [rootA, a2],
-        [a1, joinA],
-        [a2, joinA],
-        [rootB, b1],
-        [rootB, b2],
-        [b1, joinB],
-        [b2, joinB],
-      ],
-    ),
-    tasks: summaries([rootA, a1, a2, joinA, rootB, b1, b2, joinB]),
-  })
-  expect(disjoint.plans[0]?.rows.filter((row) => row.fork).map((row) => row.taskID)).toEqual([
-    rootA,
-    rootB,
-  ])
-  expect(new Set(renderedIDs(disjoint)).size).toBe(8)
-
-  const overlap = buildExecutionList({
-    topology: topology(
-      [rootA, a1, a2, joinA, rootB, b1].map((taskID, ordinal) => ({ taskID, ordinal })),
-      [
-        [rootA, a1],
-        [rootA, a2],
-        [a1, joinA],
-        [a2, joinA],
-        [rootB, a1],
-        [rootB, b1],
-        [b1, joinA],
-      ],
-    ),
-    tasks: summaries([rootA, a1, a2, joinA, rootB, b1]),
-  })
-  expect(overlap.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
-  expect(overlap.plans[0]?.rows.find((row) => row.taskID === joinA)?.prerequisites).toEqual([
-    a1,
-    a2,
-    b1,
-  ])
-})
-
-test("real b50-shaped branches fold while external speech remains a join dependency", () => {
-  const projection = "efd8459f-1dbe-4472-968b-f26f59504291"
-  const speech = "3af64c61-ff16-43a9-8983-a11763ccf415"
-  const radar = "c1cc0d39-42d7-4845-bcce-8d91aee4935b"
-  const trajectory = "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd"
-  const assembly = "8db1b281-c288-4c2e-abaa-f846dd642246"
-  const ids = [projection, speech, radar, trajectory, assembly]
-  const observed = topology(
-    ids.map((taskID, ordinal) => ({ taskID, ordinal })),
-    [
-      [projection, radar],
-      [projection, trajectory],
-      [radar, assembly],
-      [trajectory, assembly],
-      [speech, assembly],
-    ],
-  )
-  observed.plans[0]!.id = "b50a1a71-1a54-4d89-8ef2-0644bcccc327"
-  const result = buildExecutionList({ topology: observed, tasks: summaries(ids) })
-  const group = result.plans[0]!
-  expect(group.title).toBe("Plan b50a1a71")
-  expect(group.rows.map((row) => row.taskID)).toEqual([projection, speech, assembly])
-  expect(group.rows.filter((row) => row.fork)).toHaveLength(1)
-  expect(group.rows[0]?.fork?.joinID).toBe(assembly)
-  expect(group.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([
-    [radar],
-    [trajectory],
-  ])
-  expect(group.rows.find((row) => row.taskID === assembly)?.prerequisites).toEqual([
-    radar,
-    trajectory,
-    speech,
-  ])
-  expect(renderedIDs(result)).toHaveLength(5)
-  expect(new Set(renderedIDs(result)).size).toBe(5)
-
-  observed.plans[0]!.title = "Observation panels"
-  expect(buildExecutionList({ topology: observed, tasks: summaries(ids) }).plans[0]?.title).toBe(
-    "Observation panels",
-  )
-})
-
-test("extra edges into branch heads and interiors and nonlinear branches remain flat", () => {
-  const [root, left, interior, right, join, external] = [id(1), id(2), id(3), id(4), id(5), id(6)]
-  const ids = [root, left, interior, right, join, external]
-  const base: Array<[string, string]> = [
-    [root, left],
-    [root, right],
-    [left, interior],
-    [interior, join],
-    [right, join],
-  ]
-  for (const extra of [
-    [external, left],
-    [external, interior],
-    [left, right],
-  ] as Array<[string, string]>) {
-    const result = buildExecutionList({
-      topology: topology(
-        ids.map((taskID, ordinal) => ({ taskID, ordinal })),
-        [...base, extra],
-      ),
-      tasks: summaries(ids),
-    })
-    expect(result.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
-    expect(new Set(renderedIDs(result)).size).toBe(ids.length)
-  }
-})
-
-test("an external join prerequisite stays on the root lane with both branches folded", () => {
-  const [rootA, a1, a2, joinA, rootB] = [id(1), id(2), id(3), id(4), id(5)]
-  const joinCrossEdge = buildExecutionList({
-    topology: topology(
-      [rootA, a1, a2, joinA, rootB].map((taskID, ordinal) => ({ taskID, ordinal })),
-      [
-        [rootA, a1],
-        [rootA, a2],
-        [a1, joinA],
-        [a2, joinA],
-        [rootB, joinA],
-      ],
-    ),
-    tasks: summaries([rootA, a1, a2, joinA, rootB]),
-  })
-  expect(joinCrossEdge.plans[0]?.rows.map((row) => row.taskID)).toEqual([rootA, joinA, rootB])
-  expect(joinCrossEdge.plans[0]?.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([
-    [a1],
-    [a2],
-  ])
-  expect(joinCrossEdge.plans[0]?.rows.find((row) => row.taskID === joinA)?.prerequisites).toEqual([
-    a1,
-    a2,
-    rootB,
-  ])
 })
 
 test("planless and unavailable topology remain honest ungrouped task rows", () => {
@@ -501,22 +236,21 @@ test("grouped and context-only rows preserve recorded lifecycle beside plan hold
   tasks[0]!.recordedState = "ready"
   tasks[0]!.reason = "Plan awaits human evidence"
   const result = buildExecutionList({ topology: observed, tasks })
-  const contextualRoot = result.plans[0]?.rows[0]
-  expect(contextualRoot).toMatchObject({
-    taskID: root,
+  expect(result.plans[0]?.rows).toMatchObject([
+    {
+      taskID: left,
+      contextOnly: false,
+      status: "ready",
+      reason: "Plan awaits human evidence",
+      waiting: true,
+      holdReason: "Plan awaits human evidence",
+    },
+  ])
+  expect(result.related.find((row) => row.taskID === root)).toMatchObject({
     contextOnly: true,
     status: "ready",
     reason: "Plan awaits human evidence",
     waiting: true,
-    holdReason: "Plan awaits human evidence",
-  })
-  expect(contextualRoot?.fork?.branches[0]?.rows[0]).toMatchObject({
-    taskID: left,
-    contextOnly: false,
-    status: "ready",
-    reason: "Plan awaits human evidence",
-    waiting: true,
-    holdReason: "Plan awaits human evidence",
   })
 })
 
@@ -584,55 +318,19 @@ test("same-plan rows expose sequential blockers without calling completed predec
   expect(build()).toMatchObject({ waiting: false, dependencyTasks: [{ waiting: false }] })
 })
 
-test("plan groups put genuine running work first, then scheduler priority and FIFO", () => {
+test("plan groups sort by priority (1 first, none last), then scheduler plan order", () => {
   const source = topology([], [])
   source.plans = [
-    {
-      id: id(901),
-      taskID: id(1),
-      priority: 5,
-      queuePosition: 0,
-      state: "queued",
-      planState: "running",
-    },
-    {
-      id: id(902),
-      taskID: id(2),
-      priority: 100,
-      queuePosition: 1,
-      state: "queued",
-      planState: "running",
-    },
-    {
-      id: id(903),
-      taskID: id(3),
-      priority: -100,
-      queuePosition: 2,
-      state: "running",
-      planState: "running",
-    },
-    {
-      id: id(904),
-      taskID: id(4),
-      priority: 5,
-      queuePosition: 3,
-      state: "queued",
-      planState: "running",
-    },
-    {
-      id: id(905),
-      taskID: id(5),
-      priority: 200,
-      queuePosition: 4,
-      state: "running",
-      planState: "blocked",
-    },
+    { id: id(901), taskID: id(1), priority: 5, queuePosition: 0 },
+    { id: id(902), taskID: id(2), priority: 0, queuePosition: 1 },
+    { id: id(903), taskID: id(3), priority: 1, queuePosition: 2 },
+    { id: id(904), taskID: id(4), priority: 5, queuePosition: 3 },
+    { id: id(905), taskID: id(5), priority: 2, queuePosition: 4 },
   ].map((value) => ({
-    ...topology([{ taskID: value.taskID, ordinal: 0, state: value.state }], []).plans[0]!,
+    ...topology([{ taskID: value.taskID, ordinal: 0, state: "queued" }], []).plans[0]!,
     id: value.id,
     priority: value.priority,
     queuePosition: value.queuePosition,
-    state: value.planState,
   }))
   const list = buildExecutionList({
     topology: source,
@@ -641,13 +339,13 @@ test("plan groups put genuine running work first, then scheduler priority and FI
   expect(list.plans.map((plan) => plan.rows[0]!.taskID)).toEqual([
     id(3),
     id(5),
-    id(2),
     id(1),
     id(4),
+    id(2),
   ])
 })
 
-test("running siblings precede queued siblings without treating held history as activity", () => {
+test("rows stay in node order within a plan; running work is not pinned above queued work", () => {
   const a = id(1),
     b = id(2)
   const source = topology(
@@ -661,9 +359,30 @@ test("running siblings precede queued siblings without treating held history as 
     buildExecutionList({ topology: source, tasks: summaries([a, b]) }).plans[0]!.rows.map(
       (row) => row.taskID,
     )
-  expect(build()).toEqual([b, a])
+  expect(build()).toEqual([a, b])
   source.plans[0]!.state = "blocked"
   expect(build()).toEqual([a, b])
+})
+
+test("tasks outside the listed page are available as dependency rows, never listed", () => {
+  const [a, b, c] = [id(1), id(2), id(3)]
+  const nodes = [
+    { taskID: a, ordinal: 0, state: "accepted" },
+    { taskID: b, ordinal: 1 },
+    { taskID: c, ordinal: 2 },
+  ]
+  const edges: Array<[string, string]> = [
+    [a, b],
+    [b, c],
+  ]
+  for (const list of [
+    buildExecutionList({ topology: topology(nodes, edges), tasks: summaries([c]) }),
+    buildExecutionList({ tasks: summaries([c]), scheduling: scheduling(nodes, edges) }),
+  ]) {
+    expect(list.plans[0]!.rows.map((row) => row.taskID)).toEqual([c])
+    expect(list.related.map((row) => row.taskID).toSorted()).toEqual([a, b].toSorted())
+    expect(list.related.every((row) => row.contextOnly)).toBe(true)
+  }
 })
 
 test("dispatch pause applies to queued rows while active workers remain running", () => {
@@ -680,7 +399,6 @@ test("dispatch pause applies to queued rows while active workers remain running"
   const rows = buildExecutionList({ topology: source, tasks: summaries([a, b]) }).plans[0]!.rows
   expect(rows.find((row) => row.taskID === a)?.dispatchPause?.reason).toBe("Coordinate release")
   expect(rows.find((row) => row.taskID === b)?.dispatchPause).toBeUndefined()
-  expect(rows[0]!.taskID).toBe(b)
 })
 
 test("without topology, a dispatch pause still marks queued and ready rows", () => {

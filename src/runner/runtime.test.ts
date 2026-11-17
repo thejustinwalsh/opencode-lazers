@@ -9608,7 +9608,7 @@ test("priority orders conflicting plans without rejecting their overlapping scop
       planID: later.planID,
       expectedVersion: f.store.plan(later.planID)!.version,
       action: "schedule",
-      priority: -1,
+      priority: 0,
       reason: "Let another plan take precedence after this worker finishes",
     },
     "owner",
@@ -9661,7 +9661,7 @@ test("runtime dispatch matches scheduling projection for submission ties and sha
 })
 
 test("afterPlans dispatches from combined integration while prerequisite cleanup is still pending", async () => {
-  for (const childPriority of [10, -10]) {
+  for (const childPriority of [10, 0]) {
     const f = fixture({
       independent: true,
       delayed: true,
@@ -9669,6 +9669,13 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       taskFiles: [{ name: "a", path: "a.txt" }],
     })
     const parentID = f.receipt.planID
+    // A child that ranks below its prerequisite still dispatches once the prerequisite integrates.
+    if (childPriority === 0)
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_plans SET body=json_set(body,'$.priority',1) WHERE id=?")
+          .run(parentID),
+      )
     const childTask = f.createTask("b", "b.txt")
     const child = f.store.submit(
       {
@@ -9870,7 +9877,7 @@ test("afterPlans cleanup cannot publish over cancellation or reuse the historica
   const { parentID, child, accepted } = await prepareAfterPlanDependency(
     f,
     "cancel-cleanup",
-    -10,
+    0,
     true,
   )
   const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")

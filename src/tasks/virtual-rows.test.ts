@@ -3,17 +3,15 @@ import type { ExecutionList, ExecutionListRow, ExecutionPlanGroup } from "./exec
 import {
   anchoredScrollTop,
   estimateItemSize,
-  viewportAnchor,
   flattenExecutionList,
   navigationTarget,
-  planHeaded,
-  planOfTask,
   taskIndex,
   taskItems,
+  viewportAnchor,
 } from "./virtual-rows.ts"
 import type { VirtualItem } from "./virtual-rows.ts"
 
-const row = (taskID: string, fork?: ExecutionListRow["fork"]): ExecutionListRow => ({
+const row = (taskID: string, prerequisites: string[] = []): ExecutionListRow => ({
   taskID,
   title: taskID,
   status: "queued",
@@ -22,15 +20,10 @@ const row = (taskID: string, fork?: ExecutionListRow["fork"]): ExecutionListRow 
   holdReason: null,
   ordinal: 0,
   contextOnly: false,
-  prerequisites: [],
+  prerequisites,
   successors: [],
-  ...(fork ? { fork } : {}),
 })
-const group = (
-  planID: string,
-  rows: ExecutionListRow[],
-  extra: Partial<ExecutionPlanGroup> = {},
-): ExecutionPlanGroup => ({
+const group = (planID: string, rows: ExecutionListRow[]): ExecutionPlanGroup => ({
   planID,
   planVersion: 1,
   title: planID,
@@ -38,165 +31,99 @@ const group = (
   nonterminalCount: rows.length,
   totalCount: rows.length,
   rows,
-  ...extra,
 })
-const fork = (rootID: string, branches: Array<{ id: string; ids: string[]; hidden?: number }>) => ({
-  id: `${rootID}:fork`,
-  joinID: "join",
-  branches: branches.map((branch) => ({
-    id: branch.id,
-    taskIDs: branch.ids,
-    rows: branch.ids.map((id) => row(id)),
-    hiddenCount: branch.hidden ?? 0,
-  })),
-})
-const model = (plans: ExecutionPlanGroup[], unplanned: ExecutionListRow[] = []): ExecutionList => ({
-  plans,
-  unplanned,
-  topologyAvailable: true,
-})
-
-const forked = () =>
-  group("plan-a", [
-    row(
-      "root",
-      fork("root", [
-        { id: "a1", ids: ["a1", "a2"], hidden: 2 },
-        { id: "b1", ids: ["b1"] },
-      ]),
-    ),
-    row("join"),
-  ])
-const flatten = (
-  list: ExecutionList,
-  options: { collapsed?: string[]; expanded?: string[]; hasMore?: boolean } = {},
-) =>
+const model = (
+  plans: ExecutionPlanGroup[],
+  unplanned: ExecutionListRow[] = [],
+  related: ExecutionListRow[] = [],
+): ExecutionList => ({ plans, unplanned, related, topologyAvailable: true })
+const flatten = (list: ExecutionList, options: { expanded?: string[]; hasMore?: boolean } = {}) =>
   flattenExecutionList({
     model: list,
-    collapsedPlans: new Set(options.collapsed ?? []),
-    forkExpanded: (_group, parent) => (options.expanded ?? []).includes(parent.taskID),
+    expanded: new Set(options.expanded ?? []),
     hasMore: options.hasMore,
   })
 const keys = (items: readonly VirtualItem[]) => items.map((item) => item.key)
 
-test("a headed plan flattens to heading then rows; plain plans and unplanned rows have no heading", () => {
-  const items = flatten(
-    model(
-      [
-        group("headed", [row("t1"), row("t2")]),
-        group("single", [row("s1")], { totalCount: 1 }),
-        group("untitled", [row("u1"), row("u2")], { hasRecordedTitle: false }),
-      ],
-      [row("loose")],
-    ),
-  )
+test("every task is one flat row: no plan headings, plans and unplanned tasks interleave in model order", () => {
+  const list = model([group("p", [row("t1"), row("t2")]), group("q", [row("t3")])], [row("u1")])
+  const items = flatten(list)
+  expect(keys(items)).toEqual(["task:t1", "task:t2", "task:t3", "task:u1"])
+  expect(taskItems(items).map((item) => [item.level, item.setSize, item.posInSet])).toEqual([
+    [1, 4, 1],
+    [1, 4, 2],
+    [1, 4, 3],
+    [1, 4, 4],
+  ])
+  expect(taskItems(items).some((item) => item.expandable)).toBe(false)
+})
+
+test("a task with dependencies is a collapsed accordion by default", () => {
+  const list = model([group("p", [row("a"), row("b", ["a"])])])
+  const items = flatten(list)
+  expect(keys(items)).toEqual(["task:a", "task:b"])
+  expect(taskItems(items).map((item) => [item.expandable, item.expanded])).toEqual([
+    [false, false],
+    [true, false],
+  ])
+})
+
+test("expanding lists the dependency tree as nested rows, duplicated across expanded trees", () => {
+  // c depends on b, b depends on a; d also depends on b: b's subtree repeats under d.
+  const list = model([group("p", [row("a"), row("b", ["a"]), row("c", ["b"]), row("d", ["b"])])])
+  const items = flatten(list, {
+    expanded: ["task:c", "task:c>b", "task:d", "task:d>b"],
+  })
   expect(keys(items)).toEqual([
-    "plan:headed",
-    "task:t1",
-    "task:t2",
-    "task:s1",
-    "task:u1",
-    "task:u2",
-    "task:loose",
+    "task:a",
+    "task:b",
+    "task:c",
+    "task:c>b",
+    "task:c>b>a",
+    "task:d",
+    "task:d>b",
+    "task:d>b>a",
   ])
-  expect(planHeaded(group("single", [row("s1")], { totalCount: 1 }))).toBe(false)
-  // Scheduler facts earn a heading even for one task.
-  expect(planHeaded(group("gated", [row("g")], { totalCount: 1, priority: 2 }))).toBe(true)
-  expect(planHeaded(group("after", [row("g")], { totalCount: 1, afterPlans: ["x"] }))).toBe(true)
+  const nested = taskItems(items).filter((item) => item.key === "task:c>b>a")[0]!
+  expect(nested).toMatchObject({ depth: 2, level: 3, parentKey: "task:c>b", setSize: 1 })
+  // Collapsing a parent hides its whole subtree but keeps sibling expansion.
+  expect(keys(flatten(list, { expanded: ["task:c>b", "task:d", "task:d>b"] }))).toEqual([
+    "task:a",
+    "task:b",
+    "task:c",
+    "task:d",
+    "task:d>b",
+    "task:d>b>a",
+  ])
 })
 
-test("a collapsed plan keeps its heading and omits every row, fork branches included", () => {
-  const list = model([forked(), group("plan-b", [row("b-task"), row("c-task")])])
-  const items = flatten(list, { collapsed: ["plan-a"], expanded: ["root"] })
-  expect(keys(items)).toEqual(["plan:plan-a", "plan:plan-b", "task:b-task", "task:c-task"])
-  expect(items[0]).toMatchObject({ kind: "plan", collapsed: true })
-  expect(items[1]).toMatchObject({ kind: "plan", collapsed: false })
-  // Collapse is ignored where there is no heading to expand it again.
-  const plain = model([group("plain", [row("only")], { totalCount: 1 })])
-  expect(keys(flatten(plain, { collapsed: ["plain"] }))).toEqual(["task:only"])
+test("dependency cycles are listed once and never expand again", () => {
+  const list = model([group("p", [row("a", ["b"]), row("b", ["a"]), row("s", ["s"])])])
+  const items = flatten(list, { expanded: ["task:a", "task:a>b", "task:a>b>a", "task:s"] })
+  expect(keys(items)).toEqual(["task:a", "task:a>b", "task:a>b>a", "task:b", "task:s", "task:s>s"])
+  const cyclic = taskItems(items).find((item) => item.key === "task:a>b>a")!
+  expect(cyclic).toMatchObject({ expandable: false, expanded: false })
 })
 
-test("collapsed forks omit branch rows and notes; expanded forks add them with depth and rail data", () => {
-  const list = model([forked()])
-  expect(keys(flatten(list))).toEqual(["plan:plan-a", "task:root", "task:join"])
-  const items = flatten(list, { expanded: ["root"] })
-  expect(keys(items)).toEqual([
-    "plan:plan-a",
-    "task:root",
-    "task:a1",
-    "task:a2",
-    "note:a1",
-    "task:b1",
-    "task:join",
-  ])
-  const tasks = Object.fromEntries(taskItems(items).map((item) => [item.row.taskID, item]))
-  expect(tasks.root).toMatchObject({ depth: 0, level: 2, expandable: true, expanded: true })
-  expect(tasks.join).toMatchObject({
-    depth: 0,
-    level: 2,
-    expandable: false,
-    setSize: 2,
-    posInSet: 2,
-  })
-  // Branch rows are the fork root's children: one sibling set spanning both branches.
-  expect(tasks.a1).toMatchObject({
-    depth: 1,
-    level: 3,
-    setSize: 3,
-    posInSet: 1,
-    parentTaskID: "root",
-  })
-  expect(tasks.a2).toMatchObject({ depth: 1, setSize: 3, posInSet: 2, parentTaskID: "root" })
-  expect(tasks.b1).toMatchObject({ depth: 1, setSize: 3, posInSet: 3, parentTaskID: "root" })
-  expect(tasks.a1!.branch).toEqual({ branchID: "a1", first: true, last: false })
-  // The rail continues through the hidden-count note, which closes branch a.
-  expect(tasks.a2!.branch).toEqual({ branchID: "a1", first: false, last: false })
-  expect(tasks.b1!.branch).toEqual({ branchID: "b1", first: true, last: true })
-  expect(items.find((item) => item.kind === "note")).toMatchObject({
-    hiddenCount: 2,
-    depth: 1,
-    branchID: "a1",
-  })
-})
-
-test("tree levels: headings and unheaded rows are one top-level set; a heading's rows sit below it", () => {
-  const items = flatten(
-    model(
-      [
-        group("headed", [row("t1"), row("t2")]),
-        group("single", [row("s1")], { totalCount: 1 }),
-        group("other", [row("o1"), row("o2")]),
-      ],
-      [row("loose")],
-    ),
-    { collapsed: ["other"] },
-  )
-  const levels = items.map((item) =>
-    item.kind === "plan"
-      ? [item.key, 1, item.posInSet, item.setSize]
-      : item.kind === "task"
-        ? [item.key, item.level, item.posInSet, item.setSize]
-        : [item.key],
-  )
-  expect(levels).toEqual([
-    ["plan:headed", 1, 1, 4],
-    ["task:t1", 2, 1, 2],
-    ["task:t2", 2, 2, 2],
-    ["task:s1", 1, 2, 4],
-    ["plan:other", 1, 3, 4],
-    ["task:loose", 1, 4, 4],
-  ])
+test("dependencies outside the list resolve from related rows, else from the reference alone", () => {
+  const external = {
+    ...row("far"),
+    contextOnly: true,
+    title: "Far away",
+    prerequisites: ["deeper"],
+  }
+  const list = model([group("p", [row("a", ["far", "ghost"])])], [], [external])
+  const items = flatten(list, { expanded: ["task:a", "task:a>far"] })
+  expect(keys(items)).toEqual(["task:a", "task:a>far", "task:a>far>deeper", "task:a>ghost"])
+  const ghost = taskItems(items).find((item) => item.key === "task:a>ghost")!
+  expect(ghost.row).toMatchObject({ contextOnly: true, title: "Task ghost" })
+  expect(ghost.expandable).toBe(false)
 })
 
 test("a loader item trails the list only while another page exists", () => {
   const list = model([group("p", [row("t1"), row("t2")])])
-  expect(keys(flatten(list))).toEqual(["plan:p", "task:t1", "task:t2"])
-  expect(keys(flatten(list, { hasMore: true }))).toEqual([
-    "plan:p",
-    "task:t1",
-    "task:t2",
-    "loader:more",
-  ])
+  expect(keys(flatten(list))).toEqual(["task:t1", "task:t2"])
+  expect(keys(flatten(list, { hasMore: true }))).toEqual(["task:t1", "task:t2", "loader:more"])
 })
 
 test("item keys are stable when later pages append rows", () => {
@@ -207,87 +134,58 @@ test("item keys are stable when later pages append rows", () => {
   expect(before.filter((key) => key !== "loader:more")).toEqual(
     after.filter((key) => key !== "task:t3" && key !== "task:u2"),
   )
-  // Existing rows keep their index; only the tail grows.
   expect(after.indexOf("task:t1")).toBe(before.indexOf("task:t1"))
   expect(after.indexOf("task:u1")).toBe(before.indexOf("task:u1") + 1)
 })
 
-test("keyboard navigation reads the model in visual order through headings and rows", () => {
-  const items = flatten(model([forked(), group("plan-b", [row("x"), row("y")])]), {
-    expanded: ["root"],
-    hasMore: true,
-  })
+test("keyboard navigation reads the model in visual order and moves through the dependency tree", () => {
+  const list = model([group("p", [row("a"), row("b", ["a"]), row("c")])])
+  const items = flatten(list, { expanded: ["task:b"] })
+  expect(keys(items)).toEqual(["task:a", "task:b", "task:b>a", "task:c"])
   const go = (key: string, direction: Parameters<typeof navigationTarget>[2]) =>
     navigationTarget(items, key, direction)?.key
-  expect(go("task:root", "Home")).toBe("plan:plan-a")
-  expect(go("task:root", "End")).toBe("task:y")
-  expect(go("task:root", "ArrowDown")).toBe("task:a1")
-  // Down from the last row of plan-a reaches plan-b's heading, then its first row.
-  expect(go("task:join", "ArrowDown")).toBe("plan:plan-b")
-  expect(go("plan:plan-b", "ArrowDown")).toBe("task:x")
-  expect(go("task:x", "ArrowUp")).toBe("plan:plan-b")
-  expect(go("task:y", "ArrowDown")).toBe("task:y")
-  expect(go("task:root", "ArrowUp")).toBe("plan:plan-a")
-  expect(go("plan:plan-a", "ArrowUp")).toBe("plan:plan-a")
-  expect(go("task:root", "ArrowRight")).toBe("task:a1")
-  expect(go("task:a2", "ArrowLeft")).toBe("task:root")
-  // Left from a plan's row is its heading; Right from an expanded heading is its first row.
-  expect(go("task:join", "ArrowLeft")).toBe("plan:plan-a")
-  expect(go("plan:plan-b", "ArrowRight")).toBe("task:x")
-  expect(go("plan:plan-b", "ArrowLeft")).toBeUndefined()
-  expect(go("task:join", "ArrowRight")).toBeUndefined()
-  // An item outside the sequence enters it at the first item.
-  expect(go("task:gone", "ArrowDown")).toBe("plan:plan-a")
-  const collapsed = flatten(model([forked(), group("plan-b", [row("x"), row("y")])]), {
-    collapsed: ["plan-b"],
-  })
-  expect(navigationTarget(collapsed, "task:root", "ArrowRight")).toBeUndefined()
-  expect(navigationTarget(collapsed, "plan:plan-b", "ArrowRight")).toBeUndefined()
-  // Rows without a heading have no parent to go back to.
-  const plain = flatten(model([], [row("loose")]))
-  expect(navigationTarget(plain, "task:loose", "ArrowLeft")).toBeUndefined()
+  expect(go("task:a", "ArrowDown")).toBe("task:b")
+  expect(go("task:b", "ArrowDown")).toBe("task:b>a")
+  expect(go("task:b>a", "ArrowDown")).toBe("task:c")
+  expect(go("task:c", "ArrowDown")).toBe("task:c")
+  expect(go("task:a", "ArrowUp")).toBe("task:a")
+  expect(go("task:c", "Home")).toBe("task:a")
+  expect(go("task:a", "End")).toBe("task:c")
+  // Right enters an expanded row's first dependency; Left returns to its parent.
+  expect(go("task:b", "ArrowRight")).toBe("task:b>a")
+  expect(go("task:b>a", "ArrowLeft")).toBe("task:b")
+  expect(go("task:a", "ArrowRight")).toBeUndefined()
+  expect(go("task:a", "ArrowLeft")).toBeUndefined()
+  // A collapsed accordion has nothing to enter: the caller expands it first.
+  expect(navigationTarget(flatten(list), "task:b", "ArrowRight")).toBeUndefined()
+  // Unknown keys fall back to the first row.
+  expect(go("task:missing", "ArrowDown")).toBe("task:a")
 })
 
-test("reveal targets: a task in a collapsed fork or plan gets an index once revealed", () => {
-  const list = model([forked(), group("plan-b", [row("x"), row("y")])])
-  // Hidden until revealed.
-  const hidden = flatten(list, { collapsed: ["plan-a"] })
-  expect(taskIndex(hidden, "a2")).toBe(-1)
-  expect(planOfTask(list, "a2")).toBe("plan-a")
-  expect(planOfTask(list, "join")).toBe("plan-a")
-  expect(planOfTask(list, "y")).toBe("plan-b")
-  expect(planOfTask(list, "nowhere")).toBeUndefined()
-  // Un-collapse the plan only: the fork is still collapsed.
-  const planOpen = flatten(list)
-  expect(taskIndex(planOpen, "a2")).toBe(-1)
-  expect(taskIndex(planOpen, "root")).toBe(1)
-  // Expand the fork too: the flat index addresses the row among all items, headings included.
-  const revealed = flatten(list, { expanded: ["root"] })
-  expect(taskIndex(revealed, "a2")).toBe(3)
-  expect(revealed[taskIndex(revealed, "a2")]!.key).toBe("task:a2")
-  expect(taskIndex(revealed, "y")).toBe(revealed.length - 1)
+test("a task's index prefers its listed row over a repeat inside an expanded tree", () => {
+  const list = model([group("p", [row("x", ["a"]), row("a")])])
+  const items = flatten(list, { expanded: ["task:x"] })
+  expect(keys(items)).toEqual(["task:x", "task:x>a", "task:a"])
+  expect(taskIndex(items, "a")).toBe(2)
+  expect(taskIndex(items, "x")).toBe(0)
+  expect(taskIndex(items, "missing")).toBe(-1)
 })
 
 test("scroll anchoring restores a moved first-visible item and ignores stable or removed ones", () => {
   const anchor = { key: "task:t5", offset: 12 }
   const starts = new Map([["task:t5", 200]])
   const at = (key: string) => starts.get(key)
-  // A row inserted above moved the anchor from 150 to 200: scrollTop follows.
   expect(anchoredScrollTop({ key: "task:t5", offset: 12 }, at, 138)).toBe(188)
-  // Unmoved: no write.
   expect(anchoredScrollTop(anchor, at, 188)).toBeUndefined()
-  // Removed or never captured: no write.
   expect(anchoredScrollTop({ key: "task:gone", offset: 0 }, at, 50)).toBeUndefined()
   expect(anchoredScrollTop(undefined, at, 50)).toBeUndefined()
 })
 
-test("no anchor while the list top or the head above the tree is at the viewport top", () => {
-  // The virtualizer reports the first tree row for any offset above the tree.
+test("no anchor while the list top or the notes above the tree are at the viewport top", () => {
   const first = { key: "task:t1", start: 80 }
   expect(viewportAnchor(0, 80, first)).toBeUndefined()
   expect(viewportAnchor(40, 80, first)).toBeUndefined()
   expect(viewportAnchor(0, 0, { key: "task:t1", start: 0 })).toBeUndefined()
-  // Inside the tree the first visible row anchors, measured from the tree's top.
   expect(viewportAnchor(100, 80, { key: "task:t2", start: 112 })).toEqual({
     key: "task:t2",
     offset: -68,
@@ -295,14 +193,7 @@ test("no anchor while the list top or the head above the tree is at the viewport
   expect(viewportAnchor(100, 80, undefined)).toBeUndefined()
 })
 
-test("size estimates follow the compact row height and carry plan margins and reason lines", () => {
-  const [plain, reasoned, tasks] = [
-    group("p", [row("a")]),
-    group("q", [row("a")], { schedulingReason: "Waiting" }),
-    flatten(model([group("r", [row("a"), row("b")])]), { hasMore: true }),
-  ]
-  const heading = { kind: "plan", collapsed: false, setSize: 1, posInSet: 1 } as const
-  expect(estimateItemSize({ ...heading, key: "p", group: plain! })).toBe(36)
-  expect(estimateItemSize({ ...heading, key: "q", group: reasoned! })).toBe(56)
-  expect((tasks as VirtualItem[]).map(estimateItemSize)).toEqual([36, 32, 32, 32])
+test("size estimates follow the compact row height", () => {
+  const items = flatten(model([group("r", [row("a"), row("b")])]), { hasMore: true })
+  expect(items.map(estimateItemSize)).toEqual([32, 32, 32])
 })
