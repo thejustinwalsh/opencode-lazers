@@ -99,44 +99,59 @@ the same `requestID` and exact bindings so the original operation and receipts
 are reused.
 
 This route is not original execution settlement or safe cleanup. Keep the source
-quarantine and historical holds intact; use the existing explicit cleanup
-recovery route only after its independent native settlement and integration
-preconditions are proven.
+quarantine and historical holds intact; ordinary cleanup removes the checkout
+only when it is contained, clean and idle.
 
-## Recover a held runner cleanup
+## Clean up an owned worktree
 
-Use the registered `recover-cleanup` action as the current plan owner, bound to the
-exact `planID`, accepted `taskID`, `attemptID`, integrated `artifact`, and
-`targetBranch`. Preserve the existing assignment and workspace; recovery is not a
-new worker run or a replay of implementation or verification.
+A worktree is removed through the native worktree API, never forced, when all
+three observed facts hold:
 
-Recovery authorization is local to that exact attempt and its source worktree.
-An authorization for a later accepted attempt neither grants recovery authority
-to nor revokes ordinary cleanup eligibility for an earlier attempt of the same
-task. Each resource still needs its own genuine eligible settlement and merged,
-clean content; an earlier attempt with unknown native idle/background evidence
-remains held with that specific uncertainty visible.
+1. **Contained.** Its change is contained in the current checkout. The accepted
+   artifact passes `proofForArtifact`, and the worktree's `HEAD` is an ancestor
+   of the checkout or its change is contained there (rebased, amended, re-signed
+   or squashed).
+2. **Clean.** `git status --porcelain` is empty.
+3. **Idle.** The host reports the worker idle now (see below).
 
-Removal requires a stable native settlement tied to that exact assignment: a
-confirmed successful terminal event and an uninvalidated `experimental.idle`
-report for the assigned input with zero shell, subagent, and image jobs. The idle
-hook's report covers background work owned by the worker and its descendants.
-An empty active-session map, an empty location shell list, a successful terminal,
-or a read-only `session.shell` check alone cannot establish that complete
-background inventory.
+Otherwise the worktree stays registered and the plan keeps a visible reason:
+`Owned worktree is dirty`, `Owned worktree has unmerged commits`, or
+`Owned worktree worker is not idle` with each live blocker named. A cancelled
+plan follows the same rule; a clean worktree that never committed, or whose
+commits are contained, is removed, and unmerged commits are preserved and
+surfaced in the plan reason.
 
-If the report is absent, stale, positive, contradictory, or changes during the
-read, cleanup remains held: the exact worktree stays registered, no location is
-retired, and prior uncertainty is retained. Do not repeat `recover-cleanup` on
-unchanged evidence. Wait only for the original native lifecycle to produce a
-genuine, exact idle observation after its background work settles, then have the
-current owner retry with the same task, attempt, artifact, workspace, and branch
-bindings. `session.shell` is not a way to manufacture this evidence: it starts a
-shell, publishes shell events and a non-resuming synthetic notice, but does not
-run the `experimental.idle` hook or expose image/descendant job inventory. If no
-such native idle observation is available, keep the hold and ask the Architect to
-choose a supported next step; do not edit native state directly, force removal,
-replace the worker, or replay its implementation prompt.
+### Live idle check
+
+A worker is idle when the host says so at the time of the check. No hook report
+or stored evidence is read or waited for:
+
+| Fact                         | Source                                                           |
+| ---------------------------- | ---------------------------------------------------------------- |
+| session not busy             | `client.session.active()`                                        |
+| no pending input             | `client.session.inbox.list`                                      |
+| no pending permission/forms  | `client.permission.request.list`, `client.form.list`             |
+| no running shell in the tree | `client.shell.list`, status `running`, `cwd` inside the worktree |
+| no active child session      | active sessions whose `parentID` chain reaches the worker        |
+
+`RunnerHost.session()` returns these as `busy`, `pendingInput`,
+`pendingPermissions`, `pendingForms`, `runningShells` and `activeChildren`.
+A transport failure throws and the next tick asks again; a worker whose session
+is authoritatively absent has nothing running. The `experimental.idle` hook only
+wakes the scheduler and requests the handoff reminder. `runner_native_idle` is no
+longer written; existing rows are history.
+
+### Retry
+
+The scheduler re-checks a held cleanup only when an observed fact changed: the
+local fact set (attempts, effects, owners, source receipts, adoption checks)
+differs from the last probe, or the poll interval elapsed (5 seconds when the
+blocker was live activity, 60 seconds otherwise). A repeated, unchanged blocker
+records no new `CLEANUP_BLOCKED` transition and appends no receipt history.
+There is no owner authorization to obtain: when the blocker clears, cleanup
+completes on its own. To act sooner, commit or discard the held worktree's
+uncommitted work, merge its unmerged commits, then re-record integration with
+`integrated`, or cancel the plan.
 
 Existing retained runner paths and Root-owned review resources are not disposable
 fixtures. In particular, preserve `lz182-review-recovered` and

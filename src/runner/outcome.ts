@@ -113,7 +113,7 @@ export function outcomeText(serialized: string) {
       break
     case "cleanup-blocked":
       action =
-        "Resolve cleanup before starting new work. Inspect the held worktree and retry with recover-cleanup or integrated at the current plan version. Use the native question tool when a decision requires human input."
+        "Cleanup retries on its own when the observed facts change (a running shell ends, the worker goes idle, the worktree becomes clean or its commits are contained in the checkout). To act now: commit or discard uncommitted work in the held worktree, merge its unmerged commits, then re-record integration with integrated at the current plan version, or cancel the plan. Use the native question tool when a decision requires human input."
       break
     case "cancelled":
       action =

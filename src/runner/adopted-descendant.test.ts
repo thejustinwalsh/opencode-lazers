@@ -143,16 +143,7 @@ function fixture(
     pendingInput: false,
     pendingPermissions: 0,
     pendingForms: 0,
-    background: {
-      state: "observed",
-      source: "experimental.idle",
-      observedAt: Date.now(),
-      inputID: "architect-input",
-      executionStartSequence: 1,
-      eventSequence: 1,
-      count: 0,
-      kinds: { shell: 0, subagent: 0, image: 0 },
-    },
+
     model: { providerID: "fixture", id: "architect" },
     tokens: null,
     tools: 0,
@@ -238,16 +229,7 @@ function fixture(
         pendingInput: false,
         pendingPermissions: 0,
         pendingForms: 0,
-        background: {
-          state: "observed",
-          source: "experimental.idle",
-          observedAt: Date.now(),
-          inputID: "unassigned-input",
-          executionStartSequence: 1,
-          eventSequence: 1,
-          count: 0,
-          kinds: { shell: 0, subagent: 0, image: 0 },
-        },
+
         tokens: null,
         tools: 0,
         cost: null,
@@ -276,17 +258,6 @@ function fixture(
       session.pendingInput = false
       session.outcome = "succeeded"
       session.turn = { inputID: input.id, state: "completed" }
-      session.background = {
-        state: "observed",
-        source: "experimental.idle",
-        observedAt: Date.now(),
-        inputID: input.id,
-        executionStartSequence: 1,
-        eventSequence: 2,
-        terminalSequence: 2,
-        count: 0,
-        kinds: { shell: 0, subagent: 0, image: 0 },
-      }
     },
     updateInstruction: async () => {
       throw new Error("Adoption must not update worker instructions")

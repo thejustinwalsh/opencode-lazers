@@ -35,5 +35,6 @@ test("unresolved blockers request human input when a decision is needed", () => 
   }
   const cleanup = outcomeText(JSON.stringify({ status: "cleanup-blocked", planID: "plan" }))
   expect(cleanup).toContain("Use the native question tool when a decision requires human input")
-  expect(cleanup).toContain("recover-cleanup or integrated at the current plan version")
+  expect(cleanup).toContain("retries on its own when the observed facts change")
+  expect(cleanup).not.toContain("recover-cleanup")
 })

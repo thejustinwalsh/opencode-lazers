@@ -189,16 +189,7 @@ function fixture(options: FixtureOptions = {}) {
         pendingInput: false,
         pendingPermissions: 0,
         pendingForms: 0,
-        background: {
-          state: "observed",
-          source: "experimental.idle",
-          observedAt: Date.now(),
-          inputID: "before-first-prompt",
-          executionStartSequence: 1,
-          eventSequence: 1,
-          count: 0,
-          kinds: { shell: 0, subagent: 0, image: 0 },
-        },
+
         tokens: 100,
         tools: 2,
         cost: null,
@@ -246,19 +237,6 @@ function fixture(options: FixtureOptions = {}) {
       session.pendingForms = 0
       session.outcome = "succeeded"
       session.turn = { inputID: input.id, state: "completed" }
-      if (session.background?.state === "observed")
-        Object.assign(session.background, {
-          inputID: input.id,
-          projectDirectory: root,
-          projectID: "project",
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          assignedMessageID: input.id,
-          terminalSequence: 2,
-          terminalEventID: `terminal:${input.id}`,
-          terminalMessageID: `terminal-message:${input.id}`,
-        })
       session.tokens = 150
       session.tools = 3
       if (input.text.includes("Concrete defect to repair:") && options.ambiguousRepair)

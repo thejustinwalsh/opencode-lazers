@@ -8,7 +8,7 @@ with existing records. No task snapshots or attempt history are replaced.
 | Domain                | XState definition             | Persisted update path                                   | Recovery / completion                                                                                                                        |
 | --------------------- | ----------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Task                  | `taskMachine`                 | `RunnerStore.move()`                                    | Reconcile, resume, retry, retained repair/acceptance, cancellation or incorporation                                                          |
-| Plan                  | `planMachine`                 | `lz_runner_transition('plan', state, event)`            | Owner commands; cleanup probes; integration or cancellation                                                                                  |
+| Plan                  | `planMachine`                 | `lz_runner_transition('plan', state, event)`            | Owner commands; cleanup retries on a changed observed fact; integration or cancellation                                                      |
 | Attempt               | `attemptMachine`              | `lz_runner_transition('attempt', state, event)`         | Resume/retry; cancellation preserves the previous attempt and checkout                                                                       |
 | Effect                | `effectMachine`               | `lz_runner_transition('effect', state, event)`          | Reconcile a native receipt, or record conclusive failure; never replay an unknown side effect                                                |
 | Dispatch              | `dispatchControlMachine`      | `RunnerStore.setDispatchPause()`                        | Explicit unpause or recorded integration conditions                                                                                          |
@@ -90,6 +90,44 @@ next step. Full authorization rechecks ownership, plan/specification and
 candidate inputs, all relevant check receipts, resources, activities, adoptions
 and unresolved effects across the asynchronous admission boundary.
 
+## Live idle check replaces the idle report
+
+No state waits for an `experimental.idle` report. A worker is idle when the host
+reports it now: session not busy, no pending input, permission or form, no
+running shell whose cwd is inside the worktree, and no active child session.
+`RunnerHost.session()` supplies `busy`, `pendingInput`, `pendingPermissions`,
+`pendingForms`, `runningShells` and `activeChildren` from the same reads every
+tick; `TaskRuntime.backgroundBlockReason()` turns a positive shell or child
+count into a visible `WORKER_BACKGROUND_WAIT` hold. `unknown` no longer exists:
+an unreadable host throws and the next tick asks again.
+
+Deleted with it: the `runner_native_idle` write path and its report, terminal,
+pending-terminal, invalidation, stale-sequence and execution-start lineage; the
+`WORKER_BACKGROUND_UNKNOWN` hold; the prior-continuation-background exception;
+retained-repair idle lineage binding; and the `NativeCleanupSettlement` host
+call. The plan, attempt and effect machines needed no new states: every hold the
+idle report created exits on an observable event (the shell or child ends, the
+session stops being busy) or on the existing `reconcile`, `retry` and `cancel`
+controls. Existing holds whose reason names the retired report
+("Native idle background observation ...") clear through the same
+`resumeTransientObservationWait` path on the next observation.
+
+## Cleanup removes a worktree without owner authorization
+
+`cleaning`, `cleanup-blocked` and the `worktree-remove` effect keep their
+transitions. `CleanupRecoveryAuthorization`, `WORKTREE_CLEANUP_RECOVERY_AUTHORIZED`,
+`WORKTREE_CLEANUP_SETTLEMENT_OBSERVED`, the owner-epoch binding on them and the
+`recover-cleanup` command are deleted. The effect moves to `completed` when the
+change is contained in the checkout, the tree is clean and the worker is idle by
+the live check above. A failed precondition keeps the effect `held` (or
+`uncertain` after a native attempt) with its reason on the plan; the scheduler
+re-evaluates it when an observed fact changes (`worktreeCleanupFactsChanged`),
+every 5 seconds while the blocker is live activity, and every 60 seconds
+otherwise. An unchanged blocker records neither a new `CLEANUP_BLOCKED`
+transition nor new receipt history. `cleanup-blocked` exits through
+`cleaning` (the blocker cleared or `integrated` was re-recorded), `integrated`,
+`blocked`, `running` or `cancelling`.
+
 ## Cleanup preconditions do not block retry
 
 A fresh `worktree-remove` effect that fails a precondition before native cleanup
@@ -140,8 +178,8 @@ Validation: `runtime.test.ts` and `lifecycle-machines.test.ts`: 352 tests,
   XState cancellation transition, and retains the operation and check history.
   Accepted candidates and retained repairs keep their existing gates.
 - `isolateStoppedWorkerSource()` invokes the existing source quarantine for a
-  stopped worker with a completed, bound input and unknown background state
-  when its isolated checkout blocks eligible isolated work. Native archive and
+  stopped worker with a completed, bound input and no running shell or child
+  session when its isolated checkout blocks eligible isolated work. Native archive and
   source guard checks must succeed before the reservation is excluded. The
   checkout and unresolved resources stay owned; no completion is recorded.
 - `failMissingWorker()` settles an authoritatively absent worker as failed

@@ -82,7 +82,7 @@ Use the shared [runtime state machines](../../design/runtime-state-machines.md) 
 
 Create new isolated runner, adoption, retained-verification, and combined-check worktrees through OpenCode's native API under the canonical project root's `.worktrees` directory. Record and reuse the API's returned directory, including a collision-adjusted name.
 
-Keep existing recorded paths authoritative. Do not relocate them. Shared serial execution stays in its current checkout. Remove only owned, idle, clean, merged worktrees through native APIs. Preserve unmerged work.
+Keep existing recorded paths authoritative. Do not relocate them. Shared serial execution stays in its current checkout. Remove an owned worktree through native APIs, never forced, when its change is contained in the checkout, `git status` is clean, and the host reports the worker idle now: session not busy, no pending input, permission or form, no running shell with a cwd inside the worktree, and no active child session. There is no `experimental.idle` report to wait for, and no cleanup authorization or `recover-cleanup` command: a blocker clears on its own and cleanup retries only when an observed fact changed. Preserve dirty trees and unmerged commits, and keep the reason visible.
 
 ## Context and access
 
