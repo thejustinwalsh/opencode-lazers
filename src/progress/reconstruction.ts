@@ -1,3 +1,4 @@
+import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import type { ProgressAssignment } from "./recorder.ts"
@@ -486,7 +487,8 @@ function drive(coordinator: Coordinator) {
         const participant = activeParticipant(coordinator)
         if (!participant) return
 
-        if (Date.now() >= coordinator.scanAt) scanAssignments(coordinator, participant)
+        if (Date.now() >= coordinator.scanAt)
+          section("reconstruction:scan", () => scanAssignments(coordinator, participant))
 
         const now = Date.now()
         const next = [...coordinator.jobs.entries()].find(([, work]) => work.dueAt <= now)
@@ -495,7 +497,9 @@ function drive(coordinator: Coordinator) {
         coordinator.jobs.delete(sessionID)
         let assignment: ProgressAssignment | undefined
         try {
-          assignment = participant.assignmentForSession(sessionID)
+          assignment = section("reconstruction:assignmentForSession", () =>
+            participant.assignmentForSession(sessionID),
+          )
         } catch {
           if (coordinator.drainOwner !== drainOwner) return
           const failures = work.failures + 1
@@ -518,8 +522,12 @@ function drive(coordinator: Coordinator) {
           coordinator.participants.get(participant.id) === participant &&
           coordinator.inFlight === inFlight
         try {
-          result = await participant.reconstruct(assignment, isCurrent, (kind) =>
-            nativeReadStarted(coordinator, participant, kind),
+          result = await sectionAsync("reconstruction:reconstruct", () =>
+            Promise.resolve(
+              participant.reconstruct(assignment, isCurrent, (kind) =>
+                nativeReadStarted(coordinator, participant, kind),
+              ),
+            ),
           )
         } catch {
           result = "retry"

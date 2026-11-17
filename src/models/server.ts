@@ -1,3 +1,4 @@
+import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Integration } from "@opencode/schema/integration"
@@ -350,7 +351,7 @@ export function registerModelsServer(
         }
       },
     })
-    yield* ctx.rpc.register(Models, {
+    yield* timedRpc(ctx.rpc).register(Models, {
       settings: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -599,7 +600,7 @@ export function registerModelsServer(
         }).pipe(Effect.orDie),
     })
 
-    yield* ctx.rpc.register(ModelsDecision, {
+    yield* timedRpc(ctx.rpc).register(ModelsDecision, {
       overview: (input) =>
         Effect.tryPromise({
           try: async (signal) => {

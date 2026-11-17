@@ -1,3 +1,4 @@
+import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { realpathSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -156,6 +157,11 @@ export class SchedulerCoordinator {
   private drain() {
     this.timer = undefined
     this.wakeups++
+    section("scheduler:drain", () => this.drainGroups())
+    this.arm()
+  }
+
+  private drainGroups() {
     for (const [key, group] of this.groups) {
       if (group.running || group.dueAt > this.clock.now()) continue
       const selected = group.participants.entries().next().value
@@ -167,7 +173,9 @@ export class SchedulerCoordinator {
       let failed = false
       let failure: unknown
       const done = Promise.resolve()
-        .then(() => participant.run())
+        .then(() =>
+          sectionAsync(`scheduler:run:${key}`.slice(0, 120), async () => participant.run()),
+        )
         .catch((error: unknown) => {
           this.errors++
           failed = true
@@ -190,7 +198,6 @@ export class SchedulerCoordinator {
         })
       group.running = { owner, done, waiters }
     }
-    this.arm()
   }
 }
 

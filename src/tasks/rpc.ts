@@ -1,3 +1,4 @@
+import { timedRpc } from "../diagnostics/stall-probe.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
@@ -64,7 +65,7 @@ export function registerTaskReads(
   runtime: TaskRuntime,
 ) {
   return Effect.gen(function* () {
-    const rpc = yield* ctx.rpc.register(Tasks, {
+    const rpc = yield* timedRpc(ctx.rpc).register(Tasks, {
       query: (input) =>
         Effect.sync(() => {
           const page = reads.query(input)
@@ -264,7 +265,7 @@ export function registerTaskReads(
           catch: (error) => (error instanceof Error ? error : new Error(String(error))),
         }).pipe(Effect.orDie),
     })
-    yield* ctx.rpc.register(TasksScheduling, {
+    yield* timedRpc(ctx.rpc).register(TasksScheduling, {
       read: (input) =>
         Effect.tryPromise({
           try: async (signal) => {

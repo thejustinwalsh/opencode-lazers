@@ -1,3 +1,4 @@
+import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Schema } from "effect"
 import { Budget, unavailable } from "./contract.ts"
@@ -78,7 +79,7 @@ export function registerBudget(
   cache: UsageCache = new UsageCache(),
 ) {
   const identity = (key: string) => new Bun.CryptoHasher("sha256").update(key).digest("hex")
-  return ctx.rpc.register(Budget, {
+  return timedRpc(ctx.rpc).register(Budget, {
     read: (input) =>
       Effect.promise(async (signal) => {
         const integration = input.provider === "go" ? "opencode-go" : "openrouter"

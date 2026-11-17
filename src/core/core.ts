@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
+import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { UsageCache } from "../budget/server.ts"
@@ -98,7 +99,7 @@ export function acquireLazersCore(ctx: Plugin.Context, info: LazersCoreInfo): La
     projectDirectory: info.projectDirectory,
     directory: info.directory,
     ctx,
-    create: (hub) => createLazersCore(hub, info),
+    create: (hub) => section("core:create", () => createLazersCore(hub, info)),
   })
 }
 
@@ -143,13 +144,18 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     const root = canonical(directory)
     let index = indexes.get(root)
     if (!index) {
-      index = new ProjectIndex(
-        directory,
-        join(dirname(repository.path), "context"),
-        repository,
-        nativeContextPermission(host),
-        contextHost,
+      const created = section(
+        "ProjectIndex:construct",
+        () =>
+          new ProjectIndex(
+            directory,
+            join(dirname(repository.path), "context"),
+            repository,
+            nativeContextPermission(host),
+            contextHost,
+          ),
       )
+      index = created
       built("projectIndex")
       indexes.set(root, index)
     }
@@ -165,10 +171,12 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const runnerStore = new RunnerStore(repository)
   built("runnerStore")
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
-  void registerProject(repository, {
-    directory: info.projectDirectory,
-    opencodeProjectID: projectID,
-  }).catch((error) =>
+  void sectionAsync("registerProject", () =>
+    registerProject(repository, {
+      directory: info.projectDirectory,
+      opencodeProjectID: projectID,
+    }),
+  ).catch((error) =>
     Effect.runPromise(
       Effect.logWarning("LAZERS project key registration failed", { error: String(error) }),
     ),
@@ -239,22 +247,20 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     wake: () => scheduler?.request(),
     indexFor,
   }
-  return {
-    core,
-    dispose: async () => {
-      scheduler = undefined
-      await registration.dispose()
-      await runtime.stop()
-      // Hand the lease to a successor core immediately instead of letting the TTL lapse.
-      try {
-        runnerStore.releaseLease(runtime.owner)
-      } catch {
-        // The lease expires on its own TTL if the store is unavailable.
-      }
-      for (const index of indexes.values()) index.close()
-      indexes.clear()
-      inferenceBroker.close()
-      repository.close()
-    },
+  const disposeCore = async () => {
+    scheduler = undefined
+    await registration.dispose()
+    await runtime.stop()
+    // Hand the lease to a successor core immediately instead of letting the TTL lapse.
+    try {
+      runnerStore.releaseLease(runtime.owner)
+    } catch {
+      // The lease expires on its own TTL if the store is unavailable.
+    }
+    for (const index of indexes.values()) index.close()
+    indexes.clear()
+    inferenceBroker.close()
+    repository.close()
   }
+  return { core, dispose: () => sectionAsync("core:dispose", disposeCore) }
 }
