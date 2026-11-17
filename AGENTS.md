@@ -35,6 +35,9 @@ parents, never rely on recomputing an identical commit SHA.
 The remote is `github`; push `main` there when work is done and its checks
 pass. Do not rebase or rewrite recorded history: the runtime stores commit
 SHAs in integration proofs and plan artifacts, so reconcile with merges.
+Change identity lives in git notes on `refs/notes/lazers`; after pushing `main`,
+also push `refs/notes/lazers` (`git push github refs/notes/lazers:refs/notes/lazers`).
+Bare `git push` is never reconfigured by the runtime.
 
 ## Product cost basis
 

@@ -200,18 +200,20 @@ async function ensureConfigValue(directory: string, key: string, value: string) 
 
 /**
  * Idempotent repo-local notes plumbing: carry notes through amend and rebase,
- * and fetch and push them with the branch when the remote exists.
+ * and fetch them with the remote. Push behavior is never configured here: a bare
+ * `git push` behaves as the user set it; use `pushChangeNotes` explicitly.
  */
 export async function ensureNotesConfig(directory: string, remote = "origin"): Promise<void> {
   await ensureConfigValue(directory, "notes.rewriteRef", NOTES_REF)
   const remotes = (await run(directory, ["remote"])).stdout.split("\n").filter(Boolean)
   if (!remotes.includes(remote)) return
   await ensureConfigValue(directory, `remote.${remote}.fetch`, "+refs/notes/*:refs/notes/*")
-  // An explicit push refspec replaces the default push behavior, so keep the
-  // current branch pushing the way a bare `git push` already did.
-  if (!(await configValues(directory, `remote.${remote}.push`)).length)
-    await ensureConfigValue(directory, `remote.${remote}.push`, "HEAD")
-  await ensureConfigValue(directory, `remote.${remote}.push`, "refs/notes/*:refs/notes/*")
+}
+
+/** Push the notes ref to `remote`. Never throws; false means the push did not happen. */
+export async function pushChangeNotes(directory: string, remote = "origin"): Promise<boolean> {
+  const result = await run(directory, ["push", remote, `${NOTES_REF}:${NOTES_REF}`])
+  return result.code === 0
 }
 
 export type ChangeEvidence = {

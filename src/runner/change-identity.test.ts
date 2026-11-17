@@ -5,6 +5,7 @@ import {
   artifactIdentity,
   changeContained,
   ensureNotesConfig,
+  pushChangeNotes,
   readChangeNote,
   treeOf,
   writeChangeNote,
@@ -141,7 +142,7 @@ test("tree containment: main has a commit with the artifact tree", async () => {
   expect(result).toMatchObject({ status: "contained", via: "tree" })
 })
 
-test("ensureNotesConfig is idempotent and only adds refspecs for an existing remote", async () => {
+test("ensureNotesConfig is idempotent, adds only the fetch refspec, and never edits push config", async () => {
   const root = fixtureRepo()
   await ensureNotesConfig(root)
   await ensureNotesConfig(root)
@@ -154,8 +155,18 @@ test("ensureNotesConfig is idempotent and only adds refspecs for an existing rem
   await ensureNotesConfig(root)
   const fetch = git(root, ["config", "--local", "--get-all", "remote.origin.fetch"]).split("\n")
   expect(fetch.filter((line) => line === "+refs/notes/*:refs/notes/*")).toHaveLength(1)
-  expect(git(root, ["config", "--local", "--get-all", "remote.origin.push"]).split("\n")).toEqual([
-    "HEAD",
-    "refs/notes/*:refs/notes/*",
-  ])
+  expect(() => git(root, ["config", "--local", "--get-all", "remote.origin.push"])).toThrow()
+})
+
+test("pushChangeNotes pushes the notes ref and returns false instead of throwing", async () => {
+  const { root, artifact } = await workerBranch()
+  await writeChangeNote(root, artifact, { changeId: "c" })
+  const bare = fixtureRepo()
+  git(bare, ["config", "receive.denyCurrentBranch", "ignore"])
+  git(root, ["remote", "add", "origin", bare])
+  expect(await pushChangeNotes(root, "origin")).toBe(true)
+  expect(git(bare, ["rev-parse", "--verify", "refs/notes/lazers"])).toBe(
+    git(root, ["rev-parse", "refs/notes/lazers"]),
+  )
+  expect(await pushChangeNotes(root, "missing-remote")).toBe(false)
 })
