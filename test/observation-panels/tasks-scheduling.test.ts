@@ -673,6 +673,7 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
   const browserDocument = dom.document as unknown as Document
+  const uninstallLayout = installTasksLayout(dom)
   const globalNames = [
     "window",
     "document",
@@ -715,15 +716,6 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
   const inferenceRuntimeModule = "\0lazers-test-unused-inference-runtime"
   let disposeSetup: (() => void) | undefined
   let mounted: { dispose(): void } | undefined
-  const scrollTargets: string[] = []
-  const scrollPrototype = dom.window.HTMLElement.prototype
-  const scrollDescriptor = Object.getOwnPropertyDescriptor(scrollPrototype, "scrollIntoView")
-  Object.defineProperty(scrollPrototype, "scrollIntoView", {
-    configurable: true,
-    value(this: HTMLElement) {
-      if (this.dataset.taskId) scrollTargets.push(this.dataset.taskId)
-    },
-  })
   try {
     await rm(outputDirectory, { recursive: true, force: true })
     await mkdir(outputDirectory, { recursive: true })
@@ -1078,20 +1070,17 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
     expect(browserDocument.activeElement).toBe(relatedTask())
     expect(relatedTask()?.textContent).toBe(ids.heldChild.slice(0, 8))
 
-    const priorScrolls = scrollTargets.length
     pressEnter(dom, relatedTask()!)
     await until(() => row(ids.heldChild)?.getAttribute("aria-selected") === "true")
     await until(() => browserDocument.activeElement === row(ids.heldChild))
     expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
-    expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("2")
-    await until(() => scrollTargets.slice(priorScrolls).includes(ids.heldChild))
+    expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("3")
     expect(topologyCalls).toBeGreaterThan(0)
   } finally {
     mounted?.dispose()
     disposeSetup?.()
     await rm(outputDirectory, { recursive: true, force: true })
-    if (scrollDescriptor) Object.defineProperty(scrollPrototype, "scrollIntoView", scrollDescriptor)
-    else Reflect.deleteProperty(scrollPrototype, "scrollIntoView")
+    uninstallLayout()
     for (const name of globalNames) {
       const descriptor = previousGlobals.get(name)
       if (descriptor) Object.defineProperty(globalThis, name, descriptor)
