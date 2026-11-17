@@ -27,7 +27,7 @@ import { decodePCM16, wavBase64 } from "./audio.ts"
 import { loadDecisionRuntime, type DecisionRuntime } from "./runntime-decision-runtime.ts"
 import type { SystemOneInput } from "./system-one.ts"
 import { ExclusiveModels, retryLoad } from "./lifecycle.ts"
-import { DEFAULT_VOICE } from "./speech.ts"
+import { DEFAULT_VOICE, runntimeSpeechVoice } from "./speech.ts"
 import type { SpeechVoice } from "./speech.ts"
 import { DEFAULT_MODEL_KEEP_ALIVE_MS, featureEnabled, usesGPU, needsChat } from "./features.ts"
 import type { Features, LocalFeature } from "./features.ts"
@@ -993,6 +993,7 @@ export function createInferenceRuntime(
           const generation = engine.speak(job.prompt, {
             temperature: 0.4,
             maxAudioFrames: 256,
+            voice: runntimeSpeechVoice(job.voice),
             signal: controller.signal,
           })
           for await (const _chunk of generation) controller.signal.throwIfAborted()

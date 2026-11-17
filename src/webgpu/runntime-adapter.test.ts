@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { MAX_READ_BYTES, MODEL_FILES, MODEL_REVISION } from "./manifest.ts"
 import { cachedModelRangeSource } from "./runntime-adapter.ts"
+import { runntimeSpeechVoice } from "./speech.ts"
 
 const encode = (bytes: Uint8Array) => {
   let binary = ""
@@ -63,4 +64,19 @@ test("ruNNtime range reads reject invalid and cancelled requests before cache ac
   controller.abort(new Error("route changed"))
   await expect(source.read(0, 0)).rejects.toThrow("route changed")
   expect(reads).toBe(0)
+})
+
+test("LAZERS voice keys map to ruNNtime's typed speech voice", () => {
+  expect(runntimeSpeechVoice("american-female")).toEqual({
+    language: "American English",
+    gender: "female",
+  })
+  expect(runntimeSpeechVoice("british-female")).toEqual({
+    language: "British English",
+    gender: "female",
+  })
+  expect(runntimeSpeechVoice("british-male")).toEqual({
+    language: "British English",
+    gender: "male",
+  })
 })
