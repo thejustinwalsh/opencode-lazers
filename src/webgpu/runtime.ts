@@ -117,7 +117,8 @@ const tokenizerIdentity = `LiquidAI/LFM3-Omni-2B tokenizer.json revision:${LFM3_
 
 export function createInferenceRuntime(
   ctx: Parameters<Plugin.Setup>[0],
-  keepAliveMs: () => number = () => DEFAULT_MODEL_KEEP_ALIVE_MS,
+  /** Undefined means the preference has not hydrated: neither unload nor pin the model. */
+  keepAliveMs: () => number | undefined = () => DEFAULT_MODEL_KEEP_ALIVE_MS,
   voice: () => SpeechVoice = () => DEFAULT_VOICE,
   features: () => Features,
   timing: {
@@ -829,6 +830,7 @@ export function createInferenceRuntime(
       signal.throwIfAborted()
       setResident(models.current())
       lastUsed = wallNow()
+      manualUnload = false
     } catch (error) {
       setResident(models.current())
       if (requestedSignal.aborted) {
@@ -1220,8 +1222,37 @@ export function createInferenceRuntime(
     !recovery &&
     !models.isTainted() &&
     models.current() !== undefined &&
-    keepAliveMs() >= 0 &&
-    wallNow() - lastUsed >= keepAliveMs()
+    (keepAliveMs() ?? -1) >= 0 &&
+    wallNow() - lastUsed >= keepAliveMs()!
+
+  /** "Never" unload: the configured model stays resident whenever local inference is on. */
+  let manualUnload = false
+  const keepResident = () => !manualUnload && (keepAliveMs() ?? 0) < 0 && usesGPU(features())
+
+  /** Restores residency after a generation reload, ownership loss, failure or device loss. */
+  let restoreRetryAt: number | undefined
+  const restoreResident = async () => {
+    if (state() === "error") {
+      // A failure never retargets instantly; wait out the same bounded backoff first.
+      restoreRetryAt ??= wallNow() + Math.min(30_000, 1_000 * 2 ** Math.min(loadFailures, 5))
+      if (wallNow() < restoreRetryAt) return
+    }
+    restoreRetryAt = undefined
+    if (wallNow() < nextLoadAttempt) return
+    if (!owner) return load(true)
+    nextLoadAttempt = wallNow() + Math.min(30_000, 1_000 * 2 ** Math.min(loadFailures++, 5))
+    try {
+      await ensureModel(
+        modelKindForInference(needsChat(features()) ? "text" : "systemone"),
+        ctx.signal,
+      )
+      nextLoadAttempt = 0
+      loadFailures = 0
+      ready()
+    } catch {
+      /* ensureModel recorded the failure; the backoff above gates the next attempt. */
+    }
+  }
 
   let checking = false
   const tick = async () => {
@@ -1356,6 +1387,19 @@ export function createInferenceRuntime(
       )
         void load()
       else if (idleExpired()) await releaseResident()
+      else if (
+        keepResident() &&
+        !active &&
+        !initializing &&
+        !switching &&
+        !recovery &&
+        !recoveryRetry &&
+        !unloading &&
+        !models.current() &&
+        !models.isTainted() &&
+        contractStatus() !== "incompatible"
+      )
+        await restoreResident()
     } catch {
       /* The next tick retries a disconnected service; bounded model loading has its own policy. */
     } finally {
@@ -1482,8 +1526,15 @@ export function createInferenceRuntime(
       return undefined
     },
     audioRoute,
-    load: () => load(true),
-    unload,
+    load: () => {
+      if (!unloading) manualUnload = false
+      return load(true)
+    },
+    /** A user-requested unload holds the model out until the next load or job. */
+    unload: () => {
+      manualUnload = true
+      return unload()
+    },
     dispose,
     cancel: () => {
       loadController?.abort(new Error("Model loading cancelled"))
