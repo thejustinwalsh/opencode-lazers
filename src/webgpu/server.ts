@@ -29,9 +29,11 @@ export function registerLocalInference(
     "rpc" | "tool" | "permission" | "agent" | "storage" | "location" | "options"
   >,
   resolveWorker?: () => Promise<RpcClient<typeof RendererInference>>,
+  /** Process-core broker shared by every location; its owner closes it. */
+  sharedBroker?: InferenceBroker,
 ) {
   return Effect.gen(function* () {
-    const broker = new InferenceBroker()
+    const broker = sharedBroker ?? new InferenceBroker()
     // Local tools and audio features forward to the default-location renderer authority.
     const worker =
       resolveWorker ??
@@ -371,7 +373,7 @@ export function registerLocalInference(
         Effect.promise(async () => {
           controller.abort()
           await registration.dispose()
-          broker.close()
+          if (!sharedBroker) broker.close()
         }),
     )
   })

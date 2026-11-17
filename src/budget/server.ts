@@ -75,8 +75,8 @@ export class UsageCache {
 export function registerBudget(
   ctx: Pick<Plugin.Context, "rpc" | "integration" | "storage">,
   fetcher: UsageFetch = fetch,
+  cache: UsageCache = new UsageCache(),
 ) {
-  const cache = new UsageCache()
   const identity = (key: string) => new Bun.CryptoHasher("sha256").update(key).digest("hex")
   return ctx.rpc.register(Budget, {
     read: (input) =>
