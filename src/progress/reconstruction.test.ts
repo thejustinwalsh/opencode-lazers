@@ -153,7 +153,7 @@ test("54 registrations across pinned loader generations share one 97-session bas
       expect(
         firstDiagnostics.coordinator.participantGenerations.map((group) => group.participantCount),
       ).toEqual([27, 27])
-      expect(firstDiagnostics.coordinator.assignments.cachedCount).toBe(96)
+      expect(firstDiagnostics.coordinator.assignments.cachedCount).toBe(97)
       expect(firstDiagnostics.coordinator.nativeReads).toMatchObject({
         get: { invocations: 0, succeeded: 0, failed: 0, pending: 0 },
         context: { invocations: 0, succeeded: 0, failed: 0, pending: 0 },

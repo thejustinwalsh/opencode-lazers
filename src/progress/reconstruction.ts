@@ -12,6 +12,8 @@ export type ReconstructionRead = (
 export type ReconstructionParticipant = {
   assignments(): ProgressAssignment[]
   assignmentForSession(sessionID: string): ProgressAssignment | undefined
+  /** Optional O(1) prefilter: false guarantees no assignment owns the session. */
+  mayOwn?(sessionID: string): boolean
   reconstruct(
     assignment: ProgressAssignment,
     isCurrent: () => boolean,
@@ -27,6 +29,8 @@ export type ReconstructionOptions = {
   participant: ReconstructionParticipant
   pollIntervalMs?: number
   terminalRefreshMs?: number
+  /** Trailing coalescing window per session for native-event nudges. */
+  changedDebounceMs?: number
 }
 
 export type ReconstructionRegistration = {
@@ -97,6 +101,7 @@ const coordinators: CoordinatorRegistry = (coordinatorHost[coordinatorRegistryKe
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 const DEFAULT_TERMINAL_REFRESH_MS = 30_000
+export const DEFAULT_CHANGED_DEBOUNCE_MS = 1_500
 const MAX_RETRY_DELAY_MS = 60_000
 const ACTIVE_ATTEMPT_STATES = new Set(["preparing", "queued", "ready", "running", "verifying"])
 
@@ -588,6 +593,7 @@ export function registerProgressReconstruction(
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     terminalRefreshMs: options.terminalRefreshMs ?? DEFAULT_TERMINAL_REFRESH_MS,
   }
+  const debounceMs = Math.max(0, options.changedDebounceMs ?? DEFAULT_CHANGED_DEBOUNCE_MS)
   coordinator.participants.set(participant.id, participant)
   updateIntervals(coordinator)
   coordinator.scanAt = Math.min(coordinator.scanAt, Date.now())
@@ -597,8 +603,22 @@ export function registerProgressReconstruction(
   return {
     changed(sessionID) {
       if (disposed || !sessionID) return
-      enqueue(coordinator, sessionID)
-      drive(coordinator)
+      // Once the assignment baseline exists, sessions outside it are unowned or new. Unowned
+      // sessions return in O(1); possibly-new ones request one coalesced assignment scan,
+      // which enqueues them. Neither opens a per-session transaction.
+      if (coordinator.baselineCaptured && !coordinator.assignments.has(sessionID)) {
+        const owner = activeParticipant(coordinator)
+        if (owner?.mayOwn?.(sessionID) === false) return
+        if (coordinator.scanAt > Date.now()) {
+          coordinator.scanAt = Date.now()
+          drive(coordinator)
+        }
+        return
+      }
+      const wasQueued = coordinator.jobs.has(sessionID)
+      enqueue(coordinator, sessionID, Date.now() + debounceMs)
+      // A burst shares the first job's due time; wake only when the schedule changed.
+      if (!wasQueued || debounceMs === 0) drive(coordinator)
     },
     dispose() {
       if (disposed) return

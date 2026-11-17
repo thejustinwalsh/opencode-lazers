@@ -1052,6 +1052,7 @@ export function registerProgress(
       participant: {
         assignments: () => recorder.assignments(),
         assignmentForSession: (sessionID) => recorder.assignmentForSession(sessionID),
+        mayOwn: (sessionID) => recorder.mayBeAssigned(sessionID),
         reconstruct: (assignment, isCurrent, readStarted) =>
           reconstructSession(ctx, recorder, assignment, isCurrent, readStarted),
       },

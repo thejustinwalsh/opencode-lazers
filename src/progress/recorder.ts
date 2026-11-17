@@ -11,6 +11,7 @@ import { publicProgressError, visibleProgressText } from "./privacy.ts"
 import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
 import { observeFileTargets } from "./file-target.ts"
 import { sameProject } from "../project-key.ts"
+import { sessionOwners, type SessionOwners } from "./session-owners.ts"
 
 export type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -132,9 +133,15 @@ type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFinge
 
 const MAX_RECOVERY_MEMOS = 256
 
+/** Light signatures are trusted for this long before a full content fingerprint re-verifies. */
+const FULL_FINGERPRINT_VERIFY_MS = 60_000
+
 type RecoveryMemo = {
   assignmentFingerprint: string
   fingerprint: string
+  /** Incremental signature: count, ids and update stamps; avoids re-encoding every message. */
+  light?: string
+  fullVerifiedAt?: number
   progressFingerprint: string
   revision: number
 }
@@ -377,6 +384,52 @@ function retainedMessagesFingerprint(
       .digest("hex")
   } catch {
     // Proxies and malformed retained data must retain the original recovery path.
+    return undefined
+  }
+}
+
+function shallowSignature(value: unknown, depth: number, out: string[]) {
+  if (typeof value === "string") {
+    out.push(
+      value.length <= 24
+        ? JSON.stringify(value)
+        : `${value.length}:${value.slice(0, 12)}:${value.slice(-12)}`,
+    )
+  } else if (value === null || typeof value !== "object") {
+    out.push(String(value))
+  } else if (depth <= 0) {
+    out.push(Array.isArray(value) ? `[${value.length}]` : "{}")
+  } else if (Array.isArray(value)) {
+    out.push(`[${value.length}`)
+    for (const item of value) shallowSignature(item, depth - 1, out)
+    out.push("]")
+  } else {
+    const keys = Object.getOwnPropertyNames(value)
+    out.push(`{${keys.join(",")}`)
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      // Never run user code: accessors keep the original full-reconciliation path.
+      if (!descriptor || descriptor.get || descriptor.set) throw new Error("unsafe retained value")
+      shallowSignature(descriptor.value, depth - 1, out)
+    }
+    out.push("}")
+  }
+}
+
+/**
+ * Cheap change signature over retained messages: structure, counts, stamps, string lengths and
+ * string edges. No recursive tagged encode, JSON serialization or hashing of full content;
+ * the full fingerprint re-verifies periodically to bound any residual blind spot.
+ */
+export function lightMessagesSignature(
+  messages: readonly unknown[],
+  hasMoreThanBound: boolean,
+): string | undefined {
+  try {
+    const out: string[] = [String(messages.length), hasMoreThanBound ? "+" : "="]
+    for (const message of messages) shallowSignature(message, 6, out)
+    return createHash("sha256").update(out.join("|")).digest("hex")
+  } catch {
     return undefined
   }
 }
@@ -930,11 +983,21 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
  */
 export class ProgressRecorder {
   private readonly recoveryMemos = new Map<string, RecoveryMemo>()
+  private owners: SessionOwners | undefined
 
   constructor(
     readonly store: RunnerStore,
     readonly projectID: string,
   ) {}
+
+  /**
+   * O(1) prefilter: false means no runner attempt owns this session, so assignment-only
+   * work (fact building, privacy scrubbing, transactions, reconstruction) can be skipped.
+   */
+  mayBeAssigned(sessionID: string): boolean {
+    this.owners ??= sessionOwners(this.store.repository)
+    return this.owners.has(sessionID)
+  }
 
   private assignmentFromRow(row: {
     plan_id: string
@@ -992,7 +1055,10 @@ export class ProgressRecorder {
          WHERE p.project_directory=? AND t.project_directory=? AND ${condition}`,
       )
       .get(this.store.repository.projectDirectory, this.store.repository.projectDirectory, value)
-    return row ? this.assignmentFromRow(row) : undefined
+    const assignment = row ? this.assignmentFromRow(row) : undefined
+    if (assignment && where === "session")
+      (this.owners ??= sessionOwners(this.store.repository)).markOwned(assignment.sessionID)
+    return assignment
   }
 
   private observationRevisionIn(db: Database): number | undefined {
@@ -1061,6 +1127,7 @@ export class ProgressRecorder {
   }
 
   assignmentForSession(sessionID: string): ProgressAssignment | undefined {
+    if (!this.mayBeAssigned(sessionID)) return undefined
     return this.store.atomic((db) => this.assignmentQuery(db, "session", sessionID))
   }
 
@@ -1586,6 +1653,7 @@ export class ProgressRecorder {
     fact: Fact,
     verifiedToolSession?: boolean,
   ): number | undefined {
+    if (verifiedToolSession !== true && !this.mayBeAssigned(sessionID)) return undefined
     return this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
       if (
@@ -1812,6 +1880,8 @@ export class ProgressRecorder {
       return eventID
         ? this.observeReminderAdmission(sessionID, data.metadata, eventID, at)
         : undefined
+    // Unowned sessions have nothing to record: skip fact building and privacy scrubbing.
+    if (verifiedToolSession !== true && !this.mayBeAssigned(sessionID)) return undefined
     let fact: Fact | undefined
 
     if (
@@ -2125,7 +2195,20 @@ export class ProgressRecorder {
   /** Reconcile only retained public session messages; it never invokes execution. */
   reconcileMessages(sessionID: string, rawMessages: readonly unknown[]): void {
     const messages = rawMessages.slice(0, 10_000)
-    const fingerprint = retainedMessagesFingerprint(messages, rawMessages.length > messages.length)
+    const hasMoreThanBound = rawMessages.length > messages.length
+    const light = lightMessagesSignature(messages, hasMoreThanBound)
+    const prior = this.recoveryMemos.get(sessionID)
+    const now = Date.now()
+    const lightUnchanged =
+      light !== undefined &&
+      prior?.light === light &&
+      prior.fullVerifiedAt !== undefined &&
+      now - prior.fullVerifiedAt < FULL_FINGERPRINT_VERIFY_MS
+    // Unchanged light signature: reuse the memoized full fingerprint instead of re-hashing everything.
+    const fingerprint = lightUnchanged
+      ? prior.fingerprint
+      : retainedMessagesFingerprint(messages, hasMoreThanBound)
+    const fullVerifiedAt = lightUnchanged ? prior.fullVerifiedAt! : now
     this.reconcileReminder(sessionID, rawMessages)
     this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
@@ -2430,6 +2513,7 @@ export class ProgressRecorder {
           assignmentFingerprint,
           revision: completedRevision,
           fingerprint,
+          ...(light === undefined ? {} : { light, fullVerifiedAt }),
           progressFingerprint,
         })
         while (this.recoveryMemos.size > MAX_RECOVERY_MEMOS) {
