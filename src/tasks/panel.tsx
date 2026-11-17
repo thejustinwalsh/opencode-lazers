@@ -702,6 +702,7 @@ function TaskPanel(
         : (selectedRecordedState() ?? "Unknown")
   const selectedRelations = () => {
     const taskID = visible()?.selectedID
+    const plan = schedulingPlan(selectedExecution()?.planID)
     const waitSet = new Set([
       ...(selectedExecution()?.waitingOn ?? []),
       ...(taskID ? (schedulingNode(taskID)?.waitingOn ?? []) : []),
@@ -721,7 +722,9 @@ function TaskPanel(
       waitingOn,
       waitingOnPlans: taskID ? (schedulingNode(taskID)?.waitingOnPlans ?? []) : [],
       successors: [...successors],
-      planPrerequisites: schedulingPlan(selectedExecution()?.planID)?.afterPlans ?? [],
+      planPrerequisites: plan?.afterPlans ?? [],
+      planPrerequisitesCount: plan?.afterPlansCount ?? plan?.afterPlans.length ?? 0,
+      planPrerequisitesComplete: plan?.afterPlansComplete ?? true,
     }
   }
   const relationLabel = (taskID: string) =>
@@ -2252,7 +2255,12 @@ function TaskPanel(
                 </Show>
                 <Show when={selectedRelations().planPrerequisites.length}>
                   <div class="lazers-tasks-dependencies">
-                    <span>Plan waits for </span>
+                    <span>
+                      Plan waits for
+                      {selectedRelations().planPrerequisitesComplete
+                        ? " "
+                        : ` (showing ${selectedRelations().planPrerequisites.length} of ${selectedRelations().planPrerequisitesCount} prerequisite plans) `}
+                    </span>
                     <For each={selectedRelations().planPrerequisites}>
                       {(planID, index) => (
                         <>

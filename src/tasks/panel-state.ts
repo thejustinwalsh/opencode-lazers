@@ -65,7 +65,13 @@ function relationshipsMatch(
     const topologyPlan = topologyPlanByID.get(planID)!
     const schedulingPlan = schedulingPlanByID.get(planID)!
     if (!schedulingPlan.nodesComplete) return false
-    if (!sameIDs(topologyPlan.afterPlans, schedulingPlan.afterPlans)) return false
+    const afterPlansMatch =
+      schedulingPlan.afterPlansComplete === false
+        ? schedulingPlan.afterPlans.every(
+            (planID, index) => topologyPlan.afterPlans[index] === planID,
+          )
+        : sameIDs(topologyPlan.afterPlans, schedulingPlan.afterPlans)
+    if (!afterPlansMatch) return false
 
     const topologyNodes = topologyPlan.nodes.toSorted((left, right) => left.ordinal - right.ordinal)
     const schedulingNodes = schedulingPlan.nodes.toSorted(

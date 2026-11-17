@@ -614,6 +614,101 @@ test("material relationship disagreement and scheduling scope mismatch do not co
   }
 })
 
+test("bounded scheduling plan prerequisites keep compatible topology prefixes", async () => {
+  const taskID = crypto.randomUUID()
+  const planID = crypto.randomUUID()
+  const prerequisiteIDs = [crypto.randomUUID(), crypto.randomUUID()]
+  const scope: SchedulingScope = { kind: "project", sessionID: "session" }
+  const state = new TaskPanelState(() => {})
+  const api = transport(async () => page("/project", taskID))
+  api.topology = async () =>
+    ({
+      boundary: { repositoryVersion: 1 },
+      scope: { kind: "project" },
+      plans: [
+        {
+          id: planID,
+          revision: 1,
+          version: 1,
+          afterPlans: prerequisiteIDs,
+          nodes: [{ taskID, ordinal: 0 }],
+          dependencies: [],
+        },
+      ],
+    }) as unknown as TopologyResponse
+  api.scheduling = async () => ({
+    schemaVersion: 1,
+    snapshotID: crypto.randomUUID(),
+    repositoryVersion: 1,
+    scope,
+    observedAt: 1,
+    coverage: {
+      status: "partial",
+      planCount: 1,
+      coveredPlanCount: 1,
+      nodeCount: 1,
+      coveredNodeCount: 1,
+      activeReservationCount: 0,
+      reservationsComplete: true,
+      reason: "Prerequisite plan references are bounded.",
+    },
+    next: { status: "none" },
+    selectedTaskIDs: [],
+    selectionComplete: true,
+    plans: [
+      {
+        planID,
+        planVersion: 1,
+        planOrder: 0,
+        priority: 0,
+        title: "Bounded prerequisites",
+        lifecycle: "running",
+        decision: "waiting",
+        reason: null,
+        afterPlans: [prerequisiteIDs[0]!],
+        afterPlansCount: 2,
+        afterPlansComplete: false,
+        nodesComplete: true,
+        nodes: [
+          {
+            taskID,
+            title: "Task",
+            objective: "Task",
+            ordinal: 0,
+            order: 0,
+            lifecycle: "queued",
+            decision: "waiting",
+            reason: null,
+            prerequisites: [],
+            waitingOn: [],
+            reservationTaskIDs: [],
+          },
+        ],
+      },
+    ],
+    nextCursor: null,
+  })
+
+  try {
+    state.connect("bounded-afterplans", "/project", api, {}, undefined, scope)
+    await until(() => !state.data.loading && Boolean(state.data.scheduling))
+    expect(state.data.topology).toBeDefined()
+    expect(state.data.topologyError).toBe("")
+    expect(
+      buildExecutionList({
+        tasks: state.data.tasks,
+        scheduling: state.data.scheduling,
+      }).plans[0],
+    ).toMatchObject({
+      afterPlans: [prerequisiteIDs[0]!],
+      afterPlansCount: 2,
+      afterPlansComplete: false,
+    })
+  } finally {
+    state.close()
+  }
+})
+
 test("native reconnect refreshes current activity once on the connected stream", async () => {
   const taskID = crypto.randomUUID()
   const channel = changeChannel()
