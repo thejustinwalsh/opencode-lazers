@@ -35,13 +35,17 @@ function deferred(): Deferred {
   return { promise, resolve }
 }
 
-async function withPanel(run: (h: Awaited<ReturnType<typeof mountPanel>>) => Promise<void>) {
+async function withPanel(
+  run: (h: Awaited<ReturnType<typeof mountPanel>>) => Promise<void>,
+  layout: { paneHeight?: number } = {},
+) {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
   const uninstallLayout = installTasksLayout(dom, {
     viewportHeight: 320,
     headHeight: HEAD,
     itemHeights: { task: ROW, plan: PLAN_HEIGHT, note: 28, loader: ROW },
+    ...layout,
   })
   const globalNames = [
     "window",
@@ -191,6 +195,8 @@ async function mountPanel(dom: Window, outputDirectory: string) {
   let snapshot = 1
   const queryCalls: Array<{ state?: string; cursor?: string }> = []
   const gates = new Map<string, Deferred>()
+  /** `${state}:${cursor}` pages that fail while listed here. */
+  const failures = new Set<string>()
   const pageOf = (ids: string[], nextCursor: string | null, count: number) => ({
     projectDirectory,
     snapshot,
@@ -203,6 +209,8 @@ async function mountPanel(dom: Window, outputDirectory: string) {
     queryCalls.push({ state: input.state, cursor: input.cursor })
     const gate = input.cursor ? gates.get(`${input.state}:${input.cursor}`) : undefined
     if (gate) await gate.promise
+    if (input.cursor && failures.has(`${input.state}:${input.cursor}`))
+      throw new Error("next page unavailable")
     if (input.state === "queued") {
       const pageIndex = input.cursor ? Number(input.cursor.split("-")[1]) : 0
       const ids = queue.slice(pageIndex * 30, pageIndex * 30 + 30)
@@ -439,6 +447,20 @@ async function mountPanel(dom: Window, outputDirectory: string) {
       .find((button) => button.textContent === label)!
       .click()
   }
+  const announceChange = () => {
+    snapshot++
+    eventSubscriber?.({
+      type: "rpc.lazers.tasks.changed",
+      data: { projectDirectory, version: snapshot },
+    })
+  }
+  /** A live reorder: the first queued task moves down past the next five. */
+  const reorderQueueTop = () => {
+    const [moved] = queue.splice(0, 1)
+    queue.splice(5, 0, moved!)
+    announceChange()
+    return moved!
+  }
   const refreshWithNewRowAbove = () => {
     const inserted = make(`Alpha inserted ${nextID}`)
     alpha.unshift(inserted)
@@ -465,6 +487,9 @@ async function mountPanel(dom: Window, outputDirectory: string) {
     queue,
     queryCalls,
     gates,
+    failures,
+    announceChange,
+    reorderQueueTop,
     list,
     rows,
     row,
@@ -587,16 +612,19 @@ test("selecting an Attention task inside a collapsed fork or plan expands it, mo
     await until(() => h.row(h.beta.a)?.getAttribute("aria-selected") === "true")
     await until(() => doc.activeElement === h.row(h.beta.a))
     expect(h.row(h.beta.root)?.getAttribute("aria-expanded")).toBe("true")
-    expect(h.row(h.beta.a)?.getAttribute("aria-level")).toBe("2")
+    // Beta heading (level 1) > fork root (level 2) > branch row (level 3).
+    expect(h.row(h.beta.root)?.getAttribute("aria-level")).toBe("2")
+    expect(h.row(h.beta.a)?.getAttribute("aria-level")).toBe("3")
     expect(h.list().scrollTop).toBeGreaterThan(ROW * 40)
 
     // Collapse the Beta plan from its heading, return to the top, then reach for its join.
     const heading = () =>
-      [...h.container.querySelectorAll<HTMLButtonElement>(".lazers-tasks-plan-heading")].find(
-        (button) => button.textContent?.includes("Beta plan"),
+      [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-plan[role=treeitem]")].find(
+        (item) => item.textContent?.includes("Beta plan"),
       )
     expect(heading()?.getAttribute("aria-expanded")).toBe("true")
-    heading()!.click()
+    expect(heading()?.getAttribute("aria-level")).toBe("1")
+    heading()!.querySelector<HTMLElement>(".lazers-tasks-plan-heading")!.click()
     await until(() => heading()?.getAttribute("aria-expanded") === "false")
     expect(h.row(h.beta.root)).toBeNull()
     expect(h.row(h.beta.join)).toBeNull()
@@ -632,7 +660,7 @@ test("arrow keys, Home and End walk rows that are not mounted", async () => {
     h.key(last, "ArrowDown")
     await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
     await until(() => doc.activeElement === h.row(h.alpha[0]!))
-    // Home from anywhere returns to the first task; ArrowDown steps through the model order.
+    // ArrowDown steps through the model order; Home returns to the first tree item, Alpha's heading.
     h.key(h.row(h.alpha[0]!)!, "ArrowDown")
     await until(() => h.row(h.alpha[1]!)?.getAttribute("aria-selected") === "true")
     for (let step = 2; step <= 14; step++) {
@@ -642,6 +670,121 @@ test("arrow keys, Home and End walk rows that are not mounted", async () => {
     }
     expect(h.row(h.alpha[14]!)).not.toBeNull()
     h.key(h.row(h.alpha[14]!)!, "Home")
+    const alphaHeading = () =>
+      h.container.querySelector<HTMLElement>(".lazers-tasks-plan[role=treeitem]")
+    await until(() => doc.activeElement === alphaHeading())
+    expect(alphaHeading()?.textContent).toContain("Alpha plan")
+    h.key(alphaHeading()!, "ArrowDown")
     await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
   })
+})
+
+test("a failed next page shows its own retry and is not requested again until Retry", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.rows().length > 0)
+    h.chooseFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+    h.failures.add("queued:queue-1")
+    const pageOne = () =>
+      h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-1").length
+    const loader = () => h.container.querySelector<HTMLElement>(".lazers-tasks-loader")
+    await until(() => {
+      h.scrollTo(h.list().scrollHeight)
+      return pageOne() === 1
+    })
+    await until(() => Boolean(loader()?.textContent?.includes("Could not load more tasks.")))
+    // The page failure belongs to the loader: the list keeps no error banner.
+    expect(h.container.querySelector(".lazers-tasks-list > .lazers-tasks-error")).toBeNull()
+    // Past the list's retry delay, through a live refresh and further scrolling: one request.
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    const reads = h.queryCalls.length
+    h.announceChange()
+    await until(() => h.queryCalls.length > reads)
+    await settle()
+    h.scrollTo(h.list().scrollHeight - 40)
+    h.scrollTo(h.list().scrollHeight)
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    expect(pageOne()).toBe(1)
+    expect(loader()?.textContent).toContain("Could not load more tasks.")
+    // Retry asks once more; the page lands.
+    h.failures.clear()
+    const retry = [...loader()!.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Retry",
+    )!
+    retry.click()
+    await until(() => pageOne() === 2)
+    // Rows 31+ follow the first page.
+    h.scrollTo(HEAD + ROW * 28)
+    await until(() => Boolean(h.row(h.queue[30]!)))
+    expect(pageOne()).toBe(2)
+  })
+})
+
+test("at the list top, with the head above the tree, a live reorder of the first rows keeps scrollTop", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.rows().length > 0)
+    h.chooseFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+    await settle()
+    // At the top, the head (Now/Attention/Next, 80px here) sits above the first tree row.
+    h.scrollTo(0)
+    for (let round = 0; round < 2; round++) {
+      const reads = h.queryCalls.length
+      const moved = h.reorderQueueTop()
+      await until(() => h.queryCalls.length > reads)
+      await until(() => h.rows()[5]?.dataset.taskId === moved)
+      await settle()
+      expect(h.list().scrollTop).toBe(0)
+      expect(h.rows()[0]?.dataset.taskId).toBe(h.queue[0])
+    }
+    // Scrolled partway into the head: still the head's view, still no row anchor.
+    h.scrollTo(40)
+    const reads = h.queryCalls.length
+    h.reorderQueueTop()
+    await until(() => h.queryCalls.length > reads)
+    await settle()
+    expect(h.list().scrollTop).toBe(40)
+  })
+})
+
+test("collapsing a plan keeps the fitted split; plan headings are level-1 tree items", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      await settle()
+      const separator = () =>
+        h.container.querySelector<HTMLElement>(".lazers-tasks-separator[role=separator]")!
+      const plan = (title: string) =>
+        [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-plan[role=treeitem]")].find(
+          (item) => item.textContent?.includes(title),
+        )
+      const fitted = separator().getAttribute("aria-valuenow")
+      // Alpha heading, then Beta heading: one top-level sibling set; Alpha's rows sit below it.
+      const alpha = plan("Alpha plan")!
+      expect(alpha.getAttribute("aria-level")).toBe("1")
+      expect(alpha.getAttribute("aria-posinset")).toBe("1")
+      expect(alpha.getAttribute("aria-setsize")).toBe("2")
+      expect(alpha.getAttribute("aria-expanded")).toBe("true")
+      expect(h.row(h.alpha[0]!)?.getAttribute("aria-level")).toBe("2")
+      // Left from a plan row reaches its heading, whose own keys collapse and expand it.
+      const doc = h.container.ownerDocument
+      h.row(h.alpha[0]!)!.focus()
+      h.key(h.row(h.alpha[0]!)!, "ArrowLeft")
+      await until(() => doc.activeElement === plan("Alpha plan"))
+      h.key(plan("Alpha plan")!, "ArrowLeft")
+      await until(() => plan("Alpha plan")?.getAttribute("aria-expanded") === "false")
+      expect(h.row(h.alpha[0]!)).toBeNull()
+      await settle()
+      // Collapsing reveals no new content: the divider stays where the listed content put it.
+      expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
+      // Down from the collapsed heading moves to the next plan heading.
+      h.key(plan("Alpha plan")!, "ArrowDown")
+      await until(() => doc.activeElement === plan("Beta plan"))
+      h.key(plan("Alpha plan")!, "Enter")
+      await until(() => plan("Alpha plan")?.getAttribute("aria-expanded") === "true")
+      await settle()
+      expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
+    },
+    { paneHeight: 1000 },
+  )
 })

@@ -3,6 +3,7 @@ import type { ExecutionList, ExecutionListRow, ExecutionPlanGroup } from "./exec
 import {
   anchoredScrollTop,
   estimateItemSize,
+  viewportAnchor,
   flattenExecutionList,
   navigationTarget,
   planHeaded,
@@ -129,10 +130,22 @@ test("collapsed forks omit branch rows and notes; expanded forks add them with d
     "task:join",
   ])
   const tasks = Object.fromEntries(taskItems(items).map((item) => [item.row.taskID, item]))
-  expect(tasks.root).toMatchObject({ depth: 0, expandable: true, expanded: true })
-  expect(tasks.join).toMatchObject({ depth: 0, expandable: false, setSize: 2, posInSet: 2 })
+  expect(tasks.root).toMatchObject({ depth: 0, level: 2, expandable: true, expanded: true })
+  expect(tasks.join).toMatchObject({
+    depth: 0,
+    level: 2,
+    expandable: false,
+    setSize: 2,
+    posInSet: 2,
+  })
   // Branch rows are the fork root's children: one sibling set spanning both branches.
-  expect(tasks.a1).toMatchObject({ depth: 1, setSize: 3, posInSet: 1, parentTaskID: "root" })
+  expect(tasks.a1).toMatchObject({
+    depth: 1,
+    level: 3,
+    setSize: 3,
+    posInSet: 1,
+    parentTaskID: "root",
+  })
   expect(tasks.a2).toMatchObject({ depth: 1, setSize: 3, posInSet: 2, parentTaskID: "root" })
   expect(tasks.b1).toMatchObject({ depth: 1, setSize: 3, posInSet: 3, parentTaskID: "root" })
   expect(tasks.a1!.branch).toEqual({ branchID: "a1", first: true, last: false })
@@ -144,6 +157,35 @@ test("collapsed forks omit branch rows and notes; expanded forks add them with d
     depth: 1,
     branchID: "a1",
   })
+})
+
+test("tree levels: headings and unheaded rows are one top-level set; a heading's rows sit below it", () => {
+  const items = flatten(
+    model(
+      [
+        group("headed", [row("t1"), row("t2")]),
+        group("single", [row("s1")], { totalCount: 1 }),
+        group("other", [row("o1"), row("o2")]),
+      ],
+      [row("loose")],
+    ),
+    { collapsed: ["other"] },
+  )
+  const levels = items.map((item) =>
+    item.kind === "plan"
+      ? [item.key, 1, item.posInSet, item.setSize]
+      : item.kind === "task"
+        ? [item.key, item.level, item.posInSet, item.setSize]
+        : [item.key],
+  )
+  expect(levels).toEqual([
+    ["plan:headed", 1, 1, 4],
+    ["task:t1", 2, 1, 2],
+    ["task:t2", 2, 2, 2],
+    ["task:s1", 1, 2, 4],
+    ["plan:other", 1, 3, 4],
+    ["task:loose", 1, 4, 4],
+  ])
 })
 
 test("a loader item trails the list only while another page exists", () => {
@@ -170,29 +212,40 @@ test("item keys are stable when later pages append rows", () => {
   expect(after.indexOf("task:u1")).toBe(before.indexOf("task:u1") + 1)
 })
 
-test("keyboard navigation reads the model in visual order and skips non-task items", () => {
+test("keyboard navigation reads the model in visual order through headings and rows", () => {
   const items = flatten(model([forked(), group("plan-b", [row("x"), row("y")])]), {
     expanded: ["root"],
     hasMore: true,
   })
-  const go = (taskID: string, key: Parameters<typeof navigationTarget>[2]) =>
-    navigationTarget(items, taskID, key)
-  expect(go("root", "Home")).toBe("root")
-  expect(go("root", "End")).toBe("y")
-  expect(go("root", "ArrowDown")).toBe("a1")
-  // Down from the last row of plan-a crosses plan-b's heading to the next task.
-  expect(go("join", "ArrowDown")).toBe("x")
-  expect(go("x", "ArrowUp")).toBe("join")
-  expect(go("y", "ArrowDown")).toBe("y")
-  expect(go("root", "ArrowUp")).toBe("root")
-  expect(go("root", "ArrowRight")).toBe("a1")
-  expect(go("a2", "ArrowLeft")).toBe("root")
-  expect(go("join", "ArrowRight")).toBeUndefined()
-  expect(go("join", "ArrowLeft")).toBeUndefined()
-  // A row outside the sequence enters it at the first task.
-  expect(go("gone", "ArrowDown")).toBe("root")
-  const collapsed = flatten(model([forked()]), { expanded: [] })
-  expect(navigationTarget(collapsed, "root", "ArrowRight")).toBeUndefined()
+  const go = (key: string, direction: Parameters<typeof navigationTarget>[2]) =>
+    navigationTarget(items, key, direction)?.key
+  expect(go("task:root", "Home")).toBe("plan:plan-a")
+  expect(go("task:root", "End")).toBe("task:y")
+  expect(go("task:root", "ArrowDown")).toBe("task:a1")
+  // Down from the last row of plan-a reaches plan-b's heading, then its first row.
+  expect(go("task:join", "ArrowDown")).toBe("plan:plan-b")
+  expect(go("plan:plan-b", "ArrowDown")).toBe("task:x")
+  expect(go("task:x", "ArrowUp")).toBe("plan:plan-b")
+  expect(go("task:y", "ArrowDown")).toBe("task:y")
+  expect(go("task:root", "ArrowUp")).toBe("plan:plan-a")
+  expect(go("plan:plan-a", "ArrowUp")).toBe("plan:plan-a")
+  expect(go("task:root", "ArrowRight")).toBe("task:a1")
+  expect(go("task:a2", "ArrowLeft")).toBe("task:root")
+  // Left from a plan's row is its heading; Right from an expanded heading is its first row.
+  expect(go("task:join", "ArrowLeft")).toBe("plan:plan-a")
+  expect(go("plan:plan-b", "ArrowRight")).toBe("task:x")
+  expect(go("plan:plan-b", "ArrowLeft")).toBeUndefined()
+  expect(go("task:join", "ArrowRight")).toBeUndefined()
+  // An item outside the sequence enters it at the first item.
+  expect(go("task:gone", "ArrowDown")).toBe("plan:plan-a")
+  const collapsed = flatten(model([forked(), group("plan-b", [row("x"), row("y")])]), {
+    collapsed: ["plan-b"],
+  })
+  expect(navigationTarget(collapsed, "task:root", "ArrowRight")).toBeUndefined()
+  expect(navigationTarget(collapsed, "plan:plan-b", "ArrowRight")).toBeUndefined()
+  // Rows without a heading have no parent to go back to.
+  const plain = flatten(model([], [row("loose")]))
+  expect(navigationTarget(plain, "task:loose", "ArrowLeft")).toBeUndefined()
 })
 
 test("reveal targets: a task in a collapsed fork or plan gets an index once revealed", () => {
@@ -228,13 +281,28 @@ test("scroll anchoring restores a moved first-visible item and ignores stable or
   expect(anchoredScrollTop(undefined, at, 50)).toBeUndefined()
 })
 
+test("no anchor while the list top or the head above the tree is at the viewport top", () => {
+  // The virtualizer reports the first tree row for any offset above the tree.
+  const first = { key: "task:t1", start: 80 }
+  expect(viewportAnchor(0, 80, first)).toBeUndefined()
+  expect(viewportAnchor(40, 80, first)).toBeUndefined()
+  expect(viewportAnchor(0, 0, { key: "task:t1", start: 0 })).toBeUndefined()
+  // Inside the tree the first visible row anchors, measured from the tree's top.
+  expect(viewportAnchor(100, 80, { key: "task:t2", start: 112 })).toEqual({
+    key: "task:t2",
+    offset: -68,
+  })
+  expect(viewportAnchor(100, 80, undefined)).toBeUndefined()
+})
+
 test("size estimates follow the compact row height and carry plan margins and reason lines", () => {
   const [plain, reasoned, tasks] = [
     group("p", [row("a")]),
     group("q", [row("a")], { schedulingReason: "Waiting" }),
     flatten(model([group("r", [row("a"), row("b")])]), { hasMore: true }),
   ]
-  expect(estimateItemSize({ kind: "plan", key: "p", group: plain!, collapsed: false })).toBe(36)
-  expect(estimateItemSize({ kind: "plan", key: "q", group: reasoned!, collapsed: false })).toBe(56)
+  const heading = { kind: "plan", collapsed: false, setSize: 1, posInSet: 1 } as const
+  expect(estimateItemSize({ ...heading, key: "p", group: plain! })).toBe(36)
+  expect(estimateItemSize({ ...heading, key: "q", group: reasoned! })).toBe(56)
   expect((tasks as VirtualItem[]).map(estimateItemSize)).toEqual([36, 32, 32, 32])
 })

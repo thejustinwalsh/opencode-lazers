@@ -137,6 +137,7 @@ describe("tasks native affordances", () => {
       totalCount,
       rows: [],
     })
+    const treeItemProps = { setSize: 1, posInSet: 1, tabIndex: -1, onKeyDown: () => {} }
     const renderGroup = (
       title: string,
       nonterminalCount: number,
@@ -151,6 +152,7 @@ describe("tasks native affordances", () => {
               stateFilter,
               collapsed: false,
               onToggle: () => {},
+              ...treeItemProps,
             }),
           )
         : ""
@@ -160,6 +162,9 @@ describe("tasks native affordances", () => {
     expect(open).toContain('aria-label="Open plan, 1 remaining of 2 tasks in this plan"')
     expect(open).toContain(">1/2 remaining</span>")
     expect(open).toContain('aria-expanded="true"')
+    // The heading is the plan's tree item; its rows are the level-2 items that follow it.
+    expect(open).toContain('role="treeitem"')
+    expect(open).toContain('aria-level="1"')
 
     // An untitled plan gets no heading item in the flat list.
     expect(
@@ -180,10 +185,12 @@ describe("tasks native affordances", () => {
   })
 
   test("plan headings show recorded priority and integration or cleanup state", () => {
+    const treeItemProps = { setSize: 1, posInSet: 1, tabIndex: -1, onKeyDown: () => {} }
     const rendered = renderToString(() =>
       createComponent(ExecutionPlanHeading, {
         collapsed: false,
         onToggle: () => {},
+        ...treeItemProps,
         group: {
           planID: "cleanup",
           planVersion: 1,
@@ -227,6 +234,7 @@ describe("tasks native affordances", () => {
         stateFilter: "open",
         collapsed: false,
         onToggle: () => {},
+        ...treeItemProps,
         planTitle: () => "Parent implementation",
       }),
     )

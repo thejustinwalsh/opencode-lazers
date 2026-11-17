@@ -70,14 +70,25 @@ import { ExecutionPlanHeading } from "./execution-list-view.tsx"
 import {
   LOADER_HEIGHT,
   anchoredScrollTop,
+  viewportAnchor,
   estimateItemSize,
   flattenExecutionList,
+  itemIndex,
   navigationTarget,
+  planHeaded,
   planOfTask,
   taskIndex,
   taskItems,
+  taskKey,
+  treeItems,
 } from "./virtual-rows.ts"
-import type { NavigationKey, VirtualItem, VirtualTaskItem } from "./virtual-rows.ts"
+import type {
+  NavigationKey,
+  TreeItem,
+  VirtualItem,
+  VirtualPlanItem,
+  VirtualTaskItem,
+} from "./virtual-rows.ts"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
@@ -216,6 +227,7 @@ function TaskPanel(
   const frame = usePanel()
   const [data, setData] = createSignal<PanelData>({
     key: "",
+    moreError: "",
     tasks: [],
     currentActivity: {},
     activityError: "",
@@ -835,6 +847,9 @@ function TaskPanel(
         : []
     })
   })
+  /** With no task row listed (every plan collapsed), the first heading keeps the tree's stop. */
+  const planTabIndex = (key: string) =>
+    !focusTaskID() && treeItems(items())[0]?.key === key ? 0 : -1
   const rowTabIndex = (taskID: string) => {
     return taskID === focusTaskID() ? 0 : -1
   }
@@ -921,11 +936,12 @@ function TaskPanel(
         class="lazers-tasks-entry"
         role="treeitem"
         data-task-id={taskRow().taskID}
+        data-item-key={item().key}
         data-context-only={taskRow().contextOnly}
         data-depth={item().depth}
         data-branch-first={item().branch?.first}
         data-branch-last={item().branch?.last}
-        aria-level={item().depth + 1}
+        aria-level={item().level}
         aria-setsize={item().setSize}
         aria-posinset={item().posInSet}
         aria-selected={taskRow().taskID === visible()?.selectedID}
@@ -1219,31 +1235,65 @@ function TaskPanel(
       feedback.finish(ticket)
     }
   }
-  const rowElement = (taskID: string) =>
-    [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].find(
-      (element) => element.dataset.taskId === taskID,
-    )
   /** Bring a task's row into the viewport; offscreen rows are not mounted, so go by the model. */
   const scrollToTask = (taskID: string) => {
     const index = taskIndex(items(), taskID)
     if (index >= 0) virtualizer.scrollToIndex(index, { align: "auto" })
   }
   let focusRequest = 0
-  /** Scroll to a task, then focus its row once the virtualizer has mounted it. */
-  const focusTaskRow = (taskID: string) => {
+  /** Scroll to a tree item, then focus it once the virtualizer has mounted it. */
+  const focusItem = (key: string) => {
     const request = ++focusRequest
     const attempt = (remaining: number) => {
-      if (request !== focusRequest || taskIndex(items(), taskID) < 0) return
-      scrollToTask(taskID)
-      const element = rowElement(taskID)
+      const index = itemIndex(items(), key)
+      if (request !== focusRequest || index < 0) return
+      virtualizer.scrollToIndex(index, { align: "auto" })
+      const element = [...(list?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].find(
+        (candidate) => candidate.dataset.itemKey === key,
+      )
       if (element) element.focus({ preventScroll: true })
       else if (remaining > 0) requestAnimationFrame(() => attempt(remaining - 1))
     }
     attempt(FOCUS_ATTEMPTS)
   }
+  const focusTaskRow = (taskID: string) => focusItem(taskKey(taskID))
   const moveTo = (taskID: string) => {
     selectTask(taskID)
     focusTaskRow(taskID)
+  }
+  /** Task rows take selection with focus; a plan heading only takes focus. */
+  const goTo = (target: TreeItem | undefined) => {
+    if (target?.kind === "task") moveTo(target.row.taskID)
+    else if (target) focusItem(target.key)
+  }
+  const planKeyDown = (
+    event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
+    item: VirtualPlanItem,
+  ) => {
+    // Keys from the heading's own controls (prerequisite plan links) stay theirs.
+    if (event.target !== event.currentTarget) return
+    switch (event.key) {
+      case "ArrowUp":
+      case "ArrowDown":
+      case "Home":
+      case "End":
+        event.preventDefault()
+        goTo(navigationTarget(items(), item.key, event.key))
+        return
+      case "ArrowRight":
+        event.preventDefault()
+        if (item.collapsed) togglePlan(item.group.planID)
+        else goTo(navigationTarget(items(), item.key, "ArrowRight"))
+        return
+      case "ArrowLeft":
+        event.preventDefault()
+        if (!item.collapsed) togglePlan(item.group.planID)
+        return
+      case "Enter":
+      case " ":
+        event.preventDefault()
+        togglePlan(item.group.planID)
+    }
   }
   const rowKey = (
     event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element },
@@ -1253,10 +1303,7 @@ function TaskPanel(
     // Keys from the row's own controls (the blocker link) stay theirs.
     if (event.target !== event.currentTarget) return
     const taskID = item.row.taskID
-    const go = (key: NavigationKey) => {
-      const target = navigationTarget(items(), taskID, key)
-      if (target) moveTo(target)
-    }
+    const go = (key: NavigationKey) => goTo(navigationTarget(items(), item.key, key))
     switch (event.key) {
       case "ArrowUp":
       case "ArrowDown":
@@ -1354,10 +1401,7 @@ function TaskPanel(
     if (!list) return
     const top = list.scrollTop
     // From the layout, not the mounted window: a jump scroll fires before the window follows it.
-    const first = virtualizer.getVirtualItemForOffset(top)
-    anchor = first
-      ? { key: String(first.key), offset: first.start - treeOffset() - top }
-      : undefined
+    anchor = viewportAnchor(top, treeOffset(), virtualizer.getVirtualItemForOffset(top))
   }
   // Rows inserted or removed above the viewport (refresh) must not move what the person reads.
   // Within one view only; a new view restores its own saved scroll.
@@ -1424,13 +1468,13 @@ function TaskPanel(
     onCleanup(() => listObserver?.disconnect())
   })
   // Hold the last fitted value while a view loads so the divider does not jump to its minimum.
+  // Fit the listed content, not the disclosure state: collapsing a plan does not move the divider.
   const autoSplit = createMemo<number>((previous) => {
     const value = visible()
     if (!value || value.loading) return previous
-    const current = items()
     return contentSplit({
-      rows: taskItems(current).length,
-      headings: current.filter((item) => item.kind === "plan").length,
+      rows: rowValues().length,
+      headings: executionList().plans.filter(planHeaded).length,
       extra: 16 + (value.page?.nextCursor ? LOADER_HEIGHT : 0),
       available: paneHeight(),
     })
@@ -1798,7 +1842,11 @@ function TaskPanel(
                                     group={plan().group}
                                     stateFilter={stateFilter()}
                                     collapsed={plan().collapsed}
+                                    setSize={plan().setSize}
+                                    posInSet={plan().posInSet}
+                                    tabIndex={planTabIndex(plan().key)}
                                     onToggle={() => togglePlan(plan().group.planID)}
+                                    onKeyDown={(event) => planKeyDown(event, plan())}
                                     onOpenPlan={openPrerequisitePlan}
                                     planTitle={(planID) => schedulingPlan(planID)?.title}
                                   />
@@ -1818,11 +1866,21 @@ function TaskPanel(
                                 return (
                                   <div class="lazers-tasks-loader" role="status">
                                     <Show
-                                      when={!value().error}
-                                      fallback="Could not load more tasks."
+                                      when={value().moreError}
+                                      fallback={
+                                        <>
+                                          <Ui.Loader size="small" />
+                                          Loading more tasks…
+                                        </>
+                                      }
                                     >
-                                      <Ui.Loader size="small" />
-                                      Loading more tasks…
+                                      Could not load more tasks.
+                                      <Ui.Button
+                                        variant="ghost"
+                                        onClick={() => state.retryMore(expectedKey())}
+                                      >
+                                        Retry
+                                      </Ui.Button>
                                     </Show>
                                   </div>
                                 )

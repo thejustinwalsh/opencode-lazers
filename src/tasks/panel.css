@@ -621,10 +621,10 @@
   text-align: center;
   color: var(--text-weak);
 }
-.lazers-tasks-plan-heading[aria-expanded="true"]::before {
+.lazers-tasks-plan[aria-expanded="true"] > .lazers-tasks-plan-heading::before {
   transform: rotate(90deg);
 }
-.lazers-tasks-plan-heading:focus-visible {
+.lazers-tasks-plan:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
 }

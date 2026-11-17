@@ -25,6 +25,9 @@ export type VirtualPlanItem = {
   key: string
   group: ExecutionPlanGroup
   collapsed: boolean
+  /** A heading is a top-level tree item: aria-level 1, positioned among top-level siblings. */
+  setSize: number
+  posInSet: number
 }
 
 export type VirtualBranchPosition = {
@@ -39,8 +42,10 @@ export type VirtualTaskItem = {
   key: string
   row: ExecutionListRow
   group?: ExecutionPlanGroup
-  /** 0 for list rows, 1 for rows hanging from a fork. */
+  /** 0 for list rows, 1 for rows hanging from a fork. Visual indent only. */
   depth: number
+  /** aria-level: one deeper under a plan heading, one more under a fork root. */
+  level: number
   /** Position among tree siblings (aria-setsize / aria-posinset). */
   setSize: number
   posInSet: number
@@ -76,7 +81,12 @@ export function flattenExecutionList(input: {
   hasMore?: boolean
 }): VirtualItem[] {
   const items: VirtualItem[] = []
-  const pushRows = (rows: readonly ExecutionListRow[], group?: ExecutionPlanGroup) => {
+  const pushRows = (
+    rows: readonly ExecutionListRow[],
+    group?: ExecutionPlanGroup,
+    headed = false,
+  ) => {
+    const level = headed ? 2 : 1
     rows.forEach((row, index) => {
       const expandable = Boolean(group && row.fork)
       const expanded = Boolean(group && row.fork && input.forkExpanded(group, row))
@@ -86,6 +96,7 @@ export function flattenExecutionList(input: {
         row,
         group,
         depth: 0,
+        level,
         setSize: rows.length,
         posInSet: index + 1,
         expandable,
@@ -102,6 +113,7 @@ export function flattenExecutionList(input: {
             row: child,
             group,
             depth: 1,
+            level: level + 1,
             setSize: children,
             posInSet: ++position,
             parentTaskID: row.taskID,
@@ -126,14 +138,31 @@ export function flattenExecutionList(input: {
     })
   }
   for (const group of input.model.plans) {
-    if (planHeaded(group)) {
+    const headed = planHeaded(group)
+    if (headed) {
       const collapsed = input.collapsedPlans.has(group.planID)
-      items.push({ kind: "plan", key: planKey(group.planID), group, collapsed })
+      items.push({
+        kind: "plan",
+        key: planKey(group.planID),
+        group,
+        collapsed,
+        setSize: 0,
+        posInSet: 0,
+      })
       if (collapsed) continue
     }
-    pushRows(group.rows, group)
+    pushRows(group.rows, group, headed)
   }
   pushRows(input.model.unplanned)
+  // Headings and the rows of plain plans and unplanned tasks are one top-level sibling set.
+  const topLevel = items.filter(
+    (item): item is VirtualPlanItem | VirtualTaskItem =>
+      item.kind === "plan" || (item.kind === "task" && item.level === 1),
+  )
+  topLevel.forEach((item, index) => {
+    item.setSize = topLevel.length
+    item.posInSet = index + 1
+  })
   if (input.hasMore) items.push({ kind: "loader", key: LOADER_KEY })
   return items
 }
@@ -158,35 +187,55 @@ export function planOfTask(model: ExecutionList, taskID: string) {
 
 export type NavigationKey = "ArrowUp" | "ArrowDown" | "Home" | "End" | "ArrowLeft" | "ArrowRight"
 
+/** Tree items in visual order: plan headings and task rows (notes and the loader are not items). */
+export type TreeItem = VirtualPlanItem | VirtualTaskItem
+export const treeItems = (items: readonly VirtualItem[]) =>
+  items.filter((item): item is TreeItem => item.kind === "plan" || item.kind === "task")
+
 /**
- * Task to move to from `taskID` in visual order. Offscreen rows count: this reads the model, not the
- * DOM. Left goes to a branch row's fork root; Right to a fork root's first branch row (a collapsed
- * fork must expand first, which the caller does).
+ * Tree item to move to from the item keyed `key` in visual order. Offscreen rows count: this reads
+ * the model, not the DOM. Left goes to a branch row's fork root or a plan row's heading; Right to an
+ * expanded fork root's first branch row or an expanded heading's first row (collapsed ones must
+ * expand first, which the caller does).
  */
 export function navigationTarget(
   items: readonly VirtualItem[],
-  taskID: string,
-  key: NavigationKey,
-): string | undefined {
-  const tasks = taskItems(items)
-  const index = tasks.findIndex((item) => item.row.taskID === taskID)
-  if (index < 0) return tasks[0]?.row.taskID
-  switch (key) {
+  key: string,
+  direction: NavigationKey,
+): TreeItem | undefined {
+  const tree = treeItems(items)
+  const index = tree.findIndex((item) => item.key === key)
+  if (index < 0) return tree[0]
+  const current = tree[index]!
+  switch (direction) {
     case "Home":
-      return tasks[0]?.row.taskID
+      return tree[0]
     case "End":
-      return tasks[tasks.length - 1]?.row.taskID
+      return tree[tree.length - 1]
     case "ArrowUp":
-      return tasks[Math.max(0, index - 1)]?.row.taskID
+      return tree[Math.max(0, index - 1)]
     case "ArrowDown":
-      return tasks[Math.min(tasks.length - 1, index + 1)]?.row.taskID
-    case "ArrowLeft":
-      return tasks[index]?.parentTaskID
+      return tree[Math.min(tree.length - 1, index + 1)]
+    case "ArrowLeft": {
+      if (current.kind === "plan") return undefined
+      const parent = current.parentTaskID
+        ? taskKey(current.parentTaskID)
+        : current.level > 1 && current.group
+          ? planKey(current.group.planID)
+          : undefined
+      return parent ? tree.find((item) => item.key === parent) : undefined
+    }
     case "ArrowRight": {
-      const current = tasks[index]!
-      const next = tasks[index + 1]
-      return current.expandable && current.expanded && next?.parentTaskID === taskID
-        ? next.row.taskID
+      const next = tree[index + 1]
+      if (current.kind === "plan")
+        return !current.collapsed && next?.kind === "task" && next.group === current.group
+          ? next
+          : undefined
+      return current.expandable &&
+        current.expanded &&
+        next?.kind === "task" &&
+        next.parentTaskID === current.row.taskID
+        ? next
         : undefined
     }
   }
@@ -198,9 +247,21 @@ export const itemIndex = (items: readonly VirtualItem[], key: string) =>
 
 /**
  * Scroll anchoring across item-list changes: the first item intersecting the viewport and how far
- * its start sits below the scroll offset. Returns the scroll offset that keeps it put, or
+ * its start (from the tree's top) sits below the scroll offset, or undefined when nothing in the
+ * tree should hold still. `anchoredScrollTop` returns the scroll offset that keeps it put, or
  * undefined when the item is gone or has not moved.
  */
+export function viewportAnchor(
+  scrollTop: number,
+  treeOffset: number,
+  first: { key: string | number | bigint; start: number } | undefined,
+): { key: string; offset: number } | undefined {
+  // At the list top, or with the head (Now/Attention/Next) still at the viewport top, the person
+  // reads content a reorder of tree rows does not move: hold the scroll offset, follow no row.
+  if (!first || scrollTop <= 0 || scrollTop < treeOffset) return undefined
+  return { key: String(first.key), offset: first.start - treeOffset - scrollTop }
+}
+
 export function anchoredScrollTop(
   anchor: { key: string; offset: number } | undefined,
   start: (key: string) => number | undefined,

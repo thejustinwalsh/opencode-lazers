@@ -10,12 +10,15 @@ export type TasksLayout = {
   /** Height of everything above the tree inside the scrolling list. */
   headHeight: number
   itemHeights: Record<string, number>
+  /** Height of the whole panel; 0 leaves the list/inspector split at its default share. */
+  paneHeight: number
 }
 
 export const defaultTasksLayout: TasksLayout = {
   viewportHeight: 320,
   headHeight: 80,
   itemHeights: { task: 32, plan: 40, note: 28, loader: 32 },
+  paneHeight: 0,
 }
 
 /** Returns `uninstall()`, which restores every overridden own property (or its absence) exactly. */
@@ -61,6 +64,7 @@ export function installTasksLayout(dom: Window, overrides: Partial<TasksLayout> 
     writable: true,
     value(this: HTMLElement) {
       if (isList(this)) return rect(0, layout.viewportHeight)
+      if (this.classList.contains("lazers-tasks")) return rect(0, layout.paneHeight)
       if (this.classList.contains("lazers-tasks-tree"))
         return rect(layout.headHeight - (this.closest(".lazers-tasks-list")?.scrollTop ?? 0), 0)
       return rect(0, 0)

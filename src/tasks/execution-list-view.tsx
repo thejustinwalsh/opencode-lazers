@@ -4,15 +4,20 @@ import type { ExecutionPlanGroup } from "./execution-list.ts"
 import { planStateLabel } from "./row-presentation.ts"
 
 /**
- * A titled plan's heading: a quiet collapse control plus scheduler facts (priority, plan order,
- * prerequisites). It is one item of the flat virtual list; its tasks are sibling items, hidden when
- * collapsed. The scheduling reason stays one line here; the inspector carries the full text.
+ * A titled plan's heading: a top-level tree item that collapses its rows (aria-level 2 siblings that
+ * follow it), plus scheduler facts (priority, plan order, prerequisites). It is one item of the flat
+ * virtual list; its rows are hidden when collapsed. The scheduling reason stays one line here; the
+ * inspector carries the full text.
  */
 export function ExecutionPlanHeading(props: {
   group: ExecutionPlanGroup
   stateFilter: TaskStateFilter
   collapsed: boolean
+  setSize: number
+  posInSet: number
+  tabIndex: number
   onToggle: () => void
+  onKeyDown: (event: KeyboardEvent & { currentTarget: HTMLDivElement; target: Element }) => void
   onOpenPlan?: (planID: string) => void
   planTitle?: (planID: string) => string | undefined
 }) {
@@ -21,21 +26,30 @@ export function ExecutionPlanHeading(props: {
   const planState = () => planStateLabel(props.group.state)
   const planName = (planID: string) => props.planTitle?.(planID) ?? `Plan ${planID.slice(0, 8)}`
   return (
-    <div class="lazers-tasks-plan" role="none" data-collapsed={props.collapsed}>
-      <button
-        type="button"
+    <div
+      class="lazers-tasks-plan"
+      role="treeitem"
+      data-plan-id={props.group.planID}
+      data-item-key={`plan:${props.group.planID}`}
+      data-collapsed={props.collapsed}
+      aria-level={1}
+      aria-setsize={props.setSize}
+      aria-posinset={props.posInSet}
+      aria-expanded={!props.collapsed}
+      aria-label={[
+        remaining()
+          ? `${props.group.title}, ${props.group.nonterminalCount} remaining of ${props.group.totalCount} tasks in this plan`
+          : props.group.title,
+        ...(props.group.priority !== undefined ? [`priority ${props.group.priority}`] : []),
+        ...(props.group.planOrder !== undefined ? [`plan order ${props.group.planOrder + 1}`] : []),
+        ...(planState() ? [`plan ${planState()!.toLowerCase()}`] : []),
+      ].join(", ")}
+      tabIndex={props.tabIndex}
+      onKeyDown={(event) => props.onKeyDown(event)}
+    >
+      <div
         class="lazers-tasks-plan-heading"
-        aria-expanded={!props.collapsed}
-        aria-label={[
-          remaining()
-            ? `${props.group.title}, ${props.group.nonterminalCount} remaining of ${props.group.totalCount} tasks in this plan`
-            : props.group.title,
-          ...(props.group.priority !== undefined ? [`priority ${props.group.priority}`] : []),
-          ...(props.group.planOrder !== undefined
-            ? [`plan order ${props.group.planOrder + 1}`]
-            : []),
-          ...(planState() ? [`plan ${planState()!.toLowerCase()}`] : []),
-        ].join(", ")}
+        title={props.collapsed ? "Expand plan" : "Collapse plan"}
         onClick={() => props.onToggle()}
       >
         <span>{props.group.title}</span>
@@ -55,7 +69,7 @@ export function ExecutionPlanHeading(props: {
             </span>
           </Show>
         </span>
-      </button>
+      </div>
       <Show when={props.group.schedulingReason || afterPlans().length}>
         <div class="lazers-tasks-plan-reason">
           <Show when={afterPlans().length}>

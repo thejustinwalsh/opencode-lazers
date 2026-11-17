@@ -623,7 +623,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     // One tree item per task, one visual line each: no stacked meta, hold or dependency lines.
     expect(container.querySelector('[role="tree"]')).not.toBeNull()
     expect(heldRow.getAttribute("role")).toBe("treeitem")
-    expect(heldRow.getAttribute("aria-level")).toBe("1")
+    // The row sits under its plan's heading, a level-1 tree item.
+    expect(heldRow.getAttribute("aria-level")).toBe("2")
     expect(heldRow.querySelectorAll(":scope > *")).toHaveLength(1)
     expect(container.querySelector(".lazers-tasks-row-dependencies")).toBeNull()
     expect(container.querySelector(".lazers-tasks-row-hold")).toBeNull()
@@ -666,11 +667,11 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(tasksCSS).not.toContain(".lazers-tasks-row-blocker-name")
     expect(heldRow.getAttribute("aria-label")).toContain("waiting on LZ-8 (queued)")
     // Row icons add no tab stops: the tree keeps exactly one roving stop, on a tree item. Plan
-    // headings are their own collapse buttons and are the only other stops.
+    // headings are tree items reached by arrow keys, not extra stops.
     const tree = container.querySelector<HTMLElement>('[role="tree"]')!
-    const tabStops = [...tree.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]")]
-      .filter((element) => element.tabIndex >= 0)
-      .filter((element) => !element.classList.contains("lazers-tasks-plan-heading"))
+    const tabStops = [
+      ...tree.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]"),
+    ].filter((element) => element.tabIndex >= 0)
     expect(tabStops).toHaveLength(1)
     expect(tabStops[0]!.getAttribute("role")).toBe("treeitem")
     expect(tree.querySelectorAll(".lazers-tasks-state[tabindex]")).toHaveLength(0)
@@ -883,7 +884,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(forkRow.getAttribute("aria-expanded")).toBe("false")
     expect(forkRow.getAttribute("aria-label")).toContain("2 parallel branches")
     expect(row(ids.branchA)).toBeNull()
-    expect(row(ids.join)?.getAttribute("aria-level")).toBe("1")
+    expect(row(ids.join)?.getAttribute("aria-level")).toBe("2")
     forkRow.focus()
     key(forkRow, "ArrowRight")
     await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "true")
@@ -900,8 +901,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       "2",
     ])
     expect(row(ids.join)?.getAttribute("aria-setsize")).toBe("2")
-    expect(row(ids.branchA)?.getAttribute("aria-level")).toBe("2")
-    expect(row(ids.branchB)?.getAttribute("aria-level")).toBe("2")
+    expect(row(ids.branchA)?.getAttribute("aria-level")).toBe("3")
+    expect(row(ids.branchB)?.getAttribute("aria-level")).toBe("3")
     expect(
       Object.values(
         (taskStore.value as { projects: Record<string, { collapsedForks?: object }> }).projects[

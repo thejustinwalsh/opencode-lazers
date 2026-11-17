@@ -1394,11 +1394,12 @@ test("more(key) ignores another view's key and requests each page object once", 
   }
 })
 
-test("a page that failed to load is not requested again until a refresh yields a new page", async () => {
+test("a failed next page has its own error and loads again only on an explicit retry", async () => {
   const first = { ...page("/project"), nextCursor: "page-two" }
   const calls: Array<string | undefined> = []
   let failMore = true
   const state = new TaskPanelState(() => {})
+  const pageTwo = () => calls.filter((cursor) => cursor === "page-two").length
   try {
     state.connect(
       "view-a",
@@ -1413,18 +1414,30 @@ test("a page that failed to load is not requested again until a refresh yields a
     await until(() => state.data.page?.nextCursor === "page-two" && !state.data.loading)
     await tick()
     await state.more("view-a")
-    expect(state.data.error).toContain("page two unavailable")
-    const attempts = calls.filter((cursor) => cursor === "page-two").length
+    // The list itself is fine: no list error, no stale mark, no list retry timer.
+    expect(state.data.moreError).toContain("page two unavailable")
+    expect(state.data.error).toBe("")
+    expect(state.data.stale).toBe(false)
+    expect(pageTwo()).toBe(1)
+    const reads = calls.length
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    expect(calls).toHaveLength(reads)
+    // Neither repeated asks nor a refresh that replaces the page object re-request it.
     await state.more("view-a")
-    await state.more("view-a")
-    expect(calls.filter((cursor) => cursor === "page-two")).toHaveLength(attempts)
-    // A refresh replaces the page object, which re-arms the request.
-    failMore = false
     await state.refresh()
-    await until(() => !state.data.error && state.data.page?.nextCursor === "page-two")
+    await until(() => !state.data.loading && state.data.page?.nextCursor === "page-two")
     await tick()
     await state.more("view-a")
-    expect(state.data.page?.nextCursor).toBeNull()
+    expect(pageTwo()).toBe(1)
+    expect(state.data.moreError).toContain("page two unavailable")
+    // Retry for another view is ignored; retry for this view requests the page once more.
+    failMore = false
+    state.retryMore("view-b")
+    expect(pageTwo()).toBe(1)
+    state.retryMore("view-a")
+    await until(() => state.data.page?.nextCursor === null)
+    expect(pageTwo()).toBe(2)
+    expect(state.data.moreError).toBe("")
   } finally {
     state.close()
   }
