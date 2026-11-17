@@ -1,4 +1,7 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { acquireSharedConnection } from "../storage.ts"
+import type { SharedConnection } from "../storage.ts"
+
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import { existsSync } from "node:fs"
 import { TaskClassificationRevision, TaskKindV1 } from "../task-classification.ts"
@@ -2405,9 +2408,11 @@ export function openReadOnlyObservationLedger(
   options: { cursorSecret?: Uint8Array } = {},
 ): ReadOnlyObservationLedger {
   let db: Database | null = null
+  let shared: SharedConnection | null = null
   let openError: "database-missing" | "database-unavailable" | null = null
   try {
-    db = new Database(path, { readonly: true, strict: true })
+    shared = acquireSharedConnection(path, "readonly")
+    db = shared.db
   } catch {
     openError = existsSync(path) ? "database-unavailable" : "database-missing"
   }
@@ -2542,7 +2547,8 @@ export function openReadOnlyObservationLedger(
     close() {
       if (closed) return
       closed = true
-      db?.close()
+      shared?.release()
+      shared = null
       db = null
     },
   }
