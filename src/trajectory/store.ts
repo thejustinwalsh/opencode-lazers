@@ -1,4 +1,5 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { acquireSharedConnection } from "../storage.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskSpecSchema } from "../task.ts"
 import { RunnerStore } from "../runner/store.ts"
@@ -6,7 +7,8 @@ import type { RunnerStore as RunnerStoreType } from "../runner/store.ts"
 
 /** Open only the existing project database, without repository migrations or runner DDL. */
 export function openReadOnlyTrajectoryStore(path: string, projectDirectory: string) {
-  const db = new Database(path, { readonly: true, strict: true })
+  const shared = acquireSharedConnection(path, "readonly")
+  const db = shared.db
   try {
     const repository = {
       path,
@@ -34,9 +36,9 @@ export function openReadOnlyTrajectoryStore(path: string, projectDirectory: stri
       value: repository,
       enumerable: true,
     })
-    return { store, close: () => db.close() }
+    return { store, close: () => shared.release() }
   } catch (error) {
-    db.close()
+    shared.release()
     throw error
   }
 }
