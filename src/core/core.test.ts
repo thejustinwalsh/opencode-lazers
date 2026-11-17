@@ -64,6 +64,7 @@ test("N adapters on one project share exactly one of each core object", async ()
   expect(new Set(handles.map((handle) => handle.core)).size).toBe(1)
   expect(delta(before)).toEqual({
     repository: 1,
+    projectIndex: 1,
     runnerStore: 1,
     progress: 1,
     runtime: 1,
@@ -94,6 +95,7 @@ test("before: constructing the full stack per location multiplies every object",
   })
   expect(delta(before)).toEqual({
     repository: 5,
+    projectIndex: 5,
     runnerStore: 5,
     progress: 5,
     runtime: 5,

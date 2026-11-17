@@ -108,6 +108,56 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   })
   const repository = new TaskRepository(taskDatabasePath(dataDirectory), info.projectDirectory)
   built("repository")
+  const indexes = new Map<string, ProjectIndex>()
+  const contextHost: ContextHost = {
+    projectID,
+    session: async (id) => {
+      try {
+        const session = await Effect.runPromise(
+          host.session.get({ sessionID: Session.ID.make(id) }),
+        )
+        return {
+          id: session.id,
+          ...(session.parentID ? { parentID: session.parentID } : {}),
+          projectID: session.projectID,
+          directory: session.location.directory,
+          agent: session.agent,
+        }
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "_tag" in error &&
+          error._tag === "SessionNotFoundError"
+        )
+          return null
+        throw error
+      }
+    },
+  }
+  const indexFor = (directory: string) => {
+    const root = canonical(directory)
+    let index = indexes.get(root)
+    if (!index) {
+      index = new ProjectIndex(
+        directory,
+        join(dirname(repository.path), "context"),
+        repository,
+        nativeContextPermission(host),
+        contextHost,
+      )
+      built("projectIndex")
+      indexes.set(root, index)
+    }
+    return index
+  }
+  try {
+    // The canonical project index fails setup early; worktree indexes are built lazily.
+    indexFor(info.projectDirectory)
+  } catch (error) {
+    repository.close()
+    throw error
+  }
   const runnerStore = new RunnerStore(repository)
   built("runnerStore")
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
@@ -152,50 +202,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const taskReads = new AssociationTaskReads(repository)
   const usageCache = new UsageCache()
   const inferenceBroker = new InferenceBroker()
-
-  const indexes = new Map<string, ProjectIndex>()
-  const contextHost: ContextHost = {
-    projectID,
-    session: async (id) => {
-      try {
-        const session = await Effect.runPromise(
-          host.session.get({ sessionID: Session.ID.make(id) }),
-        )
-        return {
-          id: session.id,
-          ...(session.parentID ? { parentID: session.parentID } : {}),
-          projectID: session.projectID,
-          directory: session.location.directory,
-          agent: session.agent,
-        }
-      } catch (error) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "_tag" in error &&
-          error._tag === "SessionNotFoundError"
-        )
-          return null
-        throw error
-      }
-    },
-  }
-  const indexFor = (directory: string) => {
-    const root = canonical(directory)
-    let index = indexes.get(root)
-    if (!index) {
-      index = new ProjectIndex(
-        directory,
-        join(dirname(repository.path), "context"),
-        repository,
-        nativeContextPermission(host),
-        contextHost,
-      )
-      built("projectIndex")
-      indexes.set(root, index)
-    }
-    return index
-  }
 
   scheduler = sharedScheduler.register(
     schedulerProjectKey(repository.path, repository.projectDirectory, projectID),
