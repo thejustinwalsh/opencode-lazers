@@ -69,11 +69,16 @@ function highestSequence(items: readonly HistoryItem[]) {
   return items.reduce((highest, item) => Math.max(highest, item.sequence), -Infinity)
 }
 
-/** Later reads replace the same journal sequence, so in-place status updates stay current. */
-function mergeHistoryItems(existing: readonly HistoryItem[], incoming: readonly HistoryItem[]) {
-  const bySequence = new Map(existing.map((item) => [item.sequence, item]))
-  for (const item of incoming) bySequence.set(item.sequence, item)
-  return [...bySequence.values()].toSorted((left, right) => right.sequence - left.sequence)
+/**
+ * When a row was read: the producer's observation revision, then the client's issue order
+ * for reads at the same or an unknown revision. Arrival order is not freshness.
+ */
+type HistoryFreshness = { revision: number | null; ticket: number }
+
+function fresher(left: HistoryFreshness, right: HistoryFreshness) {
+  return left.revision !== null && right.revision !== null && left.revision !== right.revision
+    ? left.revision > right.revision
+    : left.ticket > right.ticket
 }
 
 /** Coverage describes every loaded page: more pages follow the tail cursor, cuts stay visible. */
@@ -144,6 +149,9 @@ export class RadarMonitorState {
   private tailError = ""
   /** Cursor chain within one selection baseline; a non-contiguous head starts a new chain. */
   private historyChain = 0
+  /** Freshness of each loaded row, keyed by journal sequence, for the current selection. */
+  private itemFreshness = new Map<number, HistoryFreshness>()
+  private readTicket = 0
   private transport?: RadarMonitorTransport
   private scope?: ObservationScope
   private projectID = ""
@@ -399,6 +407,36 @@ export class RadarMonitorState {
     this.tailRead?.abort()
     this.tailRead = undefined
     this.tailError = ""
+    this.itemFreshness = new Map()
+  }
+
+  /**
+   * Merges one read into the loaded rows by journal sequence. A newer read updates a row in
+   * place; a row from an older read never replaces one from a newer read, whatever the arrival
+   * order. `replace` keeps only the incoming rows, still preferring newer loaded copies.
+   */
+  private mergeRead(
+    existing: readonly HistoryItem[],
+    incoming: readonly HistoryItem[],
+    freshness: HistoryFreshness,
+    replace = false,
+  ) {
+    const loaded = new Map(existing.map((item) => [item.sequence, item]))
+    const rows = replace ? new Map<number, HistoryItem>() : new Map(loaded)
+    const known = replace ? new Map<number, HistoryFreshness>() : new Map(this.itemFreshness)
+    for (const item of incoming) {
+      const kept = loaded.get(item.sequence)
+      const recorded = this.itemFreshness.get(item.sequence)
+      if (kept && recorded && fresher(recorded, freshness)) {
+        rows.set(item.sequence, kept)
+        known.set(item.sequence, recorded)
+      } else {
+        rows.set(item.sequence, item)
+        known.set(item.sequence, freshness)
+      }
+    }
+    this.itemFreshness = known
+    return [...rows.values()].toSorted((left, right) => right.sequence - left.sequence)
   }
 
   private publishHistory(change: Partial<RadarMonitorData> = {}) {
@@ -440,18 +478,20 @@ export class RadarMonitorState {
       this.publishHistory()
     }
     try {
+      const ticket = ++this.readTicket
       const response = await transport.liveHistory(scope, sessionID, undefined, controller.signal)
       if (!current()) return
       if (!historyMatches(response, this.projectID, scope) || response.sessionID !== sessionID)
         throw new Error("Selected history belongs to another project, scope, or session.")
       const previous = this.data.history
+      const freshness = { revision: response.runnerRevision, ticket }
       this.headRead = undefined
       this.headError = ""
       if (previous && headJoins(previous, response)) {
         this.publishHistory({
           history: {
             ...response,
-            items: mergeHistoryItems(previous.items, response.items),
+            items: this.mergeRead(previous.items, response.items, freshness),
             nextCursor: previous.nextCursor,
             coverage: mergeHistoryCoverage(
               previous.coverage,
@@ -466,7 +506,12 @@ export class RadarMonitorState {
         this.tailRead?.abort()
         this.tailRead = undefined
         this.tailError = ""
-        this.publishHistory({ history: response })
+        this.publishHistory({
+          history: {
+            ...response,
+            items: this.mergeRead(previous?.items ?? [], response.items, freshness, true),
+          },
+        })
       }
     } catch (error) {
       if (!current()) return
@@ -521,11 +566,12 @@ export class RadarMonitorState {
     this.tailError = ""
     this.publishHistory()
     try {
-      const pages: LiveHistoryResponse[] = []
+      const pages: { page: LiveHistoryResponse; freshness: HistoryFreshness }[] = []
       let next: string | undefined = cursor
       let restarts = 0
       for (;;) {
         let page: LiveHistoryResponse
+        const ticket = ++this.readTicket
         try {
           page = await transport.liveHistory(scope, sessionID, next, controller.signal)
         } catch (error) {
@@ -542,22 +588,22 @@ export class RadarMonitorState {
         if (page.attemptID !== from.attemptID)
           throw new Error("Selected history moved to another attempt; refresh to restart.")
         const lowest = lowestSequence(page.items)
-        const previous = pages.at(-1)
+        const previous = pages.at(-1)?.page
         if (page.nextCursor !== null && previous && lowest >= lowestSequence(previous.items))
           throw new Error("The next history page did not advance.")
         if (page.nextCursor !== null && page.items.length === 0)
           throw new Error("The next history page did not advance.")
-        pages.push(page)
+        pages.push({ page, freshness: { revision: page.runnerRevision, ticket } })
         if (page.nextCursor === null || lowest < floor) break
         next = page.nextCursor
       }
       const loaded = this.data.history
       if (!loaded || loaded.nextCursor !== cursor) return
-      const nextCursor = pages.at(-1)!.nextCursor
+      const nextCursor = pages.at(-1)!.page.nextCursor
       let items = loaded.items
       let coverage = loaded.coverage
-      for (const page of pages) {
-        items = mergeHistoryItems(items, page.items)
+      for (const { page, freshness } of pages) {
+        items = this.mergeRead(items, page.items, freshness)
         coverage = mergeHistoryCoverage(coverage, page.coverage, nextCursor)
       }
       this.tailRead = undefined

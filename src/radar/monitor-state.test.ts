@@ -432,3 +432,35 @@ test("a non-contiguous head and a selection change fence stale older pages", asy
     state.close()
   }
 })
+
+test("a stale restart head cannot overwrite a newer live head", async () => {
+  const delayedRestart = deferred<LiveHistoryResponse>()
+  let heads = 0
+  const fake = fakeTransport({
+    history: async (sessionID, cursor) => {
+      if (cursor === "old-before-20")
+        throw { data: { reason: "changed-during-read", recovery: "restart" } }
+      if (cursor === "restart-before-20") return history(sessionID, [10])
+      if (++heads === 2) return delayedRestart.promise
+      return history(sessionID, heads === 1 ? [30, 20] : [40, 30], "old-before-20")
+    },
+  })
+  const state = new RadarMonitorState(() => {})
+  state.connect("project-key", "project", projectScope, fake.transport, false)
+  try {
+    await until(() => Boolean(state.data.live))
+    state.selectSession("ses-worker")
+    await until(() => state.data.history?.items.length === 2)
+    state.loadMoreHistory()
+    await until(() => heads === 2)
+    fake.emit(2)
+    await until(() => state.data.history?.items[0]?.sequence === 40)
+    const stale = history("ses-worker", [30, 20], "restart-before-20")
+    stale.items[0] = { ...stale.items[0]!, status: "running" }
+    delayedRestart.resolve(stale)
+    await until(() => state.data.history?.nextCursor === null)
+    expect(state.data.history?.items.find((item) => item.sequence === 30)?.status).toBe("succeeded")
+  } finally {
+    state.close()
+  }
+})
