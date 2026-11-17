@@ -326,11 +326,8 @@ export function registerObservability(
         let closed = false
         const refresh = () => {
           if (closed) return
-          try {
-            tracker.refreshSource()
-          } catch {
-            tracker.streamGap()
-          }
+          // Every runner/progress write bumps the revision; coalesce into one trailing read.
+          tracker.scheduleRefresh()
         }
         const unsubscribe = databaseChanges.subscribe(reads.store.repository.path, refresh, () =>
           tracker.streamGap(),

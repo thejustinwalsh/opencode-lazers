@@ -1,10 +1,10 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto"
-import { realpathSync } from "node:fs"
+import { realpathSync, statSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
-import { associatedSessionIDs } from "./associations.ts"
+import { associationIndex } from "./associations.ts"
 import type { ObservationChange } from "./contract.ts"
 
 export type SourceStamp = {
@@ -50,16 +50,24 @@ function readAssociatedSessions(
     entry = {
       revision,
       repositoryVersion,
-      sessions: [...associatedSessionIDs(db, projectDirectory)],
+      sessions: [...associationIndex.read(db, projectDirectory)],
     }
     associationReads.set(key, entry)
-    const captured = entry
-    // Drop the shared view when this notification stack yields.
-    queueMicrotask(() => {
-      if (associationReads.get(key) === captured) associationReads.delete(key)
-    })
+    // Keyed by durable revision (every membership write bumps it), so the shared view
+    // stays valid across the debounce window instead of being dropped when the stack yields.
   }
   return new Set(entry.sessions)
+}
+
+const realpathMemo = new Map<string, string>()
+function canonicalDatabasePath(filename: string) {
+  let resolved = realpathMemo.get(filename)
+  if (resolved === undefined) {
+    resolved = realpathSync(filename)
+    realpathMemo.set(filename, resolved)
+    if (realpathMemo.size > 64) realpathMemo.delete(realpathMemo.keys().next().value!)
+  }
+  return resolved
 }
 
 /** A keyed source fingerprint detects runner/check/tool changes not reflected in the task watermark. */
@@ -83,22 +91,76 @@ export function sourceStampFromDatabase(
   return {
     repositoryVersion,
     sourceFingerprint: createHmac("sha256", sourceFingerprintSecret)
-      .update(JSON.stringify([realpathSync(db.filename), projectDirectory, revision]))
+      .update(JSON.stringify([canonicalDatabasePath(db.filename), projectDirectory, revision]))
       .digest("hex"),
     sessionIDs: readAssociatedSessions(db, projectDirectory, repositoryVersion, revision),
   }
 }
 
+type SourceConnection = {
+  identity: string
+  connection: ReturnType<typeof openReadOnlyTrajectoryStore>
+}
+const sourceConnectionsKey = Symbol.for("opencode-lazers.observation-source-connections.v1")
+const sourceConnectionsHost = globalThis as typeof globalThis & {
+  [sourceConnectionsKey]?: Map<string, SourceConnection>
+}
+const sourceConnections: Map<string, SourceConnection> = (sourceConnectionsHost[
+  sourceConnectionsKey
+] ??= new Map())
+
+function fileIdentity(path: string) {
+  const stat = statSync(path)
+  return `${stat.dev}:${stat.ino}`
+}
+
+/** Close pooled source-stamp connections (tests and shutdown). */
+export function closeSourceStampConnections() {
+  for (const [key, entry] of sourceConnections) {
+    sourceConnections.delete(key)
+    try {
+      entry.connection.close()
+    } catch {
+      // Already closed.
+    }
+  }
+}
+
+/** One lazily opened read-only connection per database file replaces open-per-call. */
 export function readSourceStamp(
   path: string,
   projectDirectory: string,
   secret: Uint8Array,
 ): SourceStamp {
-  const connection = openReadOnlyTrajectoryStore(path, projectDirectory)
+  const key = JSON.stringify([path, projectDirectory])
+  const identity = fileIdentity(path)
+  let entry = sourceConnections.get(key)
+  if (entry && entry.identity !== identity) {
+    sourceConnections.delete(key)
+    try {
+      entry.connection.close()
+    } catch {
+      // Replaced file: the old handle is dead anyway.
+    }
+    entry = undefined
+  }
+  if (!entry) {
+    entry = { identity, connection: openReadOnlyTrajectoryStore(path, projectDirectory) }
+    sourceConnections.set(key, entry)
+  }
   try {
-    return connection.store.atomic((db) => sourceStampFromDatabase(db, projectDirectory, secret))
-  } finally {
-    connection.close()
+    return entry.connection.store.atomic((db) =>
+      sourceStampFromDatabase(db, projectDirectory, secret),
+    )
+  } catch (error) {
+    // A broken pooled handle must not poison later reads.
+    sourceConnections.delete(key)
+    try {
+      entry.connection.close()
+    } catch {
+      // Ignore close failures.
+    }
+    throw error
   }
 }
 
@@ -148,7 +210,12 @@ type TrackerState = {
   liveSignalBytes: number
   liveSignalsTruncated: boolean
   registryKey?: string
+  lastRefreshAt: number
+  refreshTimer?: ReturnType<typeof setTimeout>
 }
+
+/** Minimum spacing between synchronous source reads triggered by events or invalidations. */
+export const SOURCE_REFRESH_DEBOUNCE_MS = 250
 
 const MAX_TRACKED_EVENTS = 4096
 export const LIVE_SIGNAL_LIMITS = {
@@ -210,6 +277,7 @@ function newState(projectID: string): TrackerState {
     liveSignals: new Map(),
     liveSignalBytes: 0,
     liveSignalsTruncated: false,
+    lastRefreshAt: 0,
   }
 }
 
@@ -489,9 +557,34 @@ export class ObservationChangeTracker {
   }
 
   refreshSource() {
+    const state = this.state
+    if (state.refreshTimer) {
+      clearTimeout(state.refreshTimer)
+      state.refreshTimer = undefined
+    }
+    state.lastRefreshAt = Date.now()
     this.observeStamp(
       readSourceStamp(this.repository.path, this.repository.projectDirectory, this.secret),
     )
+  }
+
+  /**
+   * Coalesced refresh: bursts of invalidations (every progress write bumps the revision)
+   * share one trailing read at most every SOURCE_REFRESH_DEBOUNCE_MS.
+   */
+  scheduleRefresh(onError: () => void = () => this.streamGap()) {
+    const state = this.state
+    if (state.refreshTimer) return
+    const wait = Math.max(0, state.lastRefreshAt + SOURCE_REFRESH_DEBOUNCE_MS - Date.now())
+    state.refreshTimer = setTimeout(() => {
+      state.refreshTimer = undefined
+      try {
+        this.refreshSource()
+      } catch {
+        onError()
+      }
+    }, wait)
+    state.refreshTimer.unref?.()
   }
 
   trackScopedSessions(
@@ -659,6 +752,13 @@ export class ObservationChangeTracker {
         bufferNative(this.state, fact)
         return
       }
+      if (Date.now() - this.state.lastRefreshAt < SOURCE_REFRESH_DEBOUNCE_MS) {
+        // A source read just happened: park the fact and let one trailing refresh decide
+        // membership for the whole burst instead of reading the database per event.
+        bufferNative(this.state, fact)
+        this.scheduleRefresh()
+        return
+      }
       this.refreshSource()
       if (!hasInterest(this.state, fact.sessionID)) {
         if (fact.eventID) rememberBounded(this.state.seenEvents, fact.eventID)
@@ -689,6 +789,8 @@ export class ObservationChangeTracker {
     this.liveSignalTruncatedSessionIDs.clear()
     this.liveSignalTruncationUnknown = false
     if (!state.members.size) {
+      if (state.refreshTimer) clearTimeout(state.refreshTimer)
+      state.refreshTimer = undefined
       if (state.registryKey) projectStates.delete(state.registryKey)
       state.pendingNative = []
       state.pendingNativeKeys.clear()
