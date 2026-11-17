@@ -32,7 +32,7 @@ Before launching or restarting a development, preview, documentation, Storybook,
 
 This applies to project-owned servers. OpenCode Desktop and its service are third-party developer tooling and follow the skill's developer-tool exclusion. Project previews inside them still use Portless.
 
-For product walkthroughs, integrate the changes first and verify them in the regular OpenCode Desktop session. Reuse that session for follow-up checks. Launch a separate Desktop verification profile only when the user explicitly asks for one, and close the profile and its service when finished.
+For product walkthroughs, integrate the worker changes, load the current integrated plugin in the regular OpenCode Desktop session, and exercise the changed behavior there. Build the GUI bundle and reload the regular Desktop when GUI code changes. Reload the regular service for server changes at a quiet point and confirm the changed behavior in the app. If a walkthrough finds a defect, give the worker the reproduction and ask it to update its branch. Integrate the follow-up and rerun the affected walkthrough in the same session. Launch a separate Desktop verification profile only when the user explicitly asks for one, and close the profile and its service when finished.
 
 ## Stacked pull requests
 
