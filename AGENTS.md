@@ -24,7 +24,7 @@ formatting or fixable lint failures.
 
 ## Product cost basis
 
-Product costs and estimates use configured ordered price sources, independent of execution provider or subscription. Initially offer OpenRouter then OpenCode by default, reusing access configured in OpenCode. Skip unavailable sources; missing applicable prices remain unknown. Preserve chosen-source provenance, exact execution provider/model/effort and measured tokens. Published zeros require source support; session-reported charges are diagnostics, not market rates. Refresh reprices unchanged usage. Price lookup does not authorize inference.
+Product costs and estimates use configured ordered price sources, independent of execution provider or subscription. Initially offer OpenRouter then OpenCode by default, reusing access configured in OpenCode. Skip unavailable sources. A missing applicable price is a defect to investigate; when no source prices a model, omit the price UI rather than showing unknown. Preserve chosen-source provenance, exact execution provider/model/effort and measured tokens. Published zeros require source support; session-reported charges are diagnostics, not market rates. Refresh reprices unchanged usage. Price lookup does not authorize inference.
 
 ## Development and verification servers
 
@@ -32,9 +32,9 @@ Before launching or restarting a development, preview, documentation, Storybook,
 
 This applies to project-owned servers. OpenCode Desktop and its service are third-party developer tooling and follow the skill's developer-tool exclusion. Project previews inside them still use Portless.
 
-### Codex dogfood operator workflow
+### Dogfood operator workflow
 
-When Codex operates this repository's dogfood loop, LAZERS Architect owns worker coordination, integration and validation. Codex loads the current integrated plugin in the regular OpenCode Desktop session and exercises the changed behavior there. These instructions govern this repository's operator session. Before dispatching work, check the regular Desktop for pending Architect questions, answer what the existing user decisions cover, and confirm the form cleared. Build the GUI bundle and reload the regular Desktop when GUI code changes. Reload the regular service for server changes at a quiet point and confirm the changed behavior in the app. If a walkthrough finds a defect, give the worker the reproduction and ask it to update its branch. Integrate the follow-up and rerun the affected walkthrough in the same session. Launch a separate Desktop verification profile only when the user explicitly asks for one, and close the profile and its service when finished.
+When the external driver (currently Claude Code) operates this repository's dogfood loop, LAZERS Architect owns worker coordination, integration and validation. The driver loads the current integrated plugin in the regular OpenCode Desktop session and exercises the changed behavior there. These instructions govern this repository's operator session. Before dispatching work, check the regular Desktop for pending Architect questions, answer what the existing user decisions cover, and confirm the form cleared. Build the GUI bundle and reload the regular Desktop when GUI code changes. Reload the regular service for server changes at a quiet point and confirm the changed behavior in the app. If a walkthrough finds a defect, give the worker the reproduction and ask it to update its branch. Integrate the follow-up and rerun the affected walkthrough in the same session. Launch a separate Desktop verification profile only when the user explicitly asks for one, and close the profile and its service when finished.
 
 ## Stacked pull requests
 

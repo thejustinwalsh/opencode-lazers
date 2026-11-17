@@ -1,198 +1,102 @@
 # Current dogfood handoff
 
-Updated 2026-11-09. Goal remains active: native Architect/LAZERS must deliver the
-whole roadmap, then propose improvements from observation. Runtime/API/DB state
-is authoritative; this file is a locator. Earlier detail remains in Git history.
+Updated 2026-11-17. The external dogfood driver is now Claude Code; Codex no
+longer drives OpenCode. Runtime/API/DB state is authoritative; this file is a
+locator. Earlier detail (2026-11-09 and before) remains in Git history.
 
-## Cleanup-first continuation and cancellation waits
+## Product goal (user direction, 2026-11-17)
 
-This continuation supersedes older delivery observations below; native state is
-authoritative. LZ-185 stays first, in its SAME recovered worker. LZ-195 final
-`9c5e434` is reviewed and integrated in main `59b9578`, with native worker removal
-and cache retirement confirmed. It preserves worker provenance and unavailable/
-disabled limitations. Main quality, 11 registered controls / 133 assertions and
-38 recovery tests / 515 assertions passed. LZ-201/LZ-164 are also integrated;
-actual registered history paging is recorded in
-`design/reviews/retained-inspection-live-20261109.md`. Manual cleanup is not proof
-that LZ-185's automatic repair works.
+LAZERS turns a request into **integrated** code. Handing work back for review
+is a step, not the goal. A queued task must reach exactly one of:
 
-Required sequence: **LZ-185 → LZ-154 → explicit SAME-worker LZ-182 continuation**.
-LZ-154 no longer waits on Models/Tasks: those were coordination dependencies, not
-functional producers. Its real prerequisites are LZ-185/LZ-199/LZ-195, reusing
-`src/recovery/tools.ts` and `src/recovery/journal.ts`. LZ-182 remains temporarily
-cancelled, not rejected or integrated. Original source, attempt and Architect
-composition `1f3efb0` remain preserved. After cleanup/steering integration,
-Architect explicitly continues that attempt for authorized-dependent continuation
-and scheduling reads with 101 blocking reservations, preserving negative controls;
-then composes, reviews, qualifies and integrates Tasks. Ownership guidance already
-landed as `b42f512`; feature composition has not.
+| End state    | Meaning                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| Integrated   | Architect reviewed it and merged it into the current branch.                                                 |
+| Pull request | Pushed to the remote with a merge-ready PR awaiting integration.                                             |
+| Escalated    | Raised to the human with a concrete question the Architect cannot answer from the plans or its own guidance. |
 
-LZ-189 retains genuine source prerequisites; LZ-200 still requires Tasks source.
-LZ-196 consumes LZ-154/LZ-195/LZ-199; LZ-192 consumes LZ-196/LZ-182/LZ-200. LZ-200
-retains the single project-configurable limit, explicitly 3 here, across
-implementers, Auditors and research/review helpers; Architect excluded. It is not
-implemented yet.
+A plan that sits in any other state without progress is a product defect, not
+an expected wait. A stalled scheduler with an Architect that is not unblocking
+it is strong evidence of a flaw to fix.
 
-Silent cancellation waits were reproduced: `runtime.ts:7376–7380` returns when
-cross-plan integrated-source proof is absent, while `store.ts:2952–2988` exposes
-only same-plan dependency waits. Public tasks consequently reported queued with
-no reason and empty waitingOn. Proportional correction stays in existing work:
-LZ-200 produces canonical prerequisite identity/state/wait reasons; LZ-196 routes
-changed incidents and concrete deferred follow-up to the current Architect;
-LZ-192 displays those facts and the owner action. Intentional cleanup deferral
-must remain visible. Cancellation neither proves integration nor authorizes
-automatic redispatch. Reads stay nonmutating; source gates and truthful unknowns
-remain intact. Implementation and connected qualification are still pending.
+Corrections to earlier framing:
 
-## Standing driver role
+1. **Done is a valid review outcome.** When the checks pass and the review
+   agrees, the work is done. The next step is integration or a PR, not another
+   repair/retry/replan loop.
+2. **"Unknown" is not a default UI state.** Missing telemetry for a task is a
+   bug. A missing price is a bug unless the source has no price, in which case
+   the price UI is omitted rather than shown as unknown. Missing test coverage is
+   a known fact ("no tests"), not unknown. Every product decision built on
+   "unknown" needs to be audited and reconciled. This includes the website copy
+   (`website/src/Sections.tsx:658`, `:793`) and the cost line in AGENTS.md,
+   README and contributor contracts.
+3. **Overlapping write scopes do not force serial execution.** The Architect
+   may choose parallel work on overlapping files when it knows how to integrate
+   it. The Architect can queue a small integration prompt for itself when it
+   expects a messy merge. The runtime should warn about large overlapping write
+   scopes, the same way plan validation warns, and then honor an explicit
+   parallel choice. Parallel versus serial work must be a controlled choice,
+   not an automatic serialization.
 
-When the user explicitly invokes dogfood, use
-[dogfood](../skills/dogfood/SKILL.md) for the external Codex driver workflow.
-Architect and workers retain their normal execution responsibilities. Direct
-repair requests use normal development workflow.
+The docs (`docs/reference/contributor-contracts.md`,
+`docs/explanation/workflow.md`) still describe the current behavior: overlapping
+scopes are serialized and missing costs stay unknown. Update them alongside the
+implementation, not ahead of it.
 
-## Current native observations (2026-11-09)
+## Live state (read 2026-11-17 via `lazers.tasks.scheduling` project scope)
 
-Runtime/API/DB state is authoritative. Architect remains
-`ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol 6.1 High. Main includes reviewed
-LZ-199 (`efde8d1`), LZ-164 (`6b571c0`) and LZ-197 (`51fd20c`). LZ-199 and
-LZ-197 are runtime-integrated; their native worktrees and cached locations were
-removed. LZ-164's live paging failure produced LZ-201 rather than a fabricated
-probe pass. See `design/reviews/native-progress-20261109.md` for checks and the
-activation helper's lost completion notification. Original LZ-181/LZ-198 are
-cancelled with useful work preserved; do not resume the failed original worker.
+There are 190 plans: 108 integrated, 29 cancelled, **53 not finished**. The
+active sessions are the Architect `ses_e568438ebffeaoFbF9nBb942XM` and four
+workers.
 
-Urgent LZ-185 workspace lifecycle now has priority 4000 and no afterPlans. It owns
-automatic cleanup after integration/cancellation/restart, resolved-hold retries,
-stale activity reconciliation and owned review/verification resources. Its worker
-is `ses_6a0c6753d66f4a90b413e2d2773fa6c4` (OpenAI Luna Max), in native checkout
-`/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3156909f-f2b7-429d-b50c-a9c879079a18`.
-Provider transport failures stopped both worker and Architect; Desktop also showed
-an OpenAI DNS failure. After current DNS recovered, the driver resumed Architect
-through Desktop. Architect then resumed that SAME worker through native controls
-(plan version 8); its activity is confirmed. This is driver-assisted recovery,
-not autonomous outage recovery. Keep the original session and useful work.
+**Pending Architect question** (form `frm_1ea437721001idmYgEp4qo4HPq`): should
+LZ-214's remaining connected qualification be split from its landed
+implementation, releasing its write reservation? LZ-216 (Tasks toggles) and
+LZ-224 (plan headings) are queued behind that reservation.
 
-The worktree audit found 141 present additional checkouts and about 82.8 GiB across
-the two audited folders. Fifty clean merged checkouts map to 38 cleanup-blocked
-plans; all 44 associated sessions were inactive in the foreground observation.
-A fresh runtime cleanup retry still reproduced the stale idle hold. Architect
-subsequently recorded 16 native non-forced removals, including LZ-195's worker
-and review checkout; independent disk/native/cache checks confirmed absence.
-Net allocation fell 7.8144 GiB across the same measured roots, while retained
-workers could allocate files. This manual intervention is not automatic recovery.
-LZ-185's repair and remaining historical holds remain unresolved. Exact records:
-`design/reviews/worktree-cleanup-audit-20261109.md`,
-`design/reviews/worktree-lifecycle-inventory-20261109.json`, and
-`design/reviews/worktree-cleanup-intervention-20261109.json`.
+How the 53 unfinished plans are held. Each group is a stall to fix or escalate,
+not a state to wait out.
 
-Implementors own features, checks and commits; Architect owns synchronization,
-rebasing, conflicts, composition and integration. Native ownership guidance is
-landed in main as `b42f512`, separately from retained LZ-182
-composition `79ae40e`, which is not integrated. Original LZ-182 commits `fae0967`
-and `6dbae67` remain preserved. Its 20-hour-old session is not 20 hours of continuous
-inference. Architect corrected stale advice and kept that implementor idle while
-handling composition itself. Independent review found continuation-admission and
-bounded scheduling-read defects; final correction/review remains open. The latest
-native verification could not start because Bun was absent from the shell PATH;
-do not call that a failed feature test or send the worker into integration work.
+| Hold                                                   | Plans                                                                                                         | Reading                                                                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `Combined artifact evidence missing: …:human`          | LZ-43, 56, 62, 77, 80, 81, 83–85, 96, 108, 110, 111, 117, 151/152, 155, 156–158, 168/169, 178, 184 (19 plans) | Accepted work is waiting for human evidence that nobody has asked for. These need to be escalated as questions or self-verified. |
+| Connected qualification evidence missing               | LZ-214                                                                                                        | This is the subject of the pending question.                                                                                     |
+| Native idle observation unknown or mismatched          | LZ-50, 103, 139, 141, 142, 173                                                                                | An idle-proof gate blocks progress and cleanup. This is a direct case of correction 2.                                           |
+| Recovery uncertain, no receipt                         | LZ-63, 72                                                                                                     |                                                                                                                                  |
+| Combined verification failed or conflicted             | LZ-59, 138, LZ-130/131 (test merge conflict), LZ-183 (quarantined checkout)                                   | These need Architect repair or composition.                                                                                      |
+| Prerequisite cancelled (LZ-182)                        | LZ-189, 190, 191, 192, 200                                                                                    | These need to be rewired to the LZ-214 completion.                                                                               |
+| Waiting for accepted prerequisites to integrate        | LZ-196, 219, 221                                                                                              |                                                                                                                                  |
+| Accepted, prerequisites integrated, not yet integrated | LZ-88, 154                                                                                                    | This is a direct case of correction 1.                                                                                           |
+| Write-scope reservation                                | LZ-216, 224                                                                                                   | This is a direct case of correction 3.                                                                                           |
+| Draft, never started                                   | LZ-144, 212, 213, 217, 225                                                                                    |                                                                                                                                  |
+| Running with a live worker                             | LZ-99, 134, 135, 146, 222                                                                                     |                                                                                                                                  |
 
-LZ-195's SAME worker delivered limited-review-status correction `9c5e434`, now
-source-merged as `59b9578` and runtime-integrated (version 37). Its full live
-handoff/recovery walkthrough remains open. LZ-201 correction `e2833b0b` landed in main as
-`5f6b759`. LZ-164 and LZ-201 are runtime-integrated with native cleanup confirmed.
-Architect exercised actual registered full/history reads through two pages with
-normal telemetry; main quality and 23 focused tests/214 assertions passed. See
-`design/reviews/retained-inspection-live-20261109.md`. Their earlier fixes
-were retained through concrete native review-to-repair cycles. LZ-193/LZ-194
-repairs remain pending with original workers preserved. LZ-196 (automatic recovery)
-waits on LZ-154/LZ-195/LZ-199; LZ-192 waits on LZ-196/LZ-182/LZ-200. LZ-200
-is the queued configurable limit of 3 across all delegated roles, Architect
-excluded; the limit is not implemented yet.
+Reproduce this read with `bun .cache/driver/claude-state-20261117.ts`. It is
+read-only: sessions, forms, permissions and the paged scheduling read.
 
-Main Radar source landed at `bd2896d`; connected qualification remains incomplete.
-The live panel reports some current session/model states, but tool-call activity
-was empty during observed work and legacy sessions often show unknown. See
-`design/reviews/radar-live-integration-gap-20261109.md`. Provider/model-aware
-Architect cache policy remains unproven; a scalar default is not a provider's
-cache lifetime. Existing roadmap work remains in scope; cleanup priority does
-not cancel it.
+## Active plans
 
-LZ-182's plan is now cancelled, not completed. Its original and Architect-owned
-checkouts/commits remain present. The driver found LZ-154/LZ-189/LZ-192/LZ-200
-still depending on that cancelled plan and raised the gap through Desktop in
-`msg_1c0d4b4f30012lDKUBjRgwBYv0` (Unix1794236539424), keeping cleanup first.
-Architect rewired LZ-154 and retained the other three genuine source edges.
-The explicit same-worker continuation at the top now supplies the retained Tasks
-path; implementation and connected qualification remain open. Do not claim
-routine cancellation itself handled these dependents.
-See the latest section of `design/reviews/native-progress-20261109.md`.
+- `.agents/plans/lz182-full-completion.md`: complete Tasks Now/Attention/Next
+  (LZ-214). Two source gaps are in `src/tasks/scheduling-read.ts`.
+- `.agents/plans/panel-streaming-idle-axis.md`: full-result streaming in all
+  four panels and Trajectory idle compression. The corrected Auditor report is at
+  `.cache/driver/panel-streaming-audit-corrected-92b0a75.md` (not yet published
+  to `.agents/docs/panel-streaming-contract-audit.md`).
+- `.cache/driver/native-capacity-admission-defect-20261117.md`: a definitive
+  pre-admission rejection must not leave an ambiguous interaction lease (LZ-225).
 
-## Delivery and preservation
+## Driver rules
 
-Architect owns verification, product probes, review, integration, activation,
-cleanup and recovery. Human input is for material unresolved decisions or
-required authorization. Stuck work must show an actionable reason in Tasks and
-offer one-click Architect investigation. Autonomous end-to-end recovery and
-that action remain unproven.
-
-LZ-131 original worker `ses_e8e85ff547f941e2b3e960621c3db6dd` and accepted work
-remain retained. Composition with accepted LZ-130 has test conflicts. Use native
-repair/integration controls; do not mutate SQL or discard failed-attempt history.
-Old standalone scheduling diagnostics lack the process-local source-guard
-registry and may overreport holds. Native runtime observations determine actual
-reservation ownership.
-
-## Preserved UI work and walkthrough locator
-
-Review checkout:
-`/Users/tjw/Documents/ChatGPT/opencode-lazers.worktrees/lz182-review-recovered`.
-Candidate66927d5 composes Tasks/Radar with the native summary-control fix3ada1c3.
-Earlier quality/build,320UI/observation tests and66audit/native-tool tests passed;
-this does not establish current live acceptance. Preserve existing review images.
-
-Native Luna Max probe `ses_e4300c5d7ffeNSzVZm3oOZpWzU` completed setup only.
-Owned root ends `lazers-full-instance-9TcU4T`, owner
-06a0c8a9-1305-4fb3-a083-11e588e6cef5. The owned Desktop was quit to restore
-main-window Computer Use targeting. Reobserve service/process state and reopen
-through the supported lifecycle; old PIDs are not proof of liveness. OpenAI
-consent and ChatGPT usage were authorized for this instance and completed. Do
-not repeat sign-in, copy credentials or substitute a free default model.
-Its canary session and four synthetic unrun tasks remain retained. No completed
-two-implementer live walkthrough has been demonstrated. LZ-197's real Ctrl+T
-shortcut support is needed for owned-window effort selection.
-
-The setup probe compacted without completing a real implementer walkthrough;
-this is delivery inefficiency, not acceptance. Reuse original fixture images and
-`design/reviews/lz182-fae-source-review-20261107.md`,
-`design/reviews/lz184-combined-validation-20261108.md`, and
-candidate `.cache/review/native182184-results.md`. Earlier source checks and
-fixture screenshot reviews do not establish current live acceptance.
-
-## Auditor delivered
-
-Auditor role/native Fallow3.41.0 and durable task-linked SQLite history are on main
-(`7126ebf`, `c9ffb96`). Five Code Mode tools query runs/findings, append assessments,
-import legacy reports and regenerate exports outside worktrees. See
-`design/auditor.md`. LZ-186 was reviewed/merged7afd88b→0d0fa9b; runtime plan is
-integrated and its original worker checkout was removed natively. Before/after
-runs remain durable. User approved Muse training; exact Go workspace privacy
-setting was verified ON after reload. Remaining audits187–191 retain their order.
-
-## Working rules and locators
-
-- Model prompts through Desktop CUA; SDK/DB diagnostics read-only. No production
-  SQL repair. Native agents can use their normal SDK/tool/fixture workflows.
-- CUA focus-input shortcut is Ctrl+L. AX setValue alone changed the visible draft
-  without firing input state; use focus, paste/type, verify Send, then submit.
-- `.cache/driver/client.ts` discovers the existing service; bounded state/latest
-  tool helpers are there. Discovery timeout is not proof the service stopped.
-- Follow README/AGENTS and pinned `.agents/docs/opencode-api.md`. Use native
-  worktree/lifecycle APIs. Preserve original workers, useful work and history.
-- Evidence is real checks and behavior, not source hashes or arbitrary limits.
-  Keep schema validation, Architect self-review and advisory System One.
-- Six inference flags remain ON, idle unload Never. Preserve downloaded models.
-- Auto-fix formatting/lint through `bun run verify`; relevant behavior tests.
-  Project listeners use Portless; native OpenCode follows its supported lifecycle.
+- Follow `.agents/skills/dogfood` and the AGENTS.md operator workflow. Check
+  for pending Architect forms before dispatching work.
+- Prompt models through Desktop. SDK and DB reads are diagnostics only. Never
+  repair production state with SQL.
+- `.cache/driver/client.ts` discovers the existing service. A discovery
+  timeout does not prove the service stopped.
+- Preserve original workers, useful work and history. Use native worktree and
+  lifecycle APIs.
+- Run `bun run verify` plus the relevant behavior tests. Project listeners go
+  through Portless.
 - Original brief: `.agents/docs/sources/original-design-brief.md`. User steering
-  supersedes it. Task-sizing research: `design/reviews/llm-work-decomposition-research-20261107.md`.
+  supersedes it.

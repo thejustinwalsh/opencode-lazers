@@ -1,11 +1,11 @@
 ---
 name: dogfood
-description: Drive LAZERS through OpenCode Desktop as the external Codex developer when the user explicitly requests dogfooding. Does not apply to Architect or workers, or to ordinary repair requests.
+description: Drive LAZERS through OpenCode Desktop as the external driver when the user explicitly requests dogfooding. Does not apply to Architect or workers, or to ordinary repair requests.
 ---
 
 # Dogfood
 
-Apply this workflow only to the external Codex driver when the user explicitly
+Apply this workflow only to the external driver (currently Claude Code) when the user explicitly
 asks to dogfood. Do not pass these driver instructions to Architect or workers.
 
 Read README.md's progressive dogfood order and the current handoff. Present the
