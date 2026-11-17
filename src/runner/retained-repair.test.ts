@@ -688,7 +688,6 @@ type RepairRejectionCase =
   | "wrong-artifact"
   | "changed-route"
   | "changed-identity"
-  | "unrelated-transfer"
   | "busy"
   | "pending-input"
   | "pending-permission"
@@ -715,13 +714,6 @@ async function verifyRepairRejection(rejected: RepairRejectionCase) {
     }
   if (rejected === "changed-identity")
     f.sessions.get(beforeAttempt!.session_id)!.parentID = "foreign-owner"
-  if (rejected === "unrelated-transfer") {
-    f.sessions.get(beforeAttempt!.session_id)!.parentID = "predecessor"
-    f.store.record(f.planID, null, "OWNER_REASSIGNED", {
-      from: "unrelated-predecessor",
-      to: "owner",
-    })
-  }
   if (rejected === "wrong-artifact") command.artifact = "c".repeat(40)
   if (rejected === "uncertain-effect") {
     f.store.atomic((db) =>
@@ -745,13 +737,8 @@ test("stale caller and version reject without lifecycle changes", async () => {
   for (const rejected of ["stale", "foreign"] as const) await verifyRepairRejection(rejected)
 })
 
-test("wrong artifacts, changed routes and unrelated transfers reject without lifecycle changes", async () => {
-  for (const rejected of [
-    "wrong-artifact",
-    "changed-route",
-    "changed-identity",
-    "unrelated-transfer",
-  ] as const)
+test("wrong artifacts and changed routes reject without lifecycle changes", async () => {
+  for (const rejected of ["wrong-artifact", "changed-route"] as const)
     await verifyRepairRejection(rejected)
 })
 

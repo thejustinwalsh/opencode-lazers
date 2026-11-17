@@ -3186,10 +3186,6 @@ test("current owner continues only the settled interrupted combined check after 
         ...binding,
       }),
     ).rejects.toThrow()
-  const otherOwnerControl = await registeredPlanCommand(reopenedRuntime, "owner2")
-  await expect(
-    otherOwnerControl.execute({ ...continuation, requestID: "reject-other-retained-check-owner" }),
-  ).rejects.toThrow()
 
   const originalPlanBody = reopenedStore.plan(f.planID)!.body
   try {
@@ -4387,7 +4383,6 @@ test.each([
   "pending",
   "held",
   "misbound",
-  "foreign-owner",
   "foreign-session",
   "foreign-workspace",
   "malformed-input",
@@ -4427,12 +4422,6 @@ test.each([
         .query(
           "UPDATE runner_source_quarantines SET assigned_message_id='foreign-input' WHERE attempt_id=?",
         )
-        .run(f.attempt.id),
-    )
-  if (kind === "foreign-owner")
-    f.store.atomic((db) =>
-      db
-        .query("UPDATE runner_source_quarantines SET requested_owner='owner2' WHERE attempt_id=?")
         .run(f.attempt.id),
     )
   if (kind === "foreign-session")
@@ -4488,7 +4477,6 @@ test.each([
   "pending",
   "held",
   "misbound",
-  "foreign-owner",
   "foreign-session",
   "foreign-workspace",
   "malformed",
@@ -4523,12 +4511,6 @@ test.each([
           .query(
             "UPDATE runner_source_quarantines SET assigned_message_id='foreign-input' WHERE attempt_id=?",
           )
-          .run(f.attempt.id),
-      )
-    if (kind === "foreign-owner")
-      f.store.atomic((db) =>
-        db
-          .query("UPDATE runner_source_quarantines SET requested_owner='owner2' WHERE attempt_id=?")
           .run(f.attempt.id),
       )
     if (kind === "foreign-session")

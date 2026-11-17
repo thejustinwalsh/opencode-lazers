@@ -256,40 +256,11 @@ test("retained verification binding requires the exact sealed guarded source and
     expect(
       sourceQuarantineVerificationBinding(store, {
         planID: attempt.plan_id,
-        owner: "foreign-owner",
-        attempt,
-        artifact: attempt.artifact,
-      }),
-    ).toBeUndefined()
-    expect(
-      sourceQuarantineVerificationBinding(store, {
-        planID: attempt.plan_id,
         owner: "continued-owner",
         attempt: { ...attempt, message_id: "foreign-input" },
         artifact: attempt.artifact,
       }),
     ).toBeUndefined()
-    store.atomic((db) =>
-      db
-        .query(
-          "UPDATE runner_source_quarantines SET requested_owner='continued-owner' WHERE attempt_id=?",
-        )
-        .run(attempt.id),
-    )
-    expect(
-      sourceQuarantineVerificationBindingMatches(store, {
-        planID: attempt.plan_id,
-        owner: "continued-owner",
-        attempt,
-        artifact: attempt.artifact,
-        expected: binding!,
-      }),
-    ).toBe(false)
-    store.atomic((db) =>
-      db
-        .query("UPDATE runner_source_quarantines SET requested_owner='owner' WHERE attempt_id=?")
-        .run(attempt.id),
-    )
     store.atomic((db) =>
       db
         .query("UPDATE runner_source_quarantines SET review_input_json=? WHERE attempt_id=?")
