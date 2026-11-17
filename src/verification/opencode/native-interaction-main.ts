@@ -306,7 +306,7 @@ function nativeKeyboardInput(key: NativeKey): {
   modifiers?: Array<"shift" | "control" | "alt" | "meta">
 } {
   if (key === "Ctrl+T") return { keyCode: "T", modifiers: ["control"] }
-  return { keyCode: key }
+  return { keyCode: key.startsWith("Arrow") ? key.slice("Arrow".length) : key }
 }
 
 function stableValue(value: unknown): string {

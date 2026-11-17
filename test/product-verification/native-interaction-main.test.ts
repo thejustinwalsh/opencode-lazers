@@ -352,6 +352,22 @@ describe("owned native Desktop adapter", () => {
     ])
   })
 
+  test("translates DOM arrow names to Electron accelerator codes", async () => {
+    const target = harness([rawSnapshot, rawSnapshot, rawSnapshot])
+    const initial = await target.adapter.perform({ kind: "snapshot", window: reference(target) })
+    const result = await target.adapter.perform({
+      kind: "key",
+      window: reference(target),
+      snapshotID: initial.snapshot!.snapshotID,
+      key: "ArrowDown",
+    })
+    expect(result.delivery).toBe("delivered")
+    expect(target.events).toEqual([
+      { type: "keyDown", keyCode: "Down" },
+      { type: "keyUp", keyCode: "Down" },
+    ])
+  })
+
   test("rejects a stale rendered snapshot without sending native input", async () => {
     const changed = { ...rawSnapshot, text: "The UI changed after observation" }
     const target = harness([rawSnapshot, changed])
