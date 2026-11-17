@@ -1,0 +1,137 @@
+# Full-scope panel streaming and shared idle-axis compression
+
+## Product outcome
+
+Implement DESIGN.md's full-result contract in Tasks, Radar, Trajectory and Models:
+return real database pages, publish the first page promptly, automatically
+continue to exhaustion for the current scope/filter, reconcile live updates, and
+keep rendering bounded where large collections make interaction expensive.
+Trajectory additionally compresses long **known idle** intervals on one shared
+axis while retaining real timestamps/durations and distinct recording gaps.
+
+This is new acquisition/visualization work, not a replay of the landed Tasks
+virtualizer. Reuse existing LZ-216 for immediate project-wide multi-state filters;
+do not duplicate or expand its selection/persistence/query-union scope.
+
+## Grounded starting findings
+
+Source research at66070762904cd9b7787640d6ad175a2d66e93701 found:
+
+- Tasks already uses real SQL task pages and TanStack virtualization, but loads
+  later pages near the viewport, waits for optional topology/scheduling before
+  first publication, and refreshes a prior loaded extent. Activity hydration is
+  separately bounded and must not be advertised as complete just because all
+  task identities arrived. See src/tasks/panel-state.ts and
+  src/observability/task-reads.ts.
+- Radar overview has no cursor and whole-result session/activity limits. Selected
+  history has real SQL keyset pages but manual continuation. Refresh-head and
+  drain-tail positions need independent ownership. Include Diagnostics, not only
+  the default monitor. See src/observability/live-{read,store}.ts and
+  src/radar/monitor-{state,view}.ts(x).
+- Trajectory's selected history first captures a bounded whole projection, then
+  slices cached arrays. Broad choices and native-context availability have
+  independent limits. Following existing cursors alone is not database streaming.
+  See src/trajectory/history.ts, src/trajectory/read.ts,
+  src/observability/read.ts and src/trajectory-panel/panel-state.ts.
+- Models has separately paged candidates, decision rows/configurations and
+  contributors, but the task picker reads one page and other producers materialize
+  full projections before slicing. Decision progress's512-row SQL keyset scanner
+  is a reuse point. Global financial statistics must not become page-local.
+  See src/models/comparison-{state,read}.ts, decision-read.ts and
+  observation-ledger-read.ts.
+- Trajectory currently positions attempts/checks/tool/gap marks through linear
+  timestamp ratios in projection.ts, tracks.ts, panel-layout.ts and panel.tsx.
+  Every track, ruler, hit target and scroll/zoom calculation must use the same
+  transform; changing only bar positions would misrepresent time relationships.
+
+These are starting facts for independent audit, not a completed audit or a claim
+that native telemetry/transcripts are complete. The older Repomix snapshot is
+as-of-refresh; current Git/live source is authoritative for changed paths.
+
+## Contract and coverage audit
+
+Auditor first audits the intertwined producer/transport/controller/rendering
+boundaries and publishes a source-grounded report at
+`.agents/docs/panel-streaming-contract-audit.md`. This increment does not change
+product source or take over active Tasks/filter writers. Enumerate all visible
+collections, true SQL pages versus cached-array slicing, whole-result limits,
+scope/cursor identities, live update races, rendering bounds, coverage and gaps.
+Trace idle-axis coverage/placement callers and distinguish recorded idle from
+unobserved or unloaded history. Group findings by shared cause/change boundary,
+not one task per analyzer finding.
+
+The report must independently confirm or correct the starting findings, explain
+ownership of shared observability contracts, and identify focused behavioral
+checks for each feature below. Architect retains task boundaries and sequencing;
+concrete findings can refine this plan before implementation tasks are submitted.
+
+## Tasks full-scope streaming
+
+After LZ-216 source integration, one feature worker owns the Tasks producer and
+consumer changes needed for prompt first-page publication and cancellable
+background drain to exhaustion. Optional topology, scheduling and activity
+enrichment must not block useful first rows or imply unsupported completeness.
+Preserve its existing virtualizer, icon language, anchors, accessible logical
+navigation, immediate filter semantics and independent inspector scroll.
+
+## Radar complete live collections
+
+One feature worker owns pageable authorized overview inventory/activity and
+selected history, incremental first-page rendering, automatic continuation,
+head/tail live reconciliation and large-list rendering, including Diagnostics.
+Keep compact summaries distinct from the complete browsable collections; retain
+explicit unavailable native coverage rather than inventing telemetry.
+
+## Trajectory complete progressive history
+
+One feature worker owns pageable task choices and selected history from actual
+bounded database reads rather than whole-capture-before-first-page, progressive
+track/activity rendering, complete continuation, live-event reconciliation and
+large-list/mark rendering. Preserve privacy, event identities, selection and
+honest native-context/recording gaps. Coordinate shared observability files after
+Radar rather than creating competing producer writers.
+
+## Models complete collections and truthful analytics
+
+One feature worker owns full streaming of task choices, candidates, decisions,
+configurations and selected contributors, plus source/data invalidation and
+large-collection rendering. Decouple prompt rows from expensive global analytics
+without publishing page-local frontier, counts or market-valued conclusions as
+global facts. Preserve mapping/readback safety and existing ECharts adapters.
+Consume LZ-216's final Tasks query identity; do not independently redesign it.
+
+## Trajectory shared compressed idle axis
+
+After progressive-history integration, one feature worker adds a monotonic
+shared time transform with clearly marked compressed intervals across attempts,
+checks, tools, file activity and the ruler. Compress only intervals established
+as idle by available coverage; unloaded pages, unknown recording gaps, active
+work and overlapping tracks must not be silently treated as idle. Inspectors
+retain actual wall-clock timestamps and elapsed durations. All tracks, hit
+testing, keyboard selection, zoom and scrolling stay aligned as pages/live data
+change the domain. Deterministic visual policy belongs in one tested transform,
+not independent per-track scale guesses.
+
+## Integration order and combined acceptance
+
+1. Review Auditor's report and settle common cursor/live-merge contracts.
+2. Finish existing LZ-216; Tasks streaming follows that integrated interface.
+3. Radar and Models can proceed independently once shared contract ownership and
+   the Tasks query interface are fixed; serialize overlapping observability edits.
+4. Integrate Trajectory streaming after Radar's shared producer edits; then idle
+   compression uses the resulting coverage/domain contract.
+5. Architect composes retained commits, runs proportional combined checks and
+   supplies each integrated revision for regular Desktop validation. Do not
+   ship operator workflow as product UI or generic agent instructions.
+
+Combined behavior checks cover first-page publication while a later page or
+optional enrichment is blocked; exhaustion without scrolling/clicking; live
+upserts/removals during draining; duplicate/cyclic/stale cursor protection;
+scope/filter/server changes and cancellation; failure/retry with readable rows;
+bounded mounted rows/marks; selected identity/anchors and independent scrolling.
+Keep per-page payload safeguards but never label collection truncation as normal
+exhaustion. Axis checks cover cross-track overlap, real gaps, partial coverage,
+stable timestamp/position mapping and inverse hit testing where used. Use
+`bun run verify`, focused registered RPC/component/axis tests and GUI build for
+changed GUI code. Actual integrated regular-Desktop observations remain distinct
+from component fixtures; no isolated trial is a prerequisite for this plan.
