@@ -21,12 +21,17 @@ export async function startingRevision(
   directory: string,
 ): Promise<TaskSpec["provenance"]["startingRevision"]> {
   const git = async (...args: string[]) => {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd: directory,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    })
+    let proc: Bun.Subprocess<"ignore", "pipe", "ignore">
+    try {
+      proc = Bun.spawn(["git", ...args], {
+        cwd: directory,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      })
+    } catch {
+      return { status: null, stdout: "" }
+    }
     const timer = setTimeout(() => proc.kill(), 5_000)
     try {
       const [stdout, status] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
