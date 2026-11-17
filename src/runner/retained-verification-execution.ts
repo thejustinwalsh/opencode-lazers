@@ -1,3 +1,4 @@
+import { sameProject } from "../project-key.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
@@ -264,7 +265,7 @@ export class RetainedVerificationExecution {
         this.runtime.store.planControlEpoch(plan.id) === current.ownerEpoch &&
         task &&
         task.revision === current.taskRevision &&
-        task.provenance.projectID === this.runtime.projectID &&
+        sameProject(task.provenance.projectID, this.runtime.projectID) &&
         task.provenance.projectDirectory === this.runtime.directory &&
         !this.runtime.store.repository.taskDisposition(current.taskID) &&
         latestAttempt?.id === current.attemptID &&
@@ -1003,7 +1004,7 @@ export class RetainedVerificationExecution {
             !artifact ||
             !task ||
             task.revision !== authored.revision ||
-            task.provenance.projectID !== this.runtime.projectID ||
+            !sameProject(task.provenance.projectID, this.runtime.projectID) ||
             task.provenance.projectDirectory !== this.runtime.directory ||
             this.runtime.store.repository.taskDisposition(taskID) !== undefined ||
             !attempt ||
@@ -2661,7 +2662,7 @@ export class RetainedVerificationExecution {
           : !["blocked", "accepted", "cleanup-blocked"].includes(currentPlan.state)) ||
         !currentTask ||
         currentTask.revision !== initial.taskRevision ||
-        currentTask.provenance.projectID !== this.runtime.projectID ||
+        !sameProject(currentTask.provenance.projectID, this.runtime.projectID) ||
         currentTask.provenance.projectDirectory !== this.runtime.directory ||
         this.runtime.store.repository.taskDisposition(initial.taskID) !== undefined ||
         latestAttempt?.id !== initial.attemptID ||

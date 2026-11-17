@@ -1,3 +1,4 @@
+import { sameProject } from "../project-key.ts"
 import type { Link, LinkHandler, SessionRef } from "@opencode/plugin/gui"
 import { TaskReferenceSchema } from "../task.ts"
 
@@ -95,7 +96,7 @@ export function createTaskLinkHandler(services: TaskLinkServices): LinkHandler {
         signal.aborted ||
         detail.status !== "found" ||
         detail.reference !== parsed.reference ||
-        detail.task.provenance.projectID !== project.id ||
+        !sameProject(detail.task.provenance.projectID, project.id) ||
         detail.task.provenance.projectDirectory !== project.canonical
       )
         return undefined

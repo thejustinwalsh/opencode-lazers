@@ -1,3 +1,4 @@
+import { sameProject } from "../project-key.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
@@ -410,7 +411,7 @@ export class WorktreeCleanup {
       attempt.state === "accepted" &&
       latestAttempt?.id === attempt.id &&
       task?.revision === proposedNode?.revision &&
-      task.provenance.projectID === this.runtime.projectID &&
+      sameProject(task.provenance.projectID, this.runtime.projectID) &&
       task.provenance.projectDirectory === this.runtime.directory &&
       integrationStillRecorded &&
       this.runtime.store.repository.taskDisposition(attempt.task_id) === undefined

@@ -1,3 +1,4 @@
+import { sameProject } from "../project-key.ts"
 import { panelErrorMessage as errorMessage } from "../panel-error.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
 import type { TrajectoryResponse } from "../observability/contract.ts"
@@ -1154,7 +1155,10 @@ export class ModelComparisonPanelState {
     if (detailResult.status === "fulfilled") {
       const detail = detailResult.value
       if (detail.status === "found") {
-        if (detail.task.id !== taskID || detail.task.provenance.projectID !== this.projectID)
+        if (
+          detail.task.id !== taskID ||
+          !sameProject(detail.task.provenance.projectID, this.projectID)
+        )
           this.update({ taskError: "Task detail belongs to another project or task." })
         else this.update({ task: detail, taskError: "" })
       } else {

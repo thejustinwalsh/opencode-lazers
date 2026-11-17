@@ -1,3 +1,4 @@
+import { sameProject } from "../project-key.ts"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { DateTime } from "effect"
 import type { TaskSpec } from "../task.ts"
@@ -882,7 +883,7 @@ export async function inspectTrajectory(
   if (input.taskID) task = store.repository.get(input.taskID)
   if (
     task &&
-    (task.provenance.projectID !== projectID ||
+    (!sameProject(task.provenance.projectID, projectID) ||
       task.provenance.projectDirectory !== store.repository.projectDirectory)
   )
     throw new Error("Task is not owned by this project")
@@ -906,7 +907,7 @@ export async function inspectTrajectory(
           const found = store.repository.get(attempt.task_id)
           if (
             found &&
-            found.provenance.projectID === projectID &&
+            sameProject(found.provenance.projectID, projectID) &&
             found.provenance.projectDirectory === store.repository.projectDirectory
           )
             task = found
