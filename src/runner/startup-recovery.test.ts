@@ -481,22 +481,7 @@ test("recovery-only unavailable-session telemetry survives settlement and reopen
   const worker = f.sessions.get(attempt.session_id)!
   worker.turn = { inputID: attempt.message_id, state: "completed" }
   worker.outcome = "succeeded"
-  worker.background = {
-    state: "observed",
-    source: "experimental.idle",
-    observedAt: Date.now(),
-    inputID: attempt.message_id,
-    executionStartSequence: 1,
-    eventSequence: 1,
-    count: 0,
-    kinds: { shell: 0, subagent: 0, image: 0 },
-    projectDirectory: f.root,
-    projectID: "project",
-    attemptID: attempt.id,
-    sessionID: attempt.session_id,
-    workspace,
-    assignedMessageID: attempt.message_id,
-  }
+
   f.store.atomic((db) => {
     db.query("UPDATE runner_attempts SET state='accepted',artifact=? WHERE id=?").run(
       artifact,

@@ -150,11 +150,6 @@ export const schemaModules = {
     source: "src/audit/history.ts",
     tables: ["audit_runs", "audit_sections", "audit_decisions"],
   },
-  "native-idle": {
-    generation: 1,
-    source: "src/runner/native-idle.ts",
-    tables: ["runner_native_idle"],
-  },
   observability: {
     generation: 1,
     source: "src/observability/source-revision.ts",

@@ -188,7 +188,6 @@ export const CommandInput = z
         "resume",
         "retry",
         "integrated",
-        "recover-cleanup",
         "schedule",
         "amend-scope",
         "adopt-descendant",
@@ -201,7 +200,7 @@ export const CommandInput = z
         "continue-retained-check",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -408,33 +407,6 @@ export const CommandInput = z
             path: [field],
             message: `Startup settlement requires ${field}`,
           })
-    if (command.action === "recover-cleanup") {
-      for (const field of ["taskID", "attemptID", "artifact", "targetBranch", "reason"] as const)
-        if (!command[field])
-          context.addIssue({
-            code: "custom",
-            path: [field],
-            message: `Cleanup recovery requires ${field}`,
-          })
-      if (command.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(command.artifact))
-        context.addIssue({
-          code: "custom",
-          path: ["artifact"],
-          message: "Cleanup recovery requires an exact full merged artifact identity",
-        })
-      if (!command.reason?.trim())
-        context.addIssue({
-          code: "custom",
-          path: ["reason"],
-          message: "Cleanup recovery requires a concrete owner reason",
-        })
-      if (!command.targetBranch?.trim())
-        context.addIssue({
-          code: "custom",
-          path: ["targetBranch"],
-          message: "Cleanup recovery requires the exact integration branch",
-        })
-    }
     if (command.action === "verify-retained") {
       for (const field of [
         "projectID",

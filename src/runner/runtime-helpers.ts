@@ -22,27 +22,6 @@ const verificationCheckIdentity = (check: unknown): unknown =>
 export const sameVerificationCheckIdentity = (left: unknown, right: unknown): boolean =>
   fingerprint(verificationCheckIdentity(left)) === fingerprint(verificationCheckIdentity(right))
 
-export type CleanupRecoveryAuthorization = {
-  schemaVersion: 1
-  projectDirectory: string
-  planID: string
-  planRevision: number
-  planArtifact: string | null
-  taskID: string
-  taskRevision: number
-  attemptID: string
-  artifact: string
-  workspace: string
-  sourceEffectID: string
-  sessionID: string
-  assignedMessageID: string
-  owner: string
-  ownerEpoch: number
-  targetBranch: string
-  requestID: string
-  reason: string
-}
-
 export function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefined {
   if (!effect.receipt) return undefined
   try {
@@ -82,3 +61,5 @@ export function pathEntryExists(path: string): boolean {
 }
 
 export const WORKTREE_CLEANUP_FALLBACK_MS = 60_000
+/** A live-activity blocker (running shell, busy session) is cheap to re-observe. */
+export const WORKTREE_CLEANUP_LIVE_RETRY_MS = 5_000

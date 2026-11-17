@@ -1,7 +1,7 @@
 import { sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import { z } from "zod"
-import type { HostBackgroundObservation, HostMessage, HostSession } from "./host.ts"
+import type { HostMessage, HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
 
 const ReviewInputMetadata = z.object({
@@ -14,7 +14,8 @@ const ReviewInputMetadata = z.object({
     .refine((value) => value.trim().length > 0),
 })
 
-const ReviewIdleObservation = z.strictObject({
+/** Legacy aliases recorded the retired experimental.idle report; they remain readable. */
+const LegacyReviewIdleObservation = z.strictObject({
   observedAt: z.number().finite(),
   inputID: z.string().min(1),
   executionStartSequence: z.number().int().nonnegative().safe(),
@@ -61,7 +62,7 @@ export const ReviewInputAlias = z.strictObject({
     outcome: z.literal("succeeded"),
     inputID: z.string().min(1).max(200),
     turnState: z.literal("completed"),
-    idle: ReviewIdleObservation,
+    idle: LegacyReviewIdleObservation.optional(),
   }),
 })
 export type ReviewInputAlias = z.infer<typeof ReviewInputAlias>
@@ -105,43 +106,9 @@ function sameModel(actual: HostSession["model"], expected: z.infer<typeof ModelP
   return sameNativeModel(actual, expected)
 }
 
-function matchesIdleBinding(
-  background: HostBackgroundObservation,
-  binding: ReviewInputBinding,
-): background is Extract<HostBackgroundObservation, { state: "observed" }> {
-  return (
-    background.state === "observed" &&
-    background.source === "experimental.idle" &&
-    background.inputID === binding.reviewInputID &&
-    background.projectDirectory === binding.projectDirectory &&
-    background.projectID === binding.projectID &&
-    background.attemptID === binding.attemptID &&
-    background.sessionID === binding.sessionID &&
-    background.workspace === binding.workspace &&
-    background.assignedMessageID === binding.assignedMessageID &&
-    background.count === 0 &&
-    background.kinds.shell === 0 &&
-    background.kinds.subagent === 0 &&
-    background.kinds.image === 0 &&
-    Number.isFinite(background.observedAt) &&
-    Number.isSafeInteger(background.executionStartSequence) &&
-    background.executionStartSequence >= 0 &&
-    Number.isSafeInteger(background.eventSequence) &&
-    background.eventSequence >= 0 &&
-    typeof background.terminalSequence === "number" &&
-    Number.isSafeInteger(background.terminalSequence) &&
-    background.terminalSequence >= 0 &&
-    background.terminalSequence > background.eventSequence &&
-    typeof background.terminalEventID === "string" &&
-    background.terminalEventID.length > 0 &&
-    typeof background.terminalMessageID === "string" &&
-    background.terminalMessageID.length > 0
-  )
-}
-
 /**
  * Accepts only the exact native message/current-turn pair and stable terminal
- * idle evidence. The returned relationship is lineage, never acceptance proof.
+ * live idle observation. The returned relationship is lineage, never acceptance proof.
  */
 export function observeReviewInput(worker: HostSession, binding: ReviewInputBinding) {
   if (
@@ -180,9 +147,8 @@ export function observeReviewInput(worker: HostSession, binding: ReviewInputBind
   const review = reviewMetadata(message, binding)
   if (!review)
     throw new Error("Native input is not a confirmed same-task, same-attempt review input")
-  const background = worker.background
-  if (!background || !matchesIdleBinding(background, binding))
-    throw new Error("Review input lacks matching fresh successful zero-background evidence")
+  if ((worker.runningShells ?? 0) !== 0 || (worker.activeChildren ?? 0) !== 0)
+    throw new Error("Review input requires a worker with no running shells or child sessions")
 
   return {
     reviewRequestID: review.requestID,
@@ -196,23 +162,6 @@ export function observeReviewInput(worker: HostSession, binding: ReviewInputBind
       outcome: "succeeded" as const,
       inputID: turn.inputID,
       turnState: "completed" as const,
-      idle: {
-        observedAt: background.observedAt,
-        inputID: background.inputID,
-        executionStartSequence: background.executionStartSequence,
-        eventSequence: background.eventSequence,
-        terminalSequence: background.terminalSequence!,
-        terminalEventID: background.terminalEventID!,
-        terminalMessageID: background.terminalMessageID!,
-        projectDirectory: background.projectDirectory!,
-        projectID: background.projectID!,
-        attemptID: background.attemptID!,
-        sessionID: background.sessionID!,
-        workspace: background.workspace!,
-        assignedMessageID: background.assignedMessageID!,
-        count: 0 as const,
-        kinds: { shell: 0 as const, subagent: 0 as const, image: 0 as const },
-      },
     },
   }
 }

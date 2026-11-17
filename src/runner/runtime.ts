@@ -11,7 +11,6 @@ import {
   isCommitID,
   isRecord,
   sameVerificationCheckIdentity,
-  type CleanupRecoveryAuthorization,
   actualCheckResultFromEffect,
   checkSettlementProblem,
   errorText,
@@ -78,7 +77,6 @@ import { equivalentShas, FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identi
 import {
   baseReachable,
   proofForArtifact,
-  requireIntegration,
   storedEvidence,
   type BaseReach,
   type IntegrationProof,
@@ -523,12 +521,8 @@ const cleanupObservationStages = [
   "observation-stability",
   "pending-permissions",
   "pending-forms",
-  "outcome",
-  "turn",
-  "background",
-  "assigned-input",
-  "turn-input",
-  "background-count",
+  "running-shells",
+  "active-children",
 ] as const
 type CleanupObservationStage = (typeof cleanupObservationStages)[number]
 type CleanupObservationCheck = {
@@ -664,8 +658,6 @@ export class TaskRuntime {
       directory: this.directory,
       effect: (...args) => this.effect(...args),
       host: this.host,
-      isPriorContinuationBackground: (...args) => this.isPriorContinuationBackground(...args),
-      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
       now: (...args) => this.now(...args),
       outcome: (...args) => this.outcome(...args),
       owner: this.owner,
@@ -746,7 +738,7 @@ export class TaskRuntime {
 
   /**
    * Async Git proofs a command needs, gathered before its transaction:
-   * integration containment (`integrated`, `recover-cleanup`) and baseline
+   * integration containment (`integrated`) and baseline
    * reachability (an explicit `baseCommit`).
    */
   private async preflightProofs(command: CommandInput, plan: PlanRow) {
@@ -762,12 +754,11 @@ export class TaskRuntime {
           this.store.repository.read((db) => knownTree(db, command.baseCommit)),
         ),
       )
-    if (command.action === "integrated" || command.action === "recover-cleanup") {
+    if (command.action === "integrated") {
       const task = command.taskID
         ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
         : undefined
-      const artifact =
-        command.action === "integrated" ? (task?.artifact ?? plan.artifact) : command.artifact
+      const artifact = task?.artifact ?? plan.artifact
       if (artifact) {
         const attempt = command.taskID
           ? this.store
@@ -1474,7 +1465,7 @@ export class TaskRuntime {
       (worker.pendingForms ?? 0) === 0 &&
       Boolean(worker.outcome) &&
       ["completed", "interrupted"].includes(worker.turn?.state ?? "unknown") &&
-      !this.backgroundBlockReason(worker, attempt, true)
+      !this.backgroundBlockReason(worker)
     )
   }
 
@@ -1705,11 +1696,8 @@ export class TaskRuntime {
         model,
       )
       if (problem) throw new Error(problem)
-      if (
-        worker?.background?.state === "observed" &&
-        (worker.background.count !== 0 || worker.background.inputID !== attempt.message_id)
-      )
-        throw new Error("Retained repair has unresolved background work or input lineage")
+      const backgroundProblem = worker ? this.backgroundBlockReason(worker) : undefined
+      if (backgroundProblem) throw new Error(`Retained repair is not idle: ${backgroundProblem}`)
     }
     const before = await this.host.session(attempt.session_id, { messages: true })
     validate(before)
@@ -3442,7 +3430,8 @@ export class TaskRuntime {
       observationUnstable: worker.observationUnstable ?? false,
       outcome: worker.outcome ?? null,
       turn: worker.turn ?? null,
-      background: worker.background ?? null,
+      runningShells: worker.runningShells ?? 0,
+      activeChildren: worker.activeChildren ?? 0,
       idleAt: worker.idleAt ?? null,
       messages: worker.messages.map((message) => ({ id: message.id, type: message.type ?? null })),
     })
@@ -3496,45 +3485,14 @@ export class TaskRuntime {
   }
 
   private retainedRepairBackgroundProblem(
-    attempt: AttemptRow,
     worker: HostSession | null | undefined,
     inputID: string | undefined,
-    assignedMessageID: string,
   ) {
-    const background = worker?.background
-    if (!background || background.state !== "observed")
-      return "Retained repair requires a fresh native idle/background observation"
-    if (background.count !== 0)
-      return "Known background work must finish before the retained repair can continue"
-    const executionStart = background.executionStartSequence
-    const eventSequence = background.eventSequence
-    const terminalSequence = background.terminalSequence
-    if (
-      !inputID ||
-      background.inputID !== inputID ||
-      worker?.turn?.inputID !== inputID ||
-      background.projectDirectory !== this.directory ||
-      background.projectID !== this.projectID ||
-      background.attemptID !== attempt.id ||
-      background.sessionID !== attempt.session_id ||
-      background.workspace !== attempt.workspace ||
-      background.assignedMessageID !== assignedMessageID ||
-      !Number.isFinite(background.observedAt) ||
-      typeof executionStart !== "number" ||
-      !Number.isSafeInteger(executionStart) ||
-      executionStart < 0 ||
-      typeof eventSequence !== "number" ||
-      !Number.isSafeInteger(eventSequence) ||
-      eventSequence < executionStart ||
-      typeof terminalSequence !== "number" ||
-      !Number.isSafeInteger(terminalSequence) ||
-      terminalSequence <= eventSequence ||
-      typeof background.terminalEventID !== "string" ||
-      !background.terminalEventID ||
-      typeof background.terminalMessageID !== "string" ||
-      !background.terminalMessageID
-    )
-      return "Retained repair idle evidence does not bind the exact current native input and assignment"
+    if (!worker) return "Retained repair worker session is unavailable"
+    const reason = this.backgroundBlockReason(worker)
+    if (reason) return `${reason}; it must finish before the retained repair can continue`
+    if (!inputID || worker.turn?.inputID !== inputID)
+      return "Retained repair worker's current turn is not the repaired input"
     return undefined
   }
 
@@ -3877,9 +3835,6 @@ export class TaskRuntime {
       projectID: this.projectID,
       taskCurrent: true,
       assignedInputMatches: confirmedWorker.turn?.inputID === repairMessageID,
-      backgroundInputMatches:
-        confirmedWorker.background?.state === "observed" &&
-        confirmedWorker.background.inputID === repairMessageID,
       stopObservation: stopped,
       planHoldObservation: priorHold,
       retainedSession: sessionReceipt,
@@ -4165,12 +4120,7 @@ export class TaskRuntime {
     await this.host.waitForSession(attempt.session_id)
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const nativeInputID = observed?.turn?.inputID ?? undefined
-    const backgroundProblem = this.retainedRepairBackgroundProblem(
-      attempt,
-      observed,
-      nativeInputID,
-      previousMessageID,
-    )
+    const backgroundProblem = this.retainedRepairBackgroundProblem(observed, nativeInputID)
     if (!nativeInputID || !this.matchesWorkerInput(attempt, nativeInputID))
       throw new Error("Retained repair requires the exact captured successful native input")
     const problem = this.retainedRepairWorkerProblem(
@@ -4193,10 +4143,8 @@ export class TaskRuntime {
       attemptModel.data,
     )
     const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      attempt,
       confirmed,
       nativeInputID,
-      previousMessageID,
     )
     if (
       confirmedProblem ||
@@ -4401,11 +4349,6 @@ export class TaskRuntime {
       taskCurrent,
       assignedInputMatches: Boolean(
         attempt && worker?.turn && this.matchesWorkerInput(attempt, worker.turn.inputID),
-      ),
-      backgroundInputMatches: Boolean(
-        attempt &&
-        worker?.background?.state === "observed" &&
-        this.matchesWorkerInput(attempt, worker.background.inputID),
       ),
       stopObservation,
       planHoldObservation,
@@ -5483,7 +5426,6 @@ export class TaskRuntime {
         "cancel-retained-verification",
         "extend-verification-deadline",
         "continue-retained-check",
-        "recover-cleanup",
       ].includes(command.action) ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
     ) {
@@ -5819,10 +5761,8 @@ export class TaskRuntime {
         retainedRepair.model,
       )
       const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
-        attempt,
         observedWorker,
         retainedRepair.nativeInputID,
-        retainedRepair.previousMessageID,
       )
       if (
         observedProblem ||
@@ -5843,10 +5783,8 @@ export class TaskRuntime {
         retainedRepair.model,
       )
       const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-        attempt,
         confirmedWorker,
         retainedRepair.nativeInputID,
-        retainedRepair.previousMessageID,
       )
       if (
         confirmedProblem ||
@@ -6810,126 +6748,6 @@ export class TaskRuntime {
               operationID: operation.id,
               generation: operation.generation,
               version: plan.version,
-            }
-          }
-          if (command.action === "recover-cleanup") {
-            if (
-              !this.validArchitect(ownerSession) ||
-              ownerSession.id !== plan.owner ||
-              caller !== plan.owner
-            )
-              throw new Error("Cleanup recovery requires the current Architect owner")
-            if (plan.state !== "cleanup-blocked")
-              throw new Error("Cleanup recovery is available only for an existing cleanup hold")
-            if (!command.taskID || !command.attemptID || !command.artifact || !command.targetBranch)
-              throw new Error("Cleanup recovery requires the exact accepted task and attempt")
-            const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-            const proposal = PlanInput.parse(JSON.parse(plan.body))
-            const proposedNode = proposal.nodes.find((item) => item.taskID === command.taskID)
-            const task = this.store.repository.get(command.taskID)
-            const attempts = this.store
-              .attempts(plan.id)
-              .filter((candidate) => candidate.task_id === command.taskID)
-            const attempt = attempts.at(-1)
-            if (
-              !node ||
-              node.state !== "accepted" ||
-              node.artifact !== command.artifact ||
-              !proposedNode ||
-              !task ||
-              task.revision !== proposedNode.revision ||
-              !sameProject(task.provenance.projectID, this.projectID) ||
-              task.provenance.projectDirectory !== this.directory ||
-              !attempt ||
-              attempt.id !== command.attemptID ||
-              attempt.state !== "accepted" ||
-              attempt.artifact !== command.artifact
-            )
-              throw new Error("Cleanup recovery task, accepted artifact or latest attempt changed")
-            const sourceEffect = this.store.effects(plan.id).find((effect) => {
-              if (
-                !["worktree", "worktree-recovery"].includes(effect.kind) ||
-                effect.state !== "completed" ||
-                effect.attempt_id !== attempt.id
-              )
-                return false
-              try {
-                return JSON.parse(effect.receipt ?? "{}").workspace === attempt.workspace
-              } catch {
-                return false
-              }
-            })
-            if (
-              !sourceEffect ||
-              attempt.workspace === this.directory ||
-              !existsSync(attempt.workspace)
-            )
-              throw new Error(
-                "Exact owned attempt worktree is unavailable; preserve it for reconciliation",
-              )
-            const taskIntegration = this.store.latestTransition<{
-              artifact?: string
-              branch?: string
-            }>(plan.id, command.taskID, "TASK_INTEGRATION_RECORDED")
-            const planIntegration = this.store.latestTransition<{
-              artifact?: string
-              branch?: string
-            }>(plan.id, null, "INTEGRATION_RECORDED")
-            const integrated =
-              (taskIntegration?.artifact === command.artifact &&
-                taskIntegration.branch === command.targetBranch) ||
-              (planIntegration?.artifact === plan.artifact &&
-                planIntegration.branch === command.targetBranch)
-            if (!integrated)
-              throw new Error(
-                "Cleanup recovery requires a durable matching source integration record",
-              )
-            if (obs.git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
-              throw new Error("The current checkout is not the recorded integration target branch")
-            requireIntegration(
-              preflight.integration,
-              command.artifact,
-              "The accepted artifact",
-              "the recorded integration branch",
-            )
-            if (obs.git(attempt.workspace, ["status", "--porcelain"]))
-              throw new Error(`Accepted attempt worktree is dirty; preserve ${attempt.workspace}`)
-
-            const ownerEpoch = this.store.planControlEpoch(plan.id)
-            this.store.record(plan.id, command.taskID, "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED", {
-              schemaVersion: 1,
-              projectDirectory: this.directory,
-              planID: plan.id,
-              planRevision: plan.revision,
-              planArtifact: plan.artifact,
-              taskID: command.taskID,
-              taskRevision: proposedNode.revision,
-              attemptID: attempt.id,
-              artifact: command.artifact,
-              workspace: attempt.workspace,
-              sourceEffectID: sourceEffect.id,
-              sessionID: attempt.session_id,
-              assignedMessageID: attempt.message_id,
-              owner: caller,
-              ownerEpoch,
-              targetBranch: command.targetBranch,
-              requestID: command.requestID,
-              reason: command.reason ?? "Owner-authorized native cleanup recovery",
-            } satisfies CleanupRecoveryAuthorization)
-            const changed = db
-              .query(
-                `UPDATE runner_plans SET version=version+1
-             WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='cleanup-blocked'`,
-              )
-              .run(plan.id, this.directory, caller, command.expectedVersion).changes
-            if (changed !== 1)
-              throw new Error("Cleanup recovery plan changed during owner authorization")
-            return {
-              status: "cleanup-recovery-requested",
-              taskID: attempt.task_id,
-              attemptID: attempt.id,
-              workspace: attempt.workspace,
-              version: this.store.plan(plan.id)!.version,
             }
           }
           if (command.action === "integrated")
@@ -8092,7 +7910,6 @@ export class TaskRuntime {
         result?.status === "retained-verification-check-continued") ||
       (command.action === "continue-retained-check" &&
         result?.status === "retained-verification-check-continued") ||
-      command.action === "recover-cleanup" ||
       command.action === "pause" ||
       command.action === "unpause" ||
       (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
@@ -9951,13 +9768,6 @@ export class TaskRuntime {
       pendingPermissions: worker.pendingPermissions ?? 0,
       pendingForms: worker.pendingForms ?? 0,
       observationUnstable: worker.observationUnstable ?? false,
-      background:
-        worker.background ??
-        ({
-          state: "unknown",
-          source: "experimental.idle",
-          reason: "Native idle background observation is unavailable",
-        } as const),
     }
   }
   private outcome(planID: string, payload: unknown, resume: boolean) {
@@ -10424,7 +10234,7 @@ export class TaskRuntime {
         session?.busy ||
         session?.pendingInput ||
         session?.observationUnstable ||
-        (session?.background?.state === "observed" && session.background.count > 0)
+        (session && this.backgroundBlockReason(session))
       )
         return
     }
@@ -11106,22 +10916,12 @@ export class TaskRuntime {
             effect.state === "completed",
         )
       this.observeUsage(attempt, session, fence)
-      const backgroundReason = this.backgroundBlockReason(session, attempt)
-      const knownBackgroundWork =
-        session.background?.state === "observed" && session.background.count > 0
+      const backgroundReason = this.backgroundBlockReason(session)
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
         this.approvalWait(plan, attempt, session, fence)
       if (session.busy) {
         await this.host.interrupt(attempt.session_id)
-        if (backgroundReason)
-          this.backgroundWait(
-            plan,
-            attempt,
-            session,
-            backgroundReason,
-            fence,
-            knownBackgroundWork ? "WORKER_BACKGROUND_WAIT" : "WORKER_BACKGROUND_UNKNOWN",
-          )
+        if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
         waiting = true
         continue
       }
@@ -11134,20 +10934,11 @@ export class TaskRuntime {
         waiting = true
         continue
       }
-      if (knownBackgroundWork) {
-        this.backgroundWait(plan, attempt, session, backgroundReason!, fence)
+      if (backgroundReason) {
+        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
         waiting = true
         continue
       }
-      if (backgroundReason)
-        this.backgroundWait(
-          plan,
-          attempt,
-          session,
-          backgroundReason,
-          fence,
-          "WORKER_BACKGROUND_UNKNOWN",
-        )
       session = await this.host.session(attempt.session_id, { messages: true })
       if (!session) {
         if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
@@ -11167,23 +10958,12 @@ export class TaskRuntime {
         waiting = true
         continue
       }
-      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
-      const detailedKnownBackgroundWork =
-        session.background?.state === "observed" && session.background.count > 0
-      if (detailedKnownBackgroundWork) {
-        this.backgroundWait(plan, attempt, session, detailedBackgroundReason!, fence)
+      const detailedBackgroundReason = this.backgroundBlockReason(session)
+      if (detailedBackgroundReason) {
+        this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         waiting = true
         continue
       }
-      if (detailedBackgroundReason)
-        this.backgroundWait(
-          plan,
-          attempt,
-          session,
-          detailedBackgroundReason,
-          fence,
-          "WORKER_BACKGROUND_UNKNOWN",
-        )
       if (
         promptCompleted &&
         (!session.turn ||
@@ -11407,32 +11187,6 @@ export class TaskRuntime {
     })
   }
 
-  private isPriorContinuationBackground(
-    attempt: AttemptRow,
-    background: HostSession["background"],
-    currentInputID: string | null | undefined,
-  ) {
-    const assignedInputID = currentInputID === undefined ? attempt.message_id : currentInputID
-    if (!assignedInputID || !this.matchesWorkerInput(attempt, assignedInputID)) return false
-    if (background?.state === "observed")
-      return (
-        background.inputID !== assignedInputID &&
-        this.isPriorContinuationInput(attempt, background.inputID)
-      )
-    if (background?.state !== "unknown") return false
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      inputID?: string
-      background?: HostSession["background"]
-    }>(attempt.plan_id, attempt.task_id, "WORKER_BACKGROUND_UNKNOWN")
-    return (
-      previous?.attemptID === attempt.id &&
-      previous.inputID !== assignedInputID &&
-      this.isPriorContinuationInput(attempt, previous.inputID) &&
-      JSON.stringify(previous.background) === JSON.stringify(background)
-    )
-  }
-
   private async observeCleanupSession(attempt: AttemptRow): Promise<CleanupSessionObservation> {
     try {
       const session = await this.host.session(attempt.session_id, { messages: true })
@@ -11498,33 +11252,10 @@ export class TaskRuntime {
     pass("pending-permissions")
     if ((session.pendingForms ?? 0) !== 0) return fail("pending-forms", "pending-forms")
     pass("pending-forms")
-    if (!session.outcome) return fail("outcome", "outcome-absent")
-    pass("outcome")
-    if (!session.turn) return fail("turn", "turn-absent")
-    if (session.turn.state === "pending") return fail("turn", "turn-pending")
-    if (session.turn.state !== "completed" && session.turn.state !== "interrupted")
-      return fail("turn", "turn-unknown")
-    pass("turn")
-    if (this.isPriorContinuationBackground(attempt, session.background, session.turn.inputID)) {
-      // Reflect the existing cleanup exception without reclassifying old input as current.
-      stages.push({ stage: "background", status: "passed", code: "prior-continuation-background" })
-      for (const stage of cleanupObservationStages.slice(
-        cleanupObservationStages.indexOf("background") + 1,
-      ))
-        stages.push({ stage, status: "not-evaluated" })
-      return { binding, firstBlocker: null, stages }
-    }
-    if (!session.background) return fail("background", "background-absent")
-    if (session.background.state === "unknown") return fail("background", "background-unknown")
-    pass("background")
-    if (!this.matchesWorkerInput(attempt, session.background.inputID))
-      return fail("assigned-input", "assigned-input-mismatch")
-    pass("assigned-input")
-    if (session.turn.inputID !== session.background.inputID)
-      return fail("turn-input", "turn-input-mismatch")
-    pass("turn-input")
-    if (session.background.count > 0) return fail("background-count", "positive-background-count")
-    pass("background-count")
+    if ((session.runningShells ?? 0) !== 0) return fail("running-shells", "running-shells")
+    pass("running-shells")
+    if ((session.activeChildren ?? 0) !== 0) return fail("active-children", "active-children")
+    pass("active-children")
     return { binding, firstBlocker: null, stages }
   }
 
@@ -11587,28 +11318,16 @@ export class TaskRuntime {
     }
   }
 
-  private backgroundBlockReason(
-    session: HostSession,
-    attempt: AttemptRow,
-    requireTurnLineage = false,
-  ): string | undefined {
-    const background = session.background
-    if (!background) return "Native idle background observation is unknown"
-    if (background.state === "unknown")
-      return `Native idle background observation is unknown: ${background.reason}`
-    if (
-      !this.matchesWorkerInput(attempt, background.inputID) ||
-      (requireTurnLineage && session.turn?.inputID !== background.inputID)
-    )
-      return "Native idle background observation does not match the current worker input lineage"
-    if (background.count > 0) {
-      const kinds = Object.entries(background.kinds)
-        .filter(([, count]) => count > 0)
-        .map(([kind, count]) => `${count} ${kind}`)
-        .join(", ")
-      return `Worker has ${background.count} known background job(s) in the last experimental.idle report${kinds ? ` (${kinds})` : ""}`
-    }
-    return undefined
+  /**
+   * Live idle check: a worker with a running shell in its worktree or an
+   * active child session is not idle. The counts are read from the host at
+   * observation time; there is no report to wait for.
+   */
+  backgroundBlockReason(session: HostSession): string | undefined {
+    const shells = session.runningShells ?? 0
+    const children = session.activeChildren ?? 0
+    if (shells === 0 && children === 0) return undefined
+    return `Worker has ${shells} running shell(s) and ${children} active child session(s)`
   }
 
   private approvalWait(
@@ -11795,9 +11514,13 @@ export class TaskRuntime {
     const current = this.store.plan(plan.id)
     const reason = current?.reason
     const observationReason = reason?.replace(/^Worker execution (?:failed|completed); /, "")
+    // Legacy holds named the retired experimental.idle report; they clear the same way.
     const backgroundWait =
       observationReason?.startsWith("Native idle background observation") ||
-      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "")
+      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "") ||
+      /^Worker has \d+ running shell\(s\) and \d+ active child session\(s\)/.test(
+        observationReason ?? "",
+      )
     const approvalWait = this.approvalWaitReason(reason)
     if (current?.state !== "blocked" || !reason || (!backgroundWait && !approvalWait)) return
     if (approvalWait && !this.conclusiveApprovalClear(attempt, session)) return false
@@ -11830,7 +11553,7 @@ export class TaskRuntime {
       if (changed)
         this.store.record(plan.id, null, "WORKER_OBSERVATION_SETTLED", {
           previousReason: reason,
-          observation: approvalWait ? "worker-approvals" : "experimental.idle-background",
+          observation: approvalWait ? "worker-approvals" : "live-idle-check",
         })
       return changed
     })
@@ -11842,32 +11565,25 @@ export class TaskRuntime {
     session: HostSession,
     reason: string,
     fence: number,
-    event: "WORKER_BACKGROUND_WAIT" | "WORKER_BACKGROUND_UNKNOWN" = "WORKER_BACKGROUND_WAIT",
   ) {
-    const background = session.background ?? {
-      state: "unknown" as const,
-      source: "experimental.idle" as const,
-      reason: "Native idle background observation is unavailable",
+    const background = {
+      runningShells: session.runningShells ?? 0,
+      activeChildren: session.activeChildren ?? 0,
     }
-    const inputID =
-      session.turn?.inputID ?? (background.state === "observed" ? background.inputID : undefined)
     const previous = this.store.latestTransition<{
       attemptID?: string
-      inputID?: string
-      background?: HostSession["background"]
-    }>(plan.id, attempt.task_id, event)
+      background?: typeof background
+    }>(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT")
     if (
       previous?.attemptID === attempt.id &&
-      previous.inputID === inputID &&
       JSON.stringify(previous.background) === JSON.stringify(background)
     )
       return
     this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, event, {
+      this.store.record(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT", {
         attemptID: attempt.id,
         sessionID: attempt.session_id,
         workspace: attempt.workspace,
-        ...(inputID ? { inputID } : {}),
         reason,
         background,
       }),
@@ -12497,8 +12213,6 @@ export class TaskRuntime {
       }
       if (!isRecord(captured)) return undefined
       const turn = isRecord(captured.turn) ? captured.turn : undefined
-      const background = isRecord(captured.background) ? captured.background : undefined
-      const boundBackground = background as HostSession["background"]
       if (
         captured.id !== attempt.session_id ||
         captured.projectID !== this.projectID ||
@@ -12513,28 +12227,8 @@ export class TaskRuntime {
         captured.outcome !== "succeeded" ||
         turn?.inputID !== admissionInputID ||
         turn?.state !== "completed" ||
-        this.retainedRepairBackgroundProblem(
-          attempt,
-          {
-            id: attempt.session_id,
-            projectID: this.projectID,
-            directory: attempt.workspace,
-            metadata: { lazersAttemptID: attempt.id },
-            busy: false,
-            pendingInput: false,
-            pendingPermissions: 0,
-            pendingForms: 0,
-            turn: { inputID: admissionInputID, state: "completed" },
-            background: boundBackground,
-            archived: false,
-            tokens: null,
-            tools: 0,
-            cost: null,
-            messages: [],
-          },
-          admissionInputID,
-          admissionAssignmentID,
-        )
+        Number(captured.runningShells ?? 0) !== 0 ||
+        Number(captured.activeChildren ?? 0) !== 0
       )
         return undefined
     }
@@ -12720,15 +12414,7 @@ export class TaskRuntime {
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const expectedInputID = repair.nativeInputID
     const expectedOutcome = repair.continued ? repair.terminalOutcome! : "succeeded"
-    const backgroundProblem =
-      observed?.background?.state === "observed"
-        ? this.retainedRepairBackgroundProblem(
-            attempt,
-            observed,
-            expectedInputID,
-            repair.nativeAssignmentID,
-          )
-        : undefined
+    const backgroundProblem = this.retainedRepairBackgroundProblem(observed, expectedInputID)
     if (
       backgroundProblem ||
       this.retainedRepairWorkerProblem(
@@ -12746,15 +12432,10 @@ export class TaskRuntime {
     const owner = await this.host.session(repair.owner)
     if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
     const confirmed = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedBackgroundProblem =
-      confirmed?.background?.state === "observed"
-        ? this.retainedRepairBackgroundProblem(
-            attempt,
-            confirmed,
-            expectedInputID,
-            repair.nativeAssignmentID,
-          )
-        : undefined
+    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
+      confirmed,
+      expectedInputID,
+    )
     return Boolean(
       !this.retainedRepairWorkerProblem(
         plan,
@@ -13007,8 +12688,8 @@ export class TaskRuntime {
     attempt: AttemptRow,
     worker: HostSession,
   ) {
-    // A matching foreground completion can be retained even when the last
-    // idle report belongs to another input. Known jobs still keep the source.
+    // A completed foreground worker's source can be retained; a running shell or
+    // child session keeps it.
     if (
       plan.state !== "blocked" ||
       (attempt.state !== "running" &&
@@ -13026,7 +12707,7 @@ export class TaskRuntime {
       worker.observationUnstable ||
       worker.pendingPermissions !== 0 ||
       worker.pendingForms !== 0 ||
-      (worker.background?.state === "observed" && worker.background.count > 0) ||
+      this.backgroundBlockReason(worker) !== undefined ||
       worker.outcome !== "succeeded"
     )
       return
@@ -13211,12 +12892,7 @@ export class TaskRuntime {
       this.isPriorContinuationInput(attempt, session.turn.inputID)
     )
       return
-    const priorBackground = this.isPriorContinuationBackground(
-      attempt,
-      session.background,
-      session.turn?.inputID,
-    )
-    const backgroundReason = this.backgroundBlockReason(session, attempt)
+    const backgroundReason = this.backgroundBlockReason(session)
     const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
       plan.id,
       null,
@@ -13234,8 +12910,7 @@ export class TaskRuntime {
       previousHold.idleAt === session.idleAt &&
       (!session.turn ||
         (previousHold.inputID === session.turn.inputID &&
-          previousHold.turnState === session.turn.state)) &&
-      JSON.stringify(previousHold.background) === JSON.stringify(session.background)
+          previousHold.turnState === session.turn.state))
     if (
       !session.busy &&
       !session.pendingInput &&
@@ -13245,22 +12920,16 @@ export class TaskRuntime {
       ((session.outcome !== "failed" && session.outcome !== "succeeded") ||
         unchangedTerminal ||
         session.archived ||
-        (session.outcome === "succeeded" &&
-          session.background?.state === "observed" &&
-          session.background.count > 0))
+        session.outcome === "succeeded")
     ) {
-      if (!priorBackground) {
-        this.hold(
-          plan,
-          backgroundReason,
-          ["audit", "reconcile", "cancel"],
-          unchangedTerminal ? previousHold : undefined,
-          observation,
-        )
-        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        if (unchangedTerminal)
-          await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
-      }
+      this.hold(
+        plan,
+        backgroundReason,
+        ["audit", "reconcile", "cancel"],
+        unchangedTerminal ? previousHold : undefined,
+        observation,
+      )
+      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
       return
     }
     if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
@@ -13283,12 +12952,7 @@ export class TaskRuntime {
         this.isPriorContinuationInput(attempt, session.turn.inputID)
       )
         return
-      const priorBackground = this.isPriorContinuationBackground(
-        attempt,
-        session.background,
-        session.turn?.inputID,
-      )
-      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
+      const detailedBackgroundReason = this.backgroundBlockReason(session)
       if (session.outcome === "interrupted") {
         this.workerEvent(
           plan,
@@ -13302,16 +12966,7 @@ export class TaskRuntime {
           ? `Worker execution was interrupted; ${detailedBackgroundReason}`
           : "Worker execution was interrupted; explicit reconciliation or cancellation is required"
         if (detailedBackgroundReason)
-          this.backgroundWait(
-            plan,
-            attempt,
-            session,
-            detailedBackgroundReason,
-            fence,
-            session.background?.state === "unknown" || !session.background
-              ? "WORKER_BACKGROUND_UNKNOWN"
-              : "WORKER_BACKGROUND_WAIT",
-          )
+          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         this.hold(
           plan,
           reason,
@@ -13331,16 +12986,7 @@ export class TaskRuntime {
             session.outcome,
             session.turn?.inputID,
           )
-          this.backgroundWait(
-            plan,
-            attempt,
-            session,
-            detailedBackgroundReason,
-            fence,
-            session.background?.state === "unknown" || !session.background
-              ? "WORKER_BACKGROUND_UNKNOWN"
-              : "WORKER_BACKGROUND_WAIT",
-          )
+          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
           this.hold(
             plan,
             `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${detailedBackgroundReason}`,
@@ -13348,10 +12994,8 @@ export class TaskRuntime {
             this.terminalWorkerObservation(attempt, session),
             observation,
           )
-          await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
           return
         }
-        if (priorBackground && !session.outcome) return
         this.hold(
           plan,
           detailedBackgroundReason,

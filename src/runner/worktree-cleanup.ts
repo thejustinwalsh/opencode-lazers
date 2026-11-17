@@ -1,12 +1,10 @@
-import { sameProject } from "../project-key.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
-import { SessionMessage } from "@opencode/schema/session-message"
 import { fingerprint } from "../identity.ts"
 import { gitAsync, worktreeListPorcelain } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import type { NativeCleanupSettlement, WorktreeLocationRetirement } from "./host.ts"
+import type { WorktreeLocationRetirement } from "./host.ts"
 import { PlanInput } from "./schema.ts"
 import { containmentReason, headContained, proofForArtifact } from "./integration-proof.ts"
 import type { PlanRow, AttemptRow, EffectRow } from "./store.ts"
@@ -15,10 +13,12 @@ import { appendRunnerEffectReceipt } from "./store.ts"
 import type { TaskRuntime } from "./runtime.ts"
 import { errorText } from "./runtime-helpers.ts"
 import { isRecord } from "./runtime-helpers.ts"
-import { WORKTREE_CLEANUP_FALLBACK_MS } from "./runtime-helpers.ts"
-import { type CleanupRecoveryAuthorization } from "./runtime-helpers.ts"
+import { WORKTREE_CLEANUP_FALLBACK_MS, WORKTREE_CLEANUP_LIVE_RETRY_MS } from "./runtime-helpers.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
 import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
+
+/** A cleanup blocker that the host can observe directly, so a short poll re-checks it. */
+class LiveActivityBlockedError extends Error {}
 
 export class WorktreeCleanup {
   constructor(
@@ -29,8 +29,6 @@ export class WorktreeCleanup {
       directory: TaskRuntime["directory"]
       effect: TaskRuntime["effect"]
       host: TaskRuntime["host"]
-      isPriorContinuationBackground: TaskRuntime["isPriorContinuationBackground"]
-      matchesWorkerInput: TaskRuntime["matchesWorkerInput"]
       now: TaskRuntime["now"]
       outcome: TaskRuntime["outcome"]
       owner: TaskRuntime["owner"]
@@ -156,7 +154,7 @@ export class WorktreeCleanup {
     workspace: string,
     allowCancelled = false,
     mergedCheckout = false,
-  ): Promise<NativeCleanupSettlement | undefined> {
+  ): Promise<void> {
     if (
       this.runtime.store
         .activeProjectAttempts()
@@ -167,98 +165,27 @@ export class WorktreeCleanup {
       if (this.runtime.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Adoption worktree unexpectedly has an attempt owner; preserve it")
       this.assertAdoptionWorkspaceQuiescent(plan, effect, workspace, allowCancelled)
-      return undefined
+      return
     }
     if (effect.kind === "graph-worktree") {
       if (this.runtime.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
         throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
       this.assertGraphWorkspaceQuiescent(plan, workspace, allowCancelled)
-      return undefined
+      return
     }
     const attempts = this.runtime.store
       .attempts(plan.id)
       .filter((attempt) => attempt.workspace === workspace)
     if (!attempts.length)
       throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
-    let recoverySettlement: NativeCleanupSettlement | undefined
     for (const attempt of attempts) {
       const session = await this.runtime.host.session(attempt.session_id, { messages: true })
-      // RunnerHost null is authoritative native not-found. Current session and
-      // background uncertainty still fail closed below; a missing historical
-      // worker cannot keep its already-merged checkout forever.
-      if (!session) {
-        if (this.cleanupRecoveryAuthorization(plan, attempt, effect, workspace))
-          throw new Error(
-            "Native worker session is unavailable for cleanup recovery; preserve the worktree and reconcile the session binding",
-          )
-        continue
-      }
-      const backgroundReason = this.runtime.backgroundBlockReason(session, attempt, true)
-      let settlement: NativeCleanupSettlement | undefined
-      const authorization = this.cleanupRecoveryAuthorization(plan, attempt, effect, workspace)
-      if (authorization) {
-        await this.assertRecoveryIntegrated(authorization, attempt)
-        if (!this.runtime.host.cleanupSettlement)
-          throw new Error(
-            "Fresh native cleanup settlement is unsupported by this host; preserve the worktree and wait for a new experimental.idle observation",
-          )
-        const settlementRequestedAt = Date.now()
-        settlement = await this.runtime.host.cleanupSettlement({
-          projectID: this.runtime.projectID,
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          assignedMessageID: attempt.message_id,
-        })
-        if (
-          settlement.schemaVersion !== 1 ||
-          settlement.projectID !== this.runtime.projectID ||
-          settlement.attemptID !== attempt.id ||
-          settlement.sessionID !== attempt.session_id ||
-          settlement.workspace !== attempt.workspace ||
-          settlement.assignedMessageID !== attempt.message_id ||
-          settlement.inputID !== attempt.message_id ||
-          settlement.observedAt < settlementRequestedAt - 1_000 ||
-          settlement.observedAt > this.runtime.now() + 1_000 ||
-          settlement.inventory.activeSession !== false ||
-          settlement.inventory.activeDescendants !== 0 ||
-          settlement.inventory.pendingInput !== false ||
-          settlement.inventory.pendingPermissions !== 0 ||
-          settlement.inventory.pendingForms !== 0 ||
-          settlement.inventory.runningShells !== 0 ||
-          settlement.idleReport.source !== "experimental.idle" ||
-          !Number.isFinite(settlement.idleReport.observedAt) ||
-          settlement.idleReport.observedAt > settlement.observedAt ||
-          settlement.idleReport.inputID !== attempt.message_id ||
-          !Number.isSafeInteger(settlement.idleReport.executionStartSequence) ||
-          settlement.idleReport.executionStartSequence < 0 ||
-          !Number.isSafeInteger(settlement.idleReport.eventSequence) ||
-          settlement.idleReport.eventSequence < settlement.idleReport.executionStartSequence ||
-          settlement.idleReport.count !== 0 ||
-          settlement.idleReport.kinds.shell !== 0 ||
-          settlement.idleReport.kinds.subagent !== 0 ||
-          settlement.idleReport.kinds.image !== 0 ||
-          !Number.isSafeInteger(settlement.terminal.previousEventSequence) ||
-          settlement.terminal.previousEventSequence !== settlement.idleReport.eventSequence ||
-          settlement.terminal.sequence <= settlement.idleReport.eventSequence ||
-          !Number.isSafeInteger(settlement.terminal.sequence) ||
-          settlement.terminal.sequence < 0 ||
-          !settlement.terminal.eventID ||
-          !settlement.terminal.messageID
-        )
-          throw new Error(
-            "Fresh native cleanup settlement did not match the held worker assignment",
-          )
-        let terminalMessageID: string | undefined
-        try {
-          terminalMessageID = SessionMessage.ID.fromEvent(settlement.terminal.eventID)
-        } catch {
-          terminalMessageID = undefined
-        }
-        if (terminalMessageID !== settlement.terminal.messageID)
-          throw new Error("Fresh native cleanup terminal event/message binding is invalid")
-        recoverySettlement = settlement
-      }
+      // RunnerHost null is authoritative native not-found: a missing worker has
+      // nothing running, so it cannot keep its checkout forever.
+      if (!session) continue
+      // Live idle check, read from the host now: the worker is idle when its
+      // session is not busy, has no pending input, permission or form, runs no
+      // shell inside the worktree and has no active child session.
       const blockers: string[] = []
       if (session.id !== attempt.session_id) blockers.push("session identity changed")
       if (session.projectID !== this.runtime.projectID) blockers.push("project identity changed")
@@ -266,184 +193,45 @@ export class WorktreeCleanup {
       if (!isWorkerAgent(session.agent)) blockers.push("session is no longer an implementor")
       if (session.metadata?.lazersAttemptID !== attempt.id)
         blockers.push("attempt ownership changed")
-      if (session.busy !== false) blockers.push("worker execution is active or unknown")
+      if (session.busy !== false) blockers.push("worker session is busy")
       if (session.pendingInput === true) blockers.push("worker has pending input")
       if (session.observationUnstable) blockers.push("native worker observation is unstable")
       if ((session.pendingPermissions ?? 0) !== 0)
         blockers.push("worker has pending permission requests")
       if ((session.pendingForms ?? 0) !== 0) blockers.push("worker has pending forms")
-      if (!session.outcome) blockers.push("worker outcome is unknown")
-      if (settlement && session.turn?.inputID && session.turn.inputID !== settlement.inputID)
-        blockers.push("native settlement input does not match the current worker turn")
-      if (!["completed", "interrupted"].includes(session.turn?.state ?? "unknown"))
-        blockers.push("worker turn is not conclusively terminal")
+      const background = this.runtime.backgroundBlockReason(session)
+      if (background) blockers.push(background)
       if (
         !blockers.length &&
         mergedCheckout &&
-        !settlement &&
         !allowCancelled &&
         attempt.state === "accepted" &&
-        this.runtime.host.retireIntegratedWorker &&
-        !(session.background?.state === "observed" && session.background.count > 0) &&
-        session.turn?.inputID &&
-        this.runtime.matchesWorkerInput(attempt, session.turn.inputID)
-      ) {
+        this.runtime.host.retireIntegratedWorker
+      )
         await this.runtime.host.retireIntegratedWorker({
           projectID: this.runtime.projectID,
           attemptID: attempt.id,
           sessionID: attempt.session_id,
           workspace,
         })
-      } else if (
-        backgroundReason &&
-        !settlement &&
-        !this.runtime.isPriorContinuationBackground(
-          attempt,
-          session.background,
-          session.turn?.inputID,
-        )
-      )
-        blockers.push(backgroundReason)
       if (blockers.length)
-        throw new Error(
-          `Owned worktree worker is not conclusively idle; preserve it: ${blockers.join("; ")}`,
+        throw new LiveActivityBlockedError(
+          `Owned worktree worker is not idle; preserve it: ${blockers.join("; ")}`,
         )
     }
-    return recoverySettlement
-  }
-
-  private cleanupRecoveryAuthorization(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    source: EffectRow,
-    workspace: string,
-  ): CleanupRecoveryAuthorization | undefined {
-    const taskAttempts = this.runtime.store
-      .attempts(plan.id)
-      .filter((candidate) => candidate.task_id === attempt.task_id)
-    const attemptIDs = new Set(taskAttempts.map((candidate) => candidate.id))
-    const authorizations = this.runtime.store.atomic((db) =>
-      db
-        .query<{ payload: string }, [string, string]>(
-          `SELECT payload FROM runner_transitions
-           WHERE plan_id=? AND task_id IS ? AND event='WORKTREE_CLEANUP_RECOVERY_AUTHORIZED'
-           ORDER BY id`,
-        )
-        .all(plan.id, attempt.task_id),
-    )
-    let authorization: CleanupRecoveryAuthorization | undefined
-    for (const row of authorizations) {
-      let candidate: unknown
-      try {
-        candidate = JSON.parse(row.payload)
-      } catch {
-        throw new Error(
-          "Cleanup recovery authorization history is malformed; preserve the worktree for reconciliation",
-        )
-      }
-      if (!isRecord(candidate) || typeof candidate.attemptID !== "string")
-        throw new Error(
-          "Cleanup recovery authorization attempt binding is missing; preserve the worktree for reconciliation",
-        )
-      if (!attemptIDs.has(candidate.attemptID))
-        throw new Error(
-          "Cleanup recovery authorization names an unknown task attempt; preserve the worktree for reconciliation",
-        )
-      if (candidate.attemptID !== attempt.id) {
-        if (
-          candidate.sourceEffectID === source.id ||
-          candidate.sessionID === attempt.session_id ||
-          candidate.assignedMessageID === attempt.message_id
-        )
-          throw new Error(
-            "Cleanup recovery authorization is stale or bound to a different worker assignment; preserve the worktree",
-          )
-        continue
-      }
-      authorization = candidate as CleanupRecoveryAuthorization
-    }
-    if (!authorization) return undefined
-    const node = this.runtime.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-    const proposal = PlanInput.parse(JSON.parse(plan.body))
-    const proposedNode = proposal.nodes.find((item) => item.taskID === attempt.task_id)
-    const task = this.runtime.store.repository.get(attempt.task_id)
-    const latestAttempt = this.runtime.store
-      .attempts(plan.id)
-      .filter((candidate) => candidate.task_id === attempt.task_id)
-      .at(-1)
-    const taskIntegration = this.runtime.store.latestTransition<{
-      artifact?: string
-      branch?: string
-    }>(plan.id, attempt.task_id, "TASK_INTEGRATION_RECORDED")
-    const planIntegration = this.runtime.store.latestTransition<{
-      artifact?: string
-      branch?: string
-    }>(plan.id, null, "INTEGRATION_RECORDED")
-    const integrationStillRecorded =
-      (taskIntegration?.artifact === attempt.artifact &&
-        taskIntegration.branch === authorization.targetBranch) ||
-      (planIntegration?.artifact === plan.artifact &&
-        planIntegration.branch === authorization.targetBranch)
-    const valid =
-      authorization.schemaVersion === 1 &&
-      authorization.projectDirectory === this.runtime.directory &&
-      authorization.planID === plan.id &&
-      authorization.planRevision === plan.revision &&
-      authorization.planArtifact === plan.artifact &&
-      authorization.taskID === attempt.task_id &&
-      authorization.taskRevision === proposedNode?.revision &&
-      authorization.attemptID === attempt.id &&
-      authorization.artifact === attempt.artifact &&
-      authorization.workspace === workspace &&
-      authorization.workspace === attempt.workspace &&
-      authorization.sourceEffectID === source.id &&
-      authorization.sessionID === attempt.session_id &&
-      authorization.assignedMessageID === attempt.message_id &&
-      authorization.owner === plan.owner &&
-      authorization.ownerEpoch === this.runtime.store.planControlEpoch(plan.id) &&
-      authorization.requestID.length > 0 &&
-      authorization.reason.trim().length > 0 &&
-      ["worktree", "worktree-recovery"].includes(source.kind) &&
-      source.state === "completed" &&
-      source.attempt_id === attempt.id &&
-      node?.state === "accepted" &&
-      node.artifact === attempt.artifact &&
-      attempt.state === "accepted" &&
-      latestAttempt?.id === attempt.id &&
-      task?.revision === proposedNode?.revision &&
-      sameProject(task.provenance.projectID, this.runtime.projectID) &&
-      task.provenance.projectDirectory === this.runtime.directory &&
-      integrationStillRecorded &&
-      this.runtime.store.repository.taskDisposition(attempt.task_id) === undefined
-    if (!valid)
-      throw new Error(
-        "Cleanup recovery authorization is stale or no longer matches the accepted attempt; preserve the worktree and have the current owner revalidate before retrying recover-cleanup",
-      )
-    return authorization
   }
 
   /**
-   * The recorded integration must still hold: the artifact's change (note,
-   * patch-id or tree, not its commit SHA) is contained in the current checkout.
+   * The accepted artifact's change (note, patch-id or tree, not its commit SHA)
+   * must be contained in the current checkout before its worktree is removed.
    */
-  private async assertRecoveryIntegrated(
-    authorization: CleanupRecoveryAuthorization,
-    attempt: AttemptRow,
-  ) {
+  private async assertArtifactIntegrated(attempt: AttemptRow) {
+    if (!attempt.artifact) return
     try {
-      if (
-        (await gitAsync(this.runtime.directory, ["branch", "--show-current"])) !==
-        authorization.targetBranch
-      )
-        throw new Error("current checkout is not the recorded integration branch")
       const proof = await proofForArtifact(
         (run) => this.runtime.store.repository.read(run),
         this.runtime.directory,
-        {
-          artifact: authorization.artifact,
-          attemptID: attempt.id,
-          base: attempt.base_commit,
-        },
+        { artifact: attempt.artifact, attemptID: attempt.id, base: attempt.base_commit },
       )
       if (proof.containment.status !== "contained")
         throw new Error(
@@ -451,7 +239,7 @@ export class WorktreeCleanup {
         )
     } catch (error) {
       throw new Error(
-        `Cleanup recovery integration evidence is no longer valid (${errorText(error)}); preserve the worktree and have the current owner revalidate before retrying recover-cleanup`,
+        `Accepted artifact is not contained in the checkout (${errorText(error)}); preserve the worktree`,
         { cause: error },
       )
     }
@@ -480,58 +268,6 @@ export class WorktreeCleanup {
           : ""
       }`,
     )
-  }
-
-  private appendCleanupSettlement(
-    effect: EffectRow,
-    authorization: CleanupRecoveryAuthorization,
-    settlement: NativeCleanupSettlement,
-    fence: number,
-  ) {
-    this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
-      const current = db
-        .query<{ state: string; receipt: string | null }, [string, string]>(
-          "SELECT state,receipt FROM runner_effects WHERE id=? AND plan_id=?",
-        )
-        .get(effect.id, effect.plan_id)
-      if (!current || !["held", "intended", "uncertain"].includes(current.state))
-        throw new Error("Native cleanup effect changed before settlement evidence was recorded")
-      const receipt = appendRunnerEffectReceipt(current.receipt, {
-        schema: "lazers-native-cleanup-settlement/v1",
-        authorization: {
-          requestID: authorization.requestID,
-          owner: authorization.owner,
-          ownerEpoch: authorization.ownerEpoch,
-          taskID: authorization.taskID,
-          attemptID: authorization.attemptID,
-          artifact: authorization.artifact,
-          workspace: authorization.workspace,
-        },
-        settlement,
-      })
-      const changed = db
-        .query(
-          "UPDATE runner_effects SET receipt=? WHERE id=? AND plan_id=? AND state IN ('held','intended','uncertain')",
-        )
-        .run(receipt, effect.id, effect.plan_id).changes
-      if (changed !== 1)
-        throw new Error("Native cleanup settlement evidence lost its durable effect row")
-      this.runtime.store.record(
-        effect.plan_id,
-        effect.task_id,
-        "WORKTREE_CLEANUP_SETTLEMENT_OBSERVED",
-        {
-          effectID: effect.id,
-          requestID: authorization.requestID,
-          attemptID: authorization.attemptID,
-          sessionID: authorization.sessionID,
-          workspace: authorization.workspace,
-          terminalSequence: settlement.terminal.sequence,
-          terminalEventID: settlement.terminal.eventID,
-          observedAt: settlement.observedAt,
-        },
-      )
-    })
   }
 
   private completeWorktreeRemoval(effect: EffectRow, receipt: unknown, fence: number) {
@@ -670,24 +406,6 @@ export class WorktreeCleanup {
       sessionID: attempt.session_id,
       assignment: this.runtime.progress.assignmentForSession(attempt.session_id) ?? null,
     }))
-    const idleRevisions = this.runtime.store.atomic((db) => {
-      if (!attempts.length) return []
-      const sessionIDs = attempts.map((attempt) => attempt.session_id)
-      try {
-        const rows = db
-          .query<{ session_id: string; revision: number }, [string, ...string[]]>(
-            `SELECT session_id,revision FROM runner_native_idle
-             WHERE project_directory=? AND session_id IN (${sessionIDs.map(() => "?").join(",")})
-             ORDER BY session_id`,
-          )
-          .all(this.runtime.directory, ...sessionIDs)
-        const revisions = new Map(rows.map((row) => [row.session_id, row.revision]))
-        return sessionIDs.map((sessionID) => [sessionID, revisions.get(sessionID) ?? null])
-      } catch {
-        // Old databases or unavailable native-idle storage rely on the bounded native fallback.
-        return null
-      }
-    })
     const owners = this.runtime.store.atomic((db) =>
       db
         .query<
@@ -699,22 +417,6 @@ export class WorktreeCleanup {
         )
         .all(this.runtime.directory, workspace),
     )
-    const cleanupRecoveryAuthorizations = this.runtime.store.atomic((db) => {
-      const attemptIDs = new Set(attempts.map((attempt) => attempt.id))
-      return db
-        .query<{ task_id: string | null; payload: string }, [string]>(
-          `SELECT task_id,payload FROM runner_transitions
-           WHERE plan_id=? AND event='WORKTREE_CLEANUP_RECOVERY_AUTHORIZED' ORDER BY id`,
-        )
-        .all(plan.id)
-        .filter((row) => {
-          try {
-            return attemptIDs.has(JSON.parse(row.payload).attemptID)
-          } catch {
-            return true
-          }
-        })
-    })
     let adoptionFacts: unknown = null
     try {
       const payload = JSON.parse(source.payload) as { adoptionID?: unknown }
@@ -752,9 +454,7 @@ export class WorktreeCleanup {
         artifact: attempt.artifact,
       })),
       sessions,
-      idleRevisions,
       owners,
-      cleanupRecoveryAuthorizations,
       adoptionFacts,
       source: {
         kind: source.kind,
@@ -798,13 +498,16 @@ export class WorktreeCleanup {
       if (removal.state === "completed") continue
       let previousFacts: unknown
       let previousCheckedAt: unknown
+      let liveBlocker = false
       try {
         const receipt = JSON.parse(removal.receipt ?? "{}") as {
           retryFacts?: unknown
           retryCheckedAt?: unknown
+          liveBlocker?: unknown
         }
         previousFacts = receipt.retryFacts
         previousCheckedAt = receipt.retryCheckedAt
+        liveBlocker = receipt.liveBlocker === true
       } catch {
         previousFacts = undefined
       }
@@ -817,7 +520,8 @@ export class WorktreeCleanup {
       }
       if (currentFacts !== undefined && currentFacts !== previousFacts) return true
       const elapsed = this.runtime.now() - previousCheckedAt
-      if (elapsed < 0 || elapsed >= WORKTREE_CLEANUP_FALLBACK_MS) return true
+      const interval = liveBlocker ? WORKTREE_CLEANUP_LIVE_RETRY_MS : WORKTREE_CLEANUP_FALLBACK_MS
+      if (elapsed < 0 || elapsed >= interval) return true
     }
     return false
   }
@@ -934,7 +638,12 @@ export class WorktreeCleanup {
           }
           const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
           await this.assertHeadMerged(workspace, head)
-          const initialSettlement = await this.assertWorktreeQuiescent(
+          for (const attempt of this.runtime.store
+            .attempts(plan.id)
+            .filter((candidate) => candidate.workspace === workspace && candidate.artifact))
+            if (mode === "integration" && attempt.state === "accepted")
+              await this.assertArtifactIntegrated(attempt)
+          await this.assertWorktreeQuiescent(
             plan,
             sourceEffect,
             workspace,
@@ -945,7 +654,7 @@ export class WorktreeCleanup {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          const finalSettlement = await this.assertWorktreeQuiescent(
+          await this.assertWorktreeQuiescent(
             plan,
             sourceEffect,
             workspace,
@@ -956,15 +665,6 @@ export class WorktreeCleanup {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          if (
-            initialSettlement &&
-            finalSettlement &&
-            fingerprint({ ...initialSettlement, observedAt: 0 }) !==
-              fingerprint({ ...finalSettlement, observedAt: 0 })
-          )
-            throw new Error(
-              "Native cleanup settlement changed before removal; preserve the worktree",
-            )
           if (await gitAsync(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
           const finalHead = await gitAsync(workspace, ["rev-parse", "HEAD"])
@@ -983,18 +683,6 @@ export class WorktreeCleanup {
             !finalGitWorktrees.includes(target)
           )
             throw new Error("Exact owned worktree registration changed before removal; preserve it")
-          const settlement = finalSettlement ?? initialSettlement
-          if (settlement) {
-            const attempt = this.runtime.store
-              .attempts(plan.id)
-              .find((candidate) => candidate.id === sourceEffect.attempt_id)
-            const authorization = attempt
-              ? this.cleanupRecoveryAuthorization(plan, attempt, sourceEffect, workspace)
-              : undefined
-            if (!authorization)
-              throw new Error("Cleanup recovery authorization changed before evidence was recorded")
-            this.appendCleanupSettlement(effect, authorization, settlement, fence)
-          }
           if (!cleanupCurrent()) return
           beginCleanup()
           await this.runtime.host.removeWorktree(workspace)
@@ -1073,21 +761,39 @@ export class WorktreeCleanup {
             // Keep malformed legacy receipt bytes in the append-only history below.
           }
           const checkedAt = this.runtime.now()
-          const appended = JSON.parse(
-            appendRunnerEffectReceipt(current.receipt, {
-              schema: "lazers-worktree-cleanup-observation/v1",
-              error: reason,
-              ...(held ? { notSent: true } : {}),
-              ...(retryFacts ? { retryFacts } : {}),
-              retryCheckedAt: checkedAt,
-            }),
-          ) as Record<string, unknown>
+          const live = error instanceof LiveActivityBlockedError
+          let priorReceipt: Record<string, unknown> | undefined
+          try {
+            const parsed = JSON.parse(current.receipt ?? "null") as unknown
+            if (isRecord(parsed)) priorReceipt = parsed
+          } catch {
+            priorReceipt = undefined
+          }
+          const last = Array.isArray(priorReceipt?.history)
+            ? priorReceipt.history.at(-1)
+            : undefined
+          // The same blocker observed again is not new history; only the check time moves.
+          const unchanged =
+            isRecord(last) && last.error === reason && Boolean(last.notSent) === held
+          const base =
+            unchanged && priorReceipt
+              ? priorReceipt
+              : (JSON.parse(
+                  appendRunnerEffectReceipt(current.receipt, {
+                    schema: "lazers-worktree-cleanup-observation/v1",
+                    error: reason,
+                    ...(held ? { notSent: true } : {}),
+                    ...(retryFacts ? { retryFacts } : {}),
+                    retryCheckedAt: checkedAt,
+                  }),
+                ) as Record<string, unknown>)
           const receipt = JSON.stringify({
-            ...appended,
+            ...base,
             error: previousError ?? reason,
             ...(held ? { notSent: true } : {}),
             ...(retryFacts ? { retryFacts } : {}),
             retryCheckedAt: checkedAt,
+            liveBlocker: live,
           })
           const recorded = db
             .query(
@@ -1120,7 +826,7 @@ export class WorktreeCleanup {
               status: "cleanup-blocked",
               reason,
               artifact: plan.artifact,
-              allowedActions: ["integrated", "recover-cleanup"],
+              allowedActions: ["integrated", "cancel"],
             },
             true,
           )

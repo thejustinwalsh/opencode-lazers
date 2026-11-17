@@ -191,11 +191,7 @@ function facts(): TerminalWorkerContinuationFacts {
     pendingForms: 0,
     outcome: "interrupted",
     turn: { inputID, state: "interrupted" },
-    background: {
-      state: "unknown",
-      source: "experimental.idle",
-      reason: "replacement process has no idle-hook report",
-    },
+
     tokens: 50,
     tools: 3,
     cost: null,
@@ -227,7 +223,6 @@ function facts(): TerminalWorkerContinuationFacts {
     projectID: "project-current",
     taskCurrent: true,
     assignedInputMatches: true,
-    backgroundInputMatches: false,
     stopObservation: {
       attemptID,
       sessionID,
@@ -248,7 +243,6 @@ function facts(): TerminalWorkerContinuationFacts {
       pendingPermissions: 0,
       pendingForms: 0,
       observationUnstable: false,
-      background: worker.background,
     },
     retainedSession: true,
     retainedPrompt: true,
@@ -257,7 +251,7 @@ function facts(): TerminalWorkerContinuationFacts {
   }
 }
 
-test("unknown background remains explicit while the exact interrupted assignment may continue", () => {
+test("an idle worker with the exact interrupted assignment may continue", () => {
   expect(terminalWorkerContinuationProblem(facts())).toBeUndefined()
 })
 
@@ -302,7 +296,6 @@ test("a completed model turn can continue unfinished work without establishing t
   value.planHoldObservation!.turnState = "completed"
 
   expect(terminalWorkerContinuationProblem(value)).toBeUndefined()
-  expect(value.worker!.background?.state).toBe("unknown")
   value.node!.state = "accepted"
   expect(terminalWorkerContinuationProblem(value)).toBeDefined()
 })
@@ -458,35 +451,15 @@ test.each([
     },
   ],
   [
-    "known background work",
+    "a running shell",
     (value: TerminalWorkerContinuationFacts) => {
-      value.worker!.background = {
-        state: "observed",
-        source: "experimental.idle",
-        observedAt: 1,
-        inputID,
-        executionStartSequence: 1,
-        eventSequence: 2,
-        count: 1,
-        kinds: { shell: 1, subagent: 0, image: 0 },
-      }
-      value.backgroundInputMatches = true
+      value.worker!.runningShells = 1
     },
   ],
   [
-    "a mismatched known-idle report",
+    "an active child session",
     (value: TerminalWorkerContinuationFacts) => {
-      value.worker!.background = {
-        state: "observed",
-        source: "experimental.idle",
-        observedAt: 1,
-        inputID: "msg-old",
-        executionStartSequence: 1,
-        eventSequence: 2,
-        count: 0,
-        kinds: { shell: 0, subagent: 0, image: 0 },
-      }
-      value.backgroundInputMatches = false
+      value.worker!.activeChildren = 1
     },
   ],
 ] as const)("rejects %s", (_label, mutate) => {
