@@ -25,6 +25,13 @@ It is not a historical hook replay, general OS scan or cleanup lease.
 
 ## LAZERS consumer
 
+Consume the reviewed native producer at
+`22e48b17bbb90a91010c9ca06af4909044d6edff` in the existing native checkout.
+Its public `experimental.session.settlement` observation distinguishes retained
+replay from compact projected lineage and reports present coverage, inventory,
+process identity and capture revision. Existing job listings are diagnostics,
+not a substitute for this observation.
+
 After the producer's actual API and compatible artifacts are reviewed, add its
 consumer only to explicit current-owner cleanup recovery. Keep fresh settlement
 distinct from hook reports; preserve historical `NativeIdleStore` rows and holds.
@@ -52,10 +59,14 @@ generation. LAZERS uses automatic fixes through `bun run verify` plus native,
 idle and cleanup-convergence tests. Qualify compatible producer/consumer against
 an isolated candidate or embedded native host before claiming installed capability.
 
-Replacing or activating the running native service is a separate user decision;
-no deployment, global configuration change, publication or upstream PR is
-authorized here. After authorized activation, observe original held assignments
-and retry public cleanup only on genuine passing evidence. Preserve holds otherwise.
+The current user instruction authorizes implementing the missing consumer and
+running joint code tests, followed by coordinated activation in the regular
+OpenCode service at a quiet point and product validation in regular Desktop.
+Do not create a separate Desktop profile. Preserve retained worktrees until the
+supported cleanup condition is satisfied; pre-upgrade history may remain unknown.
+After reviewed integration and qualification, observe original held assignments
+and retry public cleanup only on genuine passing evidence. No global configuration
+change, publication or upstream PR is authorized here.
 
 The delegated-agent ceiling remains three including native coordination/helpers
 and workers; the current owning Architect is excluded. Do not restart unrelated
