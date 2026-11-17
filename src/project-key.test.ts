@@ -154,6 +154,9 @@ test("reads accept rows recorded under an old alias after a restart", async () =
   expect(registration.key.startsWith("root:")).toBe(true)
   resetProjectAliasCache()
   expect(sameProject("old-id", "new-id")).toBe(false)
+  // Startup race: before resolution finishes, the strict current id still matches itself.
+  expect(sameProject("new-id", "new-id")).toBe(true)
+  expect(projectIdsFor("new-id")).toEqual(["new-id"])
   // New process: the synchronous part of registration hydrates from the database.
   const pending = registerProject(repository, { directory, opencodeProjectID: "new-id" })
   expect(sameProject("old-id", "new-id")).toBe(true)
