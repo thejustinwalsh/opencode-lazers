@@ -25,7 +25,15 @@ budget HTTP, Repomix and inference weights are not eagerly loaded by setup.
 
 ## Bounded demand-driven plugin startup
 
-One systems repair owns entrypoint registration, project-service ownership and
+**Driver intervention ownership:** Justin assigned the external driver direct
+development ownership of per-location startup and main-thread blocking Git,
+filesystem and SQLite hot paths, including `src/index.ts`. Do not dispatch a
+LAZERS worker into those areas. The earlier two-task authoring review was
+interrupted before submission; no startup worker was submitted or dispatched.
+Driver will supply changed files/commits for Architect composition. The outcome
+and verification below remain required, not delegated duplicate work.
+
+The driver repair owns entrypoint registration, project-service ownership and
 background activation. Preserve cheap location-scoped tools/RPCs, authorization,
 worker delegation restrictions, exact-generation source guards and options.
 Heavy construction/reconstruction and native location fan-out should depend on
@@ -54,6 +62,10 @@ One systems feature owns automatic admission and the existing continuation path.
 The user authorizes automatic continuation of genuinely interrupted admitted
 implementation workers after service restart; not cancellation revival, replay
 of tools, provider-error retries, retained-check reruns or cleanup certification.
+Architect retains this lane and LZ-222 verification uncertainty. Automatic
+continuation work must not alter the driver's startup or synchronous hot-path
+changes. Coordinate same-file changes with delivered file lists; Architect owns
+rebasing/composition, not moving-base worker rebase loops.
 
 Reuse the journaled same-attempt/session/workspace/route/input lineage path,
 XState transitions and exact owner/control-epoch fences. A matching interrupted
