@@ -243,3 +243,32 @@ export function planStateLabel(state: string | undefined) {
       return null
   }
 }
+
+export type TaskSequencing = {
+  kind: "sequenced" | "parallel"
+  /** The icon's accessible name. */
+  label: string
+  detail: string
+}
+
+/**
+ * Whether the task runs in order behind other work or is free to run alongside it. A task with any
+ * recorded dependency is sequenced; one without is eligible for parallel work.
+ */
+export function taskSequencing(row: ExecutionListRow): TaskSequencing {
+  const count = new Set([
+    ...row.prerequisites,
+    ...(row.dependencyTasks ?? []).map((dependency) => dependency.taskID),
+  ]).size
+  return count > 0
+    ? {
+        kind: "sequenced",
+        label: "Sequenced",
+        detail: `Runs after ${count} ${count === 1 ? "dependency" : "dependencies"}`,
+      }
+    : {
+        kind: "parallel",
+        label: "Parallel-eligible",
+        detail: "No dependencies; can run alongside other work",
+      }
+}
