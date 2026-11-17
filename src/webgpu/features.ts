@@ -1,6 +1,7 @@
 import { z } from "zod"
 
-export const DEFAULT_MODEL_KEEP_ALIVE_MS = 60_000
+/** Negative means never unload when idle. */
+export const DEFAULT_MODEL_KEEP_ALIVE_MS = -1
 
 export const FeatureSettings = z.strictObject({
   enabled: z.boolean(),
