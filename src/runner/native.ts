@@ -32,6 +32,7 @@ import { NativeIdleStore } from "./native-idle.ts"
 import type { NativeIdleReport, NativeIdleState, NativeIdleTerminal } from "./native-idle.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
+import { sameProject } from "../project-key.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -1321,7 +1322,7 @@ export function nativeHost(
       if (
         input.ownership.lazersSessionID !== input.sessionID ||
         input.ownership.lazersMessageID !== input.inboxID ||
-        input.ownership.lazersProjectID !== ctx.location.project.id ||
+        !sameProject(input.ownership.lazersProjectID, ctx.location.project.id) ||
         input.ownership.lazersProjectDirectory !== repository.projectDirectory
       )
         throw new Error("Refusing to cancel an outcome with mismatched durable ownership")
@@ -1585,7 +1586,7 @@ export function nativeHost(
     async notify(input) {
       if (
         input.metadata &&
-        (input.metadata.lazersProjectID !== ctx.location.project.id ||
+        (!sameProject(input.metadata.lazersProjectID, ctx.location.project.id) ||
           input.metadata.lazersProjectDirectory !== repository.projectDirectory ||
           input.metadata.lazersSessionID !== input.sessionID ||
           input.metadata.lazersMessageID !== input.id)

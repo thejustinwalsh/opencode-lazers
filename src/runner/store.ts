@@ -38,6 +38,7 @@ import type {
   PrerequisiteIntegrationRow,
   TaskPrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
+import { sameProject } from "../project-key.ts"
 
 export type PlanRow = {
   id: string
@@ -402,7 +403,7 @@ function hasArchitectSourceReferenceOwnership(
       payload.status === "architect-source-reference" &&
       payload.sourceSessionID === sourceSessionID &&
       ownership &&
-      ownership.lazersProjectID === projectID &&
+      sameProject(ownership.lazersProjectID, projectID) &&
       ownership.lazersProjectDirectory === projectDirectory &&
       ownership.lazersPlanID === row.plan_id &&
       ownership.lazersOutboxID === row.id &&

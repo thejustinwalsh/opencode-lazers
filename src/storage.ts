@@ -42,6 +42,7 @@ import {
   TaskDispositionRecord,
   type TaskDispositionRecord as TaskDispositionRecordType,
 } from "./task-disposition.ts"
+import { installProjectSchema } from "./project-key.ts"
 
 export function taskDatabasePath(dataDirectory?: string): string {
   const directory =
@@ -73,6 +74,7 @@ export class TaskRepository {
     this.connection = this.open()
     try {
       installTaskAdviceSchema(this)
+      installProjectSchema(this)
     } catch (error) {
       this.connection.close()
       this.connection = undefined

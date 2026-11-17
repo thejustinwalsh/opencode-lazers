@@ -19,6 +19,11 @@ export const schemaModules = {
     source: "src/tasks/advice.ts",
     tables: ["task_advice"],
   },
+  projects: {
+    generation: 1,
+    source: "src/project-key.ts",
+    tables: ["lazers_projects", "lazers_project_aliases", "lazers_project_paths"],
+  },
   runner: {
     generation: 5,
     source: "src/runner/store.ts",

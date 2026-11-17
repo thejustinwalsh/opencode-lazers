@@ -20,6 +20,7 @@ import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
 import { beginSourceGuard } from "./runner/source-quarantine.ts"
 import { registerSourceFence } from "./runner/source-fence-rpc.ts"
+import { registerProject } from "./project-key.ts"
 import { ProjectIndex } from "./context/index.ts"
 import type { ContextHost } from "./context/index.ts"
 import { nativeContextPermission, registerContextTools } from "./context/tools.ts"
@@ -113,6 +114,15 @@ export default Plugin.define({
       yield* registerArchitect(ctx)
       yield* registerAuditTools(ctx, repository)
       const runnerStore = new RunnerStore(repository)
+      // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
+      void registerProject(repository, {
+        directory: ctx.location.project.canonical,
+        opencodeProjectID: ctx.location.project.id,
+      }).catch((error) =>
+        Effect.runPromise(
+          Effect.logWarning("LAZERS project key registration failed", { error: String(error) }),
+        ),
+      )
       const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
       const host = nativeHost(ctx, repository)
       let scheduler: ReturnType<typeof sharedScheduler.register> | undefined

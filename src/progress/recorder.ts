@@ -10,6 +10,7 @@ import { privacyStats, safeError, safeText } from "../trajectory/privacy.ts"
 import { publicProgressError, visibleProgressText } from "./privacy.ts"
 import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
 import { observeFileTargets } from "./file-target.ts"
+import { sameProject } from "../project-key.ts"
 
 export type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -950,7 +951,7 @@ export class ProgressRecorder {
     const task = TaskSpecSchema.parse(JSON.parse(row.task_body))
     if (
       task.id !== row.task_id ||
-      task.provenance.projectID !== this.projectID ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
       task.provenance.projectDirectory !== row.project_directory
     )
       return undefined

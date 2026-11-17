@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import type { LiveHistoryRequest } from "./contract.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
+import { projectIdsJSON, sameProject } from "../project-key.ts"
 
 export const LIVE_LIMITS = {
   sessions: 32,
@@ -241,11 +242,11 @@ function progressQuery(db: Database) {
   return db.query<ProgressRow, (string | number)[]>(
     `WITH recent AS (
        SELECT seq FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id=?
+        WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
           AND plan_id=? AND task_id=? ORDER BY seq DESC LIMIT ?
      ), tools AS (
        SELECT seq FROM runner_progress
-        WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id=?
+        WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
           AND plan_id=? AND task_id=? AND kind='tool' AND call_id IS NOT NULL
         ORDER BY seq DESC LIMIT ?
      ), selected AS (
@@ -277,14 +278,14 @@ function progressArgs(
     projectDirectory,
     assignment.attemptID,
     sessionID,
-    projectID,
+    projectIdsJSON(projectID),
     assignment.planID,
     assignment.taskID,
     LIVE_LIMITS.progressRowsPerSession + 1,
     projectDirectory,
     assignment.attemptID,
     sessionID,
-    projectID,
+    projectIdsJSON(projectID),
     assignment.planID,
     assignment.taskID,
     LIVE_LIMITS.toolRowsPerSession + 1,
@@ -373,7 +374,7 @@ function readHistoryCursor(
     scope.data.sessionID === request.scope.sessionID
   if (
     !sameScope ||
-    payload.data.projectID !== projectID ||
+    !sameProject(payload.data.projectID, projectID) ||
     payload.data.sessionID !== request.sessionID ||
     payload.data.limit !== request.limit
   )
@@ -536,7 +537,7 @@ export class LiveReadStore {
                         ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)} AS payload_bytes,
                         ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)}>? AS payload_omitted
                    FROM runner_progress
-                  WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id=?
+                  WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?))
                     AND plan_id=? AND task_id=? AND seq IN (${placeholders})
                   ORDER BY seq DESC`,
               )
@@ -550,7 +551,7 @@ export class LiveReadStore {
                 this.projectDirectory,
                 assignment.attemptID,
                 sessionID,
-                this.projectID,
+                projectIdsJSON(this.projectID),
                 assignment.planID,
                 assignment.taskID,
                 ...sequences,
@@ -631,7 +632,7 @@ export class LiveReadStore {
           this.projectDirectory,
           assignment.attempt_id,
           input.sessionID,
-          this.projectID,
+          projectIdsJSON(this.projectID),
           input.limit + 1,
         ]
         if (beforeSequence !== undefined) values.splice(values.length - 1, 0, beforeSequence)
@@ -647,7 +648,7 @@ export class LiveReadStore {
                     ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)} AS payload_bytes,
                     ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)}>? AS payload_omitted
                FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id=? ${predicate}
+              WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?)) ${predicate}
               ORDER BY seq DESC LIMIT ?`,
           )
           .all(...values)
