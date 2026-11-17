@@ -250,7 +250,7 @@ describe("owned native Desktop adapter", () => {
     expect(hint).not.toContain("abc123456789")
   })
 
-  test("rendered native menus, tabs and disclosures are actionable without exposing navigation links", () => {
+  test("rendered native controls and visible tree rows are actionable without exposing navigation links", () => {
     const dom = new Window()
     try {
       dom.document.body.innerHTML = `
@@ -259,14 +259,25 @@ describe("owned native Desktop adapter", () => {
         <div role="menuitemcheckbox">Include other sessions</div>
         <div role="option">Project tasks</div>
         <div role="tab">Radar</div>
+        <div role="treeitem"><span>Visible task</span></div>
+        <div role="treeitem">Clipped task</div>
         <details><summary>Activity and holds</summary><p>Fixture failure</p></details>
         <a href="https://example.test" role="menuitem">External link</a>`
       for (const element of dom.document.body.querySelectorAll("*")) {
         element.setAttribute("style", "opacity:1")
         Object.defineProperty(element, "getBoundingClientRect", {
-          value: () => ({ x: 10, y: 20, width: 100, height: 30 }),
+          value: () => ({
+            x: 10,
+            y: element.textContent === "Clipped task" ? 50 : 20,
+            width: 100,
+            height: 30,
+          }),
         })
       }
+      Object.defineProperty(dom.document, "elementFromPoint", {
+        value: (_x: number, y: number) =>
+          y === 35 ? dom.document.querySelector('[role="treeitem"] span') : dom.document.body,
+      })
       const snapshot = dom.eval(BOUNDED_DOM_SNAPSHOT_SCRIPT) as {
         elements: Array<{ name: string; role: string; tag: string }>
       }
@@ -276,6 +287,7 @@ describe("owned native Desktop adapter", () => {
         "Include other sessions",
         "Project tasks",
         "Radar",
+        "Visible task",
         "Activity and holds",
       ])
       expect(snapshot.elements[0]?.role).toBe("menuitem")
