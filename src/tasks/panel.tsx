@@ -57,6 +57,7 @@ import {
   attentionLabel,
   distinctReasons,
   isRingGlyph,
+  rowHeld,
   rowHoldReasons,
   taskRowPresentation,
   taskRowBlocker,
@@ -76,6 +77,7 @@ import {
   itemIndex,
   navigationTarget,
   planHeaded,
+  planKey,
   planOfTask,
   taskIndex,
   taskItems,
@@ -175,8 +177,13 @@ function objectiveExtendsTitle(objective: string) {
 
 /** Rows rendered beyond the viewport on each side. */
 const VIRTUAL_OVERSCAN = 8
-/** Request the next page once the last rendered item is this close to the end of the list. */
+/**
+ * Request the next page once the viewport's overscanned window is this close to the end of the
+ * list. Measured from the viewport, never from rows pinned to stay mounted for focus.
+ */
 const LOAD_MORE_WITHIN = 10
+/** Attention entries mounted at once; the rest stay reachable by keyboard and its pager. */
+const ATTENTION_WINDOW = 5
 /** Bounded wait for a scrolled-to row to mount before giving up on focusing it. */
 const FOCUS_ATTEMPTS = 10
 
@@ -256,6 +263,10 @@ function TaskPanel(
   const [collapsedPlans, setCollapsedPlans] = createSignal<Set<string>>(new Set())
   /** Where the tree starts inside the scrolling list, below Now/Attention/Next and notes. */
   const [treeOffset, setTreeOffset] = createSignal(0)
+  /** First Attention entry in its mounted window (clamped where read). */
+  const [attentionStart, setAttentionStart] = createSignal(0)
+  /** The tree item holding focus while focus is inside the tree; it stays mounted. */
+  const [focusedTreeKey, setFocusedTreeKey] = createSignal<string>()
   const feedback = new StartFeedback(setStartFeedback)
   const listRestore = new ScrollRestoration()
   const detailRestore = new ScrollRestoration()
@@ -422,6 +433,7 @@ function TaskPanel(
     setTemporarilyExpandedForks(new Set<string>())
     setTemporarilyCollapsedForks(new Set<string>())
     setCollapsedPlans(new Set<string>())
+    setAttentionStart(0)
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
@@ -445,18 +457,21 @@ function TaskPanel(
    * Every row in the model, including branches of collapsed forks: Now and Attention membership
    * must not depend on what is expanded. Selecting an entry reveals its fork.
    */
-  const signalRows = createMemo(() => {
+  const signalEntries = createMemo(() => {
     const model = executionList()
     const rows: ExecutionListRow[] = []
-    const visit = (taskRow: ExecutionListRow) => {
+    const planStates = new Map<string, string>()
+    const visit = (taskRow: ExecutionListRow, planState?: string) => {
       rows.push(taskRow)
+      if (planState) planStates.set(taskRow.taskID, planState)
       for (const branch of taskRow.fork?.branches ?? [])
-        for (const child of branch.rows) visit(child)
+        for (const child of branch.rows) visit(child, planState)
     }
-    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow)
+    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow, group.state)
     rows.push(...model.unplanned)
-    return rows
+    return { rows, planStates }
   })
+  const signalRows = () => signalEntries().rows
   /** A native input/approval request on an open task: it asks the person now. */
   const asksForAttention = (row: ExecutionListRow) =>
     taskRowPresentation(row, visible()?.currentActivity[row.taskID]).tone === "attention"
@@ -468,21 +483,28 @@ function TaskPanel(
     )
   /**
    * Native input/approval requests lead Attention (they ask the person now, even while the worker is
-   * foreground), then recorded waits. Membership only reads recorded state; it never reorders work.
+   * foreground), then recorded holds. Routine waits on prerequisites, reservations or scheduler
+   * order are not holds: they stay in the planned tree. Membership only reads recorded state; it
+   * never reorders work.
    */
-  const attentionRows = () => {
-    const held = (row: ExecutionListRow) =>
-      visible()?.currentActivity[row.taskID]?.foreground !== "active" &&
-      (row.waiting ||
-        visible()?.currentActivity[row.taskID]?.waiting === true ||
-        row.scheduling?.decision === "waiting")
-    const rows = signalRows()
+  const attentionRows = createMemo(() => {
+    const { rows, planStates } = signalEntries()
+    const held = (row: ExecutionListRow) => {
+      const activity = visible()?.currentActivity[row.taskID]
+      return activity?.foreground !== "active" && rowHeld(row, activity, planStates.get(row.taskID))
+    }
     return [
       ...rows.filter(asksForAttention),
       ...rows.filter((row) => !asksForAttention(row) && held(row)),
     ]
-  }
-  const signalTabStopTaskID = () => nowRows()[0]?.taskID ?? attentionRows()[0]?.taskID
+  })
+  /** The mounted slice of Attention: a short window over every entry, never all of them. */
+  const attentionWindow = createMemo(() => {
+    const rows = attentionRows()
+    const start = Math.max(0, Math.min(attentionStart(), rows.length - ATTENTION_WINDOW))
+    return { start, rows: rows.slice(start, start + ATTENTION_WINDOW), total: rows.length }
+  })
+  const signalTabStopTaskID = () => nowRows()[0]?.taskID ?? attentionWindow().rows[0]?.taskID
   const nextStatus = () => {
     const value = visible()
     if (!value?.scheduling || value.schedulingError || value.stale)
@@ -806,11 +828,21 @@ function TaskPanel(
     }),
   )
   const itemByKey = createMemo(() => new Map(items().map((item) => [item.key, item])))
-  const focusTaskID = createMemo(() => {
-    const rows = taskItems(items())
+  /**
+   * The tree's one tab stop: the selected row; with that row inside a collapsed plan, its heading;
+   * otherwise the first task row, else the first heading (every plan collapsed). It is always a
+   * listed item, and the range extractor keeps it mounted.
+   */
+  const treeTabStop = createMemo(() => {
+    const current = items()
     const selectedID = visible()?.selectedID
-    return rows.some((item) => item.row.taskID === selectedID) ? selectedID : rows[0]?.row.taskID
+    if (selectedID && taskIndex(current, selectedID) >= 0) return taskKey(selectedID)
+    const planID = selectedID ? planOfTask(executionList(), selectedID) : undefined
+    if (planID && itemIndex(current, planKey(planID)) >= 0) return planKey(planID)
+    return (taskItems(current)[0] ?? treeItems(current)[0])?.key
   })
+  /** Last item index inside the viewport (no overscan, no pins); -1 before layout. */
+  const [viewportEnd, setViewportEnd] = createSignal(-1)
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
       return items().length
@@ -828,16 +860,20 @@ function TaskPanel(
     get scrollMargin() {
       return treeOffset()
     },
+    onChange: (instance) => setViewportEnd(instance.range?.endIndex ?? -1),
     overscan: VIRTUAL_OVERSCAN,
-    // The tabbable row stays mounted so Tab can always enter the tree.
+    // The tab stop and the focused item stay mounted: Tab can always enter the tree, and scrolling
+    // never drops focus. Pins only add to the mounted set; paging reads the viewport range.
     get rangeExtractor() {
       const current = items()
-      const id = focusTaskID()
-      const pinned = id ? taskIndex(current, id) : -1
+      const pinned = [treeTabStop(), focusedTreeKey()]
+        .map((key) => (key ? itemIndex(current, key) : -1))
+        .filter((index) => index >= 0)
       return (range: Parameters<typeof defaultRangeExtractor>[0]) => {
         const indexes = defaultRangeExtractor(range)
-        return pinned >= 0 && !indexes.includes(pinned)
-          ? [...indexes, pinned].toSorted((left, right) => left - right)
+        const extra = pinned.filter((index) => !indexes.includes(index))
+        return extra.length
+          ? [...indexes, ...new Set(extra)].toSorted((left, right) => left - right)
           : indexes
       }
     },
@@ -852,12 +888,8 @@ function TaskPanel(
         : []
     })
   })
-  /** With no task row listed (every plan collapsed), the first heading keeps the tree's stop. */
-  const planTabIndex = (key: string) =>
-    !focusTaskID() && treeItems(items())[0]?.key === key ? 0 : -1
-  const rowTabIndex = (taskID: string) => {
-    return taskID === focusTaskID() ? 0 : -1
-  }
+  const planTabIndex = (key: string) => (key === treeTabStop() ? 0 : -1)
+  const rowTabIndex = (taskID: string) => (taskKey(taskID) === treeTabStop() ? 0 : -1)
   const openSourcePlan = async (source: NonNullable<ExecutionListRow["sourcePlan"]>) => {
     try {
       const files = props.screen.file
@@ -1334,28 +1366,58 @@ function TaskPanel(
         selectTask(taskID)
     }
   }
-  /** Now/Attention/Next entries form one short list above the tree; Down from the last enters it. */
+  /**
+   * Now/Attention/Next entries form one short list above the tree; Down from the last enters it.
+   * Attention mounts a window of its entries: stepping past either edge of the window slides it, so
+   * every entry is reachable and the list order holds across groups.
+   */
   const signalKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
     event.preventDefault()
-    const entries = [
+    const shown = attentionWindow()
+    const currentID = event.currentTarget.dataset.schedulingTaskId
+    const group = event.currentTarget.dataset.schedulingGroup
+    const entries = () => [
       ...(list?.querySelectorAll<HTMLButtonElement>("[data-scheduling-task-id]") ?? []),
     ]
-    const index = entries.indexOf(event.currentTarget)
-    if (event.key === "ArrowDown" && index === entries.length - 1) {
+    const focusEntry = (entry: HTMLButtonElement | undefined) => {
+      entry?.focus()
+      const id = entry?.dataset.schedulingTaskId
+      if (id) selectTask(id)
+    }
+    if (group === "attention" && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      const step = event.key === "ArrowDown" ? 1 : -1
+      const position = shown.rows.findIndex((row) => row.taskID === currentID) + step
+      const target = attentionRows()[shown.start + position]
+      if (target && (position < 0 || position >= shown.rows.length)) {
+        setAttentionStart(shown.start + step)
+        focusEntry(
+          entries().find(
+            (entry) =>
+              entry.dataset.schedulingGroup === "attention" &&
+              entry.dataset.schedulingTaskId === target.taskID,
+          ),
+        )
+        return
+      }
+    }
+    if (event.key === "Home") setAttentionStart(0)
+    if (event.key === "End") setAttentionStart(Math.max(0, shown.total - ATTENTION_WINDOW))
+    const listed = entries()
+    const index = listed.indexOf(event.currentTarget)
+    if (event.key === "ArrowDown" && index === listed.length - 1) {
       const first = taskItems(items())[0]
       if (first) moveTo(first.row.taskID)
+      else goTo(treeItems(items())[0])
       return
     }
     const next =
       event.key === "Home"
         ? 0
         : event.key === "End"
-          ? entries.length - 1
-          : Math.max(0, Math.min(entries.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
-    entries[next]?.focus()
-    const id = entries[next]?.dataset.schedulingTaskId
-    if (id) selectTask(id)
+          ? listed.length - 1
+          : Math.max(0, Math.min(listed.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
+    focusEntry(listed[next])
   }
   const stateLabel = (state: NonNullable<typeof initial.state>) => {
     if (state === "failed") return "Failed / exhausted"
@@ -1389,7 +1451,8 @@ function TaskPanel(
   createEffect(() => {
     visible()
     void nowRows().length
-    void attentionRows().length
+    void attentionWindow().rows.length
+    void attentionWindow().total
     nextStatus()
     void items().length
     void scope.error
@@ -1443,12 +1506,33 @@ function TaskPanel(
       captureAnchor()
     })
   })
+  // Sliding the window reorders mounted nodes; moving the focused one blurs it. Focus that fell to
+  // the document from a still-mounted tree item goes back to it, without scrolling.
+  createEffect(() => {
+    void virtualRows()
+    const key = focusedTreeKey()
+    if (!key) return
+    queueMicrotask(() => {
+      if (!tree || focusedTreeKey() !== key) return
+      const active = tree.ownerDocument.activeElement
+      if (active && active !== tree.ownerDocument.body) return
+      const element = [...tree.querySelectorAll<HTMLElement>("[role=treeitem]")].find(
+        (candidate) => candidate.dataset.itemKey === key,
+      )
+      element?.focus({ preventScroll: true })
+    })
+  })
   // The next page loads as the end of the list comes into range; each page is requested once.
+  // The range is the viewport's, not the mounted rows': a pinned tab stop or focused row far below
+  // the viewport must not read as "near the end".
   createEffect(() => {
     const value = visible()
-    const last = virtualRows().at(-1)
-    if (!value || value.loading || !value.page?.nextCursor || !last) return
-    if (last.index < items().length - 1 - LOAD_MORE_WITHIN) return
+    viewportEnd()
+    void virtualRows().length
+    const count = items().length
+    const end = virtualizer.range?.endIndex
+    if (!value || value.loading || !value.page?.nextCursor || end === undefined) return
+    if (Math.min(end + VIRTUAL_OVERSCAN, count - 1) < count - 1 - LOAD_MORE_WITHIN) return
     void state.more(expectedKey())
   })
   const measure = () => {
@@ -1741,15 +1825,51 @@ function TaskPanel(
                         <For each={nowRows()}>{(taskRow) => renderSignalRow(taskRow, "Now")}</For>
                       </section>
                     </Show>
-                    <Show when={attentionRows().length}>
+                    <Show when={attentionWindow().total}>
                       <section class="lazers-tasks-schedule-group" aria-label="Attention">
                         <h3 class="lazers-tasks-schedule-heading">
                           Attention
-                          <span class="lazers-tasks-schedule-count">{attentionRows().length}</span>
+                          <span class="lazers-tasks-schedule-count">{attentionWindow().total}</span>
                         </h3>
-                        <For each={attentionRows()}>
+                        <For each={attentionWindow().rows}>
                           {(taskRow) => renderSignalRow(taskRow, "Attention")}
                         </For>
+                        <Show when={attentionWindow().total > ATTENTION_WINDOW}>
+                          <div
+                            class="lazers-tasks-schedule-pager"
+                            role="group"
+                            aria-label="More Attention"
+                          >
+                            <span class="lazers-tasks-schedule-pager-range" aria-live="polite">
+                              {attentionWindow().start + 1}–
+                              {attentionWindow().start + attentionWindow().rows.length} of{" "}
+                              {attentionWindow().total}
+                            </span>
+                            <Ui.Button
+                              variant="ghost"
+                              disabled={attentionWindow().start === 0}
+                              onClick={() =>
+                                setAttentionStart(
+                                  Math.max(0, attentionWindow().start - ATTENTION_WINDOW),
+                                )
+                              }
+                            >
+                              Previous
+                            </Ui.Button>
+                            <Ui.Button
+                              variant="ghost"
+                              disabled={
+                                attentionWindow().start + attentionWindow().rows.length >=
+                                attentionWindow().total
+                              }
+                              onClick={() =>
+                                setAttentionStart(attentionWindow().start + ATTENTION_WINDOW)
+                              }
+                            >
+                              More
+                            </Ui.Button>
+                          </div>
+                        </Show>
                       </section>
                     </Show>
                     <Show when={value().scheduling || value().schedulingError}>
@@ -1827,6 +1947,20 @@ function TaskPanel(
                     style={{ height: `${virtualizer.getTotalSize()}px` }}
                     ref={(element) => {
                       tree = element
+                    }}
+                    onFocusIn={(event) =>
+                      setFocusedTreeKey(
+                        (event.target as Element).closest<HTMLElement>("[role=treeitem]")?.dataset
+                          .itemKey,
+                      )
+                    }
+                    onFocusOut={(event) => {
+                      // A node the window reorders is detached for a moment and blurs; that is
+                      // not the person leaving the tree, and the guard below restores focus.
+                      if (!(event.target as Element).isConnected) return
+                      const next = event.relatedTarget
+                      if (!(next instanceof Node) || !event.currentTarget.contains(next))
+                        setFocusedTreeKey(undefined)
                     }}
                   >
                     <Keyed each={virtualRows()} by={(virtual) => virtual.key}>

@@ -274,6 +274,20 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* Attention mounts a short window; the pager names the range and steps it. */
+.lazers-tasks-schedule-pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 var(--task-icon-inset);
+  color: var(--text-weak);
+  font-size: 0.85em;
+}
+.lazers-tasks-schedule-pager-range {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
 .lazers-tasks-scheduling-warning {
   padding: 4px 8px;
   color: var(--text-weak);

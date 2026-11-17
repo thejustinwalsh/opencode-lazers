@@ -35,9 +35,22 @@ function deferred(): Deferred {
   return { promise, resolve }
 }
 
+/** Fixture variations; the defaults reproduce the original list. */
+type Fixture = {
+  /** Alpha's tasks form one dependency chain: every task after the first waits on the one before. */
+  alphaChain?: boolean
+  /** The first N Alpha tasks have a worker asking for input (a genuine request of the person). */
+  requests?: number
+  /** Further titled two-task plans after Beta. */
+  extraPlans?: number
+  /** Queued pages advertise a next cursor only once opened. */
+  queuePagesClosed?: boolean
+}
+
 async function withPanel(
   run: (h: Awaited<ReturnType<typeof mountPanel>>) => Promise<void>,
   layout: { paneHeight?: number } = {},
+  fixture: Fixture = {},
 ) {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
@@ -90,7 +103,7 @@ async function withPanel(
   let disposeSetup: (() => void) | undefined
   let mounted: { dispose(): void } | undefined
   try {
-    const harness = await mountPanel(dom, outputDirectory)
+    const harness = await mountPanel(dom, outputDirectory, fixture)
     disposeSetup = harness.disposeSetup
     mounted = harness.mounted
     await run(harness)
@@ -108,7 +121,7 @@ async function withPanel(
   }
 }
 
-async function mountPanel(dom: Window, outputDirectory: string) {
+async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture) {
   const browserDocument = dom.document as unknown as Document
   const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
   const entry = fileURLToPath(new URL("../task-panel/fixtures/tasks-dom-entry.ts", import.meta.url))
@@ -166,6 +179,13 @@ async function mountPanel(dom: Window, outputDirectory: string) {
   }
   const betaTasks = [beta.root, beta.a, beta.b, beta.join]
   const queue = Array.from({ length: 90 }, (_, index) => make(`Queue ${index + 1}`))
+  const extraPlans = Array.from({ length: fixture.extraPlans ?? 0 }, (_, index) => ({
+    id: uuid(9100 + index),
+    title: `Gamma ${index + 1} plan`,
+    tasks: [make(`Gamma ${index + 1} a`), make(`Gamma ${index + 1} b`)],
+  }))
+  const requests = new Set(alpha.slice(0, fixture.requests ?? 0))
+  let queuePagesOpen = !fixture.queuePagesClosed
   const blocked = new Set([beta.a, beta.join])
   const referenceOf = (taskID: string) => `LZ-${[...names.keys()].indexOf(taskID) + 1}`
   const stateOf = (taskID: string) => (blocked.has(taskID) ? "blocked" : "queued")
@@ -197,6 +217,8 @@ async function mountPanel(dom: Window, outputDirectory: string) {
   const gates = new Map<string, Deferred>()
   /** `${state}:${cursor}` pages that fail while listed here. */
   const failures = new Set<string>()
+  /** `${state}:${cursor}` pages answered with these tasks and next cursor instead. */
+  const pageOverrides = new Map<string, { ids: string[]; nextCursor: string | null }>()
   const pageOf = (ids: string[], nextCursor: string | null, count: number) => ({
     projectDirectory,
     snapshot,
@@ -211,12 +233,18 @@ async function mountPanel(dom: Window, outputDirectory: string) {
     if (gate) await gate.promise
     if (input.cursor && failures.has(`${input.state}:${input.cursor}`))
       throw new Error("next page unavailable")
+    const override = input.cursor ? pageOverrides.get(`${input.state}:${input.cursor}`) : undefined
+    if (override) return pageOf(override.ids, override.nextCursor, queue.length)
     if (input.state === "queued") {
       const pageIndex = input.cursor ? Number(input.cursor.split("-")[1]) : 0
       const ids = queue.slice(pageIndex * 30, pageIndex * 30 + 30)
-      return pageOf(ids, pageIndex < 2 ? `queue-${pageIndex + 1}` : null, queue.length)
+      return pageOf(
+        ids,
+        pageIndex < 2 && queuePagesOpen ? `queue-${pageIndex + 1}` : null,
+        queue.length,
+      )
     }
-    const ids = [...alpha, ...betaTasks]
+    const ids = [...alpha, ...betaTasks, ...extraPlans.flatMap((plan) => plan.tasks)]
     return pageOf(ids, null, ids.length)
   }
   const node = (taskID: string, ordinal: number) => ({
@@ -256,7 +284,9 @@ async function mountPanel(dom: Window, outputDirectory: string) {
         title: "Alpha plan",
         afterPlans: [],
         nodes: alpha.map(node),
-        dependencies: [],
+        dependencies: fixture.alphaChain
+          ? alpha.slice(1).map((successor, index) => ({ prerequisite: alpha[index]!, successor }))
+          : [],
       },
       {
         id: uuid(9002),
@@ -274,6 +304,17 @@ async function mountPanel(dom: Window, outputDirectory: string) {
           { prerequisite: beta.b, successor: beta.join },
         ],
       },
+      ...extraPlans.map((plan) => ({
+        id: plan.id,
+        revision: 1,
+        version: 1,
+        state: "queued",
+        reason: null,
+        title: plan.title,
+        afterPlans: [],
+        nodes: plan.tasks.map(node),
+        dependencies: [],
+      })),
     ],
     unplannedTasks: queue.map((taskID) => ({
       taskID,
@@ -291,7 +332,7 @@ async function mountPanel(dom: Window, outputDirectory: string) {
       recordedState: stateOf(taskID),
       waiting: false,
       holdReason: null,
-      pendingInput: false,
+      pendingInput: requests.has(taskID),
       pendingPermissions: 0,
       pendingForms: 0,
       outcome: null,
@@ -488,6 +529,11 @@ async function mountPanel(dom: Window, outputDirectory: string) {
     queryCalls,
     gates,
     failures,
+    pageOverrides,
+    openQueuePages: () => {
+      queuePagesOpen = true
+    },
+    extraPlans,
     announceChange,
     reorderQueueTop,
     list,
@@ -786,5 +832,254 @@ test("collapsing a plan keeps the fitted split; plan headings are level-1 tree i
       expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
     },
     { paneHeight: 1000 },
+  )
+})
+
+test("a next page that repeats its cursor or lists nothing new is requested once until Retry", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.rows().length > 0)
+    h.chooseFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+    // queue-1 lists the first page again and points back at itself: it never advances.
+    h.pageOverrides.set("queued:queue-1", { ids: h.queue.slice(0, 30), nextCursor: "queue-1" })
+    const asked = (cursor: string) =>
+      h.queryCalls.filter((call) => call.state === "queued" && call.cursor === cursor).length
+    const loader = () => h.container.querySelector<HTMLElement>(".lazers-tasks-loader")
+    const retry = () =>
+      [...(loader()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (button) => button.textContent === "Retry",
+      )
+    await until(() => {
+      h.scrollTo(h.list().scrollHeight)
+      return asked("queue-1") === 1
+    })
+    await until(() => Boolean(retry()))
+    // The loader stays in view; scroll events keep coming; the cursor is not read again.
+    for (let round = 0; round < 5; round++) {
+      h.scrollTo(h.list().scrollHeight - 40)
+      h.scrollTo(h.list().scrollHeight)
+      await settle()
+    }
+    expect(asked("queue-1")).toBe(1)
+    expect(loader()?.textContent).toContain("Could not load more tasks.")
+    // Retry reads it exactly once more; the cycle stops again.
+    retry()!.click()
+    await until(() => asked("queue-1") === 2 && Boolean(retry()))
+    await settle()
+    expect(asked("queue-1")).toBe(2)
+    // A fresh cursor with no new task is no progress either: the fresh cursor is not followed.
+    h.pageOverrides.set("queued:queue-1", { ids: [], nextCursor: "queue-2" })
+    retry()!.click()
+    await until(() => asked("queue-1") === 3 && Boolean(retry()))
+    h.scrollTo(h.list().scrollHeight)
+    await settle()
+    expect(asked("queue-2")).toBe(0)
+    // Once the page advances, Retry continues and rows 31+ follow.
+    h.pageOverrides.clear()
+    retry()!.click()
+    await until(() => asked("queue-1") === 4)
+    h.scrollTo(HEAD + ROW * 28)
+    await until(() => Boolean(h.row(h.queue[30]!)))
+  })
+})
+
+test("a pinned selected row near the end does not page; the viewport reaching the end does", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      h.chooseFilter("Queued")
+      await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+      const doc = h.container.ownerDocument
+      // Select and focus a row near the end of the 30 listed, then return the viewport to the top.
+      h.scrollTo(h.list().scrollHeight)
+      await until(() => Boolean(h.row(h.queue[27]!)))
+      h.row(h.queue[27]!)!.click()
+      await until(() => h.row(h.queue[27]!)?.getAttribute("aria-selected") === "true")
+      // Selection focuses its row once the detail loads; wait for that before scrolling away.
+      await until(() => doc.activeElement === h.row(h.queue[27]!))
+      await settle()
+      h.scrollTo(0)
+      await until(() => Boolean(h.row(h.queue[0]!)))
+      // The selected, focused row stays mounted far below the viewport.
+      expect(h.row(h.queue[27]!)).not.toBeNull()
+      await until(() => h.row(h.queue[20]!) === null)
+      expect(doc.activeElement).toBe(h.row(h.queue[27]!))
+      // A next page appears with the viewport at the top.
+      const loaded = h.queryCalls.length
+      h.openQueuePages()
+      h.announceChange()
+      await until(() => h.queryCalls.length > loaded)
+      // The loader joins the list (offscreen, so unmounted): 30 rows and a loader row.
+      const tree = () => h.container.querySelector<HTMLElement>(".lazers-tasks-tree")!
+      await until(() => parseInt(tree().style.height) >= ROW * 31)
+      for (let round = 0; round < 3; round++) {
+        h.scrollTo(round)
+        await settle()
+      }
+      const paged = () =>
+        h.queryCalls.filter((call) => call.state === "queued" && call.cursor === "queue-1").length
+      expect(h.row(h.queue[27]!)).not.toBeNull()
+      expect(paged()).toBe(0)
+      expect(parseInt(tree().style.height)).toBe(ROW * 31)
+      expect(h.container.querySelector(".lazers-tasks-loader")).toBeNull()
+      // The viewport itself nearing the end still pages, once.
+      await until(() => {
+        h.scrollTo(h.list().scrollHeight)
+        return paged() === 1
+      })
+      await settle()
+      expect(paged()).toBe(1)
+    },
+    {},
+    { queuePagesClosed: true },
+  )
+})
+
+test("routine dependency waits stay in the planned tree; Attention lists holds only", async () => {
+  await withPanel(
+    async (h) => {
+      // Every Alpha task after the first waits on the one before it; no worker is active.
+      await until(() => h.rows().length > 0 && Boolean(h.attention(h.beta.a)))
+      await settle()
+      const attention = h.container.querySelector<HTMLElement>('[aria-label="Attention"]')!
+      expect(attention.querySelector(".lazers-tasks-schedule-count")?.textContent).toBe("2")
+      expect(
+        [...h.container.querySelectorAll<HTMLElement>('[data-scheduling-group="attention"]')].map(
+          (entry) => entry.dataset.schedulingTaskId,
+        ),
+      ).toEqual([h.beta.a, h.beta.join])
+      expect(h.container.querySelector('[aria-label="Now"]')).toBeNull()
+      // The routine waits are in the tree, in plan order, marked waiting on their prerequisite.
+      const waitingRow = h.row(h.alpha[3]!)!
+      expect(waitingRow.getAttribute("aria-posinset")).toBe("4")
+      expect(
+        waitingRow
+          .querySelector(":scope > .lazers-tasks-row .lazers-tasks-state")
+          ?.getAttribute("data-tone"),
+      ).toBe("waiting")
+      expect(h.attention(h.alpha[3]!)).toBeNull()
+    },
+    {},
+    { alphaChain: true },
+  )
+})
+
+test("Attention mounts a bounded window of requests and holds; keys walk every entry across groups", async () => {
+  await withPanel(
+    async (h) => {
+      // Twelve workers ask for input; two tasks are blocked; 47 more wait routinely on the chain.
+      await until(() => Boolean(h.attention(h.alpha[0]!)))
+      await settle()
+      const doc = h.container.ownerDocument
+      const expected = [...h.alpha.slice(0, 12), h.beta.a, h.beta.join]
+      const mounted = () => [
+        ...h.container.querySelectorAll<HTMLButtonElement>('[data-scheduling-group="attention"]'),
+      ]
+      const count = () =>
+        h.container.querySelector('[aria-label="Attention"] .lazers-tasks-schedule-count')
+          ?.textContent
+      expect(count()).toBe("14")
+      expect(mounted().length).toBe(5)
+      expect(mounted()[0]!.tabIndex).toBe(0)
+      expect(h.container.querySelector(".lazers-tasks-schedule-pager")?.textContent).toContain(
+        "1–5 of 14",
+      )
+      // Down walks every entry in order; the window slides and never mounts more than five.
+      // (Selecting an entry later moves focus to its tree row, so each key goes to the entry.)
+      const pressed = (taskID: string) =>
+        h.attention(taskID)?.getAttribute("aria-pressed") === "true"
+      let current = mounted()[0]!
+      const visited = [current.dataset.schedulingTaskId]
+      for (let step = 1; step < expected.length; step++) {
+        h.key(current, "ArrowDown")
+        await until(() => pressed(expected[step]!))
+        expect(mounted().length).toBeLessThanOrEqual(5)
+        current = h.attention(expected[step]!)!
+        visited.push(current.dataset.schedulingTaskId)
+      }
+      expect(visited).toEqual(expected)
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-selected") === "true")
+      // Up from the window's first entry slides it back.
+      const firstShown = mounted()[0]!.dataset.schedulingTaskId!
+      h.key(mounted()[0]!, "ArrowUp")
+      await until(() => pressed(expected[expected.indexOf(firstShown) - 1]!))
+      // Home and End reach the ends of the whole list.
+      h.key(mounted()[0]!, "Home")
+      await until(() => pressed(h.alpha[0]!))
+      h.key(h.attention(h.alpha[0]!)!, "End")
+      await until(() => pressed(h.beta.join))
+      // Down from the last entry enters the tree at its first task.
+      h.key(h.attention(h.beta.join)!, "ArrowDown")
+      await until(() => doc.activeElement === h.row(h.alpha[0]!))
+      // The pager reaches every entry without a keyboard.
+      h.scrollTo(0)
+      const pagerButton = (label: string) =>
+        [
+          ...h.container.querySelectorAll<HTMLButtonElement>(".lazers-tasks-schedule-pager button"),
+        ].find((button) => button.textContent === label)!
+      pagerButton("Previous").click()
+      pagerButton("Previous").click()
+      await until(() => mounted()[0]?.dataset.schedulingTaskId === h.alpha[0])
+      const seen = new Set<string>()
+      for (let page = 0; page < 4; page++) {
+        for (const entry of mounted()) seen.add(entry.dataset.schedulingTaskId!)
+        pagerButton("More").click()
+        await settle()
+      }
+      expect([...seen].toSorted()).toEqual(expected.toSorted())
+    },
+    {},
+    { alphaChain: true, requests: 12 },
+  )
+})
+
+test("an all-collapsed tree keeps a mounted tab stop and keeps a focused heading mounted", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      await settle()
+      const doc = h.container.ownerDocument
+      const headings = () => [
+        ...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-plan[role=treeitem]"),
+      ]
+      const heading = (title: string) =>
+        headings().find((item) => item.textContent?.includes(title))
+      const titles = ["Alpha plan", "Beta plan", ...h.extraPlans.map((plan) => plan.title)]
+      // Collapse every plan from the keyboard, heading by heading.
+      h.row(h.alpha[0]!)!.focus()
+      h.key(h.row(h.alpha[0]!)!, "ArrowLeft")
+      await until(() => doc.activeElement === heading("Alpha plan"))
+      for (const [index, title] of titles.entries()) {
+        h.key(heading(title)!, "ArrowLeft")
+        await until(() => heading(title)?.getAttribute("aria-expanded") === "false")
+        if (index === titles.length - 1) break
+        h.key(heading(title)!, "ArrowDown")
+        await until(() => doc.activeElement === heading(titles[index + 1]!))
+      }
+      expect(h.rows().filter((item) => item.dataset.taskId)).toHaveLength(0)
+      // Scrolled to the end with focus outside the tree, one mounted heading is still tabbable:
+      // the one holding the selected task (Alpha, the first), far above the viewport.
+      ;(doc.activeElement as HTMLElement).blur()
+      h.scrollTo(h.list().scrollHeight)
+      await settle()
+      expect(heading("Alpha plan")).toBeDefined()
+      expect(heading("Gamma 5 plan")).toBeUndefined()
+      const stops = headings().filter((item) => item.tabIndex === 0)
+      expect(stops.map((item) => item.textContent?.includes("Alpha plan"))).toEqual([true])
+      stops[0]!.focus()
+      expect(doc.activeElement).toBe(heading("Alpha plan")!)
+      // A focused heading that is not the tab stop stays mounted and focused while scrolled away.
+      h.key(heading("Alpha plan")!, "ArrowDown")
+      await until(() => doc.activeElement === heading("Beta plan"))
+      h.scrollTo(h.list().scrollHeight)
+      await settle()
+      expect(heading("Beta plan")).toBeDefined()
+      expect(doc.activeElement).toBe(heading("Beta plan")!)
+      // Down still steps from the focused heading through the model.
+      h.key(heading("Beta plan")!, "ArrowDown")
+      await until(() => doc.activeElement === heading("Gamma 1 plan"))
+    },
+    {},
+    { extraPlans: 30 },
   )
 })

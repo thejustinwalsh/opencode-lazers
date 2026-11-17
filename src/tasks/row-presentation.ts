@@ -111,6 +111,16 @@ export function attentionLabel(activity?: Activity) {
 }
 
 /**
+ * A recorded hold someone has to clear: a blocked task, a blocked plan, or a hold the runtime
+ * reports for the task's worker. Queued or ready work waiting on prerequisite tasks or plans,
+ * reservations or the scheduler's order is routine; the planned tree shows it where it sits.
+ */
+export function rowHeld(row: ExecutionListRow, activity?: Activity, planState?: string) {
+  if (terminal.has(row.status)) return false
+  return activity?.waiting === true || row.status === "blocked" || planState === "blocked"
+}
+
+/**
  * Derive the one-line row state from recorded lifecycle, runtime holds, the scheduling read and
  * native attention. Nothing here ranks or schedules work; it only names what was recorded.
  */

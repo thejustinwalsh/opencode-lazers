@@ -920,11 +920,25 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     key(row(ids.forkRoot)!, "ArrowLeft")
     await until(() => row(ids.forkRoot)?.getAttribute("aria-expanded") === "false")
     expect(row(ids.branchA)).toBeNull()
-    const branchAttention = container.querySelector<HTMLButtonElement>(
-      `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.branchA}"]`,
-    )
-    expect(branchAttention).not.toBeNull()
-    branchAttention!.click()
+    const branchAttention = () =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-scheduling-group="attention"][data-scheduling-task-id="${ids.branchA}"]`,
+      )
+    // Attention mounts a bounded window of its holds; its pager reaches the rest.
+    for (let page = 0; page < 10 && !branchAttention(); page++) {
+      expect(
+        container.querySelectorAll('[data-scheduling-group="attention"]').length,
+      ).toBeLessThanOrEqual(5)
+      const more = [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[aria-label="Attention"] .lazers-tasks-schedule-pager button',
+        ),
+      ].find((button) => button.textContent === "More")
+      more!.click()
+      await until(() => true)
+    }
+    expect(branchAttention()).not.toBeNull()
+    branchAttention()!.click()
     await until(() => row(ids.branchA)?.getAttribute("aria-selected") === "true")
     expect(row(ids.forkRoot)?.getAttribute("aria-expanded")).toBe("true")
     row(ids.unknown)!.click()

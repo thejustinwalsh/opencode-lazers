@@ -539,9 +539,10 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
     expect(container.querySelector('[aria-label="Now"]')?.textContent).toContain(
       "Foreground active work",
     )
-    expect(container.querySelector('[aria-label="Attention"]')?.textContent).toContain(
-      "Waiting for integrated task source",
-    )
+    // A queued task waiting on its running prerequisite is routine: it stays in the planned tree,
+    // not in Attention.
+    expect(container.querySelector('[aria-label="Attention"]')).toBeNull()
+    expect(row(ids.waiting)).not.toBeNull()
     expect(container.querySelector('[aria-label="Next"]')?.textContent).toContain(
       "Backend-selected next task",
     )
@@ -553,9 +554,9 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       "observed foreground activity active",
     )
     expect(row(ids.active)?.getAttribute("aria-label")).toContain("waiting")
-    expect(container.querySelectorAll(".lazers-tasks-schedule-group")).toHaveLength(3)
-    // Now and Attention entries carry the same colored state icon and no status word.
-    for (const group of ["now", "attention"]) {
+    expect(container.querySelectorAll(".lazers-tasks-schedule-group")).toHaveLength(2)
+    // Now entries carry the colored state icon and no status word.
+    for (const group of ["now"]) {
       const entry = container.querySelector<HTMLElement>(`[data-scheduling-group="${group}"]`)!
       const state = entry.querySelector<HTMLElement>(".lazers-tasks-state")!
       expect(state.dataset.tone).toBeTruthy()
@@ -795,12 +796,14 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
     }
     const reference = (taskID: string) =>
       taskID === ids.heldChild ? undefined : `LZ-${Object.values(ids).indexOf(taskID) + 1}`
+    // The Attention entry is a recorded hold (blocked), not a routine dependency wait.
+    const recorded = (taskID: string) => (taskID === ids.heldAttention ? "blocked" : "queued")
     const summary = (taskID: string) => ({
       taskID,
       ...(reference(taskID) ? { reference: reference(taskID) } : {}),
       revision: 1,
-      status: "queued",
-      recordedState: "queued",
+      status: recorded(taskID),
+      recordedState: recorded(taskID),
       reason: null,
       classification,
       title: names[taskID as keyof typeof names],
@@ -823,7 +826,7 @@ test("keyboard navigation reveals a held scheduling-backed fork when topology is
       objective: names[input.taskID as keyof typeof names],
       ordinal: input.ordinal,
       order: input.ordinal,
-      lifecycle: "queued",
+      lifecycle: recorded(input.taskID),
       decision: input.decision,
       reason: input.reason,
       prerequisites: input.prerequisites,

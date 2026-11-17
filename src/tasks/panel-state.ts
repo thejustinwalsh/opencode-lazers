@@ -134,6 +134,9 @@ export interface PanelData {
   /** The next page failed to load. Only `retryMore` requests it again; the list stays usable. */
   moreError: string
 }
+/** `moreError` when the next page repeated a cursor or listed nothing new. */
+export const STALLED_PAGE = "The next page did not advance."
+
 const blank = (key = ""): PanelData => ({
   key,
   tasks: [],
@@ -156,6 +159,11 @@ export class TaskPanelState {
   private generation = 0
   private listRequest = 0
   private requestedMore: TaskPage | undefined
+  /**
+   * Cursors already followed in the current page chain (refresh reads and `more`). A next cursor
+   * found here is a cycle; reading it again could never reach the end.
+   */
+  private followedCursors = new Set<string>()
   private detailRequest = 0
   private activityRequest = 0
   private transport?: TaskTransport
@@ -415,6 +423,8 @@ export class TaskPanelState {
       let topologyError = ""
       let scheduling = this.data.scheduling
       let schedulingError = ""
+      let followed = new Set<string>()
+      let stalled = false
       for (let attempt = 0; attempt < 3; attempt++) {
         const first = await transport.query({ ...this.query, cursor: undefined }, signal)
         if (generation !== this.generation || request !== this.listRequest) return
@@ -447,16 +457,44 @@ export class TaskPanelState {
             Math.max(0, first.count - (this.data.page?.count ?? first.count)),
         )
         page = first
-        tasks = [...first.tasks]
+        tasks = []
+        const listed = new Set<string>()
+        const append = (next: readonly TaskSummary[]) => {
+          const before = tasks.length
+          for (const task of next) {
+            if (listed.has(task.taskID)) continue
+            listed.add(task.taskID)
+            tasks.push(task)
+          }
+          return tasks.length - before
+        }
+        append(first.tasks)
+        followed = new Set()
+        stalled = false
         let changedSnapshot = false
         while (page.nextCursor && tasks.length < wanted) {
-          page = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
+          // A repeated cursor or a page that lists nothing new would re-read forever: stop here and
+          // leave the rest to an explicit Retry.
+          if (followed.has(page.nextCursor)) {
+            stalled = true
+            break
+          }
+          followed.add(page.nextCursor)
+          const next = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
           if (generation !== this.generation || request !== this.listRequest) return
-          if (page.snapshot !== first.snapshot) {
+          if (next.snapshot !== first.snapshot) {
+            page = next
             changedSnapshot = true
             break
           }
-          tasks.push(...page.tasks)
+          const added = append(next.tasks)
+          if (next.nextCursor && (added === 0 || followed.has(next.nextCursor))) {
+            // Keep the page that made progress, so Retry re-reads the cursor that stalled.
+            if (added > 0) page = next
+            stalled = true
+            break
+          }
+          page = next
         }
         if (changedSnapshot && attempt < 2) continue
         if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
@@ -509,6 +547,8 @@ export class TaskPanelState {
       }
       if (!page) throw new Error("Could not read a stable task snapshot")
       if (signal.aborted || generation !== this.generation || request !== this.listRequest) return
+      this.followedCursors = followed
+      this.requestedMore = stalled ? page : undefined
       this.update({
         tasks,
         page,
@@ -519,8 +559,9 @@ export class TaskPanelState {
         loading: false,
         stale: !transport.online(),
         error: "",
-        // The failed page is gone with the cursor; a later one starts clean.
-        ...(page.nextCursor ? {} : { moreError: "" }),
+        // The failed page is gone with the cursor; a later one starts clean. A stalled chain keeps
+        // its next page behind Retry.
+        ...(stalled ? { moreError: STALLED_PAGE } : page.nextCursor ? {} : { moreError: "" }),
       })
       const selectedForActivity = this.data.selectedID ?? tasks[0]?.taskID
       await this.observeCurrentActivity(
@@ -590,11 +631,20 @@ export class TaskPanelState {
       if (generation !== this.generation || request !== this.listRequest) return
       if (page.projectDirectory !== this.project)
         throw new Error("Task response belongs to another project")
+      this.followedCursors.add(cursor)
       const seen = new Set(this.data.tasks.map((task) => task.taskID))
-      this.update({
-        page,
-        tasks: [...this.data.tasks, ...page.tasks.filter((task) => !seen.has(task.taskID))],
-      })
+      const added = page.tasks.filter((task) => !seen.has(task.taskID))
+      const cycled = Boolean(page.nextCursor && this.followedCursors.has(page.nextCursor))
+      // A page that lists nothing new with another cursor, or a cursor already followed, would
+      // re-request forever as the loader stays in view. Stop at the last page that made progress;
+      // only `retryMore` reads on.
+      if (page.nextCursor && (cycled || added.length === 0)) {
+        if (added.length > 0) this.update({ page, tasks: [...this.data.tasks, ...added] })
+        this.requestedMore = this.data.page
+        this.update({ moreError: STALLED_PAGE })
+        return
+      }
+      this.update({ page, tasks: [...this.data.tasks, ...added] })
       const selectedID = this.data.selectedID
       await this.observeCurrentActivity(
         this.activityTaskIDs(page.tasks, selectedID),
@@ -642,9 +692,10 @@ export class TaskPanelState {
       this.update({ selectedID: taskID, detail: undefined })
       this.selected(taskID)
       this.cancelCurrentActivity()
-      const currentActivity = { ...this.data.currentActivity }
-      delete currentActivity[taskID]
-      this.update({ currentActivity, activityError: "" })
+      // Selecting is not a loss of observation: the last result stays until this read replaces
+      // it. Clearing it here dropped requests from Attention whenever the next selection
+      // superseded the read (keyboard stepping through Attention).
+      this.update({ activityError: "" })
       void this.observeCurrentActivity([taskID], generation, this.listRequest, taskID)
     }
     try {
@@ -756,6 +807,8 @@ export class TaskPanelState {
     this.retry = undefined
     this.retryDelayMs = 1_000
     this.refreshPending = false
+    this.requestedMore = undefined
+    this.followedCursors = new Set()
     this.transport = undefined
     this.refreshing = false
     this.pendingVersion = 0

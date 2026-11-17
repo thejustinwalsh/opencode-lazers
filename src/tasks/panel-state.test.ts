@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { TaskPanelState } from "./panel-state.ts"
+import { STALLED_PAGE, TaskPanelState } from "./panel-state.ts"
 import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
 import type { TopologyResponse } from "../observability/contract.ts"
@@ -1533,6 +1533,91 @@ test("a failed next page has its own error and loads again only on an explicit r
     await until(() => state.data.page?.nextCursor === null)
     expect(pageTwo()).toBe(2)
     expect(state.data.moreError).toBe("")
+  } finally {
+    state.close()
+  }
+})
+
+test("a next page that repeats its cursor or lists nothing new stops until an explicit retry", async () => {
+  const first = { ...page("/project"), nextCursor: "page-two" }
+  const calls: Array<string | undefined> = []
+  // page-two lists a new task but points back at itself; later, nothing new with fresh cursors.
+  let mode: "cycle" | "empty" | "end" = "cycle"
+  let fresh = 0
+  const state = new TaskPanelState(() => {})
+  const asked = (cursor: string) => calls.filter((call) => call === cursor).length
+  try {
+    state.connect(
+      "view-a",
+      "/project",
+      transport(async (input) => {
+        calls.push(input.cursor)
+        if (calls.length > 50) throw new Error("pagination did not stop")
+        if (!input.cursor) return { ...first }
+        if (mode === "cycle") return { ...page("/project"), nextCursor: input.cursor }
+        if (mode === "empty") return { ...page("/project"), tasks: [], nextCursor: `f-${++fresh}` }
+        return { ...page("/project"), nextCursor: null }
+      }),
+      {},
+    )
+    await until(() => state.data.page?.nextCursor === "page-two" && !state.data.loading)
+    await tick()
+    await state.more("view-a")
+    // The new task is kept; the repeated cursor is not followed again by any view request.
+    expect(state.data.tasks).toHaveLength(2)
+    expect(state.data.moreError).toBe(STALLED_PAGE)
+    for (let ask = 0; ask < 5; ask++) await state.more("view-a")
+    expect(asked("page-two")).toBe(1)
+    // Retry belongs to its view; for this view it asks the same cursor exactly once more.
+    state.retryMore("view-b")
+    expect(asked("page-two")).toBe(1)
+    state.retryMore("view-a")
+    await until(() => asked("page-two") === 2 && state.data.moreError === STALLED_PAGE)
+    // No progress under a fresh cursor stops too, at the last page that made progress.
+    mode = "empty"
+    state.retryMore("view-a")
+    await until(() => asked("page-two") === 3 && state.data.moreError === STALLED_PAGE)
+    for (let ask = 0; ask < 5; ask++) await state.more("view-a")
+    expect(calls.filter((call) => call?.startsWith("f-"))).toEqual([])
+    expect(state.data.page?.nextCursor).toBe("page-two")
+    // Once the source advances, Retry reads on and the error clears.
+    mode = "end"
+    state.retryMore("view-a")
+    await until(() => state.data.page?.nextCursor === null)
+    expect(state.data.moreError).toBe("")
+  } finally {
+    state.close()
+  }
+})
+
+test("a refresh reading grown pages stops at a cursor cycle and leaves the rest to Retry", async () => {
+  let count = 1
+  const calls: Array<string | undefined> = []
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "view-a",
+      "/project",
+      transport(async (input) => {
+        calls.push(input.cursor)
+        if (calls.length > 50) throw new Error("refresh did not stop")
+        // Pages after the first list nothing and point back at the same cursor.
+        if (input.cursor) return { ...page("/project"), count, tasks: [], nextCursor: "c" }
+        return { ...page("/project"), count, nextCursor: "c" }
+      }),
+      {},
+    )
+    await until(() => !state.data.loading && state.data.page?.nextCursor === "c")
+    await tick()
+    expect(calls).toEqual([undefined])
+    // The list grew: the refresh reads on toward the old length plus the growth.
+    count = 5
+    await state.refresh()
+    await until(() => !state.data.loading && state.data.moreError === STALLED_PAGE)
+    expect(calls.filter((call) => call === "c")).toHaveLength(1)
+    expect(state.data.error).toBe("")
+    await state.more("view-a")
+    expect(calls.filter((call) => call === "c")).toHaveLength(1)
   } finally {
     state.close()
   }
