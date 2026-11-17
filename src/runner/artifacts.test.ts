@@ -15,6 +15,9 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   artifactExists,
   checkResourcesSettled,
+  canonicalCombinedArtifact,
+  combineArtifacts,
+  combinedArtifactsMatch,
   commitIsAncestor,
   commitArtifact,
   git,
@@ -794,6 +797,107 @@ test("ambiguous reviewed ancestry fails closed before staging", async () => {
     )
     expect(git(root, ["diff", "--cached", "--name-only"])).toBe("")
     expect(git(root, ["ls-files", "--others", "--exclude-standard"])).toBe("repair/allowed.ts")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("combined artifacts and verified candidates use the configured identity and stay stable", async () => {
+  const root = initRepository("lazers-identity-")
+  try {
+    git(root, ["config", "user.name", "Configured Person"])
+    git(root, ["config", "user.email", "person@example.com"])
+    git(root, ["config", "commit.gpgsign", "false"])
+    const commitAt = (message: string, date: string) => {
+      git(root, ["add", "--all"])
+      git(root, ["commit", "-m", message], undefined, {
+        GIT_AUTHOR_DATE: date,
+        GIT_COMMITTER_DATE: date,
+      })
+      return git(root, ["rev-parse", "HEAD"])
+    }
+    writeFileSync(join(root, "origin.txt"), "origin")
+    const origin = commitAt("origin", "2024-03-01T10:00:00+02:00")
+    git(root, ["checkout", "-b", "first", origin])
+    writeFileSync(join(root, "first.txt"), "first")
+    const first = commitAt("first", "2024-03-02T10:00:00+00:00")
+    git(root, ["checkout", "-b", "second", origin])
+    writeFileSync(join(root, "second.txt"), "second")
+    const second = commitAt("second", "2024-03-05T08:30:00-05:00")
+
+    const combined = await combineArtifacts(root, origin, [first, second])
+    expect(await combineArtifacts(root, origin, [first, second])).toBe(combined)
+    expect(git(root, ["show", "-s", "--format=%an <%ae>|%cn <%ce>", combined])).toBe(
+      "Configured Person <person@example.com>|Configured Person <person@example.com>",
+    )
+    expect(git(root, ["show", "-s", "--format=%cI", combined])).toBe("2024-03-05T08:30:00-05:00")
+    expect(git(root, ["rev-list", "--parents", "-n", "1", combined]).split(" ").slice(1)).toEqual([
+      first,
+      second,
+    ])
+    expect(git(root, ["show", "-s", "--format=%B", combined])).not.toContain("lazers.invalid")
+
+    // Signing (non-reproducible commits) still yields one SHA per tree and parents.
+    git(root, ["config", "commit.gpgsign", "true"])
+    const signer = join(root, "..", `fake-signer-${Date.now()}.sh`)
+    writeFileSync(
+      signer,
+      '#!/bin/sh\ncat >/dev/null\necho "[GNUPG:] SIG_CREATED " >&2\nprintf -- "-----BEGIN PGP SIGNATURE-----\\n\\n%s\\n-----END PGP SIGNATURE-----\\n" "$(date +%s)$$$RANDOM"\n',
+      { mode: 0o755 },
+    )
+    git(root, ["config", "gpg.program", signer])
+    const third = await combineArtifacts(root, origin, [second, first])
+    expect(await combineArtifacts(root, origin, [second, first])).toBe(third)
+    expect(git(root, ["cat-file", "commit", third])).toContain("gpgsig")
+    rmSync(signer)
+
+    git(root, ["config", "commit.gpgsign", "false"])
+    writeFileSync(join(root, "second.txt"), "dirty")
+    const candidate = await commitArtifact(root, origin, ["second.txt"])
+    expect(git(root, ["show", "-s", "--format=%an <%ae>", candidate.commit])).toBe(
+      "Configured Person <person@example.com>",
+    )
+    expect(git(root, ["show", "-s", "--format=%cI", candidate.commit])).not.toStartWith("2000-")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("combined artifact comparison uses tree OID and ordered parents, not the commit SHA", async () => {
+  const root = initRepository("lazers-combined-match-")
+  try {
+    git(root, ["config", "commit.gpgsign", "false"])
+    writeFileSync(join(root, "origin.txt"), "origin")
+    const origin = commitAll(root, "origin")
+    git(root, ["checkout", "-b", "first", origin])
+    writeFileSync(join(root, "first.txt"), "first")
+    const first = commitAll(root, "first")
+    git(root, ["checkout", "-b", "second", origin])
+    writeFileSync(join(root, "second.txt"), "second")
+    const second = commitAll(root, "second")
+    const stored = await combineArtifacts(root, origin, [first, second])
+    const tree = git(root, ["rev-parse", `${stored}^{tree}`])
+    const sibling = (parents: string[], commitTree = tree, message = "other") =>
+      git(root, ["commit-tree", commitTree, ...parents.flatMap((p) => ["-p", p])], message)
+
+    // A re-signed or re-authored recompute: new SHA, same tree and parents.
+    const recomputed = sibling([first, second], tree, "different signature and author")
+    expect(recomputed).not.toBe(stored)
+    expect(combinedArtifactsMatch(root, recomputed, stored)).toBe(true)
+    expect(canonicalCombinedArtifact(root, recomputed, [undefined, stored])).toBe(stored)
+
+    // Different tree is rejected.
+    const otherTree = git(root, ["rev-parse", `${first}^{tree}`])
+    expect(combinedArtifactsMatch(root, sibling([first, second], otherTree), stored)).toBe(false)
+    // Different parent order is rejected.
+    expect(combinedArtifactsMatch(root, sibling([second, first]), stored)).toBe(false)
+    // Unreadable commit is a failure.
+    expect(combinedArtifactsMatch(root, "0".repeat(40), stored)).toBe(false)
+    // Rewritten parents match through the mapping.
+    const map = (parent: string) =>
+      parent === first ? "first" : parent === second ? "second" : parent
+    const rewritten = sibling([second, first].toReversed())
+    expect(combinedArtifactsMatch(root, rewritten, stored, map)).toBe(true)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -117,6 +117,107 @@ export function scopePatternsConflict(left: string[], right: string[]): boolean 
   )
 }
 
+/**
+ * `git commit-tree` ignores `commit.gpgsign`, so honor the configured signing
+ * preference explicitly. Never disable signing and never choose a key here.
+ */
+function signingArguments(directory: string): string[] {
+  const result = spawnSync("git", ["config", "--type=bool", "--get", "commit.gpgsign"], {
+    cwd: directory,
+    encoding: "utf8",
+  })
+  return result.status === 0 && result.stdout.trim() === "true" ? ["-S"] : []
+}
+
+/**
+ * Create the merge commit for a combined artifact as the workspace identity,
+ * signed as configured. Signatures make a recomputed commit SHA differ, but
+ * callers compare combined SHAs across restarts. So the result is memoized
+ * under a ref keyed by the resulting tree plus the ordered parents: the same
+ * tree and parents always resolve to the first commit created for them.
+ */
+async function commitCombinedTree(
+  directory: string,
+  tree: string,
+  left: string,
+  right: string,
+): Promise<string> {
+  const key = createHash("sha256").update(`${tree}\n${left}\n${right}`).digest("hex")
+  const ref = `refs/lazers/combined/${key}`
+  const existing = async () => {
+    try {
+      return await gitAsync(directory, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])
+    } catch {
+      return undefined
+    }
+  }
+  const known = await existing()
+  if (known) return known
+  // Realistic, input-derived date: the newest parent committer time.
+  const stamps = await gitAsync(directory, ["show", "-s", "--format=%cI", left, right])
+  const date = stamps
+    .split("\n")
+    .map((line) => ({ line, time: Date.parse(line) }))
+    .reduce((best, item) => (item.time > best.time ? item : best)).line
+  const created = await gitAsync(
+    directory,
+    ["commit-tree", ...signingArguments(directory), tree, "-p", left, "-p", right],
+    "chore: integrate accepted artifacts\n",
+    { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+  )
+  try {
+    await gitAsync(directory, ["update-ref", ref, created, ""])
+    return created
+  } catch {
+    // A concurrent computation won the race; converge on its commit.
+    return (await existing()) ?? created
+  }
+}
+
+/**
+ * Signed commits are not reproducible, so a recomputed combined commit is
+ * equal to a stored one when both resolve, have the same tree OID, and have the
+ * same ordered parents (after `mapParent`, for rewritten history). An
+ * unreadable commit never matches.
+ */
+export function combinedArtifactsMatch(
+  directory: string,
+  current: string,
+  stored: string,
+  mapParent: (parent: string) => string = (parent) => parent,
+): boolean {
+  if (current === stored) return true
+  try {
+    const read = (commit: string) => {
+      const tree = git(directory, ["rev-parse", "--verify", `${commit}^{tree}`])
+      const parents = git(directory, ["rev-list", "--parents", "-n", "1", commit])
+        .split(" ")
+        .slice(1)
+      return { tree, parents }
+    }
+    const a = read(current)
+    const b = read(stored)
+    return (
+      a.tree === b.tree &&
+      a.parents.length === b.parents.length &&
+      a.parents.every((parent, index) => mapParent(parent) === mapParent(b.parents[index]!))
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Prefer an already-recorded equivalent so SHA-keyed receipts and effects keep matching. */
+export function canonicalCombinedArtifact(
+  directory: string,
+  computed: string,
+  recorded: Array<string | null | undefined>,
+): string {
+  for (const candidate of recorded)
+    if (candidate && combinedArtifactsMatch(directory, computed, candidate)) return candidate
+  return computed
+}
+
 /** Merge branch artifacts in caller-supplied deterministic order without moving a checkout. */
 export async function combineArtifacts(
   directory: string,
@@ -151,26 +252,7 @@ export async function combineArtifacts(
     const tree = merged.trim().split(/\s/, 1)[0]
     if (!tree || !/^[a-f0-9]{40,64}$/.test(tree))
       throw new Error("Git did not return a tree for combined artifacts")
-    const fixedDate = "2000-01-01T00:00:00+00:00"
-    combined = await gitAsync(
-      directory,
-      [
-        "-c",
-        "user.name=LAZERS",
-        "-c",
-        "user.email=runner@lazers.invalid",
-        "-c",
-        "commit.gpgsign=false",
-        "commit-tree",
-        tree,
-        "-p",
-        combined,
-        "-p",
-        artifact,
-      ],
-      "LAZERS deterministic artifact integration\n",
-      { GIT_AUTHOR_DATE: fixedDate, GIT_COMMITTER_DATE: fixedDate },
-    )
+    combined = await commitCombinedTree(directory, tree, combined, artifact)
   }
   return combined
 }
@@ -332,17 +414,8 @@ export async function commitArtifact(
   const tree = await gitAsync(directory, ["write-tree"])
   const commit = await gitAsync(
     directory,
-    [
-      "-c",
-      "user.name=LAZERS",
-      "-c",
-      "user.email=runtime@lazers.invalid",
-      "commit-tree",
-      tree,
-      "-p",
-      head,
-    ],
-    "LAZERS verified candidate\n",
+    ["commit-tree", ...signingArguments(directory), tree, "-p", head],
+    "chore: snapshot verified candidate\n",
   )
   return { commit, paths, identity: commit, scopeBase }
 }

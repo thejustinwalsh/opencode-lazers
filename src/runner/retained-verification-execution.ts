@@ -14,6 +14,7 @@ import {
   artifactExists,
   checkResourcesSettled,
   combineArtifacts,
+  combinedArtifactsMatch,
   git,
   gitAsync,
 } from "./artifacts.ts"
@@ -1040,7 +1041,15 @@ export class RetainedVerificationExecution {
             acceptedArtifactsCurrent &&
             !unresolvedEffects.length &&
             !unrelatedActivity &&
-            currentCombinedArtifact === initial.combinedArtifact &&
+            (currentCombinedArtifact === undefined
+              ? false
+              : initial.combinedArtifact
+                ? combinedArtifactsMatch(
+                    this.runtime.directory,
+                    currentCombinedArtifact,
+                    initial.combinedArtifact,
+                  )
+                : false) &&
             previousBoundReceipt !== undefined &&
             isConclusiveNonTimeoutInterruption(previousBoundReceipt) &&
             authorization.planVersion === initial.planVersion &&

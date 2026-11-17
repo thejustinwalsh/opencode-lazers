@@ -7,6 +7,7 @@ import {
   artifactUnchanged,
   checkResourcesSettled,
   combineArtifacts,
+  combinedArtifactsMatch,
   git,
   gitAsync,
   runDeclaredCheck,
@@ -262,7 +263,10 @@ export class AdoptionExecution {
       input.baseCommit,
       branches,
     )
-    if (combinedArtifact !== adoption.combined_artifact)
+    if (
+      !adoption.combined_artifact ||
+      !combinedArtifactsMatch(this.runtime.directory, combinedArtifact, adoption.combined_artifact)
+    )
       throw new Error("Combined artifact inputs changed during adoption")
     return { plan, input, task, node, attempt }
   }

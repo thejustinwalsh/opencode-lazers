@@ -54,7 +54,9 @@ import {
   commitIsAncestor,
   changedPaths,
   checkResourcesSettled,
+  canonicalCombinedArtifact,
   combineArtifacts,
+  combinedArtifactsMatch,
   commitArtifact,
   git,
   gitAsync,
@@ -2172,7 +2174,10 @@ export class TaskRuntime {
         input.baseCommit,
         acceptedArtifacts.map((item) => item.artifact),
       )
-      if (currentCombinedArtifact !== operation.combinedArtifact)
+      if (
+        !operation.combinedArtifact ||
+        !combinedArtifactsMatch(this.directory, currentCombinedArtifact, operation.combinedArtifact)
+      )
         throw new Error("Retained combined candidate no longer matches its accepted task artifacts")
     } else if (this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)) {
       throw new Error("An accepted retained task candidate cannot restart its task checks")
@@ -2584,15 +2589,16 @@ export class TaskRuntime {
       if (command.taskID !== undefined || command.taskRevision !== undefined || command.attemptID)
         throw new Error("Combined deadline extension cannot target a task attempt")
       const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
-      const artifact = await combineArtifacts(
+      const recomputed = await combineArtifacts(
         this.directory,
         input.baseCommit,
         acceptedArtifacts.map((item) => item.artifact),
       )
-      if (artifact !== command.artifact)
+      if (!combinedArtifactsMatch(this.directory, recomputed, command.artifact))
         throw new Error(
           "Combined deadline extension candidate is no longer the exact accepted result",
         )
+      const artifact = command.artifact
       authoredCheck = input.verification.find((candidate) => candidate.id === command.checkID)
       if (!authoredCheck)
         throw new Error("Deadline extension does not name a declared combined check")
@@ -2995,7 +3001,10 @@ export class TaskRuntime {
       input.baseCommit,
       this.acceptedCombinedArtifacts(plan, input, operation).map((item) => item.artifact),
     )
-    if (combinedArtifact !== operation.combinedArtifact)
+    if (
+      !operation.combinedArtifact ||
+      !combinedArtifactsMatch(this.directory, combinedArtifact, operation.combinedArtifact)
+    )
       throw new Error("Combined candidate changed before retained-check continuation")
     const currentPlan = this.store.plan(plan.id)
     if (!currentPlan) throw new Error("Plan disappeared during retained-check continuation")
@@ -5054,10 +5063,22 @@ export class TaskRuntime {
 
     const input = PlanInput.parse(JSON.parse(plan.body))
     const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
-    const artifact = await combineArtifacts(
+    const effectRecorded = this.store.effects(plan.id).flatMap((effect) => {
+      try {
+        const payload: unknown = JSON.parse(effect.payload)
+        return isRecord(payload) && typeof payload.artifact === "string" ? [payload.artifact] : []
+      } catch {
+        return []
+      }
+    })
+    const artifact = canonicalCombinedArtifact(
       this.directory,
-      input.baseCommit,
-      acceptedArtifacts.map((item) => item.artifact),
+      await combineArtifacts(
+        this.directory,
+        input.baseCommit,
+        acceptedArtifacts.map((item) => item.artifact),
+      ),
+      effectRecorded,
     )
     const sourceGeneration = this.retainedRepairGeneration(plan.id) ?? null
     const effects = this.store.effects(plan.id)
@@ -13851,7 +13872,11 @@ export class TaskRuntime {
       (!continuation ||
         (continuationInputsCurrent(artifact) && continuationEffectsCurrent(artifact)))
     try {
-      artifact = await combineArtifacts(this.directory, input.baseCommit, branches)
+      artifact = canonicalCombinedArtifact(
+        this.directory,
+        await combineArtifacts(this.directory, input.baseCommit, branches),
+        [continuation?.artifact],
+      )
     } catch (error) {
       if (!acceptedNodesCurrent()) return
       this.hold(plan, `Combined artifact conflict: ${errorText(error)}`)
