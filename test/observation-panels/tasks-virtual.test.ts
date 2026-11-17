@@ -430,7 +430,13 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
       observedAt: Date.now(),
     })),
   })
-  const detail = async ({ taskID }: { taskID: string }) => ({
+  /** Task IDs whose detail was read, in order. */
+  const detailCalls: string[] = []
+  const detail = async ({ taskID }: { taskID: string }) => {
+    detailCalls.push(taskID)
+    return detailOf(taskID)
+  }
+  const detailOf = (taskID: string) => ({
     status: "found",
     task: {
       schemaVersion: 1,
@@ -631,6 +637,8 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     },
     extraPlans,
     topologyCalls: () => topologyCalls,
+    detailCalls,
+    nameOf: (taskID: string) => names.get(taskID)!,
     announceChange,
     reorderQueueTop,
     list,
@@ -1326,5 +1334,90 @@ test("Now mounts a bounded window of active work; keys reach every entry across 
     },
     {},
     { active: 8, requests: 2 },
+  )
+})
+
+test("arrowing through Now and Attention keeps focus on the entries while details load", async () => {
+  await withPanel(
+    async (h) => {
+      // Two foreground workers, six requests, two blocked tasks: ten entries in two windows.
+      const s = signals(h)
+      await until(
+        () => Boolean(s.entry("now", h.alpha[0]!)) && Boolean(s.entry("attention", h.alpha[2]!)),
+      )
+      await settle()
+      const doc = h.container.ownerDocument
+      const sequence = [
+        ...h.alpha.slice(0, 2).map((taskID) => ["now", taskID] as const),
+        ...[...h.alpha.slice(2, 8), h.beta.a, h.beta.join].map(
+          (taskID) => ["attention", taskID] as const,
+        ),
+      ]
+      const title = () => h.container.querySelector(".lazers-tasks-detail .lazers-tasks-title")
+      s.entry("now", h.alpha[0]!)!.focus()
+      for (const [group, taskID] of sequence.slice(1)) {
+        // The key goes wherever focus is, as it would from a keyboard.
+        h.key(doc.activeElement as HTMLElement, "ArrowDown")
+        // The selected task's details resolve before the next keypress.
+        await until(
+          () => h.detailCalls.at(-1) === taskID && title()?.textContent === h.nameOf(taskID),
+        )
+        await settle()
+        expect(doc.activeElement).toBe(s.entry(group, taskID))
+        expect(h.row(taskID)?.getAttribute("aria-selected")).toBe("true")
+      }
+      // Up and Home stay in the list too.
+      h.key(doc.activeElement as HTMLElement, "ArrowUp")
+      await until(() => title()?.textContent === h.nameOf(h.beta.a))
+      await settle()
+      expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
+      h.key(doc.activeElement as HTMLElement, "Home")
+      await until(() => title()?.textContent === h.nameOf(h.alpha[0]!))
+      await settle()
+      expect(doc.activeElement).toBe(s.entry("now", h.alpha[0]!))
+      // A click on an entry still takes the person to its row, even for the selected task.
+      s.entry("now", h.alpha[0]!)!.click()
+      await until(() => doc.activeElement === h.row(h.alpha[0]!))
+      // (Attention's window still ends at its last entries.)
+      s.entry("attention", h.beta.a)!.click()
+      await until(() => doc.activeElement === h.row(h.beta.a))
+      // Down from the last entry still enters the tree.
+      s.entry("attention", h.beta.join)!.focus()
+      h.key(s.entry("attention", h.beta.join)!, "ArrowDown")
+      await until(() => doc.activeElement === h.row(h.alpha[0]!))
+    },
+    {},
+    { active: 2, requests: 6 },
+  )
+})
+
+test("an unchanged refresh keeps the focused Now or Attention button and its focus", async () => {
+  await withPanel(
+    async (h) => {
+      const s = signals(h)
+      await until(
+        () => Boolean(s.entry("now", h.alpha[0]!)) && Boolean(s.entry("attention", h.beta.a)),
+      )
+      await settle()
+      const doc = h.container.ownerDocument
+      for (const [group, taskID] of [
+        ["attention", h.beta.a],
+        ["now", h.alpha[1]!],
+      ] as const) {
+        const focused = s.entry(group, taskID)!
+        focused.focus()
+        expect(doc.activeElement).toBe(focused)
+        const reads = h.queryCalls.length
+        h.announceChange()
+        await until(() => h.queryCalls.length > reads)
+        await settle()
+        await settle()
+        expect(focused.isConnected).toBe(true)
+        expect(s.entry(group, taskID)).toBe(focused)
+        expect(doc.activeElement).toBe(focused)
+      }
+    },
+    {},
+    { active: 2, requests: 2 },
   )
 })

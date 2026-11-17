@@ -1104,38 +1104,46 @@ function TaskPanel(
       </Ui.Tooltip>
     )
   }
-  const renderSignalRow = (taskRow: ExecutionListRow, label: "Now" | "Attention") => {
-    const activity = () => visible()?.currentActivity[taskRow.taskID]
-    const presentation = () => taskRowPresentation(taskRow, activity(), relationLabel)
-    const reason = () => rowHoldReasons(taskRow, activity()).join("; ")
+  /**
+   * One Now or Attention entry. Mounted per task ID (see `Keyed` below), reading the latest row,
+   * so a refresh that rebuilds the list never replaces a focused button.
+   */
+  const renderSignalRow = (item: Accessor<ExecutionListRow>, label: "Now" | "Attention") => {
+    const taskID = item().taskID
+    const taskRow = () => item()
+    const activity = () => visible()?.currentActivity[taskID]
+    const presentation = () => taskRowPresentation(taskRow(), activity(), relationLabel)
+    const reason = () => rowHoldReasons(taskRow(), activity()).join("; ")
     const waiting = () =>
-      Boolean(taskRow.waiting || activity()?.waiting || taskRow.scheduling?.decision === "waiting")
-    const selected = () => taskRow.taskID === visible()?.selectedID
+      Boolean(
+        taskRow().waiting || activity()?.waiting || taskRow().scheduling?.decision === "waiting",
+      )
+    const selected = () => taskID === visible()?.selectedID
     /** Paused tasks of the plan this entry stands for (Attention pause entries only). */
-    const paused = () =>
-      label === "Attention" ? attentionEntries().paused.get(taskRow.taskID) : undefined
+    const paused = () => (label === "Attention" ? attentionEntries().paused.get(taskID) : undefined)
     const pauseText = () => {
       const count = paused()
-      if (count === undefined || !taskRow.dispatchPause) return ""
-      return `, paused${taskRow.dispatchPause.reason ? `: ${taskRow.dispatchPause.reason}` : ""}${count > 1 ? `, ${count} paused tasks in this plan` : ""}`
+      const pause = taskRow().dispatchPause
+      if (count === undefined || !pause) return ""
+      return `, paused${pause.reason ? `: ${pause.reason}` : ""}${count > 1 ? `, ${count} paused tasks in this plan` : ""}`
     }
     return (
       <div class="lazers-tasks-schedule-entry" data-selected={selected()}>
         <button
           type="button"
           class="lazers-tasks-schedule-select"
-          data-scheduling-task-id={taskRow.taskID}
+          data-scheduling-task-id={taskID}
           data-scheduling-group={label.toLowerCase()}
           aria-pressed={selected()}
           data-paused-count={paused()}
-          aria-label={`${label}: ${taskTitle(taskRow.title)}, recorded lifecycle ${taskRow.status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${pauseText()}${!pauseText() && waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
-          tabIndex={taskRow.taskID === signalTabStopTaskID() ? 0 : -1}
+          aria-label={`${label}: ${taskTitle(taskRow().title)}, recorded lifecycle ${taskRow().status}${activity() ? `, observed foreground activity ${activity()!.foreground}` : ""}${pauseText()}${!pauseText() && waiting() ? `, waiting${reason() ? `: ${reason()}` : ""}` : ""}`}
+          tabIndex={taskID === signalTabStopTaskID() ? 0 : -1}
           onKeyDown={signalKey}
-          onClick={() => selectTask(taskRow.taskID)}
+          onClick={() => selectFromClick(taskID)}
         >
           <span
             class="lazers-tasks-state"
-            data-state={taskRow.status}
+            data-state={taskRow().status}
             data-waiting={waiting()}
             data-tone={presentation().tone}
             aria-hidden="true"
@@ -1143,7 +1151,7 @@ function TaskPanel(
           >
             {renderGlyph(presentation().icon)}
           </span>
-          <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow.title)}</span>
+          <span class="lazers-tasks-schedule-entry-title">{taskTitle(taskRow().title)}</span>
           <Show when={(paused() ?? 0) > 1}>
             <span class="lazers-tasks-schedule-entry-meta">{paused()} paused</span>
           </Show>
@@ -1458,6 +1466,7 @@ function TaskPanel(
         `[data-scheduling-group="${target.group}"][data-scheduling-task-id="${target.taskID}"]`,
       )
       ?.focus()
+    keepFocusFor = JSON.stringify([expectedKey(), target.taskID])
     selectTask(target.taskID)
   }
   /** Range and stepping for a signal group with more entries than its window mounts. */
@@ -1493,11 +1502,24 @@ function TaskPanel(
     return state[0]!.toUpperCase() + state.slice(1)
   }
   let focusedSelection = ""
+  /**
+   * A selection made by a Now/Attention/Next arrow key: focus stays on the entry while its details
+   * load, so the next key keeps walking the list. Clicks and the exit key still go to the row.
+   */
+  let keepFocusFor = ""
+  /** A click (or Enter) on a Now/Attention/Next entry: select it and take focus to its row. */
+  const selectFromClick = (taskID: string) => {
+    keepFocusFor = ""
+    // Re-arm for a task already selected from the keyboard; its details load again.
+    focusedSelection = ""
+    selectTask(taskID)
+  }
   createEffect(() => {
     const selectedID = visible()?.selectedID
     const key = selectionKey()
     if (!selectedID || visible()?.detail?.status !== "found" || key === focusedSelection) return
     focusedSelection = key
+    if (key === keepFocusFor) return
     queueMicrotask(() => {
       if (selectionKey() !== key) return
       focusTaskRow(selectedID)
@@ -1891,9 +1913,9 @@ function TaskPanel(
                           Now
                           <span class="lazers-tasks-schedule-count">{nowWindow().total}</span>
                         </h3>
-                        <For each={nowWindow().rows}>
+                        <Keyed each={nowWindow().rows} by={(row) => row.taskID}>
                           {(taskRow) => renderSignalRow(taskRow, "Now")}
-                        </For>
+                        </Keyed>
                         {renderSignalPager("now", "Now")}
                       </section>
                     </Show>
@@ -1903,9 +1925,9 @@ function TaskPanel(
                           Attention
                           <span class="lazers-tasks-schedule-count">{attentionWindow().total}</span>
                         </h3>
-                        <For each={attentionWindow().rows}>
+                        <Keyed each={attentionWindow().rows} by={(row) => row.taskID}>
                           {(taskRow) => renderSignalRow(taskRow, "Attention")}
-                        </For>
+                        </Keyed>
                         {renderSignalPager("attention", "Attention")}
                       </section>
                     </Show>
@@ -1949,7 +1971,7 @@ function TaskPanel(
                                       : 0
                                   }
                                   onKeyDown={signalKey}
-                                  onClick={() => selectTask(candidate().taskID)}
+                                  onClick={() => selectFromClick(candidate().taskID)}
                                 >
                                   <span
                                     class="lazers-tasks-state"
