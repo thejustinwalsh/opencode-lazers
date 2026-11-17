@@ -65,6 +65,40 @@ ownership of shared observability contracts, and identify focused behavioral
 checks for each feature below. Architect retains task boundaries and sequencing;
 concrete findings can refine this plan before implementation tasks are submitted.
 
+### Reviewed integration baseline
+
+Auditor's corrected report92b0a75 is retained with its original8efd10b source
+boundary and Architect integration notes in the report. Its major first-page,
+capture-slicing, cursor, coverage and renderer findings were independently
+reviewed. Tasks does await optional topology and scheduling before publishing;
+Models candidates/decisions/contributors slice full retained projections rather
+than returning database pages. Radar Diagnostics remains included. All large
+collections, including Models, need bounded mounted rendering where expensive.
+
+Main98b1d85 already includes Opus6ec0e64/98b1d85 for independent Radar history
+head/tail ownership and fresh-row merging. Exact quality,20focused tests, GUI
+build and source review passed. Future Radar work must build on those fixes,
+not implement them again. Current native regular-Desktop observations remain
+separate from those automated/source checks.
+
+### Shared delivery contract
+
+Each collection publishes page one independently of later pages and optional
+enrichment, then owns one cancellable background drain to genuine exhaustion.
+Opaque cursors bind scope/filter/order and baseline identity; failed-page retry
+can reuse its cursor, whereas repeated/cyclic advancement must stop. Live
+upserts/removals cannot be overwritten by older baseline pages. Invalidation
+restarts only the affected chain and retains useful visible data and identity
+where compatible. Initial loading, background loading, exhausted, stale and
+failed-page states remain distinct. New-view changes fence late responses;
+same-view updates preserve focus, selection and anchors.
+
+Keep per-page payload limits and telemetry/privacy coverage explicit. Do not
+substitute a total-result cap for complete authorized browsable membership or
+make global analytics page-local. The idle feature includes the missing
+coverage/span producer as well as the shared transform and positive compression
+behavior; no waiver or renderer-only substitute satisfies it.
+
 ## Tasks full-scope streaming
 
 After LZ-216 source integration, one feature worker owns the Tasks producer and
@@ -112,6 +146,13 @@ testing, keyboard selection, zoom and scrolling stay aligned as pages/live data
 change the domain. Deterministic visual policy belongs in one tested transform,
 not independent per-track scale guesses.
 
+This feature also owns necessary producer/coverage work: existing per-session
+idle/model endpoints alone do not prove continuous cross-track idleness. Produce
+trustworthy bounded coverage/idle intervals with recorded basis; absence of facts,
+unavailable native context and unloaded history remain unknown. Do not fabricate
+historical coverage. Verify a real positive known-idle interval compresses, not
+just that uncertain fixtures remain linear.
+
 ## Integration order and combined acceptance
 
 1. Review Auditor's report and settle common cursor/live-merge contracts.
@@ -123,6 +164,13 @@ not independent per-track scale guesses.
 5. Architect composes retained commits, runs proportional combined checks and
    supplies each integrated revision for regular Desktop validation. Do not
    ship operator workflow as product UI or generic agent instructions.
+
+Overlap coordination: retain LZ-216 filtering and LZ-224 heading outcomes before
+the Tasks follow-up; coordinate existing LZ-139 observation-reader and LZ-146
+Models presentation writers before those same files change. Preserve the
+existing audit roadmap (including LZ-189), cancellation history and source
+reservations. Runtime serializes conflicting scopes; an unavailable native
+settlement or verification artifact is not solved by manufacturing acceptance.
 
 Combined behavior checks cover first-page publication while a later page or
 optional enrichment is blocked; exhaustion without scrolling/clicking; live

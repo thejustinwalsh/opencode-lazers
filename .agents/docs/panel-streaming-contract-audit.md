@@ -10,6 +10,40 @@ Design contract: `DESIGN.md` §Shared patterns ("Stream the full result … in d
 pages … merge live updates … virtualize") and §Trajectory (shared axis, marked
 compressed intervals, true timestamps, honest gaps).
 
+## Architect integration notes
+
+The report below is an **8efd10b baseline**, not a claim about every later
+revision. Independent review of the corrected report92b0a75 accepted its source
+inventory with these clarifications, which govern follow-up tasking:
+
+- Radar6ec0e64 and98b1d85 are already in main. They separate history head/tail
+  request/cursor ownership and preserve newer overlapping row payloads. Source
+  review found no blocker; exact98b1d85 passed quality,20focused tests and GUI
+  build. Do not redispatch these repairs. Automatic exhaustion, pageable overview
+  and Diagnostics, and large-list rendering remain outstanding. In the historical
+  controller, same-selection refresh preserved loaded items but could cancel the
+  tail request and reset its continuation; it did not unconditionally delete all
+  accumulated history.
+- Diagnostics has its own controller: `src/radar/state.ts:132-135` awaits
+  `radar` and `snapshot`, then publishes at202-213 in the audited baseline.
+  The inventory row below incorrectly cites monitor-controller operations for
+  that detail. Diagnostics remains included in the full-result outcome.
+- "Page or bound" means bound **individual reads and mounted rendering**, not
+  truncate the total browsable collection. A coverage flag does not turn a
+  whole-result cap into cursor exhaustion.
+- Mounted-rendering bounds also cover large **Models** collections. Its
+  mount-all choice disclosure is in `src/models/comparison-chart.tsx:1206-1237`,
+  not comparison-panel.tsx. The later phrase "exactly those two" must not exclude
+  Models; disclosure is not virtualization.
+- No truthfulness waiver is authorized or needed. Idle-axis work must include
+  sufficient coverage/span production and a positive known-idle compression
+  fixture, alongside unknown/gap/overlap negatives. "Compress nothing" is only
+  an interim safety fallback, never feature acceptance.
+
+The durable audit query returned no analyzer runs for this documentation-only
+task; this is a source/contract audit, not evidence of a Fallow score or product
+behavior passing. Operator workflow remains outside product UI and agent policy.
+
 ## 1. All-collections inventory
 
 Legend: **SQL pages** = keyset/cursor read against the database per page.
