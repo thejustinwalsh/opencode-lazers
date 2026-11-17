@@ -29,12 +29,21 @@ export const BOUNDED_DOM_SNAPSHOT_SCRIPT = `(() => {
     return rect.width > 0 && rect.height > 0 && style.display !== "none" &&
       style.visibility !== "hidden" && Number(style.opacity) !== 0;
   };
+  const renderedTarget = (element) => {
+    if (!visible(element)) return false;
+    if (element.getAttribute("role") !== "treeitem") return true;
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      Math.round(rect.x + rect.width / 2), Math.round(rect.y + rect.height / 2)
+    );
+    return hit !== null && element.contains(hit) && hit.closest('[role="treeitem"]') === element;
+  };
   const clean = (value, limit) => String(value || "").replace(/\\s+/g, " ").trim().slice(0, limit);
   const controls = Array.from(document.querySelectorAll(
-    "button,summary,[role=button],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=tab],input,textarea,select,[contenteditable=true]"
+    "button,summary,[role=button],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=tab],[role=treeitem],input,textarea,select,[contenteditable=true]"
   ));
   const elements = controls.filter((element) =>
-    visible(element) && !(element.tagName === "A" && element.hasAttribute("href"))
+    renderedTarget(element) && !(element.tagName === "A" && element.hasAttribute("href"))
   ).slice(0, MAX_ELEMENTS).map((element, index) => {
     const rect = element.getBoundingClientRect();
     const tag = element.tagName.toLowerCase();

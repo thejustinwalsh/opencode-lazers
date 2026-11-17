@@ -1,0 +1,93 @@
+/* Element defaults sit in the lowest layer so StyleX atomic layers always win. */
+@layer reset;
+
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  :root {
+    /* Composition unit for the cover: 1vw, capped so the stage keeps a 16:10 height. */
+    --u: min(1vw, 1.6svh);
+    color-scheme: light;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    scrollbar-color: #13095e #f7f6ef;
+  }
+  body {
+    margin: 0;
+    background: #f7f6ef;
+    color: #13095e;
+    font-family: "Archivo Variable", "Archivo", sans-serif;
+    font-size: 17px;
+    font-weight: 450;
+    line-height: 1.55;
+    caret-color: #f81497;
+    overflow-x: clip;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  p,
+  figure,
+  ul,
+  ol,
+  dl,
+  dd,
+  pre {
+    margin: 0;
+  }
+  ul,
+  ol {
+    padding: 0;
+    list-style: none;
+  }
+  a {
+    color: inherit;
+    text-decoration-color: #f81497;
+    text-decoration-thickness: 0.12em;
+    text-underline-offset: 0.22em;
+  }
+  img,
+  canvas,
+  svg {
+    display: block;
+  }
+  button {
+    font: inherit;
+  }
+}
+
+::selection {
+  background: #f81497;
+  color: #f7f6ef;
+}
+:focus-visible {
+  outline: 3px solid #f81497;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px #19ebf1;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+::-webkit-scrollbar-track {
+  background: #f7f6ef;
+  border-left: 3px solid #13095e;
+}
+::-webkit-scrollbar-thumb {
+  background: #13095e;
+  border: 3px solid #f7f6ef;
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #f81497;
+}
