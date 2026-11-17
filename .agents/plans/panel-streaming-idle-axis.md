@@ -168,6 +168,28 @@ just that uncertain fixtures remain linear.
 
 ## Integration order and combined acceptance
 
+### Submitted feature graph
+
+| Task   | Outcome                                                                                 | Integrated prerequisites                                             |
+| ------ | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| LZ-227 | Complete progressive Tasks acquisition, live merge and retained virtualized interaction | LZ-226 current connected qualification (which follows LZ-224/LZ-216) |
+| LZ-228 | Complete Radar overview/history/Diagnostics streams and retained inspector state        | LZ-139 shared observation-reader outcome                             |
+| LZ-229 | Complete progressive Trajectory choices/history, persistent gaps and anchored time      | LZ-228 shared-reader changes                                         |
+| LZ-230 | Complete Models collections without page-local global analytics                         | LZ-146 presentation and LZ-216 Tasks query interface                 |
+| LZ-231 | Trustworthy idle coverage/span producer plus aligned compressed axis                    | LZ-229 progressive history                                           |
+
+Each is a vertical producer/transport/controller/rendering feature with related
+tests, not a frontend/backend work-item split. Radar and Models have separate
+lanes; Trajectory/idle form a sequenced graph. Existing heading/filter work is
+not replaced. Source review and regular-instance probes follow each integrated
+outcome; no new isolated Desktop trial is authorized by these implementation
+plans. The initial automated task self-review was interrupted for Radar,
+Trajectory, Models and idle-axis drafts; it supplied no semantic pass. The
+source-grounded audit review and ordinary task validation remain distinct from
+future implementation checks.
+
+### Composition and checks
+
 1. Review Auditor's report and settle common cursor/live-merge contracts.
 2. Finish existing LZ-224 and LZ-216, then the preserved LZ-226 connected
    qualification. Per the user's later priority, new overlapping Tasks streaming
