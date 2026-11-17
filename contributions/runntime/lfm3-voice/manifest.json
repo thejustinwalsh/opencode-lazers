@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "stage": "lfm3-voice",
+  "base": {
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "commit": "68e9e608dda71aad6c41263d435ed262d2a32de3",
+    "tree": "0faf498990d7bf6b59c6a863848f35c0def222b6"
+  },
+  "tip": {
+    "commit": "a3718c80f959b8e86d1b2abf056fb578f532aeb9",
+    "tree": "0955db900d7b537727676aa5034623331db98b17"
+  },
+  "patches": [
+    {
+      "commit": "a3718c80f959b8e86d1b2abf056fb578f532aeb9",
+      "parent": "68e9e608dda71aad6c41263d435ed262d2a32de3",
+      "tree": "0955db900d7b537727676aa5034623331db98b17",
+      "path": "patches/0001-selectable-lfm3-speech-voice.patch",
+      "sha256": "ef69312112c72d89e85aa44f587aa4dfda2d6efb4173978b3ae62744ecd8efca"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime exec vitest run --project unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "0dde4c1a0863bb50afee9a82d52341befa2e85cae6f5c460750419bafb572bbb"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm --filter runntime typecheck",
+      "exitCode": 0,
+      "path": "evidence/typecheck.log",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm --filter runntime build",
+      "exitCode": 0,
+      "path": "evidence/build.log",
+      "sha256": "79c7673ef1a0ee29a7953c8eaaba2974d311c758cd524dbc903baeaef090b422"
+    },
+    {
+      "kind": "package",
+      "command": "pnpm --filter runntime pack",
+      "exitCode": 0,
+      "path": "evidence/package.log",
+      "sha256": "fb0c4e24d79a010b9e2f8e6a0422e476eec66de756606b8d9a21d6f4e2b33a49"
+    }
+  ]
+}
