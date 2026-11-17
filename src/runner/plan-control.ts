@@ -1,5 +1,4 @@
 import type { Database } from "bun:sqlite"
-import { git } from "./artifacts.ts"
 import type { HostSession } from "./host.ts"
 import { requireIntegration, type BaseReach, type IntegrationProof } from "./integration-proof.ts"
 import { PlanInput, type CommandInput } from "./schema.ts"
@@ -21,22 +20,23 @@ export const terminalPlanStates = new Set([
  * tree), so a rewritten history still proves. Never a bare SHA ancestry check.
  */
 function reviewedBranchHead(
-  directory: string,
+  currentBranch: string,
   branch: string,
   artifact: string,
   proof: IntegrationProof | undefined,
 ) {
-  if (git(directory, ["branch", "--show-current"]) !== branch)
+  if (currentBranch !== branch)
     throw new Error("The current checkout is not the reviewed target branch")
   return requireIntegration(proof, artifact, "The accepted artifact", `branch ${branch}`)
 }
 
+/** `currentBranch` is the observed checked-out branch of the project directory. */
 export function recordIntegration(
   store: RunnerStore,
   db: Database,
   plan: PlanRow,
   command: CommandInput,
-  directory: string,
+  currentBranch: string,
   proof?: IntegrationProof,
 ) {
   if (command.taskID) {
@@ -45,7 +45,7 @@ export function recordIntegration(
       throw new Error("Only an accepted task result can be recorded as integrated")
     if (command.artifact !== node.artifact || !command.targetBranch || !command.reason)
       throw new Error("Record the accepted task artifact, reviewed targetBranch and reason")
-    const head = reviewedBranchHead(directory, command.targetBranch, node.artifact, proof)
+    const head = reviewedBranchHead(currentBranch, command.targetBranch, node.artifact, proof)
     store.record(plan.id, node.task_id, "TASK_INTEGRATION_RECORDED", {
       artifact: node.artifact,
       branch: command.targetBranch,
@@ -61,7 +61,7 @@ export function recordIntegration(
     throw new Error("Only an accepted result can be integrated")
   if (command.artifact !== plan.artifact || !command.targetBranch || !command.reason)
     throw new Error("Record the accepted artifact, reviewed targetBranch and reason")
-  const head = reviewedBranchHead(directory, command.targetBranch, plan.artifact, proof)
+  const head = reviewedBranchHead(currentBranch, command.targetBranch, plan.artifact, proof)
   store.record(plan.id, null, "INTEGRATION_RECORDED", {
     artifact: plan.artifact,
     branch: command.targetBranch,
