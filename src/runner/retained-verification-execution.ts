@@ -34,7 +34,6 @@ import {
   activateRetainedVerificationResources,
   beginRetainedVerificationCheck,
   completeRetainedVerificationCheck,
-  hasRetainedVerificationEvidence,
   markRetainedVerificationCheckUncertain,
   registerRetainedVerificationResources,
   retainedVerification,
@@ -89,13 +88,7 @@ function isCurrentRetainedVerification(
   return (
     current !== undefined &&
     current.generation === initial.generation &&
-    [
-      "pending",
-      "task-checks",
-      "combined-checks",
-      "waiting-human",
-      "waiting-human-combined",
-    ].includes(current.state)
+    ["pending", "task-checks", "combined-checks"].includes(current.state)
   )
 }
 
@@ -206,14 +199,7 @@ export class RetainedVerificationExecution {
       if (
         !current ||
         current.generation !== generation ||
-        ![
-          "pending",
-          "task-checks",
-          "combined-checks",
-          "waiting-human",
-          "waiting-human-combined",
-          "task-accepted",
-        ].includes(current.state)
+        !["pending", "task-checks", "combined-checks", "task-accepted"].includes(current.state)
       )
         return false
       const plan = this.runtime.store.plan(current.planID)
@@ -222,8 +208,7 @@ export class RetainedVerificationExecution {
         .attempts(current.planID)
         .filter((attempt) => attempt.task_id === current.taskID)
         .at(-1)
-      const combinedPhase =
-        current.state === "combined-checks" || current.state === "waiting-human-combined"
+      const combinedPhase = current.state === "combined-checks"
       const deferredTaskPhase = current.state === "task-accepted"
       const sourceQuarantineCurrent = Boolean(
         current.sourceQuarantine &&
@@ -297,7 +282,7 @@ export class RetainedVerificationExecution {
 
   retainedCombinedGatePending(operation: RetainedVerification): boolean {
     return Boolean(
-      ["task-accepted", "combined-checks", "waiting-human-combined"].includes(operation.state) ||
+      ["task-accepted", "combined-checks"].includes(operation.state) ||
       (operation.state === "held" && this.retainedTaskCandidateAccepted(operation)),
     )
   }
@@ -524,14 +509,7 @@ export class RetainedVerificationExecution {
       if (
         !current ||
         current.generation !== initial.generation ||
-        ![
-          "pending",
-          "task-checks",
-          "combined-checks",
-          "waiting-human",
-          "waiting-human-combined",
-          "task-accepted",
-        ].includes(current.state)
+        !["pending", "task-checks", "combined-checks", "task-accepted"].includes(current.state)
       )
         return
       if (current.state === "held" && current.holdReason === reason) return
@@ -1981,20 +1959,6 @@ export class RetainedVerificationExecution {
           missing.push(`${assertion.id}:verification`)
         if (evidence.kind === "artifact" && !(await artifactExists(workspace, evidence.reference)))
           missing.push(`${assertion.id}:${evidence.reference}`)
-        if (
-          evidence.kind === "human" &&
-          !this.runtime.store.atomic((db) =>
-            hasRetainedVerificationEvidence(db, {
-              operationID: operation.id,
-              generation: operation.generation,
-              phase,
-              taskID: phase === "task" ? operation.taskID : null,
-              assertionID: assertion.id,
-              artifact,
-            }),
-          )
-        )
-          missing.push(`${assertion.id}:human`)
       }
       const scenarios =
         probeDefinition?.scenarios.filter((scenario) =>
@@ -2651,7 +2615,7 @@ export class RetainedVerificationExecution {
       if (
         !current ||
         current.generation !== initial.generation ||
-        !["task-checks", "waiting-human"].includes(current.state) ||
+        current.state !== "task-checks" ||
         !currentPlan ||
         (current.sourceQuarantine
           ? !this.sourceQuarantinePlanVersionCurrent(current, currentPlan, db)
@@ -2814,8 +2778,7 @@ export class RetainedVerificationExecution {
     let owner: HostSession | null | undefined
     try {
       owner = await this.runtime.host.session(operation.owner)
-      const combinedPhase =
-        operation.state === "combined-checks" || operation.state === "waiting-human-combined"
+      const combinedPhase = operation.state === "combined-checks"
       const deferredTaskPhase = operation.state === "task-accepted"
       if (
         !this.runtime.validArchitect(owner) ||
@@ -2929,12 +2892,9 @@ export class RetainedVerificationExecution {
         taskReceipts,
       )
       if (missing.length) {
-        const externallySuppliedOnly = missing.every(
-          (item) => item.endsWith(":human") || item.includes(":probe:"),
-        )
         await this.setRetainedVerificationState(
           operation,
-          externallySuppliedOnly ? "waiting-human" : "held",
+          "held",
           `Required retained task evidence missing: ${missing.join(", ")}`,
           fence,
         )
@@ -2948,42 +2908,6 @@ export class RetainedVerificationExecution {
       )
       if (!accepted || accepted.state === "task-accepted") return
       operation = accepted
-    }
-    if (operation.state === "waiting-human") {
-      const taskWorkspace = this.retainedVerificationIsolatedWorkspace(operation, "task")
-      if (!taskWorkspace) return
-      const taskReceipts = this.runtime.store.atomic((db) =>
-        retainedVerificationChecks(db, initial.id, "task")
-          .filter((row) => row.state === "completed" && row.receipt)
-          .map((row) => JSON.parse(row.receipt!) as CheckReceipt),
-      )
-      const missing = await this.retainedEvidenceMissing(
-        operation,
-        "task",
-        task.proposal.acceptance,
-        taskWorkspace,
-        operation.artifact,
-        taskReceipts,
-      )
-      if (missing.length) return
-      const accepted = await this.acceptRetainedTaskCandidate(
-        operation,
-        taskWorkspace,
-        taskReceipts,
-        fence,
-      )
-      if (!accepted || accepted.state === "task-accepted") return
-      operation = accepted
-    }
-    if (operation.state === "waiting-human-combined") {
-      const updated = await this.setRetainedVerificationState(
-        operation,
-        "combined-checks",
-        null,
-        fence,
-      )
-      if (!updated) return
-      operation = updated
     }
     if (operation.state === "task-accepted") {
       const deferredOperation = operation
@@ -3161,12 +3085,9 @@ export class RetainedVerificationExecution {
       combinedReceipts,
     )
     if (missing.length) {
-      const externallySuppliedOnly = missing.every(
-        (item) => item.endsWith(":human") || item.includes(":probe:"),
-      )
       await this.setRetainedVerificationState(
         operation,
-        externallySuppliedOnly ? "waiting-human-combined" : "held",
+        "held",
         `Required retained combined evidence missing: ${missing.join(", ")}`,
         fence,
       )
@@ -3239,13 +3160,7 @@ export class RetainedVerificationExecution {
       if (
         !current ||
         current.generation !== operation.generation ||
-        ![
-          "pending",
-          "task-checks",
-          "combined-checks",
-          "waiting-human",
-          "waiting-human-combined",
-        ].includes(current.state) ||
+        !["pending", "task-checks", "combined-checks"].includes(current.state) ||
         !currentPlan ||
         (current.sourceQuarantine
           ? !this.sourceQuarantinePlanVersionCurrent(current, currentPlan, db)

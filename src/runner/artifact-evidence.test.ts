@@ -59,7 +59,6 @@ function fixture(
       evidence: [
         { kind: "artifact", reference: directoryReference },
         { kind: "verification", verificationID: "check" },
-        { kind: "human", decision: "Review the artifact" },
       ],
     },
   ]
@@ -238,14 +237,10 @@ async function run(runtime: TaskRuntime, planID: string, count = 10) {
   for (let index = 0; index < count; index++) await settleVerification(runtime)
 }
 
-test("directory artifact evidence accepts only with matching checks and human evidence", async () => {
+test("directory artifact evidence accepts only with matching checks", async () => {
   const f = fixture()
   await run(f.runtime, f.planID)
 
-  const blocked = f.store.plan(f.planID)!
-  expect(blocked.state).toBe("blocked")
-  expect(blocked.reason).toContain("correct:human")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
   expect(readFileSync(join(f.evidencePath, "verification.md"), "utf8")).toContain("LZ37-shaped")
 
   const originalChecks = f.store
@@ -261,21 +256,6 @@ test("directory artifact evidence accepts only with matching checks and human ev
     reference: f.directoryReference,
   })
   const artifactHead = git(f.root, ["rev-parse", "HEAD"])
-
-  await f.runtime.command(
-    {
-      requestID: "reviewed",
-      planID: f.planID,
-      expectedVersion: blocked.version,
-      action: "human-evidence",
-      taskID: f.task.id,
-      assertionID: "correct",
-      artifact: f.store.nodes(f.planID)[0]!.artifact!,
-      reason: "Reviewed the directory evidence and task result.",
-    },
-    "owner",
-  )
-  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
 
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   await f.runtime.command(
@@ -326,8 +306,7 @@ test("successful automatic fixes are committed and reach Architect review in the
   const f = fixture({ autoFix: true })
   await run(f.runtime, f.planID)
   const attempt = f.store.attempts(f.planID)[0]!
-  expect(f.store.plan(f.planID)?.reason).toContain("correct:human")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(git(f.root, ["show", `${attempt.artifact}:result.txt`])).toBe("formatted")
   expect(git(f.root, ["rev-parse", "HEAD"])).toBe(attempt.artifact!)
   expect(git(f.root, ["status", "--porcelain"])).toBe("")

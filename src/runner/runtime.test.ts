@@ -74,7 +74,7 @@ afterEach(async () => {
 function fixture(
   options: {
     fail?: boolean
-    human?: boolean
+    missingEvidence?: boolean
     outside?: boolean
     shared?: boolean
     commit?: boolean
@@ -166,7 +166,9 @@ function fixture(
         assertion: `${name} exists with exact content`,
         evidence: [
           { kind: "verification", verificationID: "content" },
-          ...(options.human ? [{ kind: "human" as const, decision: "review" }] : []),
+          ...(options.missingEvidence
+            ? [{ kind: "artifact" as const, reference: "evidence/never-produced.md" }]
+            : []),
         ],
       },
     ]
@@ -1156,66 +1158,6 @@ test("source quarantine seals only a stopped guarded native writer and permits i
   await f.runtime.tick()
   expect(f.store.attempts(dependentPlan.planID)).toHaveLength(0)
 })
-
-test("a settled human evidence hold releases its isolated scope for a waiting plan", async () => {
-  const f = fixture({
-    human: true,
-    delayed: true,
-    commit: true,
-    useProjectVerificationDefaults: true,
-    verificationTimeoutDefaults: { inactivityTimeoutMs: 10_000, hardTimeoutMs: 20_000 },
-    taskFiles: [{ name: "a", path: "shared.txt" }],
-  })
-  await runPlan(f)
-  await f.runtime.tick()
-  const planID = f.receipt.planID
-  const original = f.store.attempts(planID)[0]!
-  const worker = f.sessions.get(original.session_id)!
-  f.completeWorker(original.session_id)
-  Object.assign(worker, { pendingInput: false, pendingPermissions: 0, pendingForms: 0 })
-  await drive(f.runtime, 5)
-  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing:")
-  const completedCheck = f.store.effects(planID).find((effect) => effect.kind === "verify:content")!
-  const legacyPayload = JSON.parse(completedCheck.payload) as Record<string, unknown>
-  delete legacyPayload.authoredCheck
-  delete legacyPayload.verificationDeadline
-  f.store.atomic((db) =>
-    db
-      .query("UPDATE runner_effects SET payload=? WHERE id=?")
-      .run(JSON.stringify(legacyPayload), completedCheck.id),
-  )
-  await f.runtime.stop()
-  const reopened = reopenRuntime(f, {
-    inactivityTimeoutMs: 15_000,
-    hardTimeoutMs: 30_000,
-  })
-  f.runtime = reopened.runtime
-  f.store = reopened.store
-  const retained = f.store.attempts(planID)[0]!
-  const guard = registerSourceGuard(f.store, retained.workspace)
-  cleanup.push(guard)
-  const readSession = f.host.session
-  const adapter = attachNativeQuarantineHost({
-    ...f,
-    retained,
-    worker,
-    guardID: guard.registrationID,
-  })
-  f.host.session = readSession
-  const next = f.createTask("overlap-human-hold", "shared.txt")
-  const following = f.store.submit(f.inputFor([next], { requestID: "overlap-human-hold" }), "owner")
-  await runPlan(f, following.planID, "run-overlap-human-hold")
-  await drive(f.runtime, 4)
-  expect(sourceQuarantine(f.store, retained.id)?.phase).toBe("sealed")
-  expect(adapter.archives).toBe(1)
-  expect(f.store.attempts(following.planID)).toHaveLength(1)
-  expect(f.store.plan(planID)?.reason).toContain("Required evidence missing:")
-  expect(f.store.attempts(planID)[0]).toMatchObject({
-    id: retained.id,
-    state: "verifying",
-    artifact: retained.artifact,
-  })
-}, 15_000)
 
 test("source quarantine isolates a completed foreground worker with unknown background without accepting it", async () => {
   const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
@@ -4969,7 +4911,7 @@ test.each([false, true])(
 test("a committed shared-checkout correction gets fresh mechanical preparation", async () => {
   const f = fixture({
     shared: true,
-    human: true,
+    missingEvidence: true,
     taskFiles: [{ name: "a", path: "src/result.ts" }],
     checkCommand: "bun fmt --check src/result.ts",
   })
@@ -7066,7 +7008,7 @@ test("repair handoffs do not copy legacy skill bodies into a new attempt", async
 })
 
 test("verification failure and scope violations cannot unblock a successor", async () => {
-  for (const options of [{ fail: true }, { outside: true }, { human: true }]) {
+  for (const options of [{ fail: true }, { outside: true }, { missingEvidence: true }]) {
     const f = fixture(options)
     await f.runtime.command(
       { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
@@ -7080,8 +7022,12 @@ test("verification failure and scope violations cannot unblock a successor", asy
   }
 })
 
-test("an unchanged evidence wait keeps its version and notification stable until evidence arrives", async () => {
-  const f = fixture({ human: true, commit: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+test("an unchanged evidence wait keeps its version and notification stable", async () => {
+  const f = fixture({
+    missingEvidence: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
   const planID = f.receipt.planID
   await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
   await drive(f.runtime, 5)
@@ -7098,38 +7044,11 @@ test("an unchanged evidence wait keeps its version and notification stable until
   await drive(f.runtime, 4)
   expect(f.store.plan(planID)!.version).toBe(blocked.version)
   expect(counts()).toEqual(before)
-
-  await f.runtime.command(
-    {
-      requestID: "observed",
-      planID,
-      expectedVersion: blocked.version,
-      action: "human-evidence",
-      taskID: f.tasks[0]!.id,
-      assertionID: "correct",
-      artifact: f.store.nodes(planID)[0]!.artifact!,
-      reason: "Observed the fixture acceptance condition.",
-    },
-    "owner",
-  )
-  await drive(f.runtime, 4)
-  expect(f.store.nodes(planID)[0]!.state).toBe("accepted")
-  await f.runtime.command(
-    {
-      requestID: "continue-observed",
-      planID,
-      expectedVersion: f.store.plan(planID)!.version,
-      action: "reconcile",
-    },
-    "owner",
-  )
-  await drive(f.runtime, 4)
-  expect(f.store.plan(planID)!.state).toBe("accepted")
 })
 
 test("a resumed worker verifies its new commit without reusing older receipts or spending a repair", async () => {
   const f = fixture({
-    human: true,
+    missingEvidence: true,
     commit: true,
     repair: true,
     taskFiles: [{ name: "a", path: "a.txt" }],
@@ -7140,7 +7059,7 @@ test("a resumed worker verifies its new commit without reusing older receipts or
   const original = f.store.attempts(planID)[0]!
   const originalCheck = f.store.effects(planID).find((effect) => effect.kind === "verify:content")!
   const originalReceipt = originalCheck.receipt
-  expect(f.store.plan(planID)?.reason).toContain("correct:human")
+  expect(f.store.plan(planID)?.reason).toContain("correct:evidence/never-produced.md")
 
   await f.runtime.command(
     {
@@ -7181,7 +7100,7 @@ test("a resumed worker verifies its new commit without reusing older receipts or
   await drive(f.runtime, 5)
 
   expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([original.id])
-  expect(f.store.plan(planID)?.reason).toContain("correct:human")
+  expect(f.store.plan(planID)?.reason).toContain("correct:evidence/never-produced.md")
   expect(f.store.nodes(planID)[0]).toMatchObject({ state: "verifying", artifact: repaired })
   const checks = f.store.effects(planID).filter((effect) => effect.kind === "verify:content")
   expect(checks).toHaveLength(2)
@@ -7196,79 +7115,6 @@ test("a resumed worker verifies its new commit without reusing older receipts or
     expect(existsSync(payload.receiptPath)).toBe(true)
   }
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
-})
-
-test("plan evidence binds to the accepted combination and remains separate from task evidence", async () => {
-  const f = fixture({ commit: true, startOnly: true })
-  const plan = f.store.submit(
-    {
-      ...f.input,
-      acceptance: [
-        ...f.input.acceptance,
-        {
-          id: "native",
-          assertion: "Observed the combined behavior",
-          evidence: [{ kind: "human", decision: "Observe the app" }],
-        },
-      ],
-    },
-    "owner",
-  )
-  const evidence = {
-    requestID: "graph-observed",
-    planID: plan.planID,
-    expectedVersion: 1,
-    action: "human-evidence" as const,
-    assertionID: "native",
-    artifact: f.base,
-    reason: "Observed the combined acceptance condition.",
-  }
-  await expect(f.runtime.command(evidence, "owner")).rejects.toThrow("all accepted task artifacts")
-  await f.runtime.command(
-    { requestID: "run", planID: plan.planID, expectedVersion: 1, action: "run" },
-    "owner",
-  )
-  await driveWithTaskSourceLandings(f, 10, plan.planID)
-  expect(f.store.plan(plan.planID)!.reason).toContain("native:human")
-  expect(f.store.nodes(plan.planID).every((node) => node.state === "accepted")).toBe(true)
-  const artifact = await combineArtifacts(
-    f.root,
-    f.base,
-    f.input.integrationOrder.map(
-      (id) => f.store.nodes(plan.planID).find((node) => node.task_id === id)!.artifact!,
-    ),
-  )
-  const current = { ...evidence, expectedVersion: f.store.plan(plan.planID)!.version, artifact }
-  await expect(
-    f.runtime.command({ ...current, requestID: "wrong-artifact", artifact: f.base }, "owner"),
-  ).rejects.toThrow("current assertion/artifact")
-  await expect(
-    f.runtime.command({ ...current, requestID: "wrong-scope", taskID: f.tasks[0]!.id }, "owner"),
-  ).rejects.toThrow("current assertion/artifact")
-  const receipt = await f.runtime.command(current, "owner")
-  expect(f.store.plan(plan.planID)!.state).toBe("blocked")
-  const recorded = () =>
-    f.store.atomic((db) =>
-      db
-        .query(
-          "SELECT task_id,artifact FROM runner_evidence WHERE plan_id=? AND assertion_id='native' AND kind='human'",
-        )
-        .all(plan.planID),
-    )
-  expect(recorded()).toEqual([{ task_id: null, artifact }])
-  await f.runtime.command(
-    {
-      requestID: "continue-graph",
-      planID: plan.planID,
-      expectedVersion: f.store.plan(plan.planID)!.version,
-      action: "reconcile",
-    },
-    "owner",
-  )
-  await drive(f.runtime, 4)
-  expect(f.store.plan(plan.planID)!.state).toBe("accepted")
-  expect(await f.runtime.command(current, "owner")).toEqual(receipt)
-  expect(recorded()).toHaveLength(1)
 })
 
 test("reconcile retries a conclusively unsent route-guard prompt on the same attempt", async () => {
@@ -16387,7 +16233,12 @@ test.each([false, true])(
 
 test("Auditor dispatch retains its role and selected model and waits for Architect review", async () => {
   const model = { providerID: "opencode-go", id: "muse-spark-1.3-contributor" }
-  const f = fixture({ shared: true, human: true, workerAgent: "auditor", personas: ["systems"] })
+  const f = fixture({
+    shared: true,
+    missingEvidence: true,
+    workerAgent: "auditor",
+    personas: ["systems"],
+  })
   const requested: unknown[] = []
   f.host.workerModel = async (agent) => {
     requested.push(agent)
@@ -16403,7 +16254,7 @@ test("Auditor dispatch retains its role and selected model and waits for Archite
   expect(f.sessions.get(attempt.session_id)!.agent).toBe("auditor")
   expect(JSON.parse(attempt.policy)).toMatchObject({ agent: "auditor", model })
   expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
-  expect(f.store.plan(f.receipt.planID)!.reason).toContain("correct:human")
+  expect(f.store.plan(f.receipt.planID)!.reason).toContain("correct:evidence/never-produced.md")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
 

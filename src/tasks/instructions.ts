@@ -73,7 +73,7 @@ export function taskInstructions(detail: TaskDetail): string {
       "Done when",
       proposal.acceptance.map(
         (item) =>
-          `${item.id}: ${item.assertion}\n  Evidence: ${item.evidence.map((e) => (e.kind === "verification" ? e.verificationID : e.kind === "artifact" ? e.reference : e.decision)).join("; ")}`,
+          `${item.id}: ${item.assertion}\n  Evidence: ${item.evidence.map((e) => (e.kind === "verification" ? e.verificationID : e.reference)).join("; ")}`,
       ),
     ) +
     section("Write scope", proposal.writeScope) +

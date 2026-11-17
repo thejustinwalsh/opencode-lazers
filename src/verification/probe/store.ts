@@ -715,13 +715,7 @@ export class ProbeRepository {
     const workspace = phase === "task" ? operation.taskWorkspace : operation.combinedWorkspace
     const workspaceState =
       phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
-    const activeStates = [
-      "pending",
-      "task-checks",
-      "combined-checks",
-      "waiting-human",
-      "waiting-human-combined",
-    ]
+    const activeStates = ["pending", "task-checks", "combined-checks"]
     if (
       input.inputs.recordID !== `retained-verification:${operation.id}:inputs` ||
       !activeStates.includes(operation.state) ||

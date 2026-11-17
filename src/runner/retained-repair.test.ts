@@ -17,8 +17,6 @@ afterEach(() => {
 
 type FixtureOptions = {
   dependent?: boolean
-  humanEvidence?: boolean
-  combinedHumanEvidence?: boolean
   failRepair?: boolean
   ambiguousRepair?: boolean
   repairRace?: boolean
@@ -56,12 +54,7 @@ function fixture(options: FixtureOptions = {}) {
       {
         id: `correct-${index}`,
         assertion: `The accepted content is present in ${path}`,
-        evidence: [
-          { kind: "verification" as const, verificationID: `content-${index}` },
-          ...(options.humanEvidence && index === 0
-            ? [{ kind: "human" as const, decision: "review" }]
-            : []),
-        ],
+        evidence: [{ kind: "verification" as const, verificationID: `content-${index}` }],
       },
     ]
     proposal.limits.maxRepairAttempts = 1
@@ -103,12 +96,7 @@ function fixture(options: FixtureOptions = {}) {
         {
           id: "combined",
           assertion: "All isolated task artifacts are present together",
-          evidence: [
-            { kind: "verification" as const, verificationID: "combined" },
-            ...(options.combinedHumanEvidence
-              ? [{ kind: "human" as const, decision: "product review" }]
-              : []),
-          ],
+          evidence: [{ kind: "verification" as const, verificationID: "combined" }],
         },
       ],
     },
@@ -433,38 +421,6 @@ function addActivePlanAttempt(
   return plan.planID
 }
 
-test("retained repair directly corrects an accepted task blocked on combined product review", async () => {
-  let wakes = 0
-  const f = fixture({ combinedHumanEvidence: true, wakeScheduler: () => wakes++ })
-  await accept(f)
-  const prior = f.store.attempts(f.planID)[0]!
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-  expect(prior.state).toBe("accepted")
-  const beforeRepair = wakes
-  const requested = await f.runtime.command(retainedRepairCommand(f), "owner")
-  expect(requested).toMatchObject({
-    status: "retained-repair-requested",
-    attemptID: prior.id,
-  })
-  expect(wakes).toBe(beforeRepair + 1)
-  await f.runtime.tick()
-  expect(f.prompts).toHaveLength(2)
-  expect(f.created).toEqual([prior.session_id])
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
-  expect(f.store.attempts(f.planID)[0]).toMatchObject({
-    id: prior.id,
-    session_id: prior.session_id,
-    workspace: prior.workspace,
-    policy: prior.policy,
-  })
-  await settleVerification(f.runtime)
-  await settleVerification(f.runtime)
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.plan(f.planID)?.reason).toContain("combined:human")
-})
-
 test("explicit retained repair preserves accepted history and usage and re-verifies equal-hash task and combined artifacts", async () => {
   const f = fixture()
   await accept(f)
@@ -773,154 +729,6 @@ test("A to B to A during retained-repair admission rejects before reservation", 
   expect(f.store.effects(f.planID).filter((effect) => effect.kind === "prompt")).toHaveLength(1)
   expect(f.prompts).toHaveLength(1)
 })
-
-test("repeated artifact hashes require current-generation human evidence after repair", async () => {
-  const f = fixture({ humanEvidence: true })
-  await f.runtime.command(
-    { requestID: "run", planID: f.planID, expectedVersion: 1, action: "run" },
-    "owner",
-  )
-  for (let index = 0; index < 6; index++) await settleVerification(f.runtime)
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  const originalAttempt = f.store.attempts(f.planID)[0]!
-  const artifact = f.store.nodes(f.planID)[0]!.artifact!
-  await f.runtime.command(
-    {
-      requestID: "original-human-review",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "human-evidence",
-      taskID: f.tasks[0]!.id,
-      assertionID: "correct-0",
-      artifact,
-      reason: "Reviewed the original candidate.",
-    },
-    "owner",
-  )
-  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-  await f.runtime.command(
-    {
-      requestID: "original-reconcile",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "reconcile",
-    },
-    "owner",
-  )
-  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
-  expect(f.store.plan(f.planID)?.state).toBe("accepted")
-
-  const repair = await f.runtime.command(retainedRepairCommand(f), "owner")
-  await settleVerification(f.runtime)
-  await settleVerification(f.runtime)
-  expect(f.store.attempts(f.planID)[0]).toMatchObject({
-    id: originalAttempt.id,
-    state: "verifying",
-  })
-  expect(f.store.nodes(f.planID)[0]).toMatchObject({ state: "verifying", artifact })
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-
-  await f.runtime.command(
-    {
-      requestID: "repair-human-review",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "human-evidence",
-      taskID: f.tasks[0]!.id,
-      assertionID: "correct-0",
-      artifact,
-      reason: "Reviewed the retained repair against the reported defect.",
-    },
-    "owner",
-  )
-  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-  await f.runtime.command(
-    {
-      requestID: "repair-reconcile",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "reconcile",
-    },
-    "owner",
-  )
-  for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
-  expect(f.store.plan(f.planID)?.state).toBe("accepted")
-  expect(f.store.nodes(f.planID)[0]).toMatchObject({ state: "accepted", artifact })
-  const humanEvidence = f.store.atomic((db) =>
-    db
-      .query<{ body: string }, [string, string]>(
-        "SELECT body FROM runner_evidence WHERE plan_id=? AND task_id=? AND kind='human' ORDER BY created_at",
-      )
-      .all(f.planID, f.tasks[0]!.id)
-      .map((row) => JSON.parse(row.body) as { sourceGeneration?: string }),
-  ) as unknown as Array<{ sourceGeneration?: string }>
-  expect(humanEvidence).toHaveLength(2)
-  expect(humanEvidence[0]?.sourceGeneration).toBeUndefined()
-  expect(humanEvidence[1]?.sourceGeneration).toBe((repair as { operationID: string }).operationID)
-})
-
-test(
-  "a later retry cannot reuse human acceptance evidence superseded by retained repair",
-  { timeout: 15000 },
-  async () => {
-    const f = fixture({ humanEvidence: true, failRepair: true })
-    await f.runtime.command(
-      { requestID: "run", planID: f.planID, expectedVersion: 1, action: "run" },
-      "owner",
-    )
-    for (let index = 0; index < 6; index++) await settleVerification(f.runtime)
-    const originalArtifact = f.store.nodes(f.planID)[0]!.artifact!
-    await f.runtime.command(
-      {
-        requestID: "original-human-review",
-        planID: f.planID,
-        expectedVersion: f.store.plan(f.planID)!.version,
-        action: "human-evidence",
-        taskID: f.tasks[0]!.id,
-        assertionID: "correct-0",
-        artifact: originalArtifact,
-        reason: "Reviewed the original candidate.",
-      },
-      "owner",
-    )
-    for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
-    await f.runtime.command(
-      {
-        requestID: "original-reconcile",
-        planID: f.planID,
-        expectedVersion: f.store.plan(f.planID)!.version,
-        action: "reconcile",
-      },
-      "owner",
-    )
-    for (let index = 0; index < 10; index++) await settleVerification(f.runtime)
-    expect(f.store.plan(f.planID)?.state).toBe("accepted")
-
-    await f.runtime.command(retainedRepairCommand(f), "owner")
-    for (let index = 0; index < 4; index++) await settleVerification(f.runtime)
-    expect(f.store.plan(f.planID)?.state).toBe("blocked")
-    expect(f.store.attempts(f.planID)[0]?.state).toBe("failed")
-
-    await f.runtime.command(
-      {
-        requestID: "retry-after-retained-repair",
-        planID: f.planID,
-        expectedVersion: f.store.plan(f.planID)!.version,
-        action: "retry",
-        taskID: f.tasks[0]!.id,
-        reason: "Start a fresh attempt after reviewing the failed retained repair.",
-      },
-      "owner",
-    )
-    for (let index = 0; index < 12; index++) await settleVerification(f.runtime)
-    expect(f.store.attempts(f.planID)).toHaveLength(2)
-    expect(f.store.nodes(f.planID)[0]?.state).toBe("verifying")
-    expect(f.store.plan(f.planID)?.state).toBe("blocked")
-    expect(f.store.plan(f.planID)?.reason).toContain("correct-0:human")
-  },
-)
 
 type RepairRejectionCase =
   | "stale"

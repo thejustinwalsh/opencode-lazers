@@ -822,9 +822,7 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
         dependencies: [],
         integrationOrder: [task.id],
         verification: [],
-        acceptance: [
-          { id: "done", assertion: "Done", evidence: [{ kind: "human", decision: "review" }] },
-        ],
+        acceptance: [{ id: "done", assertion: "Done", evidence: [] }],
       },
       ownerSessionID,
     )

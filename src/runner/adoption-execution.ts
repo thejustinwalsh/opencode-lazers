@@ -59,7 +59,7 @@ export class AdoptionExecution {
     return Boolean(
       adoption &&
       plan?.state === "blocked" &&
-      ["pending", "task-checks", "combined-checks", "waiting-human"].includes(adoption.state),
+      ["pending", "task-checks", "combined-checks"].includes(adoption.state),
     )
   }
 
@@ -67,7 +67,7 @@ export class AdoptionExecution {
     plan: PlanRow,
     adoptionID: string,
     reason: string,
-    state: "pending" | "waiting-human" | "held" = "held",
+    state: "pending" | "held" = "held",
     fence: number,
   ) {
     this.runtime.store.fenced(this.runtime.owner, fence, () => {
@@ -78,7 +78,7 @@ export class AdoptionExecution {
         !currentPlan ||
         currentPlan.state === "cancelling" ||
         currentPlan.state === "cancelled" ||
-        !["pending", "task-checks", "combined-checks", "waiting-human"].includes(current.state)
+        !["pending", "task-checks", "combined-checks"].includes(current.state)
       )
         return
       if (
@@ -102,14 +102,12 @@ export class AdoptionExecution {
             )
             .run(reason, plan.id, reason).changes,
       )
-      this.runtime.store.record(
-        plan.id,
-        current.task_id,
-        state === "waiting-human"
-          ? "DESCENDANT_ADOPTION_WAITING_HUMAN"
-          : "DESCENDANT_ADOPTION_HELD",
-        { adoptionID, reason, state, planVersionChanged: changed === 1 },
-      )
+      this.runtime.store.record(plan.id, current.task_id, "DESCENDANT_ADOPTION_HELD", {
+        adoptionID,
+        reason,
+        state,
+        planVersionChanged: changed === 1,
+      })
     })
   }
 
@@ -797,36 +795,25 @@ export class AdoptionExecution {
       return
     }
     const taskMissing = await this.runtime.missingEvidence(
-      plan.id,
-      adoption.task_id,
-      adoption.descendant_commit,
       taskWorkspace,
       context.task.proposal.acceptance,
       taskReceipts,
-      adoption.id,
     )
     const combinedMissing = await this.runtime.missingEvidence(
-      plan.id,
-      null,
-      adoption.combined_artifact,
       combinedWorkspace,
       context.input.acceptance,
       combinedReceipts,
-      adoption.id,
     )
     const missing = [
       ...taskMissing.map((item) => `task:${item}`),
       ...combinedMissing.map((item) => `combined:${item}`),
     ]
     if (missing.length) {
-      const humanOnly = [...taskMissing, ...combinedMissing].every((item) =>
-        item.endsWith(":human"),
-      )
       this.holdAdoption(
         plan,
         adoption.id,
         `Required adoption evidence missing: ${missing.join(", ")}`,
-        humanOnly ? "waiting-human" : "held",
+        "held",
         fence,
       )
       return
@@ -865,7 +852,7 @@ export class AdoptionExecution {
         currentPlan.state !== "blocked" ||
         currentPlan.version !== context.plan.version ||
         currentPlan.owner !== context.plan.owner ||
-        !["pending", "task-checks", "combined-checks", "waiting-human"].includes(current.state) ||
+        !["pending", "task-checks", "combined-checks"].includes(current.state) ||
         !currentNode ||
         currentNode.state !== adoption!.node_state ||
         currentNode.artifact !== adoption!.old_artifact
@@ -883,7 +870,7 @@ export class AdoptionExecution {
         const held = db
           .query(
             `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'held'),hold_reason=?,updated_at=?
-             WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+             WHERE id=? AND state IN ('pending','task-checks','combined-checks')`,
           )
           .run(reason, Date.now(), adoption!.id).changes
         if (!held) return
@@ -910,7 +897,7 @@ export class AdoptionExecution {
         const held = db
           .query(
             `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'held'),hold_reason=?,updated_at=?
-             WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+             WHERE id=? AND state IN ('pending','task-checks','combined-checks')`,
           )
           .run(reason, Date.now(), adoption!.id).changes
         if (!held) return
@@ -954,7 +941,7 @@ export class AdoptionExecution {
       const changed = db
         .query(
           `UPDATE runner_adoptions SET state=lz_runner_transition('adoption',state,'accepted'),hold_reason=NULL,updated_at=?
-           WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+           WHERE id=? AND state IN ('pending','task-checks','combined-checks')`,
         )
         .run(Date.now(), adoption!.id).changes
       if (!changed) return

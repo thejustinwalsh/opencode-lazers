@@ -74,7 +74,7 @@ import {
 import type { CheckReceipt } from "./artifacts.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
-import { equivalentShas, FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
+import { FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
 import {
   baseReachable,
   proofForArtifact,
@@ -171,7 +171,6 @@ import {
   ensureRetainedVerificationTables,
   latestRetainedVerificationGeneration,
   markRetainedVerificationCheckUncertain,
-  recordRetainedVerificationEvidence,
   retainedVerification,
   retainedVerificationChecks,
   retainedVerificationsForPlan,
@@ -2060,63 +2059,6 @@ export class TaskRuntime {
     })
   }
 
-  private async hasSettledHumanEvidenceHold(plan: PlanRow, attempt: AttemptRow): Promise<boolean> {
-    const artifact = attempt.artifact
-    if (
-      plan.state !== "blocked" ||
-      !artifact ||
-      !plan.reason?.startsWith("Required evidence missing:")
-    )
-      return false
-    const proposal = this.store.repository.get(attempt.task_id)?.proposal
-    if (!proposal) return false
-    const effects = this.store.effects(plan.id).filter((effect) => effect.attempt_id === attempt.id)
-    if (effects.some((effect) => ["intended", "uncertain"].includes(effect.state))) return false
-    const repairID: string | undefined = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const receipts: CheckReceipt[] = []
-    for (const check of proposal.verification) {
-      const effect: EffectRow | undefined = effects.findLast((item): boolean => {
-        if (item.kind !== `verify:${check.id}`) return false
-        const payload = JSON.parse(item.payload)
-        return (
-          payload.artifact === artifact &&
-          (payload.repairID ?? undefined) === repairID &&
-          sameVerificationCheckIdentity(payload.check, check)
-        )
-      })
-      const receipt: CheckReceipt | undefined =
-        effect?.state === "completed" && effect.receipt
-          ? (JSON.parse(effect.receipt) as { check?: CheckReceipt }).check
-          : undefined
-      if (
-        !receipt ||
-        receipt.id !== check.id ||
-        receipt.cwd !== attempt.workspace ||
-        receipt.artifact !== artifact ||
-        receipt.command !== check.command ||
-        !checkSucceeded(receipt) ||
-        !checkResourcesSettled(receipt)
-      )
-        return false
-      receipts.push(receipt)
-    }
-    const missing = await this.missingEvidence(
-      plan.id,
-      attempt.task_id,
-      artifact,
-      attempt.workspace,
-      proposal.acceptance,
-      receipts,
-      undefined,
-      repairID,
-    )
-    return (
-      missing.length > 0 &&
-      missing.every((item) => item.endsWith(":human")) &&
-      plan.reason === `Required evidence missing: ${missing.join(", ")}`
-    )
-  }
-
   private cancelledRetainedTimeoutMatchesHold(
     operation: RetainedVerification,
     timeoutReason: string,
@@ -3313,33 +3255,8 @@ export class TaskRuntime {
     return matches
   }
 
-  /** Deep admission check: observes evidence files, then applies the transactional recheck. */
-  private async quarantineTarget(
-    plan: PlanRow,
-    command: PlanCommand,
-    observed = { humanHold: false },
-  ) {
-    const candidate = command.attemptID
-      ? this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
-      : undefined
-    if (
-      candidate?.state === "verifying" &&
-      !this.hasSettledVerificationTimeout(plan, candidate) &&
-      !this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            effect.attempt_id === candidate.id &&
-            effect.state === "uncertain" &&
-            effect.kind.startsWith("verify:"),
-        )
-    )
-      observed.humanHold = await this.hasSettledHumanEvidenceHold(plan, candidate)
-    return this.quarantineTargetCurrent(plan, command, observed.humanHold)
-  }
-
-  /** Synchronous, transaction-safe form of `quarantineTarget` over an observed evidence hold. */
-  private quarantineTargetCurrent(plan: PlanRow, command: PlanCommand, humanHold: boolean) {
+  /** Transaction-safe admission check for source quarantine. */
+  private quarantineTargetCurrent(plan: PlanRow, command: PlanCommand) {
     if (!command.attemptID || !command.reason)
       throw new Error("Source quarantine requires attemptID and reason")
     const attempt = this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
@@ -3356,7 +3273,6 @@ export class TaskRuntime {
     if (
       attempt.state === "verifying" &&
       !this.hasSettledVerificationTimeout(plan, attempt) &&
-      !humanHold &&
       !this.store
         .effects(plan.id)
         .some(
@@ -3366,9 +3282,7 @@ export class TaskRuntime {
             effect.kind.startsWith("verify:"),
         )
     )
-      throw new Error(
-        "Source quarantine requires a retained uncertain check, settled timeout, or settled human evidence hold",
-      )
+      throw new Error("Source quarantine requires a retained uncertain check or settled timeout")
     if (!this.host.archiveRetainedWorker || !this.host.ensureSourceGuard)
       throw new Error("The native worker source guard and archive control must be installed")
     return attempt
@@ -5484,8 +5398,7 @@ export class TaskRuntime {
         "extend-verification-deadline",
         "continue-retained-check",
         "recover-cleanup",
-      ].includes(command.action) ||
-      (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
+      ].includes(command.action)
     ) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
@@ -5658,11 +5571,10 @@ export class TaskRuntime {
       ownerSession = confirmedOwner
     }
     let quarantineAttempt: AttemptRow | undefined
-    const quarantineObserved = { humanHold: false }
     let quarantineReview: SourceReviewBinding | undefined
     if (command.action === "quarantine-source") {
       if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
-      quarantineAttempt = await this.quarantineTarget(old, command, quarantineObserved)
+      quarantineAttempt = this.quarantineTargetCurrent(old, command)
       const worker = await this.host.session(
         quarantineAttempt.session_id,
         quarantineAttempt.state === "running" ? { messages: true } : undefined,
@@ -5885,24 +5797,6 @@ export class TaskRuntime {
       )
         throw new Error("Retained repair recovery changed during final native revalidation")
     }
-    let humanCombinedArtifact: string | undefined
-    if (
-      command.action === "human-evidence" &&
-      !command.taskID &&
-      !command.retainedVerificationID &&
-      !command.adoptionID
-    ) {
-      const input = PlanInput.parse(JSON.parse(old.body))
-      const nodes = this.store.nodes(old.id)
-      const ordered = input.integrationOrder.map((id) => nodes.find((node) => node.task_id === id))
-      if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
-        throw new Error("Plan evidence requires all accepted task artifacts")
-      humanCombinedArtifact = await combineArtifacts(
-        this.directory,
-        input.baseCommit,
-        ordered.map((node) => node!.artifact!),
-      )
-    }
     // Native cleanup observations are sampled outside the command transaction,
     // then published only if the recorded plan version is still current.
     const cleanupDiagnostics =
@@ -5923,23 +5817,15 @@ export class TaskRuntime {
           const activeAdoptions = this.store.activeAdoptions(plan.id)
           if (
             activeAdoptions.length &&
-            ![
-              "adopt-descendant",
-              "human-evidence",
-              "cancel",
-              "audit",
-              "reconcile-source-notices",
-            ].includes(command.action)
+            !["adopt-descendant", "cancel", "audit", "reconcile-source-notices"].includes(
+              command.action,
+            )
           )
             throw new Error(
-              "A descendant adoption is pending; only its evidence or cancellation is allowed",
+              "A descendant adoption is pending; only its adoption or cancellation is allowed",
             )
           if (command.action === "quarantine-source") {
-            const attempt = this.quarantineTargetCurrent(
-              plan,
-              command,
-              quarantineObserved.humanHold,
-            )
+            const attempt = this.quarantineTargetCurrent(plan, command)
             if (!sourceGuardInstalled(this.store, attempt.workspace))
               throw new Error("Native worker source guard is not installed")
             if (
@@ -6773,15 +6659,9 @@ export class TaskRuntime {
               !operation ||
               operation.planID !== plan.id ||
               operation.projectDirectory !== this.directory ||
-              ![
-                "pending",
-                "task-checks",
-                "combined-checks",
-                "waiting-human",
-                "waiting-human-combined",
-                "task-accepted",
-                "held",
-              ].includes(operation.state)
+              !["pending", "task-checks", "combined-checks", "task-accepted", "held"].includes(
+                operation.state,
+              )
             )
               throw new Error("Cancellation must name a current retained verification generation")
             const cancelled: RetainedVerification = {
@@ -7086,176 +6966,6 @@ export class TaskRuntime {
                 this.store.move(plan.id, node.task_id, "CANCEL")
             this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
             return { status: "cancelling", version: this.store.plan(plan.id)!.version }
-          }
-          if (command.action === "human-evidence") {
-            if (!command.assertionID || !command.artifact || !command.reason)
-              throw new Error("Human evidence requires assertion, exact artifact and decision")
-            if (command.retainedVerificationID) {
-              if (
-                !ownerSession ||
-                !this.validArchitect(ownerSession) ||
-                ownerSession.id !== plan.owner
-              )
-                throw new Error(
-                  "Retained verification evidence requires the current same-project Architect",
-                )
-              const operation = retainedVerification(db, command.retainedVerificationID)
-              if (
-                !operation ||
-                operation.planID !== plan.id ||
-                operation.owner !== caller ||
-                operation.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
-                operation.planVersion !== plan.version ||
-                operation.planRevision !== plan.revision ||
-                ![
-                  "pending",
-                  "task-checks",
-                  "combined-checks",
-                  "waiting-human",
-                  "waiting-human-combined",
-                ].includes(operation.state)
-              )
-                throw new Error(
-                  "Human evidence must name the current retained verification generation",
-                )
-              const taskEvidence = command.taskID === operation.taskID
-              if (command.taskID && !taskEvidence)
-                throw new Error("Retained task evidence must name its exact task")
-              const assertions = taskEvidence
-                ? (this.store.repository.get(operation.taskID)?.proposal.acceptance ?? [])
-                : PlanInput.parse(JSON.parse(plan.body)).acceptance
-              const artifact = taskEvidence ? operation.artifact : operation.combinedArtifact
-              const assertion = assertions.find((item) => item.id === command.assertionID)
-              if (
-                !artifact ||
-                command.artifact !== artifact ||
-                !assertion?.evidence.some((item) => item.kind === "human")
-              )
-                throw new Error(
-                  "Human evidence does not bind to the retained assertion, phase and exact candidate",
-                )
-              recordRetainedVerificationEvidence(db, {
-                id: crypto.randomUUID(),
-                operationID: operation.id,
-                generation: operation.generation,
-                phase: taskEvidence ? "task" : "combined",
-                taskID: taskEvidence ? operation.taskID : null,
-                assertionID: assertion.id,
-                artifact,
-                body: JSON.stringify({ decision: command.reason, caller }),
-                createdAt: this.now(),
-              })
-              this.store.record(
-                plan.id,
-                command.taskID ?? null,
-                "RETAINED_VERIFICATION_HUMAN_EVIDENCE",
-                {
-                  operationID: operation.id,
-                  generation: operation.generation,
-                  assertionID: assertion.id,
-                  artifact,
-                  phase: taskEvidence ? "task" : "combined",
-                },
-              )
-              return {
-                status: "recorded",
-                operationID: operation.id,
-                generation: operation.generation,
-              }
-            }
-            if (command.adoptionID) {
-              const adoption = this.store.adoption(command.adoptionID)
-              if (
-                !adoption ||
-                adoption.plan_id !== plan.id ||
-                adoption.owner !== caller ||
-                !["pending", "task-checks", "combined-checks", "waiting-human"].includes(
-                  adoption.state,
-                )
-              )
-                throw new Error("Human evidence must name a current pending descendant adoption")
-              const taskEvidence = command.taskID === adoption.task_id
-              if (command.taskID && !taskEvidence)
-                throw new Error("Adoption task evidence must name its exact task")
-              const assertions = taskEvidence
-                ? (this.store.repository.get(adoption.task_id)?.proposal.acceptance ?? [])
-                : PlanInput.parse(JSON.parse(plan.body)).acceptance
-              const artifact = taskEvidence
-                ? adoption.descendant_commit
-                : adoption.combined_artifact
-              const assertion = assertions.find((item) => item.id === command.assertionID)
-              if (
-                command.artifact !== artifact ||
-                !assertion?.evidence.some((e) => e.kind === "human")
-              )
-                throw new Error("Human evidence does not bind to the adoption assertion/artifact")
-              this.store.recordAdoptionEvidence({
-                id: crypto.randomUUID(),
-                adoptionID: adoption.id,
-                taskID: taskEvidence ? adoption.task_id : null,
-                phase: taskEvidence ? "task" : "combined",
-                assertionID: assertion.id,
-                artifact,
-                body: { decision: command.reason, caller },
-              })
-              this.store.record(
-                plan.id,
-                command.taskID ?? null,
-                "DESCENDANT_ADOPTION_HUMAN_EVIDENCE",
-                {
-                  adoptionID: adoption.id,
-                  assertionID: assertion.id,
-                  artifact,
-                },
-              )
-              return { status: "recorded", version: this.store.plan(plan.id)!.version }
-            }
-            const nodes = this.store.nodes(plan.id)
-            let assertions: TaskProposal["acceptance"]
-            let artifact: string | null
-            if (command.taskID) {
-              artifact = nodes.find((node) => node.task_id === command.taskID)?.artifact ?? null
-              assertions = this.store.repository.get(command.taskID)?.proposal.acceptance ?? []
-            } else {
-              const input = PlanInput.parse(JSON.parse(plan.body))
-              const ordered = input.integrationOrder.map((id) =>
-                nodes.find((node) => node.task_id === id),
-              )
-              if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
-                throw new Error("Plan evidence requires all accepted task artifacts")
-              artifact = humanCombinedArtifact ?? null
-              assertions = input.acceptance
-            }
-            const assertion = assertions.find((item) => item.id === command.assertionID)
-            if (
-              artifact !== command.artifact ||
-              !assertion?.evidence.some((e) => e.kind === "human")
-            )
-              throw new Error("Human evidence does not bind to the current assertion/artifact")
-            const sourceGeneration = command.taskID
-              ? this.retainedRepairGeneration(plan.id, command.taskID)
-              : this.retainedRepairGeneration(plan.id)
-            db.query(
-              "INSERT INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,?,'human',?,?,?)",
-            ).run(
-              crypto.randomUUID(),
-              plan.id,
-              command.taskID ?? null,
-              null,
-              assertion.id,
-              command.artifact,
-              JSON.stringify({
-                decision: command.reason,
-                caller,
-                ...(sourceGeneration ? { sourceGeneration } : {}),
-              }),
-              Date.now(),
-            )
-            this.store.record(plan.id, command.taskID ?? null, "HUMAN_EVIDENCE", {
-              assertionID: assertion.id,
-              artifact: command.artifact,
-            })
-            return { status: "recorded", version: this.store.plan(plan.id)!.version }
           }
           if (command.action === "resume" || command.action === "retry") {
             const retry = command.action === "retry"
@@ -8094,8 +7804,7 @@ export class TaskRuntime {
         result?.status === "retained-verification-check-continued") ||
       command.action === "recover-cleanup" ||
       command.action === "pause" ||
-      command.action === "unpause" ||
-      (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
+      command.action === "unpause"
     )
       await this.requestTick()
     if (command.action === "reassign" || continuedOwner) this.refreshArchitectSourceOwners()
@@ -13012,11 +12721,7 @@ export class TaskRuntime {
     if (
       plan.state !== "blocked" ||
       (attempt.state !== "running" &&
-        !(
-          attempt.state === "verifying" &&
-          (this.hasSettledVerificationTimeout(plan, attempt) ||
-            (await this.hasSettledHumanEvidenceHold(plan, attempt)))
-        )) ||
+        !(attempt.state === "verifying" && this.hasSettledVerificationTimeout(plan, attempt))) ||
       attempt.workspace === this.directory ||
       !this.host.ensureSourceGuard ||
       !this.host.archiveRetainedWorker ||
@@ -13988,16 +13693,7 @@ export class TaskRuntime {
       this.hold(plan, errorText(error))
       return
     }
-    const missing = await this.missingEvidence(
-      plan.id,
-      attempt.task_id,
-      artifact.commit,
-      attempt.workspace,
-      proposal.acceptance,
-      receipts,
-      undefined,
-      repairID,
-    )
+    const missing = await this.missingEvidence(attempt.workspace, proposal.acceptance, receipts)
     if (missing.length) {
       this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
       return
@@ -14031,14 +13727,9 @@ export class TaskRuntime {
     }
   }
   private async missingEvidence(
-    planID: string,
-    taskID: string | null,
-    artifact: string,
     workspace: string,
     assertions: TaskProposal["acceptance"],
     receipts: CheckReceipt[],
-    adoptionID?: string,
-    sourceGeneration?: string,
   ) {
     const missing: string[] = []
     for (const assertion of assertions)
@@ -14050,34 +13741,6 @@ export class TaskRuntime {
           missing.push(assertion.id)
         if (evidence.kind === "artifact" && !(await artifactExists(workspace, evidence.reference)))
           missing.push(`${assertion.id}:${evidence.reference}`)
-        if (evidence.kind === "human") {
-          const found = adoptionID
-            ? this.store.hasAdoptionEvidence(
-                adoptionID,
-                taskID === null ? "combined" : "task",
-                taskID,
-                assertion.id,
-                artifact,
-              )
-            : this.store.atomic((db) => {
-                const rows = db
-                  .query<{ body: string }, [string, string | null, string, string]>(
-                    "SELECT body FROM runner_evidence WHERE plan_id=? AND task_id IS ? AND kind='human' AND assertion_id=? AND artifact IN (SELECT value FROM json_each(?))",
-                  )
-                  .all(planID, taskID, assertion.id, JSON.stringify(equivalentShas(db, artifact)))
-                return rows.some((row) => {
-                  try {
-                    return (
-                      ((JSON.parse(row.body) as { sourceGeneration?: unknown }).sourceGeneration ??
-                        undefined) === sourceGeneration
-                    )
-                  } catch {
-                    return false
-                  }
-                })
-              })
-          if (!found) missing.push(`${assertion.id}:human`)
-        }
       }
     return missing
   }
@@ -14509,16 +14172,7 @@ export class TaskRuntime {
       this.hold(plan, "Combined candidate changed after verification")
       return
     }
-    const missing = await this.missingEvidence(
-      plan.id,
-      null,
-      artifact,
-      workspace,
-      input.acceptance,
-      receipts,
-      undefined,
-      sourceGeneration,
-    )
+    const missing = await this.missingEvidence(workspace, input.acceptance, receipts)
     if (missing.length) {
       this.hold(plan, `Combined artifact evidence missing: ${missing.join(", ")}`)
       return

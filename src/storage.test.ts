@@ -1216,7 +1216,7 @@ test("preparing, running, verifying, and approval-held execution cannot be exter
       held.plan.planID,
       held.task.id,
       1,
-      "waiting-human",
+      "task-checks",
       "{}",
     )
   })
@@ -1226,7 +1226,7 @@ test("preparing, running, verifying, and approval-held execution cannot be exter
         taskID: held.task.id,
         requestID: "approval-held-review",
         disposition: "fulfilled",
-        reason: "Retained verification is awaiting its required approval.",
+        reason: "Retained verification is still running its checks.",
         evidence: [{ kind: "human", reference: "review" }],
       },
       { sessionID: "architect-session", agent: "architect" },

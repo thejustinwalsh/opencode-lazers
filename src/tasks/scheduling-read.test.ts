@@ -69,9 +69,7 @@ function fixture() {
         dependencies: [],
         integrationOrder: [task.id],
         verification: [],
-        acceptance: [
-          { id: "done", assertion: "Done", evidence: [{ kind: "human", decision: "review" }] },
-        ],
+        acceptance: [{ id: "done", assertion: "Done", evidence: [] }],
       },
       sessionID,
     )

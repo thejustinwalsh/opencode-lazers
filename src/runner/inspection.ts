@@ -3,7 +3,6 @@ import { PlanInput } from "./schema.ts"
 import { planPrioritySortSQL } from "./priority.ts"
 import { retainedVerificationsForInspection } from "./retained-verification/store.ts"
 import type {
-  RetainedHumanEvidenceRequirements,
   RetainedVerificationInspection,
   RetainedVerificationProjection,
 } from "./retained-verification/store.ts"
@@ -485,50 +484,6 @@ type InspectablePlan = {
   state: string
 }
 
-function retainedHumanRequirements(
-  store: RunnerStore,
-  plan: InspectablePlan,
-  taskIDs: string[],
-): RetainedHumanEvidenceRequirements {
-  let parsedPlan: z.infer<typeof PlanInput>
-  try {
-    parsedPlan = PlanInput.parse(JSON.parse(plan.body))
-  } catch {
-    return new Map()
-  }
-  const combinedAssertionIDs = parsedPlan.acceptance
-    .filter((assertion) => assertion.evidence.some((evidence) => evidence.kind === "human"))
-    .map((assertion) => assertion.id)
-  const requirements: [
-    string,
-    {
-      planRevision: number
-      planVersion: number
-      taskRevision: number
-      taskAssertionIDs: string[] | null
-      combinedAssertionIDs: string[] | null
-    },
-  ][] = []
-  for (const taskID of taskIDs) {
-    const task = store.repository.get(taskID)
-    const planTask = parsedPlan.nodes.find((node) => node.taskID === taskID)
-    if (!task || !planTask || task.revision !== planTask.revision) continue
-    requirements.push([
-      taskID,
-      {
-        planRevision: plan.revision,
-        planVersion: plan.version,
-        taskRevision: task.revision,
-        taskAssertionIDs: task.proposal.acceptance
-          .filter((assertion) => assertion.evidence.some((evidence) => evidence.kind === "human"))
-          .map((assertion) => assertion.id),
-        combinedAssertionIDs,
-      },
-    ])
-  }
-  return new Map(requirements)
-}
-
 function retainedNextSteps(
   operation: RetainedVerificationProjection,
   plan: InspectablePlan,
@@ -540,15 +495,7 @@ function retainedNextSteps(
     return nextSteps
 
   if (
-    [
-      "pending",
-      "task-checks",
-      "combined-checks",
-      "waiting-human",
-      "waiting-human-combined",
-      "task-accepted",
-      "held",
-    ].includes(operation.state)
+    ["pending", "task-checks", "combined-checks", "task-accepted", "held"].includes(operation.state)
   )
     nextSteps.push({
       action: "cancel-retained-verification",
@@ -647,26 +594,6 @@ function retainedNextSteps(
     })
 
   if (
-    operation.humanEvidence.status === "known" &&
-    operation.humanEvidence.phase &&
-    operation.humanEvidence.missingAssertionIDs.length > 0
-  )
-    nextSteps.push({
-      action: "human-evidence",
-      operationID: operation.operationID,
-      generation: operation.generation,
-      phase: operation.humanEvidence.phase,
-      taskID: operation.humanEvidence.phase === "task" ? operation.taskID : null,
-      candidateArtifact:
-        operation.humanEvidence.phase === "task"
-          ? operation.candidateArtifact
-          : operation.combinedArtifact,
-      assertionIDs: operation.humanEvidence.missingAssertionIDs,
-      condition:
-        "Conditional: these exact human acceptance items are missing; current Architect, operation generation, phase and candidate bindings are rechecked by runtime.",
-    })
-
-  if (
     ["accepted", "failed", "cancelled"].includes(operation.state) &&
     operation.planRevision === plan.revision &&
     operation.planVersion === plan.version &&
@@ -731,8 +658,6 @@ function retainedInspection(
   limit: number,
   cursor?: string,
 ) {
-  const planTasks = store.nodes(plan.id).map((node) => node.task_id)
-  const requirements = retainedHumanRequirements(store, plan, planTasks)
   return store.atomic((db) =>
     retainedVerificationsForInspection(
       db,
@@ -741,7 +666,6 @@ function retainedInspection(
       taskIDs,
       limit,
       cursor,
-      requirements,
     ),
   )
 }
