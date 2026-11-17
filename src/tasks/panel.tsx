@@ -287,7 +287,12 @@ function TaskPanel(
   let separator: HTMLDivElement | undefined
   let detail: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
-  const scope = createLatest(
+  /**
+   * What the project lookup depends on. The host replaces session objects (its location) on any
+   * session update; with the same client, session, server and directory this keeps its identity,
+   * so the lookup does not run again and the view does not blank and reconnect mid-session.
+   */
+  const scopeSource = createMemo(
     () => {
       if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
       return {
@@ -297,14 +302,25 @@ function TaskPanel(
         directory: props.session.directory,
       }
     },
-    async (source, signal) => {
-      const location = await source.client.location.get(
-        { location: { directory: source.directory } },
-        { signal },
-      )
-      return { ...source, project: location.project.canonical }
+    undefined,
+    {
+      equals: (left, right) =>
+        left === right ||
+        (left !== undefined &&
+          right !== undefined &&
+          left.client === right.client &&
+          left.session === right.session &&
+          left.server === right.server &&
+          left.directory === right.directory),
     },
   )
+  const scope = createLatest(scopeSource, async (source, signal) => {
+    const location = await source.client.location.get(
+      { location: { directory: source.directory } },
+      { signal },
+    )
+    return { ...source, project: location.project.canonical }
+  })
   const current = () => {
     if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
     const value = scope.latest
@@ -433,16 +449,22 @@ function TaskPanel(
         ])
       : ""
   }
+  /** The entry holding focus while focus is in Now/Attention/Next, and its place in the list. */
+  let focusedSignal: { group: SignalGroup | "next"; taskID: string; index: number } | undefined
+  // Per-view disclosure and signal windows start over only for another view (scope, filter,
+  // search, session, project). A transient gap with no view (a reconnect) keeps them for its return.
   let revealIdentity = ""
   createEffect(() => {
     const key = expectedKey()
-    if (key === revealIdentity) return
+    if (!key || key === revealIdentity) return
     revealIdentity = key
     setRevealedTaskIDs(new Set<string>())
     setTemporarilyExpandedForks(new Set<string>())
     setTemporarilyCollapsedForks(new Set<string>())
     setCollapsedPlans(new Set<string>())
     setSignalStarts({ now: 0, attention: 0 })
+    // A focused entry belonged to the old view; do not chase its task into this one.
+    focusedSignal = undefined
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
@@ -1441,8 +1463,6 @@ function TaskPanel(
       )
       ?.focus()
   }
-  /** The entry holding focus while focus is in Now/Attention/Next, and its place in the list. */
-  let focusedSignal: (SignalEntry & { index: number }) | undefined
   const signalOf = (element: Element | null) => {
     const button = element?.closest<HTMLElement>("[data-scheduling-task-id]")
     const { schedulingGroup: group, schedulingTaskId: taskID } = button?.dataset ?? {}
@@ -1462,7 +1482,8 @@ function TaskPanel(
     void attentionWindow()
     queueMicrotask(() => {
       const lost = focusedSignal
-      if (!lost || !head) return
+      // With no view (a reconnect in progress) the list is not empty, only absent: wait for it.
+      if (!lost || !head || !visible() || visible()!.loading) return
       const active = head.ownerDocument.activeElement
       if (active && head.contains(active)) {
         focusedSignal = signalOf(active) ?? focusedSignal

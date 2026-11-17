@@ -15,6 +15,8 @@ export {
   setupGui,
 } from "../../models-panel/fixtures/dom-host.ts"
 export { LinkHandler }
+/** The bundle's own Solid signal, for reactive host fixtures (a session whose fields update). */
+export { createSignal }
 
 export function taskPanelRegistration(registrations: Array<{ token: unknown; value: unknown }>) {
   return registrations.find(

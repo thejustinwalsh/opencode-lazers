@@ -258,6 +258,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   /** `${state}:${cursor}` pages that fail while listed here. */
   const failures = new Set<string>()
   /** `${state}:${cursor}` pages answered with these tasks and next cursor instead. */
+  let locationReads = 0
   const pageOverrides = new Map<string, { ids: string[]; nextCursor: string | null }>()
   const pageOf = (ids: string[], nextCursor: string | null, count: number) => ({
     projectDirectory,
@@ -523,7 +524,12 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
       })(),
   }
   const client = {
-    location: { get: async () => ({ project: { canonical: projectDirectory, id: projectID } }) },
+    location: {
+      get: async () => {
+        locationReads++
+        return { project: { canonical: projectDirectory, id: projectID } }
+      },
+    },
     rpc: (contract: { id?: string }) =>
       contract.id === "lazers.observability"
         ? { topology }
@@ -534,11 +540,23 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   }
   const taskStore = host.createReactiveStore({ projects: {} })
   const registrations: Array<{ token: unknown; value: unknown }> = []
+  // The host replaces a session's location object on session updates, fields unchanged.
+  const [location, setLocation] = host.createSignal({ directory: projectDirectory })
+  // A reconnect gives the same server a new client object.
+  const [serverClient, setServerClient] = host.createSignal(client)
   const session = {
     id: ownerSessionID,
-    location: { directory: projectDirectory },
+    get location() {
+      return location()
+    },
     directory: projectDirectory,
-    server: { id: "tasks-server", connected: true, client },
+    server: {
+      id: "tasks-server",
+      connected: true,
+      get client() {
+        return serverClient()
+      },
+    },
   }
   const context = {
     id: "lazers",
@@ -668,6 +686,10 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     extraPlans,
     topologyCalls: () => topologyCalls,
     detailCalls,
+    /** A session update with the same fields: a new location object for the same directory. */
+    touchSession: () => setLocation({ directory: projectDirectory }),
+    reconnect: () => setServerClient({ ...client }),
+    locationReads: () => locationReads,
     /** The worker's input request is answered; it keeps working (Now) or goes idle. */
     resolveRequest: (taskID: string, keepsWorking: boolean) => {
       requests.delete(taskID)
@@ -1629,5 +1651,71 @@ test("a focused Attention request that resolves keeps focus on a visible signal"
     },
     {},
     { active: 6, requests: 2 },
+  )
+})
+
+test("an off-window focused signal keeps its window and focus across same-view refreshes", async () => {
+  await withPanel(
+    async (h) => {
+      // Ten Attention entries: eight requests, two blocked tasks. End slides the window to 6–10.
+      const s = signals(h)
+      await until(() => Boolean(s.entry("attention", h.alpha[0]!)))
+      await settle()
+      const doc = h.container.ownerDocument
+      const title = () => h.container.querySelector(".lazers-tasks-detail .lazers-tasks-title")
+      const pager = () =>
+        h.container.querySelector('[aria-label="Attention"] .lazers-tasks-schedule-pager-range')
+          ?.textContent
+      s.entry("attention", h.alpha[0]!)!.focus()
+      h.key(doc.activeElement as HTMLElement, "End")
+      await until(() => title()?.textContent === h.nameOf(h.beta.join))
+      h.key(doc.activeElement as HTMLElement, "ArrowUp")
+      await until(() => title()?.textContent === h.nameOf(h.beta.a))
+      await settle()
+      expect(pager()).toBe("6–10 of 10")
+      expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
+      const expectHeld = () => {
+        expect(pager()).toBe("6–10 of 10")
+        expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
+        expect(title()?.textContent).toBe(h.nameOf(h.beta.a))
+      }
+      // A task-change refresh (SCHEDULE_UPDATED) with unchanged membership.
+      const reads = h.queryCalls.length
+      h.announceChange()
+      await until(() => h.queryCalls.length > reads)
+      await settle()
+      await settle()
+      expectHeld()
+      // A session update with the same server, session and directory: not a new view.
+      const locations = h.locationReads()
+      h.touchSession()
+      await settle()
+      await settle()
+      expectHeld()
+      expect(h.locationReads()).toBe(locations)
+      // A reconnect re-reads the project and the view blanks for a moment. It returns as the
+      // same view: its window stays, and focus returns to the entry it was on.
+      h.reconnect()
+      await until(() => h.locationReads() > locations)
+      await until(() => doc.activeElement === s.entry("attention", h.beta.a))
+      await settle()
+      expectHeld()
+      // Keys continue from the kept focus.
+      h.key(doc.activeElement as HTMLElement, "ArrowUp")
+      await until(() => doc.activeElement === s.entry("attention", h.alpha[7]!))
+      // A real filter change is a new view: its windows start over, also on the way back.
+      const initialState = h.queryCalls[0]?.state
+      h.chooseFilter("Queued")
+      await until(() => h.queryCalls.at(-1)?.state === "queued")
+      h.chooseFilter("Open")
+      await until(
+        () =>
+          h.queryCalls.at(-1)?.state === initialState && Boolean(s.entry("attention", h.alpha[0]!)),
+      )
+      await settle()
+      expect(pager()).toBe("1–5 of 10")
+    },
+    {},
+    { requests: 8 },
   )
 })
