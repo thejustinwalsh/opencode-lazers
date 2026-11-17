@@ -2050,9 +2050,7 @@ function TaskPanel(
                               text={
                                 evidence.kind === "verification"
                                   ? `Verification: ${evidence.verificationID}`
-                                  : evidence.kind === "artifact"
-                                    ? evidence.reference
-                                    : evidence.decision
+                                  : evidence.reference
                               }
                             />
                           )}

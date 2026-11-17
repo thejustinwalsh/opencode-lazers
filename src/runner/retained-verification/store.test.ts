@@ -230,63 +230,6 @@ test("inspection limits operation reads and returns no more than the requested o
   expect(page.history.hasMore).toBe(true)
 })
 
-test("duplicate-heavy human evidence lookup keeps only distinct required assertions", () => {
-  const db = fixture(false)
-  const waiting = operation(selectedPlan, taskA, 1, "waiting-human")
-  createRetainedVerification(db, projectDirectory, waiting)
-
-  const insertEvidence = db.query(
-    `INSERT INTO runner_retained_verification_evidence(
-      id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
-    ) VALUES(?,?,?,'task',?,'approval',?,?,?)`,
-  )
-  for (let index = 0; index < 5_000; index++)
-    insertEvidence.run(
-      crypto.randomUUID(),
-      waiting.id,
-      waiting.generation,
-      taskA,
-      waiting.artifact,
-      `duplicate evidence ${index}`,
-      index,
-    )
-  expect(
-    db
-      .query<{ count: number }, [string]>(
-        "SELECT COUNT(*) AS count FROM runner_retained_verification_evidence WHERE operation_id=?",
-      )
-      .get(waiting.id)?.count,
-  ).toBe(5_000)
-
-  const requirements = new Map([
-    [
-      taskA,
-      {
-        planRevision: 1,
-        planVersion: 1,
-        taskRevision: 1,
-        taskAssertionIDs: ["approval", "follow-up"],
-        combinedAssertionIDs: [],
-      },
-    ],
-  ])
-  const result = retainedVerificationsForInspection(
-    db,
-    projectDirectory,
-    selectedPlan,
-    [taskA],
-    10,
-    undefined,
-    requirements,
-  )
-
-  expect(result.latest[0]?.humanEvidence).toEqual({
-    status: "known",
-    phase: "task",
-    missingAssertionIDs: ["follow-up"],
-  })
-})
-
 test("selected history cursors ignore unrelated telemetry and other plan/task writes", () => {
   const db = fixture()
   createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
@@ -342,8 +285,8 @@ test("selected history cursors ignore unrelated telemetry and other plan/task wr
   expect(next.history.nextCursor).toBeNull()
 })
 
-test("selected operation, generation, check, resource, and evidence changes invalidate cursors", () => {
-  for (const change of ["operation", "generation", "check", "resource", "evidence"] as const) {
+test("selected operation, generation, check, and resource changes invalidate cursors", () => {
+  for (const change of ["operation", "generation", "check", "resource"] as const) {
     const db = fixture()
     createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
     createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 3, "failed"))
@@ -381,12 +324,6 @@ test("selected operation, generation, check, resource, and evidence changes inva
       db.query(
         "UPDATE runner_retained_verification_resources SET state='removed',updated_at=3 WHERE operation_id=?",
       ).run(operationID)
-    if (change === "evidence")
-      db.query(
-        `INSERT INTO runner_retained_verification_evidence(
-          id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
-        ) VALUES(?,?,1,'task',?,'approval','artifact','private body',3)`,
-      ).run(crypto.randomUUID(), operationID, taskA)
 
     expect(() =>
       retainedVerificationsForInspection(
@@ -401,134 +338,6 @@ test("selected operation, generation, check, resource, and evidence changes inva
     db.close()
     databases.splice(databases.indexOf(db), 1)
   }
-})
-
-test("cursor capture detects evidence generation rebinding", () => {
-  const db = fixture()
-  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
-  const waiting = operation(selectedPlan, taskA, 3, "waiting-human")
-  createRetainedVerification(db, projectDirectory, waiting)
-  db.query(
-    `INSERT INTO runner_retained_verification_evidence(
-      id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
-    ) VALUES(?,?,3,'task',?,'approval',?,'private approval evidence',3)`,
-  ).run(crypto.randomUUID(), waiting.id, taskA, waiting.artifact)
-  const requirements = new Map([
-    [
-      taskA,
-      {
-        planRevision: 1,
-        planVersion: 1,
-        taskRevision: 1,
-        taskAssertionIDs: ["approval"],
-        combinedAssertionIDs: [],
-      },
-    ],
-  ])
-  const first = retainedVerificationsForInspection(
-    db,
-    projectDirectory,
-    selectedPlan,
-    [taskA],
-    1,
-    undefined,
-    requirements,
-  )
-  expect(first.latest[0]?.humanEvidence).toEqual({
-    status: "known",
-    phase: "task",
-    missingAssertionIDs: [],
-  })
-  expect(first.history.nextCursor).toBeString()
-
-  db.query(
-    "UPDATE runner_retained_verification_evidence SET generation=99 WHERE operation_id=?",
-  ).run(waiting.id)
-  expect(() =>
-    retainedVerificationsForInspection(
-      db,
-      projectDirectory,
-      selectedPlan,
-      [taskA],
-      1,
-      first.history.nextCursor!,
-      requirements,
-    ),
-  ).toThrow("Selected retained-verification history changed since this capture")
-})
-
-test("cursor capture detects evidence rebinding to an older operation", () => {
-  const db = fixture()
-  createRetainedVerification(db, projectDirectory, operation(selectedPlan, taskA, 2, "failed"))
-  const waiting = operation(selectedPlan, taskA, 3, "waiting-human")
-  createRetainedVerification(db, projectDirectory, waiting)
-  const olderOperationID = db
-    .query<{ id: string }, [string, string, string, number]>(
-      `SELECT id FROM runner_retained_verifications
-       WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=?`,
-    )
-    .get(projectDirectory, selectedPlan, taskA, 1)!.id
-  db.query(
-    `INSERT INTO runner_retained_verification_evidence(
-      id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at
-    ) VALUES(?,?,3,'task',?,'approval',?,'private approval evidence',3)`,
-  ).run(crypto.randomUUID(), waiting.id, taskA, waiting.artifact)
-  const requirements = new Map([
-    [
-      taskA,
-      {
-        planRevision: 1,
-        planVersion: 1,
-        taskRevision: 1,
-        taskAssertionIDs: ["approval"],
-        combinedAssertionIDs: [],
-      },
-    ],
-  ])
-  const first = retainedVerificationsForInspection(
-    db,
-    projectDirectory,
-    selectedPlan,
-    [taskA],
-    1,
-    undefined,
-    requirements,
-  )
-  expect(first.latest[0]?.humanEvidence).toEqual({
-    status: "known",
-    phase: "task",
-    missingAssertionIDs: [],
-  })
-  expect(first.history.nextCursor).toBeString()
-
-  db.query(
-    "UPDATE runner_retained_verification_evidence SET operation_id=? WHERE operation_id=?",
-  ).run(olderOperationID, waiting.id)
-  const fresh = retainedVerificationsForInspection(
-    db,
-    projectDirectory,
-    selectedPlan,
-    [taskA],
-    1,
-    undefined,
-    requirements,
-  )
-  expect(fresh.latest[0]?.humanEvidence).toEqual({
-    status: "known",
-    phase: "task",
-    missingAssertionIDs: ["approval"],
-  })
-  expect(() =>
-    retainedVerificationsForInspection(
-      db,
-      projectDirectory,
-      selectedPlan,
-      [taskA],
-      1,
-      first.history.nextCursor!,
-      requirements,
-    ),
-  ).toThrow("Selected retained-verification history changed since this capture")
 })
 
 test("cursor capture rejects oversized corrupt operation state without exposing it", () => {
@@ -607,7 +416,7 @@ test("missing retained child tables report partial facts without adding schema",
   const result = retainedVerificationsForInspection(db, projectDirectory, selectedPlan, [taskA], 10)
   expect(result).toMatchObject({
     status: "partial",
-    availability: { operations: true, checks: false, resources: false, humanEvidence: false },
+    availability: { operations: true, checks: false, resources: false },
     latest: [
       {
         state: "accepted",

@@ -5,11 +5,7 @@ import { createHash } from "node:crypto"
 import { fingerprint } from "../../identity.ts"
 import { z } from "zod"
 import { RetainedVerificationSchema } from "./schema.ts"
-import type {
-  RetainedVerification,
-  RetainedVerificationCheck,
-  RetainedVerificationEvidence,
-} from "./schema.ts"
+import type { RetainedVerification, RetainedVerificationCheck } from "./schema.ts"
 
 const RetainedVerificationCursorPosition = z.strictObject({
   taskID: z.uuid(),
@@ -25,17 +21,6 @@ const RetainedVerificationCursor = z.strictObject({
   capture: z.string().regex(/^[a-f0-9]{64}$/),
   checksum: z.string().regex(/^[a-f0-9]{64}$/),
 })
-
-export type RetainedHumanEvidenceRequirements = ReadonlyMap<
-  string,
-  {
-    planRevision: number
-    planVersion: number
-    taskRevision: number
-    taskAssertionIDs: string[] | null
-    combinedAssertionIDs: string[] | null
-  }
->
 
 type RetainedCheckProjection = {
   phase: "task" | "combined" | null
@@ -116,11 +101,6 @@ export type RetainedVerificationProjection = {
   checksAvailable: boolean
   checks: RetainedCheckProjection[]
   checksTruncated: boolean
-  humanEvidence: {
-    status: "not-applicable" | "known" | "unavailable" | "not-inspected"
-    phase: "task" | "combined" | null
-    missingAssertionIDs: string[]
-  }
   cleanup: {
     state: RetainedVerification["cleanupState"] | "unknown"
     workspaceStates: {
@@ -144,7 +124,6 @@ export type RetainedVerificationInspection = {
     checks: boolean
     receipts: boolean
     resources: boolean
-    humanEvidence: boolean
   }
   latest: RetainedVerificationProjection[]
   history: {
@@ -286,15 +265,7 @@ export function retainedVerificationsForProject(
     .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
 }
 
-const liveStates = [
-  "pending",
-  "task-checks",
-  "combined-checks",
-  "waiting-human",
-  "waiting-human-combined",
-  "task-accepted",
-  "held",
-] as const
+const liveStates = ["pending", "task-checks", "combined-checks", "task-accepted", "held"] as const
 
 export function activeRetainedVerifications(
   db: Database,
@@ -875,57 +846,6 @@ export function settleRetainedVerificationResources(
   ).run(state, now, operationID, phase, checkID)
 }
 
-export function recordRetainedVerificationEvidence(
-  db: Database,
-  evidence: RetainedVerificationEvidence,
-): void {
-  ensureRetainedVerificationTables(db)
-  db.query(
-    `INSERT INTO runner_retained_verification_evidence
-     (id,operation_id,generation,phase,task_id,assertion_id,artifact,body,created_at)
-     VALUES(?,?,?,?,?,?,?,?,?)`,
-  ).run(
-    evidence.id,
-    evidence.operationID,
-    evidence.generation,
-    evidence.phase,
-    evidence.taskID,
-    evidence.assertionID,
-    evidence.artifact,
-    evidence.body,
-    evidence.createdAt,
-  )
-}
-
-export function hasRetainedVerificationEvidence(
-  db: Database,
-  input: {
-    operationID: string
-    generation: number
-    phase: "task" | "combined"
-    taskID: string | null
-    assertionID: string
-    artifact: string
-  },
-): boolean {
-  ensureRetainedVerificationTables(db)
-  return Boolean(
-    db
-      .query(
-        `SELECT 1 FROM runner_retained_verification_evidence
-         WHERE operation_id=? AND generation=? AND phase=? AND task_id IS ? AND assertion_id=? AND artifact=? LIMIT 1`,
-      )
-      .get(
-        input.operationID,
-        input.generation,
-        input.phase,
-        input.taskID,
-        input.assertionID,
-        input.artifact,
-      ),
-  )
-}
-
 export function saveRetainedVerification(db: Database, operation: RetainedVerification): void {
   ensureRetainedVerificationTables(db)
   const parsed = RetainedVerificationSchema.parse(operation)
@@ -989,8 +909,6 @@ const retainedStates = [
   "pending",
   "task-checks",
   "combined-checks",
-  "waiting-human",
-  "waiting-human-combined",
   "task-accepted",
   "accepted",
   "failed",
@@ -1040,27 +958,6 @@ function appendRetainedCaptureRows(
   hash.update(`rows:${rowsRead}\n`)
 }
 
-function retainedRequirementsCapture(
-  taskIDs: string[],
-  requirements: RetainedHumanEvidenceRequirements,
-) {
-  return taskIDs.map((taskID) => {
-    const requirement = requirements.get(taskID)
-    const assertionIDs = (ids: string[] | null | undefined) =>
-      ids === null || ids === undefined
-        ? null
-        : [...new Set(ids.filter((id) => /^[a-z][a-z0-9-]{0,63}$/.test(id)))].sort()
-    return [
-      taskID,
-      requirement?.planRevision ?? null,
-      requirement?.planVersion ?? null,
-      requirement?.taskRevision ?? null,
-      assertionIDs(requirement?.taskAssertionIDs),
-      assertionIDs(requirement?.combinedAssertionIDs),
-    ]
-  })
-}
-
 /** Hash only selected retained facts; unrelated runner telemetry is not a page fence. */
 function retainedHistoryCapture(
   db: Database,
@@ -1068,8 +965,7 @@ function retainedHistoryCapture(
   planID: string,
   taskIDs: string[],
   watermark: number[],
-  tables: { checks: boolean; receipts: boolean; resources: boolean; evidence: boolean },
-  requirements: RetainedHumanEvidenceRequirements,
+  tables: { checks: boolean; receipts: boolean; resources: boolean },
 ): string {
   const hash = createHash("sha256")
   const count = { value: 0 }
@@ -1090,7 +986,6 @@ function retainedHistoryCapture(
         watermark,
         currentWatermark,
         tables,
-        requirements: retainedRequirementsCapture(taskIDs, requirements),
       }),
     )
     .update("\n")
@@ -1196,29 +1091,6 @@ function retainedHistoryCapture(
           .iterate(projectDirectory, planID, taskID, generation),
         count,
       )
-    if (tables.evidence)
-      appendRetainedCaptureRows(
-        hash,
-        `evidence:${taskID}`,
-        db
-          .query<Record<string, unknown>, [string, string, string, number]>(
-            `SELECT DISTINCT operations.generation AS operation_generation,
-               evidence.generation AS evidence_generation,
-               CASE WHEN length(evidence.phase)<=16 THEN evidence.phase ELSE '' END AS phase,
-               CASE WHEN evidence.task_id IS NULL OR length(evidence.task_id)<=64
-                 THEN evidence.task_id ELSE NULL END AS task_id,
-               CASE WHEN length(evidence.assertion_id)<=64 THEN evidence.assertion_id ELSE '' END AS assertion_id,
-               CASE WHEN length(evidence.artifact)<=64 THEN evidence.artifact ELSE '' END AS artifact
-             FROM runner_retained_verification_evidence AS evidence
-             JOIN runner_retained_verifications AS operations ON operations.id=evidence.operation_id
-             WHERE operations.project_directory=? AND operations.plan_id=?
-               AND operations.task_id=? AND operations.generation<=?
-             ORDER BY operations.generation,evidence.generation,evidence.phase,evidence.task_id,
-               evidence.assertion_id,evidence.artifact`,
-          )
-          .iterate(projectDirectory, planID, taskID, generation),
-        count,
-      )
   }
   return hash.digest("hex")
 }
@@ -1311,10 +1183,6 @@ function stateReason(state: RetainedVerificationProjection["state"]): string {
       return "Task verification checks are in progress under runtime control."
     case "combined-checks":
       return "Combined verification checks are in progress under runtime control."
-    case "waiting-human":
-      return "Task acceptance is waiting for required human evidence."
-    case "waiting-human-combined":
-      return "Combined acceptance is waiting for required human evidence."
     case "task-accepted":
       return "Task checks and task acceptance passed; combined verification may remain."
     case "accepted":
@@ -1357,7 +1225,6 @@ function emptyProjection(
   planID: string,
   checksAvailable: boolean,
   resourcesAvailable: boolean,
-  isLatest: boolean,
 ): RetainedVerificationProjection {
   const safeID = z.uuid().safeParse(row.id)
   const safeTask = z.uuid().safeParse(row.task_id)
@@ -1382,11 +1249,6 @@ function emptyProjection(
     checksAvailable,
     checks: [],
     checksTruncated: false,
-    humanEvidence: {
-      status: isLatest ? "unavailable" : "not-inspected",
-      phase: null,
-      missingAssertionIDs: [],
-    },
     cleanup: {
       state: "unknown",
       workspaceStates: { task: "unknown", combined: "unknown" },
@@ -1402,12 +1264,10 @@ function operationProjection(
   row: InspectionOperationRow,
   planID: string,
   projectDirectory: string,
-  tables: { checks: boolean; receipts: boolean; resources: boolean; evidence: boolean },
-  isLatest: boolean,
-  requirements: RetainedHumanEvidenceRequirements,
+  tables: { checks: boolean; receipts: boolean; resources: boolean },
 ): RetainedVerificationProjection {
   const operation = operationPayload(row, planID, projectDirectory)
-  if (!operation) return emptyProjection(row, planID, tables.checks, tables.resources, isLatest)
+  if (!operation) return emptyProjection(row, planID, tables.checks, tables.resources)
 
   const checkRows = tables.checks
     ? db
@@ -1677,61 +1537,6 @@ function operationProjection(
   })
 
   const state = knownState(operation.state, retainedStates)
-  let humanEvidence: RetainedVerificationProjection["humanEvidence"] = {
-    status: "not-applicable",
-    phase: null,
-    missingAssertionIDs: [],
-  }
-  const humanPhase =
-    state === "waiting-human" ? "task" : state === "waiting-human-combined" ? "combined" : null
-  if (isLatest && humanPhase) {
-    const requirement = requirements.get(operation.taskID)
-    const assertionIDs =
-      requirement &&
-      requirement.planRevision === operation.planRevision &&
-      requirement.planVersion === operation.planVersion &&
-      requirement.taskRevision === operation.taskRevision
-        ? humanPhase === "task"
-          ? requirement.taskAssertionIDs
-          : requirement.combinedAssertionIDs
-        : null
-    const candidateArtifact =
-      humanPhase === "task" ? operation.artifact : operation.combinedArtifact
-    if (!tables.evidence || assertionIDs === null || candidateArtifact === null) {
-      humanEvidence = { status: "unavailable", phase: humanPhase, missingAssertionIDs: [] }
-    } else {
-      const uniqueIDs = [
-        ...new Set(assertionIDs.filter((id) => /^[a-z][a-z0-9-]{0,63}$/.test(id))),
-      ].sort()
-      const taskID = humanPhase === "task" ? operation.taskID : null
-      const existing = uniqueIDs.length
-        ? db
-            .query<
-              { assertion_id: string },
-              [string, number, string, string | null, string, ...string[]]
-            >(
-              `SELECT DISTINCT assertion_id FROM runner_retained_verification_evidence
-               WHERE operation_id=? AND generation=? AND phase=? AND task_id IS ? AND artifact=?
-                 AND assertion_id IN (${uniqueIDs.map(() => "?").join(",")})`,
-            )
-            .all(
-              operation.id,
-              operation.generation,
-              humanPhase,
-              taskID,
-              candidateArtifact,
-              ...uniqueIDs,
-            )
-            .map((row) => row.assertion_id)
-        : []
-      humanEvidence = {
-        status: "known",
-        phase: humanPhase,
-        missingAssertionIDs: uniqueIDs.filter((id) => !existing.includes(id)),
-      }
-    }
-  }
-
   return {
     recordStatus: "recorded",
     operationID: operation.id,
@@ -1760,7 +1565,6 @@ function operationProjection(
     checksAvailable: tables.checks,
     checks,
     checksTruncated,
-    humanEvidence,
     cleanup: {
       state: operationCleanupState,
       workspaceStates: {
@@ -1792,7 +1596,6 @@ export function retainedVerificationsForInspection(
   requestedTaskIDs: string[] | undefined,
   limit: number,
   cursor?: string,
-  humanRequirements: RetainedHumanEvidenceRequirements = new Map(),
 ): RetainedVerificationInspection {
   if (!Number.isInteger(limit) || limit < 1 || limit > 20)
     throw new Error("Use a retained-verification page limit from 1 to 20")
@@ -1839,14 +1642,12 @@ export function retainedVerificationsForInspection(
     checks: tablePresent(db, "runner_retained_verification_checks"),
     receipts: tablePresent(db, "runner_retained_verification_check_receipts"),
     resources: tablePresent(db, "runner_retained_verification_resources"),
-    evidence: tablePresent(db, "runner_retained_verification_evidence"),
   }
   const availability = {
     operations: operationsAvailable,
     checks: tables.checks,
     receipts: tables.receipts,
     resources: tables.resources,
-    humanEvidence: tables.evidence,
   }
   if (!operationsAvailable)
     return {
@@ -1922,23 +1723,15 @@ export function retainedVerificationsForInspection(
   const historyRows = historyCandidates.slice(0, limit)
   const capture =
     decodedCursor || historyHasMore
-      ? retainedHistoryCapture(
-          db,
-          projectDirectory,
-          planID,
-          taskIDs,
-          watermark,
-          tables,
-          humanRequirements,
-        )
+      ? retainedHistoryCapture(db, projectDirectory, planID, taskIDs, watermark, tables)
       : null
   if (decodedCursor && capture !== decodedCursor.capture)
     throw new Error(
       "Selected retained-verification history changed since this capture; restart without the cursor",
     )
-  const project = (row: InspectionOperationRow, isLatest: boolean) =>
-    operationProjection(db, row, planID, projectDirectory, tables, isLatest, humanRequirements)
-  const records = historyRows.map((row) => project(row, false))
+  const project = (row: InspectionOperationRow) =>
+    operationProjection(db, row, planID, projectDirectory, tables)
+  const records = historyRows.map(project)
   const last = historyRows.at(-1)
   const nextCursor =
     historyHasMore && last
@@ -1953,10 +1746,7 @@ export function retainedVerificationsForInspection(
       : null
   return {
     mode: "retained-verifications",
-    status:
-      tables.checks && tables.receipts && tables.resources && tables.evidence
-        ? "available"
-        : "partial",
+    status: tables.checks && tables.receipts && tables.resources ? "available" : "partial",
     planID,
     taskIDs,
     capturedGenerationWatermark: taskIDs.map((taskID, index) => ({
@@ -1964,7 +1754,7 @@ export function retainedVerificationsForInspection(
       generation: watermark[index]!,
     })),
     availability,
-    latest: latestRows.map((row) => project(row, true)),
+    latest: latestRows.map(project),
     history: {
       limit,
       returned: records.length,

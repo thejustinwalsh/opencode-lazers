@@ -8,8 +8,6 @@ export const RetainedVerificationState = z.enum([
   "pending",
   "task-checks",
   "combined-checks",
-  "waiting-human",
-  "waiting-human-combined",
   "task-accepted",
   "accepted",
   "failed",
@@ -31,7 +29,8 @@ export const RetainedVerificationSchema = z.strictObject({
   planRevision: z.int().positive(),
   planVersion: z.int().positive(),
   owner: z.string().min(1).max(200),
-  ownerEpoch: z.int().nonnegative(),
+  /** Retired: older operations carry it; it no longer binds anything. */
+  ownerEpoch: z.int().nonnegative().optional(),
   taskID: z.uuid(),
   taskRevision: z.int().positive(),
   attemptID: z.uuid(),
@@ -83,16 +82,3 @@ export const RetainedVerificationCheckSchema = z.strictObject({
   createdAt: z.number().int().nonnegative(),
 })
 export type RetainedVerificationCheck = z.infer<typeof RetainedVerificationCheckSchema>
-
-export const RetainedVerificationEvidenceSchema = z.strictObject({
-  id: z.uuid(),
-  operationID: z.uuid(),
-  generation: z.int().positive(),
-  phase: RetainedVerificationPhase,
-  taskID: z.uuid().nullable(),
-  assertionID: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
-  artifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
-  body: z.string().min(1),
-  createdAt: z.number().int().nonnegative(),
-})
-export type RetainedVerificationEvidence = z.infer<typeof RetainedVerificationEvidenceSchema>

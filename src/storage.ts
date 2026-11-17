@@ -1108,7 +1108,7 @@ export class TaskRepository {
               .query<{ present: number }, [string, string]>(
                 `SELECT 1 AS present FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
                  WHERE p.project_directory=? AND a.task_id=?
-                   AND a.state IN ('pending','task-checks','combined-checks','waiting-human') LIMIT 1`,
+                   AND a.state IN ('pending','task-checks','combined-checks') LIMIT 1`,
               )
               .get(this.projectDirectory, parsed.taskID),
           )) ||
@@ -1118,20 +1118,12 @@ export class TaskRepository {
               .query<{ present: number }, [string, string]>(
                 `SELECT 1 AS present FROM runner_retained_verifications
                  WHERE project_directory=? AND task_id=?
-                   AND state IN ('pending','task-checks','combined-checks','waiting-human','waiting-human-combined')
+                   AND state IN ('pending','task-checks','combined-checks')
                  LIMIT 1`,
               )
               .get(this.projectDirectory, parsed.taskID),
           ))
-      const activeAttemptStates = [
-        "preparing",
-        "running",
-        "verifying",
-        "held",
-        "approval-held",
-        "waiting-human",
-        "waiting-human-combined",
-      ]
+      const activeAttemptStates = ["preparing", "running", "verifying", "held", "approval-held"]
       const activeNode = nodes.some(({ state, plan_state }) => {
         if (!activeStates.includes(state)) return false
         return !(parsed.disposition === "fulfilled" && state === "queued" && plan_state === "draft")

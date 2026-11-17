@@ -35,7 +35,7 @@ function fixture(crashVerifier = false) {
     {
       id: "test",
       command: crashVerifier
-        ? 'kill -KILL "$LAZERS_TEST_RUNNER_PID"'
+        ? `if [ ! -e "${join(root, "verifier-crashed")}" ]; then touch "${join(root, "verifier-crashed")}"; kill -KILL "$LAZERS_TEST_RUNNER_PID"; fi; test $(cat result.txt) = correct`
         : "test $(cat result.txt) = correct",
       timeoutMs: 1000,
     },
@@ -220,7 +220,7 @@ test("scope instruction intent survives process death before and after native ke
   }
 }, 20000)
 
-test("uncertain dispatch or verifier crash stays blocked without repeating its effect", async () => {
+test("uncertain dispatch stays blocked and a crashed verifier is superseded without repeating its effect", async () => {
   for (const fault of ["before-session", "before-prompt", "verifier"]) {
     const f = fixture(fault === "verifier")
     const crash = await run(f.root, fault)
@@ -233,8 +233,24 @@ test("uncertain dispatch or verifier crash stays blocked without repeating its e
     f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
     const resumed = await run(f.root, "none")
     expect(resumed.code, resumed.stderr).toBe(0)
-    expect(f.store.plan(f.plan.planID)?.state).toBe("blocked")
-    expect(f.store.effects(f.plan.planID).some((effect) => effect.state === "uncertain")).toBe(true)
+    if (fault === "verifier") {
+      // A check without a receipt is re-runnable: the crashed effect is superseded, not repeated.
+      const effects = f.store.effects(f.plan.planID)
+      expect(effects.some((effect) => effect.state === "uncertain")).toBe(false)
+      expect(
+        effects.some(
+          (effect) =>
+            effect.kind.startsWith("verify") &&
+            effect.state === "failed" &&
+            JSON.parse(effect.receipt ?? "{}").superseded === true,
+        ),
+      ).toBe(true)
+    } else {
+      expect(f.store.plan(f.plan.planID)?.state).toBe("blocked")
+      expect(f.store.effects(f.plan.planID).some((effect) => effect.state === "uncertain")).toBe(
+        true,
+      )
+    }
     const before = f.store.effects(f.plan.planID).map((effect) => effect.id)
     f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
     expect((await run(f.root, "none")).code).toBe(0)

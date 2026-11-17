@@ -70,16 +70,12 @@ export const TaskProposalSchema = z
                     "One workspace-relative file or directory path, used verbatim. Put explanatory prose in the assertion.",
                   ),
                 }),
-                z.strictObject({
-                  kind: z.literal("human"),
-                  decision: text.describe(
-                    "A decision or authorization explicitly requiring the user. Routine tests, product probes, code review and integration belong to workers/Architect, not a human or external driver.",
-                  ),
-                }),
               ]),
             )
-            .min(1)
-            .max(20),
+            .max(20)
+            .describe(
+              "Mechanical evidence (a verification or an artifact). An assertion with no evidence is judged by the Architect's review and integrate decision.",
+            ),
         }),
       )
       .min(1)
@@ -209,6 +205,37 @@ export const StartingRevisionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("unborn") }),
 ])
 
+/**
+ * Stored tasks may carry retired `kind: "human"` evidence. It is read and
+ * dropped; it never gates acceptance.
+ */
+function dropLegacyHumanEvidence(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || !("acceptance" in value)) return value
+  const proposal = value as { acceptance?: unknown }
+  if (!Array.isArray(proposal.acceptance)) return value
+  return {
+    ...proposal,
+    acceptance: proposal.acceptance.map((assertion: unknown) => {
+      if (typeof assertion !== "object" || assertion === null) return assertion
+      const record = assertion as { evidence?: unknown }
+      return Array.isArray(record.evidence)
+        ? {
+            ...record,
+            evidence: record.evidence.filter(
+              (item) =>
+                !(
+                  typeof item === "object" &&
+                  item !== null &&
+                  "kind" in item &&
+                  item.kind === "human"
+                ),
+            ),
+          }
+        : assertion
+    }),
+  }
+}
+
 export const TaskSpecSchema = z.strictObject({
   schemaVersion: z.literal(1),
   id: z.uuid(),
@@ -222,7 +249,7 @@ export const TaskSpecSchema = z.strictObject({
     sessionID: text,
     startingRevision: StartingRevisionSchema,
   }),
-  proposal: TaskProposalSchema,
+  proposal: z.preprocess(dropLegacyHumanEvidence, TaskProposalSchema),
 })
 
 export type TaskProposal = z.infer<typeof TaskProposalSchema>

@@ -227,18 +227,10 @@ export function sourceQuarantineVerificationBinding(
   if (
     !quarantine ||
     !plan ||
-    plan.owner !== input.owner ||
     attempt.plan_id !== input.planID ||
     attempt.state !== "verifying" ||
     attempt.artifact !== input.artifact ||
     quarantine.plan_id !== input.planID ||
-    (quarantine.requested_owner !== input.owner &&
-      !store.hasPlanOwnerTransfer(
-        input.planID,
-        quarantine.requested_owner,
-        input.owner,
-        attempt.started_at,
-      )) ||
     quarantine.session_id !== attempt.session_id ||
     quarantine.assigned_message_id !== attempt.message_id ||
     quarantine.workspace !== attempt.workspace ||
@@ -269,7 +261,6 @@ export function sourceQuarantineVerificationBindingMatches(
   return Boolean(
     current &&
     current.requestID === input.expected.requestID &&
-    current.requestedOwner === (input.expected.requestedOwner ?? input.owner) &&
     JSON.stringify(current.reviewInput) === JSON.stringify(input.expected.reviewInput),
   )
 }

@@ -78,6 +78,12 @@ export const PlanInput = z
         "Optional concise Architect-authored label; preserve verbatim and do not derive from objective.",
       ),
     objective: z.string().trim().min(1).max(8000),
+    draft: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true only to save the plan without admitting it. Submitting a plan otherwise admits it, and the scheduler runs its tasks; run an explicit draft later with lz-plan-command run.",
+      ),
     priority: PlanPriority.optional().describe(PRIORITY_DESCRIPTION),
     afterPlans: z
       .array(z.uuid())
@@ -184,7 +190,6 @@ export const CommandInput = z
         "reconcile",
         "reconcile-source-notices",
         "reassign",
-        "human-evidence",
         "resume",
         "retry",
         "integrated",
@@ -258,7 +263,6 @@ export const CommandInput = z
       .describe(
         "Exact supplemental scope patterns to revoke for stopped work; original task scope remains.",
       ),
-    assertionID: z.string().max(64).optional(),
     artifact: z
       .string()
       .max(128)
@@ -321,7 +325,7 @@ export const CommandInput = z
       .uuid()
       .optional()
       .describe(
-        "Exact durable retained-verification operation for cancellation, human evidence, or explicit settled-check continuation.",
+        "Exact durable retained-verification operation for cancellation or explicit settled-check continuation.",
       ),
     retainedGeneration: z
       .int()
@@ -537,7 +541,6 @@ export const CommandInput = z
         "reviewInputID",
         "scopeAdditions",
         "scopeRemovals",
-        "assertionID",
         "descendantCommit",
         "adoptionID",
         "targetBranch",
@@ -611,7 +614,6 @@ export const CommandInput = z
         "reviewInputID",
         "scopeAdditions",
         "scopeRemovals",
-        "assertionID",
         "descendantCommit",
         "adoptionID",
         "targetBranch",
@@ -629,16 +631,9 @@ export const CommandInput = z
         path: ["retainedVerificationID"],
         message: "Cancellation requires the exact retained verification operation ID",
       })
-    if (command.adoptionID !== undefined && command.retainedVerificationID !== undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["retainedVerificationID"],
-        message: "Human evidence can name only one retained operation",
-      })
     if (
       command.retainedVerificationID !== undefined &&
       command.action !== "cancel-retained-verification" &&
-      command.action !== "human-evidence" &&
       command.action !== "extend-verification-deadline" &&
       command.action !== "continue-retained-check"
     )
@@ -646,7 +641,7 @@ export const CommandInput = z
         code: "custom",
         path: ["retainedVerificationID"],
         message:
-          "Retained verification ID is valid only for cancellation, human evidence or explicit check continuation",
+          "Retained verification ID is valid only for cancellation or explicit check continuation",
       })
     for (const field of ["verificationPhase", "checkID", "retainedGeneration"] as const)
       if (

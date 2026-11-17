@@ -135,15 +135,20 @@ describe("task proposals", () => {
     expect(proposal.acceptance[0]?.evidence[0]).toEqual({ kind: "artifact", reference })
   })
 
-  test("rejects drafts, unknown fields, empty intent, and missing evidence", () => {
+  test("rejects drafts, unknown fields, and empty intent; an assertion may have no mechanical evidence", () => {
     for (const change of [
       { objective: " " },
       { questions: ["Which database?"] },
       { acceptance: [] },
-      { acceptance: [{ id: "a", assertion: "Works", evidence: [] }] },
     ]) {
       expect(TaskProposalSchema.safeParse({ ...validProposal(), ...change }).success).toBe(false)
     }
+    expect(
+      TaskProposalSchema.safeParse({
+        ...validProposal(),
+        acceptance: [{ id: "a", assertion: "Works", evidence: [] }],
+      }).success,
+    ).toBe(true)
   })
 
   test("rejects scope paths that escape or ambiguously redefine the repository boundary", () => {
@@ -254,6 +259,37 @@ describe("task proposals", () => {
       ).toBe(false)
     }
   })
+})
+
+test("stored task bodies with retired human acceptance evidence still parse and drop the entry", () => {
+  const proposal = validProposal()
+  const stored = {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: new Date().toISOString(),
+    provenance: {
+      projectID: "local",
+      projectDirectory: "/repo",
+      workspaceDirectory: "/repo",
+      sessionID: "session",
+      startingRevision: { kind: "unborn" },
+    },
+    proposal: {
+      ...proposal,
+      acceptance: [
+        {
+          id: "legacy",
+          assertion: "A retired human check",
+          evidence: [{ kind: "human", decision: "x" }],
+        },
+      ],
+    },
+  }
+  const parsed = TaskSpecSchema.parse(stored)
+  expect(parsed.proposal.acceptance).toHaveLength(1)
+  expect(parsed.proposal.acceptance[0]!.evidence).toEqual([])
 })
 
 test("submitted envelopes distinguish unborn provenance from a missing revision", () => {

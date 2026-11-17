@@ -68,6 +68,8 @@ export type HostSession = {
   runningShells?: number
   activeChildren?: number
   idleAt?: number
+  /** Last model activity: assistant completion or request start. Preferred over `idleAt` for cache warmth. */
+  activityAt?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   model?: ModelPolicy
   usage?: {
