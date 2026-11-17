@@ -5,6 +5,7 @@ import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { validProposal } from "../proposal.ts"
+import { installTasksLayout } from "./virtual-layout.ts"
 
 function until(predicate: () => boolean) {
   return (async () => {
@@ -46,6 +47,7 @@ function pressEnter(dom: Window, element: HTMLButtonElement) {
 test("registered Tasks renders authoritative Now, Attention and Next with navigable priority/dependency reasons", async () => {
   const dom = new Window({ url: "http://localhost" })
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 360 })
+  const uninstallLayout = installTasksLayout(dom)
   const browserDocument = dom.document as unknown as Document
   const globalNames = [
     "window",
@@ -662,6 +664,7 @@ test("registered Tasks renders authoritative Now, Attention and Next with naviga
       if (descriptor) Object.defineProperty(globalThis, name, descriptor)
       else Reflect.deleteProperty(globalThis, name)
     }
+    uninstallLayout()
     dom.happyDOM.abort()
   }
 })

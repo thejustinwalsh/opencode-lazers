@@ -42,6 +42,7 @@
   "dependencies": {
     "@fallow-cli/fallow-node": "3.41.0",
     "@huggingface/tokenizers": "0.2.0",
+    "@tanstack/solid-virtual": "3.13.53",
     "echarts": "6.1.0",
     "elkjs": "0.12.1",
     "ignore": "7.0.14",

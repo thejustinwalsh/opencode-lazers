@@ -125,6 +125,8 @@ export interface PanelData {
   loading: boolean
   stale: boolean
   error: string
+  /** The next page failed to load. Only `retryMore` requests it again; the list stays usable. */
+  moreError: string
 }
 const blank = (key = ""): PanelData => ({
   key,
@@ -136,6 +138,7 @@ const blank = (key = ""): PanelData => ({
   loading: true,
   stale: false,
   error: "",
+  moreError: "",
 })
 
 /** Owns cancellation and response identity independently of the mounted Solid view. */
@@ -146,6 +149,7 @@ export class TaskPanelState {
   private activityController?: AbortController
   private generation = 0
   private listRequest = 0
+  private requestedMore: TaskPage | undefined
   private detailRequest = 0
   private activityRequest = 0
   private transport?: TaskTransport
@@ -509,6 +513,8 @@ export class TaskPanelState {
         loading: false,
         stale: !transport.online(),
         error: "",
+        // The failed page is gone with the cursor; a later one starts clean.
+        ...(page.nextCursor ? {} : { moreError: "" }),
       })
       const selectedForActivity = this.data.selectedID ?? tasks[0]?.taskID
       await this.observeCurrentActivity(
@@ -542,14 +548,33 @@ export class TaskPanelState {
           this.retryDelayMs = 1_000
           this.flushCurrentActivity()
         }
+        this.announceIdle()
       }
     }
   }
 
-  async more() {
-    const cursor = this.data.page?.nextCursor
+  /**
+   * Readers that wait for the in-flight read to end (the next page near the end of the list) only
+   * re-run on a data change; announce the end of the read as one.
+   */
+  private announceIdle() {
+    if (!this.refreshing) this.update({})
+  }
+
+  /**
+   * Request the page after the current one. `key` is the view the caller is showing: a request
+   * for another filter/scope is ignored. Each page object is requested at most once; a refresh
+   * yields a new page object and re-arms it. A failed page sets `moreError` and stays failed —
+   * across refreshes too — until `retryMore`, so neither the list's retry nor a refresh spins it.
+   */
+  async more(key: string) {
+    const page = this.data.page
+    const cursor = page?.nextCursor
     const transport = this.transport
-    if (!cursor || !transport || this.refreshing) return
+    if (!cursor || !transport || this.refreshing || this.data.key !== key) return
+    if (this.data.moreError) return
+    if (this.requestedMore === page) return
+    this.requestedMore = page
     this.refreshing = true
     const generation = this.generation
     const request = ++this.listRequest
@@ -572,8 +597,12 @@ export class TaskPanelState {
         selectedID,
       )
     } catch (error) {
-      if (generation === this.generation && !this.controller.signal.aborted)
-        this.update({ stale: true, error: panelErrorMessage(error) })
+      if (
+        generation === this.generation &&
+        request === this.listRequest &&
+        !this.controller.signal.aborted
+      )
+        this.update({ moreError: panelErrorMessage(error) })
     } finally {
       if (generation === this.generation) {
         this.refreshing = false
@@ -581,10 +610,18 @@ export class TaskPanelState {
           this.refreshPending = false
           this.pendingVersion = 0
           void this.refresh()
-        } else if (this.data.error) this.retryRead(generation)
-        else this.flushCurrentActivity()
+        } else this.flushCurrentActivity()
+        this.announceIdle()
       }
     }
+  }
+
+  /** Explicitly request the page that failed, for the view `key` the caller is showing. */
+  retryMore(key: string) {
+    if (this.data.key !== key || !this.data.moreError) return
+    this.requestedMore = undefined
+    this.update({ moreError: "" })
+    void this.more(key)
   }
 
   async select(taskID: string, refresh = false) {
