@@ -207,10 +207,10 @@ function tick(now: number) {
   if (active.size > 0) raf = requestAnimationFrame(tick)
 }
 
-function fire(s: State) {
+function fire(s: State, pairs = s.pairs) {
   if (isReduced()) return
   const now = performance.now()
-  s.queue = Array.from({ length: s.pairs }, (_, i) => now + 60 + i * PAIR_GAP)
+  s.queue = Array.from({ length: pairs }, (_, i) => now + 60 + i * PAIR_GAP)
   active.add(s)
   if (import.meta.env.DEV) window.__lazers?.fired.push({ id: s.id, at: Math.round(now) })
   if (!raf) raf = requestAnimationFrame(tick)
@@ -251,9 +251,14 @@ export function registerBeams(t: BeamTarget): () => void {
     if (isReduced()) drawStatic(s)
   })
   const s: State = { ...t, armed: true, visible: false, queue: [], ctx, ro }
+  const fireOnClick = (event: MouseEvent) => {
+    if (event.target instanceof Element && event.target.closest("a, button")) return
+    if (document.elementsFromPoint(event.clientX, event.clientY).includes(t.sprite)) fire(s, 1)
+  }
   states.set(t.section, s)
   ro.observe(t.section)
   t.sprite.addEventListener("load", () => isReduced() && drawStatic(s))
+  t.section.addEventListener("click", fireOnClick)
   sizeCanvas(s)
   if (isReduced()) {
     requestAnimationFrame(() => drawStatic(s))
@@ -264,6 +269,7 @@ export function registerBeams(t: BeamTarget): () => void {
   })
   observer.observe(t.section)
   return () => {
+    t.section.removeEventListener("click", fireOnClick)
     observer?.unobserve(t.section)
     ro.disconnect()
     states.delete(t.section)
