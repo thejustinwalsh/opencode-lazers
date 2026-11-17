@@ -22,6 +22,14 @@ Always auto-fix formatting and lint as part of checks. Use `bun run verify`
 tests. Commit mechanical fixes with the change; do not ask a model to repair
 formatting or fixable lint failures.
 
+## Commits and the remote
+
+Write atomic Conventional Commits (`type(scope): summary`), one coherent
+change per commit. Never add AI attribution or `Co-Authored-By` trailers.
+The remote is `github`; push `main` there when work is done and its checks
+pass. Do not rebase or rewrite recorded history: the runtime stores commit
+SHAs in integration proofs and plan artifacts, so reconcile with merges.
+
 ## Product cost basis
 
 Product costs and estimates use configured ordered price sources, independent of execution provider or subscription. Initially offer OpenRouter then OpenCode by default, reusing access configured in OpenCode. Skip unavailable sources. A missing applicable price is a defect to investigate; when no source prices a model, omit the price UI rather than showing unknown. Preserve chosen-source provenance, exact execution provider/model/effort and measured tokens. Published zeros require source support; session-reported charges are diagnostics, not market rates. Refresh reprices unchanged usage. Price lookup does not authorize inference.
