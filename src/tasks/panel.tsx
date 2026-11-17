@@ -1423,6 +1423,64 @@ function TaskPanel(
         selectTask(taskID)
     }
   }
+  type SignalEntry = ReturnType<typeof signalSequence>[number]
+  /** Slide the entry's window to it and focus it; the list's own scroll follows native focus. */
+  const focusSignal = (target: SignalEntry) => {
+    if (target.group !== "next") {
+      const shown = windows[target.group]()
+      const position = signalSequence()
+        .filter((entry) => entry.group === target.group)
+        .findIndex((entry) => entry.taskID === target.taskID)
+      if (position < shown.start) setSignalStart(target.group, position)
+      else if (position >= shown.start + SIGNAL_WINDOW)
+        setSignalStart(target.group, position - SIGNAL_WINDOW + 1)
+    }
+    head
+      ?.querySelector<HTMLButtonElement>(
+        `[data-scheduling-group="${target.group}"][data-scheduling-task-id="${target.taskID}"]`,
+      )
+      ?.focus()
+  }
+  /** The entry holding focus while focus is in Now/Attention/Next, and its place in the list. */
+  let focusedSignal: (SignalEntry & { index: number }) | undefined
+  const signalOf = (element: Element | null) => {
+    const button = element?.closest<HTMLElement>("[data-scheduling-task-id]")
+    const { schedulingGroup: group, schedulingTaskId: taskID } = button?.dataset ?? {}
+    if (!group || !taskID) return undefined
+    const index = signalSequence().findIndex(
+      (entry) => entry.group === group && entry.taskID === taskID,
+    )
+    return index < 0 ? undefined : { ...signalSequence()[index]!, index }
+  }
+  // A refresh can move the focused entry's task to another group (an answered request becomes
+  // Now work), outside that group's window, or out of the list; its button then leaves the page
+  // with focus. Focus follows the task to its new entry, else takes the entry now at its place,
+  // else the tree's tab stop. Selection does not change.
+  createEffect(() => {
+    void signalSequence()
+    void nowWindow()
+    void attentionWindow()
+    queueMicrotask(() => {
+      const lost = focusedSignal
+      if (!lost || !head) return
+      const active = head.ownerDocument.activeElement
+      if (active && head.contains(active)) {
+        focusedSignal = signalOf(active) ?? focusedSignal
+        return
+      }
+      if (active && active !== head.ownerDocument.body) return
+      const sequence = signalSequence()
+      const target =
+        sequence.find((entry) => entry.taskID === lost.taskID) ??
+        sequence[Math.min(lost.index, sequence.length - 1)]
+      if (target) focusSignal(target)
+      else {
+        focusedSignal = undefined
+        const stop = treeTabStop()
+        if (stop) focusItem(stop)
+      }
+    })
+  })
   /** Now, Attention and Next entries in list order, unmounted window entries included. */
   const signalSequence = () => [
     ...nowRows().map((row) => ({ group: "now" as const, taskID: row.taskID })),
@@ -1457,22 +1515,11 @@ function TaskPanel(
             : Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1))
       ]
     if (!target) return
-    if (target.group !== "next") {
-      const shown = windows[target.group]()
-      const position = sequence
-        .filter((entry) => entry.group === target.group)
-        .findIndex((entry) => entry.taskID === target.taskID)
-      if (position < shown.start) setSignalStart(target.group, position)
-      else if (position >= shown.start + SIGNAL_WINDOW)
-        setSignalStart(target.group, position - SIGNAL_WINDOW + 1)
-    }
-    list
-      ?.querySelector<HTMLButtonElement>(
-        `[data-scheduling-group="${target.group}"][data-scheduling-task-id="${target.taskID}"]`,
-      )
-      ?.focus()
+    focusSignal(target)
     keepFocusFor = JSON.stringify([expectedKey(), target.taskID])
-    selectTask(target.taskID)
+    // Select only: revealing and scrolling the tree are for explicit entry (click, Enter, Down
+    // from the last entry). The list stays put under the focused entry.
+    void state.select(target.taskID)
   }
   /** Range and stepping for a signal group with more entries than its window mounts. */
   const renderSignalPager = (group: SignalGroup, label: string) => {
@@ -1910,6 +1957,17 @@ function TaskPanel(
                     ref={(element) => {
                       head = element
                       listObserver?.observe(element)
+                    }}
+                    onFocusIn={(event) => {
+                      focusedSignal = signalOf(event.target as Element) ?? focusedSignal
+                    }}
+                    onFocusOut={(event) => {
+                      // A button removed by a refresh blurs while detached; the guard above
+                      // moves focus on. Anything else is the person leaving the list.
+                      if (!(event.target as Element).isConnected) return
+                      const next = event.relatedTarget
+                      if (!(next instanceof Node) || !event.currentTarget.contains(next))
+                        focusedSignal = undefined
                     }}
                   >
                     <Show when={nowWindow().total}>
