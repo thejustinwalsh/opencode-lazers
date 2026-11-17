@@ -14,6 +14,7 @@ import type { SchedulingReservation } from "../runner/scheduling-selection.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import {
   SchedulingInput,
+  MAX_SCHEDULING_AFTER_PLAN_REFERENCES,
   MAX_SCHEDULING_PLAN_REFERENCES,
   MAX_SCHEDULING_RESERVATION_REFERENCES,
   SchedulingOutput,
@@ -267,6 +268,8 @@ async function buildSnapshot(input: {
   const { store, facts, scope, observedAt, branch, reservationExclusions, provePlan, proveTask } =
     input
   const directory = store.repository.projectDirectory
+  const sessionPlanIDs =
+    scope.kind === "session" ? new Set(facts.sessionAssociations?.planIDs ?? []) : undefined
   let cacheable = true
   const projected: ProjectedPlan[] = await Promise.all(
     facts.plans.map(async (plan, planOrder) => {
@@ -363,6 +366,9 @@ async function buildSnapshot(input: {
       } else {
         reason = reason ?? (plan.state === "blocked" ? "Plan is on hold." : null)
       }
+      const scopedAfterPlans = (parsed.success ? (parsed.data.afterPlans ?? []) : []).filter(
+        (planID) => !sessionPlanIDs || sessionPlanIDs.has(planID),
+      )
       const schedule: SchedulingPlan = {
         planID: plan.id,
         planVersion: plan.version,
@@ -375,7 +381,9 @@ async function buildSnapshot(input: {
         lifecycle: plan.state,
         decision: planDecision,
         reason,
-        afterPlans: parsed.success ? (parsed.data.afterPlans ?? []) : [],
+        afterPlans: scopedAfterPlans.slice(0, MAX_SCHEDULING_AFTER_PLAN_REFERENCES),
+        afterPlansCount: scopedAfterPlans.length,
+        afterPlansComplete: scopedAfterPlans.length <= MAX_SCHEDULING_AFTER_PLAN_REFERENCES,
         nodes,
         nodesComplete: plan.node_count === planNodes.length,
       }
@@ -414,8 +422,6 @@ async function buildSnapshot(input: {
       reservationTaskIDsScopeLimited: scopedTaskIDs.length < uniqueTaskIDs.length,
     }
   }
-  const sessionPlanIDs =
-    scope.kind === "session" ? new Set(facts.sessionAssociations?.planIDs ?? []) : undefined
   const previouslySelectedReservations: SchedulingReservation[] = []
   const selectedTaskIDs: string[] = []
   let prefixKnown = true
@@ -651,6 +657,9 @@ async function buildSnapshot(input: {
     !facts.reservationsComplete ? "Active reservation coverage is incomplete." : null,
     !facts.adoptionsComplete ? "Adoption reservation coverage is incomplete." : null,
     !facts.planIntegrationsComplete ? "Prerequisite integration coverage is bounded." : null,
+    projected.some((plan) => plan.schedule.afterPlansComplete === false)
+      ? "Prerequisite plan references are bounded."
+      : null,
   ].filter((reason): reason is string => reason !== null)
   const snapshot = {
     schemaVersion: 1 as const,

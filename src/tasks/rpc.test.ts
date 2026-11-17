@@ -791,6 +791,7 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     priority: number,
     afterPlans: string[] = [],
     writeScope = [`${name}.ts`],
+    ownerSessionID = sessionID,
   ) => {
     const task = repository.insert({
       schemaVersion: 1,
@@ -802,7 +803,7 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
         projectID: "project",
         projectDirectory: directory,
         workspaceDirectory: directory,
-        sessionID,
+        sessionID: ownerSessionID,
         startingRevision: { kind: "git", commit: baseCommit },
       },
       proposal: { ...validProposal(), objective: name, writeScope },
@@ -824,7 +825,7 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
           { id: "done", assertion: "Done", evidence: [{ kind: "human", decision: "review" }] },
         ],
       },
-      sessionID,
+      ownerSessionID,
     )
     store.atomic((db) => {
       db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID)
@@ -1043,6 +1044,133 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     expect(repository.version()).toBe(beforeReadVersion)
     expect(git(directory, ["rev-parse", "HEAD"])).toBe(beforeReadHead)
     expect(proofChild.plan.planID).not.toBe(parent.plan.planID)
+
+    const sessionInput = { scope: { kind: "session" as const, sessionID }, limit: 100 }
+    const initialSessionPage = SchedulingOutput.parse(await Effect.runPromise(read!(sessionInput)))
+    const sessionDependentPlan = initialSessionPage.plans.find(
+      (plan) => plan.planID === dependent.plan.planID,
+    )
+    expect(sessionDependentPlan).toMatchObject({
+      afterPlans: prerequisites,
+      afterPlansCount: 101,
+      afterPlansComplete: true,
+    })
+
+    const largeSessionID = "ses_scheduling_afterplans_large"
+    const manyPrerequisites = Array.from({ length: 1_001 }, (_, index) => {
+      const name = `afterplans-prerequisite-${index}`
+      return create(name, -1_000, [], [`${name}.ts`], largeSessionID).plan.planID
+    })
+    const manyPrerequisiteIDs = new Set<string>(manyPrerequisites)
+    store.atomic((db) => {
+      const integratedPlan = db.query(
+        "UPDATE runner_plans SET state='integrated',artifact=? WHERE id=?",
+      )
+      const acceptedNode = db.query(
+        "UPDATE runner_nodes SET state='accepted',artifact=? WHERE plan_id=?",
+      )
+      const recordIntegrations = db.query(
+        `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+         VALUES(?,NULL,3,'PLAN_ACCEPTED',?,1),(?,NULL,3,'INTEGRATION_RECORDED',?,2)`,
+      )
+      for (const planID of manyPrerequisites.slice(0, 1_000)) {
+        integratedPlan.run(baseCommit, planID)
+        acceptedNode.run(baseCommit, planID)
+        recordIntegrations.run(
+          planID,
+          JSON.stringify({ artifact: baseCommit }),
+          planID,
+          JSON.stringify({
+            artifact: baseCommit,
+            head: baseCommit,
+            branch: "main",
+            reason: "reviewed",
+          }),
+        )
+      }
+      repository.changed()
+    })
+    const exactlyThousand = create(
+      "afterplans-exactly-1000",
+      200,
+      manyPrerequisites.slice(0, 1_000),
+      ["afterplans-exactly-1000.ts"],
+      largeSessionID,
+    )
+    const overThousand = create(
+      "afterplans-over-1000",
+      300,
+      manyPrerequisites,
+      ["afterplans-over-1000.ts"],
+      largeSessionID,
+    )
+    activeRead = new TaskSchedulingRead(
+      store,
+      () => 102,
+      {},
+      async (path, args) => {
+        if (args[0] === "branch") return "main"
+        if (args[0] === "rev-parse") return baseCommit
+        if (args[0] === "merge-base") return ""
+        return git(path, args)
+      },
+    )
+    const largeProjectPage = SchedulingOutput.parse(
+      await Effect.runPromise(read!({ scope: { kind: "project", sessionID }, limit: 100 })),
+    )
+    const exactThousandPlan = largeProjectPage.plans.find(
+      (plan) => plan.planID === exactlyThousand.plan.planID,
+    )
+    const overThousandPlan = largeProjectPage.plans.find(
+      (plan) => plan.planID === overThousand.plan.planID,
+    )
+    expect(exactThousandPlan).toMatchObject({
+      afterPlans: manyPrerequisites.slice(0, 1_000),
+      afterPlansCount: 1_000,
+      afterPlansComplete: true,
+      decision: "eligible",
+    })
+    expect(overThousandPlan).toMatchObject({
+      afterPlans: manyPrerequisites.slice(0, 1_000),
+      afterPlansCount: 1_001,
+      afterPlansComplete: false,
+      decision: "waiting",
+    })
+    expect(largeProjectPage.coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("Prerequisite plan references are bounded."),
+    })
+    expect(largeProjectPage.next).toMatchObject({
+      status: "known",
+      candidate: { taskID: exactlyThousand.task.id },
+    })
+    expect(overThousandPlan?.decision).toBe("waiting")
+    expect(overThousandPlan?.nodes[0]).toMatchObject({
+      waitingOnPlans: manyPrerequisites.slice(0, 100),
+      waitingOnPlansCount: 1_001,
+      waitingOnPlansComplete: false,
+    })
+
+    const finalSessionPage = SchedulingOutput.parse(await Effect.runPromise(read!(sessionInput)))
+    expect(finalSessionPage.plans.some((plan) => plan.planID === exactlyThousand.plan.planID)).toBe(
+      false,
+    )
+    expect(finalSessionPage.plans.some((plan) => plan.planID === overThousand.plan.planID)).toBe(
+      false,
+    )
+    expect(
+      finalSessionPage.plans.some((plan) =>
+        plan.afterPlans.some((planID) => manyPrerequisiteIDs.has(planID)),
+      ),
+    ).toBe(false)
+    expect(
+      finalSessionPage.plans.find((plan) => plan.planID === dependent.plan.planID),
+    ).toMatchObject({ afterPlansCount: 101, afterPlansComplete: true })
+
+    expect(largeProjectPage.next).not.toMatchObject({
+      status: "known",
+      candidate: { planID: overThousand.plan.planID, taskID: overThousand.task.id },
+    })
   } finally {
     releaseProof()
     unregisterGuard?.()

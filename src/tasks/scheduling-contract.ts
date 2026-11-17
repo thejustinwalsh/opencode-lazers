@@ -16,6 +16,7 @@ export const SchedulingInput = z.strictObject({
 export const SchedulingDecision = z.enum(["eligible", "waiting", "unknown", "not-applicable"])
 export const MAX_SCHEDULING_RESERVATION_REFERENCES = 100
 export const MAX_SCHEDULING_PLAN_REFERENCES = 100
+export const MAX_SCHEDULING_AFTER_PLAN_REFERENCES = 1_000
 
 export const SchedulingNode = z.strictObject({
   taskID: z.uuid(),
@@ -50,7 +51,11 @@ export const SchedulingPlan = z.strictObject({
   lifecycle: z.string().min(1).max(80),
   decision: z.enum(["eligible", "waiting", "unknown"]),
   reason: z.string().max(400).nullable(),
-  afterPlans: z.array(z.uuid()).max(1_000),
+  afterPlans: z.array(z.uuid()).max(MAX_SCHEDULING_AFTER_PLAN_REFERENCES),
+  /** Number of prerequisite plan references visible in this scope before output bounding. */
+  afterPlansCount: z.int().nonnegative().optional(),
+  /** False when this scope's prerequisite plan references are bounded in the public result. */
+  afterPlansComplete: z.boolean().optional(),
   nodes: z.array(SchedulingNode).max(100),
   nodesComplete: z.boolean(),
 })
