@@ -219,6 +219,8 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     },
   )
   built("schedulerParticipant")
+  // Joining a live group must not wait an interval: the next drain turn picks up handoff work.
+  scheduler.request()
   const registration = scheduler
 
   const core: LazersCore = {
@@ -243,6 +245,12 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
       scheduler = undefined
       await registration.dispose()
       await runtime.stop()
+      // Hand the lease to a successor core immediately instead of letting the TTL lapse.
+      try {
+        runnerStore.releaseLease(runtime.owner)
+      } catch {
+        // The lease expires on its own TTL if the store is unavailable.
+      }
       for (const index of indexes.values()) index.close()
       indexes.clear()
       inferenceBroker.close()

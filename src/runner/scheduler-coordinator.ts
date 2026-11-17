@@ -81,12 +81,16 @@ export class SchedulerCoordinator {
       },
       dispose: () => {
         if (disposed) return disposed
+        const wasNext = group.participants.keys().next().value === owner
         group.participants.delete(owner)
         this.rejectOwnedWaiters(group.waiters, owner)
         if (group.running) this.rejectOwnedWaiters(group.running.waiters, owner)
         const running = group.running
         if (!running && !group.participants.size) this.groups.delete(key)
         else if (running?.owner === owner && group.participants.size)
+          group.dueAt = Math.min(group.dueAt, this.clock.now())
+        // The participant that would have ticked left: hand over without waiting an interval.
+        else if (wasNext && !running && group.participants.size)
           group.dueAt = Math.min(group.dueAt, this.clock.now())
         this.arm()
         disposed = running?.owner === owner ? running.done : Promise.resolve()

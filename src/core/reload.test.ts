@@ -95,3 +95,58 @@ test("reload with changed code builds a second core; one lease owner; old core d
     "Stale",
   )
 })
+
+test("old core's last release hands the lease and next tick to the new core within a turn", async () => {
+  const data = root()
+  const project = root()
+  const acquire = (directory: string, generation: string) => {
+    mkdirSync(directory, { recursive: true })
+    const ctx = {
+      app: { version: "test" },
+      location: { directory, project: { id: "project-handoff", canonical: project } },
+      options: {},
+    } as unknown as Plugin.Context
+    return acquireLazersCore(ctx, {
+      dataDirectory: data,
+      projectID: "project-handoff",
+      projectDirectory: project,
+      directory,
+      options: {},
+      generation,
+    })
+  }
+  const ticks: string[] = []
+  const instrument = (handle: LazersCoreHandle, name: string) => {
+    const { runtime, runnerStore } = handle.core
+    // Real ticks need a live OpenCode; the claim is the lease contract under test.
+    runtime.tick = async () => {
+      if (runnerStore.claim(runtime.owner) !== null) ticks.push(name)
+    }
+  }
+  const old = acquire(project, "old")
+  instrument(old, "old")
+  const fresh = acquire(join(project, "new"), "new")
+  instrument(fresh, "new")
+  handles.push(old, fresh)
+  const waitFor = async (done: () => boolean) => {
+    const start = performance.now()
+    while (!done() && performance.now() - start < 1_000) await Bun.sleep(5)
+  }
+  // Joining a live group ticks promptly; the old core owns the lease and the ticks.
+  await waitFor(() => ticks.length > 0)
+  expect(ticks).toEqual(["old"])
+  const oldCore = old.core
+  const fence = oldCore.runnerStore.claim(oldCore.runtime.owner)
+  expect(fence).not.toBeNull()
+  const started = performance.now()
+  await old.release()
+  // The old lease was expired by its owner, not left to its 30 s TTL.
+  await waitFor(() => ticks.includes("new"))
+  expect(ticks).toContain("new")
+  expect(performance.now() - started).toBeLessThan(1_000)
+  const claimed = fresh.core.runnerStore.claim(fresh.core.runtime.owner)
+  expect(claimed).toBeGreaterThan(fence!)
+  // A stale owner's release never touches the successor's lease.
+  expect(oldCore.runnerStore.releaseLease(oldCore.runtime.owner)).toBe(false)
+  expect(fresh.core.runnerStore.claim(fresh.core.runtime.owner)).toBe(claimed)
+})

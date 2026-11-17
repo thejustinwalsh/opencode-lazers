@@ -3866,6 +3866,15 @@ export class RunnerStore {
       return next.state
     })
   }
+  /** Expire this owner's lease so a successor claims at once; never touches another owner's row. */
+  releaseLease(owner: string) {
+    return this.atomic(
+      (db) =>
+        db
+          .query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=? AND owner=?")
+          .run(this.repository.projectDirectory, owner).changes > 0,
+    )
+  }
   claim(owner: string, now = Date.now()) {
     return this.atomic((db) => {
       const old = db
