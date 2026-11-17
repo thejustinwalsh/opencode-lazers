@@ -8,6 +8,33 @@ Architect, and the Architect can always push the work forward.
 
 The evidence comes from the driver's gate audit of the live DB on 2026-11-17.
 
+## Governing rule for this work
+
+Preserve the good parts and reach the planned outcome by deleting bad code and
+bad gates, not by adding bypasses around them.
+
+- **Keep XState.** `lifecycleMachines` stays the single authority for every
+  workflow transition. A bad gate is removed by deleting its state or
+  transition, along with the code that drives it. Do not add escape hatches,
+  overrides or SQL-only transitions.
+- **No dead ends.** Every non-terminal state in every machine must have at
+  least one outgoing transition triggered by one of:
+  - a directly observable event, or
+  - an Architect action that the hold advertises (proceed, retry or cancel).
+
+  A behavior test enumerates every machine and asserts this property, so a
+  stall-capable state cannot be added again.
+
+- **Keep the good parts:**
+  - scheduler leases and fences
+  - the effect journal for prompts and worktrees
+  - stable change identity and containment proofs
+  - write-scope warnings
+  - real check failures and conflicts
+  - the dependency order
+  - pause
+  - the Tasks and observability reads
+
 ## Dispatch is decoupled from the Architect
 
 When a task enters the system, the scheduler runs it. The Architect never has
