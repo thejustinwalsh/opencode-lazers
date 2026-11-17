@@ -48,6 +48,8 @@ const s = stylex.create({
     objectFit: "contain",
     imageRendering: "pixelated",
     userSelect: "none",
+    pointerEvents: "auto",
+    cursor: "default",
   },
   field: { position: "absolute", pointerEvents: "none", zIndex: 0 },
   fieldInner: { width: "100%", height: "100%" },
