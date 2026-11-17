@@ -9,7 +9,6 @@ import {
   checkResourcesSettled,
   combineArtifacts,
   combinedArtifactsMatch,
-  git,
   gitAsync,
   runDeclaredCheck,
   scopePatternsConflict,
@@ -206,8 +205,8 @@ export class AdoptionExecution {
         adoption.input_fingerprint
     )
       throw new Error("Task, plan, or authorized scope changed during adoption verification")
-    const branch = git(this.runtime.directory, ["branch", "--show-current"])
-    const head = git(this.runtime.directory, ["rev-parse", "HEAD"])
+    const branch = await gitAsync(this.runtime.directory, ["branch", "--show-current"])
+    const head = await gitAsync(this.runtime.directory, ["rev-parse", "HEAD"])
     if (branch !== adoption.target_branch || head !== adoption.landing_head)
       throw new Error("Reviewed landing branch or HEAD changed during adoption")
     if (
@@ -216,27 +215,27 @@ export class AdoptionExecution {
         "--porcelain",
         "--untracked-files=all",
       ])) ||
-      git(this.runtime.directory, ["ls-files", "-u", "-z"])
+      (await gitAsync(this.runtime.directory, ["ls-files", "-u", "-z"]))
     )
       throw new Error("Dirty or unmerged candidate checkout cannot publish adoption")
-    const candidate = git(this.runtime.directory, [
+    const candidate = await gitAsync(this.runtime.directory, [
       "rev-parse",
       `${adoption.descendant_commit}^{commit}`,
     ])
-    const oldArtifact = git(this.runtime.directory, [
+    const oldArtifact = await gitAsync(this.runtime.directory, [
       "rev-parse",
       `${adoption.old_artifact}^{commit}`,
     ])
     if (
       candidate !== adoption.descendant_commit ||
       oldArtifact !== adoption.old_artifact ||
-      git(this.runtime.directory, ["rev-parse", `${candidate}^{tree}`]) !==
+      (await gitAsync(this.runtime.directory, ["rev-parse", `${candidate}^{tree}`])) !==
         adoption.candidate_tree ||
-      git(this.runtime.directory, ["write-tree"]) !== adoption.candidate_tree
+      (await gitAsync(this.runtime.directory, ["write-tree"])) !== adoption.candidate_tree
     )
       throw new Error("Candidate or index no longer matches the reviewed adoption inputs")
-    git(this.runtime.directory, ["merge-base", "--is-ancestor", oldArtifact, candidate])
-    const reviewedBaseline = this.runtime.reviewedAdoptionBaseline(
+    await gitAsync(this.runtime.directory, ["merge-base", "--is-ancestor", oldArtifact, candidate])
+    const reviewedBaseline = await this.runtime.reviewedAdoptionBaseline(
       adoption.target_branch,
       oldArtifact,
       candidate,
@@ -266,7 +265,11 @@ export class AdoptionExecution {
     )
     if (
       !adoption.combined_artifact ||
-      !combinedArtifactsMatch(this.runtime.directory, combinedArtifact, adoption.combined_artifact)
+      !(await combinedArtifactsMatch(
+        this.runtime.directory,
+        combinedArtifact,
+        adoption.combined_artifact,
+      ))
     )
       throw new Error("Combined artifact inputs changed during adoption")
     return { plan, input, task, node, attempt }
@@ -295,9 +298,9 @@ export class AdoptionExecution {
         return undefined
       }
       const workspace = workspaceField ?? JSON.parse(existing.receipt!).workspace
-      if (!existsSync(workspace) || git(workspace, ["rev-parse", "HEAD"]) !== base)
+      if (!existsSync(workspace) || (await gitAsync(workspace, ["rev-parse", "HEAD"])) !== base)
         throw new Error(`Owned adoption worktree changed; preserve ${workspace}`)
-      if (git(workspace, ["ls-files", "-u", "-z"]))
+      if (await gitAsync(workspace, ["ls-files", "-u", "-z"]))
         throw new Error(`Owned adoption worktree has unmerged paths; preserve ${workspace}`)
       if (await gitAsync(workspace, ["status", "--porcelain", "--untracked-files=all"])) {
         const declaredChecks =
@@ -396,9 +399,9 @@ export class AdoptionExecution {
       const actual = await this.runtime.host.worktree({ directory: workspace, base })
       if (
         actual === this.runtime.directory ||
-        git(actual, ["rev-parse", "HEAD"]) !== base ||
+        (await gitAsync(actual, ["rev-parse", "HEAD"])) !== base ||
         (await gitAsync(actual, ["status", "--porcelain", "--untracked-files=all"])) ||
-        git(actual, ["ls-files", "-u", "-z"])
+        (await gitAsync(actual, ["ls-files", "-u", "-z"]))
       )
         throw new Error("Adoption worktree is not a clean exact-candidate checkout")
       this.runtime.receipt(effect, { workspace: actual, base }, fence)
@@ -610,9 +613,9 @@ export class AdoptionExecution {
       }
       const candidateClean =
         existsSync(workspace) &&
-        git(workspace, ["rev-parse", "HEAD"]) === artifact &&
+        (await gitAsync(workspace, ["rev-parse", "HEAD"])) === artifact &&
         !(await gitAsync(workspace, ["status", "--porcelain", "--untracked-files=all"])) &&
-        !git(workspace, ["ls-files", "-u", "-z"])
+        !(await gitAsync(workspace, ["ls-files", "-u", "-z"]))
       if (!candidateClean) {
         this.holdAdoption(
           plan,
@@ -720,7 +723,7 @@ export class AdoptionExecution {
       fence,
     )
     if (!taskReceipts || !this.adoptionIsLive(adoption.id)) return
-    if (!artifactUnchanged(taskWorkspace, adoption.descendant_commit)) {
+    if (!(await artifactUnchanged(taskWorkspace, adoption.descendant_commit))) {
       this.holdAdoption(
         plan,
         adoption.id,
@@ -768,7 +771,7 @@ export class AdoptionExecution {
       fence,
     )
     if (!combinedReceipts || !this.adoptionIsLive(adoption.id)) return
-    if (!artifactUnchanged(combinedWorkspace, adoption.combined_artifact)) {
+    if (!(await artifactUnchanged(combinedWorkspace, adoption.combined_artifact))) {
       this.holdAdoption(
         plan,
         adoption.id,
@@ -793,7 +796,7 @@ export class AdoptionExecution {
       this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
       return
     }
-    const taskMissing = this.runtime.missingEvidence(
+    const taskMissing = await this.runtime.missingEvidence(
       plan.id,
       adoption.task_id,
       adoption.descendant_commit,
@@ -802,7 +805,7 @@ export class AdoptionExecution {
       taskReceipts,
       adoption.id,
     )
-    const combinedMissing = this.runtime.missingEvidence(
+    const combinedMissing = await this.runtime.missingEvidence(
       plan.id,
       null,
       adoption.combined_artifact,
@@ -834,10 +837,12 @@ export class AdoptionExecution {
       this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
       return
     }
-    const publicationStatus = await gitAsync(this.runtime.directory, [
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
+    // Sampled concurrently outside the fenced transaction; the transaction
+    // re-validates plan, adoption, node and attempt state before publishing.
+    const [publicationStatus, publicationBranch, publicationHead] = await Promise.all([
+      gitAsync(this.runtime.directory, ["status", "--porcelain", "--untracked-files=all"]),
+      gitAsync(this.runtime.directory, ["branch", "--show-current"]),
+      gitAsync(this.runtime.directory, ["rev-parse", "HEAD"]),
     ])
     this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
       const current = this.runtime.store.adoption(adoption!.id)
@@ -894,8 +899,8 @@ export class AdoptionExecution {
         return
       }
       if (
-        git(this.runtime.directory, ["branch", "--show-current"]) !== adoption!.target_branch ||
-        git(this.runtime.directory, ["rev-parse", "HEAD"]) !== adoption!.landing_head ||
+        publicationBranch !== adoption!.target_branch ||
+        publicationHead !== adoption!.landing_head ||
         publicationStatus
       )
         return

@@ -17,8 +17,8 @@ import {
   checkResourcesSettled,
   combineArtifacts,
   combinedArtifactsMatch,
-  git,
   gitAsync,
+  worktreeListPorcelain,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import { checkSucceeded, checkFailureReason, isConclusiveNonTimeoutInterruption } from "./checks.ts"
@@ -356,10 +356,11 @@ export class RetainedVerificationExecution {
           .join("\n")
       }
       return (
-        realpathSync(git(workspace, ["rev-parse", "--show-toplevel"])) === workspaceRoot &&
-        git(workspace, ["rev-parse", "HEAD"]) === artifact &&
+        realpathSync(await gitAsync(workspace, ["rev-parse", "--show-toplevel"])) ===
+          workspaceRoot &&
+        (await gitAsync(workspace, ["rev-parse", "HEAD"])) === artifact &&
         !status &&
-        !git(workspace, ["ls-files", "-u", "-z"])
+        !(await gitAsync(workspace, ["ls-files", "-u", "-z"]))
       )
     } catch {
       return false
@@ -595,10 +596,10 @@ export class RetainedVerificationExecution {
       let mismatches: string[]
       try {
         const actual = realpathSync(present)
-        const topLevel = realpathSync(git(actual, ["rev-parse", "--show-toplevel"]))
-        const head = git(actual, ["rev-parse", "HEAD"])
+        const topLevel = realpathSync(await gitAsync(actual, ["rev-parse", "--show-toplevel"]))
+        const head = await gitAsync(actual, ["rev-parse", "HEAD"])
         const status = await gitAsync(actual, ["status", "--porcelain", "--untracked-files=all"])
-        const conflicts = git(actual, ["ls-files", "-u", "-z"])
+        const conflicts = await gitAsync(actual, ["ls-files", "-u", "-z"])
         const pendingCheck = this.runtime.store.atomic((db) =>
           retainedVerificationChecks(db, initial.id, phase).find(
             (check) => check.workspace === actual && check.artifact === artifact,
@@ -723,10 +724,10 @@ export class RetainedVerificationExecution {
         realpathSync(dirname(canonical)) !== realpathSync(dirname(workspace)) ||
         samePhysicalWorkspace(canonical, initial.originalWorkspace) ||
         samePhysicalWorkspace(canonical, this.runtime.directory) ||
-        realpathSync(git(canonical, ["rev-parse", "--show-toplevel"])) !== canonical ||
-        git(canonical, ["rev-parse", "HEAD"]) !== artifact ||
+        realpathSync(await gitAsync(canonical, ["rev-parse", "--show-toplevel"])) !== canonical ||
+        (await gitAsync(canonical, ["rev-parse", "HEAD"])) !== artifact ||
         (await gitAsync(canonical, ["status", "--porcelain", "--untracked-files=all"])) ||
-        git(canonical, ["ls-files", "-u", "-z"])
+        (await gitAsync(canonical, ["ls-files", "-u", "-z"]))
       )
         throw new Error(
           "Native worktree is not a distinct clean canonical checkout of the exact candidate",
@@ -1070,7 +1071,7 @@ export class RetainedVerificationExecution {
             (currentCombinedArtifact === undefined
               ? false
               : initial.combinedArtifact
-                ? combinedArtifactsMatch(
+                ? await combinedArtifactsMatch(
                     this.runtime.directory,
                     currentCombinedArtifact,
                     initial.combinedArtifact,
@@ -1221,7 +1222,7 @@ export class RetainedVerificationExecution {
           try {
             const onDisk = savedReceipt
             if (
-              observeRetainedCheckIsolationWitness(
+              await observeRetainedCheckIsolationWitness(
                 existing.contextPath,
                 isRecord(onDisk) ? onDisk.isolation : undefined,
                 {
@@ -1494,7 +1495,7 @@ export class RetainedVerificationExecution {
               throw new Error("Retained verification temporary-link ownership reservation changed")
           },
         })
-        if (!observeRetainedCheckContext(context))
+        if (!(await observeRetainedCheckContext(context)))
           throw new Error("Fresh verification resources do not have a readable ownership witness")
         this.runtime.store.atomic((db) =>
           activateRetainedVerificationResources(
@@ -1509,7 +1510,7 @@ export class RetainedVerificationExecution {
         const cleaned =
           error instanceof RetainedSetupProcessTreeUncertainError
             ? this.markRetainedCheckSetupUncertain(initial, phase, check.id, errorText(error))
-            : this.cleanupRetainedCheckSetup(
+            : await this.cleanupRetainedCheckSetup(
                 initial,
                 phase,
                 check.id,
@@ -1588,7 +1589,7 @@ export class RetainedVerificationExecution {
         )
       } catch (error) {
         try {
-          removeRetainedCheckContext(context)
+          await removeRetainedCheckContext(context)
           this.runtime.store.atomic((db) =>
             settleRetainedVerificationResources(
               db,
@@ -1727,7 +1728,7 @@ export class RetainedVerificationExecution {
         ),
         procedurePlan: procedure.plan,
       }
-      removeRetainedCheckContextFromWitness(contextPath, witness, expected)
+      await removeRetainedCheckContextFromWitness(contextPath, witness, expected)
       this.runtime.store.atomic((db) => {
         setRetainedVerificationCheckCleanup(db, operation.id, phase, checkID, "complete")
         settleRetainedVerificationResources(
@@ -1818,7 +1819,7 @@ export class RetainedVerificationExecution {
     return false
   }
 
-  private cleanupRetainedCheckSetup(
+  private async cleanupRetainedCheckSetup(
     operation: RetainedVerification,
     phase: "task" | "combined",
     checkID: string,
@@ -1827,7 +1828,7 @@ export class RetainedVerificationExecution {
     resource: RetainedCheckSetupResource | undefined,
     dependencyLink: RetainedCheckSetupLink | undefined,
     temporaryDirectoryLink: RetainedCheckSetupLink | undefined,
-  ): boolean {
+  ): Promise<boolean> {
     try {
       const persisted = this.runtime.store.atomic((db) =>
         db
@@ -1902,7 +1903,7 @@ export class RetainedVerificationExecution {
             inode: -1,
           }
       }
-      removeRetainedCheckSetupResources({
+      await removeRetainedCheckSetupResources({
         rootDirectory,
         resource,
         candidateWorkspace,
@@ -1944,14 +1945,14 @@ export class RetainedVerificationExecution {
     }
   }
 
-  private retainedEvidenceMissing(
+  private async retainedEvidenceMissing(
     operation: RetainedVerification,
     phase: "task" | "combined",
     assertions: TaskProposal["acceptance"],
     workspace: string,
     artifact: string,
     receipts: CheckReceipt[],
-  ): string[] {
+  ): Promise<string[]> {
     const missing: string[] = []
     const probes = new ProbeRepository(this.runtime.store.repository)
     const resources = new ResourceRepository(this.runtime.store.repository)
@@ -1978,7 +1979,7 @@ export class RetainedVerificationExecution {
           )
         )
           missing.push(`${assertion.id}:verification`)
-        if (evidence.kind === "artifact" && !artifactExists(workspace, evidence.reference))
+        if (evidence.kind === "artifact" && !(await artifactExists(workspace, evidence.reference)))
           missing.push(`${assertion.id}:${evidence.reference}`)
         if (
           evidence.kind === "human" &&
@@ -2078,7 +2079,7 @@ export class RetainedVerificationExecution {
         if (!checkResourcesSettled(receipt))
           throw new Error("Retained check process cleanup remains uncertain")
         if (check.cleanupState !== "complete") {
-          const resourcesCleaned = this.cleanupRetainedCheckSetup(
+          const resourcesCleaned = await this.cleanupRetainedCheckSetup(
             operation,
             phase,
             check.checkID,
@@ -2128,7 +2129,7 @@ export class RetainedVerificationExecution {
       const owned = matches[0]
       if (!owned) {
         const existing = candidates.filter((candidate) => existsSync(candidate))
-        const gitWorktrees = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+        const gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
@@ -2164,7 +2165,7 @@ export class RetainedVerificationExecution {
           await this.runtime.host.removeWorktree(recordedWorkspace)
         }
         const nativeAfterAbsent = await this.runtime.host.worktrees()
-        const gitAfterAbsent = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+        const gitAfterAbsent = (await worktreeListPorcelain(this.runtime.directory))
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
@@ -2184,10 +2185,11 @@ export class RetainedVerificationExecution {
           realpathSync(dirname(owned)) !== realpathSync(dirname(workspace)) ||
           samePhysicalWorkspace(owned, operation.originalWorkspace) ||
           samePhysicalWorkspace(owned, this.runtime.directory) ||
-          realpathSync(git(owned, ["rev-parse", "--show-toplevel"])) !== realpathSync(owned) ||
-          git(owned, ["rev-parse", "HEAD"]) !== artifact ||
-          git(owned, ["status", "--porcelain", "--untracked-files=all"]) ||
-          git(owned, ["ls-files", "-u", "-z"])
+          realpathSync(await gitAsync(owned, ["rev-parse", "--show-toplevel"])) !==
+            realpathSync(owned) ||
+          (await gitAsync(owned, ["rev-parse", "HEAD"])) !== artifact ||
+          (await gitAsync(owned, ["status", "--porcelain", "--untracked-files=all"])) ||
+          (await gitAsync(owned, ["ls-files", "-u", "-z"]))
         )
           throw new Error("Retained checkout identity or clean state changed; preserve it")
         const removalIntent = this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
@@ -2211,7 +2213,7 @@ export class RetainedVerificationExecution {
         await this.runtime.host.removeWorktree(owned)
       }
       const currentNative = await this.runtime.host.worktrees()
-      const currentGit = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+      const currentGit = (await worktreeListPorcelain(this.runtime.directory))
         .split(/\r?\n/)
         .filter((line) => line.startsWith("worktree "))
         .map((line) => resolve(line.slice("worktree ".length)))
@@ -2298,7 +2300,7 @@ export class RetainedVerificationExecution {
     let gitWorktrees: string[]
     try {
       native = await this.runtime.host.worktrees()
-      gitWorktrees = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+      gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
         .split(/\r?\n/)
         .filter((line) => line.startsWith("worktree "))
         .map((line) => resolve(line.slice("worktree ".length)))
@@ -2372,7 +2374,7 @@ export class RetainedVerificationExecution {
               .some((resource) => resource.state !== "removed"),
           )
           if (check.cleanupState !== "complete" || resourcePending) {
-            const setupClean = this.cleanupRetainedCheckSetup(
+            const setupClean = await this.cleanupRetainedCheckSetup(
               operation,
               phase,
               check.checkID,
@@ -2918,7 +2920,7 @@ export class RetainedVerificationExecution {
         await this.holdRetainedVerification(operation, checkFailureReason(failed), fence)
         return
       }
-      const missing = this.retainedEvidenceMissing(
+      const missing = await this.retainedEvidenceMissing(
         operation,
         "task",
         task.proposal.acceptance,
@@ -2955,7 +2957,7 @@ export class RetainedVerificationExecution {
           .filter((row) => row.state === "completed" && row.receipt)
           .map((row) => JSON.parse(row.receipt!) as CheckReceipt),
       )
-      const missing = this.retainedEvidenceMissing(
+      const missing = await this.retainedEvidenceMissing(
         operation,
         "task",
         task.proposal.acceptance,
@@ -3150,7 +3152,7 @@ export class RetainedVerificationExecution {
       await this.holdRetainedVerification(operation, checkFailureReason(failed), fence)
       return
     }
-    const missing = this.retainedEvidenceMissing(
+    const missing = await this.retainedEvidenceMissing(
       operation,
       "combined",
       input.acceptance,

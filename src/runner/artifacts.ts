@@ -1,18 +1,16 @@
 import { execFile, spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
 import {
-  constants,
-  fstatSync,
-  lstatSync,
-  readFileSync,
-  readlinkSync,
-  openSync,
-  closeSync,
-  mkdirSync,
-  readdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs"
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  writeFile,
+} from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { constants } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { canonical } from "../identity.ts"
@@ -65,6 +63,27 @@ export async function gitAsync(
   }
 }
 
+const worktreeListInFlight = new Map<string, Promise<string>>()
+
+/**
+ * `git worktree list --porcelain`, single-flight per directory: callers that
+ * overlap in time share one process, but a call that starts after another has
+ * settled always observes fresh state (never a stale cache across a mutation).
+ */
+export function worktreeListPorcelain(directory: string): Promise<string> {
+  const running = worktreeListInFlight.get(directory)
+  if (running) return running
+  const pending = gitAsync(directory, ["worktree", "list", "--porcelain"]).finally(() => {
+    if (worktreeListInFlight.get(directory) === pending) worktreeListInFlight.delete(directory)
+  })
+  worktreeListInFlight.set(directory, pending)
+  return pending
+}
+
+/**
+ * Blocking Git for CLI scripts, fixtures and tests only. The plugin service is
+ * single-threaded: runtime code must use `gitAsync`.
+ */
 export function git(
   directory: string,
   args: string[],
@@ -87,18 +106,28 @@ export function git(
 }
 
 /** Distinguish a normal non-ancestor result from an unavailable Git observation. */
-export function commitIsAncestor(directory: string, ancestor: string, descendant: string): boolean {
-  const result = spawnSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
-    cwd: directory,
-    timeout: 30000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  })
-  if (result.status === 0) return true
-  if (result.status === 1) return false
-  const stderr = result.stderr?.toString("utf8") ?? ""
-  throw new Error(
-    `git merge-base --is-ancestor failed: ${(stderr || result.error?.message || "unknown").slice(0, 2000)}`,
-  )
+export async function commitIsAncestor(
+  directory: string,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean> {
+  try {
+    await execFileAsync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 30000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    })
+    return true
+  } catch (error) {
+    const code = (error as { code?: unknown }).code
+    if (code === 1) return false
+    const stderr = (error as { stderr?: unknown }).stderr
+    const detail = typeof stderr === "string" && stderr ? stderr : "unknown"
+    throw new Error(`git merge-base --is-ancestor failed: ${detail.slice(0, 2000)}`, {
+      cause: error,
+    })
+  }
 }
 
 /** Conservatively detects equal, wildcard-overlapping, and ancestor path scopes. */
@@ -121,12 +150,15 @@ export function scopePatternsConflict(left: string[], right: string[]): boolean 
  * `git commit-tree` ignores `commit.gpgsign`, so honor the configured signing
  * preference explicitly. Never disable signing and never choose a key here.
  */
-function signingArguments(directory: string): string[] {
-  const result = spawnSync("git", ["config", "--type=bool", "--get", "commit.gpgsign"], {
-    cwd: directory,
-    encoding: "utf8",
-  })
-  return result.status === 0 && result.stdout.trim() === "true" ? ["-S"] : []
+async function signingArguments(directory: string): Promise<string[]> {
+  try {
+    return (await gitAsync(directory, ["config", "--type=bool", "--get", "commit.gpgsign"])) ===
+      "true"
+      ? ["-S"]
+      : []
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -161,7 +193,7 @@ async function commitCombinedTree(
     .reduce((best, item) => (item.time > best.time ? item : best)).line
   const created = await gitAsync(
     directory,
-    ["commit-tree", ...signingArguments(directory), tree, "-p", left, "-p", right],
+    ["commit-tree", ...(await signingArguments(directory)), tree, "-p", left, "-p", right],
     "chore: integrate accepted artifacts\n",
     { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
   )
@@ -180,23 +212,22 @@ async function commitCombinedTree(
  * same ordered parents (after `mapParent`, for rewritten history). An
  * unreadable commit never matches.
  */
-export function combinedArtifactsMatch(
+export async function combinedArtifactsMatch(
   directory: string,
   current: string,
   stored: string,
   mapParent: (parent: string) => string = (parent) => parent,
-): boolean {
+): Promise<boolean> {
   if (current === stored) return true
   try {
-    const read = (commit: string) => {
-      const tree = git(directory, ["rev-parse", "--verify", `${commit}^{tree}`])
-      const parents = git(directory, ["rev-list", "--parents", "-n", "1", commit])
-        .split(" ")
-        .slice(1)
-      return { tree, parents }
+    const read = async (commit: string) => {
+      const [tree, line] = await Promise.all([
+        gitAsync(directory, ["rev-parse", "--verify", `${commit}^{tree}`]),
+        gitAsync(directory, ["rev-list", "--parents", "-n", "1", commit]),
+      ])
+      return { tree, parents: line.split(" ").slice(1) }
     }
-    const a = read(current)
-    const b = read(stored)
+    const [a, b] = await Promise.all([read(current), read(stored)])
     return (
       a.tree === b.tree &&
       a.parents.length === b.parents.length &&
@@ -208,13 +239,14 @@ export function combinedArtifactsMatch(
 }
 
 /** Prefer an already-recorded equivalent so SHA-keyed receipts and effects keep matching. */
-export function canonicalCombinedArtifact(
+export async function canonicalCombinedArtifact(
   directory: string,
   computed: string,
   recorded: Array<string | null | undefined>,
-): string {
+): Promise<string> {
   for (const candidate of recorded)
-    if (candidate && combinedArtifactsMatch(directory, computed, candidate)) return candidate
+    if (candidate && (await combinedArtifactsMatch(directory, computed, candidate)))
+      return candidate
   return computed
 }
 
@@ -224,9 +256,9 @@ export async function combineArtifacts(
   base: string,
   artifacts: string[],
 ): Promise<string> {
-  const isAncestor = (ancestor: string, descendant: string) => {
+  const isAncestor = async (ancestor: string, descendant: string) => {
     try {
-      git(directory, ["merge-base", "--is-ancestor", ancestor, descendant])
+      await gitAsync(directory, ["merge-base", "--is-ancestor", ancestor, descendant])
       return true
     } catch {
       return false
@@ -234,8 +266,8 @@ export async function combineArtifacts(
   }
   let combined = base
   for (const artifact of artifacts) {
-    if (artifact === combined || isAncestor(artifact, combined)) continue
-    if (isAncestor(combined, artifact)) {
+    if (artifact === combined || (await isAncestor(artifact, combined))) continue
+    if (await isAncestor(combined, artifact)) {
       combined = artifact
       continue
     }
@@ -269,34 +301,55 @@ function collectChangedPaths(results: string[]): string[] {
   return [...new Set(results.flatMap((result) => result.split("\0")).filter(Boolean))].sort()
 }
 
-export function changedPaths(directory: string, base = "HEAD"): string[] {
-  return collectChangedPaths(changedPathCommands(base).map((args) => git(directory, args)))
+export async function changedPaths(directory: string, base = "HEAD"): Promise<string[]> {
+  // The three observations are independent; run them concurrently.
+  return collectChangedPaths(
+    await Promise.all(changedPathCommands(base).map((args) => gitAsync(directory, args))),
+  )
 }
 
-async function changedPathsAsync(directory: string, base = "HEAD"): Promise<string[]> {
-  const results: string[] = []
-  for (const args of changedPathCommands(base)) results.push(await gitAsync(directory, args))
-  return collectChangedPaths(results)
+/** Bounded-concurrency map so large sets never monopolize the event loop. */
+export async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await run(items[index]!, index)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
 }
 
 /** Fingerprint the actual editable candidate bytes without staging or mutating them. */
-export function workingTreeIdentity(directory: string, base: string): string {
+export async function workingTreeIdentity(directory: string, base: string): Promise<string> {
   const hash = createHash("sha256")
   hash.update(base)
-  for (const path of changedPaths(directory, base)) {
-    hash.update("\0")
-    hash.update(path)
+  const paths = await changedPaths(directory, base)
+  const parts = await mapBounded(paths, 16, async (path) => {
     try {
-      const info = lstatSync(join(directory, path))
-      hash.update(`\0${info.mode}\0`)
-      if (info.isSymbolicLink()) hash.update(readlinkSync(join(directory, path)))
-      else if (info.isFile()) hash.update(readFileSync(join(directory, path)))
-      else hash.update("unsupported-file-kind")
+      const info = await lstat(join(directory, path))
+      let body: Buffer | string
+      if (info.isSymbolicLink()) body = await readlink(join(directory, path))
+      else if (info.isFile()) body = await readFile(join(directory, path))
+      else body = "unsupported-file-kind"
+      return { path, header: `\0${info.mode}\0`, body }
     } catch (error) {
       if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
-        hash.update("deleted")
-      else throw error
+        return { path, header: "", body: "deleted" }
+      throw error
     }
+  })
+  for (const part of parts) {
+    hash.update("\0")
+    hash.update(part.path)
+    hash.update(part.header)
+    hash.update(part.body)
   }
   return hash.digest("hex")
 }
@@ -311,22 +364,61 @@ export function scopeViolations(paths: string[], scope: string[]): string[] {
   )
 }
 
-export function artifactUnchanged(
+type WorkspaceStatus = { head: string | undefined; changed: boolean; untracked: string[] }
+
+/** One `git status` replaces `diff --quiet`, `diff --cached` and `ls-files --others`. */
+async function workspaceStatus(directory: string): Promise<WorkspaceStatus> {
+  const output = await gitAsync(directory, [
+    "status",
+    "--porcelain=v2",
+    "--branch",
+    "-z",
+    "--untracked-files=all",
+  ])
+  let head: string | undefined
+  let changed = false
+  const untracked: string[] = []
+  for (const token of output.split("\0")) {
+    if (token.startsWith("# branch.oid ")) {
+      const oid = token.slice("# branch.oid ".length)
+      head = oid === "(initial)" ? undefined : oid
+    } else if (token.startsWith("? ")) untracked.push(token.slice(2))
+    else if (/^[12u] /.test(token)) changed = true
+  }
+  return { head, changed, untracked }
+}
+
+/**
+ * True when `HEAD` is exactly `commit` and the checkout has no tracked changes
+ * and no untracked paths beyond `ownedUntrackedPaths`; one Git process.
+ */
+export async function workspaceAtArtifact(
   directory: string,
   commit: string,
   ownedUntrackedPaths: string[] = [],
-): boolean {
-  const result = spawnSync("git", ["diff", "--quiet", commit, "--"], {
-    cwd: directory,
-    timeout: 30000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  })
+): Promise<boolean> {
+  const status = await workspaceStatus(directory)
+  if (status.head !== commit) return false
   const allowed = new Set(ownedUntrackedPaths)
-  const untracked = git(directory, ["ls-files", "--others", "--exclude-standard", "-z"])
-    .split("\0")
-    .filter(Boolean)
-    .filter((path) => !allowed.has(path))
-  return result.status === 0 && untracked.length === 0
+  return !status.changed && status.untracked.every((path) => allowed.has(path))
+}
+
+export async function artifactUnchanged(
+  directory: string,
+  commit: string,
+  ownedUntrackedPaths: string[] = [],
+): Promise<boolean> {
+  const status = await workspaceStatus(directory)
+  const allowed = new Set(ownedUntrackedPaths)
+  if (status.untracked.some((path) => !allowed.has(path))) return false
+  // Status compares with HEAD; any other commit needs an explicit tracked diff.
+  if (status.head === commit) return !status.changed
+  try {
+    await gitAsync(directory, ["diff", "--quiet", commit, "--"])
+    return true
+  } catch {
+    return false
+  }
 }
 
 export class ArtifactScopeViolation extends Error {
@@ -335,8 +427,10 @@ export class ArtifactScopeViolation extends Error {
   }
 }
 
-function singleMergeBase(directory: string, left: string, right: string): string {
-  const bases = git(directory, ["merge-base", "--all", left, right]).split(/\s+/).filter(Boolean)
+async function singleMergeBase(directory: string, left: string, right: string): Promise<string> {
+  const bases = (await gitAsync(directory, ["merge-base", "--all", left, right]))
+    .split(/\s+/)
+    .filter(Boolean)
   if (bases.length !== 1 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(bases[0] ?? ""))
     throw new Error(`Cannot safely determine a unique merge base for ${left} and ${right}`)
   return bases[0]!
@@ -349,7 +443,7 @@ async function mergedScopeTree(
 ): Promise<string> {
   // Check the merge base first: Git can synthesize one when the history is
   // criss-crossed, but that would make the scope exemption ambiguous.
-  singleMergeBase(directory, base, incorporated)
+  await singleMergeBase(directory, base, incorporated)
   let merged: string
   try {
     merged = await gitAsync(directory, ["merge-tree", "--write-tree", base, incorporated])
@@ -363,7 +457,7 @@ async function mergedScopeTree(
   const tree = merged.trim()
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tree))
     throw new Error("Git did not return a tree for the reviewed artifact baseline")
-  if (git(directory, ["cat-file", "-t", tree]) !== "tree")
+  if ((await gitAsync(directory, ["cat-file", "-t", tree])) !== "tree")
     throw new Error("Git did not return a tree for the reviewed artifact baseline")
   return tree
 }
@@ -377,8 +471,8 @@ export async function reviewedScopeBase(
 ): Promise<string> {
   let scopeBase = base
   if (reviewedHead) {
-    const common = singleMergeBase(directory, head, reviewedHead)
-    const baseRelation = singleMergeBase(directory, base, common)
+    const common = await singleMergeBase(directory, head, reviewedHead)
+    const baseRelation = await singleMergeBase(directory, base, common)
     if (baseRelation === base) scopeBase = common
     else if (baseRelation !== common) scopeBase = await mergedScopeTree(directory, base, common)
   }
@@ -393,18 +487,18 @@ export async function commitArtifact(
   snapshot = true,
   reviewedHead?: string,
 ): Promise<{ commit: string; paths: string[]; identity: string; scopeBase: string }> {
-  const head = git(directory, ["rev-parse", "HEAD"])
-  git(directory, ["merge-base", "--is-ancestor", base, head])
+  const head = await gitAsync(directory, ["rev-parse", "HEAD"])
+  await gitAsync(directory, ["merge-base", "--is-ancestor", base, head])
   const scopeBase = await reviewedScopeBase(
     directory,
     base,
     head,
     snapshot ? reviewedHead : undefined,
   )
-  const paths = await changedPathsAsync(directory, scopeBase)
+  const paths = await changedPaths(directory, scopeBase)
   const violations = scopeViolations(paths, scope)
   if (violations.length) throw new ArtifactScopeViolation(violations)
-  if ((await changedPathsAsync(directory)).length === 0)
+  if ((await changedPaths(directory)).length === 0)
     return { commit: head, paths, identity: head, scopeBase }
   if (!snapshot)
     throw new Error(
@@ -414,13 +508,13 @@ export async function commitArtifact(
   const tree = await gitAsync(directory, ["write-tree"])
   const commit = await gitAsync(
     directory,
-    ["commit-tree", ...signingArguments(directory), tree, "-p", head],
+    ["commit-tree", ...(await signingArguments(directory)), tree, "-p", head],
     "chore: snapshot verified candidate\n",
   )
   return { commit, paths, identity: commit, scopeBase }
 }
 
-export function artifactExists(directory: string, reference: string): boolean {
+export async function artifactExists(directory: string, reference: string): Promise<boolean> {
   if (
     !reference ||
     isAbsolute(reference) ||
@@ -436,52 +530,52 @@ export function artifactExists(directory: string, reference: string): boolean {
     let current = directory
     for (const part of within ? within.split(sep) : []) {
       current = join(current, part)
-      if (lstatSync(current).isSymbolicLink()) return false
+      if ((await lstat(current)).isSymbolicLink()) return false
     }
-    const leaf = lstatSync(path)
+    const leaf = await lstat(path)
     if (leaf.isSymbolicLink()) return false
-    if (leaf.isFile()) return readableRegularFile(path)
-    return leaf.isDirectory() && hasReadableRegularFile(path)
+    if (leaf.isFile()) return await readableRegularFile(path)
+    return leaf.isDirectory() && (await hasReadableRegularFile(path))
   } catch {
     return false
   }
 }
 
-function readableRegularFile(path: string): boolean {
-  let fd: number | undefined
+async function readableRegularFile(path: string): Promise<boolean> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
-    const candidate = lstatSync(path)
+    const candidate = await lstat(path)
     if (candidate.isSymbolicLink() || !candidate.isFile()) return false
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    return fstatSync(fd).isFile()
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    return (await handle.stat()).isFile()
   } catch {
     return false
   } finally {
-    if (fd !== undefined) closeSync(fd)
+    await handle?.close().catch(() => {})
   }
 }
 
-function hasReadableRegularFile(directory: string): boolean {
+async function hasReadableRegularFile(directory: string): Promise<boolean> {
   const pending = [directory]
   while (pending.length) {
     const current = pending.pop()!
     let entries: string[]
     try {
-      entries = readdirSync(current)
+      entries = await readdir(current)
     } catch {
       continue
     }
     for (const entry of entries) {
       const path = join(current, entry)
-      let candidate: ReturnType<typeof lstatSync>
+      let candidate: Awaited<ReturnType<typeof lstat>>
       try {
-        candidate = lstatSync(path)
+        candidate = await lstat(path)
       } catch {
         continue
       }
       if (candidate.isSymbolicLink()) continue
       if (candidate.isDirectory()) pending.push(path)
-      else if (candidate.isFile() && readableRegularFile(path)) return true
+      else if (candidate.isFile() && (await readableRegularFile(path))) return true
     }
   }
   return false
@@ -894,9 +988,7 @@ export async function runCheck(
       processCleanup,
       ...(options.isolation === undefined ? {} : { isolation: options.isolation }),
     }
-    mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })
-    writeFileSync(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })
-    renameSync(`${receiptPath}.tmp`, receiptPath)
+    await writeCheckReceipt(receiptPath, receipt)
     return receipt
   } catch (error) {
     terminate()
@@ -932,10 +1024,10 @@ export function checkResourcesSettled(receipt: CheckReceipt): boolean {
   )
 }
 
-export function writeCheckReceipt(receiptPath: string, receipt: CheckReceipt): void {
-  mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })
-  writeFileSync(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })
-  renameSync(`${receiptPath}.tmp`, receiptPath)
+export async function writeCheckReceipt(receiptPath: string, receipt: CheckReceipt): Promise<void> {
+  await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 })
+  await writeFile(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })
+  await rename(`${receiptPath}.tmp`, receiptPath)
 }
 
 export async function runDeclaredCheck(
@@ -1040,6 +1132,6 @@ export async function runDeclaredCheck(
     phasesComplete:
       phases.length === commands.length && !latest.timedOut && latest.aborted !== true,
   }
-  writeCheckReceipt(receiptPath, result)
+  await writeCheckReceipt(receiptPath, result)
   return result
 }

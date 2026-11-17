@@ -4,7 +4,7 @@ import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { fingerprint } from "../identity.ts"
-import { git, gitAsync } from "./artifacts.ts"
+import { gitAsync, worktreeListPorcelain } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { NativeCleanupSettlement, WorktreeLocationRetirement } from "./host.ts"
 import { PlanInput } from "./schema.ts"
@@ -431,7 +431,10 @@ export class WorktreeCleanup {
     attempt: AttemptRow,
   ) {
     try {
-      if (git(this.runtime.directory, ["branch", "--show-current"]) !== authorization.targetBranch)
+      if (
+        (await gitAsync(this.runtime.directory, ["branch", "--show-current"])) !==
+        authorization.targetBranch
+      )
         throw new Error("current checkout is not the recorded integration branch")
       const proof = await proofForArtifact(
         (run) => this.runtime.store.repository.read(run),
@@ -608,7 +611,7 @@ export class WorktreeCleanup {
       if (!cleanupCurrent()) return "superseded"
       if (native.some((directory) => resolve(directory) === target))
         return "native-resource-present"
-      const gitWorktrees = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+      const gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
         .split(/\r?\n/)
         .filter((line) => line.startsWith("worktree "))
         .map((line) => resolve(line.slice("worktree ".length)))
@@ -917,7 +920,7 @@ export class WorktreeCleanup {
         }
         const target = resolve(workspace)
         const listedWorkspace = listed.some((entry) => resolve(entry) === target)
-        const gitWorktrees = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+        const gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
@@ -929,7 +932,7 @@ export class WorktreeCleanup {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          const head = git(workspace, ["rev-parse", "HEAD"])
+          const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
           await this.assertHeadMerged(workspace, head)
           const initialSettlement = await this.assertWorktreeQuiescent(
             plan,
@@ -964,14 +967,14 @@ export class WorktreeCleanup {
             )
           if (await gitAsync(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
-          const finalHead = git(workspace, ["rev-parse", "HEAD"])
+          const finalHead = await gitAsync(workspace, ["rev-parse", "HEAD"])
           await this.assertHeadMerged(workspace, finalHead)
           const finalNative = await this.runtime.host.worktrees()
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          const finalGitWorktrees = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+          const finalGitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
             .split(/\r?\n/)
             .filter((line) => line.startsWith("worktree "))
             .map((line) => resolve(line.slice("worktree ".length)))
@@ -1007,7 +1010,7 @@ export class WorktreeCleanup {
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )
         const remainingNative = await this.runtime.host.worktrees()
-        const remainingGit = git(this.runtime.directory, ["worktree", "list", "--porcelain"])
+        const remainingGit = (await worktreeListPorcelain(this.runtime.directory))
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
