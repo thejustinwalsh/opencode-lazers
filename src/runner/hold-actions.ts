@@ -80,7 +80,7 @@ export const HOLD_FAMILIES: readonly HoldFamily[] = [
   {
     name: "cleanup",
     match: /cleanup|worktree|checkout/i,
-    actions: ["recover-cleanup", "reconcile", "cancel"],
+    actions: ["reconcile", "cancel"],
   },
   {
     name: "dependency",
