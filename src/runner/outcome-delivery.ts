@@ -71,7 +71,11 @@ export class OutcomeDelivery {
         )
         .get(message.id)
       if (!current || !expected.includes(current.state)) return false
-      if (state === current.state && current.latestReceipt === JSON.stringify(receipt)) return false
+      if (state === current.state && current.latestReceipt === JSON.stringify(receipt)) {
+        // An interrupted send may already hold the same durable receipt. The current lease
+        // can retry that send after native observation, without recording another transition.
+        return state === "sending" && message.state === "sending"
+      }
       const nextReceipt = appendOutboxReceipt(current.receipt, receipt)
       const changed = db
         .query(
