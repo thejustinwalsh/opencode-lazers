@@ -120,7 +120,9 @@ export class TaskRepository {
       // write-locking pragma. A concurrent first transition can fail immediately
       // despite busy_timeout; make a few bounded attempts (each waits at most
       // SQLITE_BUSY_TIMEOUT_MS) and never sleep the thread between them.
-      if (db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal")
+      if (
+        db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal"
+      )
         for (let attempt = 1; ; attempt++) {
           try {
             db.exec("PRAGMA journal_mode = WAL")
