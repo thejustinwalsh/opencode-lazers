@@ -41,6 +41,8 @@ type Fixture = {
   active?: number
   /** The Architect paused dispatch of the Alpha plan. */
   alphaPaused?: boolean
+  dependencyPause?: boolean
+  betaPaused?: boolean
   /** The topology read fails: Tasks falls back to the scheduling read (if any). */
   topologyUnavailable?: boolean
   /** Serve a scheduling read covering Alpha and Beta. */
@@ -195,9 +197,16 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   const activeCount = fixture.active ?? 0
   const active = new Set(alpha.slice(0, activeCount))
   const requests = new Set(alpha.slice(activeCount, activeCount + (fixture.requests ?? 0)))
-  const pause = { reason: "Paused by Architect for review", untilPlans: [] as string[] }
+  const pause = {
+    reason: "Paused by Architect for review",
+    untilPlans: fixture.dependencyPause ? [uuid(9555)] : [],
+  }
   const paused = (taskID: string) =>
-    Boolean(fixture.alphaPaused && alpha.includes(taskID) && stateOf(taskID) === "queued")
+    Boolean(
+      stateOf(taskID) === "queued" &&
+      ((fixture.alphaPaused && alpha.includes(taskID)) ||
+        (fixture.betaPaused && betaTasks.includes(taskID))),
+    )
   let queuePagesOpen = !fixture.queuePagesClosed
   const blocked = new Set([beta.a, beta.join])
   const referenceOf = (taskID: string) => `LZ-${[...names.keys()].indexOf(taskID) + 1}`
@@ -208,7 +217,9 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     revision: 1,
     status: stateOf(taskID),
     recordedState: stateOf(taskID),
-    ...(paused(taskID) ? { dispatchPause: pause } : {}),
+    ...(paused(taskID)
+      ? { dispatchPause: pause, dispatchPausePlanID: uuid(alpha.includes(taskID) ? 9001 : 9002) }
+      : {}),
     reason: null,
     classification: {
       revision: 1,
@@ -1326,5 +1337,31 @@ test("Now mounts a bounded window of active work; keys reach every entry across 
     },
     {},
     { active: 8, requests: 2 },
+  )
+})
+
+test("a prerequisite pause remains in the tree without an Attention entry", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0 && Boolean(h.attention(h.beta.a)))
+      await settle()
+      expect(Boolean(h.attention(h.alpha[0]!))).toBe(false)
+    },
+    {},
+    { alphaPaused: true, dependencyPause: true, alphaChain: true },
+  )
+})
+
+test("equal pause reasons keep distinct Attention entries without topology or scheduling", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.topologyCalls() > 0 && Boolean(h.attention(h.alpha[0]!)))
+      await settle()
+      expect(Boolean(h.attention(h.beta.root))).toBe(true)
+      expect(h.attention(h.alpha[0]!)?.dataset.pausedCount).toBe("60")
+      expect(h.attention(h.beta.root)?.dataset.pausedCount).toBe("2")
+    },
+    {},
+    { alphaPaused: true, betaPaused: true, topologyUnavailable: true },
   )
 })

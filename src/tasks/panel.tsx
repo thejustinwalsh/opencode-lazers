@@ -511,12 +511,17 @@ function TaskPanel(
       ...rows.filter((row) => !asksForAttention(row) && held(row)),
     ]
     const listedIDs = new Set(listed.map((row) => row.taskID))
-    // Without a plan (no topology or scheduling read), the pause itself identifies its plan.
+    // Group only when the execution plan identity is known.
     const pauses = new Map<string, { row: ExecutionListRow; count: number }>()
     for (const row of rows) {
-      if (!row.dispatchPause || !pausableStates.has(row.status) || listedIDs.has(row.taskID))
+      if (
+        !row.dispatchPause ||
+        row.dispatchPause.untilPlans.length > 0 ||
+        !pausableStates.has(row.status) ||
+        listedIDs.has(row.taskID)
+      )
         continue
-      const key = planIDs.get(row.taskID) ?? `pause:${JSON.stringify(row.dispatchPause)}`
+      const key = planIDs.get(row.taskID) ?? row.dispatchPausePlanID ?? row.taskID
       const entry = pauses.get(key)
       if (entry) entry.count++
       else pauses.set(key, { row, count: 1 })

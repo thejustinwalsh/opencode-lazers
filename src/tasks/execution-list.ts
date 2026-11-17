@@ -16,6 +16,7 @@ export type ExecutionListRow = {
   reference?: string
   sourcePlan?: TaskSummary["sourcePlan"]
   dispatchPause?: TaskSummary["dispatchPause"]
+  dispatchPausePlanID?: string
   contextOnly: boolean
   prerequisites: string[]
   successors: string[]
@@ -222,7 +223,7 @@ function buildScheduledGroups(input: {
         ordinal,
         ...(task.reference ? { reference: task.reference } : {}),
         ...(task.dispatchPause && pausable.has(task.recordedState ?? task.status)
-          ? { dispatchPause: task.dispatchPause }
+          ? { dispatchPause: task.dispatchPause, dispatchPausePlanID: task.dispatchPausePlanID }
           : {}),
         contextOnly: false,
         prerequisites: [],
@@ -754,6 +755,7 @@ export function buildExecutionList(input: {
         ...(summary?.reference ? { reference: summary.reference } : {}),
         sourcePlan: summary?.sourcePlan,
         dispatchPause: summary?.dispatchPause,
+        dispatchPausePlanID: summary?.dispatchPausePlanID,
         contextOnly: !summary,
         prerequisites: relations.prerequisites.get(taskID) ?? [],
         successors: relations.successors.get(taskID) ?? [],

@@ -609,6 +609,7 @@ test("paused dispatch is durable, filterable and distinct from active worker lif
   expect(reads.query({ state: "paused" }).tasks[0]).toMatchObject({
     recordedState: "queued",
     dispatchPause: { reason: "Coordinate next wave", untilPlans: [] },
+    dispatchPausePlanID: plan.planID,
   })
   const reopened = new TaskReads(fixtureState.open())
   expect(reopened.runner.dispatchPause(plan.planID)).toEqual({

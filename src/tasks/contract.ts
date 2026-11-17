@@ -30,6 +30,7 @@ export const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
   dispatchPause: DispatchPause.optional(),
+  dispatchPausePlanID: z.uuid().optional(),
   // Read implementations resolve the persisted project-local reference before returning pages.
   reference: TaskReferenceSchema,
   revision: z.literal(1),
