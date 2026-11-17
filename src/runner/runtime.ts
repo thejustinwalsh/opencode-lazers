@@ -70,6 +70,19 @@ import {
   writeCheckReceipt,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
+import { ensureNotesConfig } from "./change-identity.ts"
+import { stampChangeIdentity } from "./identity-stamp.ts"
+import { equivalentShas, FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
+import {
+  baseReachable,
+  proofForArtifact,
+  requireIntegration,
+  storedEvidence,
+  type BaseReach,
+  type IntegrationProof,
+} from "./integration-proof.ts"
+import { knownTree } from "./identity-store.ts"
+import type { ArtifactEvidenceLookup } from "./prerequisite-proof.ts"
 import { checkSucceeded, checkFailureReason, isConclusiveNonTimeoutInterruption } from "./checks.ts"
 import { needsMechanicalQualityPreparation } from "./quality-failure.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
@@ -557,6 +570,25 @@ export function architectIdleWindowMs(value: unknown): number {
   return value
 }
 
+type AdoptionFingerprintInput = {
+  plan: PlanRow
+  originalPlanVersion: number
+  taskID: string
+  taskRevision: number
+  attemptID: string
+  nodeState: string
+  attemptState: string
+  oldArtifact: string
+  descendantCommit: string
+  targetBranch: string
+  landingHead: string
+  reviewedBaseline: string
+  candidateTree: string
+  combinedArtifact: string
+  reason: string
+  environmentIdentity: string
+}
+
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly worktreeCleanup: WorktreeCleanup
@@ -689,6 +721,93 @@ export class TaskRuntime {
   }
   get directory() {
     return this.store.repository.projectDirectory
+  }
+
+  private identityStamping: Promise<void> | undefined
+  private identityStampedAt = Number.NEGATIVE_INFINITY
+  private notesConfigured = false
+
+  /**
+   * Record tree OID, patch-id, change id and the `refs/notes/lazers` note for
+   * every stored artifact and base that has no current identity. This is an
+   * observation: it never grants, revokes or delays an acceptance, and a
+   * failure (for example a repository that is not available) is ignored and
+   * retried on the next call. Calls coalesce; unforced calls are throttled.
+   */
+  /** The reachability verdict computed before the transaction for `base`, as a readable error. */
+  private requireBaseReachable(bases: ReadonlyMap<string, BaseReach>, base: string) {
+    const reach = bases.get(base)
+    if (!reach) throw new Error(`Baseline ${base.slice(0, 8)} was not checked against HEAD`)
+    if (!reach.ok) throw new Error(reach.reason)
+  }
+
+  /**
+   * Async Git proofs a command needs, gathered before its transaction:
+   * integration containment (`integrated`, `recover-cleanup`) and baseline
+   * reachability (an explicit `baseCommit`).
+   */
+  private async preflightProofs(command: CommandInput, plan: PlanRow) {
+    const bases = new Map<string, BaseReach>()
+    let integration: IntegrationProof | undefined
+    if (command.baseCommit)
+      bases.set(
+        command.baseCommit,
+        await baseReachable(
+          this.directory,
+          command.baseCommit,
+          "HEAD",
+          this.store.repository.read((db) => knownTree(db, command.baseCommit)),
+        ),
+      )
+    if (command.action === "integrated" || command.action === "recover-cleanup") {
+      const task = command.taskID
+        ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
+        : undefined
+      const artifact =
+        command.action === "integrated" ? (task?.artifact ?? plan.artifact) : command.artifact
+      if (artifact) {
+        const attempt = command.taskID
+          ? this.store
+              .attempts(plan.id)
+              .filter((candidate) => candidate.task_id === command.taskID)
+              .at(-1)
+          : undefined
+        integration = await proofForArtifact(
+          (run) => this.store.repository.read(run),
+          this.directory,
+          { artifact, attemptID: attempt?.id, base: attempt?.base_commit },
+        )
+      }
+    }
+    return { bases, integration }
+  }
+
+  stampIdentity(force = false): Promise<void> {
+    if (this.identityStamping) return this.identityStamping
+    if (!force && this.now() - this.identityStampedAt < 30_000) return Promise.resolve()
+    this.identityStampedAt = this.now()
+    const running: Promise<void> = (async () => {
+      try {
+        if (!this.notesConfigured) {
+          await ensureNotesConfig(this.directory)
+          this.notesConfigured = true
+        }
+        await stampChangeIdentity(
+          {
+            read: (run) => this.store.repository.read(run),
+            write: (run) => this.store.repository.atomic(run),
+          },
+          this.directory,
+          { projectDirectory: this.directory },
+        )
+      } catch {
+        // Identity is derived, additive data; the next call repairs any gap.
+      }
+    })().finally(() => {
+      if (this.identityStamping === running) this.identityStamping = undefined
+    })
+    this.identityStamping = running
+    return running
   }
   get dataDirectory() {
     return join(dirname(this.store.repository.path), "runner")
@@ -1184,32 +1303,20 @@ export class TaskRuntime {
     })
   }
 
-  private adoptionInputFingerprint(input: {
-    plan: PlanRow
-    originalPlanVersion: number
-    taskID: string
-    taskRevision: number
-    attemptID: string
-    nodeState: string
-    attemptState: string
-    oldArtifact: string
-    descendantCommit: string
-    targetBranch: string
-    landingHead: string
-    reviewedBaseline: string
-    candidateTree: string
-    combinedArtifact: string
-    reason: string
-    environmentIdentity: string
-  }) {
+  /**
+   * Versioned. `v1` (no prefix) hashes commit SHAs and stays valid for rows
+   * already stored. `v2:` hashes tree OIDs and stable ids, so rewriting history
+   * cannot invalidate it. New rows use v2; stored rows keep the version they
+   * were written with.
+   */
+  private adoptionInputFingerprint(input: AdoptionFingerprintInput, version: "v1" | "v2" = "v2") {
     const task = this.store.repository.get(input.taskID)
     if (!task) throw new Error("Adoption task is missing")
-    return fingerprint({
+    const base = {
       projectID: this.projectID,
       planID: input.plan.id,
       planRevision: input.plan.revision,
       planVersion: input.originalPlanVersion,
-      planBody: input.plan.body,
       owner: input.plan.owner,
       taskID: input.taskID,
       taskRevision: input.taskRevision,
@@ -1217,38 +1324,57 @@ export class TaskRuntime {
       attemptID: input.attemptID,
       nodeState: input.nodeState,
       attemptState: input.attemptState,
-      oldArtifact: input.oldArtifact,
-      descendantCommit: input.descendantCommit,
       targetBranch: input.targetBranch,
-      landingHead: input.landingHead,
-      reviewedBaseline: input.reviewedBaseline,
       candidateTree: input.candidateTree,
-      combinedArtifact: input.combinedArtifact,
       effectiveWriteScope: this.store.effectiveWriteScope(input.taskID),
       reason: input.reason,
       environmentIdentity: input.environmentIdentity,
-    })
+    }
+    if (version === "v1")
+      return fingerprint({
+        ...base,
+        planBody: input.plan.body,
+        oldArtifact: input.oldArtifact,
+        descendantCommit: input.descendantCommit,
+        landingHead: input.landingHead,
+        reviewedBaseline: input.reviewedBaseline,
+        combinedArtifact: input.combinedArtifact,
+      })
+    const ref = (sha: string) => this.store.treeRef(sha)
+    return `${FINGERPRINT_V2_PREFIX}${fingerprint({
+      ...base,
+      planBody: this.store.planBodyIdentity(input.plan.body),
+      oldArtifact: ref(input.oldArtifact),
+      descendantCommit: ref(input.descendantCommit),
+      landingHead: ref(input.landingHead),
+      reviewedBaseline: input.reviewedBaseline ? ref(input.reviewedBaseline) : "",
+      combinedArtifact: ref(input.combinedArtifact),
+    })}`
   }
 
   private currentAdoptionInputFingerprint(plan: PlanRow, adoption: AdoptionRow) {
-    return this.adoptionInputFingerprint({
-      plan,
-      originalPlanVersion: adoption.plan_version,
-      taskID: adoption.task_id,
-      taskRevision: adoption.task_revision,
-      attemptID: adoption.attempt_id,
-      nodeState: adoption.node_state,
-      attemptState: adoption.attempt_state,
-      oldArtifact: adoption.old_artifact,
-      descendantCommit: adoption.descendant_commit,
-      targetBranch: adoption.target_branch,
-      landingHead: adoption.landing_head,
-      reviewedBaseline: adoption.reviewed_baseline,
-      candidateTree: adoption.candidate_tree,
-      combinedArtifact: adoption.combined_artifact,
-      reason: adoption.reason,
-      environmentIdentity: adoption.environment_identity,
-    })
+    // Recompute with the version the row was stored with.
+    return this.adoptionInputFingerprint(
+      {
+        plan,
+        originalPlanVersion: adoption.plan_version,
+        taskID: adoption.task_id,
+        taskRevision: adoption.task_revision,
+        attemptID: adoption.attempt_id,
+        nodeState: adoption.node_state,
+        attemptState: adoption.attempt_state,
+        oldArtifact: adoption.old_artifact,
+        descendantCommit: adoption.descendant_commit,
+        targetBranch: adoption.target_branch,
+        landingHead: adoption.landing_head,
+        reviewedBaseline: adoption.reviewed_baseline,
+        candidateTree: adoption.candidate_tree,
+        combinedArtifact: adoption.combined_artifact,
+        reason: adoption.reason,
+        environmentIdentity: adoption.environment_identity,
+      },
+      isFingerprintV2(adoption.input_fingerprint) ? "v2" : "v1",
+    )
   }
 
   private conflictingActiveAttempt(taskID: string): AttemptRow | undefined {
@@ -1802,13 +1928,15 @@ export class TaskRuntime {
       return latestRetainedVerificationGeneration(db, this.directory, plan.id, task.id) + 1
     })
     const environmentIdentity = retainedVerificationEnvironmentIdentity()
-    const inputFingerprint = fingerprint({
+    // v2: tree OIDs and stable ids instead of commit SHAs. Stored v1 values are
+    // never recomputed for comparison, only carried forward, so they stay valid.
+    const inputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
       projectID: this.projectID,
       projectDirectory: this.directory,
       planID: plan.id,
       planRevision: plan.revision,
       planVersion: plan.version,
-      planBody: plan.body,
+      planBody: this.store.planBodyIdentity(plan.body),
       owner: caller,
       ownerEpoch: this.store.planControlEpoch(plan.id),
       taskID: task.id,
@@ -1818,16 +1946,23 @@ export class TaskRuntime {
       originalSessionID: attempt.session_id,
       originalMessageID: attempt.message_id,
       originalWorkspace,
-      candidate: command.artifact,
-      ...(repairBinding ? { repair: repairBinding } : {}),
-      combinedArtifact,
+      candidate: this.store.treeRef(command.artifact),
+      ...(repairBinding
+        ? {
+            repair: {
+              ...repairBinding,
+              previousArtifact: this.store.treeRef(repairBinding.previousArtifact),
+            },
+          }
+        : {}),
+      combinedArtifact: this.store.treeRef(combinedArtifact),
       effectiveWriteScope: this.store.effectiveWriteScope(task.id),
       verification: { task: task.proposal.verification, combined: input.verification },
       acceptance: { task: task.proposal.acceptance, combined: input.acceptance },
       sourceQuarantine: sourceQuarantineBinding ?? null,
       environmentIdentity,
       reason: command.reason,
-    })
+    })}`
     const seed = {
       schemaVersion: 1 as const,
       id,
@@ -1882,7 +2017,7 @@ export class TaskRuntime {
       return Boolean(
         check?.timedOut &&
         check.cwd === attempt.workspace &&
-        check.artifact === attempt.artifact &&
+        this.store.sameArtifact(check.artifact, attempt.artifact) &&
         interruptedCheckResourcesSettled(check) &&
         plan.reason === checkFailureReason(check),
       )
@@ -5266,6 +5401,9 @@ export class TaskRuntime {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
     }
+    // Integration and baseline proofs run before the transaction (they read Git
+    // asynchronously) and are consumed, never recomputed, inside it.
+    const preflight = await this.preflightProofs(command, old)
     let terminalContinuation:
       | {
           attemptID: string
@@ -6616,7 +6754,12 @@ export class TaskRuntime {
           throw new Error("Cleanup recovery requires a durable matching source integration record")
         if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
           throw new Error("The current checkout is not the recorded integration target branch")
-        git(this.directory, ["merge-base", "--is-ancestor", command.artifact, "HEAD"])
+        requireIntegration(
+          preflight.integration,
+          command.artifact,
+          "The accepted artifact",
+          "the recorded integration branch",
+        )
         if (git(attempt.workspace, ["status", "--porcelain"]))
           throw new Error(`Accepted attempt worktree is dirty; preserve ${attempt.workspace}`)
 
@@ -6658,7 +6801,14 @@ export class TaskRuntime {
         }
       }
       if (command.action === "integrated")
-        return recordIntegration(this.store, db, plan, command, this.directory)
+        return recordIntegration(
+          this.store,
+          db,
+          plan,
+          command,
+          this.directory,
+          preflight.integration,
+        )
       if (command.action === "pause" || command.action === "unpause")
         return changeDispatchPause(
           this.store,
@@ -6669,7 +6819,7 @@ export class TaskRuntime {
           this.validArchitect(ownerSession),
         )
       if (command.action === "schedule")
-        return changeSchedule(this.store, plan, command, caller, this.directory)
+        return changeSchedule(this.store, plan, command, caller, this.directory, preflight.bases)
       if (command.action === "audit")
         return {
           status: "audited",
@@ -7281,7 +7431,7 @@ export class TaskRuntime {
             if (baseCommit !== command.baseCommit)
               throw new Error("An explicit baseline must identify a commit")
             git(this.directory, ["merge-base", "--is-ancestor", input.baseCommit, baseCommit])
-            git(this.directory, ["merge-base", "--is-ancestor", baseCommit, "HEAD"])
+            this.requireBaseReachable(preflight.bases, baseCommit)
             this.store.revisePlan(
               plan,
               PlanInput.parse({ ...input, baseCommit }),
@@ -7409,7 +7559,7 @@ export class TaskRuntime {
             (retry && sharedMode && command.baseCommit !== undefined))
         ) {
           const source = command.baseCommit ?? git(this.directory, ["rev-parse", "HEAD"])
-          git(this.directory, ["merge-base", "--is-ancestor", source, "HEAD"])
+          if (command.baseCommit !== undefined) this.requireBaseReachable(preflight.bases, source)
           if (!retry)
             db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
               this.directory,
@@ -10551,7 +10701,7 @@ export class TaskRuntime {
     let input = PlanInput.parse(rawInput)
     const prerequisites = input.afterPlans ?? []
     const prerequisiteBaseline = prerequisites.length
-      ? this.integratedPrerequisiteBaseline(prerequisites)
+      ? await this.integratedPrerequisiteBaseline(prerequisites)
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
       if (
@@ -10580,7 +10730,7 @@ export class TaskRuntime {
     const nodes = this.store.nodes(plan.id)
     const occupied = this.store.dispatchReservations(input.workspaceMode)
     let pause = this.store.dispatchPause(plan.id)
-    if (pause?.untilPlans.length && this.integratedPrerequisiteBaseline(pause.untilPlans)) {
+    if (pause?.untilPlans.length && (await this.integratedPrerequisiteBaseline(pause.untilPlans))) {
       this.store.fenced(this.owner, fence, () =>
         this.store.setDispatchPause(plan!.id, null, { source: "resume-condition" }),
       )
@@ -10592,19 +10742,21 @@ export class TaskRuntime {
       )
       pause = undefined
     }
-    const ready = nodes.filter((node) => {
+    const ready: NodeRow[] = []
+    for (const node of nodes) {
       if (
         pause ||
         !["queued", "ready"].includes(node.state) ||
         this.store.execution(node.task_id)!.waitingOn.length > 0
       )
-        return false
+        continue
       const prerequisites = this.taskDependencyIDs(input, node)
-      return (
+      if (
         prerequisites.length === 0 ||
-        this.taskDependencyIntegration(plan!, input, node).status === "ready"
+        (await this.taskDependencyIntegration(plan!, input, node)).status === "ready"
       )
-    })
+        ready.push(node)
+    }
     const selection = selectSchedulingCandidates(
       input.workspaceMode,
       ready.map((node) => ({
@@ -11466,7 +11618,7 @@ export class TaskRuntime {
   private async dependencySource(plan: PlanRow, input: PlanInput, node: NodeRow): Promise<string> {
     const prerequisites = this.taskDependencyIDs(input, node)
     if (!prerequisites.length) return input.baseCommit
-    const proof = this.taskDependencyIntegration(plan, input, node)
+    const proof = await this.taskDependencyIntegration(plan, input, node)
     if (proof.status !== "ready") throw new Error(proof.reason)
     return proof.baseline
   }
@@ -11495,14 +11647,18 @@ export class TaskRuntime {
     )
   }
 
-  private taskDependencyIntegration(
+  /** Stored change identity for an artifact SHA, so proof survives a rewritten history. */
+  private artifactEvidence: ArtifactEvidenceLookup = (artifact) =>
+    this.store.repository.read((db) => storedEvidence(db, { artifact }))
+
+  private async taskDependencyIntegration(
     plan: PlanRow,
     input: PlanInput,
     node: NodeRow,
     candidateBaseline?: string,
     capturedRows?: readonly TaskPrerequisiteIntegrationRow[],
     capturedBranch?: string,
-  ): IntegrationDecision {
+  ): Promise<IntegrationDecision> {
     const prerequisites = this.taskDependencyIDs(input, node)
     if (!prerequisites.length)
       return {
@@ -11525,15 +11681,16 @@ export class TaskRuntime {
       branch,
       prerequisites,
       rows,
-      git,
+      gitAsync,
       candidateBaseline,
+      this.artifactEvidence,
     )
   }
 
-  private integratedPrerequisiteBaseline(
+  private async integratedPrerequisiteBaseline(
     prerequisites: string[],
     candidateBaseline?: string,
-  ): string | undefined {
+  ): Promise<string | undefined> {
     if (!prerequisites.length || new Set(prerequisites).size !== prerequisites.length)
       return undefined
 
@@ -11582,8 +11739,9 @@ export class TaskRuntime {
       this.directory,
       prerequisites,
       rows,
-      git,
+      gitAsync,
       candidateBaseline,
+      this.artifactEvidence,
     )
   }
 
@@ -11646,7 +11804,7 @@ export class TaskRuntime {
         ? git(this.directory, ["rev-parse", "HEAD"])
         : await this.dependencySource(plan, input, node))
     if (taskPrerequisites.length) {
-      const proof = this.taskDependencyIntegration(plan, input, node, base)
+      const proof = await this.taskDependencyIntegration(plan, input, node, base)
       if (proof.status !== "ready") throw new Error(proof.reason)
       if (proof.baseline !== base)
         throw new Error("The prerequisite baseline changed before dispatch")
@@ -11837,7 +11995,7 @@ export class TaskRuntime {
     return true
   }
 
-  private promptAdmissionAllowed(
+  private async promptAdmissionAllowed(
     planID: string,
     attempt: AttemptRow,
     authority: { owner: string; ownerEpoch: number },
@@ -11865,7 +12023,7 @@ export class TaskRuntime {
     if (!taskNode) return false
     const taskPrerequisites = this.taskDependencyIDs(input, taskNode)
     if (taskPrerequisites.length) {
-      const proof = this.taskDependencyIntegration(
+      const proof = await this.taskDependencyIntegration(
         plan,
         input,
         taskNode,
@@ -11972,7 +12130,7 @@ export class TaskRuntime {
       if (git(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
       if (scopeViolations(changed, this.store.effectiveWriteScope(currentAttempt.task_id)).length)
         return false
-      return this.integratedPrerequisiteBaseline(prerequisites, baseline) === baseline
+      return (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
     } catch {
       return false
     }
@@ -12366,7 +12524,7 @@ export class TaskRuntime {
       ownerEpoch: this.store.planControlEpoch(plan.id),
     }
     if (!(await this.startupWorkspaceReady(admissionPlan, attempt, fence))) return
-    if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
+    if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
     const retainedRepair = this.retainedRepairForAttempt(attempt)
     const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
       plan.id,
@@ -12393,7 +12551,7 @@ export class TaskRuntime {
       !retainedRepair &&
       !existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")
     ) {
-      if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
+      if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -12418,7 +12576,7 @@ export class TaskRuntime {
         return
       }
     }
-    if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
+    if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
     const repairPrompt = retainedRepair
       ? existing.find(
           (effect) =>
@@ -12479,7 +12637,7 @@ export class TaskRuntime {
           JSON.parse(e.payload).messageID === attempt.message_id,
       )
     ) {
-      if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
+      if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
       if (
         retainedRepair &&
         !(await this.retainedRepairPromptCurrent(plan, attempt, retainedRepair))
@@ -12555,7 +12713,7 @@ export class TaskRuntime {
         return
       }
     }
-    if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
+    if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
     const started = this.store.fenced(this.owner, fence, (db) => {
       const currentPlan = this.store.plan(plan.id)
       const currentAttempt = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
@@ -12614,15 +12772,16 @@ export class TaskRuntime {
     )
       return
     const scope = this.store.effectiveWriteScope(attempt.task_id)
-    const hasContender = Iterator.from(this.store.runnablePlans(terminal)).some((candidate) => {
+    let hasContender = false
+    for (const candidate of this.store.runnablePlans(terminal)) {
       if (
         candidate.id === plan.id ||
         candidate.state !== "running" ||
         this.store.dispatchPause(candidate.id)
       )
-        return false
+        continue
       const input = PlanInput.parse(JSON.parse(candidate.body))
-      return (
+      if (
         input.workspaceMode === "isolated" &&
         this.store
           .nodes(candidate.id)
@@ -12632,9 +12791,13 @@ export class TaskRuntime {
               this.store.execution(node.task_id)?.waitingOn.length === 0 &&
               scopePatternsConflict(scope, this.store.effectiveWriteScope(node.task_id)),
           ) &&
-        (!input.afterPlans?.length || !!this.integratedPrerequisiteBaseline(input.afterPlans))
-      )
-    })
+        (!input.afterPlans?.length ||
+          !!(await this.integratedPrerequisiteBaseline(input.afterPlans)))
+      ) {
+        hasContender = true
+        break
+      }
+    }
     if (!hasContender && attempt.state !== "verifying") return
     const detailed = worker.turn
       ? worker
@@ -13360,6 +13523,7 @@ export class TaskRuntime {
         attempt.task_id,
       )
     })
+    await this.stampIdentity(true)
     try {
       this.progress.recordArtifact(attempt.id, artifact.commit)
     } catch {
@@ -13639,9 +13803,9 @@ export class TaskRuntime {
             : this.store.atomic((db) => {
                 const rows = db
                   .query<{ body: string }, [string, string | null, string, string]>(
-                    "SELECT body FROM runner_evidence WHERE plan_id=? AND task_id IS ? AND kind='human' AND assertion_id=? AND artifact=?",
+                    "SELECT body FROM runner_evidence WHERE plan_id=? AND task_id IS ? AND kind='human' AND assertion_id=? AND artifact IN (SELECT value FROM json_each(?))",
                   )
-                  .all(planID, taskID, assertion.id, artifact)
+                  .all(planID, taskID, assertion.id, JSON.stringify(equivalentShas(db, artifact)))
                 return rows.some((row) => {
                   try {
                     return (

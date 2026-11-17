@@ -36,6 +36,8 @@ export type StampReport = {
 }
 
 export type StampOptions = {
+  /** Restrict to one project's plans; the runtime always passes its own directory. */
+  projectDirectory?: string
   dryRun?: boolean
   /** Write git notes for stamped attempt and node artifacts. Default true. */
   notes?: boolean
@@ -76,6 +78,8 @@ export async function stampChangeIdentity(
   const bump = (subject: string) => {
     report.rowsUpdated[subject] = (report.rowsUpdated[subject] ?? 0) + 1
   }
+  const projectFilter = options.projectDirectory ? " AND p.project_directory=?" : ""
+  const projectArgs = options.projectDirectory ? [options.projectDirectory] : []
   const noteTargets: NoteTarget[] = []
   const stampTreeOnly = async (items: Pending[]) => {
     for (const item of items) {
@@ -92,12 +96,13 @@ export async function stampChangeIdentity(
   // Attempts: artifact identity, base tree and change id.
   const attempts = access.read((db) =>
     db
-      .query<{ id: string; task_id: string; base_commit: string; artifact: string }, []>(
+      .query<{ id: string; task_id: string; base_commit: string; artifact: string }, string[]>(
         `SELECT a.id,a.task_id,a.base_commit,a.artifact FROM runner_attempts a
+         JOIN runner_plans p ON p.id=a.plan_id
          LEFT JOIN runner_change_identity i ON i.subject='attempt' AND i.subject_id=a.id
-         WHERE a.artifact IS NOT NULL AND ${stale("a.artifact")}`,
+         WHERE a.artifact IS NOT NULL AND ${stale("a.artifact")}${projectFilter}`,
       )
-      .all(),
+      .all(...projectArgs),
   )
   for (const attempt of attempts) {
     const artifactTree = await tree(attempt.artifact)
@@ -139,12 +144,13 @@ export async function stampChangeIdentity(
   // Nodes: the node's artifact can differ from the attempt's (adoption, retained repair).
   const nodes = access.read((db) =>
     db
-      .query<{ plan_id: string; task_id: string; artifact: string }, []>(
+      .query<{ plan_id: string; task_id: string; artifact: string }, string[]>(
         `SELECT n.plan_id,n.task_id,n.artifact FROM runner_nodes n
+         JOIN runner_plans p ON p.id=n.plan_id
          LEFT JOIN runner_change_identity i ON i.subject='node' AND i.subject_id=n.plan_id||':'||n.task_id
-         WHERE n.artifact IS NOT NULL AND ${stale("n.artifact")}`,
+         WHERE n.artifact IS NOT NULL AND ${stale("n.artifact")}${projectFilter}`,
       )
-      .all(),
+      .all(...projectArgs),
   )
   for (const node of nodes) {
     const nodeTree = await tree(node.artifact)
@@ -191,15 +197,15 @@ export async function stampChangeIdentity(
   // Plans: combined artifact and baseline.
   const plans = access.read((db) =>
     db
-      .query<{ id: string; artifact: string | null; base: string | null }, []>(
+      .query<{ id: string; artifact: string | null; base: string | null }, string[]>(
         `SELECT p.id,p.artifact,json_extract(p.body,'$.baseCommit') AS base FROM runner_plans p
          LEFT JOIN runner_change_identity i ON i.subject='plan' AND i.subject_id=p.id
          LEFT JOIN runner_change_identity b ON b.subject='plan-base' AND b.subject_id=p.id
-         WHERE (p.artifact IS NOT NULL AND ${stale("p.artifact")})
+         WHERE ((p.artifact IS NOT NULL AND ${stale("p.artifact")})
             OR (json_extract(p.body,'$.baseCommit') IS NOT NULL
-                AND (b.sha IS NULL OR b.sha!=json_extract(p.body,'$.baseCommit') OR b.tree IS NULL))`,
+                AND (b.sha IS NULL OR b.sha!=json_extract(p.body,'$.baseCommit') OR b.tree IS NULL)))${projectFilter}`,
       )
-      .all(),
+      .all(...projectArgs),
   )
   for (const plan of plans) {
     const baseTree = await tree(plan.base)
@@ -235,12 +241,13 @@ export async function stampChangeIdentity(
   await stampTreeOnly(
     access.read((db) =>
       db
-        .query<{ id: string; sha: string }, []>(
+        .query<{ id: string; sha: string }, string[]>(
           `SELECT e.id,e.artifact AS sha FROM runner_evidence e
+           JOIN runner_plans p ON p.id=e.plan_id
            LEFT JOIN runner_change_identity i ON i.subject='evidence' AND i.subject_id=e.id
-           WHERE ${stale("e.artifact")}`,
+           WHERE ${stale("e.artifact")}${projectFilter}`,
         )
-        .all()
+        .all(...projectArgs)
         .map((row) => ({ subject: "evidence" as const, ...row })),
     ),
   )
@@ -257,12 +264,13 @@ export async function stampChangeIdentity(
     await stampTreeOnly(
       access.read((db) =>
         db
-          .query<{ id: string; sha: string }, []>(
+          .query<{ id: string; sha: string }, string[]>(
             `SELECT a.id,a.${column} AS sha FROM runner_adoptions a
+             JOIN runner_plans p ON p.id=a.plan_id
              LEFT JOIN runner_change_identity i ON i.subject='${subject}' AND i.subject_id=a.id
-             WHERE a.${column}!='' AND ${stale(`a.${column}`)}`,
+             WHERE a.${column}!='' AND ${stale(`a.${column}`)}${projectFilter}`,
           )
-          .all()
+          .all(...projectArgs)
           .map((row) => ({ subject, ...row })),
       ),
     )

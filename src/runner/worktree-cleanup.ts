@@ -7,6 +7,7 @@ import { git, gitAsync } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { NativeCleanupSettlement, WorktreeLocationRetirement } from "./host.ts"
 import { PlanInput } from "./schema.ts"
+import { containmentReason, headContained, proofForArtifact } from "./integration-proof.ts"
 import type { PlanRow, AttemptRow, EffectRow } from "./store.ts"
 import { appendRunnerEffectReceipt } from "./store.ts"
 
@@ -195,6 +196,7 @@ export class WorktreeCleanup {
       let settlement: NativeCleanupSettlement | undefined
       const authorization = this.cleanupRecoveryAuthorization(plan, attempt, effect, workspace)
       if (authorization) {
+        await this.assertRecoveryIntegrated(authorization, attempt)
         if (!this.runtime.host.cleanupSettlement)
           throw new Error(
             "Fresh native cleanup settlement is unsupported by this host; preserve the worktree and wait for a new experimental.idle observation",
@@ -416,17 +418,64 @@ export class WorktreeCleanup {
       throw new Error(
         "Cleanup recovery authorization is stale or no longer matches the accepted attempt; preserve the worktree and have the current owner revalidate before retrying recover-cleanup",
       )
+    return authorization
+  }
+
+  /**
+   * The recorded integration must still hold: the artifact's change (note,
+   * patch-id or tree, not its commit SHA) is contained in the current checkout.
+   */
+  private async assertRecoveryIntegrated(
+    authorization: CleanupRecoveryAuthorization,
+    attempt: AttemptRow,
+  ) {
     try {
       if (git(this.runtime.directory, ["branch", "--show-current"]) !== authorization.targetBranch)
         throw new Error("current checkout is not the recorded integration branch")
-      git(this.runtime.directory, ["merge-base", "--is-ancestor", authorization.artifact, "HEAD"])
+      const proof = await proofForArtifact(
+        (run) => this.runtime.store.repository.read(run),
+        this.runtime.directory,
+        {
+          artifact: authorization.artifact,
+          attemptID: attempt.id,
+          base: attempt.base_commit,
+        },
+      )
+      if (proof.containment.status !== "contained")
+        throw new Error(
+          containmentReason(proof.containment, "The accepted artifact", "the integration branch"),
+        )
     } catch (error) {
       throw new Error(
         `Cleanup recovery integration evidence is no longer valid (${errorText(error)}); preserve the worktree and have the current owner revalidate before retrying recover-cleanup`,
         { cause: error },
       )
     }
-    return authorization
+  }
+
+  /**
+   * A worktree is safe to remove when its HEAD is an ancestor of the checkout or
+   * its change is contained there (rebased, amended, re-signed or squashed).
+   * Anything else is preserved; an ambiguous match keeps its reason visible.
+   */
+  private async assertHeadMerged(workspace: string, head: string) {
+    const base = this.runtime.store.repository.read(
+      (db) =>
+        db
+          .query<{ base_commit: string }, [string]>(
+            "SELECT base_commit FROM runner_attempts WHERE workspace=? ORDER BY started_at DESC LIMIT 1",
+          )
+          .get(workspace)?.base_commit,
+    )
+    const result = await headContained(this.runtime.directory, head, "HEAD", base)
+    if (result.status === "contained") return
+    throw new Error(
+      `Owned worktree has unmerged commits; preserve ${workspace}${
+        result.status === "ambiguous"
+          ? ` (${containmentReason(result, "Its change", "the checkout")})`
+          : ""
+      }`,
+    )
   }
 
   private appendCleanupSettlement(
@@ -880,11 +929,7 @@ export class WorktreeCleanup {
             return
           }
           const head = git(workspace, ["rev-parse", "HEAD"])
-          try {
-            git(this.runtime.directory, ["merge-base", "--is-ancestor", head, "HEAD"])
-          } catch {
-            throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
-          }
+          await this.assertHeadMerged(workspace, head)
           const initialSettlement = await this.assertWorktreeQuiescent(
             plan,
             sourceEffect,
@@ -919,11 +964,7 @@ export class WorktreeCleanup {
           if (await gitAsync(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
           const finalHead = git(workspace, ["rev-parse", "HEAD"])
-          try {
-            git(this.runtime.directory, ["merge-base", "--is-ancestor", finalHead, "HEAD"])
-          } catch {
-            throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
-          }
+          await this.assertHeadMerged(workspace, finalHead)
           const finalNative = await this.runtime.host.worktrees()
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)

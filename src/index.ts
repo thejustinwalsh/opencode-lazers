@@ -123,6 +123,8 @@ export default Plugin.define({
         requestTick: () => (scheduler ? scheduler.runNow() : runtime.tick()),
         wakeScheduler: () => scheduler?.request(),
       })
+      // Lazy, offline-safe backfill of stable change identity; never blocks startup.
+      void runtime.stampIdentity(true)
       yield* ctx.session.hook("prompt", (prompt) =>
         Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
       )

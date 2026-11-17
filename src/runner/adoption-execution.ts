@@ -2,6 +2,7 @@ import { isWorkerAgent } from "./worker-agent.ts"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fingerprint } from "../identity.ts"
+import { FINGERPRINT_V2_PREFIX } from "./identity-store.ts"
 import type { TaskProposal } from "../task.ts"
 import {
   artifactUnchanged,
@@ -434,8 +435,8 @@ export class AdoptionExecution {
       receipt.id === check.id &&
       receipt.command === check.command &&
       receipt.cwd === row.workspace &&
-      receipt.artifact === row.artifact &&
-      receipt.inputIdentity === row.artifact &&
+      this.runtime.store.sameArtifact(receipt.artifact, row.artifact) &&
+      this.runtime.store.sameArtifact(receipt.inputIdentity, row.artifact) &&
       receipt.environmentIdentity === row.environment_identity
     )
   }
@@ -465,13 +466,20 @@ export class AdoptionExecution {
         ...identity,
         authoredCheck: check,
       })
+      // v2 hashes the candidate's tree, so a rewritten commit keeps its receipt.
+      const treeInputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
+        ...identity,
+        artifact: this.runtime.store.treeRef(artifact),
+        authoredCheck: check,
+      })}`
       return (
         row.check_id === check.id &&
         row.workspace === workspace &&
-        row.artifact === artifact &&
+        this.runtime.store.sameArtifact(row.artifact, artifact) &&
         sameVerificationCheckIdentity(recordedCheck, check) &&
         (row.input_fingerprint === legacyInputFingerprint ||
-          row.input_fingerprint === currentInputFingerprint)
+          row.input_fingerprint === currentInputFingerprint ||
+          row.input_fingerprint === treeInputFingerprint)
       )
     } catch {
       return false
@@ -498,16 +506,16 @@ export class AdoptionExecution {
         .adoptionChecks(adoption.id, phase)
         .find((item) => item.check_id === check.id)
       const environmentIdentity = row?.environment_identity ?? verificationEnvironmentIdentity()
-      const inputFingerprint = fingerprint({
+      const inputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
         adoptionID: adoption.id,
         adoptionInputFingerprint: adoption.input_fingerprint,
         phase,
         authoredCheck: check,
         check: effectiveCheck,
         workspace,
-        artifact,
+        artifact: this.runtime.store.treeRef(artifact),
         environmentIdentity,
-      })
+      })}`
       const receiptPath = join(
         this.runtime.dataDirectory,
         "receipts",

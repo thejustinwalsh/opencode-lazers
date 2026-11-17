@@ -5,6 +5,8 @@
  *
  * Every Git call here is asynchronous: nothing in this module blocks the event loop.
  */
+import { execFile } from "node:child_process"
+
 export const NOTES_REF = "refs/notes/lazers"
 const NOTES_NAME = "lazers"
 /** Bound the history window so a stale base cannot make containment checks unbounded. */
@@ -16,24 +18,48 @@ const objectID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
 export const isObjectID = (value: unknown): value is string =>
   typeof value === "string" && objectID.test(value)
 
-type Run = { code: number; stdout: string; stderr: string }
+export type Run = { code: number; stdout: string; stderr: string }
 
-/** Run git without throwing on a non-zero exit; callers interpret exit codes. */
-async function run(directory: string, args: string[], input?: string): Promise<Run> {
-  const child = Bun.spawn(["git", ...args], {
-    cwd: directory,
-    stdin: input === undefined ? "ignore" : new Blob([input]),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+/**
+ * Run git without throwing on a non-zero exit; callers interpret exit codes.
+ * Uses `execFile` (like `gitAsync`) so nothing blocks the event loop.
+ */
+export function gitRun(directory: string, args: string[], input?: string): Promise<Run> {
+  return new Promise((resolve) => {
+    try {
+      const child = execFile(
+        "git",
+        args,
+        {
+          cwd: directory,
+          encoding: "utf8",
+          timeout: 60_000,
+          maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        },
+        (error, stdout, stderr) => {
+          const code = error ? (typeof error.code === "number" ? error.code : 127) : 0
+          resolve({
+            code,
+            stdout: stdout.trimEnd(),
+            stderr: (stderr || (error ? error.message : "")).trimEnd(),
+          })
+        },
+      )
+      child.stdin?.on("error", () => {})
+      child.stdin?.end(input)
+    } catch (error) {
+      // An unavailable directory or git binary is an observation failure, not a crash.
+      resolve({
+        code: 127,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : "spawn failed",
+      })
+    }
   })
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ])
-  return { code, stdout: stdout.trimEnd(), stderr: stderr.trimEnd() }
 }
+
+const run = gitRun
 
 async function must(directory: string, args: string[], input?: string): Promise<string> {
   const result = await run(directory, args, input)

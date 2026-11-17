@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { git } from "./artifacts.ts"
 import type { HostSession } from "./host.ts"
+import { requireIntegration, type BaseReach, type IntegrationProof } from "./integration-proof.ts"
 import { PlanInput, type CommandInput } from "./schema.ts"
 import type { PlanRow, RunnerStore } from "./store.ts"
 
@@ -14,11 +15,20 @@ export const terminalPlanStates = new Set([
   "cleanup-blocked",
 ])
 
-function reviewedBranchHead(directory: string, branch: string, artifact: string) {
+/**
+ * The change must be contained in the reviewed branch, proven before the
+ * transaction by `proveIntegration` (ancestry, change-id note, patch-id or
+ * tree), so a rewritten history still proves. Never a bare SHA ancestry check.
+ */
+function reviewedBranchHead(
+  directory: string,
+  branch: string,
+  artifact: string,
+  proof: IntegrationProof | undefined,
+) {
   if (git(directory, ["branch", "--show-current"]) !== branch)
     throw new Error("The current checkout is not the reviewed target branch")
-  git(directory, ["merge-base", "--is-ancestor", artifact, "HEAD"])
-  return git(directory, ["rev-parse", "HEAD"])
+  return requireIntegration(proof, artifact, "The accepted artifact", `branch ${branch}`)
 }
 
 export function recordIntegration(
@@ -27,6 +37,7 @@ export function recordIntegration(
   plan: PlanRow,
   command: CommandInput,
   directory: string,
+  proof?: IntegrationProof,
 ) {
   if (command.taskID) {
     const node = store.nodes(plan.id).find((item) => item.task_id === command.taskID)
@@ -34,7 +45,7 @@ export function recordIntegration(
       throw new Error("Only an accepted task result can be recorded as integrated")
     if (command.artifact !== node.artifact || !command.targetBranch || !command.reason)
       throw new Error("Record the accepted task artifact, reviewed targetBranch and reason")
-    const head = reviewedBranchHead(directory, command.targetBranch, node.artifact)
+    const head = reviewedBranchHead(directory, command.targetBranch, node.artifact, proof)
     store.record(plan.id, node.task_id, "TASK_INTEGRATION_RECORDED", {
       artifact: node.artifact,
       branch: command.targetBranch,
@@ -50,7 +61,7 @@ export function recordIntegration(
     throw new Error("Only an accepted result can be integrated")
   if (command.artifact !== plan.artifact || !command.targetBranch || !command.reason)
     throw new Error("Record the accepted artifact, reviewed targetBranch and reason")
-  const head = reviewedBranchHead(directory, command.targetBranch, plan.artifact)
+  const head = reviewedBranchHead(directory, command.targetBranch, plan.artifact, proof)
   store.record(plan.id, null, "INTEGRATION_RECORDED", {
     artifact: plan.artifact,
     branch: command.targetBranch,
@@ -95,7 +106,8 @@ export function changeSchedule(
   plan: PlanRow,
   command: CommandInput,
   caller: string,
-  directory: string,
+  _directory: string,
+  baseReach?: ReadonlyMap<string, BaseReach>,
 ) {
   if (
     terminalPlanStates.has(plan.state) ||
@@ -120,8 +132,11 @@ export function changeSchedule(
     ...(command.workspaceMode !== undefined ? { workspaceMode: command.workspaceMode } : {}),
   })
   store.validatePlanDependencies(updated.afterPlans ?? [], plan.id)
-  if (command.baseCommit)
-    git(directory, ["merge-base", "--is-ancestor", command.baseCommit, "HEAD"])
+  if (command.baseCommit) {
+    const reach = baseReach?.get(command.baseCommit)
+    if (!reach) throw new Error("The requested baseline was not checked against HEAD")
+    if (!reach.ok) throw new Error(reach.reason)
+  }
   store.revisePlan(plan, updated, "SCHEDULE_UPDATED", {
     caller,
     reason: command.reason,

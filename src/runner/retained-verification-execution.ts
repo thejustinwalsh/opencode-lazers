@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fingerprint } from "../identity.ts"
+import { FINGERPRINT_V2_PREFIX } from "./identity-store.ts"
 import {
   effectiveVerificationCheck,
   verificationCommandFingerprint,
@@ -298,6 +299,30 @@ export class RetainedVerificationExecution {
       ["task-accepted", "combined-checks", "waiting-human-combined"].includes(operation.state) ||
       (operation.state === "held" && this.retainedTaskCandidateAccepted(operation)),
     )
+  }
+
+  /**
+   * An authorization recorded accepted artifacts by SHA. They still match when
+   * every other field is equal and each artifact is the same SHA or carries the
+   * same recorded tree OID, so a rewritten commit does not revoke it.
+   */
+  private acceptedArtifactsMatch(recorded: unknown, current: unknown): boolean {
+    if (!Array.isArray(recorded) || !Array.isArray(current) || recorded.length !== current.length)
+      return fingerprint(recorded) === fingerprint(current)
+    return recorded.every((left: unknown, index) => {
+      const right: unknown = current[index]
+      if (typeof left !== "object" || left === null || typeof right !== "object" || right === null)
+        return fingerprint(left) === fingerprint(right)
+      const { artifact: leftArtifact, ...leftRest } = left as Record<string, unknown>
+      const { artifact: rightArtifact, ...rightRest } = right as Record<string, unknown>
+      return (
+        fingerprint(leftRest) === fingerprint(rightRest) &&
+        (leftArtifact === rightArtifact ||
+          (typeof leftArtifact === "string" &&
+            typeof rightArtifact === "string" &&
+            this.runtime.store.sameArtifact(leftArtifact, rightArtifact)))
+      )
+    })
   }
 
   private retainedVerificationInputFingerprint(
@@ -1056,7 +1081,7 @@ export class RetainedVerificationExecution {
             plan.version === initial.planVersion &&
             authorization.planBodyFingerprint === fingerprint(plan.body) &&
             authorization.combinedInputFingerprint === initial.combinedInputFingerprint &&
-            fingerprint(authorization.acceptedArtifacts) === fingerprint(acceptedArtifacts) &&
+            this.acceptedArtifactsMatch(authorization.acceptedArtifacts, acceptedArtifacts) &&
             authorization.sourceQuarantineFingerprint ===
               fingerprint(initial.sourceQuarantine ?? null) &&
             fingerprint(previousCheck) === fingerprint(effectiveCheck)
@@ -1519,7 +1544,7 @@ export class RetainedVerificationExecution {
         initial.id,
         `${initial.generation}-${phase}-${check.id}${retryReceiptSuffix}.json`,
       )
-      const inputFingerprint = fingerprint({
+      const inputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
         operationID: initial.id,
         generation: initial.generation,
         operationInputFingerprint: this.retainedVerificationInputFingerprint(initial, phase),
@@ -1528,10 +1553,10 @@ export class RetainedVerificationExecution {
         authoredCheck: check,
         verificationDeadline: verificationReceiptDeadline(deadline),
         workspace,
-        artifact,
+        artifact: this.runtime.store.treeRef(artifact),
         contextIdentity: context.identity,
         environmentIdentity: context.environmentIdentity,
-      })
+      })}`
       let checkRow: ReturnType<typeof beginRetainedVerificationCheck>
       try {
         await this.runtime.beforeRetainedCheckBegin?.({
@@ -1945,8 +1970,8 @@ export class RetainedVerificationExecution {
           !receipts.some(
             (receipt) =>
               receipt.id === evidence.verificationID &&
-              receipt.artifact === artifact &&
-              receipt.inputIdentity === artifact &&
+              this.runtime.store.sameArtifact(receipt.artifact, artifact) &&
+              this.runtime.store.sameArtifact(receipt.inputIdentity, artifact) &&
               receipt.exitCode === 0 &&
               !receipt.timedOut,
           )

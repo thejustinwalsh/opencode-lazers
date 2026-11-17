@@ -10,14 +10,14 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
-import { installChangeIdentity } from "./identity-store.ts"
+import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
 import { canonical, fingerprint } from "../identity.ts"
 import { sessionAssociations } from "../observability/associations.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
 import { RecoveryJournal } from "../recovery/journal.ts"
-import { scopePatternsConflict } from "./artifacts.ts"
+import { git, scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
@@ -4637,6 +4637,48 @@ export class RunnerStore {
         .all(adoptionID),
     )
   }
+  /**
+   * Stable reference for a commit in a fingerprint: its tree OID from recorded
+   * identity, else from Git, else the SHA itself (marked, so it never collides
+   * with a tree). A rewrite changes the SHA but never the tree.
+   */
+  treeRef(sha: string | null | undefined): string | null {
+    if (!sha) return null
+    // A commit's tree never changes, so resolved values are cached for the process.
+    const cached = this.treeRefs.get(sha)
+    if (cached) return cached
+    const known = this.repository.read((db) => knownTree(db, sha))
+    let resolved: string
+    if (known) resolved = `tree:${known}`
+    else
+      try {
+        resolved = `tree:${git(this.repository.projectDirectory, ["rev-parse", "--verify", `${sha}^{tree}`])}`
+      } catch {
+        return `sha:${sha}`
+      }
+    this.treeRefs.set(sha, resolved)
+    return resolved
+  }
+  private readonly treeRefs = new Map<string, string>()
+  /** A plan body with its baseCommit replaced by the baseline tree reference. */
+  planBodyIdentity(body: string): unknown {
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>
+      return typeof parsed.baseCommit === "string"
+        ? { ...parsed, baseCommit: this.treeRef(parsed.baseCommit) }
+        : parsed
+    } catch {
+      return body
+    }
+  }
+  /** Equal artifact SHAs, or SHAs recorded with the same tree OID. */
+  sameArtifact(left: string | null | undefined, right: string | null | undefined): boolean {
+    return this.repository.read((db) => sameArtifact(db, left, right))
+  }
+  /** Every artifact SHA known to carry the same tree as `artifact`, itself first. */
+  equivalentArtifacts(artifact: string): string[] {
+    return this.repository.read((db) => equivalentShas(db, artifact))
+  }
   hasAdoptionEvidence(
     adoptionID: string,
     phase: "task" | "combined",
@@ -4644,16 +4686,18 @@ export class RunnerStore {
     assertionID: string,
     artifact: string,
   ): boolean {
-    return this.atomic((db) =>
-      Boolean(
+    return this.atomic((db) => {
+      const equivalent = equivalentShas(db, artifact)
+      return Boolean(
         db
           .query(
             `SELECT 1 FROM runner_adoption_evidence
-             WHERE adoption_id=? AND phase=? AND task_id IS ? AND assertion_id=? AND artifact=? LIMIT 1`,
+             WHERE adoption_id=? AND phase=? AND task_id IS ? AND assertion_id=?
+               AND artifact IN (SELECT value FROM json_each(?)) LIMIT 1`,
           )
-          .get(adoptionID, phase, taskID, assertionID, artifact),
-      ),
-    )
+          .get(adoptionID, phase, taskID, assertionID, JSON.stringify(equivalent)),
+      )
+    })
   }
   cancelAdoptions(planID: string, reason: string) {
     return this.atomic((db) => {

@@ -140,6 +140,40 @@ export function knownTree(db: Database, sha: string | null | undefined): string 
   )
 }
 
+/**
+ * Every SHA known to carry the same tree as `sha`, `sha` itself first. A commit
+ * SHA is an observation: a rebase, amend or re-sign yields a new SHA for the same
+ * content, so evidence recorded under one SHA is valid for the others.
+ */
+export function equivalentShas(db: Database, sha: string): string[] {
+  const tree = knownTree(db, sha)
+  if (!tree) return [sha]
+  const others = db
+    .query<{ sha: string }, [string, string]>(
+      "SELECT DISTINCT sha FROM runner_change_identity WHERE tree=? AND sha!='' AND sha!=?",
+    )
+    .all(tree, sha)
+    .map((row) => row.sha)
+  return [sha, ...others]
+}
+
+/** Equal SHAs, or SHAs known to carry the same tree. Never invokes Git. */
+export function sameArtifact(
+  db: Database,
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  if (left === right) return left !== undefined && left !== null
+  if (!left || !right) return false
+  const tree = knownTree(db, left)
+  return tree !== undefined && tree === knownTree(db, right)
+}
+
+/** Fingerprint scheme for stored input and authorization hashes. */
+export const FINGERPRINT_V2_PREFIX = "v2:"
+export const isFingerprintV2 = (value: unknown): value is string =>
+  typeof value === "string" && value.startsWith(FINGERPRINT_V2_PREFIX)
+
 /** Reads an attempt's change id, assigning and storing a fresh UUID once. Run inside a transaction. */
 export function changeIdFor(db: Database, attemptID: string): string {
   const existing = readIdentity(db, "attempt", attemptID)?.change_id
