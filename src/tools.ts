@@ -3,7 +3,11 @@ import { Effect } from "effect"
 import { z } from "zod"
 import { Tool } from "@opencode/schema/tool"
 import { TaskRepository } from "./storage.ts"
-import { startingRevision, submitTask, taskSubmissionSummary } from "./submission.ts"
+import {
+  startingRevision as observeStartingRevision,
+  submitTask,
+  taskSubmissionSummary,
+} from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
 import {
   GetInput,
@@ -104,6 +108,8 @@ export function registerTaskTools(
                         })),
                       }),
                     }
+                  // Observed before the transaction: Git must not run inside it.
+                  const startingRevision = await observeStartingRevision(ctx.location.directory)
                   const receipt = withRepository((connection) => {
                     const submitted = submitTask(
                       connection,
@@ -113,7 +119,7 @@ export function registerTaskTools(
                         projectDirectory: ctx.location.project.canonical,
                         workspaceDirectory: ctx.location.directory,
                         sessionID: context.sessionID,
-                        startingRevision: startingRevision(ctx.location.directory),
+                        startingRevision,
                       }),
                       timeoutDefaults,
                     )
