@@ -10,6 +10,7 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
+import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
 import { canonical, fingerprint } from "../identity.ts"
@@ -1241,6 +1242,7 @@ export class RunnerStore {
         ensureArchitectSourceJournalRevisions(db)
       },
     )
+    installPrioritySchema(repository)
     // An older still-loaded plugin can recreate its table after the generation was installed.
     if (
       repository.read((db) =>
@@ -1256,8 +1258,21 @@ export class RunnerStore {
       return run(db)
     })
   }
+  atomicAsync<T>(run: (db: Database) => T, options?: { deadlineMs?: number }): Promise<T> {
+    return this.repository.atomicAsync((db) => {
+      registerLifecycleTransitions(db)
+      return run(db)
+    }, options)
+  }
+  /** Pure reads: deferred snapshot, never waits on writers. */
+  read<T>(run: (db: Database) => T): T {
+    return this.repository.read((db) => {
+      registerLifecycleTransitions(db)
+      return run(db)
+    })
+  }
   plan(id: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<PlanRow, [string, string]>(
           "SELECT * FROM runner_plans WHERE id=? AND project_directory=?",
@@ -1267,14 +1282,14 @@ export class RunnerStore {
   }
   nodes(planID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<NodeRow, [string]>("SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal")
         .all(planID),
     )
   }
   dispatchPause(planID: string) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const row = db
         .query<{ reason: string; until_plans: string }, [string]>(
           "SELECT reason,until_plans FROM runner_dispatch_controls WHERE plan_id=? AND state='paused'",
@@ -1310,7 +1325,7 @@ export class RunnerStore {
     })
   }
   cancelledDependencyPlans(planID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<
           { planID: string; taskID: string; reference: string; state: string },
@@ -1335,7 +1350,7 @@ export class RunnerStore {
     )
   }
   cancelledDependencyNodes(planID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<{ taskID: string; rootID: string; reference: string }, [string, string, string]>(
           `
@@ -1352,10 +1367,10 @@ export class RunnerStore {
     )
   }
   plans() {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<PlanRow, [string]>(
-          "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY COALESCE(json_extract(body, '$.priority'),0) DESC,rowid LIMIT 1000",
+          `SELECT * FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
         )
         .all(this.repository.projectDirectory),
     )
@@ -1375,20 +1390,28 @@ export class RunnerStore {
       )) THEN 1 ELSE 0 END`
     let cursor: Candidate | undefined
     for (;;) {
-      const page: Candidate[] = this.atomic((db) =>
+      const page: Candidate[] = this.read((db) =>
         db
           .query<Candidate, (string | number)[]>(
             `SELECT *,${queueRank} AS queue_rank,
-           COALESCE(json_extract(body,'$.priority'),0) AS priority,rowid AS sequence
+           ${planPrioritySortSQL("body")} AS priority,rowid AS sequence
            FROM runner_plans WHERE project_directory=?
            ${states.length ? `AND state NOT IN (${states.map(() => "?").join(",")})` : ""}
-           ${cursor ? `AND (${queueRank},COALESCE(json_extract(body,'$.priority'),0),-rowid) < (?,?,?)` : ""}
-           ORDER BY queue_rank DESC,priority DESC,rowid LIMIT 1000`,
+           ${cursor ? `AND (${queueRank}<? OR (${queueRank}=? AND (${planPrioritySortSQL("body")}>? OR (${planPrioritySortSQL("body")}=? AND rowid>?))))` : ""}
+           ORDER BY queue_rank DESC,priority ASC,rowid LIMIT 1000`,
           )
           .all(
             this.repository.projectDirectory,
             ...states,
-            ...(cursor ? [cursor.queue_rank, cursor.priority, -cursor.sequence] : []),
+            ...(cursor
+              ? [
+                  cursor.queue_rank,
+                  cursor.queue_rank,
+                  cursor.priority,
+                  cursor.priority,
+                  cursor.sequence,
+                ]
+              : []),
           ),
       )
       yield* page
@@ -1398,7 +1421,7 @@ export class RunnerStore {
   }
   /** A transitive dependent with execution history prevents rewriting its prerequisite. */
   startedDependentPlan(planID: string): PlanRow | null {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<PlanRow, [string, string, string, string]>(
           `WITH RECURSIVE dependents(id) AS (
@@ -1415,7 +1438,7 @@ export class RunnerStore {
     )
   }
   closeoutReviewPlanIDs(): string[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<{ id: string }, [string]>(
           `SELECT p.id FROM runner_plans p
@@ -1431,14 +1454,14 @@ export class RunnerStore {
              AND (o.state IN ('pending','sending','uncertain','admitted','delivered')
                OR json_extract(o.payload,'$.closeoutReminder')=1)
            )
-           ORDER BY p.state='cleanup-blocked' DESC,COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid`,
+           ORDER BY p.state='cleanup-blocked' DESC,${planPrioritySortSQL("p.body")},p.rowid`,
         )
         .all(this.repository.projectDirectory)
         .map(({ id }) => id),
     )
   }
   terminalCleanupPlanIDs(): string[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<{ id: string }, [string]>(
           "SELECT id FROM runner_plans WHERE project_directory=? AND state IN ('cleanup-blocked','cancelled') ORDER BY rowid",
@@ -1449,14 +1472,14 @@ export class RunnerStore {
   }
   continuation(planID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
         .get(planID),
     )
   }
   architectRenewal(id: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectRenewalRow, [string, string]>(
           `SELECT r.* FROM runner_architect_renewals r
@@ -1467,7 +1490,7 @@ export class RunnerStore {
     )
   }
   architectContinuity(sessionID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectContinuityRow, [string, string]>(
           "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
@@ -1478,7 +1501,7 @@ export class RunnerStore {
   architectContinuityCoverage(sessionID: string, revision?: number) {
     const checkpoint = this.architectContinuity(sessionID)
     if (!checkpoint || (revision !== undefined && checkpoint.revision !== revision)) return []
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<{ message_id: string }, [string, string, number]>(
           `SELECT message_id FROM runner_architect_continuity_inputs
@@ -1494,7 +1517,7 @@ export class RunnerStore {
     if (!renewal?.continuity_json) return null
     const parsed = JSON.parse(renewal.continuity_json) as { revision?: unknown }
     if (typeof parsed.revision !== "number" || !Number.isSafeInteger(parsed.revision)) return null
-    return this.atomic((db) => {
+    return this.read((db) => {
       const inputIDs = db
         .query<{ message_id: string }, [string, string]>(
           `SELECT message_id FROM runner_architect_renewal_coverage
@@ -1594,7 +1617,7 @@ export class RunnerStore {
     })
   }
   architectRenewalForPlan(planID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectRenewalRow, [string, string]>(
           `SELECT r.* FROM runner_architect_renewals r
@@ -1607,7 +1630,7 @@ export class RunnerStore {
     )
   }
   architectRenewalForSource(sessionID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectRenewalRow, [string, string]>(
           `SELECT r.* FROM runner_architect_renewals r
@@ -1619,7 +1642,7 @@ export class RunnerStore {
     )
   }
   architectRenewalsNeedingRecovery() {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectRenewalRow, [string]>(
           `SELECT r.* FROM runner_architect_renewals r
@@ -1632,7 +1655,7 @@ export class RunnerStore {
     )
   }
   architectRenewalPlans(id: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectRenewalPlanRow, [string, string]>(
           `SELECT rp.* FROM runner_architect_renewal_plans rp
@@ -1644,7 +1667,7 @@ export class RunnerStore {
     )
   }
   architectSources() {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ArchitectSourceRow, [string]>(
           `SELECT s.* FROM runner_architect_sources s
@@ -1717,7 +1740,7 @@ export class RunnerStore {
     )
   }
   architectSourceNoticeTargets(sessionID: string) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const source = db
         .query<{ renewal_id: string }, [string, string]>(
           `SELECT s.renewal_id FROM runner_architect_sources s
@@ -1731,7 +1754,7 @@ export class RunnerStore {
     })
   }
   architectSourceNoticeRows(sessionID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<OutboxRow, [string, string]>(
           `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
@@ -1747,7 +1770,7 @@ export class RunnerStore {
     )
   }
   architectCurrentSourceChangeNoticeRows(sessionID: string) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const source = db
         .query<{ renewal_id: string }, [string, string]>(
           `SELECT s.renewal_id FROM runner_architect_sources s
@@ -1797,7 +1820,7 @@ export class RunnerStore {
     sourceSessionID: string,
     notices: Array<{ id: string; sessionID: string }>,
   ) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       if (!notices.length) return []
       const source = db
         .query<Pick<ArchitectSourceRow, "renewal_id">, [string, string]>(
@@ -1847,7 +1870,7 @@ export class RunnerStore {
   }
   architectLegacySourceNoticePage(sessionID: string, limit = 20) {
     const boundedLimit = Math.min(20, Math.max(1, Math.floor(limit)))
-    return this.atomic((db) => ({
+    return this.read((db) => ({
       rows: db
         .query<OutboxRow, [string, string, number]>(
           `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
@@ -1876,7 +1899,7 @@ export class RunnerStore {
     expectedOwner: string
     expectedPlanVersion: number
   }) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const plan = db
         .query<{ owner: string; version: number }, [string, string]>(
           "SELECT owner,version FROM runner_plans WHERE id=? AND project_directory=?",
@@ -2119,7 +2142,7 @@ export class RunnerStore {
     })
   }
   architectSourceNoticeClaimCurrent(outboxID: string, claimID: string) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const row = db
         .query<{ state: string; receipt: string | null }, [string, string]>(
           `SELECT o.state,o.receipt FROM runner_outbox o
@@ -2164,7 +2187,7 @@ export class RunnerStore {
     })
   }
   architectSourceInputs(sessionID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<
           {
@@ -2185,7 +2208,7 @@ export class RunnerStore {
     )
   }
   architectSourceMessageReferences(planID: string, sourceSessionID: string, messageIDs: string[]) {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const source = db
         .query<{ renewal_id: string }, [string, string, string]>(
           `SELECT s.renewal_id FROM runner_architect_sources s
@@ -2235,12 +2258,12 @@ export class RunnerStore {
     })
   }
   architectSourceJournalPage(planID: string, limit: number, cursor?: string): SourceJournalPage {
-    return this.atomic((db) =>
+    return this.read((db) =>
       readSourceJournalPage(db, this.repository.projectDirectory, planID, limit, cursor),
     )
   }
   retiredArchitectSourceForPlan(sessionID: string, planID: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       Boolean(
         db
           .query<{ present: number }, [string, string, string, string]>(
@@ -2596,7 +2619,7 @@ export class RunnerStore {
     })
   }
   architectRenewalHasInput(id: string) {
-    return this.atomic((db) =>
+    return this.read((db) =>
       Boolean(
         db
           .query<{ present: number }, [string, string]>(
@@ -3438,7 +3461,7 @@ export class RunnerStore {
     })
   }
   outboxForDelivery(projectDirectory = this.repository.projectDirectory): OutboxRow[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<OutboxRow, [string]>(
           // Rank the narrow keys once, rather than parsing and sorting a plan's
@@ -3460,7 +3483,7 @@ export class RunnerStore {
   }
   activity(planID: string, taskID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<
           {
@@ -3506,7 +3529,7 @@ export class RunnerStore {
   }
 
   execution(taskID: string): Execution | undefined {
-    const node = this.atomic((db) =>
+    const node = this.read((db) =>
       db
         .query<NodeRow & { plan_state: string; plan_reason: string | null }, [string, string]>(
           "SELECT n.*,p.state AS plan_state,p.reason AS plan_reason FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=? AND n.task_id=?",
@@ -3515,7 +3538,7 @@ export class RunnerStore {
     )
     if (!node) return undefined
     const adoption = this.activeAdoptionForTask(node.plan_id, taskID)
-    const waitingOn = this.atomic((db) =>
+    const waitingOn = this.read((db) =>
       db
         .query<{ prerequisite: string }, [string, string]>(
           `SELECT d.prerequisite FROM runner_dependencies d
@@ -3577,7 +3600,7 @@ export class RunnerStore {
   }
 
   priorCommand<T>(requestID: string, input: unknown): T | undefined {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const previous = db
         .query<{ fingerprint: string; receipt: string }, [string, string]>(
           "SELECT fingerprint,receipt FROM runner_commands WHERE project_directory=? AND request_id=?",
@@ -3722,7 +3745,7 @@ export class RunnerStore {
   }
   latestTransition<T>(planID: string, taskID: string | null, event: string): T | undefined {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    const row = this.atomic((db) =>
+    const row = this.read((db) =>
       db
         .query<{ payload: string }, [string, string | null, string]>(
           "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
@@ -3737,7 +3760,7 @@ export class RunnerStore {
     event: string,
   ): number | undefined {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic(
+    return this.read(
       (db) =>
         db
           .query<{ version: number }, [string, string | null, string]>(
@@ -3748,7 +3771,7 @@ export class RunnerStore {
   }
   verificationTimeoutAmendments(planID: string): VerificationTimeoutAmendment[] {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<{ payload: string }, [string]>(
           "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EXTENDED' ORDER BY id",
@@ -3759,7 +3782,7 @@ export class RunnerStore {
   }
   latestRetainedRepair<T>(planID: string, taskID?: string): T | undefined {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    const row = this.atomic((db) =>
+    const row = this.read((db) =>
       taskID === undefined
         ? db
             .query<{ payload: string }, [string]>(
@@ -3778,7 +3801,7 @@ export class RunnerStore {
   hasPlanOwnerTransfer(planID: string, previousOwner: string, currentOwner: string, after: number) {
     if (!this.plan(planID)) throw new Error("Plan not found")
     if (!previousOwner || !currentOwner || previousOwner === currentOwner) return false
-    return this.atomic(
+    return this.read(
       (db) =>
         db
           .query<{ payload: string }, [string, number]>(
@@ -3805,7 +3828,7 @@ export class RunnerStore {
   }
   /** High-water mark for plan-level owner/cancellation changes, excluding task activity. */
   planControlEpoch(planID: string): number {
-    return this.atomic(
+    return this.read(
       (db) =>
         db
           .query<{ epoch: number }, [string]>(
@@ -3859,7 +3882,7 @@ export class RunnerStore {
     })
   }
   fenced<T>(owner: string, fence: number, run: (db: Database) => T): T {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const lease = db
         .query<{ owner: string; fence: number }, [string]>(
           "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
@@ -3870,7 +3893,7 @@ export class RunnerStore {
     })
   }
   audit(): { watermark: number; findings: Finding[] } {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const tasks = db
         .query<{ id: string; body: string }, [string]>(
           "SELECT id,body FROM tasks WHERE project_directory=? ORDER BY rowid",
@@ -3931,7 +3954,7 @@ export class RunnerStore {
   }
   /** Admission needs duplicate-content conflicts for its selected tasks, not a project audit. */
   exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const selected = new Set(taskIDs)
       if (!selected.size) return { watermark: this.repository.version(), findings: [] }
       const tasks = db
@@ -3982,7 +4005,7 @@ export class RunnerStore {
   }
   attempts(planID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<AttemptRow, [string]>(
           "SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
@@ -3992,12 +4015,12 @@ export class RunnerStore {
   }
   /** Every live project reservation, independent of retained plan history or plan state. */
   activeProjectAttempts(): AttemptRow[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<AttemptRow, [string]>(
           `SELECT a.* FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
            WHERE a.project_directory=? AND a.state IN ('preparing','running','verifying')
-           ORDER BY COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid,a.started_at,a.number`,
+           ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number`,
         )
         .all(this.repository.projectDirectory),
     )
@@ -4008,7 +4031,7 @@ export class RunnerStore {
     for (let offset = 0; offset < taskIDs.length; offset += 100) {
       const batch = taskIDs.slice(offset, offset + 100)
       rows.push(
-        ...this.atomic((db) =>
+        ...this.read((db) =>
           db
             .query<TaskPrerequisiteIntegrationRow, [string, string, ...string[]]>(
               `SELECT p.id AS plan_id,n.task_id,p.project_directory,n.state AS node_state,
@@ -4042,7 +4065,7 @@ export class RunnerStore {
     const maxNodes = Math.max(1, Math.min(input.maxNodes ?? 10_000, 10_000))
     const maxReservations = Math.max(1, Math.min(input.maxReservations ?? 10_000, 10_000))
     const directory = this.repository.projectDirectory
-    return this.atomic((db): SchedulingFactSnapshot => {
+    return this.read((db): SchedulingFactSnapshot => {
       const repositoryVersion = db
         .query<{ version: number }, [string]>(
           "SELECT COALESCE(MAX(id),0) AS version FROM task_changes WHERE project_directory=?",
@@ -4072,7 +4095,7 @@ export class RunnerStore {
            FROM runner_plans p
            LEFT JOIN runner_dispatch_controls c ON c.plan_id=p.id AND c.state='paused'
            WHERE p.project_directory=?
-           ORDER BY priority DESC,p.rowid LIMIT ?`,
+           ORDER BY ${prioritySortSQL("priority")},p.rowid LIMIT ?`,
         )
         .all(directory, maxPlans)
       const nodes = db
@@ -4081,7 +4104,7 @@ export class RunnerStore {
              SELECT id,rowid AS sequence,
                COALESCE(json_extract(body,'$.priority'),0) AS priority
              FROM runner_plans WHERE project_directory=?
-             ORDER BY priority DESC,rowid LIMIT ${maxPlans}
+             ORDER BY ${prioritySortSQL("priority")},rowid LIMIT ${maxPlans}
            )
            SELECT n.*,p.sequence,p.priority,t.body AS task_body,r.reference,
              (SELECT tr.payload FROM runner_transitions tr
@@ -4090,7 +4113,7 @@ export class RunnerStore {
            FROM runner_nodes n JOIN selected_plans p ON p.id=n.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=n.task_id
            LEFT JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
-           ORDER BY p.priority DESC,p.sequence,n.ordinal LIMIT ?`,
+           ORDER BY ${prioritySortSQL("p.priority")},p.sequence,n.ordinal LIMIT ?`,
         )
         .all(directory, directory, maxNodes + 1)
       if (nodes.length > maxNodes) nodes.pop()
@@ -4121,7 +4144,7 @@ export class RunnerStore {
            JOIN tasks t ON t.project_directory=? AND t.id=a.task_id
            LEFT JOIN runner_source_quarantines q ON q.attempt_id=a.id
            WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')
-           ORDER BY COALESCE(json_extract(p.body,'$.priority'),0) DESC,p.rowid,a.started_at,a.number LIMIT ?`,
+           ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number LIMIT ?`,
         )
         .all(directory, directory, maxReservations + 1)
       const totalReservationCount = db
@@ -4246,7 +4269,7 @@ export class RunnerStore {
     if (!attemptIDs.length) return []
     const bounded = Math.max(1, Math.min(limit, 10_001))
     const placeholders = attemptIDs.map(() => "?").join(",")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<ProgressRow, [string, ...string[], number]>(
           `SELECT * FROM (
@@ -4259,14 +4282,14 @@ export class RunnerStore {
   }
   effects(planID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE plan_id=? ORDER BY rowid")
         .all(planID),
     )
   }
   adoption(id: string): AdoptionRow | undefined {
-    return this.atomic(
+    return this.read(
       (db) =>
         db
           .query<AdoptionRow, [string, string]>(
@@ -4278,7 +4301,7 @@ export class RunnerStore {
   }
   adoptions(planID: string): AdoptionRow[] {
     if (!this.plan(planID)) throw new Error("Plan not found")
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<AdoptionRow, [string]>(
           "SELECT * FROM runner_adoptions WHERE plan_id=? ORDER BY created_at,id",
@@ -4287,7 +4310,7 @@ export class RunnerStore {
     )
   }
   activeAdoptions(planID?: string): AdoptionRow[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       planID
         ? db
             .query<AdoptionRow, [string, string]>(
@@ -4308,7 +4331,7 @@ export class RunnerStore {
     )
   }
   activeAdoptionForTask(planID: string, taskID: string): AdoptionRow | undefined {
-    return this.atomic(
+    return this.read(
       (db) =>
         db
           .query<AdoptionRow, [string, string]>(
@@ -4475,7 +4498,7 @@ export class RunnerStore {
     })
   }
   adoptionChecks(adoptionID: string, phase?: "task" | "combined"): AdoptionCheckRow[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       phase
         ? db
             .query<AdoptionCheckRow, [string, string]>(
@@ -4630,7 +4653,7 @@ export class RunnerStore {
     })
   }
   adoptionEvidence(adoptionID: string): AdoptionEvidenceRow[] {
-    return this.atomic((db) =>
+    return this.read((db) =>
       db
         .query<AdoptionEvidenceRow, [string]>(
           "SELECT * FROM runner_adoption_evidence WHERE adoption_id=? ORDER BY created_at,id",
@@ -4687,7 +4710,7 @@ export class RunnerStore {
     assertionID: string,
     artifact: string,
   ): boolean {
-    return this.atomic((db) => {
+    return this.read((db) => {
       const equivalent = equivalentShas(db, artifact)
       return Boolean(
         db
@@ -4715,13 +4738,13 @@ export class RunnerStore {
   detail(planID: string) {
     const plan = this.plan(planID)
     if (!plan) throw new Error("Plan not found")
-    return this.atomic((db) => ({
+    return this.read((db) => ({
       plan,
       nodes: this.nodes(planID),
       attempts: this.attempts(planID),
       effects: this.effects(planID),
       adoptions: this.adoptions(planID),
-      adoptionChecks: this.atomic((db) =>
+      adoptionChecks: this.read((db) =>
         db
           .query(
             `SELECT c.* FROM runner_adoption_checks c JOIN runner_adoptions a ON a.id=c.adoption_id
@@ -4729,7 +4752,7 @@ export class RunnerStore {
           )
           .all(planID),
       ),
-      adoptionEvidence: this.atomic((db) =>
+      adoptionEvidence: this.read((db) =>
         db
           .query(
             `SELECT e.* FROM runner_adoption_evidence e JOIN runner_adoptions a ON a.id=e.adoption_id

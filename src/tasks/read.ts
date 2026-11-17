@@ -313,7 +313,7 @@ export class TaskReads {
   }
 
   protected recordedNodeState(taskID: string, planID: string): TaskState | undefined {
-    return this.repository.atomic(
+    return this.repository.read(
       (db) =>
         db
           .query<{ state: TaskState }, [string, string, string, string]>(
@@ -330,7 +330,7 @@ export class TaskReads {
   ): CurrentActivityTarget[] {
     if (taskIDs.length > 40 || new Set(taskIDs).size !== taskIDs.length)
       throw new Error("Current activity task selection is invalid")
-    return this.repository.atomic((db) =>
+    return this.repository.read((db) =>
       taskIDs.map((taskID): CurrentActivityTarget => {
         const taskExists = db
           .query<{ present: number }, [string, string]>(

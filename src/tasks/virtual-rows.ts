@@ -1,168 +1,141 @@
-import type { ExecutionList, ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
-import { PLAN_HEADING_HEIGHT, TASK_ROW_HEIGHT } from "./panel-layout.ts"
+import type { ExecutionList, ExecutionListRow } from "./execution-list.ts"
+import { TASK_ROW_HEIGHT } from "./panel-layout.ts"
 
 export const LOADER_HEIGHT = 32
-const NOTE_HEIGHT = 28
-const PLAN_MARGIN = 8
-const PLAN_REASON_HEIGHT = 20
 
 /**
- * The Tasks list as one flat, ordered sequence. Plan headings, task rows, "not in this page" notes
- * and the page loader are siblings; nesting survives only as `depth` and branch position data, so
- * a virtualizer can mount any window of it. Pure: no Solid or DOM imports.
+ * The Tasks list as one flat, priority-ordered sequence of task rows. A task with dependencies is
+ * an accordion: expanding it lists its dependency tree beneath it as nested rows. Nesting survives
+ * only as `depth` and `parentKey`, so a virtualizer can mount any window of it. Pure: no Solid or
+ * DOM imports.
  */
-
-/** A titled plan gets a heading when it groups several tasks or carries scheduler facts. */
-export function planHeaded(group: ExecutionPlanGroup) {
-  return (
-    group.hasRecordedTitle &&
-    (group.totalCount > 1 || Boolean(group.priority) || (group.afterPlans ?? []).length > 0)
-  )
-}
-
-export type VirtualPlanItem = {
-  kind: "plan"
-  key: string
-  group: ExecutionPlanGroup
-  collapsed: boolean
-  /** A heading is a top-level tree item: aria-level 1, positioned among top-level siblings. */
-  setSize: number
-  posInSet: number
-}
-
-export type VirtualBranchPosition = {
-  branchID: string
-  /** First/last task row of its branch: the branch rail starts and ends here. */
-  first: boolean
-  last: boolean
-}
 
 export type VirtualTaskItem = {
   kind: "task"
+  /** `task:<id>` for a listed row; a dependency row appends `>` and its id to its parent's key. */
   key: string
   row: ExecutionListRow
-  group?: ExecutionPlanGroup
-  /** 0 for list rows, 1 for rows hanging from a fork. Visual indent only. */
+  /** 0 for listed rows, one more per dependency level. Visual indent only. */
   depth: number
-  /** aria-level: one deeper under a plan heading, one more under a fork root. */
+  /** aria-level: depth + 1. */
   level: number
   /** Position among tree siblings (aria-setsize / aria-posinset). */
   setSize: number
   posInSet: number
-  /** The fork root a branch row hangs from. */
-  parentTaskID?: string
+  parentKey?: string
+  /** The row has dependencies to list. */
   expandable: boolean
   expanded: boolean
-  branch?: VirtualBranchPosition
-}
-
-export type VirtualNoteItem = {
-  kind: "note"
-  key: string
-  branchID: string
-  hiddenCount: number
-  depth: number
 }
 
 export type VirtualLoaderItem = { kind: "loader"; key: string }
 
-export type VirtualItem = VirtualPlanItem | VirtualTaskItem | VirtualNoteItem | VirtualLoaderItem
+export type VirtualItem = VirtualTaskItem | VirtualLoaderItem
 
 export const LOADER_KEY = "loader:more"
-export const planKey = (planID: string) => `plan:${planID}`
 export const taskKey = (taskID: string) => `task:${taskID}`
-export const noteKey = (branchID: string) => `note:${branchID}`
+
+/** Dependencies of a row: recorded prerequisites plus topology dependency references. */
+export function dependencyRefs(row: ExecutionListRow) {
+  const refs = new Map<
+    string,
+    { taskID: string; reference?: string; title?: string; state?: string }
+  >()
+  for (const dependency of row.dependencyTasks ?? [])
+    refs.set(dependency.taskID, {
+      taskID: dependency.taskID,
+      ...(dependency.reference ? { reference: dependency.reference } : {}),
+      title: dependency.title,
+      state: dependency.state,
+    })
+  for (const taskID of row.prerequisites) if (!refs.has(taskID)) refs.set(taskID, { taskID })
+  return [...refs.values()]
+}
+
+export const hasDependencies = (row: ExecutionListRow) => dependencyRefs(row).length > 0
+
+/** A dependency row for a task no list or plan node describes: only what the reference carries. */
+function referenceRow(ref: ReturnType<typeof dependencyRefs>[number]): ExecutionListRow {
+  return {
+    taskID: ref.taskID,
+    title: ref.title ?? `Task ${ref.taskID.slice(0, 8)}`,
+    status: ref.state ?? "unknown",
+    reason: null,
+    waiting: false,
+    holdReason: null,
+    ordinal: 0,
+    ...(ref.reference ? { reference: ref.reference } : {}),
+    contextOnly: true,
+    prerequisites: [],
+    successors: [],
+  }
+}
+
+/** Every listed row in order: plans by priority, then unplanned tasks. */
+export function listedRows(model: ExecutionList) {
+  return [...model.plans.flatMap((group) => group.rows), ...model.unplanned]
+}
 
 export function flattenExecutionList(input: {
   model: ExecutionList
-  collapsedPlans: ReadonlySet<string>
-  forkExpanded: (group: ExecutionPlanGroup, row: ExecutionListRow) => boolean
+  /** Item keys of expanded rows; everything else is collapsed. */
+  expanded: ReadonlySet<string>
   /** Append a loader row while another page exists. */
   hasMore?: boolean
 }): VirtualItem[] {
+  const top = listedRows(input.model)
+  const known = new Map<string, ExecutionListRow>()
+  for (const row of [...input.model.related, ...top]) known.set(row.taskID, row)
   const items: VirtualItem[] = []
-  const pushRows = (
-    rows: readonly ExecutionListRow[],
-    group?: ExecutionPlanGroup,
-    headed = false,
+  const push = (
+    row: ExecutionListRow,
+    key: string,
+    depth: number,
+    setSize: number,
+    posInSet: number,
+    ancestors: ReadonlySet<string>,
+    parentKey?: string,
   ) => {
-    const level = headed ? 2 : 1
-    rows.forEach((row, index) => {
-      const expandable = Boolean(group && row.fork)
-      const expanded = Boolean(group && row.fork && input.forkExpanded(group, row))
-      items.push({
-        kind: "task",
-        key: taskKey(row.taskID),
-        row,
-        group,
-        depth: 0,
-        level,
-        setSize: rows.length,
-        posInSet: index + 1,
-        expandable,
-        expanded,
-      })
-      if (!expanded || !row.fork) return
-      const children = row.fork.branches.reduce((sum, branch) => sum + branch.rows.length, 0)
-      let position = 0
-      for (const branch of row.fork.branches) {
-        branch.rows.forEach((child, childIndex) => {
-          items.push({
-            kind: "task",
-            key: taskKey(child.taskID),
-            row: child,
-            group,
-            depth: 1,
-            level: level + 1,
-            setSize: children,
-            posInSet: ++position,
-            parentTaskID: row.taskID,
-            expandable: false,
-            expanded: false,
-            branch: {
-              branchID: branch.id,
-              first: childIndex === 0,
-              last: childIndex === branch.rows.length - 1 && branch.hiddenCount === 0,
-            },
-          })
+    const refs = dependencyRefs(row)
+    const expandable = refs.length > 0
+    const expanded = expandable && input.expanded.has(key)
+    items.push({
+      kind: "task",
+      key,
+      row,
+      depth,
+      level: depth + 1,
+      setSize,
+      posInSet,
+      ...(parentKey ? { parentKey } : {}),
+      expandable,
+      expanded,
+    })
+    if (!expanded) return
+    const next = new Set([...ancestors, row.taskID])
+    const children = refs
+    children.forEach((ref, index) => {
+      const child = known.get(ref.taskID) ?? referenceRow(ref)
+      if (next.has(ref.taskID)) {
+        // Cycle: show the row without a subtree so the loop is visible but finite.
+        items.push({
+          kind: "task",
+          key: `${key}>${ref.taskID}`,
+          row: child,
+          depth: depth + 1,
+          level: depth + 2,
+          setSize: children.length,
+          posInSet: index + 1,
+          parentKey: key,
+          expandable: false,
+          expanded: false,
         })
-        if (branch.hiddenCount > 0)
-          items.push({
-            kind: "note",
-            key: noteKey(branch.id),
-            branchID: branch.id,
-            hiddenCount: branch.hiddenCount,
-            depth: 1,
-          })
+        return
       }
+      push(child, `${key}>${ref.taskID}`, depth + 1, children.length, index + 1, next, key)
     })
   }
-  for (const group of input.model.plans) {
-    const headed = planHeaded(group)
-    if (headed) {
-      const collapsed = input.collapsedPlans.has(group.planID)
-      items.push({
-        kind: "plan",
-        key: planKey(group.planID),
-        group,
-        collapsed,
-        setSize: 0,
-        posInSet: 0,
-      })
-      if (collapsed) continue
-    }
-    pushRows(group.rows, group, headed)
-  }
-  pushRows(input.model.unplanned)
-  // Headings and the rows of plain plans and unplanned tasks are one top-level sibling set.
-  const topLevel = items.filter(
-    (item): item is VirtualPlanItem | VirtualTaskItem =>
-      item.kind === "plan" || (item.kind === "task" && item.level === 1),
-  )
-  topLevel.forEach((item, index) => {
-    item.setSize = topLevel.length
-    item.posInSet = index + 1
-  })
+  top.forEach((row, index) => push(row, taskKey(row.taskID), 0, top.length, index + 1, new Set()))
   if (input.hasMore) items.push({ kind: "loader", key: LOADER_KEY })
   return items
 }
@@ -170,40 +143,30 @@ export function flattenExecutionList(input: {
 export const taskItems = (items: readonly VirtualItem[]) =>
   items.filter((item): item is VirtualTaskItem => item.kind === "task")
 
-/** Index in the flat list of a task row, or -1 when it is not part of the visible sequence. */
+/**
+ * Index in the flat list of a task row, or -1 when it is not part of the visible sequence. The
+ * listed row wins over a repeat of the same task inside an expanded dependency tree.
+ */
 export function taskIndex(items: readonly VirtualItem[], taskID: string) {
-  return items.findIndex((item) => item.kind === "task" && item.row.taskID === taskID)
-}
-
-/** The plan whose rows, fork branches included, list this task. */
-export function planOfTask(model: ExecutionList, taskID: string) {
-  const holds = (row: ExecutionListRow): boolean =>
-    row.taskID === taskID ||
-    Boolean(
-      row.fork?.branches.some((branch) => branch.rows.some((child) => child.taskID === taskID)),
-    )
-  return model.plans.find((group) => group.rows.some(holds))?.planID
+  const listed = items.findIndex((item) => item.key === taskKey(taskID))
+  return listed >= 0
+    ? listed
+    : items.findIndex((item) => item.kind === "task" && item.row.taskID === taskID)
 }
 
 export type NavigationKey = "ArrowUp" | "ArrowDown" | "Home" | "End" | "ArrowLeft" | "ArrowRight"
 
-/** Tree items in visual order: plan headings and task rows (notes and the loader are not items). */
-export type TreeItem = VirtualPlanItem | VirtualTaskItem
-export const treeItems = (items: readonly VirtualItem[]) =>
-  items.filter((item): item is TreeItem => item.kind === "plan" || item.kind === "task")
-
 /**
- * Tree item to move to from the item keyed `key` in visual order. Offscreen rows count: this reads
- * the model, not the DOM. Left goes to a branch row's fork root or a plan row's heading; Right to an
- * expanded fork root's first branch row or an expanded heading's first row (collapsed ones must
- * expand first, which the caller does).
+ * Task item to move to from the item keyed `key` in visual order. Offscreen rows count: this reads
+ * the model, not the DOM. Left goes to the parent a dependency row hangs from; Right to an expanded
+ * row's first dependency (a collapsed row must expand first, which the caller does).
  */
 export function navigationTarget(
   items: readonly VirtualItem[],
   key: string,
   direction: NavigationKey,
-): TreeItem | undefined {
-  const tree = treeItems(items)
+): VirtualTaskItem | undefined {
+  const tree = taskItems(items)
   const index = tree.findIndex((item) => item.key === key)
   if (index < 0) return tree[0]
   const current = tree[index]!
@@ -216,25 +179,11 @@ export function navigationTarget(
       return tree[Math.max(0, index - 1)]
     case "ArrowDown":
       return tree[Math.min(tree.length - 1, index + 1)]
-    case "ArrowLeft": {
-      if (current.kind === "plan") return undefined
-      const parent = current.parentTaskID
-        ? taskKey(current.parentTaskID)
-        : current.level > 1 && current.group
-          ? planKey(current.group.planID)
-          : undefined
-      return parent ? tree.find((item) => item.key === parent) : undefined
-    }
+    case "ArrowLeft":
+      return current.parentKey ? tree.find((item) => item.key === current.parentKey) : undefined
     case "ArrowRight": {
       const next = tree[index + 1]
-      if (current.kind === "plan")
-        return !current.collapsed && next?.kind === "task" && next.group === current.group
-          ? next
-          : undefined
-      return current.expandable &&
-        current.expanded &&
-        next?.kind === "task" &&
-        next.parentTaskID === current.row.taskID
+      return current.expandable && current.expanded && next?.parentKey === current.key
         ? next
         : undefined
     }
@@ -256,8 +205,8 @@ export function viewportAnchor(
   treeOffset: number,
   first: { key: string | number | bigint; start: number } | undefined,
 ): { key: string; offset: number } | undefined {
-  // At the list top, or with the head (Now/Attention/Next) still at the viewport top, the person
-  // reads content a reorder of tree rows does not move: hold the scroll offset, follow no row.
+  // At the list top, or with the notes above the tree still at the viewport top, the person reads
+  // content a reorder of tree rows does not move: hold the scroll offset, follow no row.
   if (!first || scrollTop <= 0 || scrollTop < treeOffset) return undefined
   return { key: String(first.key), offset: first.start - treeOffset - scrollTop }
 }
@@ -274,25 +223,7 @@ export function anchoredScrollTop(
   return Math.abs(target - scrollTop) < 0.5 ? undefined : target
 }
 
-/**
- * First-guess height before the virtualizer measures the mounted element: compact rows match
- * `.lazers-tasks-row`, headings carry their margin and optional reason line.
- */
+/** First-guess height before the virtualizer measures the mounted element. */
 export function estimateItemSize(item: VirtualItem) {
-  switch (item.kind) {
-    case "task":
-      return TASK_ROW_HEIGHT
-    case "plan":
-      return (
-        PLAN_HEADING_HEIGHT +
-        PLAN_MARGIN +
-        (item.group.schedulingReason || (item.group.afterPlans ?? []).length
-          ? PLAN_REASON_HEIGHT
-          : 0)
-      )
-    case "note":
-      return NOTE_HEIGHT
-    case "loader":
-      return LOADER_HEIGHT
-  }
+  return item.kind === "task" ? TASK_ROW_HEIGHT : LOADER_HEIGHT
 }

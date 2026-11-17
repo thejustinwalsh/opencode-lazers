@@ -1693,7 +1693,12 @@ test("F-S4-2 live reservations and runnable pages survive more than 1000 retaine
   expect(rows).toHaveLength(1006)
   expect(new Set(rows.map((row) => row.id)).size).toBe(1006)
   expect(rows[0]!.id).toBe("cancel-first")
-  expect(rows.slice(1, 336).every((row) => JSON.parse(row.body).priority === 2)).toBe(true)
+  // Priority 1 is the top, then 2; unprioritized (0) plans sort after every prioritized one. The
+  // order holds across the 1000-row page boundary.
+  const priorities = rows.slice(1).map((row) => JSON.parse(row.body).priority)
+  expect(priorities.slice(0, 335).every((priority) => priority === 1)).toBe(true)
+  expect(priorities.slice(335, 670).every((priority) => priority === 2)).toBe(true)
+  expect(priorities.slice(670).every((priority) => priority === 0)).toBe(true)
   f.store.atomic((db) =>
     db.query("UPDATE runner_attempts SET state='accepted' WHERE id='hidden-live'").run(),
   )

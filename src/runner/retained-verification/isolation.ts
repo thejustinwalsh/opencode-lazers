@@ -6,15 +6,15 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs"
+import { lstat, readdir, realpath, rm } from "node:fs/promises"
+import type { Dirent } from "node:fs"
 import { join, relative, sep } from "node:path"
 import { tmpdir } from "node:os"
 import { fingerprint } from "../../identity.ts"
@@ -109,50 +109,112 @@ function pathContains(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(sep))
 }
 
-function assertNoSymlinks(directory: string) {
-  const ownedRoot = realpathSync(directory)
-  const pending = [directory]
+const walkConcurrency = 32
+/** Passes over one immutable-in-practice tree within this window are shared. */
+const walkMemoMs = 2000
+const walkMemo = new Map<string, { at: number; pass: Promise<void> }>()
+
+type Visit = (child: string, entry: Dirent) => Promise<boolean>
+
+/**
+ * Breadth-first walk with bounded concurrency. Every readdir awaits, so the
+ * event loop gets a turn between directory batches; a copied node_modules tree
+ * never holds the service thread.
+ */
+async function walkTree(start: string, visit: Visit): Promise<void> {
+  const pending = [start]
   while (pending.length) {
-    const current = pending.pop()!
-    for (const entry of readdirSync(current)) {
-      const child = join(current, entry)
-      const info = lstatSync(child)
-      if (info.isSymbolicLink()) {
-        const target = realpathSync(child)
+    const batch = pending.splice(0, walkConcurrency)
+    const descended = await Promise.all(
+      batch.map(async (current) => {
+        const directories: string[] = []
+        for (const entry of await readdir(current, { withFileTypes: true })) {
+          const child = join(current, entry.name)
+          if (await visit(child, entry)) directories.push(child)
+        }
+        return directories
+      }),
+    )
+    for (const directories of descended) pending.push(...directories)
+  }
+}
+
+/** A directory entry's kind; falls back to lstat on filesystems without d_type. */
+async function entryKind(
+  child: string,
+  entry: Dirent,
+): Promise<"link" | "directory" | "file" | "other"> {
+  if (entry.isSymbolicLink()) return "link"
+  if (entry.isDirectory()) return "directory"
+  if (entry.isFile()) return "file"
+  const info = await lstat(child)
+  return info.isSymbolicLink()
+    ? "link"
+    : info.isDirectory()
+      ? "directory"
+      : info.isFile()
+        ? "file"
+        : "other"
+}
+
+function memoized(kind: string, root: string, run: () => Promise<void>): Promise<void> {
+  const key = `${kind}\0${root}`
+  const hit = walkMemo.get(key)
+  const now = Date.now()
+  if (hit && now - hit.at < walkMemoMs) return hit.pass
+  const pass = run()
+  walkMemo.set(key, { at: now, pass })
+  // A failed pass must never be reused: the next caller re-walks.
+  pass.catch(() => {
+    if (walkMemo.get(key)?.pass === pass) walkMemo.delete(key)
+  })
+  return pass
+}
+
+/** Exported for behavior tests. */
+export async function assertNoSymlinks(directory: string): Promise<void> {
+  const ownedRoot = await realpath(directory)
+  await memoized("symlinks", ownedRoot, () =>
+    walkTree(directory, async (child, entry) => {
+      const kind = await entryKind(child, entry)
+      if (kind === "link") {
+        const target = await realpath(child)
         if (!pathContains(ownedRoot, target))
           throw new Error(
             `Verification resource contains a symbolic link outside its owned context: ${child} -> ${target}`,
           )
-        continue
+        return false
       }
-      if (info.isDirectory()) pending.push(child)
-      else if (!info.isFile()) throw new Error("Verification resource contains a non-regular entry")
-    }
-  }
+      if (kind === "directory") return true
+      if (kind !== "file") throw new Error("Verification resource contains a non-regular entry")
+      return false
+    }),
+  )
 }
 
-function assertOwnedDependencyTree(directory: string): void {
-  const root = realpathSync(directory)
-  const pending = [root]
-  while (pending.length) {
-    const current = pending.pop()!
-    for (const entry of readdirSync(current)) {
-      const child = join(current, entry)
-      const info = lstatSync(child)
-      if (info.isSymbolicLink()) {
+/** Exported for behavior tests. */
+export async function assertOwnedDependencyTree(directory: string): Promise<void> {
+  const root = await realpath(directory)
+  await memoized("dependencies", root, () =>
+    walkTree(root, async (child, entry) => {
+      const kind = await entryKind(child, entry)
+      if (kind === "link") {
         let target: string
         try {
-          target = realpathSync(child)
+          target = await realpath(child)
         } catch {
           throw new Error("Project dependency snapshot contains a dangling symbolic link")
         }
         if (!pathContains(root, target))
           throw new Error("Project dependency snapshot links to a shared external resource")
-      } else if (info.isDirectory()) pending.push(child)
-      else if (!info.isFile())
+        return false
+      }
+      if (kind === "directory") return true
+      if (kind !== "file")
         throw new Error("Project dependency snapshot contains a non-regular entry")
-    }
-  }
+      return false
+    }),
+  )
 }
 
 const dependencyFields = [
@@ -516,7 +578,7 @@ export async function createRetainedCheckContext(input: {
       nativeDependencies.isSymbolicLink()
     )
       throw new Error("Candidate dependencies require a committed manifest and private directory")
-    assertOwnedDependencyTree(candidateDependencies)
+    await assertOwnedDependencyTree(candidateDependencies)
   }
   const directory = join(
     root,
@@ -665,7 +727,7 @@ export async function createRetainedCheckContext(input: {
     // candidate checkout, while remaining entirely inside this owned resource.
     symlinkSync(".", resolverRoot, "dir")
   }
-  assertOwnedDependencyTree(dependencyResource.realPath)
+  await assertOwnedDependencyTree(dependencyResource.realPath)
   const dependencyEnvironmentIdentity = candidateDependencyEnvironmentIdentity(
     dependencyResource.realPath,
     candidateManifest,
@@ -792,7 +854,7 @@ export async function createRetainedCheckContext(input: {
 }
 
 /** Re-read ownership before a check; declarations and path strings alone are not evidence. */
-export function observeRetainedCheckContext(context: RetainedCheckContext): boolean {
+export async function observeRetainedCheckContext(context: RetainedCheckContext): Promise<boolean> {
   try {
     if (realpathSync(context.directory) !== context.directory) return false
     const owner = JSON.parse(
@@ -898,8 +960,8 @@ export function observeRetainedCheckContext(context: RetainedCheckContext): bool
         procedureBinding.candidateArtifact,
         candidateManifest,
       )
-    assertOwnedDependencyTree(dependencyRoot)
-    assertNoSymlinks(context.directory)
+    await assertOwnedDependencyTree(dependencyRoot)
+    await assertNoSymlinks(context.directory)
     const database = join(
       context.resources.find((item) => item.name === "database")!.realPath,
       "verification.sqlite",
@@ -959,13 +1021,13 @@ export function retainedCheckIsolationWitness(context: RetainedCheckContext) {
 }
 
 /** Remove a setup that failed before a complete context witness was returned. */
-export function removeRetainedCheckSetupResources(input: {
+export async function removeRetainedCheckSetupResources(input: {
   rootDirectory: string
   resource: RetainedCheckSetupResource
   candidateWorkspace: string
   dependencyLink?: RetainedCheckSetupLink
   temporaryDirectoryLink?: RetainedCheckSetupLink
-}): void {
+}): Promise<void> {
   const root = realpathSync(input.rootDirectory)
   const setupPath = input.resource.path
   const setupRelativePath = relative(root, setupPath)
@@ -1021,23 +1083,23 @@ export function removeRetainedCheckSetupResources(input: {
     realpathSync(setupPath) !== setupPath
   )
     throw new Error("Verification setup directory ownership changed; preserve the resource")
-  rmSync(setupPath, { recursive: true, force: false })
+  await rm(setupPath, { recursive: true, force: false })
   if (lstatIfPresent(setupPath))
     throw new Error("Verification setup directory remains after cleanup")
 }
 
 /** Non-forced, ownership-checked teardown. Unknown entries are never followed. */
-export function removeRetainedCheckContext(context: RetainedCheckContext): void {
-  if (!observeRetainedCheckContext(context))
+export async function removeRetainedCheckContext(context: RetainedCheckContext): Promise<void> {
+  if (!(await observeRetainedCheckContext(context)))
     throw new Error("Verification resource ownership changed; preserve the context")
   if (context.dependencyLink) unlinkSync(context.dependencyLink.path)
   if (context.procedureBinding.temporaryDirectoryLink)
     unlinkSync(context.procedureBinding.temporaryDirectoryLink.path)
-  assertNoSymlinks(context.directory)
-  rmSync(context.directory, { recursive: true, force: false })
+  await assertNoSymlinks(context.directory)
+  await rm(context.directory, { recursive: true, force: false })
 }
 
-export function observeRetainedCheckIsolationWitness(
+export async function observeRetainedCheckIsolationWitness(
   contextPath: string,
   witness: unknown,
   expected: {
@@ -1053,7 +1115,7 @@ export function observeRetainedCheckIsolationWitness(
     projectIdentity: string
     procedurePlan: RetainedProcedurePlan
   },
-): boolean {
+): Promise<boolean> {
   try {
     if (typeof witness !== "object" || witness === null || Array.isArray(witness)) return false
     const record = witness as Record<string, unknown>
@@ -1178,7 +1240,7 @@ export function observeRetainedCheckIsolationWitness(
         expected.candidateArtifact,
         candidateManifest,
       )
-    assertOwnedDependencyTree(join(root, "dependencies"))
+    await assertOwnedDependencyTree(join(root, "dependencies"))
     if (
       candidateDependencyEnvironmentIdentity(
         join(root, "dependencies"),
@@ -1188,7 +1250,7 @@ export function observeRetainedCheckIsolationWitness(
     ) {
       return false
     }
-    assertNoSymlinks(root)
+    await assertNoSymlinks(root)
     if (procedureBinding.dependencyLink) {
       const dependencyPath = join(record.candidateWorkspace as string, "node_modules")
       const dependencyResource = join(root, "dependencies")
@@ -1265,18 +1327,18 @@ export function observeRetainedCheckIsolationWitness(
   }
 }
 
-export function removeRetainedCheckContextFromWitness(
+export async function removeRetainedCheckContextFromWitness(
   contextPath: string,
   witness: unknown,
   expected: Parameters<typeof observeRetainedCheckIsolationWitness>[2],
-): void {
-  if (!observeRetainedCheckIsolationWitness(contextPath, witness, expected))
+): Promise<void> {
+  if (!(await observeRetainedCheckIsolationWitness(contextPath, witness, expected)))
     throw new Error("Verification resource ownership changed; preserve the context")
   const binding = (witness as { procedureBinding: RetainedProcedureBinding }).procedureBinding
   if (binding.dependencyLink) unlinkSync(binding.dependencyLink.path)
   if (binding.temporaryDirectoryLink) unlinkSync(binding.temporaryDirectoryLink.path)
-  assertNoSymlinks(contextPath)
-  rmSync(contextPath, { recursive: true, force: false })
+  await assertNoSymlinks(contextPath)
+  await rm(contextPath, { recursive: true, force: false })
 }
 
 export function retainedResourcePaths(context: RetainedCheckContext): string[] {

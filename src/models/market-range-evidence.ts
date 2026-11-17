@@ -1,4 +1,6 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
+import { acquireSharedConnection } from "../storage.ts"
+
 import {
   ENDPOINT_PRICING_PRODUCTS,
   EndpointPricingReadSchema,
@@ -154,7 +156,8 @@ export function readEndpointPricingEvidence(
   signal?: AbortSignal,
 ): EndpointPricingRead {
   signal?.throwIfAborted()
-  const db = new Database(path, { readonly: true, strict: true })
+  const shared = acquireSharedConnection(path, "readonly")
+  const db = shared.db
   try {
     const scenarios = db
       .transaction(() => {
@@ -218,6 +221,6 @@ export function readEndpointPricingEvidence(
     signal?.throwIfAborted()
     return aggregate(scenarios)
   } finally {
-    db.close()
+    shared.release()
   }
 }

@@ -1241,11 +1241,11 @@ test("storage path honors an explicit directory and rejects a relative override"
   expect(() => taskDatabasePath("relative")).toThrow("absolute")
 })
 
-test("Git provenance distinguishes unborn HEAD, committed HEAD, and an inaccessible repository", () => {
+test("Git provenance distinguishes unborn HEAD, committed HEAD, and an inaccessible repository", async () => {
   const path = directory()
-  expect(() => startingRevision(path)).toThrow("starting revision")
+  await expect(startingRevision(path)).rejects.toThrow("starting revision")
   expect(spawnSync("git", ["init", "--initial-branch=main", path]).status).toBe(0)
-  expect(startingRevision(path)).toEqual({ kind: "unborn" })
+  expect(await startingRevision(path)).toEqual({ kind: "unborn" })
   expect(
     spawnSync(
       "git",
@@ -1262,5 +1262,5 @@ test("Git provenance distinguishes unborn HEAD, committed HEAD, and an inaccessi
       { cwd: path },
     ).status,
   ).toBe(0)
-  expect(startingRevision(path).kind).toBe("git")
+  expect((await startingRevision(path)).kind).toBe("git")
 })

@@ -1838,6 +1838,8 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
         {
           assignmentFingerprint: string
           fingerprint: string
+          light?: string
+          fullVerifiedAt?: number
           progressFingerprint: string
           revision: number
         }
@@ -1882,7 +1884,8 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
       retainedMetadata.every(
         ([, memo]) =>
           Object.keys(memo).toSorted().join(",") ===
-            "assignmentFingerprint,fingerprint,progressFingerprint,revision" &&
+            "assignmentFingerprint,fingerprint,fullVerifiedAt,light,progressFingerprint,revision" &&
+          /^[a-f0-9]{64}$/.test(memo.light ?? "") &&
           /^[a-f0-9]{64}$/.test(memo.assignmentFingerprint) &&
           /^[a-f0-9]{64}$/.test(memo.fingerprint) &&
           /^[a-f0-9]{64}$/.test(memo.progressFingerprint),

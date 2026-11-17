@@ -13,8 +13,8 @@ import { installTasksLayout } from "./virtual-layout.ts"
  */
 
 const ROW = 32
-const HEAD = 80
-const PLAN_HEIGHT = 40
+/** Nothing sits above the tree: the list is task rows only. */
+const HEAD = 0
 
 function until(predicate: () => boolean) {
   return (async () => {
@@ -37,7 +37,11 @@ function deferred(): Deferred {
 
 /** Fixture variations; the defaults reproduce the original list. */
 type Fixture = {
-  /** The first N Alpha tasks have a foreground-active worker (Now). */
+  /** Beta outranks Alpha: Beta priority 1, Alpha priority 2. */
+  prioritized?: boolean
+  /** The first two Alpha tasks depend on each other. */
+  cycle?: boolean
+  /** The first N Alpha tasks have a foreground-active worker. */
   active?: number
   /** The Architect paused dispatch of the Alpha plan. */
   alphaPaused?: boolean
@@ -71,7 +75,7 @@ async function withPanel(
   const uninstallLayout = installTasksLayout(dom, {
     viewportHeight: 320,
     headHeight: HEAD,
-    itemHeights: { task: ROW, plan: PLAN_HEIGHT, note: 28, loader: ROW },
+    itemHeights: { task: ROW, loader: ROW },
     ...layout,
   })
   const globalNames = [
@@ -347,7 +351,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         planID: uuid(9001),
         planVersion: 1,
         planOrder: 0,
-        priority: 0,
+        priority: fixture.prioritized ? 2 : 0,
         title: "Alpha plan",
         lifecycle: "running",
         decision: alphaPaused ? "waiting" : "eligible",
@@ -362,7 +366,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         planID: uuid(9002),
         planVersion: 1,
         planOrder: 1,
-        priority: 0,
+        priority: fixture.prioritized ? 1 : 0,
         title: "Beta plan",
         lifecycle: "running",
         decision: "waiting",
@@ -400,11 +404,20 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         reason: null,
         title: "Alpha plan",
         afterPlans: [],
+        priority: fixture.prioritized ? 2 : 0,
         ...(alphaPaused ? { dispatchPause: pause } : {}),
         nodes: alpha.map(node),
-        dependencies: fixture.alphaChain
-          ? alpha.slice(1).map((successor, index) => ({ prerequisite: alpha[index]!, successor }))
-          : [],
+        dependencies: [
+          ...(fixture.alphaChain
+            ? alpha.slice(1).map((successor, index) => ({ prerequisite: alpha[index]!, successor }))
+            : []),
+          ...(fixture.cycle
+            ? [
+                { prerequisite: alpha[1]!, successor: alpha[0]! },
+                { prerequisite: alpha[0]!, successor: alpha[1]! },
+              ]
+            : []),
+        ],
       },
       {
         id: uuid(9002),
@@ -414,6 +427,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         reason: null,
         title: "Beta plan",
         afterPlans: [],
+        priority: fixture.prioritized ? 1 : 0,
         nodes: betaTasks.map(node),
         dependencies: [
           { prerequisite: beta.root, successor: beta.a },
@@ -617,10 +631,10 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   const rows = () => [...container.querySelectorAll<HTMLElement>("[role=treeitem]")]
   const row = (taskID: string) =>
     container.querySelector<HTMLElement>(`[role=treeitem][data-task-id="${taskID}"]`)
-  const attention = (taskID: string) =>
-    container.querySelector<HTMLButtonElement>(
-      `[data-scheduling-group="attention"][data-scheduling-task-id="${taskID}"]`,
-    )
+  /** The row's own accordion control (a listed row; the first match when a task repeats). */
+  const disclosure = (taskID: string) =>
+    row(taskID)?.querySelector<HTMLElement>(".lazers-tasks-disclosure") ?? null
+  const rowKeys = () => rows().map((item) => item.dataset.itemKey)
   const key = (element: HTMLElement, value: string) =>
     element.dispatchEvent(
       new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true }) as unknown as Event,
@@ -701,7 +715,8 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     list,
     rows,
     row,
-    attention,
+    disclosure,
+    rowKeys,
     key,
     scrollTo,
     chooseFilter,
@@ -715,10 +730,9 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
 
 test("only a window of a long list is mounted, and the tree spans the whole list", async () => {
   await withPanel(async (h) => {
-    await until(() => h.rows().length > 0 && Boolean(h.attention(h.beta.a)))
-    const total = 1 + 60 + 1 + 3 // Alpha heading + rows, Beta heading, root/join... (fork collapsed)
-    expect(total).toBeGreaterThan(h.rows().length + 20)
-    // Viewport 320px: 10 rows plus overscan below. Far fewer than the 64 rows in the model.
+    await until(() => h.rows().length > 0)
+    // 60 Alpha tasks and 4 Beta tasks are 64 flat rows: no headings, no sections.
+    expect(64).toBeGreaterThan(h.rows().length + 20)
     expect(h.rows().length).toBeGreaterThanOrEqual(10)
     expect(h.rows().length).toBeLessThanOrEqual(10 + 8 + 2)
     expect(h.row(h.alpha[0]!)).not.toBeNull()
@@ -726,21 +740,333 @@ test("only a window of a long list is mounted, and the tree spans the whole list
     expect(h.row(h.beta.join)).toBeNull()
     await settle()
     const tree = h.container.querySelector<HTMLElement>(".lazers-tasks-tree")!
-    // Alpha heading (measured 40) + 60 rows + root + join (fork collapsed) + Beta heading, which is
-    // not mounted and so still carries its 36px estimate.
-    expect(parseInt(tree.style.height)).toBe(PLAN_HEIGHT + 36 + ROW * 62)
-    // Every mounted row sits at its flat offset; positions follow list order.
+    expect(parseInt(tree.style.height)).toBe(ROW * 64)
     const first = h.row(h.alpha[0]!)!
     expect(first.getAttribute("aria-posinset")).toBe("1")
-    expect(first.getAttribute("aria-setsize")).toBe("60")
-    expect(h.rowTop(h.alpha[0]!)).toBe(HEAD + PLAN_HEIGHT)
-    // Scrolling swaps the window: the first rows unmount, later rows mount.
-    h.scrollTo(HEAD + PLAN_HEIGHT + ROW * 30)
+    expect(first.getAttribute("aria-setsize")).toBe("64")
+    expect(first.getAttribute("aria-level")).toBe("1")
+    expect(h.rowTop(h.alpha[0]!)).toBe(0)
+    h.scrollTo(ROW * 30)
     await until(() => Boolean(h.row(h.alpha[35]!)))
     expect(h.row(h.alpha[1]!)).toBeNull()
     // The selected row (the tab stop) stays mounted so Tab can always enter the tree.
     expect(h.row(h.alpha[0]!)?.tabIndex).toBe(0)
     expect(h.rows().length).toBeLessThanOrEqual(10 + 16 + 2 + 1)
+  })
+})
+
+test("a mounted row keeps its element across a refresh that inserts a row above, and stays put", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.rows().length > 0)
+    h.scrollTo(ROW * 20 + 5)
+    await until(() => Boolean(h.row(h.alpha[22]!)))
+    const watched = h.alpha[22]!
+    const before = h.row(watched)!
+    const topBefore = h.rowTop(watched)
+    const scrollBefore = h.list().scrollTop
+    const reads = h.queryCalls.length
+    h.refreshWithNewRowAbove()
+    await until(() => h.queryCalls.length > reads && h.alpha.length === 61)
+    await settle()
+    await until(() => h.list().scrollTop === scrollBefore + ROW)
+    expect(h.row(watched)).toBe(before)
+    expect(h.rowTop(watched)).toBe(topBefore)
+    expect(h.list().scrollTop).toBe(scrollBefore + ROW)
+  })
+})
+
+test("the list is plain task rows: no Now, Attention or Next sections and no plan headings or decorations", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      expect(h.container.querySelector(".lazers-tasks-schedule-groups")).toBeNull()
+      expect(h.container.querySelector(".lazers-tasks-plan")).toBeNull()
+      expect(h.container.querySelector("[data-scheduling-group]")).toBeNull()
+      const tree = h.container.querySelector<HTMLElement>(".lazers-tasks-tree")!
+      expect(tree.querySelector("h3")).toBeNull()
+      for (const text of ["Now", "Attention", "Next", "Alpha plan", "Priority", "Order"])
+        expect(tree.textContent).not.toContain(text)
+      expect(h.rows().every((item) => item.getAttribute("aria-level") === "1")).toBe(true)
+      // Only the list region lacks plan titles; the rows carry the task title and reference.
+      expect(h.row(h.alpha[0]!)?.textContent).toContain("Alpha 1")
+    },
+    {},
+    { scheduling: true, active: 2, requests: 1, prioritized: true },
+  )
+})
+
+test("tasks sort by priority: 1 first, larger numbers lower, then plan order", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      // Beta (priority 1) outranks Alpha (priority 2) even though Alpha is the earlier plan.
+      expect(h.rows()[0]?.dataset.taskId).toBe(h.beta.root)
+      expect(h.rowKeys().slice(0, 4)).toEqual(
+        [h.beta.root, h.beta.a, h.beta.b, h.beta.join].map((id) => `task:${id}`),
+      )
+      expect(h.rows()[4]?.dataset.taskId).toBe(h.alpha[0])
+    },
+    {},
+    { prioritized: true },
+  )
+  await withPanel(async (h) => {
+    await until(() => h.rows().length > 0)
+    // No priorities recorded: unprioritized plans keep plan order, Alpha first.
+    expect(h.rows()[0]?.dataset.taskId).toBe(h.alpha[0])
+  })
+})
+
+test("a task with dependencies is a collapsed accordion; expanding lists its dependency tree beneath it", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.root)))
+      const keys = () => h.rowKeys().slice(0, 8)
+      // Default collapsed: four top-level Beta rows, then Alpha.
+      expect(h.row(h.beta.root)?.hasAttribute("aria-expanded")).toBe(false)
+      expect(h.row(h.beta.join)?.getAttribute("aria-expanded")).toBe("false")
+      expect(h.disclosure(h.beta.root)).toBeNull()
+      expect(h.rows().filter((item) => item.hasAttribute("aria-expanded")).length).toBe(3)
+      // join depends on a and b; both depend on root. Expand join, then its a branch.
+      h.disclosure(h.beta.join)!.click()
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "true")
+      const join = `task:${h.beta.join}`
+      expect(keys()).toEqual([
+        `task:${h.beta.root}`,
+        `task:${h.beta.a}`,
+        `task:${h.beta.b}`,
+        join,
+        `${join}>${h.beta.a}`,
+        `${join}>${h.beta.b}`,
+        `task:${h.alpha[0]}`,
+        `task:${h.alpha[1]}`,
+      ])
+      const nested = h.container.querySelector<HTMLElement>(
+        `[data-item-key="${join}>${h.beta.a}"]`,
+      )!
+      expect(nested.getAttribute("aria-level")).toBe("2")
+      expect(nested.dataset.depth).toBe("1")
+      expect(nested.getAttribute("aria-expanded")).toBe("false")
+      // The nested row expands in turn: root repeats beneath a, though it is also listed on top.
+      nested.querySelector<HTMLElement>(".lazers-tasks-disclosure")!.click()
+      await until(() => nested.getAttribute("aria-expanded") === "true")
+      expect(h.rowKeys()).toContain(`${join}>${h.beta.a}>${h.beta.root}`)
+      expect(
+        h.rows().filter((item) => item.dataset.taskId === h.beta.root).length,
+      ).toBeGreaterThanOrEqual(2)
+      // Collapsing the parent hides the whole subtree; the nested expansion is remembered.
+      h.disclosure(h.beta.join)!.click()
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "false")
+      expect(h.rowKeys().some((key) => key?.includes(">"))).toBe(false)
+    },
+    {},
+    { prioritized: true },
+  )
+})
+
+test("dependency cycles expand once and stop", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.alpha[0]!)))
+      const a = `task:${h.alpha[0]}`
+      h.disclosure(h.alpha[0]!)!.click()
+      await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-expanded") === "true")
+      const child = () =>
+        h.container.querySelector<HTMLElement>(`[data-item-key="${a}>${h.alpha[1]}"]`)!
+      expect(child()).not.toBeNull()
+      child().querySelector<HTMLElement>(".lazers-tasks-disclosure")!.click()
+      await until(() => child().getAttribute("aria-expanded") === "true")
+      // alpha[0] reappears under alpha[1] as a leaf: listed, never expandable.
+      const loop = h.container.querySelector<HTMLElement>(
+        `[data-item-key="${a}>${h.alpha[1]}>${h.alpha[0]}"]`,
+      )!
+      expect(loop).not.toBeNull()
+      expect(loop.hasAttribute("aria-expanded")).toBe(false)
+      expect(h.rowKeys().filter((key) => key?.startsWith(`${a}>`))).toHaveLength(2)
+    },
+    {},
+    { cycle: true },
+  )
+})
+
+test("keyboard: Right expands then enters, Left leaves then collapses, Enter opens details, Up and Down move", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      const doc = h.container.ownerDocument
+      const join = h.row(h.beta.join)!
+      join.focus()
+      h.key(join, "ArrowRight")
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "true")
+      const key = `task:${h.beta.join}>${h.beta.a}`
+      const item = () => h.container.querySelector<HTMLElement>(`[data-item-key="${key}"]`)
+      expect(item()).not.toBeNull()
+      // Right again enters the first dependency.
+      h.key(h.row(h.beta.join)!, "ArrowRight")
+      await until(() => doc.activeElement === item())
+      // Down moves to the next dependency, Up back; Left returns to the parent.
+      h.key(item()!, "ArrowDown")
+      await until(
+        () =>
+          (doc.activeElement as HTMLElement | null)?.dataset.itemKey?.endsWith(h.beta.b) ?? false,
+      )
+      h.key(doc.activeElement as HTMLElement, "ArrowUp")
+      await until(() => doc.activeElement === item())
+      h.key(item()!, "ArrowLeft")
+      await until(() => doc.activeElement === h.row(h.beta.join))
+      // Left on an expanded row collapses it; Left on a collapsed top-level row is a no-op.
+      h.key(h.row(h.beta.join)!, "ArrowLeft")
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "false")
+      h.key(h.row(h.beta.join)!, "ArrowLeft")
+      expect(h.row(h.beta.join)?.getAttribute("aria-expanded")).toBe("false")
+      // Enter opens the task's details.
+      h.key(h.row(h.beta.join)!, "Enter")
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-selected") === "true")
+      await until(() => h.detailCalls.includes(h.beta.join))
+      expect(h.container.querySelector(".lazers-tasks-detail")?.textContent).toContain("Beta join")
+    },
+    {},
+    { prioritized: true },
+  )
+})
+
+test("arrow keys, Home and End walk rows that are not mounted", async () => {
+  await withPanel(async (h) => {
+    await until(() => Boolean(h.row(h.alpha[0]!)))
+    const doc = h.container.ownerDocument
+    const first = h.row(h.alpha[0]!)!
+    first.focus()
+    h.key(first, "End")
+    // The last row is the Beta join, 64 rows down: never mounted until the key reaches it.
+    await until(() => h.row(h.beta.join)?.getAttribute("aria-selected") === "true")
+    await until(() => doc.activeElement === h.row(h.beta.join))
+    await until(() => h.row(h.alpha[0]!) === null)
+    h.key(h.row(h.beta.join)!, "ArrowUp")
+    await until(() => h.row(h.beta.b)?.getAttribute("aria-selected") === "true")
+    await until(() => doc.activeElement === h.row(h.beta.b))
+    h.key(h.row(h.beta.b)!, "Home")
+    await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
+    await until(() => doc.activeElement === h.row(h.alpha[0]!))
+    h.key(h.row(h.alpha[0]!)!, "ArrowDown")
+    await until(() => h.row(h.alpha[1]!)?.getAttribute("aria-selected") === "true")
+    for (let step = 2; step <= 14; step++) {
+      h.key(h.row(h.alpha[step - 1]!)!, "ArrowDown")
+      await until(() => h.row(h.alpha[step]!)?.getAttribute("aria-selected") === "true")
+      await until(() => doc.activeElement === h.row(h.alpha[step]!))
+    }
+  })
+})
+
+test("rows end in icon-only signals: a neutral link icon and the state icon, with no sequencing icon", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.root)))
+      const entry = (taskID: string) => h.row(taskID)!
+      // No sequencing icon, tooltip or label anywhere in a row.
+      for (const taskID of [h.alpha[0]!, h.beta.root, h.beta.join]) {
+        expect(entry(taskID).querySelector(".lazers-tasks-sequence")).toBeNull()
+        expect(entry(taskID).getAttribute("aria-label")).not.toMatch(/sequenced|parallel/iu)
+      }
+      expect(
+        entry(h.alpha[0]!).querySelector(".lazers-tasks-state")?.getAttribute("aria-label"),
+      ).toBe("Queued")
+      // Link icons are neutral: no tone attribute that could select a status color.
+      for (const link of h.container.querySelectorAll(".lazers-tasks-row-blocker"))
+        expect((link as HTMLElement).dataset.tone).toBeUndefined()
+      // Signals sit last, after the title; the glyphs are icons, not text.
+      const order = [...entry(h.alpha[0]!).querySelectorAll(".lazers-tasks-row > *")].map(
+        (el) => el.className,
+      )
+      expect(order.at(-1)).toContain("signals")
+      const signalText = entry(h.alpha[0]!).querySelector(".lazers-tasks-row-signals")!.textContent!
+      expect(signalText).not.toMatch(/Queued/u)
+    },
+    {},
+    { prioritized: true },
+  )
+})
+
+test("the inspector, not the list, carries priority, order, plan and sequencing", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      h.row(h.beta.join)!.click()
+      await until(() => h.detailCalls.includes(h.beta.join))
+      const facts = () =>
+        h.container.querySelector<HTMLElement>(".lazers-tasks-scheduling-facts")?.textContent ?? ""
+      await until(() => facts().includes("Beta plan"))
+      expect(facts()).toContain("Priority1")
+      expect(facts()).toContain("Plan 2, step 4")
+      expect(facts()).toContain("Sequenced")
+      h.row(h.alpha[0]!)!.click()
+      await until(() => h.detailCalls.includes(h.alpha[0]!))
+      await until(() => facts().includes("Alpha plan"))
+      expect(facts()).toContain("Priority2")
+      expect(facts()).toContain("Parallel-eligible")
+    },
+    {},
+    { scheduling: true, prioritized: true },
+  )
+  await withPanel(async (h) => {
+    await until(() => Boolean(h.row(h.alpha[0]!)))
+    h.row(h.alpha[0]!)!.click()
+    await until(() => h.detailCalls.includes(h.alpha[0]!))
+    await until(() =>
+      (h.container.querySelector(".lazers-tasks-scheduling-facts")?.textContent ?? "").includes(
+        "Alpha plan",
+      ),
+    )
+    expect(h.container.querySelector(".lazers-tasks-scheduling-facts")?.textContent).toContain(
+      "PriorityNone",
+    )
+  })
+})
+
+test("scheduling facts render each label before its value inside one row", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      h.row(h.beta.join)!.click()
+      await until(() =>
+        Boolean(h.container.querySelector(".lazers-tasks-scheduling-facts .lazers-tasks-fact")),
+      )
+      const rows = [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-fact")]
+      expect(rows.length).toBeGreaterThanOrEqual(3)
+      for (const row of rows) {
+        expect([...row.children].map((child) => child.tagName)).toEqual(["DT", "DD"])
+        expect(row.parentElement?.tagName).toBe("DL")
+      }
+      expect(rows.map((row) => row.firstElementChild!.textContent)).toEqual([
+        "Priority",
+        "Plan",
+        "Order",
+        "Sequencing",
+      ])
+      // The generic detail dt margin must not offset a label from its value.
+      const css = getComputedStyle(rows[0]!.firstElementChild!)
+      expect(css.marginTop).toBe("0px")
+      expect(getComputedStyle(rows[0]!).display).toBe("grid")
+    },
+    {},
+    { prioritized: true, scheduling: true },
+  )
+})
+
+test("at the list top a live reorder of the first rows keeps scrollTop", async () => {
+  await withPanel(async (h) => {
+    await until(() => h.rows().length > 0)
+    h.chooseFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+    await settle()
+    h.scrollTo(0)
+    for (let round = 0; round < 2; round++) {
+      const reads = h.queryCalls.length
+      const moved = h.reorderQueueTop()
+      await until(() => h.queryCalls.length > reads)
+      await until(() => h.rows()[5]?.dataset.taskId === moved)
+      await settle()
+      expect(h.list().scrollTop).toBe(0)
+      expect(h.rows()[0]?.dataset.taskId).toBe(h.queue[0])
+    }
   })
 })
 
@@ -789,105 +1115,6 @@ test("the next page loads once as the end comes into range, for the current filt
   })
 })
 
-test("a mounted row keeps its element across a refresh that inserts a row above, and stays put", async () => {
-  await withPanel(async (h) => {
-    await until(() => h.rows().length > 0)
-    h.scrollTo(HEAD + PLAN_HEIGHT + ROW * 20 + 5)
-    await until(() => Boolean(h.row(h.alpha[22]!)))
-    const watched = h.alpha[22]!
-    const before = h.row(watched)!
-    const topBefore = h.rowTop(watched)
-    const scrollBefore = h.list().scrollTop
-    const reads = h.queryCalls.length
-    h.refreshWithNewRowAbove()
-    await until(() => h.queryCalls.length > reads && h.alpha.length === 61)
-    // The new row sits above the viewport: the scroll offset moves by exactly its height.
-    await settle()
-    await until(() => h.list().scrollTop === scrollBefore + ROW)
-    expect(h.row(watched)).toBe(before)
-    expect(h.rowTop(watched)).toBe(topBefore)
-    expect(h.list().scrollTop).toBe(scrollBefore + ROW)
-  })
-})
-
-test("selecting an Attention task inside a collapsed fork or plan expands it, mounts, selects and focuses the row", async () => {
-  await withPanel(async (h) => {
-    await until(() => Boolean(h.attention(h.beta.a)) && Boolean(h.attention(h.beta.join)))
-    const doc = h.container.ownerDocument
-    // Beta sits below 60 Alpha rows: it is not mounted, and its fork is collapsed.
-    expect(h.row(h.beta.root)).toBeNull()
-    expect(h.row(h.beta.a)).toBeNull()
-    h.attention(h.beta.a)!.click()
-    await until(() => h.row(h.beta.a)?.getAttribute("aria-selected") === "true")
-    await until(() => doc.activeElement === h.row(h.beta.a))
-    expect(h.row(h.beta.root)?.getAttribute("aria-expanded")).toBe("true")
-    // Beta heading (level 1) > fork root (level 2) > branch row (level 3).
-    expect(h.row(h.beta.root)?.getAttribute("aria-level")).toBe("2")
-    expect(h.row(h.beta.a)?.getAttribute("aria-level")).toBe("3")
-    expect(h.list().scrollTop).toBeGreaterThan(ROW * 40)
-
-    // Collapse the Beta plan from its heading, return to the top, then reach for its join.
-    const heading = () =>
-      [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-plan[role=treeitem]")].find(
-        (item) => item.textContent?.includes("Beta plan"),
-      )
-    expect(heading()?.getAttribute("aria-expanded")).toBe("true")
-    expect(heading()?.getAttribute("aria-level")).toBe("1")
-    heading()!.querySelector<HTMLElement>(".lazers-tasks-plan-heading")!.click()
-    await until(() => heading()?.getAttribute("aria-expanded") === "false")
-    expect(h.row(h.beta.root)).toBeNull()
-    expect(h.row(h.beta.join)).toBeNull()
-    h.scrollTo(0)
-    await until(() => Boolean(h.row(h.alpha[0]!)))
-    h.attention(h.beta.join)!.click()
-    await until(() => h.row(h.beta.join)?.getAttribute("aria-selected") === "true")
-    await until(() => doc.activeElement === h.row(h.beta.join))
-    expect(heading()?.getAttribute("aria-expanded")).toBe("true")
-    expect(h.row(h.beta.root)).not.toBeNull()
-  })
-})
-
-test("arrow keys, Home and End walk rows that are not mounted", async () => {
-  await withPanel(async (h) => {
-    await until(() => Boolean(h.row(h.alpha[0]!)))
-    const doc = h.container.ownerDocument
-    const first = h.row(h.alpha[0]!)!
-    first.focus()
-    h.key(first, "End")
-    // The last row is a join 64 rows down: never mounted until the key reaches it.
-    await until(() => h.row(h.beta.join)?.getAttribute("aria-selected") === "true")
-    await until(() => doc.activeElement === h.row(h.beta.join))
-    await until(() => h.row(h.alpha[0]!) === null)
-    h.key(h.row(h.beta.join)!, "ArrowUp")
-    await until(() => h.row(h.beta.root)?.getAttribute("aria-selected") === "true")
-    await until(() => doc.activeElement === h.row(h.beta.root))
-    // Down from the last Attention entry enters the first task, which has scrolled out of the window.
-    const last = [
-      ...h.container.querySelectorAll<HTMLButtonElement>("[data-scheduling-task-id]"),
-    ].at(-1)!
-    last.focus()
-    h.key(last, "ArrowDown")
-    await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
-    await until(() => doc.activeElement === h.row(h.alpha[0]!))
-    // ArrowDown steps through the model order; Home returns to the first tree item, Alpha's heading.
-    h.key(h.row(h.alpha[0]!)!, "ArrowDown")
-    await until(() => h.row(h.alpha[1]!)?.getAttribute("aria-selected") === "true")
-    for (let step = 2; step <= 14; step++) {
-      h.key(h.row(h.alpha[step - 1]!)!, "ArrowDown")
-      await until(() => h.row(h.alpha[step]!)?.getAttribute("aria-selected") === "true")
-      await until(() => doc.activeElement === h.row(h.alpha[step]!))
-    }
-    expect(h.row(h.alpha[14]!)).not.toBeNull()
-    h.key(h.row(h.alpha[14]!)!, "Home")
-    const alphaHeading = () =>
-      h.container.querySelector<HTMLElement>(".lazers-tasks-plan[role=treeitem]")
-    await until(() => doc.activeElement === alphaHeading())
-    expect(alphaHeading()?.textContent).toContain("Alpha plan")
-    h.key(alphaHeading()!, "ArrowDown")
-    await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
-  })
-})
-
 test("a failed next page shows its own retry and is not requested again until Retry", async () => {
   await withPanel(async (h) => {
     await until(() => h.rows().length > 0)
@@ -923,95 +1150,10 @@ test("a failed next page shows its own retry and is not requested again until Re
     retry.click()
     await until(() => pageOne() === 2)
     // Rows 31+ follow the first page.
-    h.scrollTo(HEAD + ROW * 28)
+    h.scrollTo(ROW * 28)
     await until(() => Boolean(h.row(h.queue[30]!)))
     expect(pageOne()).toBe(2)
   })
-})
-
-test("at the list top, with the head above the tree, a live reorder of the first rows keeps scrollTop", async () => {
-  await withPanel(async (h) => {
-    await until(() => h.rows().length > 0)
-    h.chooseFilter("Queued")
-    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
-    await settle()
-    // At the top, the head (Now/Attention/Next, 80px here) sits above the first tree row.
-    h.scrollTo(0)
-    for (let round = 0; round < 2; round++) {
-      const reads = h.queryCalls.length
-      const moved = h.reorderQueueTop()
-      await until(() => h.queryCalls.length > reads)
-      await until(() => h.rows()[5]?.dataset.taskId === moved)
-      await settle()
-      expect(h.list().scrollTop).toBe(0)
-      expect(h.rows()[0]?.dataset.taskId).toBe(h.queue[0])
-    }
-    // Scrolled partway into the head: still the head's view, still no row anchor.
-    h.scrollTo(40)
-    const reads = h.queryCalls.length
-    h.reorderQueueTop()
-    await until(() => h.queryCalls.length > reads)
-    await settle()
-    expect(h.list().scrollTop).toBe(40)
-  })
-})
-
-test("collapsing a plan keeps the fitted split; plan headings are level-1 tree items", async () => {
-  await withPanel(
-    async (h) => {
-      await until(() => h.rows().length > 0)
-      await settle()
-      const separator = () =>
-        h.container.querySelector<HTMLElement>(".lazers-tasks-separator[role=separator]")!
-      const plan = (title: string) =>
-        [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-plan[role=treeitem]")].find(
-          (item) => item.textContent?.includes(title),
-        )
-      const fitted = separator().getAttribute("aria-valuenow")
-      // Alpha heading, then Beta heading: one top-level sibling set; Alpha's rows sit below it.
-      const alpha = plan("Alpha plan")!
-      expect(alpha.getAttribute("aria-level")).toBe("1")
-      expect(alpha.getAttribute("aria-posinset")).toBe("1")
-      expect(alpha.getAttribute("aria-setsize")).toBe("2")
-      expect(alpha.getAttribute("aria-expanded")).toBe("true")
-      expect(alpha.querySelector(".lazers-tasks-plan-reason")).toBeNull()
-      expect(alpha.querySelector<HTMLDetailsElement>(".lazers-tasks-plan-details")?.open).toBe(
-        false,
-      )
-      const title = alpha.querySelector<HTMLElement>(".lazers-tasks-plan-title")!
-      const order = alpha.querySelector<HTMLElement>(".lazers-tasks-plan-order")!
-      for (const width of [360, 420]) {
-        h.container.style.width = `${width}px`
-        expect(getComputedStyle(title).whiteSpace).toBe("nowrap")
-        expect(getComputedStyle(title).textOverflow).toBe("ellipsis")
-        expect(getComputedStyle(order).flexWrap).toBe("nowrap")
-      }
-      expect(h.row(h.alpha[0]!)?.getAttribute("aria-level")).toBe("2")
-      // Left from a plan row reaches its heading, whose own keys collapse and expand it.
-      const doc = h.container.ownerDocument
-      h.row(h.alpha[0]!)!.focus()
-      h.key(h.row(h.alpha[0]!)!, "ArrowLeft")
-      await until(() => doc.activeElement === plan("Alpha plan"))
-      h.key(plan("Alpha plan")!, "ArrowLeft")
-      await until(() => plan("Alpha plan")?.getAttribute("aria-expanded") === "false")
-      expect(h.row(h.alpha[0]!)).toBeNull()
-      expect(
-        plan("Alpha plan")?.querySelector<HTMLDetailsElement>(".lazers-tasks-plan-details")?.open,
-      ).toBe(false)
-      await settle()
-      // Collapsing reveals no new content: the divider stays where the listed content put it.
-      expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
-      // Down from the collapsed heading moves to the next plan heading.
-      h.key(plan("Alpha plan")!, "ArrowDown")
-      await until(() => doc.activeElement === plan("Beta plan"))
-      h.key(plan("Alpha plan")!, "Enter")
-      await until(() => plan("Alpha plan")?.getAttribute("aria-expanded") === "true")
-      await settle()
-      expect(separator().getAttribute("aria-valuenow")).toBe(fitted)
-    },
-    { paneHeight: 1000 },
-    { alphaPaused: true, scheduling: true },
-  )
 })
 
 test("a next page that repeats its cursor or lists nothing new is requested once until Retry", async () => {
@@ -1057,7 +1199,7 @@ test("a next page that repeats its cursor or lists nothing new is requested once
     h.pageOverrides.clear()
     retry()!.click()
     await until(() => asked("queue-1") === 4)
-    h.scrollTo(HEAD + ROW * 28)
+    h.scrollTo(ROW * 28)
     await until(() => Boolean(h.row(h.queue[30]!)))
   })
 })
@@ -1111,627 +1253,5 @@ test("a pinned selected row near the end does not page; the viewport reaching th
     },
     {},
     { queuePagesClosed: true },
-  )
-})
-
-test("routine dependency waits stay in the planned tree; Attention lists holds only", async () => {
-  await withPanel(
-    async (h) => {
-      // Every Alpha task after the first waits on the one before it; no worker is active.
-      await until(() => h.rows().length > 0 && Boolean(h.attention(h.beta.a)))
-      await settle()
-      const attention = h.container.querySelector<HTMLElement>('[aria-label="Attention"]')!
-      expect(attention.querySelector(".lazers-tasks-schedule-count")?.textContent).toBe("2")
-      expect(
-        [...h.container.querySelectorAll<HTMLElement>('[data-scheduling-group="attention"]')].map(
-          (entry) => entry.dataset.schedulingTaskId,
-        ),
-      ).toEqual([h.beta.a, h.beta.join])
-      expect(h.container.querySelector('[aria-label="Now"]')).toBeNull()
-      // The routine waits are in the tree, in plan order, marked waiting on their prerequisite.
-      const waitingRow = h.row(h.alpha[3]!)!
-      expect(waitingRow.getAttribute("aria-posinset")).toBe("4")
-      expect(
-        waitingRow
-          .querySelector(":scope > .lazers-tasks-row .lazers-tasks-state")
-          ?.getAttribute("data-tone"),
-      ).toBe("waiting")
-      expect(h.attention(h.alpha[3]!)).toBeNull()
-    },
-    {},
-    { alphaChain: true },
-  )
-})
-
-test("Attention mounts a bounded window of requests and holds; keys walk every entry across groups", async () => {
-  await withPanel(
-    async (h) => {
-      // Twelve workers ask for input; two tasks are blocked; 47 more wait routinely on the chain.
-      await until(() => Boolean(h.attention(h.alpha[0]!)))
-      await settle()
-      const doc = h.container.ownerDocument
-      const expected = [...h.alpha.slice(0, 12), h.beta.a, h.beta.join]
-      const mounted = () => [
-        ...h.container.querySelectorAll<HTMLButtonElement>('[data-scheduling-group="attention"]'),
-      ]
-      const count = () =>
-        h.container.querySelector('[aria-label="Attention"] .lazers-tasks-schedule-count')
-          ?.textContent
-      expect(count()).toBe("14")
-      expect(mounted().length).toBe(5)
-      expect(mounted()[0]!.tabIndex).toBe(0)
-      expect(h.container.querySelector(".lazers-tasks-schedule-pager")?.textContent).toContain(
-        "1–5 of 14",
-      )
-      // Down walks every entry in order; the window slides and never mounts more than five.
-      // (Selecting an entry later moves focus to its tree row, so each key goes to the entry.)
-      const pressed = (taskID: string) =>
-        h.attention(taskID)?.getAttribute("aria-pressed") === "true"
-      let current = mounted()[0]!
-      const visited = [current.dataset.schedulingTaskId]
-      for (let step = 1; step < expected.length; step++) {
-        h.key(current, "ArrowDown")
-        await until(() => pressed(expected[step]!))
-        expect(mounted().length).toBeLessThanOrEqual(5)
-        current = h.attention(expected[step]!)!
-        visited.push(current.dataset.schedulingTaskId)
-      }
-      expect(visited).toEqual(expected)
-      await until(() => h.row(h.beta.join)?.getAttribute("aria-selected") === "true")
-      // Up from the window's first entry slides it back.
-      const firstShown = mounted()[0]!.dataset.schedulingTaskId!
-      h.key(mounted()[0]!, "ArrowUp")
-      await until(() => pressed(expected[expected.indexOf(firstShown) - 1]!))
-      // Home and End reach the ends of the whole list.
-      h.key(mounted()[0]!, "Home")
-      await until(() => pressed(h.alpha[0]!))
-      h.key(h.attention(h.alpha[0]!)!, "End")
-      await until(() => pressed(h.beta.join))
-      // Down from the last entry enters the tree at its first task.
-      h.key(h.attention(h.beta.join)!, "ArrowDown")
-      await until(() => doc.activeElement === h.row(h.alpha[0]!))
-      // The pager reaches every entry without a keyboard.
-      h.scrollTo(0)
-      const pagerButton = (label: string) =>
-        [
-          ...h.container.querySelectorAll<HTMLButtonElement>(".lazers-tasks-schedule-pager button"),
-        ].find((button) => button.textContent === label)!
-      pagerButton("Previous").click()
-      pagerButton("Previous").click()
-      await until(() => mounted()[0]?.dataset.schedulingTaskId === h.alpha[0])
-      const seen = new Set<string>()
-      for (let page = 0; page < 4; page++) {
-        for (const entry of mounted()) seen.add(entry.dataset.schedulingTaskId!)
-        pagerButton("More").click()
-        await settle()
-      }
-      expect([...seen].toSorted()).toEqual(expected.toSorted())
-    },
-    {},
-    { alphaChain: true, requests: 12 },
-  )
-})
-
-test("an all-collapsed tree keeps a mounted tab stop and keeps a focused heading mounted", async () => {
-  await withPanel(
-    async (h) => {
-      await until(() => h.rows().length > 0)
-      await settle()
-      const doc = h.container.ownerDocument
-      const headings = () => [
-        ...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-plan[role=treeitem]"),
-      ]
-      const heading = (title: string) =>
-        headings().find((item) => item.textContent?.includes(title))
-      const titles = ["Alpha plan", "Beta plan", ...h.extraPlans.map((plan) => plan.title)]
-      // Collapse every plan from the keyboard, heading by heading.
-      h.row(h.alpha[0]!)!.focus()
-      h.key(h.row(h.alpha[0]!)!, "ArrowLeft")
-      await until(() => doc.activeElement === heading("Alpha plan"))
-      for (const [index, title] of titles.entries()) {
-        h.key(heading(title)!, "ArrowLeft")
-        await until(() => heading(title)?.getAttribute("aria-expanded") === "false")
-        if (index === titles.length - 1) break
-        h.key(heading(title)!, "ArrowDown")
-        await until(() => doc.activeElement === heading(titles[index + 1]!))
-      }
-      expect(h.rows().filter((item) => item.dataset.taskId)).toHaveLength(0)
-      // Scrolled to the end with focus outside the tree, one mounted heading is still tabbable:
-      // the one holding the selected task (Alpha, the first), far above the viewport.
-      ;(doc.activeElement as HTMLElement).blur()
-      h.scrollTo(h.list().scrollHeight)
-      await settle()
-      expect(heading("Alpha plan")).toBeDefined()
-      expect(heading("Gamma 5 plan")).toBeUndefined()
-      const stops = headings().filter((item) => item.tabIndex === 0)
-      expect(stops.map((item) => item.textContent?.includes("Alpha plan"))).toEqual([true])
-      stops[0]!.focus()
-      expect(doc.activeElement).toBe(heading("Alpha plan")!)
-      // A focused heading that is not the tab stop stays mounted and focused while scrolled away.
-      h.key(heading("Alpha plan")!, "ArrowDown")
-      await until(() => doc.activeElement === heading("Beta plan"))
-      h.scrollTo(h.list().scrollHeight)
-      await settle()
-      expect(heading("Beta plan")).toBeDefined()
-      expect(doc.activeElement).toBe(heading("Beta plan")!)
-      // Down still steps from the focused heading through the model.
-      h.key(heading("Beta plan")!, "ArrowDown")
-      await until(() => doc.activeElement === heading("Gamma 1 plan"))
-    },
-    {},
-    { extraPlans: 30 },
-  )
-})
-
-/** Attention, Now and tree probes shared by the signal tests below. */
-function signals(h: Awaited<ReturnType<typeof mountPanel>>) {
-  const entries = (group: string) => [
-    ...h.container.querySelectorAll<HTMLButtonElement>(`[data-scheduling-group="${group}"]`),
-  ]
-  const entry = (group: string, taskID: string) =>
-    h.container.querySelector<HTMLButtonElement>(
-      `[data-scheduling-group="${group}"][data-scheduling-task-id="${taskID}"]`,
-    )
-  const count = (label: string) =>
-    h.container.querySelector(`[aria-label="${label}"] .lazers-tasks-schedule-count`)?.textContent
-  const tone = (taskID: string) =>
-    h
-      .row(taskID)
-      ?.querySelector(":scope > .lazers-tasks-row .lazers-tasks-state")
-      ?.getAttribute("data-tone")
-  return { entries, entry, count, tone }
-}
-
-/** One paused plan is one actionable Attention entry; its rows keep the pause marker. */
-async function expectPausedPlan(h: Awaited<ReturnType<typeof mountPanel>>) {
-  const s = signals(h)
-  expect(h.pause.untilPlans).toEqual([])
-  await until(() => Boolean(s.entry("attention", h.alpha[0]!)))
-  await settle()
-  // Two blocked Beta tasks, then the paused plan once: not 60 entries, and no routine waits.
-  expect(s.count("Attention")).toBe("3")
-  expect(s.entries("attention").map((entry) => entry.dataset.schedulingTaskId)).toEqual([
-    h.beta.a,
-    h.beta.join,
-    h.alpha[0],
-  ])
-  const pauseEntry = s.entry("attention", h.alpha[0]!)!
-  expect(pauseEntry.dataset.pausedCount).toBe("60")
-  expect(pauseEntry.textContent).toContain("60 paused")
-  expect(pauseEntry.getAttribute("aria-label")).toContain(
-    "paused: Paused by Architect for review, 60 paused tasks in this plan",
-  )
-  expect(pauseEntry.querySelector(".lazers-tasks-state")?.getAttribute("data-tone")).toBe("paused")
-  // The tree marks every paused row; a routine wait under the pause is not promoted.
-  for (const index of [0, 3, 7]) expect(s.tone(h.alpha[index]!)).toBe("paused")
-  expect(s.entry("attention", h.alpha[3]!)).toBeNull()
-  // The entry is actionable: it selects the task and the inspector names the pause.
-  pauseEntry.click()
-  await until(() => h.row(h.alpha[0]!)?.getAttribute("aria-selected") === "true")
-  await until(() =>
-    Boolean(
-      h.container
-        .querySelector('.lazers-tasks-detail [data-kind="pause"]')
-        ?.textContent?.includes("Paused by Architect for review"),
-    ),
-  )
-}
-
-test("a manual dispatch pause is one actionable Attention entry for its plan", async () => {
-  await withPanel(expectPausedPlan, {}, { alphaPaused: true, alphaChain: true })
-})
-
-test("without topology, the scheduling fallback keeps the pause marker and its Attention entry", async () => {
-  await withPanel(
-    async (h) => {
-      await until(() => h.topologyCalls() > 0)
-      await expectPausedPlan(h)
-      // The plan groups come from the scheduling read, not topology.
-      expect(h.container.textContent).toContain("Showing scheduling-backed groups")
-    },
-    {},
-    { alphaPaused: true, alphaChain: true, topologyUnavailable: true, scheduling: true },
-  )
-})
-
-test("without topology or scheduling, ungrouped paused tasks keep their marker and one entry", async () => {
-  await withPanel(
-    async (h) => {
-      const s = signals(h)
-      await until(() => h.topologyCalls() > 0 && Boolean(s.entry("attention", h.alpha[0]!)))
-      await settle()
-      expect(s.count("Attention")).toBe("3")
-      expect(s.entry("attention", h.alpha[0]!)?.dataset.pausedCount).toBe("60")
-      for (const index of [0, 5]) expect(s.tone(h.alpha[index]!)).toBe("paused")
-      expect(s.entry("attention", h.alpha[5]!)).toBeNull()
-    },
-    {},
-    { alphaPaused: true, topologyUnavailable: true },
-  )
-})
-
-test("Now mounts a bounded window of active work; keys reach every entry across Now and Attention", async () => {
-  await withPanel(
-    async (h) => {
-      // Eight foreground workers, then two asking for input, then two blocked tasks.
-      const s = signals(h)
-      await until(
-        () => Boolean(s.entry("now", h.alpha[0]!)) && Boolean(s.entry("attention", h.beta.join)),
-      )
-      await settle()
-      const now = h.alpha.slice(0, 8)
-      const attention = [h.alpha[8]!, h.alpha[9]!, h.beta.a, h.beta.join]
-      expect(s.count("Now")).toBe("8")
-      expect(s.entries("now").length).toBe(5)
-      expect(s.entries("now")[0]!.tabIndex).toBe(0)
-      expect(
-        h.container.querySelector('[aria-label="Now"] .lazers-tasks-schedule-pager')?.textContent,
-      ).toContain("1–5 of 8")
-      const sequence = [
-        ...now.map((taskID) => ["now", taskID] as const),
-        ...attention.map((taskID) => ["attention", taskID] as const),
-      ]
-      const pressed = ([group, taskID]: readonly [string, string]) =>
-        s.entry(group, taskID)?.getAttribute("aria-pressed") === "true"
-      // Down walks Now, slides its window, then crosses into Attention in order.
-      let current = s.entries("now")[0]!
-      for (const target of sequence.slice(1)) {
-        h.key(current, "ArrowDown")
-        await until(() => pressed(target))
-        expect(s.entries("now").length).toBeLessThanOrEqual(5)
-        expect(s.entries("attention").length).toBeLessThanOrEqual(5)
-        current = s.entry(target[0], target[1])!
-      }
-      // Up from Attention's first entry reaches Now's last, its window slid to the end.
-      h.key(s.entry("attention", h.alpha[8]!)!, "ArrowUp")
-      await until(() => pressed(["now", now.at(-1)!]))
-      // Home reaches Now's first entry; its window slides back.
-      h.key(s.entry("now", now.at(-1)!)!, "Home")
-      await until(() => pressed(["now", now[0]!]))
-      expect(s.entries("now")[0]?.dataset.schedulingTaskId).toBe(now[0])
-      // End reaches the last Attention entry; Down from there enters the tree.
-      h.key(s.entry("now", now[0]!)!, "End")
-      await until(() => pressed(["attention", h.beta.join]))
-      h.key(s.entry("attention", h.beta.join)!, "ArrowDown")
-      await until(() => h.container.ownerDocument.activeElement === h.row(h.alpha[0]!))
-      // The Now pager reaches every active entry without a keyboard.
-      const more = () =>
-        [
-          ...h.container.querySelectorAll<HTMLButtonElement>(
-            '[aria-label="Now"] .lazers-tasks-schedule-pager button',
-          ),
-        ].find((button) => button.textContent === "More")!
-      const seen = new Set(s.entries("now").map((entry) => entry.dataset.schedulingTaskId))
-      more().click()
-      await settle()
-      for (const entry of s.entries("now")) seen.add(entry.dataset.schedulingTaskId)
-      expect([...seen].toSorted()).toEqual(now.toSorted())
-    },
-    {},
-    { active: 8, requests: 2 },
-  )
-})
-
-test("a prerequisite pause remains in the tree without an Attention entry", async () => {
-  await withPanel(
-    async (h) => {
-      await until(() => h.rows().length > 0 && Boolean(h.attention(h.beta.a)))
-      await settle()
-      expect(Boolean(h.attention(h.alpha[0]!))).toBe(false)
-    },
-    {},
-    { alphaPaused: true, dependencyPause: true, alphaChain: true },
-  )
-})
-
-test("a ready conditional pause stays in the planned tree without an Attention entry", async () => {
-  await withPanel(
-    async (h) => {
-      const s = signals(h)
-      const taskID = h.alpha[0]!
-      await until(
-        () =>
-          h.topologyCalls() > 0 &&
-          s.tone(taskID) === "paused" &&
-          s.count("Attention") !== undefined,
-      )
-      await settle()
-      const row = h.row(taskID)!
-      const state = row.querySelector<HTMLElement>(
-        ":scope > .lazers-tasks-row .lazers-tasks-state",
-      )!
-      expect(h.pause.untilPlans).toEqual([uuid(9555)])
-      expect(state.dataset.state).toBe("ready")
-      expect(state.dataset.tone).toBe("paused")
-      expect(row.getAttribute("aria-level")).toBe("2")
-      expect(row.getAttribute("aria-posinset")).toBe("1")
-      expect(row.getAttribute("aria-setsize")).toBe("60")
-      expect(s.entry("attention", taskID)).toBeNull()
-      expect(s.count("Attention")).toBe("2")
-    },
-    {},
-    { readyConditionalPause: true },
-  )
-})
-
-test("equal pause reasons keep distinct known-plan Attention entries without topology or scheduling", async () => {
-  await withPanel(
-    async (h) => {
-      await until(() => h.topologyCalls() > 0 && Boolean(h.attention(h.alpha[0]!)))
-      await settle()
-      expect(Boolean(h.attention(h.beta.root))).toBe(true)
-      expect(h.attention(h.alpha[0]!)?.dataset.pausedCount).toBe("60")
-      expect(h.attention(h.beta.root)?.dataset.pausedCount).toBe("2")
-    },
-    {},
-    { alphaPaused: true, betaPaused: true, topologyUnavailable: true },
-  )
-})
-
-test("arrowing through Now and Attention keeps focus on the entries while details load", async () => {
-  await withPanel(
-    async (h) => {
-      // Two foreground workers, six requests, two blocked tasks: ten entries in two windows.
-      const s = signals(h)
-      await until(
-        () => Boolean(s.entry("now", h.alpha[0]!)) && Boolean(s.entry("attention", h.alpha[2]!)),
-      )
-      await settle()
-      const doc = h.container.ownerDocument
-      const sequence = [
-        ...h.alpha.slice(0, 2).map((taskID) => ["now", taskID] as const),
-        ...[...h.alpha.slice(2, 8), h.beta.a, h.beta.join].map(
-          (taskID) => ["attention", taskID] as const,
-        ),
-      ]
-      const title = () => h.container.querySelector(".lazers-tasks-detail .lazers-tasks-title")
-      s.entry("now", h.alpha[0]!)!.focus()
-      for (const [group, taskID] of sequence.slice(1)) {
-        // The key goes wherever focus is, as it would from a keyboard.
-        h.key(doc.activeElement as HTMLElement, "ArrowDown")
-        // The selected task's details resolve before the next keypress.
-        await until(
-          () => h.detailCalls.at(-1) === taskID && title()?.textContent === h.nameOf(taskID),
-        )
-        await settle()
-        expect(doc.activeElement).toBe(s.entry(group, taskID))
-        expect(s.entry(group, taskID)?.getAttribute("aria-pressed")).toBe("true")
-      }
-      // Up and Home stay in the list too.
-      h.key(doc.activeElement as HTMLElement, "ArrowUp")
-      await until(() => title()?.textContent === h.nameOf(h.beta.a))
-      await settle()
-      expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
-      h.key(doc.activeElement as HTMLElement, "Home")
-      await until(() => title()?.textContent === h.nameOf(h.alpha[0]!))
-      await settle()
-      expect(doc.activeElement).toBe(s.entry("now", h.alpha[0]!))
-      // A click on an entry still takes the person to its row, even for the selected task.
-      s.entry("now", h.alpha[0]!)!.click()
-      await until(() => doc.activeElement === h.row(h.alpha[0]!))
-      // (Attention's window still ends at its last entries.)
-      s.entry("attention", h.beta.a)!.click()
-      await until(() => doc.activeElement === h.row(h.beta.a))
-      // Down from the last entry still enters the tree.
-      s.entry("attention", h.beta.join)!.focus()
-      h.key(s.entry("attention", h.beta.join)!, "ArrowDown")
-      await until(() => doc.activeElement === h.row(h.alpha[0]!))
-    },
-    {},
-    { active: 2, requests: 6 },
-  )
-})
-
-test("an unchanged refresh keeps the focused Now or Attention button and its focus", async () => {
-  await withPanel(
-    async (h) => {
-      const s = signals(h)
-      await until(
-        () => Boolean(s.entry("now", h.alpha[0]!)) && Boolean(s.entry("attention", h.beta.a)),
-      )
-      await settle()
-      const doc = h.container.ownerDocument
-      for (const [group, taskID] of [
-        ["attention", h.beta.a],
-        ["now", h.alpha[1]!],
-      ] as const) {
-        const focused = s.entry(group, taskID)!
-        focused.focus()
-        expect(doc.activeElement).toBe(focused)
-        const reads = h.queryCalls.length
-        h.announceChange()
-        await until(() => h.queryCalls.length > reads)
-        await settle()
-        await settle()
-        expect(focused.isConnected).toBe(true)
-        expect(s.entry(group, taskID)).toBe(focused)
-        expect(doc.activeElement).toBe(focused)
-      }
-    },
-    {},
-    { active: 2, requests: 2 },
-  )
-})
-
-test("manual pauses without plan identity remain separate and actionable", async () => {
-  await withPanel(
-    async (h) => {
-      const s = signals(h)
-      const alphaPause = h.alpha[0]!
-      await until(
-        () =>
-          h.topologyCalls() > 0 &&
-          s.count("Attention") === "64" &&
-          Boolean(s.entry("attention", alphaPause)) &&
-          Boolean(s.entry("attention", h.alpha[1]!)),
-      )
-      await settle()
-      expect(h.pause.untilPlans).toEqual([])
-      expect(s.entry("attention", alphaPause)?.dataset.pausedCount).toBe("1")
-      expect(s.entry("attention", h.alpha[1]!)?.dataset.pausedCount).toBe("1")
-
-      s.entry("attention", alphaPause)!.click()
-      await until(() => h.row(alphaPause)?.getAttribute("aria-selected") === "true")
-
-      // The other plan's entry is outside the mounted window but remains keyboard-reachable.
-      const first = s.entry("attention", h.beta.a)!
-      h.key(first, "End")
-      await until(() => s.entry("attention", h.beta.b)?.getAttribute("aria-pressed") === "true")
-      h.key(s.entry("attention", h.beta.b)!, "ArrowUp")
-      await until(() => s.entry("attention", h.beta.root)?.getAttribute("aria-pressed") === "true")
-      const betaPause = s.entry("attention", h.beta.root)!
-      expect(betaPause.dataset.pausedCount).toBe("1")
-      betaPause.click()
-      await until(() => h.row(h.beta.root)?.getAttribute("aria-selected") === "true")
-    },
-    {},
-    {
-      alphaPaused: true,
-      betaPaused: true,
-      topologyUnavailable: true,
-      withoutPlanIdentity: true,
-    },
-  )
-})
-
-test("signal keys select without revealing or scrolling the tree; Enter and clicks still do", async () => {
-  await withPanel(async (h) => {
-    // Attention: Beta's two blocked tasks, inside a collapsed fork 60 rows down the tree.
-    const s = signals(h)
-    await until(() => Boolean(s.entry("attention", h.beta.join)))
-    await settle()
-    const doc = h.container.ownerDocument
-    const title = () => h.container.querySelector(".lazers-tasks-detail .lazers-tasks-title")
-    h.scrollTo(0)
-    s.entry("attention", h.beta.a)!.focus()
-    for (const [key, taskID] of [
-      ["ArrowDown", h.beta.join],
-      ["ArrowUp", h.beta.a],
-      ["End", h.beta.join],
-      ["Home", h.beta.a],
-    ] as const) {
-      h.key(doc.activeElement as HTMLElement, key)
-      await until(
-        () => h.detailCalls.at(-1) === taskID && title()?.textContent === h.nameOf(taskID),
-      )
-      await settle()
-      // The list did not move: the focused entry stays where the person is looking.
-      expect(h.list().scrollTop).toBe(0)
-      expect(doc.activeElement).toBe(s.entry("attention", taskID))
-      // The tree was not opened to the task: Beta's fork stays collapsed (its branch row unlisted).
-      // A selected join may stay mounted offscreen as the pinned tab stop; nothing scrolled to it.
-      expect(h.row(h.beta.root)).toBeNull()
-      expect(h.row(h.beta.a)).toBeNull()
-    }
-    // Enter (a click on the button) is explicit entry: reveal the branch row in its fork, scroll
-    // to it and focus it.
-    s.entry("attention", h.beta.a)!.click()
-    await until(() => doc.activeElement === h.row(h.beta.a))
-    expect(h.list().scrollTop).toBeGreaterThan(ROW * 40)
-    expect(h.row(h.beta.root)?.getAttribute("aria-expanded")).toBe("true")
-  })
-})
-
-test("a focused Attention request that resolves keeps focus on a visible signal", async () => {
-  await withPanel(
-    async (h) => {
-      // Now: six workers (window shows five). Attention: two requests, two blocked tasks.
-      const s = signals(h)
-      await until(() => Boolean(s.entry("attention", h.alpha[7]!)))
-      await settle()
-      const doc = h.container.ownerDocument
-      const refresh = async () => {
-        const reads = h.queryCalls.length
-        h.announceChange()
-        await until(() => h.queryCalls.length > reads)
-        await settle()
-        await settle()
-      }
-      // The request is answered and the worker keeps going: the task moves to Now, past the
-      // mounted Now window. Focus follows it there; the window slides to show it.
-      s.entry("attention", h.alpha[7]!)!.focus()
-      h.resolveRequest(h.alpha[7]!, true)
-      await refresh()
-      expect(s.count("Now")).toBe("7")
-      expect(s.entry("attention", h.alpha[7]!)).toBeNull()
-      expect(doc.activeElement).toBe(s.entry("now", h.alpha[7]!))
-      // A request answered with no further signal: focus takes the entry that took its place.
-      s.entry("attention", h.alpha[6]!)!.focus()
-      h.resolveRequest(h.alpha[6]!, false)
-      await refresh()
-      expect(s.count("Attention")).toBe("2")
-      expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
-      // Keys continue from the recovered focus.
-      h.key(doc.activeElement as HTMLElement, "ArrowDown")
-      await until(() => doc.activeElement === s.entry("attention", h.beta.join))
-    },
-    {},
-    { active: 6, requests: 2 },
-  )
-})
-
-test("an off-window focused signal keeps its window and focus across same-view refreshes", async () => {
-  await withPanel(
-    async (h) => {
-      // Ten Attention entries: eight requests, two blocked tasks. End slides the window to 6–10.
-      const s = signals(h)
-      await until(() => Boolean(s.entry("attention", h.alpha[0]!)))
-      await settle()
-      const doc = h.container.ownerDocument
-      const title = () => h.container.querySelector(".lazers-tasks-detail .lazers-tasks-title")
-      const pager = () =>
-        h.container.querySelector('[aria-label="Attention"] .lazers-tasks-schedule-pager-range')
-          ?.textContent
-      s.entry("attention", h.alpha[0]!)!.focus()
-      h.key(doc.activeElement as HTMLElement, "End")
-      await until(() => title()?.textContent === h.nameOf(h.beta.join))
-      h.key(doc.activeElement as HTMLElement, "ArrowUp")
-      await until(() => title()?.textContent === h.nameOf(h.beta.a))
-      await settle()
-      expect(pager()).toBe("6–10 of 10")
-      expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
-      const expectHeld = () => {
-        expect(pager()).toBe("6–10 of 10")
-        expect(doc.activeElement).toBe(s.entry("attention", h.beta.a))
-        expect(title()?.textContent).toBe(h.nameOf(h.beta.a))
-      }
-      // A task-change refresh (SCHEDULE_UPDATED) with unchanged membership.
-      const reads = h.queryCalls.length
-      h.announceChange()
-      await until(() => h.queryCalls.length > reads)
-      await settle()
-      await settle()
-      expectHeld()
-      // A session update with the same server, session and directory: not a new view.
-      const locations = h.locationReads()
-      h.touchSession()
-      await settle()
-      await settle()
-      expectHeld()
-      expect(h.locationReads()).toBe(locations)
-      // A reconnect re-reads the project and the view blanks for a moment. It returns as the
-      // same view: its window stays, and focus returns to the entry it was on.
-      h.reconnect()
-      await until(() => h.locationReads() > locations)
-      await until(() => doc.activeElement === s.entry("attention", h.beta.a))
-      await settle()
-      expectHeld()
-      // Keys continue from the kept focus.
-      h.key(doc.activeElement as HTMLElement, "ArrowUp")
-      await until(() => doc.activeElement === s.entry("attention", h.alpha[7]!))
-      // A real filter change is a new view: its windows start over, also on the way back.
-      const initialState = h.queryCalls[0]?.state
-      h.chooseFilter("Queued")
-      await until(() => h.queryCalls.at(-1)?.state === "queued")
-      h.chooseFilter("Open")
-      await until(
-        () =>
-          h.queryCalls.at(-1)?.state === initialState && Boolean(s.entry("attention", h.alpha[0]!)),
-      )
-      await settle()
-      expect(pager()).toBe("1–5 of 10")
-    },
-    {},
-    { requests: 8 },
   )
 })

@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { PlanInput } from "./schema.ts"
+import { planPrioritySortSQL } from "./priority.ts"
 import { retainedVerificationsForInspection } from "./retained-verification/store.ts"
 import type {
   RetainedHumanEvidenceRequirements,
@@ -247,7 +248,7 @@ function planRows(store: RunnerStore, planID?: string): PlanRow[] {
           json_extract(body,'$.integrationOrder') AS integrationOrder
          FROM runner_plans
          WHERE project_directory=? AND (? IS NULL OR id=?)
-         ORDER BY COALESCE(json_extract(body,'$.priority'),0) DESC,rowid`,
+         ORDER BY ${planPrioritySortSQL("body")},rowid`,
       )
       .all(store.repository.projectDirectory, planID ?? null, planID ?? null),
   )

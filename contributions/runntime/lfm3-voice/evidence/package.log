@@ -1,0 +1,13 @@
+pnpm pack (packages/runntime) at a3718c80f959b8e86d1b2abf056fb578f532aeb9
+asset: runntime-0.2.0-a3718c8.tgz
+9be9c3c9dbaa6bcaa76f99626c98e0459e6b2077529c448d64518f9050719c21  /private/tmp/claude-501/-Users-tjw--claude-spares-spare-5BD2Ie/0b55e752-5f50-46a0-b5b4-a2bd98c834ca/scratchpad/runntime-0.2.0-a3718c8.tgz
+url: https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-a3718c8/runntime-0.2.0-a3718c8.tgz
+package/package.json
+package/README.md
+package/dist/classifier-DlqV5LnK.mjs
+package/dist/zoo/index.mjs
+package/dist/zoo/transformers/index.mjs
+package/dist/config-D2m8zfTp.d.mts
+package/dist/zoo/index.d.mts
+package/dist/zoo/transformers/index.d.mts
+package/LICENSE.md

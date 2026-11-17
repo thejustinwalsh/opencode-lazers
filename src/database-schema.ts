@@ -63,6 +63,11 @@ export const schemaModules = {
       "runner_progress_reminders",
     ],
   },
+  priority: {
+    generation: 1,
+    source: "src/runner/priority.ts",
+    tables: ["runner_priority_migration"],
+  },
   context: {
     generation: 1,
     source: "src/context/index.ts",

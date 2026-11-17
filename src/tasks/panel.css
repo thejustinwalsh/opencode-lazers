@@ -132,7 +132,7 @@
   background: var(--text-weak);
 }
 .lazers-tasks-activity-indicator[data-state="active"] {
-  background: var(--icon-success-base);
+  background: var(--task-tone-running);
 }
 .lazers-tasks-activity-indicator[data-state="unknown"] {
   background: var(--task-tone-warning);
@@ -140,205 +140,6 @@
 .lazers-tasks-waiting {
   color: var(--task-tone-warning);
   font-weight: 500;
-}
-.lazers-tasks-plan {
-  position: relative;
-  min-width: 0;
-  margin: 8px 0 0;
-}
-.lazers-tasks-plan-heading {
-  display: flex;
-  width: 100%;
-  box-sizing: border-box;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-  padding: 8px 36px 4px 4px;
-  color: var(--text-weak);
-  font-size: 0.85em;
-}
-.lazers-tasks-plan-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lazers-tasks-plan-order {
-  display: flex;
-  flex: 0 1 auto;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: 4px 8px;
-  min-width: 0;
-  max-width: 58%;
-  overflow: hidden;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* Keep the tree heading compact; open details only when the scheduler facts are requested. */
-.lazers-tasks-plan-details {
-  min-width: 0;
-}
-.lazers-tasks-plan-details > summary {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  color: var(--text-weak);
-  cursor: pointer;
-  list-style: none;
-}
-.lazers-tasks-plan-details > summary::-webkit-details-marker {
-  display: none;
-}
-.lazers-tasks-plan-details > summary::marker {
-  content: "";
-}
-.lazers-tasks-plan-details > summary > span {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 0.78em;
-  font-weight: 600;
-  line-height: 1;
-}
-.lazers-tasks-plan-details > summary:hover {
-  background: var(--surface-base-hover);
-  color: var(--text-strong);
-}
-.lazers-tasks-plan-details-panel {
-  max-height: min(18rem, 45vh);
-  overflow: auto;
-  overscroll-behavior: contain;
-  margin: 0 8px 4px 16px;
-  padding: 8px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 4px;
-  background: var(--background-base);
-  color: var(--text-base);
-  font-size: 0.85em;
-  line-height: 1.45;
-}
-.lazers-tasks-plan-details-reason,
-.lazers-tasks-plan-prerequisite-summary {
-  margin: 0 0 6px;
-  overflow-wrap: anywhere;
-}
-.lazers-tasks-plan-prerequisite-summary {
-  color: var(--text-weak);
-}
-.lazers-tasks-plan-prerequisite-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 4px 8px;
-  min-width: 0;
-}
-.lazers-tasks-plan-prerequisite-links > .lazers-tasks-dependency-ref {
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
-/*
- * Now / Attention / Next: one compact block above the tree, closed by a single hairline. Section
- * labels share the plan heading's inset; entry icons share the tree's icon column.
- */
-.lazers-tasks-schedule-groups {
-  display: grid;
-  gap: 2px;
-  margin: 0 0 4px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-weak-base);
-}
-.lazers-tasks-schedule-group {
-  min-width: 0;
-}
-.lazers-tasks-schedule-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 0;
-  padding: 6px 8px 0 var(--task-icon-inset);
-  color: var(--text-weak);
-  font-size: 0.85em;
-  font-weight: 500;
-}
-.lazers-tasks-schedule-count {
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-.lazers-tasks-schedule-entry {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  min-height: 32px;
-  padding-right: 4px;
-  border-radius: 4px;
-}
-.lazers-tasks-schedule-entry:hover {
-  background: var(--surface-base-hover);
-}
-.lazers-tasks-schedule-entry[data-selected="true"] {
-  background: color-mix(in srgb, var(--text-strong) 9%, var(--background-base));
-}
-.lazers-tasks-schedule-select {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 32px;
-  padding: 0 4px 0 var(--task-icon-inset);
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-strong);
-  text-align: left;
-  cursor: pointer;
-}
-.lazers-tasks-schedule-entry-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lazers-tasks-schedule-entry-meta {
-  flex: none;
-  color: var(--text-weak);
-  font-size: 0.85em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* Attention mounts a short window; the pager names the range and steps it. */
-.lazers-tasks-schedule-pager {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 4px 0 var(--task-icon-inset);
-  color: var(--text-weak);
-  font-size: 0.85em;
-}
-.lazers-tasks-schedule-pager-range {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-variant-numeric: tabular-nums;
 }
 .lazers-tasks-scheduling-warning {
   padding: 4px 8px;
@@ -616,23 +417,11 @@
   margin-top: 0;
   margin-bottom: 6px;
 }
-/* The inspector's link icon takes the first blocker's state color, matching the row's link. */
+/* The inspector's link icon is informational: plain foreground, never a status color. */
 .lazers-tasks-dependencies-visible > .lazers-tasks-dependency-icon {
   display: inline-grid;
   place-items: center;
   color: var(--icon-base);
-}
-.lazers-tasks-dependency-icon[data-tone="running"] {
-  color: var(--task-tone-running);
-}
-.lazers-tasks-dependency-icon:is([data-tone="waiting"], [data-tone="attention"]) {
-  color: var(--task-tone-warning);
-}
-.lazers-tasks-dependency-icon[data-tone="failed"] {
-  color: var(--task-tone-critical);
-}
-.lazers-tasks-dependency-icon[data-tone="accepted"] {
-  color: var(--task-tone-success);
 }
 .lazers-tasks-dependencies + .lazers-tasks-objective {
   margin-top: 8px;
@@ -679,22 +468,6 @@
   align-items: center;
   gap: 8px;
 }
-.lazers-tasks-plan-heading::before {
-  content: "›";
-  display: inline-block;
-  flex: none;
-  width: 12px;
-  text-align: center;
-  color: var(--text-weak);
-}
-.lazers-tasks-plan[aria-expanded="true"] > .lazers-tasks-plan-heading::before {
-  transform: rotate(90deg);
-}
-.lazers-tasks-plan:focus-visible {
-  outline: 2px solid var(--border-selected);
-  outline-offset: -2px;
-}
-
 /*
  * The tree is a spacer of the full list height; only a window of items is mounted, each absolutely
  * positioned by the virtualizer. Rows keep their 32px line; the branch rail is drawn per row.
@@ -722,7 +495,7 @@
   font-size: 0.85em;
 }
 
-/* Task tree: one 32px line per task; parallel branches hang from their fork on separate rules. */
+/* Task tree: one 32px line per task; dependencies nest beneath the task that expands them. */
 .lazers-tasks-entry {
   min-width: 0;
   border-radius: 4px;
@@ -758,11 +531,6 @@
   height: 28px;
   margin-right: -4px;
 }
-/* Without parallel work no row can expand, so the disclosure column gives its width to titles. */
-.lazers-tasks-tree:not([data-forks="true"]) .lazers-tasks-disclosure-spacer {
-  width: 0;
-  margin-right: calc(var(--task-icon-inset) - 8px);
-}
 .lazers-tasks-disclosure {
   border-radius: 4px;
   color: var(--text-weak);
@@ -779,38 +547,29 @@
   height: 16px;
   color: var(--icon-base);
 }
-/* One tone map for row, signal, inspector and blocker-link icons; the glyph carries the state too. */
-:is(
-  .lazers-tasks-state,
-  .lazers-tasks-inspector-icon,
-  .lazers-tasks-row-blocker
-)[data-tone="running"] {
+/*
+ * State icons carry the status colors; sequencing and link icons never do. Green (success) is
+ * reserved for completed work that succeeded (integrated). Accepted work awaiting integration is neutral.
+ */
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="running"] {
   color: var(--task-tone-running);
 }
 :is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="ready"] {
   color: var(--text-strong);
 }
-.lazers-tasks-state[data-tone="attention"],
-.lazers-tasks-state[data-tone="waiting"],
-:is(.lazers-tasks-inspector-icon, .lazers-tasks-row-blocker)[data-tone="attention"],
-:is(.lazers-tasks-inspector-icon, .lazers-tasks-row-blocker)[data-tone="waiting"] {
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="attention"],
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="waiting"] {
   color: var(--task-tone-warning);
 }
-:is(
-  .lazers-tasks-state,
-  .lazers-tasks-inspector-icon,
-  .lazers-tasks-row-blocker
-)[data-tone="failed"] {
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="failed"] {
   color: var(--task-tone-critical);
 }
-:is(
-  .lazers-tasks-state,
-  .lazers-tasks-inspector-icon,
-  .lazers-tasks-row-blocker
-)[data-tone="accepted"] {
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="integrated"] {
   color: var(--task-tone-success);
 }
-:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="integrated"],
+:is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="accepted"] {
+  color: var(--text-base);
+}
 :is(.lazers-tasks-state, .lazers-tasks-inspector-icon)[data-tone="cancelled"] {
   color: var(--text-weak);
 }
@@ -837,31 +596,24 @@
 .lazers-tasks-entry[data-context-only="true"] > .lazers-tasks-row .lazers-tasks-row-title {
   color: var(--text-base);
 }
-/* Rows hanging from a fork sit on a rail; consecutive rows join it, branches start 2px apart. */
-.lazers-tasks-entry[data-depth="1"] {
-  margin-left: 18px;
+/* Dependency rows nest one 18px step per level on a hairline rail. */
+.lazers-tasks-entry[data-depth]:not([data-depth="0"]) {
+  margin-left: calc(var(--task-depth, 1) * 18px);
   padding-left: 4px;
   border-left: 1px solid var(--border-weak-base);
   border-radius: 0 4px 4px 0;
 }
-.lazers-tasks-entry[data-branch-first="true"] {
-  margin-top: 2px;
-}
-.lazers-tasks-branch-note {
-  margin-left: 18px;
-  padding: 2px 8px 6px 32px;
-  border-left: 1px solid var(--border-weak-base);
-  color: var(--text-weak);
-  font-size: 0.85em;
-}
-.lazers-tasks-plan-state,
-.lazers-tasks-plan-priority {
+/* Right-hand signals: blocker link and state, icon only and never shrunk. */
+.lazers-tasks-row-signals {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 8px;
 }
 
 /*
  * Row status is icons only at every width, so the title alone yields width: the themed state icon
- * names the state, and a link icon that never shrinks opens the first blocker. Now/Attention match.
+ * names the state, and a link icon that never shrinks opens the first blocker.
  */
 .lazers-tasks-row-blocker {
   display: inline-grid;
@@ -884,4 +636,31 @@
 .lazers-tasks-row-blocker:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
+}
+
+/* Inspector scheduling facts: priority, plan, order and sequencing in one compact grid. */
+.lazers-tasks-detail .lazers-tasks-scheduling-facts {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 10px;
+  font-size: 0.9em;
+}
+/* One row per fact; the generic detail dt/dd margins would otherwise offset the pair. */
+.lazers-tasks-detail .lazers-tasks-fact {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+}
+.lazers-tasks-detail .lazers-tasks-fact dt {
+  margin: 0;
+  color: var(--text-weak);
+  font-weight: 400;
+}
+.lazers-tasks-detail .lazers-tasks-fact dd {
+  margin: 0;
+  min-width: 0;
+  line-height: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

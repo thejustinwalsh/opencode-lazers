@@ -789,22 +789,20 @@ export class ProbeRepository {
       throw new Error("Retained verification generation is no longer current")
     const canonicalCandidate = realpathSync(workspace)
     const canonicalOriginal = realpathSync(attempt.workspace)
-    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: canonicalCandidate,
-      encoding: "utf8",
-    }).trim()
-    const head = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: canonicalCandidate,
-      encoding: "utf8",
-    }).trim()
-    const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+    // Two Git processes (was four): toplevel+HEAD, then one status that also
+    // reports unmerged entries. This path is inside a synchronous transaction.
+    const [top = "", head = ""] = execFileSync("git", ["rev-parse", "--show-toplevel", "HEAD"], {
       cwd: canonicalCandidate,
       encoding: "utf8",
     })
-    const conflicts = execFileSync("git", ["ls-files", "-u", "-z"], {
-      cwd: canonicalCandidate,
-      encoding: "utf8",
-    })
+      .trim()
+      .split("\n")
+    const entries = execFileSync(
+      "git",
+      ["status", "--porcelain=v2", "--untracked-files=all", "-z"],
+      { cwd: canonicalCandidate, encoding: "utf8" },
+    )
+    const dirty = entries.length > 0
     if (
       !existsSync(canonicalCandidate) ||
       canonicalCandidate !== workspace ||
@@ -812,8 +810,7 @@ export class ProbeRepository {
       pathsOverlap(canonicalCandidate, canonicalOriginal) ||
       top !== canonicalCandidate ||
       head !== basis.candidate.revision ||
-      status ||
-      conflicts
+      dirty
     )
       throw new Error("Retained probe checkout is not the exact distinct clean candidate")
   }

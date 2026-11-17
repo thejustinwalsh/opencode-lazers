@@ -3893,6 +3893,29 @@ test("F-S4-2 scheduler dispatches runnable work behind 1000 high-priority termin
   expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
 })
 
+test("a runtime tick yields to the event loop while observing Git state", async () => {
+  const f = fixture({ delayed: true })
+  await runPlan(f)
+  let beats = 0
+  let last = performance.now()
+  let worstGap = 0
+  const timer = setInterval(() => {
+    const now = performance.now()
+    worstGap = Math.max(worstGap, now - last)
+    last = now
+    beats++
+  }, 2)
+  try {
+    await f.runtime.tick()
+  } finally {
+    clearInterval(timer)
+  }
+  expect(f.store.attempts(f.receipt.planID).length).toBeGreaterThan(0)
+  expect(beats).toBeGreaterThan(0)
+  // No synchronous Git or filesystem slice may hold the thread for a whole tick.
+  expect(worstGap).toBeLessThan(500)
+})
+
 test("F-S4-2 retirement preserves a live owner's location outside the display window", async () => {
   const f = fixture({ delayed: true })
   await runPlan(f)
@@ -9585,7 +9608,7 @@ test("priority orders conflicting plans without rejecting their overlapping scop
       planID: later.planID,
       expectedVersion: f.store.plan(later.planID)!.version,
       action: "schedule",
-      priority: -1,
+      priority: 0,
       reason: "Let another plan take precedence after this worker finishes",
     },
     "owner",
@@ -9638,7 +9661,7 @@ test("runtime dispatch matches scheduling projection for submission ties and sha
 })
 
 test("afterPlans dispatches from combined integration while prerequisite cleanup is still pending", async () => {
-  for (const childPriority of [10, -10]) {
+  for (const childPriority of [10, 0]) {
     const f = fixture({
       independent: true,
       delayed: true,
@@ -9646,6 +9669,13 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       taskFiles: [{ name: "a", path: "a.txt" }],
     })
     const parentID = f.receipt.planID
+    // A child that ranks below its prerequisite still dispatches once the prerequisite integrates.
+    if (childPriority === 0)
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_plans SET body=json_set(body,'$.priority',1) WHERE id=?")
+          .run(parentID),
+      )
     const childTask = f.createTask("b", "b.txt")
     const child = f.store.submit(
       {
@@ -9847,7 +9877,7 @@ test("afterPlans cleanup cannot publish over cancellation or reuse the historica
   const { parentID, child, accepted } = await prepareAfterPlanDependency(
     f,
     "cancel-cleanup",
-    -10,
+    0,
     true,
   )
   const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
@@ -13842,6 +13872,7 @@ test("normal source scans do not materialize historical notice payloads across a
   f.inbox.set(renewal.previous_session_id, [input, changedInput])
   // F-S3-1: fake the native enqueue notification alongside the inbox mutation.
   f.runtime.observeArchitectSourceEvent(renewal.previous_session_id)
+  f.runtime.flushSourceInvalidations()
   await f.runtime.tick()
 
   expect(historicalRowsRead).toBe(0)
@@ -14211,6 +14242,7 @@ test("reconciliation keeps separate current-owner pointers and receipts for mult
 
   f.inbox.set(firstOwner, [{ id: "msg_second_source_input", type: "user", delivery: "queue" }])
   f.runtime.observeArchitectSourceEvent(firstOwner)
+  f.runtime.flushSourceInvalidations()
   await f.runtime.tick()
   for (const sourceSessionID of [
     firstRenewal.previous_session_id,
@@ -15075,6 +15107,7 @@ test("a previously seen pending input that disappears without history stays unkn
   f.inbox.set("owner", [])
   // F-S3-1: the native cancellation invalidates a completed source scan.
   f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
   await f.runtime.tick()
 
   expect(f.store.architectSourceInputs("owner")).toContainEqual(
@@ -15972,12 +16005,14 @@ test("F-S3-1 archived sources leave polling while their history and native-event
   expect(f.store.architectSources()).toEqual([])
   expect(f.store.architectSourceJournalPage(f.receipt.planID, 100).records).not.toHaveLength(0)
   f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
   expect(f.store.architectSource("owner")!.state).toBe("active")
   await f.runtime.tick()
   expect(reads).toBe(scans + 1)
   expect(f.store.architectSource("owner")).toMatchObject({ state: "retired", revision })
   expect(inputTimes()).toEqual(before)
   f.runtime.observeArchitectSourceEvent()
+  f.runtime.flushSourceInvalidations()
   expect(f.store.architectSource("owner")!.state).toBe("active")
   await f.runtime.tick()
   expect(reads).toBe(scans + 2)
@@ -15997,6 +16032,7 @@ test("F-S3-1 activity during a source read keeps it scheduled for a fresh pass",
   await f.runtime.tick()
   await f.runtime.tick()
   f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
   const started = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   const read = f.host.architectInputPage!.bind(f.host)
@@ -16012,6 +16048,7 @@ test("F-S3-1 activity during a source read keeps it scheduled for a fresh pass",
   const tick = f.runtime.tick()
   await started.promise
   f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
   held = false
   release.resolve()
   await tick
@@ -16064,6 +16101,7 @@ test("late and mutable assistant tool results are signalled through the progress
   }
   // F-S3-1: the native tool completion invalidates a retired source without polling it forever.
   f.runtime.observeArchitectSourceEvent(renewal.previous_session_id)
+  f.runtime.flushSourceInvalidations()
   const predecessor = renewal.previous_session_id
   const successor = renewal.successor_session_id
   const firstPointer = f.store

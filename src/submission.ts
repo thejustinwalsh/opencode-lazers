@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process"
 import { TaskSubmissionSchema } from "./task.ts"
 import type { TaskRepository } from "./storage.ts"
 import type { TaskSpec } from "./task.ts"
@@ -18,15 +17,35 @@ class InvalidVerificationTimingError extends Error {
   }
 }
 
-export function startingRevision(directory: string): TaskSpec["provenance"]["startingRevision"] {
-  const git = (...args: string[]) =>
-    spawnSync("git", args, { cwd: directory, encoding: "utf8", timeout: 5_000 })
-  const head = git("rev-parse", "--verify", "HEAD")
+export async function startingRevision(
+  directory: string,
+): Promise<TaskSpec["provenance"]["startingRevision"]> {
+  const git = async (...args: string[]) => {
+    let proc: Bun.Subprocess<"ignore", "pipe", "ignore">
+    try {
+      proc = Bun.spawn(["git", ...args], {
+        cwd: directory,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      })
+    } catch {
+      return { status: null, stdout: "" }
+    }
+    const timer = setTimeout(() => proc.kill(), 5_000)
+    try {
+      const [stdout, status] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+      return { status, stdout }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  const head = await git("rev-parse", "--verify", "HEAD")
   if (head.status === 0) return { kind: "git", commit: head.stdout.trim() }
-  const branch = git("symbolic-ref", "--quiet", "HEAD")
+  const branch = await git("symbolic-ref", "--quiet", "HEAD")
   if (
     branch.status === 0 &&
-    git("show-ref", "--verify", "--quiet", branch.stdout.trim()).status === 1
+    (await git("show-ref", "--verify", "--quiet", branch.stdout.trim())).status === 1
   ) {
     return { kind: "unborn" }
   }

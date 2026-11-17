@@ -2,9 +2,9 @@ import { scheduledTaskPageSQL } from "./tasks/schedule-order.ts"
 import { Database, SQLiteError } from "bun:sqlite"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
-import { mkdirSync } from "node:fs"
+import { mkdirSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, isAbsolute, join } from "node:path"
+import { basename, dirname, isAbsolute, join } from "node:path"
 import {
   IdempotencyKeySchema,
   TaskProposalSchema,
@@ -57,226 +57,396 @@ export function taskDatabasePath(dataDirectory?: string): string {
   return join(directory, "tasks.sqlite")
 }
 
+/**
+ * SQLite lock-wait budget per statement on the plugin's connections. All
+ * in-process writers share one connection per database (see
+ * `acquireSharedConnection`), so only another process (verification CLI, a second
+ * service) can hold a lock. A wait inside SQLite blocks the whole event loop, so
+ * it stays well under Desktop's 2s probe; `atomicAsync` waits with
+ * `busy_timeout=0` and yields to the event loop between attempts instead.
+ */
+export const SQLITE_BUSY_TIMEOUT_MS = 250
+/** Default total budget for `atomicAsync` contention retries. */
+export const ATOMIC_ASYNC_DEADLINE_MS = 5_000
+
+/** Thrown by `atomicAsync` when a write lock could not be acquired before its deadline. */
+export class StorageBusyError extends Error {
+  constructor(
+    readonly attempts: number,
+    readonly waitedMs: number,
+    options?: { cause?: unknown },
+  ) {
+    super(`LAZERS database stayed locked for ${waitedMs}ms across ${attempts} attempts`, options)
+    this.name = "StorageBusyError"
+  }
+}
+
+export function isSqliteBusy(error: unknown): boolean {
+  return error instanceof SQLiteError && /^SQLITE_(BUSY|LOCKED)/.test(error.code ?? "")
+}
+
+function migrateTasks(db: Database): void {
+  const version = () =>
+    db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
+  const initial = version()
+  if (initial > 8) throw new Error(`Unsupported LAZERS database version ${initial}`)
+  if (initial < 8)
+    db.transaction(() => {
+      const current = version()
+      if (current > 8) throw new Error(`Unsupported LAZERS database version ${current}`)
+      db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        project_directory TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        body TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS tasks_project_created
+        ON tasks(project_directory, created_at);
+    `)
+      if (current < 2) {
+        db.exec(`
+        ALTER TABLE tasks ADD COLUMN created_version INTEGER NOT NULL DEFAULT 0;
+        UPDATE tasks SET created_version = rowid;
+        CREATE TABLE task_changes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_directory TEXT NOT NULL);
+        INSERT INTO task_changes (id, project_directory) SELECT rowid, project_directory FROM tasks;
+        CREATE INDEX task_changes_project ON task_changes(project_directory, id);
+        CREATE TRIGGER tasks_changed AFTER INSERT ON tasks BEGIN
+          INSERT INTO task_changes(project_directory) VALUES (NEW.project_directory);
+          UPDATE tasks SET created_version = last_insert_rowid() WHERE id = NEW.id;
+        END;
+        CREATE TABLE submission_requests (
+          project_directory TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          PRIMARY KEY(project_directory, request_id)
+        );
+        PRAGMA user_version = 2;
+      `)
+      }
+      if (current < 3)
+        db.exec(
+          "ALTER TABLE task_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'insert'; PRAGMA user_version=3",
+        )
+      if (current < 4)
+        db.exec(`
+        CREATE TABLE IF NOT EXISTS task_dispositions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_directory TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          request_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          disposition TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          evidence TEXT NOT NULL,
+          related_task_ids TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          agent TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(project_directory, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS task_dispositions_current
+          ON task_dispositions(project_directory, task_id, id DESC);
+        PRAGMA user_version=4;
+      `)
+      if (current < 5) {
+        db.exec(`
+        CREATE TABLE task_references (
+          project_directory TEXT NOT NULL,
+          task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
+          reference TEXT NOT NULL,
+          sequence INTEGER NOT NULL CHECK(sequence > 0),
+          PRIMARY KEY(project_directory, task_id),
+          UNIQUE(project_directory, reference),
+          UNIQUE(project_directory, sequence)
+        );
+        CREATE INDEX task_references_project ON task_references(project_directory, reference);
+      `)
+        const rows = db
+          .query<{ id: string; project_directory: string }, []>(
+            "SELECT id, project_directory FROM tasks ORDER BY rowid",
+          )
+          .all()
+        const nextByProject = new Map<string, number>()
+        const addReference = db.query(
+          "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
+        )
+        for (const row of rows) {
+          const sequence = (nextByProject.get(row.project_directory) ?? 0) + 1
+          nextByProject.set(row.project_directory, sequence)
+          addReference.run(row.project_directory, row.id, `LZ-${sequence}`, sequence)
+        }
+        db.exec("PRAGMA user_version=5")
+      }
+      if (current < 6)
+        db.exec(`
+        CREATE TABLE task_classifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_directory TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          request_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision > 0),
+          classification TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          agent TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(project_directory, request_id),
+          UNIQUE(project_directory, task_id, revision)
+        );
+        CREATE INDEX task_classifications_history
+          ON task_classifications(project_directory, task_id, revision);
+        CREATE TRIGGER task_classifications_no_update BEFORE UPDATE ON task_classifications
+        BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
+        CREATE TRIGGER task_classifications_no_delete BEFORE DELETE ON task_classifications
+        BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
+        PRAGMA user_version=6;
+      `)
+      if (current < 7)
+        db.exec(`
+        CREATE TABLE task_corrections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_directory TEXT NOT NULL,
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          original_task_id TEXT REFERENCES tasks(id),
+          request_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision > 0),
+          reason TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          agent TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(project_directory, request_id),
+          UNIQUE(project_directory, task_id, revision),
+          CHECK(original_task_id IS NULL OR original_task_id <> task_id)
+        );
+        CREATE INDEX task_corrections_history
+          ON task_corrections(project_directory, task_id, revision);
+        CREATE TRIGGER task_corrections_no_update BEFORE UPDATE ON task_corrections
+        BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
+        CREATE TRIGGER task_corrections_no_delete BEFORE DELETE ON task_corrections
+        BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
+        PRAGMA user_version=7;
+      `)
+      if (current < 8)
+        db.exec(`
+      CREATE TABLE schema_modules (
+        module TEXT PRIMARY KEY,generation INTEGER NOT NULL,tables_json TEXT NOT NULL,installed_at INTEGER NOT NULL
+      );
+      PRAGMA user_version=8;
+    `)
+      db.query("INSERT OR IGNORE INTO schema_modules VALUES(?,?,?,?)").run(
+        "tasks",
+        8,
+        JSON.stringify(schemaModules.tasks.tables),
+        Date.now(),
+      )
+    }).immediate()
+}
+
+type SharedEntry = {
+  readonly key: string
+  readonly mode: "write" | "readonly"
+  readonly db: Database
+  readonly dev: number
+  readonly ino: number
+  readonly once: Set<string>
+  refs: number
+}
+
+/** A refcounted handle on a process-wide database connection. */
+export type SharedConnection = {
+  readonly db: Database
+  /** Run `init` once per physical connection (schema installs, hooks); idempotent across handles. */
+  once(name: string, init: (db: Database) => void): void
+  /** Release this handle; the last release closes the connection. Safe to call twice. */
+  release(): void
+}
+
+const CONNECTIONS = Symbol.for("lazers.storage.connections.v1")
+
+/** Shared across module graphs: the host loads one plugin copy per location. */
+function connections(): Map<string, SharedEntry> {
+  const holder = globalThis as unknown as Record<symbol, Map<string, SharedEntry> | undefined>
+  return (holder[CONNECTIONS] ??= new Map())
+}
+
+/** Number of live shared connections (diagnostics and tests). */
+export function sharedConnectionCount(): number {
+  return connections().size
+}
+
+function connectionKey(path: string, mode: "write" | "readonly"): string {
+  return `${mode}:${join(realpathSync(dirname(path)), basename(path))}`
+}
+
+function openBase(path: string): Database {
+  const db = new Database(path, { create: true, strict: true })
+  try {
+    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys = ON`)
+    // WAL is persistent: once any connection has switched, later opens skip the
+    // write-locking pragma. A concurrent first transition can fail immediately
+    // despite busy_timeout; make a few bounded attempts and never sleep the
+    // thread between them.
+    if (db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal")
+      for (let attempt = 1; ; attempt++) {
+        try {
+          db.exec("PRAGMA journal_mode = WAL")
+          break
+        } catch (error) {
+          if (!isSqliteBusy(error) || attempt >= 3) throw error
+        }
+      }
+    databaseChanges.track(db, path)
+    return db
+  } catch (error) {
+    db.close()
+    throw error
+  }
+}
+
+/**
+ * Acquire the one connection this process keeps per database path. Bun SQLite
+ * transactions are synchronous, so in-process writers sharing a connection can
+ * never interleave or contend; nested transactions become savepoints. A
+ * read-only connection is shared separately and never creates or migrates.
+ */
+export function acquireSharedConnection(
+  path: string,
+  mode: "write" | "readonly" = "write",
+): SharedConnection {
+  if (mode === "write") mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  const key = connectionKey(path, mode)
+  const registry = connections()
+  let entry = registry.get(key)
+  if (entry) {
+    // A replaced or deleted file (fresh data directory) must not reuse the old inode.
+    try {
+      const stat = statSync(path)
+      if (stat.ino !== entry.ino || stat.dev !== entry.dev) {
+        registry.delete(key)
+        entry = undefined
+      }
+    } catch {
+      registry.delete(key)
+      entry = undefined
+    }
+  }
+  if (!entry) {
+    const db =
+      mode === "write" ? openBase(path) : new Database(path, { readonly: true, strict: true })
+    const stat = statSync(path)
+    entry = { key, mode, db, dev: stat.dev, ino: stat.ino, once: new Set(), refs: 0 }
+    registry.set(key, entry)
+  }
+  const owned = entry
+  owned.refs++
+  let released = false
+  return {
+    db: owned.db,
+    once(name, init) {
+      if (owned.once.has(name)) return
+      init(owned.db)
+      owned.once.add(name)
+    },
+    release() {
+      if (released) return
+      released = true
+      if (--owned.refs > 0) return
+      if (registry.get(owned.key) === owned) registry.delete(owned.key)
+      owned.db.close()
+    },
+  }
+}
+
 export class TaskRepository {
-  private connection: Database | undefined
+  private shared: SharedConnection | undefined
   private readonly listeners = new Set<() => void>()
 
   private get db(): Database {
-    if (!this.connection) this.connection = this.open()
-    return this.connection
+    if (!this.shared) this.shared = this.open()
+    return this.shared.db
   }
 
   constructor(
     readonly path: string,
     readonly projectDirectory: string,
   ) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    this.connection = this.open()
+    this.shared = this.open()
+  }
+
+  /** Acquire the process-wide connection and install schema once per connection. */
+  private open(): SharedConnection {
+    const shared = acquireSharedConnection(this.path)
+    // Schema installers call back into this repository, so it must see the handle.
+    this.shared = shared
     try {
-      installTaskAdviceSchema(this)
-      installProjectSchema(this)
+      shared.once("tasks", migrateTasks)
+      shared.once("task-advice-and-projects", () => {
+        installTaskAdviceSchema(this)
+        installProjectSchema(this)
+      })
+      return shared
     } catch (error) {
-      this.connection.close()
-      this.connection = undefined
+      this.shared = undefined
+      shared.release()
       throw error
     }
   }
 
-  private open(): Database {
-    const db = new Database(this.path, { create: true, strict: true })
-    try {
-      db.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON")
-      const version = () =>
-        db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
-      const initial = version()
-      if (initial > 8) throw new Error(`Unsupported LAZERS database version ${initial}`)
-      // SQLite can fail a concurrent first WAL transition immediately despite
-      // busy_timeout. Retry only connection configuration, never a task write.
-      const deadline = Date.now() + 5_000
-      for (;;) {
-        try {
-          db.exec("PRAGMA journal_mode = WAL")
-          break
-        } catch (error) {
-          if (
-            !(error instanceof SQLiteError) ||
-            error.code !== "SQLITE_BUSY" ||
-            Date.now() >= deadline
-          )
-            throw error
-          Bun.sleepSync(10)
-        }
-      }
-      if (initial < 8)
-        db.transaction(() => {
-          const current = version()
-          if (current > 8) throw new Error(`Unsupported LAZERS database version ${current}`)
-          db.exec(`
-          CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT PRIMARY KEY,
-            project_directory TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            body TEXT NOT NULL
-          );
-          CREATE INDEX IF NOT EXISTS tasks_project_created
-            ON tasks(project_directory, created_at);
-        `)
-          if (current < 2) {
-            db.exec(`
-            ALTER TABLE tasks ADD COLUMN created_version INTEGER NOT NULL DEFAULT 0;
-            UPDATE tasks SET created_version = rowid;
-            CREATE TABLE task_changes (id INTEGER PRIMARY KEY AUTOINCREMENT, project_directory TEXT NOT NULL);
-            INSERT INTO task_changes (id, project_directory) SELECT rowid, project_directory FROM tasks;
-            CREATE INDEX task_changes_project ON task_changes(project_directory, id);
-            CREATE TRIGGER tasks_changed AFTER INSERT ON tasks BEGIN
-              INSERT INTO task_changes(project_directory) VALUES (NEW.project_directory);
-              UPDATE tasks SET created_version = last_insert_rowid() WHERE id = NEW.id;
-            END;
-            CREATE TABLE submission_requests (
-              project_directory TEXT NOT NULL,
-              request_id TEXT NOT NULL,
-              fingerprint TEXT NOT NULL,
-              task_id TEXT NOT NULL REFERENCES tasks(id),
-              PRIMARY KEY(project_directory, request_id)
-            );
-            PRAGMA user_version = 2;
-          `)
-          }
-          if (current < 3)
-            db.exec(
-              "ALTER TABLE task_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'insert'; PRAGMA user_version=3",
-            )
-          if (current < 4)
-            db.exec(`
-            CREATE TABLE IF NOT EXISTS task_dispositions (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              project_directory TEXT NOT NULL,
-              task_id TEXT NOT NULL REFERENCES tasks(id),
-              request_id TEXT NOT NULL,
-              payload TEXT NOT NULL,
-              disposition TEXT NOT NULL,
-              reason TEXT NOT NULL,
-              evidence TEXT NOT NULL,
-              related_task_ids TEXT NOT NULL,
-              session_id TEXT NOT NULL,
-              agent TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              UNIQUE(project_directory, request_id)
-            );
-            CREATE INDEX IF NOT EXISTS task_dispositions_current
-              ON task_dispositions(project_directory, task_id, id DESC);
-            PRAGMA user_version=4;
-          `)
-          if (current < 5) {
-            db.exec(`
-            CREATE TABLE task_references (
-              project_directory TEXT NOT NULL,
-              task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
-              reference TEXT NOT NULL,
-              sequence INTEGER NOT NULL CHECK(sequence > 0),
-              PRIMARY KEY(project_directory, task_id),
-              UNIQUE(project_directory, reference),
-              UNIQUE(project_directory, sequence)
-            );
-            CREATE INDEX task_references_project ON task_references(project_directory, reference);
-          `)
-            const rows = db
-              .query<{ id: string; project_directory: string }, []>(
-                "SELECT id, project_directory FROM tasks ORDER BY rowid",
-              )
-              .all()
-            const nextByProject = new Map<string, number>()
-            const addReference = db.query(
-              "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
-            )
-            for (const row of rows) {
-              const sequence = (nextByProject.get(row.project_directory) ?? 0) + 1
-              nextByProject.set(row.project_directory, sequence)
-              addReference.run(row.project_directory, row.id, `LZ-${sequence}`, sequence)
-            }
-            db.exec("PRAGMA user_version=5")
-          }
-          if (current < 6)
-            db.exec(`
-            CREATE TABLE task_classifications (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              project_directory TEXT NOT NULL,
-              task_id TEXT NOT NULL REFERENCES tasks(id),
-              request_id TEXT NOT NULL,
-              payload TEXT NOT NULL,
-              revision INTEGER NOT NULL CHECK(revision > 0),
-              classification TEXT NOT NULL,
-              reason TEXT NOT NULL,
-              session_id TEXT NOT NULL,
-              agent TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              UNIQUE(project_directory, request_id),
-              UNIQUE(project_directory, task_id, revision)
-            );
-            CREATE INDEX task_classifications_history
-              ON task_classifications(project_directory, task_id, revision);
-            CREATE TRIGGER task_classifications_no_update BEFORE UPDATE ON task_classifications
-            BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
-            CREATE TRIGGER task_classifications_no_delete BEFORE DELETE ON task_classifications
-            BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
-            PRAGMA user_version=6;
-          `)
-          if (current < 7)
-            db.exec(`
-            CREATE TABLE task_corrections (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              project_directory TEXT NOT NULL,
-              task_id TEXT NOT NULL REFERENCES tasks(id),
-              original_task_id TEXT REFERENCES tasks(id),
-              request_id TEXT NOT NULL,
-              payload TEXT NOT NULL,
-              revision INTEGER NOT NULL CHECK(revision > 0),
-              reason TEXT NOT NULL,
-              session_id TEXT NOT NULL,
-              agent TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              UNIQUE(project_directory, request_id),
-              UNIQUE(project_directory, task_id, revision),
-              CHECK(original_task_id IS NULL OR original_task_id <> task_id)
-            );
-            CREATE INDEX task_corrections_history
-              ON task_corrections(project_directory, task_id, revision);
-            CREATE TRIGGER task_corrections_no_update BEFORE UPDATE ON task_corrections
-            BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
-            CREATE TRIGGER task_corrections_no_delete BEFORE DELETE ON task_corrections
-            BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
-            PRAGMA user_version=7;
-          `)
-          if (current < 8)
-            db.exec(`
-          CREATE TABLE schema_modules (
-            module TEXT PRIMARY KEY,generation INTEGER NOT NULL,tables_json TEXT NOT NULL,installed_at INTEGER NOT NULL
-          );
-          PRAGMA user_version=8;
-        `)
-          db.query("INSERT OR IGNORE INTO schema_modules VALUES(?,?,?,?)").run(
-            "tasks",
-            8,
-            JSON.stringify(schemaModules.tasks.tables),
-            Date.now(),
-          )
-        }).immediate()
-      databaseChanges.track(db, this.path)
-      return db
-    } catch (error) {
-      db.close()
-      throw error
-    }
-  }
-
-  /** Server-side domain services share transactions, never expose SQL to agents/RPC. */
+  /**
+   * Server-side domain services share transactions, never expose SQL to agents/RPC.
+   *
+   * Synchronous write transaction (BEGIN IMMEDIATE). It fails fast with
+   * SQLITE_BUSY after SQLITE_BUSY_TIMEOUT_MS (only another process can hold the lock) instead of sleeping the event loop.
+   * Callers that can await should migrate to `atomicAsync`; pure reads use `read`.
+   */
   atomic<T>(run: (db: Database) => T): T {
-    return this.db.transaction(() => run(this.db)).immediate()
+    const db = this.db
+    return db.transaction(() => run(db)).immediate()
   }
 
-  /** Single-statement reads do not acquire a write reservation. */
+  /**
+   * Write transaction that yields to the event loop while the database is
+   * locked by another writer. Retries only SQLITE_BUSY with bounded backoff
+   * and throws `StorageBusyError` after `deadlineMs`. `run` may execute more
+   * than once (a failed attempt is rolled back), so keep side effects inside the
+   * database.
+   */
+  async atomicAsync<T>(
+    run: (db: Database) => T,
+    options: { deadlineMs?: number } = {},
+  ): Promise<T> {
+    const started = Date.now()
+    const deadline = started + (options.deadlineMs ?? ATOMIC_ASYNC_DEADLINE_MS)
+    for (let attempt = 1; ; attempt++) {
+      const db = this.db
+      try {
+        // Attempts never wait inside SQLite; the backoff below yields the loop.
+        db.exec("PRAGMA busy_timeout = 0")
+        try {
+          return db.transaction(() => run(db)).immediate()
+        } finally {
+          db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`)
+        }
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw error
+        const now = Date.now()
+        if (now >= deadline) throw new StorageBusyError(attempt, now - started, { cause: error })
+        await Bun.sleep(Math.min(5 * 2 ** Math.min(attempt - 1, 6), 250, deadline - now))
+      }
+    }
+  }
+
+  /**
+   * Read-only access on a DEFERRED transaction: one consistent WAL snapshot, no
+   * write reservation, so it never waits on writers.
+   */
   read<T>(run: (db: Database) => T): T {
-    return run(this.db)
+    const db = this.db
+    return db.transaction(() => run(db)).deferred()
   }
 
   /** Module upgrades are transactional; current generations need no write transaction. */
@@ -1027,8 +1197,8 @@ export class TaskRepository {
 
   close(): void {
     this.listeners.clear()
-    this.connection?.close()
-    this.connection = undefined
+    this.shared?.release()
+    this.shared = undefined
   }
 }
 

@@ -726,7 +726,7 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      let source = connection.store.atomic((db) =>
+      let source = connection.store.read((db) =>
         loadRadarSource(db, this.store.repository.projectDirectory, scope, this.secret),
       )
       const nativeRevision = tracker.nativeRevision
@@ -859,7 +859,7 @@ export class ObservationReads {
       }
 
       if (scope.kind === "session" && scopeAncestryIDs.size > 1) {
-        source = connection.store.atomic((db) =>
+        source = connection.store.read((db) =>
           loadRadarSource(
             db,
             this.store.repository.projectDirectory,
@@ -1707,7 +1707,7 @@ export class ObservationReads {
       }
 
       if (tracker.nativeRevision !== nativeRevision) throw new ObservationReadChangedError("native")
-      const latest = connection.store.atomic((db) =>
+      const latest = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
       tracker.observeStamp(latest)
@@ -1766,11 +1766,11 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      const source = connection.store.atomic((db) =>
+      const source = connection.store.read((db) =>
         loadTopologySource(db, this.store.repository.projectDirectory, scope, this.secret),
       )
       const topology = projectTopology(source)
-      const latest = connection.store.atomic((db) =>
+      const latest = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
       if (
@@ -1805,7 +1805,7 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      const projection = connection.store.atomic((db) =>
+      const projection = connection.store.read((db) =>
         loadProjectionSource(
           db,
           this.store.repository.projectDirectory,
@@ -1882,7 +1882,7 @@ export class ObservationReads {
         }
       })
       signal?.throwIfAborted()
-      const latest = connection.store.atomic((db) =>
+      const latest = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
       if (
@@ -1923,7 +1923,7 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      const before = connection.store.atomic((db) =>
+      const before = connection.store.read((db) =>
         loadTaskObservationSource(
           db,
           this.store.repository.projectDirectory,
@@ -1947,7 +1947,7 @@ export class ObservationReads {
         { taskValuationProvider: this.taskValuationProvider, signal },
       )
       signal?.throwIfAborted()
-      const after = connection.store.atomic((db) =>
+      const after = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
       tracker.observeStamp(after)
@@ -1981,7 +1981,7 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      const source = connection.store.atomic((db) =>
+      const source = connection.store.read((db) =>
         loadTaskObservationSource(
           db,
           this.store.repository.projectDirectory,
@@ -2011,7 +2011,7 @@ export class ObservationReads {
         { taskValuationProvider: this.taskValuationProvider, signal },
       )
       signal?.throwIfAborted()
-      const after = connection.store.atomic((db) =>
+      const after = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
       tracker.observeStamp(after)
@@ -2039,7 +2039,7 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      const source = connection.store.atomic((db) =>
+      const source = connection.store.read((db) =>
         loadTaskObservationSource(
           db,
           this.store.repository.projectDirectory,
@@ -2057,7 +2057,7 @@ export class ObservationReads {
         input.taskID,
         this.secret,
       )
-      const after = connection.store.atomic((db) =>
+      const after = connection.store.read((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
       tracker.observeStamp(after)

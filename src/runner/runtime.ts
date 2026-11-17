@@ -4,6 +4,7 @@ import {
   recordIntegration,
   terminalPlanStates as terminal,
 } from "./plan-control.ts"
+import { GitObservations, ObservationRequired } from "./git-observations.ts"
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
 import {
   messageID,
@@ -58,8 +59,9 @@ import {
   combineArtifacts,
   combinedArtifactsMatch,
   commitArtifact,
-  git,
+  workspaceAtArtifact,
   gitAsync,
+  worktreeListPorcelain,
   reviewedScopeBase,
   runDeclaredCheck,
   runCheck,
@@ -918,7 +920,7 @@ export class TaskRuntime {
       ...receipt,
       verificationDeadline: verificationReceiptDeadline(deadline),
     }
-    writeCheckReceipt(receiptPath, annotated)
+    await writeCheckReceipt(receiptPath, annotated)
     return annotated
   }
 
@@ -1172,7 +1174,7 @@ export class TaskRuntime {
               phase,
             ) &&
           row.artifact === (phase === "task" ? operation.artifact : operation.combinedArtifact) &&
-          observeRetainedCheckIsolationWitness(
+          (await observeRetainedCheckIsolationWitness(
             row.contextPath,
             activity ? metadata.isolation : receipt.isolation,
             {
@@ -1188,7 +1190,7 @@ export class TaskRuntime {
               projectIdentity: retainedProjectIdentity(this.directory, row.workspace, row.artifact),
               procedurePlan: procedure.plan,
             },
-          ) &&
+          )) &&
           this.retainedVerificationExecution.retainedVerificationCheckReceipt(
             receipt,
             operation,
@@ -1390,7 +1392,11 @@ export class TaskRuntime {
       )
   }
 
-  private reviewedAdoptionBaseline(targetBranch: string, oldArtifact: string, candidate: string) {
+  private async reviewedAdoptionBaseline(
+    targetBranch: string,
+    oldArtifact: string,
+    candidate: string,
+  ) {
     const rows = this.store.atomic((db) =>
       db
         .query<{ event: string; payload: string }, [string]>(
@@ -1401,7 +1407,7 @@ export class TaskRuntime {
         )
         .all(this.directory),
     )
-    const firstParent = git(this.directory, ["rev-list", "--first-parent", candidate])
+    const firstParent = (await gitAsync(this.directory, ["rev-list", "--first-parent", candidate]))
       .split(/\s+/)
       .filter(Boolean)
     const firstParentIndex = new Map(firstParent.map((commit, index) => [commit, index]))
@@ -1426,8 +1432,13 @@ export class TaskRuntime {
       const position = firstParentIndex.get(payload.head)
       if (position === undefined || position >= nearest) continue
       try {
-        git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, payload.head])
-        git(this.directory, ["merge-base", "--is-ancestor", payload.artifact, payload.head])
+        await gitAsync(this.directory, ["merge-base", "--is-ancestor", oldArtifact, payload.head])
+        await gitAsync(this.directory, [
+          "merge-base",
+          "--is-ancestor",
+          payload.artifact,
+          payload.head,
+        ])
       } catch {
         continue
       }
@@ -1444,9 +1455,11 @@ export class TaskRuntime {
   ) {
     // Worker scope belongs to its patch. The owner reviews the integrated branch
     // separately, and fresh checks qualify that exact descendant.
-    const reviewed = this.reviewedAdoptionBaseline(branch, attempt.base_commit, artifact)
+    const reviewed = await this.reviewedAdoptionBaseline(branch, attempt.base_commit, artifact)
     const base = await reviewedScopeBase(this.directory, attempt.base_commit, artifact, reviewed)
-    const paths = git(this.directory, ["diff", "--name-only", "--no-renames", "-z", base, artifact])
+    const paths = (
+      await gitAsync(this.directory, ["diff", "--name-only", "--no-renames", "-z", base, artifact])
+    )
       .split("\0")
       .filter(Boolean)
     return scopeViolations(paths, this.store.effectiveWriteScope(attempt.task_id))
@@ -1560,17 +1573,20 @@ export class TaskRuntime {
     if (!this.adoptionWorkerIdle(latest, worker))
       throw new Error("Latest worker activity or control state is not conclusively idle")
 
-    const branch = git(this.directory, ["branch", "--show-current"])
-    const head = git(this.directory, ["rev-parse", "HEAD"])
+    const branch = await gitAsync(this.directory, ["branch", "--show-current"])
+    const head = await gitAsync(this.directory, ["rev-parse", "HEAD"])
     if (branch !== command.targetBranch || command.descendantCommit !== head)
       throw new Error("Reviewed descendant must be the exact current HEAD of targetBranch")
     if (
       (await gitAsync(this.directory, ["status", "--porcelain", "--untracked-files=all"])) ||
-      git(this.directory, ["ls-files", "-u", "-z"])
+      (await gitAsync(this.directory, ["ls-files", "-u", "-z"]))
     )
       throw new Error("Dirty or unmerged candidate checkout cannot be adopted")
-    const oldArtifact = git(this.directory, ["rev-parse", `${command.artifact}^{commit}`])
-    const descendantCommit = git(this.directory, [
+    const oldArtifact = await gitAsync(this.directory, [
+      "rev-parse",
+      `${command.artifact}^{commit}`,
+    ])
+    const descendantCommit = await gitAsync(this.directory, [
       "rev-parse",
       `${command.descendantCommit}^{commit}`,
     ])
@@ -1578,14 +1594,21 @@ export class TaskRuntime {
       throw new Error("Adoption artifacts must be exact full commit identities")
     if (oldArtifact === descendantCommit)
       throw new Error("Reviewed candidate must be a strict descendant of the old artifact")
-    git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
-    const reviewedBaseline = this.reviewedAdoptionBaseline(branch, oldArtifact, descendantCommit)
+    await gitAsync(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
+    const reviewedBaseline = await this.reviewedAdoptionBaseline(
+      branch,
+      oldArtifact,
+      descendantCommit,
+    )
     const violations = await this.adoptionArtifactScopeViolations(latest, oldArtifact, branch)
     if (violations.length)
       throw new Error(
         `Worker artifact contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
       )
-    const candidateTree = git(this.directory, ["rev-parse", `${descendantCommit}^{tree}`])
+    const candidateTree = await gitAsync(this.directory, [
+      "rev-parse",
+      `${descendantCommit}^{tree}`,
+    ])
     const branches = input.integrationOrder.map((taskID) => {
       if (taskID === command.taskID) return descendantCommit
       const other = this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
@@ -1854,7 +1877,8 @@ export class TaskRuntime {
     if (!existsSync(attempt.workspace)) throw new Error("Original attempt workspace is unavailable")
     const originalWorkspace = realpathSync(attempt.workspace)
     if (
-      realpathSync(git(attempt.workspace, ["rev-parse", "--show-toplevel"])) !== originalWorkspace
+      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
+      originalWorkspace
     )
       throw new Error("Original attempt workspace is not a canonical repository checkout")
     if (originalWorkspace !== realpathSync(this.directory)) {
@@ -1864,19 +1888,28 @@ export class TaskRuntime {
           "Original attempt checkout is not positively owned by the native worktree adapter",
         )
     }
-    if (git(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`]) !== command.artifact)
+    if (
+      (await gitAsync(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`])) !==
+      command.artifact
+    )
       throw new Error(
         "Candidate must be an exact committed Git identity in the original attempt repository",
       )
     if (
       (attempt.artifact === null || repairingCandidate) &&
-      git(attempt.workspace, ["rev-parse", "HEAD"]) !== command.artifact
+      (await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])) !== command.artifact
     )
       throw new Error(
         "Unrecorded candidate must be the exact committed HEAD of the original attempt",
       )
     if (repairBinding) {
-      if (!commitIsAncestor(attempt.workspace, repairBinding.previousArtifact, command.artifact))
+      if (
+        !(await commitIsAncestor(
+          attempt.workspace,
+          repairBinding.previousArtifact,
+          command.artifact,
+        ))
+      )
         throw new Error("Retained repair candidate must descend from its prior artifact")
       if (
         this.store
@@ -1889,16 +1922,18 @@ export class TaskRuntime {
         throw new Error("Uncertain original effects prevent repaired-candidate verification")
       await this.observeRetainedRepairCandidate(plan, attempt, repairBinding)
     }
-    if (!commitIsAncestor(attempt.workspace, attempt.base_commit, command.artifact))
+    if (!(await commitIsAncestor(attempt.workspace, attempt.base_commit, command.artifact)))
       throw new Error("Candidate is not based on the original attempt's committed baseline")
-    const changed = git(attempt.workspace, [
-      "diff",
-      "--name-only",
-      "--no-renames",
-      "-z",
-      attempt.base_commit,
-      command.artifact,
-    ])
+    const changed = (
+      await gitAsync(attempt.workspace, [
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        attempt.base_commit,
+        command.artifact,
+      ])
+    )
       .split("\0")
       .filter(Boolean)
     const violations = scopeViolations(changed, this.store.effectiveWriteScope(task.id))
@@ -2025,7 +2060,7 @@ export class TaskRuntime {
     })
   }
 
-  private hasSettledHumanEvidenceHold(plan: PlanRow, attempt: AttemptRow): boolean {
+  private async hasSettledHumanEvidenceHold(plan: PlanRow, attempt: AttemptRow): Promise<boolean> {
     const artifact = attempt.artifact
     if (
       plan.state !== "blocked" ||
@@ -2065,7 +2100,7 @@ export class TaskRuntime {
         return false
       receipts.push(receipt)
     }
-    const missing = this.missingEvidence(
+    const missing = await this.missingEvidence(
       plan.id,
       attempt.task_id,
       artifact,
@@ -2266,7 +2301,7 @@ export class TaskRuntime {
       phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
     const nativeWorkspaces = phaseWorkspace ? await this.host.worktrees() : []
     const gitWorkspaces = phaseWorkspace
-      ? git(this.directory, ["worktree", "list", "--porcelain"])
+      ? (await worktreeListPorcelain(this.directory))
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
@@ -2279,8 +2314,7 @@ export class TaskRuntime {
       !existsSync(phaseWorkspace) ||
       !nativeWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, phaseWorkspace)) ||
       !gitWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, phaseWorkspace)) ||
-      git(phaseWorkspace, ["rev-parse", "HEAD"]) !== phaseArtifact ||
-      !artifactUnchanged(phaseWorkspace, phaseArtifact)
+      !(await workspaceAtArtifact(phaseWorkspace, phaseArtifact))
     )
       throw new Error(
         "Retained timing continuation requires the unchanged exact candidate workspace",
@@ -2293,8 +2327,7 @@ export class TaskRuntime {
         !existsSync(taskWorkspace) ||
         !nativeWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, taskWorkspace)) ||
         !gitWorkspaces.some((workspace) => samePhysicalWorkspace(workspace, taskWorkspace)) ||
-        git(taskWorkspace, ["rev-parse", "HEAD"]) !== operation.artifact ||
-        !artifactUnchanged(taskWorkspace, operation.artifact)
+        !(await workspaceAtArtifact(taskWorkspace, operation.artifact))
       )
         throw new Error(
           "Interrupted retained-check continuation requires the unchanged accepted task candidate",
@@ -2304,7 +2337,7 @@ export class TaskRuntime {
     if (phase === "combined") {
       if (!this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation))
         throw new Error("Combined-check continuation requires the original task acceptance")
-      acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input, operation)
+      acceptedArtifacts = await this.acceptedCombinedArtifactsAsync(plan, input, operation)
       const currentCombinedArtifact = await combineArtifacts(
         this.directory,
         input.baseCommit,
@@ -2312,7 +2345,11 @@ export class TaskRuntime {
       )
       if (
         !operation.combinedArtifact ||
-        !combinedArtifactsMatch(this.directory, currentCombinedArtifact, operation.combinedArtifact)
+        !(await combinedArtifactsMatch(
+          this.directory,
+          currentCombinedArtifact,
+          operation.combinedArtifact,
+        ))
       )
         throw new Error("Retained combined candidate no longer matches its accepted task artifacts")
     } else if (this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)) {
@@ -2701,8 +2738,7 @@ export class TaskRuntime {
         attempt.artifact !== command.artifact ||
         node.artifact !== command.artifact ||
         !existsSync(attempt.workspace) ||
-        git(attempt.workspace, ["rev-parse", "HEAD"]) !== command.artifact ||
-        !artifactUnchanged(attempt.workspace, command.artifact)
+        !(await workspaceAtArtifact(attempt.workspace, command.artifact))
       )
         throw new Error(
           "Task, latest attempt or unchanged candidate no longer matches the extension",
@@ -2724,13 +2760,13 @@ export class TaskRuntime {
     } else {
       if (command.taskID !== undefined || command.taskRevision !== undefined || command.attemptID)
         throw new Error("Combined deadline extension cannot target a task attempt")
-      const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
+      const acceptedArtifacts = await this.acceptedCombinedArtifactsAsync(plan, input)
       const recomputed = await combineArtifacts(
         this.directory,
         input.baseCommit,
         acceptedArtifacts.map((item) => item.artifact),
       )
-      if (!combinedArtifactsMatch(this.directory, recomputed, command.artifact))
+      if (!(await combinedArtifactsMatch(this.directory, recomputed, command.artifact)))
         throw new Error(
           "Combined deadline extension candidate is no longer the exact accepted result",
         )
@@ -2836,8 +2872,7 @@ export class TaskRuntime {
     if (
       (target.phase === "task" && workspace !== taskWorkspace) ||
       !existsSync(workspace) ||
-      git(workspace, ["rev-parse", "HEAD"]) !== target.artifact ||
-      !artifactUnchanged(workspace, target.artifact)
+      !(await workspaceAtArtifact(workspace, target.artifact))
     )
       throw new Error(
         "The stopped verification workspace no longer contains the unchanged candidate",
@@ -2950,6 +2985,7 @@ export class TaskRuntime {
     caller: string,
     prepared: PreparedVerificationDeadlineExtension,
     nativeWorkspaces: string[],
+    obs: GitObservations,
   ): void {
     const retained = prepared.retained
     const operation = retained?.operation
@@ -3039,11 +3075,12 @@ export class TaskRuntime {
     )
       throw new Error("Retained task acceptance or original source binding changed")
 
-    const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input, operation)
+    const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input, operation, obs)
     if (fingerprint(acceptedArtifacts) !== fingerprint(prepared.acceptedArtifacts))
       throw new Error("Accepted plan inputs changed before retained-check continuation")
 
-    const gitWorkspaces = git(this.directory, ["worktree", "list", "--porcelain"])
+    const gitWorkspaces = obs
+      .git(this.directory, ["worktree", "list", "--porcelain"])
       .split(/\r?\n/)
       .filter((line) => line.startsWith("worktree "))
       .map((line) => resolve(line.slice("worktree ".length)))
@@ -3071,8 +3108,7 @@ export class TaskRuntime {
         !gitWorkspaces.some((workspace) =>
           samePhysicalWorkspace(workspace, candidate.workspace!),
         ) ||
-        git(candidate.workspace, ["rev-parse", "HEAD"]) !== candidate.artifact ||
-        !artifactUnchanged(candidate.workspace, candidate.artifact)
+        !obs.atArtifact(candidate.workspace, candidate.artifact)
       )
         throw new Error("Retained task or combined candidate changed before continuation")
     }
@@ -3129,27 +3165,43 @@ export class TaskRuntime {
     prepared: PreparedVerificationDeadlineExtension,
     nativeWorkspaces: string[],
   ) {
-    this.assertRetainedCheckContinuationCurrent(plan, command, caller, prepared, nativeWorkspaces)
+    const first = new GitObservations()
+    await first.run(() =>
+      this.assertRetainedCheckContinuationCurrent(
+        plan,
+        command,
+        caller,
+        prepared,
+        nativeWorkspaces,
+        first,
+      ),
+    )
     const operation = prepared.retained!.operation
     const input = PlanInput.parse(JSON.parse(plan.body))
     const combinedArtifact = await combineArtifacts(
       this.directory,
       input.baseCommit,
-      this.acceptedCombinedArtifacts(plan, input, operation).map((item) => item.artifact),
+      (await this.acceptedCombinedArtifactsAsync(plan, input, operation)).map(
+        (item) => item.artifact,
+      ),
     )
     if (
       !operation.combinedArtifact ||
-      !combinedArtifactsMatch(this.directory, combinedArtifact, operation.combinedArtifact)
+      !(await combinedArtifactsMatch(this.directory, combinedArtifact, operation.combinedArtifact))
     )
       throw new Error("Combined candidate changed before retained-check continuation")
     const currentPlan = this.store.plan(plan.id)
     if (!currentPlan) throw new Error("Plan disappeared during retained-check continuation")
-    this.assertRetainedCheckContinuationCurrent(
-      currentPlan,
-      command,
-      caller,
-      prepared,
-      nativeWorkspaces,
+    const second = new GitObservations()
+    await second.run(() =>
+      this.assertRetainedCheckContinuationCurrent(
+        currentPlan,
+        command,
+        caller,
+        prepared,
+        nativeWorkspaces,
+        second,
+      ),
     )
   }
 
@@ -3261,7 +3313,33 @@ export class TaskRuntime {
     return matches
   }
 
-  private quarantineTarget(plan: PlanRow, command: PlanCommand) {
+  /** Deep admission check: observes evidence files, then applies the transactional recheck. */
+  private async quarantineTarget(
+    plan: PlanRow,
+    command: PlanCommand,
+    observed = { humanHold: false },
+  ) {
+    const candidate = command.attemptID
+      ? this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
+      : undefined
+    if (
+      candidate?.state === "verifying" &&
+      !this.hasSettledVerificationTimeout(plan, candidate) &&
+      !this.store
+        .effects(plan.id)
+        .some(
+          (effect) =>
+            effect.attempt_id === candidate.id &&
+            effect.state === "uncertain" &&
+            effect.kind.startsWith("verify:"),
+        )
+    )
+      observed.humanHold = await this.hasSettledHumanEvidenceHold(plan, candidate)
+    return this.quarantineTargetCurrent(plan, command, observed.humanHold)
+  }
+
+  /** Synchronous, transaction-safe form of `quarantineTarget` over an observed evidence hold. */
+  private quarantineTargetCurrent(plan: PlanRow, command: PlanCommand, humanHold: boolean) {
     if (!command.attemptID || !command.reason)
       throw new Error("Source quarantine requires attemptID and reason")
     const attempt = this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
@@ -3278,7 +3356,7 @@ export class TaskRuntime {
     if (
       attempt.state === "verifying" &&
       !this.hasSettledVerificationTimeout(plan, attempt) &&
-      !this.hasSettledHumanEvidenceHold(plan, attempt) &&
+      !humanHold &&
       !this.store
         .effects(plan.id)
         .some(
@@ -3734,16 +3812,16 @@ export class TaskRuntime {
     if (
       !existsSync(attempt.workspace) ||
       attempt.workspace === this.directory ||
-      realpathSync(git(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
+      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
         realpathSync(attempt.workspace) ||
-      git(attempt.workspace, ["rev-parse", `${artifact}^{commit}`]) !== artifact ||
-      !commitIsAncestor(
+      (await gitAsync(attempt.workspace, ["rev-parse", `${artifact}^{commit}`])) !== artifact ||
+      !(await commitIsAncestor(
         attempt.workspace,
         artifact,
-        git(attempt.workspace, ["rev-parse", "HEAD"]),
-      ) ||
+        await gitAsync(attempt.workspace, ["rev-parse", "HEAD"]),
+      )) ||
       !isCommitID(attempt.base_commit) ||
-      !commitIsAncestor(attempt.workspace, attempt.base_commit, artifact) ||
+      !(await commitIsAncestor(attempt.workspace, attempt.base_commit, artifact)) ||
       !this.preparationAllowed(attempt)
     )
       throw new Error("Retained repair recovery no longer matches the original retained checkout")
@@ -4057,18 +4135,19 @@ export class TaskRuntime {
     if (
       !worktrees.some((directory) => samePhysicalWorkspace(directory, attempt.workspace)) ||
       realpathSync(attempt.workspace) === realpathSync(this.directory) ||
-      realpathSync(git(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
+      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
         realpathSync(attempt.workspace)
     )
       throw new Error("Retained repair requires the exact native-owned isolated worktree")
-    const workspaceHead = git(attempt.workspace, ["rev-parse", "HEAD"])
+    const workspaceHead = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
     if (
-      git(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`]) !== command.artifact ||
+      (await gitAsync(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`])) !==
+        command.artifact ||
       workspaceHead !== command.artifact
     )
       throw new Error("Retained repair artifact is missing or not the workspace HEAD")
-    const sourceHead = git(this.directory, ["rev-parse", "HEAD"])
-    if (commitIsAncestor(this.directory, command.artifact, sourceHead))
+    const sourceHead = await gitAsync(this.directory, ["rev-parse", "HEAD"])
+    if (await commitIsAncestor(this.directory, command.artifact, sourceHead))
       throw new Error("Source-landed task work cannot be repaired in its retained workspace")
     if (!this.preparationAllowed(attempt))
       throw new Error("A conflicting reservation prevents retained repair")
@@ -4820,7 +4899,7 @@ export class TaskRuntime {
     if (nativeWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
       throw new Error("Native worktree or collision candidate exists; startup settlement refused")
 
-    const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+    const gitWorktrees = (await worktreeListPorcelain(this.directory))
       .split(/\r?\n/)
       .filter((line) => line.startsWith("worktree "))
       .map((line) => line.slice("worktree ".length))
@@ -4965,7 +5044,7 @@ export class TaskRuntime {
     ) {
       try {
         if (!existsSync(attempt.workspace)) return false
-        const head = git(attempt.workspace, ["rev-parse", "HEAD"])
+        const head = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
         const workerWasAdmitted =
           effects.some(
             (effect) =>
@@ -5031,7 +5110,7 @@ export class TaskRuntime {
       if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
       if (nativeWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
         return false
-      const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+      const gitWorktrees = (await worktreeListPorcelain(this.directory))
         .split(/\r?\n/)
         .filter((line) => line.startsWith("worktree "))
         .map((line) => line.slice("worktree ".length))
@@ -5079,7 +5158,7 @@ export class TaskRuntime {
       })
       if (
         actual !== attempt.workspace ||
-        git(actual, ["rev-parse", "HEAD"]) !== attempt.base_commit
+        (await gitAsync(actual, ["rev-parse", "HEAD"])) !== attempt.base_commit
       )
         throw new Error("Recovered native worktree did not match the reserved workspace and source")
       return this.completeStartupRecovery(plan, attempt, operation, authorization, actual, fence)
@@ -5089,10 +5168,20 @@ export class TaskRuntime {
     }
   }
 
-  private acceptedCombinedArtifacts(
+  private async acceptedCombinedArtifactsAsync(
     plan: PlanRow,
     input: ReturnType<typeof PlanInput.parse>,
     retained?: RetainedVerification,
+  ): Promise<CombinedVerificationContinuation["acceptedArtifacts"]> {
+    const obs = new GitObservations()
+    return obs.run(() => this.acceptedCombinedArtifacts(plan, input, retained, obs))
+  }
+
+  private acceptedCombinedArtifacts(
+    plan: PlanRow,
+    input: ReturnType<typeof PlanInput.parse>,
+    retained: RetainedVerification | undefined,
+    obs: GitObservations,
   ): CombinedVerificationContinuation["acceptedArtifacts"] {
     const nodes = this.store.nodes(plan.id)
     const attempts = this.store.attempts(plan.id)
@@ -5125,7 +5214,7 @@ export class TaskRuntime {
         !attempt ||
         (!retainedCandidateAccepted &&
           (attempt.state !== "accepted" || attempt.artifact !== node.artifact)) ||
-        git(this.directory, ["rev-parse", `${node.artifact}^{commit}`]) !== node.artifact
+        obs.git(this.directory, ["rev-parse", `${node.artifact}^{commit}`]) !== node.artifact
       )
         throw new Error(
           "Combined continuation requires every current plan task to retain its accepted artifact",
@@ -5198,7 +5287,7 @@ export class TaskRuntime {
       throw new Error("Combined verification resume requires a blocked, unaccepted plan")
 
     const input = PlanInput.parse(JSON.parse(plan.body))
-    const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
+    const acceptedArtifacts = await this.acceptedCombinedArtifactsAsync(plan, input)
     const effectRecorded = this.store.effects(plan.id).flatMap((effect) => {
       try {
         const payload: unknown = JSON.parse(effect.payload)
@@ -5207,7 +5296,7 @@ export class TaskRuntime {
         return []
       }
     })
-    const artifact = canonicalCombinedArtifact(
+    const artifact = await canonicalCombinedArtifact(
       this.directory,
       await combineArtifacts(
         this.directory,
@@ -5261,11 +5350,7 @@ export class TaskRuntime {
     if (workspaces.size !== 1)
       throw new Error("Interrupted combined checks do not share one candidate")
     const workspace = [...workspaces][0]!
-    if (
-      !existsSync(workspace) ||
-      git(workspace, ["rev-parse", "HEAD"]) !== artifact ||
-      !artifactUnchanged(workspace, artifact)
-    )
+    if (!existsSync(workspace) || !(await workspaceAtArtifact(workspace, artifact)))
       throw new Error("Interrupted combined verification candidate changed; preserve it for review")
 
     const ownerEpoch = this.store.planControlEpoch(plan.id)
@@ -5315,7 +5400,10 @@ export class TaskRuntime {
       currentPlan.owner !== plan.owner ||
       this.store.planControlEpoch(plan.id) !== ownerEpoch ||
       fingerprint(
-        this.acceptedCombinedArtifacts(currentPlan, PlanInput.parse(JSON.parse(currentPlan.body))),
+        await this.acceptedCombinedArtifactsAsync(
+          currentPlan,
+          PlanInput.parse(JSON.parse(currentPlan.body)),
+        ),
       ) !== fingerprint(acceptedArtifacts) ||
       (this.retainedRepairGeneration(plan.id) ?? null) !== sourceGeneration
     )
@@ -5570,10 +5658,11 @@ export class TaskRuntime {
       ownerSession = confirmedOwner
     }
     let quarantineAttempt: AttemptRow | undefined
+    const quarantineObserved = { humanHold: false }
     let quarantineReview: SourceReviewBinding | undefined
     if (command.action === "quarantine-source") {
       if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
-      quarantineAttempt = this.quarantineTarget(old, command)
+      quarantineAttempt = await this.quarantineTarget(old, command, quarantineObserved)
       const worker = await this.host.session(
         quarantineAttempt.session_id,
         quarantineAttempt.state === "running" ? { messages: true } : undefined,
@@ -5818,1904 +5907,2059 @@ export class TaskRuntime {
     // then published only if the recorded plan version is still current.
     const cleanupDiagnostics =
       command.action === "audit" ? await this.cleanupAuditDiagnostics(old) : undefined
-    const result = this.store.command(command.requestID, { command, caller }, (db) => {
-      const plan = this.store.plan(command.planID)!
-      if (plan.version !== command.expectedVersion)
-        throw new Error(`Stale plan version; current ${plan.version}`)
-      if (caller !== plan.owner && !["audit", "reassign"].includes(command.action))
-        throw new Error("Only the plan owner may change execution")
-      // Commit owner adoption with the original request receipt. If native
-      // creation succeeds but this command fails, exact replay can recover it
-      // without granting an old owner authority over a reassigned plan.
-      if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
-      const activeAdoptions = this.store.activeAdoptions(plan.id)
-      if (
-        activeAdoptions.length &&
-        ![
-          "adopt-descendant",
-          "human-evidence",
-          "cancel",
-          "audit",
-          "reconcile-source-notices",
-        ].includes(command.action)
-      )
-        throw new Error(
-          "A descendant adoption is pending; only its evidence or cancellation is allowed",
-        )
-      if (command.action === "quarantine-source") {
-        const attempt = this.quarantineTarget(plan, command)
-        if (!sourceGuardInstalled(this.store, attempt.workspace))
-          throw new Error("Native worker source guard is not installed")
-        if (
-          !quarantineAttempt ||
-          attempt.message_id !== quarantineAttempt.message_id ||
-          attempt.session_id !== quarantineAttempt.session_id ||
-          attempt.workspace !== quarantineAttempt.workspace
-        )
-          throw new Error("Retained worker changed during source quarantine admission")
-        const existing = sourceQuarantine(this.store, attempt.id)
-        if (
-          existing &&
-          (existing.session_id !== attempt.session_id ||
-            existing.assigned_message_id !== attempt.message_id ||
-            existing.workspace !== attempt.workspace)
-        )
-          throw new Error("Existing source quarantine belongs to a different worker assignment")
-        if (existing?.phase === "sealed")
-          return { status: "source-quarantined", attemptID: attempt.id, version: plan.version }
-        const at = Date.now()
-        db.query(
-          `INSERT INTO runner_source_quarantines
+    const obs = new GitObservations()
+    const result = await obs.run(
+      () =>
+        this.store.command(command.requestID, { command, caller }, (db) => {
+          const plan = this.store.plan(command.planID)!
+          if (plan.version !== command.expectedVersion)
+            throw new Error(`Stale plan version; current ${plan.version}`)
+          if (caller !== plan.owner && !["audit", "reassign"].includes(command.action))
+            throw new Error("Only the plan owner may change execution")
+          // Commit owner adoption with the original request receipt. If native
+          // creation succeeds but this command fails, exact replay can recover it
+          // without granting an old owner authority over a reassigned plan.
+          if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
+          const activeAdoptions = this.store.activeAdoptions(plan.id)
+          if (
+            activeAdoptions.length &&
+            ![
+              "adopt-descendant",
+              "human-evidence",
+              "cancel",
+              "audit",
+              "reconcile-source-notices",
+            ].includes(command.action)
+          )
+            throw new Error(
+              "A descendant adoption is pending; only its evidence or cancellation is allowed",
+            )
+          if (command.action === "quarantine-source") {
+            const attempt = this.quarantineTargetCurrent(
+              plan,
+              command,
+              quarantineObserved.humanHold,
+            )
+            if (!sourceGuardInstalled(this.store, attempt.workspace))
+              throw new Error("Native worker source guard is not installed")
+            if (
+              !quarantineAttempt ||
+              attempt.message_id !== quarantineAttempt.message_id ||
+              attempt.session_id !== quarantineAttempt.session_id ||
+              attempt.workspace !== quarantineAttempt.workspace
+            )
+              throw new Error("Retained worker changed during source quarantine admission")
+            const existing = sourceQuarantine(this.store, attempt.id)
+            if (
+              existing &&
+              (existing.session_id !== attempt.session_id ||
+                existing.assigned_message_id !== attempt.message_id ||
+                existing.workspace !== attempt.workspace)
+            )
+              throw new Error("Existing source quarantine belongs to a different worker assignment")
+            if (existing?.phase === "sealed")
+              return { status: "source-quarantined", attemptID: attempt.id, version: plan.version }
+            const at = Date.now()
+            db.query(
+              `INSERT INTO runner_source_quarantines
           (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,phase,hold_reason,review_input_json,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,'pending',NULL,?,?,?)
           ON CONFLICT(attempt_id) DO UPDATE SET requested_owner=excluded.requested_owner,
             request_id=excluded.request_id,reason=excluded.reason,hold_reason=NULL,
             review_input_json=excluded.review_input_json,updated_at=excluded.updated_at`,
-        ).run(
-          attempt.id,
-          plan.id,
-          attempt.session_id,
-          attempt.message_id,
-          plan.owner,
-          attempt.workspace,
-          command.requestID,
-          command.reason!,
-          quarantineReview ? JSON.stringify(quarantineReview) : null,
-          at,
-          at,
-        )
-        db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-        this.store.record(plan.id, attempt.task_id, "SOURCE_QUARANTINE_REQUESTED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          requestID: command.requestID,
-          reason: command.reason,
-          ...(quarantineReview ? { reviewInput: quarantineReview } : {}),
-          ...(existing ? { supersedesRequestID: existing.request_id } : {}),
-          resourceHoldsRetained: true,
-        })
-        return {
-          status: "quarantining-source",
-          attemptID: attempt.id,
-          version: this.store.plan(plan.id)!.version,
-        }
-      }
-      if (command.action === "retained-repair") {
-        if (!retainedRepair || !ownerSession || !this.validArchitect(ownerSession))
-          throw new Error("Retained repair requires the current same-project Architect owner")
-        if (caller !== plan.owner || ownerSession.id !== plan.owner)
-          throw new Error("Retained repair owner changed before admission")
-        if (
-          caller !== retainedRepair.owner ||
-          plan.owner !== retainedRepair.owner ||
-          this.store.planControlEpoch(plan.id) !== retainedRepair.ownerEpoch
-        )
-          throw new Error("Retained repair owner/control authorization changed before admission")
-        if (!new Set(["running", "accepted", "blocked"]).has(plan.state))
-          throw new Error(
-            "Retained repair requires a running, accepted or blocked, unintegrated plan",
-          )
-        const input = PlanInput.parse(JSON.parse(plan.body))
-        const task = this.store.repository.get(retainedRepair.taskID)
-        const node = this.store
-          .nodes(plan.id)
-          .find((item) => item.task_id === retainedRepair.taskID)
-        const attempt = this.store
-          .attempts(plan.id)
-          .filter((item) => item.task_id === retainedRepair.taskID)
-          .at(-1)
-        if (
-          !task ||
-          !node ||
-          !attempt ||
-          node.state !== "accepted" ||
-          attempt.id !== retainedRepair.attemptID ||
-          !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
-          attempt.message_id !== retainedRepair.previousMessageID ||
-          attempt.session_id !== retainedRepair.sessionID ||
-          attempt.workspace !== retainedRepair.workspace ||
-          node.artifact !== retainedRepair.artifact ||
-          attempt.artifact !== retainedRepair.artifact ||
-          input.nodes.find((item) => item.taskID === task.id)?.revision !== task.revision ||
-          !sameProject(task.provenance.projectID, this.projectID) ||
-          task.provenance.projectDirectory !== this.directory ||
-          this.store.repository.taskDisposition(task.id)
-        )
-          throw new Error(
-            "Retained task, attempt, artifact, or assignment changed before admission",
-          )
-        const policy = JSON.parse(attempt.policy) as { workspaceMode?: unknown; model?: unknown }
-        const route = ModelPolicy.safeParse(policy.model)
-        const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
-        if (
-          policy.workspaceMode !== "isolated" ||
-          !route.success ||
-          !planRoute?.success ||
-          !this.sameModel(route.data, retainedRepair.model) ||
-          !this.sameModel(planRoute.data, retainedRepair.model)
-        )
-          throw new Error("Retained task execution route changed before admission")
-        if (
-          this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
-          commitIsAncestor(
-            this.directory,
-            retainedRepair.artifact,
-            git(this.directory, ["rev-parse", "HEAD"]),
-          )
-        )
-          throw new Error("Source-landed task work cannot be repaired in its retained workspace")
-        if (
-          this.store
-            .effects(plan.id)
-            .some((effect) => ["intended", "uncertain"].includes(effect.state)) ||
-          sourceQuarantine(this.store, attempt.id)
-        )
-          throw new Error("Uncertain effects or source quarantine prevent retained repair")
-        this.assertNoDispatchedDependents(plan, task.id, input)
-        if (
-          !existsSync(attempt.workspace) ||
-          git(attempt.workspace, ["rev-parse", "HEAD"]) !== retainedRepair.artifact ||
-          !this.preparationAllowed(attempt) ||
-          this.store
-            .activeProjectAttempts()
-            .some(
-              (other) =>
-                other.id !== attempt.id &&
-                samePhysicalWorkspace(other.workspace, attempt.workspace),
+            ).run(
+              attempt.id,
+              plan.id,
+              attempt.session_id,
+              attempt.message_id,
+              plan.owner,
+              attempt.workspace,
+              command.requestID,
+              command.reason!,
+              quarantineReview ? JSON.stringify(quarantineReview) : null,
+              at,
+              at,
             )
-        )
-          throw new Error(
-            "Retained artifact or effective scope reservation changed before admission",
-          )
+            db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+            this.store.record(plan.id, attempt.task_id, "SOURCE_QUARANTINE_REQUESTED", {
+              attemptID: attempt.id,
+              sessionID: attempt.session_id,
+              workspace: attempt.workspace,
+              requestID: command.requestID,
+              reason: command.reason,
+              ...(quarantineReview ? { reviewInput: quarantineReview } : {}),
+              ...(existing ? { supersedesRequestID: existing.request_id } : {}),
+              resourceHoldsRetained: true,
+            })
+            return {
+              status: "quarantining-source",
+              attemptID: attempt.id,
+              version: this.store.plan(plan.id)!.version,
+            }
+          }
+          if (command.action === "retained-repair") {
+            if (!retainedRepair || !ownerSession || !this.validArchitect(ownerSession))
+              throw new Error("Retained repair requires the current same-project Architect owner")
+            if (caller !== plan.owner || ownerSession.id !== plan.owner)
+              throw new Error("Retained repair owner changed before admission")
+            if (
+              caller !== retainedRepair.owner ||
+              plan.owner !== retainedRepair.owner ||
+              this.store.planControlEpoch(plan.id) !== retainedRepair.ownerEpoch
+            )
+              throw new Error(
+                "Retained repair owner/control authorization changed before admission",
+              )
+            if (!new Set(["running", "accepted", "blocked"]).has(plan.state))
+              throw new Error(
+                "Retained repair requires a running, accepted or blocked, unintegrated plan",
+              )
+            const input = PlanInput.parse(JSON.parse(plan.body))
+            const task = this.store.repository.get(retainedRepair.taskID)
+            const node = this.store
+              .nodes(plan.id)
+              .find((item) => item.task_id === retainedRepair.taskID)
+            const attempt = this.store
+              .attempts(plan.id)
+              .filter((item) => item.task_id === retainedRepair.taskID)
+              .at(-1)
+            if (
+              !task ||
+              !node ||
+              !attempt ||
+              node.state !== "accepted" ||
+              attempt.id !== retainedRepair.attemptID ||
+              !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
+              attempt.message_id !== retainedRepair.previousMessageID ||
+              attempt.session_id !== retainedRepair.sessionID ||
+              attempt.workspace !== retainedRepair.workspace ||
+              node.artifact !== retainedRepair.artifact ||
+              attempt.artifact !== retainedRepair.artifact ||
+              input.nodes.find((item) => item.taskID === task.id)?.revision !== task.revision ||
+              !sameProject(task.provenance.projectID, this.projectID) ||
+              task.provenance.projectDirectory !== this.directory ||
+              this.store.repository.taskDisposition(task.id)
+            )
+              throw new Error(
+                "Retained task, attempt, artifact, or assignment changed before admission",
+              )
+            const policy = JSON.parse(attempt.policy) as {
+              workspaceMode?: unknown
+              model?: unknown
+            }
+            const route = ModelPolicy.safeParse(policy.model)
+            const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+            if (
+              policy.workspaceMode !== "isolated" ||
+              !route.success ||
+              !planRoute?.success ||
+              !this.sameModel(route.data, retainedRepair.model) ||
+              !this.sameModel(planRoute.data, retainedRepair.model)
+            )
+              throw new Error("Retained task execution route changed before admission")
+            if (
+              this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
+              obs.isAncestor(
+                this.directory,
+                retainedRepair.artifact,
+                obs.git(this.directory, ["rev-parse", "HEAD"]),
+              )
+            )
+              throw new Error(
+                "Source-landed task work cannot be repaired in its retained workspace",
+              )
+            if (
+              this.store
+                .effects(plan.id)
+                .some((effect) => ["intended", "uncertain"].includes(effect.state)) ||
+              sourceQuarantine(this.store, attempt.id)
+            )
+              throw new Error("Uncertain effects or source quarantine prevent retained repair")
+            this.assertNoDispatchedDependents(plan, task.id, input)
+            if (
+              !existsSync(attempt.workspace) ||
+              obs.git(attempt.workspace, ["rev-parse", "HEAD"]) !== retainedRepair.artifact ||
+              !this.preparationAllowed(attempt) ||
+              this.store
+                .activeProjectAttempts()
+                .some(
+                  (other) =>
+                    other.id !== attempt.id &&
+                    samePhysicalWorkspace(other.workspace, attempt.workspace),
+                )
+            )
+              throw new Error(
+                "Retained artifact or effective scope reservation changed before admission",
+              )
 
-        this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
-        const cleared = db
-          .query(
-            "UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=? AND state='ready' AND artifact=?",
-          )
-          .run(plan.id, task.id, retainedRepair.artifact).changes
-        const updatedAttempt = db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state=? AND message_id=?",
-          )
-          .run(
-            retainedRepair.messageID,
-            attempt.id,
-            attempt.state,
-            retainedRepair.previousMessageID,
-          ).changes
-        const updatedPlan = db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
-          )
-          .run(plan.id, command.expectedVersion + 1).changes
-        if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
-          throw new Error("Retained repair authorization changed during atomic admission")
-        this.store.record(plan.id, task.id, "RETAINED_REPAIR_REQUESTED", {
-          operationID: retainedRepair.operationID,
-          requestID: command.requestID,
-          owner: caller,
-          ownerEpoch: retainedRepair.ownerEpoch,
-          expectedVersion: command.expectedVersion,
-          attemptID: attempt.id,
-          previousMessageID: retainedRepair.previousMessageID,
-          nativeInputID: retainedRepair.nativeInputID,
-          nativeAssignmentID: retainedRepair.previousMessageID,
-          previousAttemptState: attempt.state,
-          messageID: retainedRepair.messageID,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          route: retainedRepair.model,
-          artifact: retainedRepair.artifact,
-          defect: command.reason,
-          workerObservation: retainedRepair.workerObservation,
-          usageRetained: true,
-          sameAttempt: true,
-          sameSession: true,
-          sameWorkspace: true,
-          sameRoute: true,
-        })
-        return {
-          status: "retained-repair-requested",
-          operationID: retainedRepair.operationID,
-          taskID: task.id,
-          attemptID: attempt.id,
-          artifact: retainedRepair.artifact,
-          messageID: retainedRepair.messageID,
-          version: this.store.plan(plan.id)!.version,
-        }
-      }
-      if (command.action === "continue-retained-check") {
-        const prepared = retainedCheckContinuation
-        const nativeWorkspaces = retainedCheckNativeWorkspaces
-        const retained = prepared?.retained
-        if (
-          !prepared ||
-          !nativeWorkspaces ||
-          !retained ||
-          !ownerSession ||
-          !this.validArchitect(ownerSession) ||
-          ownerSession.id !== plan.owner ||
-          ownerSession.projectID !== this.projectID
-        )
-          throw new Error("Retained-check continuation requires the current Architect owner")
-        this.assertRetainedCheckContinuationCurrent(
-          plan,
-          command,
-          caller,
-          prepared,
-          nativeWorkspaces,
-        )
-        const changed = db
-          .query(
-            `UPDATE runner_plans SET version=version+1
-             WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
-               AND state=? AND artifact IS ?`,
-          )
-          .run(
-            plan.id,
-            this.directory,
-            caller,
-            command.expectedVersion,
-            prepared.target.planRevision,
-            plan.state,
-            plan.artifact,
-          ).changes
-        if (changed !== 1)
-          throw new Error("Retained-check plan changed during continuation authorization")
-        const nextPlan = this.store.plan(plan.id)!
-        const continuationID = crypto.randomUUID()
-        const { operation, check, receipt, resources } = retained
-        const current = retainedVerification(db, operation.id)
-        if (
-          !current ||
-          current.generation !== operation.generation ||
-          current.state !== "held" ||
-          fingerprint(current) !== fingerprint(operation)
-        )
-          throw new Error("Held retained verification changed before exact-check continuation")
-        this.store.record(
-          plan.id,
-          operation.taskID,
-          "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
-          {
-            continuationKind: "interrupted-check",
-            continuationID,
-            requestID: command.requestID,
-            owner: caller,
-            ownerEpoch: prepared.ownerEpoch,
-            priorOwner: operation.owner,
-            priorOwnerEpoch: operation.ownerEpoch,
-            planRevision: operation.planRevision,
-            planVersion: nextPlan.version,
-            operationID: operation.id,
-            generation: operation.generation,
-            taskID: operation.taskID,
-            taskRevision: operation.taskRevision,
-            attemptID: operation.attemptID,
-            phase: "combined",
-            checkID: prepared.target.checkID,
-            candidateArtifact: prepared.target.artifact,
-            commandFingerprint: verificationCommandFingerprint(prepared.target.command),
-            environmentIdentity: check.environmentIdentity,
-            planBodyFingerprint: prepared.planBodyFingerprint,
-            combinedInputFingerprint: operation.combinedInputFingerprint,
-            acceptedArtifacts: prepared.acceptedArtifacts,
-            sourceQuarantineFingerprint: fingerprint(operation.sourceQuarantine ?? null),
-            priorReceipt: receipt,
-            priorReceiptFingerprint: fingerprint(check.receipt),
-            priorCheckFingerprint: fingerprint(check.checkJSON),
-            priorCheck: JSON.parse(check.checkJSON) as unknown,
-            priorReceiptPath: check.receiptPath,
-            priorResources: resources.map((resource) => ({
-              name: resource.resource_name,
-              pathFingerprint: fingerprint(resource.canonical_path),
-              state: resource.state,
-            })),
-            reason: command.reason!.trim(),
-          },
-        )
-        saveRetainedVerification(db, {
-          ...current,
-          planVersion: nextPlan.version,
-          owner: caller,
-          ownerEpoch: prepared.ownerEpoch,
-          state: "combined-checks",
-          holdReason: null,
-          updatedAt: this.now(),
-        })
-        authorizeRetainedVerificationCheckRetry(db, {
-          operationID: operation.id,
-          phase: "combined",
-          checkID: prepared.target.checkID,
-          receiptFingerprint: fingerprint(check.receipt),
-        })
-        return {
-          status: "retained-verification-check-continued",
-          planID: plan.id,
-          operationID: operation.id,
-          generation: operation.generation,
-          phase: "combined",
-          taskID: operation.taskID,
-          taskRevision: operation.taskRevision,
-          attemptID: operation.attemptID,
-          artifact: prepared.target.artifact,
-          checkID: prepared.target.checkID,
-          continuationID,
-          inactivityTimeoutMs: prepared.deadline.effectiveInactivityTimeoutMs,
-          hardTimeoutMs: prepared.deadline.effectiveHardTimeoutMs,
-          reason: command.reason!.trim(),
-          version: nextPlan.version,
-        }
-      }
-      if (command.action === "extend-verification-deadline") {
-        const prepared = verificationDeadlineExtension
-        if (
-          !prepared ||
-          !ownerSession ||
-          !this.validArchitect(ownerSession) ||
-          ownerSession.id !== plan.owner ||
-          ownerSession.projectID !== this.projectID
-        )
-          throw new Error("Verification deadline extension requires the current Architect owner")
-        this.assertVerificationDeadlineExtensionCurrent(plan, command, caller, prepared)
-        if (
-          this.store.activeAdoptions(plan.id).length ||
-          activeRetainedVerifications(db, this.directory, plan.id).some(
-            (operation) => operation.id !== prepared.retained?.operation.id,
-          ) ||
-          (!prepared.retained &&
-            this.store
-              .effects(plan.id)
-              .some((effect) => ["intended", "uncertain"].includes(effect.state))) ||
-          verificationActivitiesForDatabase(this.store.repository.path).some(
-            (activity) => activity.metadata.planID === plan.id && activity.state === "running",
-          )
-        )
-          throw new Error("An active or uncertain check/resource prevents deadline extension")
-        const changed = db
-          .query(
-            `UPDATE runner_plans SET version=version+1
-             WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
-               AND state=? AND artifact IS ?`,
-          )
-          .run(
-            plan.id,
-            this.directory,
-            caller,
-            command.expectedVersion,
-            prepared.target.planRevision,
-            plan.state,
-            plan.artifact,
-          ).changes
-        if (changed !== 1)
-          throw new Error("Verification deadline plan changed during owner authorization")
-        const nextPlan = this.store.plan(plan.id)!
-        const amendmentID = crypto.randomUUID()
-        const amendment = VerificationTimeoutAmendmentSchema.parse({
-          schemaVersion: 1,
-          amendmentID,
-          policyRevision: prepared.deadline.policyRevision + 1,
-          requestID: command.requestID,
-          projectID: this.projectID,
-          projectDirectory: this.directory,
-          planID: plan.id,
-          planRevision: plan.revision,
-          planVersion: nextPlan.version,
-          owner: caller,
-          ownerEpoch: prepared.ownerEpoch,
-          phase: prepared.target.phase,
-          taskID: prepared.target.taskID,
-          taskRevision: prepared.target.taskRevision,
-          attemptID: prepared.target.attemptID,
-          artifact: prepared.target.artifact,
-          checkID: prepared.target.checkID,
-          commandFingerprint: verificationCommandFingerprint(prepared.target.command),
-          authoredTimeoutMs: prepared.deadline.authoredTimeoutMs,
-          previousTimeoutMs: prepared.deadline.effectiveTimeoutMs,
-          effectiveTimeoutMs: prepared.effectiveHardTimeoutMs,
-          timingPolicyVersion: 2,
-          authoredInactivityTimeoutMs: prepared.deadline.authoredInactivityTimeoutMs,
-          authoredHardTimeoutMs: prepared.deadline.authoredHardTimeoutMs,
-          defaultInactivityTimeoutMs: prepared.deadline.defaultInactivityTimeoutMs,
-          defaultHardTimeoutMs: prepared.deadline.defaultHardTimeoutMs,
-          previousInactivityTimeoutMs: prepared.deadline.effectiveInactivityTimeoutMs,
-          effectiveInactivityTimeoutMs: prepared.effectiveInactivityTimeoutMs,
-          previousHardTimeoutMs: prepared.deadline.effectiveHardTimeoutMs,
-          effectiveHardTimeoutMs: prepared.effectiveHardTimeoutMs,
-          ...(prepared.retained
-            ? {
-                retainedVerificationID: prepared.retained.operation.id,
-                retainedGeneration: prepared.retained.operation.generation,
-                retainedTaskID: prepared.retained.operation.taskID,
-                retainedTaskRevision: prepared.retained.operation.taskRevision,
-                retainedAttemptID: prepared.retained.operation.attemptID,
-              }
-            : {}),
-          reason: command.reason!.trim(),
-          createdAt: this.now(),
-        }) satisfies VerificationTimeoutAmendment
-        this.store.record(plan.id, amendment.taskID, "VERIFICATION_DEADLINE_EXTENDED", amendment)
-        if (prepared.retained) {
-          const { operation, check, receipt, resources } = prepared.retained
-          const current = retainedVerification(db, operation.id)
-          if (
-            !current ||
-            current.generation !== operation.generation ||
-            !["held", "cancelled"].includes(current.state) ||
-            current.planVersion !== operation.planVersion
-          )
-            throw new Error("Held retained verification changed before explicit continuation")
-          this.store.record(
-            plan.id,
-            operation.taskID,
-            "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
-            {
+            this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
+            const cleared = db
+              .query(
+                "UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=? AND state='ready' AND artifact=?",
+              )
+              .run(plan.id, task.id, retainedRepair.artifact).changes
+            const updatedAttempt = db
+              .query(
+                "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state=? AND message_id=?",
+              )
+              .run(
+                retainedRepair.messageID,
+                attempt.id,
+                attempt.state,
+                retainedRepair.previousMessageID,
+              ).changes
+            const updatedPlan = db
+              .query(
+                "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
+              )
+              .run(plan.id, command.expectedVersion + 1).changes
+            if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
+              throw new Error("Retained repair authorization changed during atomic admission")
+            this.store.record(plan.id, task.id, "RETAINED_REPAIR_REQUESTED", {
+              operationID: retainedRepair.operationID,
               requestID: command.requestID,
               owner: caller,
+              ownerEpoch: retainedRepair.ownerEpoch,
+              expectedVersion: command.expectedVersion,
+              attemptID: attempt.id,
+              previousMessageID: retainedRepair.previousMessageID,
+              nativeInputID: retainedRepair.nativeInputID,
+              nativeAssignmentID: retainedRepair.previousMessageID,
+              previousAttemptState: attempt.state,
+              messageID: retainedRepair.messageID,
+              sessionID: attempt.session_id,
+              workspace: attempt.workspace,
+              route: retainedRepair.model,
+              artifact: retainedRepair.artifact,
+              defect: command.reason,
+              workerObservation: retainedRepair.workerObservation,
+              usageRetained: true,
+              sameAttempt: true,
+              sameSession: true,
+              sameWorkspace: true,
+              sameRoute: true,
+            })
+            return {
+              status: "retained-repair-requested",
+              operationID: retainedRepair.operationID,
+              taskID: task.id,
+              attemptID: attempt.id,
+              artifact: retainedRepair.artifact,
+              messageID: retainedRepair.messageID,
+              version: this.store.plan(plan.id)!.version,
+            }
+          }
+          if (command.action === "continue-retained-check") {
+            const prepared = retainedCheckContinuation
+            const nativeWorkspaces = retainedCheckNativeWorkspaces
+            const retained = prepared?.retained
+            if (
+              !prepared ||
+              !nativeWorkspaces ||
+              !retained ||
+              !ownerSession ||
+              !this.validArchitect(ownerSession) ||
+              ownerSession.id !== plan.owner ||
+              ownerSession.projectID !== this.projectID
+            )
+              throw new Error("Retained-check continuation requires the current Architect owner")
+            this.assertRetainedCheckContinuationCurrent(
+              plan,
+              command,
+              caller,
+              prepared,
+              nativeWorkspaces,
+              obs,
+            )
+            const changed = db
+              .query(
+                `UPDATE runner_plans SET version=version+1
+             WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
+               AND state=? AND artifact IS ?`,
+              )
+              .run(
+                plan.id,
+                this.directory,
+                caller,
+                command.expectedVersion,
+                prepared.target.planRevision,
+                plan.state,
+                plan.artifact,
+              ).changes
+            if (changed !== 1)
+              throw new Error("Retained-check plan changed during continuation authorization")
+            const nextPlan = this.store.plan(plan.id)!
+            const continuationID = crypto.randomUUID()
+            const { operation, check, receipt, resources } = retained
+            const current = retainedVerification(db, operation.id)
+            if (
+              !current ||
+              current.generation !== operation.generation ||
+              current.state !== "held" ||
+              fingerprint(current) !== fingerprint(operation)
+            )
+              throw new Error("Held retained verification changed before exact-check continuation")
+            this.store.record(
+              plan.id,
+              operation.taskID,
+              "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
+              {
+                continuationKind: "interrupted-check",
+                continuationID,
+                requestID: command.requestID,
+                owner: caller,
+                ownerEpoch: prepared.ownerEpoch,
+                priorOwner: operation.owner,
+                priorOwnerEpoch: operation.ownerEpoch,
+                planRevision: operation.planRevision,
+                planVersion: nextPlan.version,
+                operationID: operation.id,
+                generation: operation.generation,
+                taskID: operation.taskID,
+                taskRevision: operation.taskRevision,
+                attemptID: operation.attemptID,
+                phase: "combined",
+                checkID: prepared.target.checkID,
+                candidateArtifact: prepared.target.artifact,
+                commandFingerprint: verificationCommandFingerprint(prepared.target.command),
+                environmentIdentity: check.environmentIdentity,
+                planBodyFingerprint: prepared.planBodyFingerprint,
+                combinedInputFingerprint: operation.combinedInputFingerprint,
+                acceptedArtifacts: prepared.acceptedArtifacts,
+                sourceQuarantineFingerprint: fingerprint(operation.sourceQuarantine ?? null),
+                priorReceipt: receipt,
+                priorReceiptFingerprint: fingerprint(check.receipt),
+                priorCheckFingerprint: fingerprint(check.checkJSON),
+                priorCheck: JSON.parse(check.checkJSON) as unknown,
+                priorReceiptPath: check.receiptPath,
+                priorResources: resources.map((resource) => ({
+                  name: resource.resource_name,
+                  pathFingerprint: fingerprint(resource.canonical_path),
+                  state: resource.state,
+                })),
+                reason: command.reason!.trim(),
+              },
+            )
+            saveRetainedVerification(db, {
+              ...current,
+              planVersion: nextPlan.version,
+              owner: caller,
               ownerEpoch: prepared.ownerEpoch,
-              priorOwner: operation.owner,
-              priorOwnerEpoch: operation.ownerEpoch,
-              planRevision: operation.planRevision,
+              state: "combined-checks",
+              holdReason: null,
+              updatedAt: this.now(),
+            })
+            authorizeRetainedVerificationCheckRetry(db, {
+              operationID: operation.id,
+              phase: "combined",
+              checkID: prepared.target.checkID,
+              receiptFingerprint: fingerprint(check.receipt),
+            })
+            return {
+              status: "retained-verification-check-continued",
+              planID: plan.id,
               operationID: operation.id,
               generation: operation.generation,
+              phase: "combined",
               taskID: operation.taskID,
               taskRevision: operation.taskRevision,
               attemptID: operation.attemptID,
-              phase: prepared.target.phase,
+              artifact: prepared.target.artifact,
               checkID: prepared.target.checkID,
-              candidateArtifact: prepared.target.artifact,
-              commandFingerprint: verificationCommandFingerprint(prepared.target.command),
-              amendmentID: amendment.amendmentID,
-              environmentIdentity: check.environmentIdentity,
-              priorReceipt: receipt,
-              priorReceiptFingerprint: fingerprint(check.receipt),
-              priorCheckFingerprint: fingerprint(check.checkJSON),
-              priorCheck: JSON.parse(check.checkJSON) as unknown,
-              priorReceiptPath: check.receiptPath,
-              priorResources: resources.map((resource) => ({
-                name: resource.resource_name,
-                pathFingerprint: fingerprint(resource.canonical_path),
-                state: resource.state,
-              })),
-              reason: amendment.reason,
-            },
-          )
-          const reactivated: RetainedVerification = {
-            ...current,
-            planVersion: nextPlan.version,
-            owner: caller,
-            ownerEpoch: prepared.ownerEpoch,
-            state: prepared.target.phase === "task" ? "task-checks" : "combined-checks",
-            holdReason: null,
-            updatedAt: this.now(),
+              continuationID,
+              inactivityTimeoutMs: prepared.deadline.effectiveInactivityTimeoutMs,
+              hardTimeoutMs: prepared.deadline.effectiveHardTimeoutMs,
+              reason: command.reason!.trim(),
+              version: nextPlan.version,
+            }
           }
-          saveRetainedVerification(db, reactivated)
-          authorizeRetainedVerificationCheckRetry(db, {
-            operationID: operation.id,
-            phase: prepared.target.phase,
-            checkID: prepared.target.checkID,
-            receiptFingerprint: fingerprint(check.receipt),
-          })
-        }
-        return {
-          status: prepared.retained
-            ? "retained-verification-check-continued"
-            : "verification-deadline-extended",
-          planID: plan.id,
-          phase: amendment.phase,
-          taskID: amendment.taskID,
-          attemptID: amendment.attemptID,
-          artifact: amendment.artifact,
-          checkID: amendment.checkID,
-          authoredTimeoutMs: amendment.authoredTimeoutMs,
-          previousTimeoutMs: amendment.previousTimeoutMs,
-          effectiveTimeoutMs: amendment.effectiveTimeoutMs,
-          previousInactivityTimeoutMs: amendment.previousInactivityTimeoutMs,
-          effectiveInactivityTimeoutMs: amendment.effectiveInactivityTimeoutMs,
-          previousHardTimeoutMs: amendment.previousHardTimeoutMs,
-          effectiveHardTimeoutMs: amendment.effectiveHardTimeoutMs,
-          amendmentID: amendment.amendmentID,
-          policyRevision: amendment.policyRevision,
-          reason: amendment.reason,
-          version: nextPlan.version,
-        }
-      }
-      if (command.action === "amend-scope") {
-        if (
-          !command.taskID ||
-          (!command.scopeAdditions?.length && !command.scopeRemovals?.length) ||
-          !command.reason
-        )
-          throw new Error("Scope amendment requires task, changed paths and reason")
-        const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-        if (!node || terminal.has(plan.state) || ["accepted", "incorporated"].includes(node.state))
-          throw new Error("Scope amendment requires unfinished work in this plan")
-        const previous = this.store.effectiveWriteScope(node.task_id)
-        const original = this.store.repository.get(node.task_id)!.proposal.writeScope
-        const requestedRemovals = new Set(command.scopeRemovals ?? [])
-        if (original.some((path) => requestedRemovals.has(path)))
-          throw new Error("Scope amendment cannot remove original task scope")
-        if (command.scopeAdditions?.some((path) => requestedRemovals.has(path)))
-          throw new Error("Scope amendment cannot add and remove the same pattern")
-        const writeScope = [
-          ...new Set([
-            ...previous.filter((path) => !requestedRemovals.has(path)),
-            ...(command.scopeAdditions ?? []),
-          ]),
-        ]
-        if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
-        const additions = writeScope.filter((path) => !previous.includes(path))
-        const removals = previous.filter((path) => !writeScope.includes(path))
-        if (!additions.length && !removals.length)
-          return { status: "scope-unchanged", version: plan.version }
-        const active = ["preparing", "running", "verifying"]
-        const writers = this.store
-          .attempts(plan.id)
-          .filter((a) => a.task_id === node.task_id && active.includes(a.state))
-        if (removals.length && writers.length)
-          throw new Error("Scope removal requires stopped task writers")
-        if (writers.length) {
-          for (const other of this.store.activeProjectAttempts())
+          if (command.action === "extend-verification-deadline") {
+            const prepared = verificationDeadlineExtension
             if (
-              other.task_id !== node.task_id &&
-              active.includes(other.state) &&
-              !writers.every((writer) =>
-                sourceReservationExcluded(this.store, other, {
-                  mode: writer.workspace === this.directory ? "shared" : "isolated",
-                  workspace: writer.workspace,
-                }),
-              ) &&
-              scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
+              !prepared ||
+              !ownerSession ||
+              !this.validArchitect(ownerSession) ||
+              ownerSession.id !== plan.owner ||
+              ownerSession.projectID !== this.projectID
             )
-              throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
-        }
-        this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
-          additions,
-          ...(removals.length ? { removals } : {}),
-          writeScope,
-          reason: command.reason,
-          caller,
-          taskRevision: this.store.repository.get(node.task_id)!.revision,
-        })
-        const instructionUpdates: string[] = []
-        for (const attempt of this.store
-          .attempts(plan.id)
-          .filter(
-            (item) =>
-              item.task_id === node.task_id &&
-              (["running", "verifying"].includes(item.state) ||
-                (item.state === "preparing" &&
-                  this.store
-                    .effects(plan.id)
-                    .some(
-                      (effect) =>
-                        effect.attempt_id === item.id &&
-                        effect.kind === "prompt" &&
-                        effect.state !== "failed",
-                    ))),
-          )) {
-          const payload: WorkerInstruction = {
-            sessionID: attempt.session_id,
-            attemptID: attempt.id,
-            projectID: this.projectID,
-            directory: attempt.workspace,
-            key: `lazers-scope-${attempt.id}-${fingerprint(writeScope)}`,
-            text: `Architect-authorized additive execution scope for task ${node.task_id}, revision 1, attempt ${attempt.id}. The immutable specification is unchanged.\nAdded paths: ${JSON.stringify(additions)}\nAuthorized cumulative write scope: ${JSON.stringify(writeScope)}\nReason: ${command.reason}\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance.`,
-          }
-          const kind = "scope-instruction"
-          const id = fingerprint({
-            planID: plan.id,
-            taskID: node.task_id,
-            attemptID: attempt.id,
-            kind,
-            payload,
-          })
-          // Command authorization and native-update intent commit atomically.
-          // The fenced runtime owns delivery and recovery, including lost replies.
-          db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)").run(
-            id,
-            plan.id,
-            node.task_id,
-            attempt.id,
-            kind,
-            JSON.stringify(payload),
-          )
-          this.store.record(plan.id, node.task_id, "EFFECT_INTENDED", {
-            effectID: id,
-            kind,
-            attemptID: attempt.id,
-          })
-          instructionUpdates.push(id)
-        }
-        db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-        return {
-          status: "scope-amended",
-          version: plan.version + 1,
-          writeScope,
-          instructionUpdates,
-        }
-      }
-      if (command.action === "reconcile-source-notices") {
-        if (!sourceNoticeReconciliation || !command.sourceSessionID)
-          throw new Error("Source notice reconciliation was not prepared")
-        if (plan.owner !== caller || plan.version !== command.expectedVersion)
-          throw new Error("Source notice reconciliation owner or version changed")
-        return sourceNoticeReconciliation
-      }
-      if (command.action === "adopt-descendant") {
-        if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
-          throw new Error("Descendant adoption requires the current same-project Architect owner")
-        if (ownerSession.id !== plan.owner || caller !== plan.owner)
-          throw new Error("Descendant adoption owner changed")
-        const adoptionID = crypto.randomUUID()
-        const adoption = this.store.createAdoption({
-          id: adoptionID,
-          planID: plan.id,
-          taskID: adoptionSeed.taskID,
-          writeScope: this.store.effectiveWriteScope(adoptionSeed.taskID),
-          requestID: command.requestID,
-          owner: plan.owner,
-          expectedVersion: plan.version,
-          taskRevision: adoptionSeed.taskRevision,
-          attemptID: adoptionSeed.attemptID,
-          nodeState: adoptionSeed.nodeState,
-          attemptState: adoptionSeed.attemptState,
-          oldArtifact: adoptionSeed.oldArtifact,
-          descendantCommit: adoptionSeed.descendantCommit,
-          targetBranch: adoptionSeed.targetBranch,
-          landingHead: adoptionSeed.landingHead,
-          reviewedBaseline: adoptionSeed.reviewedBaseline,
-          candidateTree: adoptionSeed.candidateTree,
-          inputFingerprint: adoptionSeed.inputFingerprint,
-          environmentIdentity: adoptionSeed.environmentIdentity,
-          reason: adoptionSeed.reason,
-          combinedArtifact: adoptionSeed.combinedArtifact,
-        })
-        return {
-          status: "descendant-adoption-requested",
-          adoptionID: adoption.id,
-          taskID: adoption.task_id,
-          artifact: adoption.descendant_commit,
-          combinedArtifact: adoption.combined_artifact,
-          version: plan.version + 1,
-        }
-      }
-      if (command.action === "verify-retained") {
-        const seed = retainedVerificationSeed
-        if (!seed || !ownerSession || !this.validArchitect(ownerSession))
-          throw new Error("Retained verification requires the current same-project Architect owner")
-        if (
-          ownerSession.id !== plan.owner ||
-          caller !== plan.owner ||
-          plan.version !== seed.planVersion ||
-          plan.revision !== seed.planRevision ||
-          this.store.planControlEpoch(plan.id) !== seed.ownerEpoch ||
-          command.projectID !== this.projectID ||
-          command.taskID !== seed.taskID ||
-          command.taskRevision !== seed.taskRevision ||
-          command.attemptID !== seed.attemptID ||
-          command.artifact !== seed.artifact
-        )
-          throw new Error(
-            "Retained verification authorization or candidate changed before reservation",
-          )
-        const taskRow = db
-          .query<{ project_directory: string; body: string }, [string, string]>(
-            "SELECT project_directory,body FROM tasks WHERE project_directory=? AND id=?",
-          )
-          .get(this.directory, seed.taskID)
-        const reservedTask = taskRow ? this.store.repository.get(seed.taskID) : undefined
-        const latestAttempt = this.store
-          .attempts(plan.id)
-          .filter((attempt) => attempt.task_id === seed.taskID)
-          .at(-1)
-        const attemptRow = db
-          .query<
-            {
-              id: string
-              artifact: string | null
-              session_id: string
-              message_id: string
-              workspace: string
-            },
-            [string, string]
-          >(
-            "SELECT id,artifact,session_id,message_id,workspace FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
-          )
-          .get(plan.id, seed.taskID)
-        const nodeRow = db
-          .query<{ state: string; artifact: string | null }, [string, string]>(
-            "SELECT state,artifact FROM runner_nodes WHERE plan_id=? AND task_id=?",
-          )
-          .get(plan.id, seed.taskID)
-        const sourceQuarantineCurrent = Boolean(
-          seed.sourceQuarantine &&
-          ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) &&
-          latestAttempt &&
-          latestAttempt.state === "verifying" &&
-          nodeRow?.state === "verifying" &&
-          sourceQuarantineVerificationBindingMatches(this.store, {
-            planID: plan.id,
-            owner: seed.owner,
-            attempt: latestAttempt,
-            artifact: seed.artifact,
-            expected: seed.sourceQuarantine,
-          }),
-        )
-        if (
-          (seed.sourceQuarantine
-            ? !sourceQuarantineCurrent
-            : !["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) ||
-          !taskRow ||
-          taskRow.project_directory !== this.directory ||
-          reservedTask?.revision !== seed.taskRevision ||
-          reservedTask.provenance.projectID !== this.projectID ||
-          reservedTask.provenance.projectDirectory !== this.directory ||
-          this.store.repository.taskDisposition(seed.taskID) !== undefined ||
-          !attemptRow ||
-          attemptRow.id !== seed.attemptID ||
-          attemptRow.session_id !== seed.originalSessionID ||
-          attemptRow.message_id !== seed.originalMessageID ||
-          realpathSync(attemptRow.workspace) !== seed.originalWorkspace ||
-          (seed.repair
-            ? attemptRow.artifact !== seed.repair.previousArtifact ||
-              nodeRow?.artifact !== null ||
-              !this.retainedRepairCandidateCurrent(
-                plan,
-                this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
-                seed.repair,
+              throw new Error(
+                "Verification deadline extension requires the current Architect owner",
+              )
+            this.assertVerificationDeadlineExtensionCurrent(plan, command, caller, prepared)
+            if (
+              this.store.activeAdoptions(plan.id).length ||
+              activeRetainedVerifications(db, this.directory, plan.id).some(
+                (operation) => operation.id !== prepared.retained?.operation.id,
               ) ||
-              git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact
-            : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
-              (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
-        )
-          throw new Error(
-            "Original task, latest attempt or exact committed candidate changed before reservation",
-          )
-        this.assertRetainedVerificationScopeAvailable(
-          plan.id,
-          seed.taskID,
-          seed.attemptID,
-          this.retainedVerificationWorkspacePath(seed.id, "task"),
-        )
-        const operation = createRetainedVerification(db, this.directory, {
-          ...seed,
-          state: "pending",
-          holdReason: null,
-          cleanupState: "pending",
-          createdAt: this.now(),
-          updatedAt: this.now(),
-        })
-        this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_REQUESTED", {
-          operationID: operation.id,
-          generation: operation.generation,
-          taskRevision: operation.taskRevision,
-          attemptID: operation.attemptID,
-          artifact: operation.artifact,
-          combinedArtifact: operation.combinedArtifact,
-          owner: operation.owner,
-          ownerEpoch: operation.ownerEpoch,
-          requestID: command.requestID,
-          oldExecutionAndResourceHoldsPreserved: true,
-        })
-        return {
-          status: "retained-verification-requested",
-          operationID: operation.id,
-          generation: operation.generation,
-          taskID: operation.taskID,
-          attemptID: operation.attemptID,
-          artifact: operation.artifact,
-          combinedArtifact: operation.combinedArtifact,
-          retainedVerification: { operationID: operation.id, generation: operation.generation },
-          probeBasis: {
-            task: retainedVerificationProbeBasis(operation, "task"),
-            ...(operation.combinedArtifact
-              ? { combined: retainedVerificationProbeBasis(operation, "combined") }
-              : {}),
-          },
-          version: plan.version,
-        }
-      }
-      if (command.action === "cancel-retained-verification") {
-        if (!command.retainedVerificationID || !ownerSession || !this.validArchitect(ownerSession))
-          throw new Error("Retained verification cancellation requires the current Architect owner")
-        if (ownerSession.id !== plan.owner || caller !== plan.owner)
-          throw new Error("Retained verification cancellation owner changed")
-        const operation = retainedVerification(db, command.retainedVerificationID)
-        if (
-          !operation ||
-          operation.planID !== plan.id ||
-          operation.projectDirectory !== this.directory ||
-          ![
-            "pending",
-            "task-checks",
-            "combined-checks",
-            "waiting-human",
-            "waiting-human-combined",
-            "task-accepted",
-            "held",
-          ].includes(operation.state)
-        )
-          throw new Error("Cancellation must name a current retained verification generation")
-        const cancelled: RetainedVerification = {
-          ...operation,
-          state: "cancelled",
-          holdReason: command.reason ?? "Cancelled by the current Architect owner",
-          updatedAt: this.now(),
-        }
-        saveRetainedVerification(db, cancelled)
-        db.query(
-          `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
-           WHERE operation_id=? AND state IN ('creating','active')`,
-        ).run(this.now(), operation.id)
-        this.retainedVerificationAborts.get(operation.id)?.abort()
-        this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
-          operationID: operation.id,
-          generation: operation.generation,
-          source: "owner-command",
-          previousState: operation.state,
-          previousHoldReason: operation.holdReason,
-          reason: cancelled.holdReason,
-          oldExecutionAndResourceHoldsPreserved: true,
-        })
-        return {
-          status: "retained-verification-cancelled",
-          operationID: operation.id,
-          generation: operation.generation,
-          version: plan.version,
-        }
-      }
-      if (command.action === "recover-cleanup") {
-        if (
-          !this.validArchitect(ownerSession) ||
-          ownerSession.id !== plan.owner ||
-          caller !== plan.owner
-        )
-          throw new Error("Cleanup recovery requires the current Architect owner")
-        if (plan.state !== "cleanup-blocked")
-          throw new Error("Cleanup recovery is available only for an existing cleanup hold")
-        if (!command.taskID || !command.attemptID || !command.artifact || !command.targetBranch)
-          throw new Error("Cleanup recovery requires the exact accepted task and attempt")
-        const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-        const proposal = PlanInput.parse(JSON.parse(plan.body))
-        const proposedNode = proposal.nodes.find((item) => item.taskID === command.taskID)
-        const task = this.store.repository.get(command.taskID)
-        const attempts = this.store
-          .attempts(plan.id)
-          .filter((candidate) => candidate.task_id === command.taskID)
-        const attempt = attempts.at(-1)
-        if (
-          !node ||
-          node.state !== "accepted" ||
-          node.artifact !== command.artifact ||
-          !proposedNode ||
-          !task ||
-          task.revision !== proposedNode.revision ||
-          !sameProject(task.provenance.projectID, this.projectID) ||
-          task.provenance.projectDirectory !== this.directory ||
-          !attempt ||
-          attempt.id !== command.attemptID ||
-          attempt.state !== "accepted" ||
-          attempt.artifact !== command.artifact
-        )
-          throw new Error("Cleanup recovery task, accepted artifact or latest attempt changed")
-        const sourceEffect = this.store.effects(plan.id).find((effect) => {
-          if (
-            !["worktree", "worktree-recovery"].includes(effect.kind) ||
-            effect.state !== "completed" ||
-            effect.attempt_id !== attempt.id
-          )
-            return false
-          try {
-            return JSON.parse(effect.receipt ?? "{}").workspace === attempt.workspace
-          } catch {
-            return false
+              (!prepared.retained &&
+                this.store
+                  .effects(plan.id)
+                  .some((effect) => ["intended", "uncertain"].includes(effect.state))) ||
+              verificationActivitiesForDatabase(this.store.repository.path).some(
+                (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+              )
+            )
+              throw new Error("An active or uncertain check/resource prevents deadline extension")
+            const changed = db
+              .query(
+                `UPDATE runner_plans SET version=version+1
+             WHERE id=? AND project_directory=? AND owner=? AND version=? AND revision=?
+               AND state=? AND artifact IS ?`,
+              )
+              .run(
+                plan.id,
+                this.directory,
+                caller,
+                command.expectedVersion,
+                prepared.target.planRevision,
+                plan.state,
+                plan.artifact,
+              ).changes
+            if (changed !== 1)
+              throw new Error("Verification deadline plan changed during owner authorization")
+            const nextPlan = this.store.plan(plan.id)!
+            const amendmentID = crypto.randomUUID()
+            const amendment = VerificationTimeoutAmendmentSchema.parse({
+              schemaVersion: 1,
+              amendmentID,
+              policyRevision: prepared.deadline.policyRevision + 1,
+              requestID: command.requestID,
+              projectID: this.projectID,
+              projectDirectory: this.directory,
+              planID: plan.id,
+              planRevision: plan.revision,
+              planVersion: nextPlan.version,
+              owner: caller,
+              ownerEpoch: prepared.ownerEpoch,
+              phase: prepared.target.phase,
+              taskID: prepared.target.taskID,
+              taskRevision: prepared.target.taskRevision,
+              attemptID: prepared.target.attemptID,
+              artifact: prepared.target.artifact,
+              checkID: prepared.target.checkID,
+              commandFingerprint: verificationCommandFingerprint(prepared.target.command),
+              authoredTimeoutMs: prepared.deadline.authoredTimeoutMs,
+              previousTimeoutMs: prepared.deadline.effectiveTimeoutMs,
+              effectiveTimeoutMs: prepared.effectiveHardTimeoutMs,
+              timingPolicyVersion: 2,
+              authoredInactivityTimeoutMs: prepared.deadline.authoredInactivityTimeoutMs,
+              authoredHardTimeoutMs: prepared.deadline.authoredHardTimeoutMs,
+              defaultInactivityTimeoutMs: prepared.deadline.defaultInactivityTimeoutMs,
+              defaultHardTimeoutMs: prepared.deadline.defaultHardTimeoutMs,
+              previousInactivityTimeoutMs: prepared.deadline.effectiveInactivityTimeoutMs,
+              effectiveInactivityTimeoutMs: prepared.effectiveInactivityTimeoutMs,
+              previousHardTimeoutMs: prepared.deadline.effectiveHardTimeoutMs,
+              effectiveHardTimeoutMs: prepared.effectiveHardTimeoutMs,
+              ...(prepared.retained
+                ? {
+                    retainedVerificationID: prepared.retained.operation.id,
+                    retainedGeneration: prepared.retained.operation.generation,
+                    retainedTaskID: prepared.retained.operation.taskID,
+                    retainedTaskRevision: prepared.retained.operation.taskRevision,
+                    retainedAttemptID: prepared.retained.operation.attemptID,
+                  }
+                : {}),
+              reason: command.reason!.trim(),
+              createdAt: this.now(),
+            }) satisfies VerificationTimeoutAmendment
+            this.store.record(
+              plan.id,
+              amendment.taskID,
+              "VERIFICATION_DEADLINE_EXTENDED",
+              amendment,
+            )
+            if (prepared.retained) {
+              const { operation, check, receipt, resources } = prepared.retained
+              const current = retainedVerification(db, operation.id)
+              if (
+                !current ||
+                current.generation !== operation.generation ||
+                !["held", "cancelled"].includes(current.state) ||
+                current.planVersion !== operation.planVersion
+              )
+                throw new Error("Held retained verification changed before explicit continuation")
+              this.store.record(
+                plan.id,
+                operation.taskID,
+                "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
+                {
+                  requestID: command.requestID,
+                  owner: caller,
+                  ownerEpoch: prepared.ownerEpoch,
+                  priorOwner: operation.owner,
+                  priorOwnerEpoch: operation.ownerEpoch,
+                  planRevision: operation.planRevision,
+                  operationID: operation.id,
+                  generation: operation.generation,
+                  taskID: operation.taskID,
+                  taskRevision: operation.taskRevision,
+                  attemptID: operation.attemptID,
+                  phase: prepared.target.phase,
+                  checkID: prepared.target.checkID,
+                  candidateArtifact: prepared.target.artifact,
+                  commandFingerprint: verificationCommandFingerprint(prepared.target.command),
+                  amendmentID: amendment.amendmentID,
+                  environmentIdentity: check.environmentIdentity,
+                  priorReceipt: receipt,
+                  priorReceiptFingerprint: fingerprint(check.receipt),
+                  priorCheckFingerprint: fingerprint(check.checkJSON),
+                  priorCheck: JSON.parse(check.checkJSON) as unknown,
+                  priorReceiptPath: check.receiptPath,
+                  priorResources: resources.map((resource) => ({
+                    name: resource.resource_name,
+                    pathFingerprint: fingerprint(resource.canonical_path),
+                    state: resource.state,
+                  })),
+                  reason: amendment.reason,
+                },
+              )
+              const reactivated: RetainedVerification = {
+                ...current,
+                planVersion: nextPlan.version,
+                owner: caller,
+                ownerEpoch: prepared.ownerEpoch,
+                state: prepared.target.phase === "task" ? "task-checks" : "combined-checks",
+                holdReason: null,
+                updatedAt: this.now(),
+              }
+              saveRetainedVerification(db, reactivated)
+              authorizeRetainedVerificationCheckRetry(db, {
+                operationID: operation.id,
+                phase: prepared.target.phase,
+                checkID: prepared.target.checkID,
+                receiptFingerprint: fingerprint(check.receipt),
+              })
+            }
+            return {
+              status: prepared.retained
+                ? "retained-verification-check-continued"
+                : "verification-deadline-extended",
+              planID: plan.id,
+              phase: amendment.phase,
+              taskID: amendment.taskID,
+              attemptID: amendment.attemptID,
+              artifact: amendment.artifact,
+              checkID: amendment.checkID,
+              authoredTimeoutMs: amendment.authoredTimeoutMs,
+              previousTimeoutMs: amendment.previousTimeoutMs,
+              effectiveTimeoutMs: amendment.effectiveTimeoutMs,
+              previousInactivityTimeoutMs: amendment.previousInactivityTimeoutMs,
+              effectiveInactivityTimeoutMs: amendment.effectiveInactivityTimeoutMs,
+              previousHardTimeoutMs: amendment.previousHardTimeoutMs,
+              effectiveHardTimeoutMs: amendment.effectiveHardTimeoutMs,
+              amendmentID: amendment.amendmentID,
+              policyRevision: amendment.policyRevision,
+              reason: amendment.reason,
+              version: nextPlan.version,
+            }
           }
-        })
-        if (!sourceEffect || attempt.workspace === this.directory || !existsSync(attempt.workspace))
-          throw new Error(
-            "Exact owned attempt worktree is unavailable; preserve it for reconciliation",
-          )
-        const taskIntegration = this.store.latestTransition<{
-          artifact?: string
-          branch?: string
-        }>(plan.id, command.taskID, "TASK_INTEGRATION_RECORDED")
-        const planIntegration = this.store.latestTransition<{
-          artifact?: string
-          branch?: string
-        }>(plan.id, null, "INTEGRATION_RECORDED")
-        const integrated =
-          (taskIntegration?.artifact === command.artifact &&
-            taskIntegration.branch === command.targetBranch) ||
-          (planIntegration?.artifact === plan.artifact &&
-            planIntegration.branch === command.targetBranch)
-        if (!integrated)
-          throw new Error("Cleanup recovery requires a durable matching source integration record")
-        if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
-          throw new Error("The current checkout is not the recorded integration target branch")
-        requireIntegration(
-          preflight.integration,
-          command.artifact,
-          "The accepted artifact",
-          "the recorded integration branch",
-        )
-        if (git(attempt.workspace, ["status", "--porcelain"]))
-          throw new Error(`Accepted attempt worktree is dirty; preserve ${attempt.workspace}`)
+          if (command.action === "amend-scope") {
+            if (
+              !command.taskID ||
+              (!command.scopeAdditions?.length && !command.scopeRemovals?.length) ||
+              !command.reason
+            )
+              throw new Error("Scope amendment requires task, changed paths and reason")
+            const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+            if (
+              !node ||
+              terminal.has(plan.state) ||
+              ["accepted", "incorporated"].includes(node.state)
+            )
+              throw new Error("Scope amendment requires unfinished work in this plan")
+            const previous = this.store.effectiveWriteScope(node.task_id)
+            const original = this.store.repository.get(node.task_id)!.proposal.writeScope
+            const requestedRemovals = new Set(command.scopeRemovals ?? [])
+            if (original.some((path) => requestedRemovals.has(path)))
+              throw new Error("Scope amendment cannot remove original task scope")
+            if (command.scopeAdditions?.some((path) => requestedRemovals.has(path)))
+              throw new Error("Scope amendment cannot add and remove the same pattern")
+            const writeScope = [
+              ...new Set([
+                ...previous.filter((path) => !requestedRemovals.has(path)),
+                ...(command.scopeAdditions ?? []),
+              ]),
+            ]
+            if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
+            const additions = writeScope.filter((path) => !previous.includes(path))
+            const removals = previous.filter((path) => !writeScope.includes(path))
+            if (!additions.length && !removals.length)
+              return { status: "scope-unchanged", version: plan.version }
+            const active = ["preparing", "running", "verifying"]
+            const writers = this.store
+              .attempts(plan.id)
+              .filter((a) => a.task_id === node.task_id && active.includes(a.state))
+            if (removals.length && writers.length)
+              throw new Error("Scope removal requires stopped task writers")
+            if (writers.length) {
+              for (const other of this.store.activeProjectAttempts())
+                if (
+                  other.task_id !== node.task_id &&
+                  active.includes(other.state) &&
+                  !writers.every((writer) =>
+                    sourceReservationExcluded(this.store, other, {
+                      mode: writer.workspace === this.directory ? "shared" : "isolated",
+                      workspace: writer.workspace,
+                    }),
+                  ) &&
+                  scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
+                )
+                  throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
+            }
+            this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
+              additions,
+              ...(removals.length ? { removals } : {}),
+              writeScope,
+              reason: command.reason,
+              caller,
+              taskRevision: this.store.repository.get(node.task_id)!.revision,
+            })
+            const instructionUpdates: string[] = []
+            for (const attempt of this.store
+              .attempts(plan.id)
+              .filter(
+                (item) =>
+                  item.task_id === node.task_id &&
+                  (["running", "verifying"].includes(item.state) ||
+                    (item.state === "preparing" &&
+                      this.store
+                        .effects(plan.id)
+                        .some(
+                          (effect) =>
+                            effect.attempt_id === item.id &&
+                            effect.kind === "prompt" &&
+                            effect.state !== "failed",
+                        ))),
+              )) {
+              const payload: WorkerInstruction = {
+                sessionID: attempt.session_id,
+                attemptID: attempt.id,
+                projectID: this.projectID,
+                directory: attempt.workspace,
+                key: `lazers-scope-${attempt.id}-${fingerprint(writeScope)}`,
+                text: `Architect-authorized additive execution scope for task ${node.task_id}, revision 1, attempt ${attempt.id}. The immutable specification is unchanged.\nAdded paths: ${JSON.stringify(additions)}\nAuthorized cumulative write scope: ${JSON.stringify(writeScope)}\nReason: ${command.reason}\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance.`,
+              }
+              const kind = "scope-instruction"
+              const id = fingerprint({
+                planID: plan.id,
+                taskID: node.task_id,
+                attemptID: attempt.id,
+                kind,
+                payload,
+              })
+              // Command authorization and native-update intent commit atomically.
+              // The fenced runtime owns delivery and recovery, including lost replies.
+              db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)").run(
+                id,
+                plan.id,
+                node.task_id,
+                attempt.id,
+                kind,
+                JSON.stringify(payload),
+              )
+              this.store.record(plan.id, node.task_id, "EFFECT_INTENDED", {
+                effectID: id,
+                kind,
+                attemptID: attempt.id,
+              })
+              instructionUpdates.push(id)
+            }
+            db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+            return {
+              status: "scope-amended",
+              version: plan.version + 1,
+              writeScope,
+              instructionUpdates,
+            }
+          }
+          if (command.action === "reconcile-source-notices") {
+            if (!sourceNoticeReconciliation || !command.sourceSessionID)
+              throw new Error("Source notice reconciliation was not prepared")
+            if (plan.owner !== caller || plan.version !== command.expectedVersion)
+              throw new Error("Source notice reconciliation owner or version changed")
+            return sourceNoticeReconciliation
+          }
+          if (command.action === "adopt-descendant") {
+            if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
+              throw new Error(
+                "Descendant adoption requires the current same-project Architect owner",
+              )
+            if (ownerSession.id !== plan.owner || caller !== plan.owner)
+              throw new Error("Descendant adoption owner changed")
+            const adoptionID = crypto.randomUUID()
+            const adoption = this.store.createAdoption({
+              id: adoptionID,
+              planID: plan.id,
+              taskID: adoptionSeed.taskID,
+              writeScope: this.store.effectiveWriteScope(adoptionSeed.taskID),
+              requestID: command.requestID,
+              owner: plan.owner,
+              expectedVersion: plan.version,
+              taskRevision: adoptionSeed.taskRevision,
+              attemptID: adoptionSeed.attemptID,
+              nodeState: adoptionSeed.nodeState,
+              attemptState: adoptionSeed.attemptState,
+              oldArtifact: adoptionSeed.oldArtifact,
+              descendantCommit: adoptionSeed.descendantCommit,
+              targetBranch: adoptionSeed.targetBranch,
+              landingHead: adoptionSeed.landingHead,
+              reviewedBaseline: adoptionSeed.reviewedBaseline,
+              candidateTree: adoptionSeed.candidateTree,
+              inputFingerprint: adoptionSeed.inputFingerprint,
+              environmentIdentity: adoptionSeed.environmentIdentity,
+              reason: adoptionSeed.reason,
+              combinedArtifact: adoptionSeed.combinedArtifact,
+            })
+            return {
+              status: "descendant-adoption-requested",
+              adoptionID: adoption.id,
+              taskID: adoption.task_id,
+              artifact: adoption.descendant_commit,
+              combinedArtifact: adoption.combined_artifact,
+              version: plan.version + 1,
+            }
+          }
+          if (command.action === "verify-retained") {
+            const seed = retainedVerificationSeed
+            if (!seed || !ownerSession || !this.validArchitect(ownerSession))
+              throw new Error(
+                "Retained verification requires the current same-project Architect owner",
+              )
+            if (
+              ownerSession.id !== plan.owner ||
+              caller !== plan.owner ||
+              plan.version !== seed.planVersion ||
+              plan.revision !== seed.planRevision ||
+              this.store.planControlEpoch(plan.id) !== seed.ownerEpoch ||
+              command.projectID !== this.projectID ||
+              command.taskID !== seed.taskID ||
+              command.taskRevision !== seed.taskRevision ||
+              command.attemptID !== seed.attemptID ||
+              command.artifact !== seed.artifact
+            )
+              throw new Error(
+                "Retained verification authorization or candidate changed before reservation",
+              )
+            const taskRow = db
+              .query<{ project_directory: string; body: string }, [string, string]>(
+                "SELECT project_directory,body FROM tasks WHERE project_directory=? AND id=?",
+              )
+              .get(this.directory, seed.taskID)
+            const reservedTask = taskRow ? this.store.repository.get(seed.taskID) : undefined
+            const latestAttempt = this.store
+              .attempts(plan.id)
+              .filter((attempt) => attempt.task_id === seed.taskID)
+              .at(-1)
+            const attemptRow = db
+              .query<
+                {
+                  id: string
+                  artifact: string | null
+                  session_id: string
+                  message_id: string
+                  workspace: string
+                },
+                [string, string]
+              >(
+                "SELECT id,artifact,session_id,message_id,workspace FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
+              )
+              .get(plan.id, seed.taskID)
+            const nodeRow = db
+              .query<{ state: string; artifact: string | null }, [string, string]>(
+                "SELECT state,artifact FROM runner_nodes WHERE plan_id=? AND task_id=?",
+              )
+              .get(plan.id, seed.taskID)
+            const sourceQuarantineCurrent = Boolean(
+              seed.sourceQuarantine &&
+              ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) &&
+              latestAttempt &&
+              latestAttempt.state === "verifying" &&
+              nodeRow?.state === "verifying" &&
+              sourceQuarantineVerificationBindingMatches(this.store, {
+                planID: plan.id,
+                owner: seed.owner,
+                attempt: latestAttempt,
+                artifact: seed.artifact,
+                expected: seed.sourceQuarantine,
+              }),
+            )
+            if (
+              (seed.sourceQuarantine
+                ? !sourceQuarantineCurrent
+                : !["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) ||
+              !taskRow ||
+              taskRow.project_directory !== this.directory ||
+              reservedTask?.revision !== seed.taskRevision ||
+              reservedTask.provenance.projectID !== this.projectID ||
+              reservedTask.provenance.projectDirectory !== this.directory ||
+              this.store.repository.taskDisposition(seed.taskID) !== undefined ||
+              !attemptRow ||
+              attemptRow.id !== seed.attemptID ||
+              attemptRow.session_id !== seed.originalSessionID ||
+              attemptRow.message_id !== seed.originalMessageID ||
+              realpathSync(attemptRow.workspace) !== seed.originalWorkspace ||
+              (seed.repair
+                ? attemptRow.artifact !== seed.repair.previousArtifact ||
+                  nodeRow?.artifact !== null ||
+                  !this.retainedRepairCandidateCurrent(
+                    plan,
+                    this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
+                    seed.repair,
+                  ) ||
+                  obs.git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact
+                : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
+                  (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
+            )
+              throw new Error(
+                "Original task, latest attempt or exact committed candidate changed before reservation",
+              )
+            this.assertRetainedVerificationScopeAvailable(
+              plan.id,
+              seed.taskID,
+              seed.attemptID,
+              this.retainedVerificationWorkspacePath(seed.id, "task"),
+            )
+            const operation = createRetainedVerification(db, this.directory, {
+              ...seed,
+              state: "pending",
+              holdReason: null,
+              cleanupState: "pending",
+              createdAt: this.now(),
+              updatedAt: this.now(),
+            })
+            this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_REQUESTED", {
+              operationID: operation.id,
+              generation: operation.generation,
+              taskRevision: operation.taskRevision,
+              attemptID: operation.attemptID,
+              artifact: operation.artifact,
+              combinedArtifact: operation.combinedArtifact,
+              owner: operation.owner,
+              ownerEpoch: operation.ownerEpoch,
+              requestID: command.requestID,
+              oldExecutionAndResourceHoldsPreserved: true,
+            })
+            return {
+              status: "retained-verification-requested",
+              operationID: operation.id,
+              generation: operation.generation,
+              taskID: operation.taskID,
+              attemptID: operation.attemptID,
+              artifact: operation.artifact,
+              combinedArtifact: operation.combinedArtifact,
+              retainedVerification: { operationID: operation.id, generation: operation.generation },
+              probeBasis: {
+                task: retainedVerificationProbeBasis(operation, "task"),
+                ...(operation.combinedArtifact
+                  ? { combined: retainedVerificationProbeBasis(operation, "combined") }
+                  : {}),
+              },
+              version: plan.version,
+            }
+          }
+          if (command.action === "cancel-retained-verification") {
+            if (
+              !command.retainedVerificationID ||
+              !ownerSession ||
+              !this.validArchitect(ownerSession)
+            )
+              throw new Error(
+                "Retained verification cancellation requires the current Architect owner",
+              )
+            if (ownerSession.id !== plan.owner || caller !== plan.owner)
+              throw new Error("Retained verification cancellation owner changed")
+            const operation = retainedVerification(db, command.retainedVerificationID)
+            if (
+              !operation ||
+              operation.planID !== plan.id ||
+              operation.projectDirectory !== this.directory ||
+              ![
+                "pending",
+                "task-checks",
+                "combined-checks",
+                "waiting-human",
+                "waiting-human-combined",
+                "task-accepted",
+                "held",
+              ].includes(operation.state)
+            )
+              throw new Error("Cancellation must name a current retained verification generation")
+            const cancelled: RetainedVerification = {
+              ...operation,
+              state: "cancelled",
+              holdReason: command.reason ?? "Cancelled by the current Architect owner",
+              updatedAt: this.now(),
+            }
+            saveRetainedVerification(db, cancelled)
+            db.query(
+              `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
+           WHERE operation_id=? AND state IN ('creating','active')`,
+            ).run(this.now(), operation.id)
+            this.retainedVerificationAborts.get(operation.id)?.abort()
+            this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
+              operationID: operation.id,
+              generation: operation.generation,
+              source: "owner-command",
+              previousState: operation.state,
+              previousHoldReason: operation.holdReason,
+              reason: cancelled.holdReason,
+              oldExecutionAndResourceHoldsPreserved: true,
+            })
+            return {
+              status: "retained-verification-cancelled",
+              operationID: operation.id,
+              generation: operation.generation,
+              version: plan.version,
+            }
+          }
+          if (command.action === "recover-cleanup") {
+            if (
+              !this.validArchitect(ownerSession) ||
+              ownerSession.id !== plan.owner ||
+              caller !== plan.owner
+            )
+              throw new Error("Cleanup recovery requires the current Architect owner")
+            if (plan.state !== "cleanup-blocked")
+              throw new Error("Cleanup recovery is available only for an existing cleanup hold")
+            if (!command.taskID || !command.attemptID || !command.artifact || !command.targetBranch)
+              throw new Error("Cleanup recovery requires the exact accepted task and attempt")
+            const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+            const proposal = PlanInput.parse(JSON.parse(plan.body))
+            const proposedNode = proposal.nodes.find((item) => item.taskID === command.taskID)
+            const task = this.store.repository.get(command.taskID)
+            const attempts = this.store
+              .attempts(plan.id)
+              .filter((candidate) => candidate.task_id === command.taskID)
+            const attempt = attempts.at(-1)
+            if (
+              !node ||
+              node.state !== "accepted" ||
+              node.artifact !== command.artifact ||
+              !proposedNode ||
+              !task ||
+              task.revision !== proposedNode.revision ||
+              !sameProject(task.provenance.projectID, this.projectID) ||
+              task.provenance.projectDirectory !== this.directory ||
+              !attempt ||
+              attempt.id !== command.attemptID ||
+              attempt.state !== "accepted" ||
+              attempt.artifact !== command.artifact
+            )
+              throw new Error("Cleanup recovery task, accepted artifact or latest attempt changed")
+            const sourceEffect = this.store.effects(plan.id).find((effect) => {
+              if (
+                !["worktree", "worktree-recovery"].includes(effect.kind) ||
+                effect.state !== "completed" ||
+                effect.attempt_id !== attempt.id
+              )
+                return false
+              try {
+                return JSON.parse(effect.receipt ?? "{}").workspace === attempt.workspace
+              } catch {
+                return false
+              }
+            })
+            if (
+              !sourceEffect ||
+              attempt.workspace === this.directory ||
+              !existsSync(attempt.workspace)
+            )
+              throw new Error(
+                "Exact owned attempt worktree is unavailable; preserve it for reconciliation",
+              )
+            const taskIntegration = this.store.latestTransition<{
+              artifact?: string
+              branch?: string
+            }>(plan.id, command.taskID, "TASK_INTEGRATION_RECORDED")
+            const planIntegration = this.store.latestTransition<{
+              artifact?: string
+              branch?: string
+            }>(plan.id, null, "INTEGRATION_RECORDED")
+            const integrated =
+              (taskIntegration?.artifact === command.artifact &&
+                taskIntegration.branch === command.targetBranch) ||
+              (planIntegration?.artifact === plan.artifact &&
+                planIntegration.branch === command.targetBranch)
+            if (!integrated)
+              throw new Error(
+                "Cleanup recovery requires a durable matching source integration record",
+              )
+            if (obs.git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
+              throw new Error("The current checkout is not the recorded integration target branch")
+            requireIntegration(
+              preflight.integration,
+              command.artifact,
+              "The accepted artifact",
+              "the recorded integration branch",
+            )
+            if (obs.git(attempt.workspace, ["status", "--porcelain"]))
+              throw new Error(`Accepted attempt worktree is dirty; preserve ${attempt.workspace}`)
 
-        const ownerEpoch = this.store.planControlEpoch(plan.id)
-        this.store.record(plan.id, command.taskID, "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED", {
-          schemaVersion: 1,
-          projectDirectory: this.directory,
-          planID: plan.id,
-          planRevision: plan.revision,
-          planArtifact: plan.artifact,
-          taskID: command.taskID,
-          taskRevision: proposedNode.revision,
-          attemptID: attempt.id,
-          artifact: command.artifact,
-          workspace: attempt.workspace,
-          sourceEffectID: sourceEffect.id,
-          sessionID: attempt.session_id,
-          assignedMessageID: attempt.message_id,
-          owner: caller,
-          ownerEpoch,
-          targetBranch: command.targetBranch,
-          requestID: command.requestID,
-          reason: command.reason ?? "Owner-authorized native cleanup recovery",
-        } satisfies CleanupRecoveryAuthorization)
-        const changed = db
-          .query(
-            `UPDATE runner_plans SET version=version+1
+            const ownerEpoch = this.store.planControlEpoch(plan.id)
+            this.store.record(plan.id, command.taskID, "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED", {
+              schemaVersion: 1,
+              projectDirectory: this.directory,
+              planID: plan.id,
+              planRevision: plan.revision,
+              planArtifact: plan.artifact,
+              taskID: command.taskID,
+              taskRevision: proposedNode.revision,
+              attemptID: attempt.id,
+              artifact: command.artifact,
+              workspace: attempt.workspace,
+              sourceEffectID: sourceEffect.id,
+              sessionID: attempt.session_id,
+              assignedMessageID: attempt.message_id,
+              owner: caller,
+              ownerEpoch,
+              targetBranch: command.targetBranch,
+              requestID: command.requestID,
+              reason: command.reason ?? "Owner-authorized native cleanup recovery",
+            } satisfies CleanupRecoveryAuthorization)
+            const changed = db
+              .query(
+                `UPDATE runner_plans SET version=version+1
              WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='cleanup-blocked'`,
-          )
-          .run(plan.id, this.directory, caller, command.expectedVersion).changes
-        if (changed !== 1)
-          throw new Error("Cleanup recovery plan changed during owner authorization")
-        return {
-          status: "cleanup-recovery-requested",
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          workspace: attempt.workspace,
-          version: this.store.plan(plan.id)!.version,
-        }
-      }
-      if (command.action === "integrated")
-        return recordIntegration(
-          this.store,
-          db,
-          plan,
-          command,
-          this.directory,
-          preflight.integration,
-        )
-      if (command.action === "pause" || command.action === "unpause")
-        return changeDispatchPause(
-          this.store,
-          plan,
-          command,
-          caller,
-          ownerSession,
-          this.validArchitect(ownerSession),
-        )
-      if (command.action === "schedule")
-        return changeSchedule(this.store, plan, command, caller, this.directory, preflight.bases)
-      if (command.action === "audit")
-        return {
-          status: "audited",
-          ...this.store.audit(),
-          version: plan.version,
-          ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
-        }
-      if (command.action === "settle-startup") {
-        if (!startupSettlement || !command.taskID || !command.reason)
-          throw new Error("Startup settlement evidence is unavailable")
-        this.assertStartupSettlementCurrent(
-          plan,
-          startupSettlement.attempt,
-          startupSettlement.effect,
-          startupSettlement.failure,
-        )
-        const receipt = appendRunnerEffectReceipt(
-          startupSettlement.effect.receipt,
-          startupSettlement.evidence,
-        )
-        const settledEffect = db
-          .query(
-            `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=?
+              )
+              .run(plan.id, this.directory, caller, command.expectedVersion).changes
+            if (changed !== 1)
+              throw new Error("Cleanup recovery plan changed during owner authorization")
+            return {
+              status: "cleanup-recovery-requested",
+              taskID: attempt.task_id,
+              attemptID: attempt.id,
+              workspace: attempt.workspace,
+              version: this.store.plan(plan.id)!.version,
+            }
+          }
+          if (command.action === "integrated")
+            return recordIntegration(
+              this.store,
+              db,
+              plan,
+              command,
+              obs.git(this.directory, ["branch", "--show-current"]),
+              preflight.integration,
+            )
+          if (command.action === "pause" || command.action === "unpause")
+            return changeDispatchPause(
+              this.store,
+              plan,
+              command,
+              caller,
+              ownerSession,
+              this.validArchitect(ownerSession),
+            )
+          if (command.action === "schedule")
+            return changeSchedule(
+              this.store,
+              plan,
+              command,
+              caller,
+              this.directory,
+              preflight.bases,
+            )
+          if (command.action === "audit")
+            return {
+              status: "audited",
+              ...this.store.audit(),
+              version: plan.version,
+              ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
+            }
+          if (command.action === "settle-startup") {
+            if (!startupSettlement || !command.taskID || !command.reason)
+              throw new Error("Startup settlement evidence is unavailable")
+            this.assertStartupSettlementCurrent(
+              plan,
+              startupSettlement.attempt,
+              startupSettlement.effect,
+              startupSettlement.failure,
+            )
+            const receipt = appendRunnerEffectReceipt(
+              startupSettlement.effect.receipt,
+              startupSettlement.evidence,
+            )
+            const settledEffect = db
+              .query(
+                `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=?
              WHERE id=? AND plan_id=? AND task_id=? AND attempt_id=? AND state='uncertain'`,
-          )
-          .run(
-            receipt,
-            startupSettlement.effect.id,
-            plan.id,
-            command.taskID,
-            startupSettlement.attempt.id,
-          ).changes
-        if (settledEffect !== 1)
-          throw new Error("Original startup effect changed before settlement")
-        const reason =
-          "Startup worktree failure evidence was settled after all reserved resources were confirmed absent; explicit resume is required"
-        const changed = db
-          .query(
-            `UPDATE runner_plans SET reason=?,version=version+1
+              )
+              .run(
+                receipt,
+                startupSettlement.effect.id,
+                plan.id,
+                command.taskID,
+                startupSettlement.attempt.id,
+              ).changes
+            if (settledEffect !== 1)
+              throw new Error("Original startup effect changed before settlement")
+            const reason =
+              "Startup worktree failure evidence was settled after all reserved resources were confirmed absent; explicit resume is required"
+            const changed = db
+              .query(
+                `UPDATE runner_plans SET reason=?,version=version+1
              WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='blocked'`,
-          )
-          .run(
-            reason,
-            plan.id,
-            this.store.repository.projectDirectory,
-            caller,
-            command.expectedVersion,
-          ).changes
-        if (changed !== 1) throw new Error("Plan changed before startup settlement")
-        this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
-          ...startupSettlement.evidence,
-          reason: command.reason,
-          caller,
-        })
-        return {
-          status: "startup-failure-settled-absent",
-          planID: plan.id,
-          taskID: command.taskID,
-          attemptID: startupSettlement.attempt.id,
-          effectID: startupSettlement.effect.id,
-          version: plan.version + 1,
-          evidence: startupSettlement.evidence,
-        }
-      }
-      if (command.action === "reassign") {
-        if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
-          throw new Error("Reassignment needs an unarchived same-project owner")
-        const retiredSource = db
-          .query<{ present: number }, [string, string, string]>(
-            `SELECT 1 AS present FROM runner_architect_renewals r
+              )
+              .run(
+                reason,
+                plan.id,
+                this.store.repository.projectDirectory,
+                caller,
+                command.expectedVersion,
+              ).changes
+            if (changed !== 1) throw new Error("Plan changed before startup settlement")
+            this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
+              ...startupSettlement.evidence,
+              reason: command.reason,
+              caller,
+            })
+            return {
+              status: "startup-failure-settled-absent",
+              planID: plan.id,
+              taskID: command.taskID,
+              attemptID: startupSettlement.attempt.id,
+              effectID: startupSettlement.effect.id,
+              version: plan.version + 1,
+              evidence: startupSettlement.evidence,
+            }
+          }
+          if (command.action === "reassign") {
+            if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
+              throw new Error("Reassignment needs an unarchived same-project owner")
+            const retiredSource = db
+              .query<{ present: number }, [string, string, string]>(
+                `SELECT 1 AS present FROM runner_architect_renewals r
              JOIN runner_architect_renewal_plans rp ON rp.renewal_id=r.id
              WHERE r.previous_session_id=? AND rp.plan_id=? AND rp.transferred=1
                AND EXISTS(SELECT 1 FROM runner_plans current WHERE current.id=rp.plan_id AND current.owner<>?)
              LIMIT 1`,
-          )
-          .get(caller, plan.id, caller)
-        if (caller !== plan.owner && retiredSource)
-          throw new Error("A retired Architect predecessor cannot reassign a transferred plan")
-        db.query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=?").run(
-          ownerSession.id,
-          plan.id,
-        )
-        this.store.record(plan.id, null, "OWNER_REASSIGNED", {
-          from: plan.owner,
-          to: ownerSession.id,
-          reason: command.reason,
-        })
-        return { status: "reassigned", version: plan.version + 1 }
-      }
-      if (command.action === "cancel") {
-        if (terminal.has(plan.state)) throw new Error("Plan has ended")
-        this.store.cancelAdoptions(plan.id, "Cancellation requested")
-        for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
-          saveRetainedVerification(db, {
-            ...operation,
-            state: "cancelled",
-            holdReason: "Plan cancellation requested",
-            updatedAt: this.now(),
-          })
-          db.query(
-            `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
-             WHERE operation_id=? AND state IN ('creating','active')`,
-          ).run(this.now(), operation.id)
-          this.retainedVerificationAborts.get(operation.id)?.abort()
-          this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
-            operationID: operation.id,
-            generation: operation.generation,
-            source: "plan-cancellation",
-            previousState: operation.state,
-            previousHoldReason: operation.holdReason,
-            reason: "Plan cancellation requested",
-            oldExecutionAndResourceHoldsPreserved: true,
-          })
-        }
-        // Stop admission now. In-flight work remains running until interruption is proven.
-        db.query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelling'),reason=?,version=version+1 WHERE id=?",
-        ).run(command.reason ?? "Cancellation requested", plan.id)
-        for (const node of this.store.nodes(plan.id))
-          if (!terminal.has(node.state) && node.state !== "running" && node.state !== "verifying")
-            this.store.move(plan.id, node.task_id, "CANCEL")
-        this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
-        return { status: "cancelling", version: this.store.plan(plan.id)!.version }
-      }
-      if (command.action === "human-evidence") {
-        if (!command.assertionID || !command.artifact || !command.reason)
-          throw new Error("Human evidence requires assertion, exact artifact and decision")
-        if (command.retainedVerificationID) {
-          if (!ownerSession || !this.validArchitect(ownerSession) || ownerSession.id !== plan.owner)
-            throw new Error(
-              "Retained verification evidence requires the current same-project Architect",
+              )
+              .get(caller, plan.id, caller)
+            if (caller !== plan.owner && retiredSource)
+              throw new Error("A retired Architect predecessor cannot reassign a transferred plan")
+            db.query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=?").run(
+              ownerSession.id,
+              plan.id,
             )
-          const operation = retainedVerification(db, command.retainedVerificationID)
-          if (
-            !operation ||
-            operation.planID !== plan.id ||
-            operation.owner !== caller ||
-            operation.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
-            operation.planVersion !== plan.version ||
-            operation.planRevision !== plan.revision ||
-            ![
-              "pending",
-              "task-checks",
-              "combined-checks",
-              "waiting-human",
-              "waiting-human-combined",
-            ].includes(operation.state)
-          )
-            throw new Error("Human evidence must name the current retained verification generation")
-          const taskEvidence = command.taskID === operation.taskID
-          if (command.taskID && !taskEvidence)
-            throw new Error("Retained task evidence must name its exact task")
-          const assertions = taskEvidence
-            ? (this.store.repository.get(operation.taskID)?.proposal.acceptance ?? [])
-            : PlanInput.parse(JSON.parse(plan.body)).acceptance
-          const artifact = taskEvidence ? operation.artifact : operation.combinedArtifact
-          const assertion = assertions.find((item) => item.id === command.assertionID)
-          if (
-            !artifact ||
-            command.artifact !== artifact ||
-            !assertion?.evidence.some((item) => item.kind === "human")
-          )
-            throw new Error(
-              "Human evidence does not bind to the retained assertion, phase and exact candidate",
-            )
-          recordRetainedVerificationEvidence(db, {
-            id: crypto.randomUUID(),
-            operationID: operation.id,
-            generation: operation.generation,
-            phase: taskEvidence ? "task" : "combined",
-            taskID: taskEvidence ? operation.taskID : null,
-            assertionID: assertion.id,
-            artifact,
-            body: JSON.stringify({ decision: command.reason, caller }),
-            createdAt: this.now(),
-          })
-          this.store.record(
-            plan.id,
-            command.taskID ?? null,
-            "RETAINED_VERIFICATION_HUMAN_EVIDENCE",
-            {
-              operationID: operation.id,
-              generation: operation.generation,
-              assertionID: assertion.id,
-              artifact,
-              phase: taskEvidence ? "task" : "combined",
-            },
-          )
-          return { status: "recorded", operationID: operation.id, generation: operation.generation }
-        }
-        if (command.adoptionID) {
-          const adoption = this.store.adoption(command.adoptionID)
-          if (
-            !adoption ||
-            adoption.plan_id !== plan.id ||
-            adoption.owner !== caller ||
-            !["pending", "task-checks", "combined-checks", "waiting-human"].includes(adoption.state)
-          )
-            throw new Error("Human evidence must name a current pending descendant adoption")
-          const taskEvidence = command.taskID === adoption.task_id
-          if (command.taskID && !taskEvidence)
-            throw new Error("Adoption task evidence must name its exact task")
-          const assertions = taskEvidence
-            ? (this.store.repository.get(adoption.task_id)?.proposal.acceptance ?? [])
-            : PlanInput.parse(JSON.parse(plan.body)).acceptance
-          const artifact = taskEvidence ? adoption.descendant_commit : adoption.combined_artifact
-          const assertion = assertions.find((item) => item.id === command.assertionID)
-          if (command.artifact !== artifact || !assertion?.evidence.some((e) => e.kind === "human"))
-            throw new Error("Human evidence does not bind to the adoption assertion/artifact")
-          this.store.recordAdoptionEvidence({
-            id: crypto.randomUUID(),
-            adoptionID: adoption.id,
-            taskID: taskEvidence ? adoption.task_id : null,
-            phase: taskEvidence ? "task" : "combined",
-            assertionID: assertion.id,
-            artifact,
-            body: { decision: command.reason, caller },
-          })
-          this.store.record(plan.id, command.taskID ?? null, "DESCENDANT_ADOPTION_HUMAN_EVIDENCE", {
-            adoptionID: adoption.id,
-            assertionID: assertion.id,
-            artifact,
-          })
-          return { status: "recorded", version: this.store.plan(plan.id)!.version }
-        }
-        const nodes = this.store.nodes(plan.id)
-        let assertions: TaskProposal["acceptance"]
-        let artifact: string | null
-        if (command.taskID) {
-          artifact = nodes.find((node) => node.task_id === command.taskID)?.artifact ?? null
-          assertions = this.store.repository.get(command.taskID)?.proposal.acceptance ?? []
-        } else {
-          const input = PlanInput.parse(JSON.parse(plan.body))
-          const ordered = input.integrationOrder.map((id) =>
-            nodes.find((node) => node.task_id === id),
-          )
-          if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
-            throw new Error("Plan evidence requires all accepted task artifacts")
-          artifact = humanCombinedArtifact ?? null
-          assertions = input.acceptance
-        }
-        const assertion = assertions.find((item) => item.id === command.assertionID)
-        if (artifact !== command.artifact || !assertion?.evidence.some((e) => e.kind === "human"))
-          throw new Error("Human evidence does not bind to the current assertion/artifact")
-        const sourceGeneration = command.taskID
-          ? this.retainedRepairGeneration(plan.id, command.taskID)
-          : this.retainedRepairGeneration(plan.id)
-        db.query(
-          "INSERT INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,?,'human',?,?,?)",
-        ).run(
-          crypto.randomUUID(),
-          plan.id,
-          command.taskID ?? null,
-          null,
-          assertion.id,
-          command.artifact,
-          JSON.stringify({
-            decision: command.reason,
-            caller,
-            ...(sourceGeneration ? { sourceGeneration } : {}),
-          }),
-          Date.now(),
-        )
-        this.store.record(plan.id, command.taskID ?? null, "HUMAN_EVIDENCE", {
-          assertionID: assertion.id,
-          artifact: command.artifact,
-        })
-        return { status: "recorded", version: this.store.plan(plan.id)!.version }
-      }
-      if (command.action === "resume" || command.action === "retry") {
-        const retry = command.action === "retry"
-        if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-        if (!command.taskID) {
-          if (retry || !combinedVerificationResume || !command.reason?.trim())
-            throw new Error("Resume requires an exact task attempt or a settled combined check")
-          if (
-            plan.state !== "blocked" ||
-            plan.artifact !== null ||
-            plan.owner !== caller ||
-            ownerSession.id !== plan.owner ||
-            !this.validArchitect(ownerSession) ||
-            plan.version !== combinedVerificationResume.expectedPlanVersion ||
-            plan.revision !== combinedVerificationResume.planRevision ||
-            this.store.planControlEpoch(plan.id) !== combinedVerificationResume.ownerEpoch
-          )
-            throw new Error("Combined verification owner or plan authorization changed")
-
-          const input = PlanInput.parse(JSON.parse(plan.body))
-          const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input)
-          const sourceGeneration = this.retainedRepairGeneration(plan.id) ?? null
-          const { inputFingerprint, ...bindingData } = combinedVerificationResume
-          const currentBinding: CombinedVerificationContinuationBinding = {
-            ...bindingData,
-            owner: plan.owner,
-            ownerEpoch: this.store.planControlEpoch(plan.id),
-            planRevision: plan.revision,
-            expectedPlanVersion: command.expectedVersion,
-            resumedPlanVersion: plan.version + 1,
-            planBodyFingerprint: fingerprint(plan.body),
-            acceptedArtifacts,
-            artifact: combinedVerificationResume.artifact,
-            workspace: combinedVerificationResume.workspace,
-            sourceGeneration,
-            verificationEpoch: plan.version + 1,
-            interruptedEffects: combinedVerificationResume.interruptedEffects,
+            this.store.record(plan.id, null, "OWNER_REASSIGNED", {
+              from: plan.owner,
+              to: ownerSession.id,
+              reason: command.reason,
+            })
+            return { status: "reassigned", version: plan.version + 1 }
           }
-          if (
-            combinedVerificationContinuationFingerprint(currentBinding) !== inputFingerprint ||
-            combinedVerificationContinuationFingerprint(bindingData) !== inputFingerprint
-          )
-            throw new Error("Combined verification continuation inputs changed before reservation")
+          if (command.action === "cancel") {
+            if (terminal.has(plan.state)) throw new Error("Plan has ended")
+            this.store.cancelAdoptions(plan.id, "Cancellation requested")
+            for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
+              saveRetainedVerification(db, {
+                ...operation,
+                state: "cancelled",
+                holdReason: "Plan cancellation requested",
+                updatedAt: this.now(),
+              })
+              db.query(
+                `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
+             WHERE operation_id=? AND state IN ('creating','active')`,
+              ).run(this.now(), operation.id)
+              this.retainedVerificationAborts.get(operation.id)?.abort()
+              this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
+                operationID: operation.id,
+                generation: operation.generation,
+                source: "plan-cancellation",
+                previousState: operation.state,
+                previousHoldReason: operation.holdReason,
+                reason: "Plan cancellation requested",
+                oldExecutionAndResourceHoldsPreserved: true,
+              })
+            }
+            // Stop admission now. In-flight work remains running until interruption is proven.
+            db.query(
+              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelling'),reason=?,version=version+1 WHERE id=?",
+            ).run(command.reason ?? "Cancellation requested", plan.id)
+            for (const node of this.store.nodes(plan.id))
+              if (
+                !terminal.has(node.state) &&
+                node.state !== "running" &&
+                node.state !== "verifying"
+              )
+                this.store.move(plan.id, node.task_id, "CANCEL")
+            this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
+            return { status: "cancelling", version: this.store.plan(plan.id)!.version }
+          }
+          if (command.action === "human-evidence") {
+            if (!command.assertionID || !command.artifact || !command.reason)
+              throw new Error("Human evidence requires assertion, exact artifact and decision")
+            if (command.retainedVerificationID) {
+              if (
+                !ownerSession ||
+                !this.validArchitect(ownerSession) ||
+                ownerSession.id !== plan.owner
+              )
+                throw new Error(
+                  "Retained verification evidence requires the current same-project Architect",
+                )
+              const operation = retainedVerification(db, command.retainedVerificationID)
+              if (
+                !operation ||
+                operation.planID !== plan.id ||
+                operation.owner !== caller ||
+                operation.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
+                operation.planVersion !== plan.version ||
+                operation.planRevision !== plan.revision ||
+                ![
+                  "pending",
+                  "task-checks",
+                  "combined-checks",
+                  "waiting-human",
+                  "waiting-human-combined",
+                ].includes(operation.state)
+              )
+                throw new Error(
+                  "Human evidence must name the current retained verification generation",
+                )
+              const taskEvidence = command.taskID === operation.taskID
+              if (command.taskID && !taskEvidence)
+                throw new Error("Retained task evidence must name its exact task")
+              const assertions = taskEvidence
+                ? (this.store.repository.get(operation.taskID)?.proposal.acceptance ?? [])
+                : PlanInput.parse(JSON.parse(plan.body)).acceptance
+              const artifact = taskEvidence ? operation.artifact : operation.combinedArtifact
+              const assertion = assertions.find((item) => item.id === command.assertionID)
+              if (
+                !artifact ||
+                command.artifact !== artifact ||
+                !assertion?.evidence.some((item) => item.kind === "human")
+              )
+                throw new Error(
+                  "Human evidence does not bind to the retained assertion, phase and exact candidate",
+                )
+              recordRetainedVerificationEvidence(db, {
+                id: crypto.randomUUID(),
+                operationID: operation.id,
+                generation: operation.generation,
+                phase: taskEvidence ? "task" : "combined",
+                taskID: taskEvidence ? operation.taskID : null,
+                assertionID: assertion.id,
+                artifact,
+                body: JSON.stringify({ decision: command.reason, caller }),
+                createdAt: this.now(),
+              })
+              this.store.record(
+                plan.id,
+                command.taskID ?? null,
+                "RETAINED_VERIFICATION_HUMAN_EVIDENCE",
+                {
+                  operationID: operation.id,
+                  generation: operation.generation,
+                  assertionID: assertion.id,
+                  artifact,
+                  phase: taskEvidence ? "task" : "combined",
+                },
+              )
+              return {
+                status: "recorded",
+                operationID: operation.id,
+                generation: operation.generation,
+              }
+            }
+            if (command.adoptionID) {
+              const adoption = this.store.adoption(command.adoptionID)
+              if (
+                !adoption ||
+                adoption.plan_id !== plan.id ||
+                adoption.owner !== caller ||
+                !["pending", "task-checks", "combined-checks", "waiting-human"].includes(
+                  adoption.state,
+                )
+              )
+                throw new Error("Human evidence must name a current pending descendant adoption")
+              const taskEvidence = command.taskID === adoption.task_id
+              if (command.taskID && !taskEvidence)
+                throw new Error("Adoption task evidence must name its exact task")
+              const assertions = taskEvidence
+                ? (this.store.repository.get(adoption.task_id)?.proposal.acceptance ?? [])
+                : PlanInput.parse(JSON.parse(plan.body)).acceptance
+              const artifact = taskEvidence
+                ? adoption.descendant_commit
+                : adoption.combined_artifact
+              const assertion = assertions.find((item) => item.id === command.assertionID)
+              if (
+                command.artifact !== artifact ||
+                !assertion?.evidence.some((e) => e.kind === "human")
+              )
+                throw new Error("Human evidence does not bind to the adoption assertion/artifact")
+              this.store.recordAdoptionEvidence({
+                id: crypto.randomUUID(),
+                adoptionID: adoption.id,
+                taskID: taskEvidence ? adoption.task_id : null,
+                phase: taskEvidence ? "task" : "combined",
+                assertionID: assertion.id,
+                artifact,
+                body: { decision: command.reason, caller },
+              })
+              this.store.record(
+                plan.id,
+                command.taskID ?? null,
+                "DESCENDANT_ADOPTION_HUMAN_EVIDENCE",
+                {
+                  adoptionID: adoption.id,
+                  assertionID: assertion.id,
+                  artifact,
+                },
+              )
+              return { status: "recorded", version: this.store.plan(plan.id)!.version }
+            }
+            const nodes = this.store.nodes(plan.id)
+            let assertions: TaskProposal["acceptance"]
+            let artifact: string | null
+            if (command.taskID) {
+              artifact = nodes.find((node) => node.task_id === command.taskID)?.artifact ?? null
+              assertions = this.store.repository.get(command.taskID)?.proposal.acceptance ?? []
+            } else {
+              const input = PlanInput.parse(JSON.parse(plan.body))
+              const ordered = input.integrationOrder.map((id) =>
+                nodes.find((node) => node.task_id === id),
+              )
+              if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
+                throw new Error("Plan evidence requires all accepted task artifacts")
+              artifact = humanCombinedArtifact ?? null
+              assertions = input.acceptance
+            }
+            const assertion = assertions.find((item) => item.id === command.assertionID)
+            if (
+              artifact !== command.artifact ||
+              !assertion?.evidence.some((e) => e.kind === "human")
+            )
+              throw new Error("Human evidence does not bind to the current assertion/artifact")
+            const sourceGeneration = command.taskID
+              ? this.retainedRepairGeneration(plan.id, command.taskID)
+              : this.retainedRepairGeneration(plan.id)
+            db.query(
+              "INSERT INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,?,'human',?,?,?)",
+            ).run(
+              crypto.randomUUID(),
+              plan.id,
+              command.taskID ?? null,
+              null,
+              assertion.id,
+              command.artifact,
+              JSON.stringify({
+                decision: command.reason,
+                caller,
+                ...(sourceGeneration ? { sourceGeneration } : {}),
+              }),
+              Date.now(),
+            )
+            this.store.record(plan.id, command.taskID ?? null, "HUMAN_EVIDENCE", {
+              assertionID: assertion.id,
+              artifact: command.artifact,
+            })
+            return { status: "recorded", version: this.store.plan(plan.id)!.version }
+          }
+          if (command.action === "resume" || command.action === "retry") {
+            const retry = command.action === "retry"
+            if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+            if (!command.taskID) {
+              if (retry || !combinedVerificationResume || !command.reason?.trim())
+                throw new Error("Resume requires an exact task attempt or a settled combined check")
+              if (
+                plan.state !== "blocked" ||
+                plan.artifact !== null ||
+                plan.owner !== caller ||
+                ownerSession.id !== plan.owner ||
+                !this.validArchitect(ownerSession) ||
+                plan.version !== combinedVerificationResume.expectedPlanVersion ||
+                plan.revision !== combinedVerificationResume.planRevision ||
+                this.store.planControlEpoch(plan.id) !== combinedVerificationResume.ownerEpoch
+              )
+                throw new Error("Combined verification owner or plan authorization changed")
 
-          const effects = this.store.effects(plan.id)
-          const interrupted = this.interruptedCombinedVerificationEffects(
-            plan,
-            input,
-            currentBinding.artifact,
-            sourceGeneration ?? undefined,
-          ).toSorted((left, right) => left.id.localeCompare(right.id))
-          const expectedEffects = currentBinding.interruptedEffects
-          const settledTimeouts = this.settledExtendedCombinedTimeouts(
-            plan,
-            input,
-            currentBinding.artifact,
-            sourceGeneration ?? undefined,
-          ).toSorted((left, right) => left.id.localeCompare(right.id))
-          const timeoutBindings = settledTimeouts.map((effect) => ({
-            id: effect.id,
-            payloadFingerprint: fingerprint(effect.payload),
-            receiptFingerprint: fingerprint(effect.receipt),
-          }))
-          if (
-            fingerprint(
-              interrupted.map((effect) => ({
+              const input = PlanInput.parse(JSON.parse(plan.body))
+              const acceptedArtifacts = this.acceptedCombinedArtifacts(plan, input, undefined, obs)
+              const sourceGeneration = this.retainedRepairGeneration(plan.id) ?? null
+              const { inputFingerprint, ...bindingData } = combinedVerificationResume
+              const currentBinding: CombinedVerificationContinuationBinding = {
+                ...bindingData,
+                owner: plan.owner,
+                ownerEpoch: this.store.planControlEpoch(plan.id),
+                planRevision: plan.revision,
+                expectedPlanVersion: command.expectedVersion,
+                resumedPlanVersion: plan.version + 1,
+                planBodyFingerprint: fingerprint(plan.body),
+                acceptedArtifacts,
+                artifact: combinedVerificationResume.artifact,
+                workspace: combinedVerificationResume.workspace,
+                sourceGeneration,
+                verificationEpoch: plan.version + 1,
+                interruptedEffects: combinedVerificationResume.interruptedEffects,
+              }
+              if (
+                combinedVerificationContinuationFingerprint(currentBinding) !== inputFingerprint ||
+                combinedVerificationContinuationFingerprint(bindingData) !== inputFingerprint
+              )
+                throw new Error(
+                  "Combined verification continuation inputs changed before reservation",
+                )
+
+              const effects = this.store.effects(plan.id)
+              const interrupted = this.interruptedCombinedVerificationEffects(
+                plan,
+                input,
+                currentBinding.artifact,
+                sourceGeneration ?? undefined,
+              ).toSorted((left, right) => left.id.localeCompare(right.id))
+              const expectedEffects = currentBinding.interruptedEffects
+              const settledTimeouts = this.settledExtendedCombinedTimeouts(
+                plan,
+                input,
+                currentBinding.artifact,
+                sourceGeneration ?? undefined,
+              ).toSorted((left, right) => left.id.localeCompare(right.id))
+              const timeoutBindings = settledTimeouts.map((effect) => ({
                 id: effect.id,
                 payloadFingerprint: fingerprint(effect.payload),
                 receiptFingerprint: fingerprint(effect.receipt),
-              })),
-            ) !== fingerprint(expectedEffects) ||
-            fingerprint(timeoutBindings) !== fingerprint(currentBinding.settledTimeouts ?? []) ||
-            effects.some(
-              (effect) =>
-                ["intended", "uncertain"].includes(effect.state) &&
-                !expectedEffects.some((expected) => expected.id === effect.id),
-            )
-          )
-            throw new Error("Combined verification effects changed; reconcile them before resuming")
-          if (
-            verificationActivitiesForDatabase(this.store.repository.path).some(
-              (activity) => activity.metadata.planID === plan.id && activity.state === "running",
-            )
-          )
-            throw new Error("A live verification activity prevents combined verification resume")
-          if (
-            activeRetainedVerifications(db, this.directory, plan.id).length > 0 ||
-            this.store.activeAdoptions(plan.id).length > 0
-          )
-            throw new Error(
-              "An unresolved verification or adoption prevents combined verification resume",
-            )
-          if (
-            !existsSync(currentBinding.workspace) ||
-            git(currentBinding.workspace, ["rev-parse", "HEAD"]) !== currentBinding.artifact ||
-            !artifactUnchanged(currentBinding.workspace, currentBinding.artifact)
-          )
-            throw new Error(
-              "Interrupted combined verification candidate changed before reservation",
-            )
-
-          for (const expected of expectedEffects) {
-            const current = interrupted.find((effect) => effect.id === expected.id)
-            if (!current)
-              throw new Error(
-                "Interrupted combined verification receipt changed before reservation",
+              }))
+              if (
+                fingerprint(
+                  interrupted.map((effect) => ({
+                    id: effect.id,
+                    payloadFingerprint: fingerprint(effect.payload),
+                    receiptFingerprint: fingerprint(effect.receipt),
+                  })),
+                ) !== fingerprint(expectedEffects) ||
+                fingerprint(timeoutBindings) !==
+                  fingerprint(currentBinding.settledTimeouts ?? []) ||
+                effects.some(
+                  (effect) =>
+                    ["intended", "uncertain"].includes(effect.state) &&
+                    !expectedEffects.some((expected) => expected.id === effect.id),
+                )
               )
-            const changed = db
-              .query(
-                `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed')
+                throw new Error(
+                  "Combined verification effects changed; reconcile them before resuming",
+                )
+              if (
+                verificationActivitiesForDatabase(this.store.repository.path).some(
+                  (activity) =>
+                    activity.metadata.planID === plan.id && activity.state === "running",
+                )
+              )
+                throw new Error(
+                  "A live verification activity prevents combined verification resume",
+                )
+              if (
+                activeRetainedVerifications(db, this.directory, plan.id).length > 0 ||
+                this.store.activeAdoptions(plan.id).length > 0
+              )
+                throw new Error(
+                  "An unresolved verification or adoption prevents combined verification resume",
+                )
+              if (
+                !existsSync(currentBinding.workspace) ||
+                !obs.atArtifact(currentBinding.workspace, currentBinding.artifact)
+              )
+                throw new Error(
+                  "Interrupted combined verification candidate changed before reservation",
+                )
+
+              for (const expected of expectedEffects) {
+                const current = interrupted.find((effect) => effect.id === expected.id)
+                if (!current)
+                  throw new Error(
+                    "Interrupted combined verification receipt changed before reservation",
+                  )
+                const changed = db
+                  .query(
+                    `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed')
                  WHERE id=? AND plan_id=? AND task_id IS NULL AND attempt_id IS NULL
                    AND state='uncertain' AND payload=? AND receipt=?`,
-              )
-              .run(expected.id, plan.id, current.payload, current.receipt).changes
-            if (changed !== 1)
-              throw new Error(
-                "Interrupted combined verification receipt changed before reservation",
-              )
-          }
-          const changedPlan = db
-            .query(
-              `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
+                  )
+                  .run(expected.id, plan.id, current.payload, current.receipt).changes
+                if (changed !== 1)
+                  throw new Error(
+                    "Interrupted combined verification receipt changed before reservation",
+                  )
+              }
+              const changedPlan = db
+                .query(
+                  `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
                WHERE id=? AND owner=? AND version=? AND state='blocked' AND artifact IS NULL`,
-            )
-            .run(plan.id, caller, command.expectedVersion).changes
-          if (changedPlan !== 1)
-            throw new Error("Combined verification plan changed before reservation")
-          const resumed = this.store.plan(plan.id)!
-          if (resumed.version !== currentBinding.verificationEpoch)
-            throw new Error("Combined verification epoch changed before reservation")
-          this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-            caller,
-            verificationEpoch: resumed.version,
-            continuation: "interrupted-combined-verification",
-            combinedVerificationContinuation: combinedVerificationResume,
-          })
-          return {
-            status: "combined-verification-resumed",
-            planID: plan.id,
-            artifact: currentBinding.artifact,
-            interruptedEffectIDs: expectedEffects.map((effect) => effect.id),
-            verificationEpoch: resumed.version,
-            version: resumed.version,
-          }
-        }
-        if (!command.taskID || !command.reason) throw new Error("Resume requires taskID and reason")
-        const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
-        const attempt = this.store
-          .attempts(plan.id)
-          .filter((a) => a.task_id === command.taskID)
-          .at(-1)
-        if (command.attemptID && command.attemptID !== attempt?.id)
-          throw new Error("Command attemptID does not match the exact latest task attempt")
-        if (retainedRepairRecovery) {
-          const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
-          const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-            (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
-          )
-          if (
-            retry ||
-            !attempt ||
-            !node ||
-            retainedRepairRecovery.taskID !== command.taskID ||
-            retainedRepairRecovery.taskID !== attempt.task_id ||
-            retainedRepairRecovery.taskRevision !== admittedRecoveryTask?.revision ||
-            recoveryTask?.id !== retainedRepairRecovery.taskID ||
-            recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
-            recoveryTask.provenance.projectID !== this.projectID ||
-            recoveryTask.provenance.projectDirectory !== this.directory ||
-            this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !== undefined ||
-            command.taskID !== retainedRepairRecovery.taskID ||
-            command.attemptID !== retainedRepairRecovery.attemptID ||
-            ownerSession?.id !== plan.owner ||
-            !this.validArchitect(ownerSession) ||
-            !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
-          )
-            throw new Error("Retained repair recovery authorization changed before reservation")
-          const resumedMessageID = messageID()
-          this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
-          const updatedAttempt = db
-            .query(
-              "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
-            )
-            .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
-          const updatedPlan = db
-            .query(
-              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
-            )
-            .run(
-              plan.id,
-              RETAINED_REPAIR_FENCE_FAILURE_REASON,
-              retainedRepairRecovery.planVersion + 1,
-            ).changes
-          if (updatedAttempt !== 1 || updatedPlan !== 1)
-            throw new Error("Retained repair recovery reservation changed during atomic admission")
-          this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
-            attemptID: attempt.id,
-            reason: command.reason,
-            usageRetained: true,
-            budget: null,
-            previousMessageID: retainedRepairRecovery.failedMessageID,
-            messageID: resumedMessageID,
-            terminalInputID: retainedRepairRecovery.interruptedInputID,
-            terminalOutcome: "interrupted",
-            interruptedInputID: retainedRepairRecovery.interruptedInputID,
-            retainedRepairRecovery: {
-              schema: "lazers-retained-repair-recovery/v1",
-              operationID: retainedRepairRecovery.operationID,
-              failedMessageID: retainedRepairRecovery.failedMessageID,
-              interruptedInputID: retainedRepairRecovery.interruptedInputID,
-              owner: retainedRepairRecovery.owner,
-              ownerEpoch: retainedRepairRecovery.ownerEpoch,
-              failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
-              blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
-              cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
-            },
-          })
-          return {
-            status: "retained-repair-recovered",
-            version: this.store.plan(plan.id)!.version,
-            taskID: attempt.task_id,
-            attemptID: attempt.id,
-            messageID: resumedMessageID,
-          }
-        }
-        if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
-          const interrupted = [
-            ...this.interruptedChecksFor(plan, attempt),
-            ...this.settledExtendedTaskTimeouts(plan, attempt),
-          ].filter(
-            (effect, index, effects) =>
-              effects.findIndex((candidate) => candidate.id === effect.id) === index,
-          )
-          if (interrupted.length) {
-            if (
-              plan.state !== "blocked" ||
-              !this.validArchitect(ownerSession) ||
-              command.attemptID !== attempt.id ||
-              command.workspaceMode !== undefined ||
-              command.baseCommit !== undefined
-            )
-              throw new Error(
-                "Interrupted verification resume requires its exact preserved attempt",
+                )
+                .run(plan.id, caller, command.expectedVersion).changes
+              if (changedPlan !== 1)
+                throw new Error("Combined verification plan changed before reservation")
+              const resumed = this.store.plan(plan.id)!
+              if (resumed.version !== currentBinding.verificationEpoch)
+                throw new Error("Combined verification epoch changed before reservation")
+              this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+                caller,
+                verificationEpoch: resumed.version,
+                continuation: "interrupted-combined-verification",
+                combinedVerificationContinuation: combinedVerificationResume,
+              })
+              return {
+                status: "combined-verification-resumed",
+                planID: plan.id,
+                artifact: currentBinding.artifact,
+                interruptedEffectIDs: expectedEffects.map((effect) => effect.id),
+                verificationEpoch: resumed.version,
+                version: resumed.version,
+              }
+            }
+            if (!command.taskID || !command.reason)
+              throw new Error("Resume requires taskID and reason")
+            const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
+            const attempt = this.store
+              .attempts(plan.id)
+              .filter((a) => a.task_id === command.taskID)
+              .at(-1)
+            if (command.attemptID && command.attemptID !== attempt?.id)
+              throw new Error("Command attemptID does not match the exact latest task attempt")
+            if (retainedRepairRecovery) {
+              const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
+              const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
+                (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
               )
-            const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
+              if (
+                retry ||
+                !attempt ||
+                !node ||
+                retainedRepairRecovery.taskID !== command.taskID ||
+                retainedRepairRecovery.taskID !== attempt.task_id ||
+                retainedRepairRecovery.taskRevision !== admittedRecoveryTask?.revision ||
+                recoveryTask?.id !== retainedRepairRecovery.taskID ||
+                recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
+                recoveryTask.provenance.projectID !== this.projectID ||
+                recoveryTask.provenance.projectDirectory !== this.directory ||
+                this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !==
+                  undefined ||
+                command.taskID !== retainedRepairRecovery.taskID ||
+                command.attemptID !== retainedRepairRecovery.attemptID ||
+                ownerSession?.id !== plan.owner ||
+                !this.validArchitect(ownerSession) ||
+                !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
+              )
+                throw new Error("Retained repair recovery authorization changed before reservation")
+              const resumedMessageID = messageID()
+              this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
+              const updatedAttempt = db
+                .query(
+                  "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
+                )
+                .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
+              const updatedPlan = db
+                .query(
+                  "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
+                )
+                .run(
+                  plan.id,
+                  RETAINED_REPAIR_FENCE_FAILURE_REASON,
+                  retainedRepairRecovery.planVersion + 1,
+                ).changes
+              if (updatedAttempt !== 1 || updatedPlan !== 1)
+                throw new Error(
+                  "Retained repair recovery reservation changed during atomic admission",
+                )
+              this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
+                attemptID: attempt.id,
+                reason: command.reason,
+                usageRetained: true,
+                budget: null,
+                previousMessageID: retainedRepairRecovery.failedMessageID,
+                messageID: resumedMessageID,
+                terminalInputID: retainedRepairRecovery.interruptedInputID,
+                terminalOutcome: "interrupted",
+                interruptedInputID: retainedRepairRecovery.interruptedInputID,
+                retainedRepairRecovery: {
+                  schema: "lazers-retained-repair-recovery/v1",
+                  operationID: retainedRepairRecovery.operationID,
+                  failedMessageID: retainedRepairRecovery.failedMessageID,
+                  interruptedInputID: retainedRepairRecovery.interruptedInputID,
+                  owner: retainedRepairRecovery.owner,
+                  ownerEpoch: retainedRepairRecovery.ownerEpoch,
+                  failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
+                  blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
+                  cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
+                },
+              })
+              return {
+                status: "retained-repair-recovered",
+                version: this.store.plan(plan.id)!.version,
+                taskID: attempt.task_id,
+                attemptID: attempt.id,
+                messageID: resumedMessageID,
+              }
+            }
+            if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
+              const interrupted = [
+                ...this.interruptedChecksFor(plan, attempt),
+                ...this.settledExtendedTaskTimeouts(plan, attempt),
+              ].filter(
+                (effect, index, effects) =>
+                  effects.findIndex((candidate) => candidate.id === effect.id) === index,
+              )
+              if (interrupted.length) {
+                if (
+                  plan.state !== "blocked" ||
+                  !this.validArchitect(ownerSession) ||
+                  command.attemptID !== attempt.id ||
+                  command.workspaceMode !== undefined ||
+                  command.baseCommit !== undefined
+                )
+                  throw new Error(
+                    "Interrupted verification resume requires its exact preserved attempt",
+                  )
+                const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
+                if (
+                  this.store
+                    .effects(plan.id)
+                    .some(
+                      (effect) =>
+                        ["intended", "uncertain"].includes(effect.state) &&
+                        !interruptedIDs.has(effect.id),
+                    )
+                )
+                  throw new Error("Reconcile other uncertain effects first")
+                for (const effect of interrupted)
+                  db.query(
+                    "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state='uncertain'",
+                  ).run(effect.id)
+                const verificationEpoch =
+                  (this.store.latestTransition<{ verificationEpoch: number }>(
+                    plan.id,
+                    attempt.task_id,
+                    "VERIFICATION_RESUMED",
+                  )?.verificationEpoch ?? 0) + 1
+                this.store.record(plan.id, attempt.task_id, "VERIFICATION_RESUMED", {
+                  attemptID: attempt.id,
+                  interruptedEffectIDs: [...interruptedIDs],
+                  verificationEpoch,
+                  reason: command.reason,
+                })
+                db.query(
+                  "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+                ).run(plan.id)
+                return {
+                  status: "verification-resumed",
+                  version: this.store.plan(plan.id)!.version,
+                  attemptID: attempt.id,
+                }
+              }
+            }
+            const continuingTerminalWorker = Boolean(
+              !retry &&
+              terminalContinuation &&
+              attempt?.id === terminalContinuation.attemptID &&
+              attempt.message_id === terminalContinuation.messageID,
+            )
+            if (continuingTerminalWorker) {
+              const retainedMode = attempt!.workspace === this.directory ? "shared" : "isolated"
+              if (
+                (command.workspaceMode !== undefined && command.workspaceMode !== retainedMode) ||
+                (command.baseCommit !== undefined && command.baseCommit !== attempt!.base_commit)
+              )
+                throw new Error("Terminal continuation preserves its workspace and baseline")
+              const problem = this.terminalWorkerContinuationProblem(
+                plan,
+                command,
+                caller,
+                ownerSession,
+                terminalContinuation!.worker,
+              )
+              if (problem) throw new Error(problem)
+              if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
+                throw new Error("Native terminal observation changed before continuation admission")
+              const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
+                plan.id,
+                attempt!.task_id,
+              )
+              const currentRepair = this.retainedRepairForAttempt(attempt!)
+              if (
+                (latestRepair?.attemptID === attempt!.id &&
+                  (!terminalRepairContinuation ||
+                    !currentRepair ||
+                    currentRepair.operationID !== terminalRepairContinuation.operationID ||
+                    currentRepair.owner !== terminalRepairContinuation.owner ||
+                    currentRepair.ownerEpoch !== terminalRepairContinuation.ownerEpoch)) ||
+                (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
+              )
+                throw new Error("Retained repair continuation authority changed before reservation")
+            }
+            if (retry && node?.state === "cancelled" && !attempt) {
+              if (
+                !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
+                plan.artifact !== null
+              )
+                throw new Error(
+                  "Only an admitted, nonintegrated plan can requeue an unstarted task",
+                )
+              if (ownerSession.id !== plan.owner || ownerSession.projectID !== this.projectID)
+                throw new Error("Foreign owner session")
+              if (
+                this.store
+                  .effects(plan.id)
+                  .some((effect) => ["intended", "uncertain"].includes(effect.state))
+              )
+                throw new Error("Reconcile uncertain effects first")
+
+              const input = PlanInput.parse(JSON.parse(plan.body))
+              if (command.baseCommit !== undefined && command.baseCommit !== input.baseCommit) {
+                if (this.store.attempts(plan.id).length)
+                  throw new Error("A plan with prior attempts cannot change its unstarted baseline")
+                const baseCommit = obs.git(this.directory, [
+                  "rev-parse",
+                  `${command.baseCommit}^{commit}`,
+                ])
+                if (baseCommit !== command.baseCommit)
+                  throw new Error("An explicit baseline must identify a commit")
+                obs.git(this.directory, [
+                  "merge-base",
+                  "--is-ancestor",
+                  input.baseCommit,
+                  baseCommit,
+                ])
+                this.requireBaseReachable(preflight.bases, baseCommit)
+                this.store.revisePlan(
+                  plan,
+                  PlanInput.parse({ ...input, baseCommit }),
+                  "UNSTARTED_BASELINE_SELECTED",
+                  { from: input.baseCommit, baseCommit, caller, reason: command.reason },
+                )
+              }
+              this.store.move(plan.id, node.task_id, "RETRY", command.reason)
+              if (plan.state !== "running")
+                db.query(
+                  "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+                ).run(plan.id)
+              this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
+                caller,
+                reason: command.reason,
+              })
+              return { status: "requeued", version: this.store.plan(plan.id)!.version }
+            }
+            if (
+              !["blocked", "cancelled", "failed"].includes(plan.state) ||
+              !node ||
+              !["exhausted", "cancelled", "running", "verifying", "failed", "blocked"].includes(
+                node.state,
+              ) ||
+              !attempt ||
+              (!continuingTerminalWorker &&
+                !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state))
+            )
+              throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
             if (
               this.store
                 .effects(plan.id)
+                .some((effect) => ["intended", "uncertain"].includes(effect.state))
+            )
+              throw new Error("Reconcile uncertain effects first")
+
+            const settledStartupEffect = attempt
+              ? this.settledStartupEffect(plan.id, attempt)
+              : undefined
+            if (settledStartupEffect) {
+              const settlement = startupFailureSettlementFromReceipt(settledStartupEffect.receipt)
+              if (
+                retry ||
+                !command.attemptID ||
+                command.attemptID !== attempt!.id ||
+                attempt!.state !== "preparing" ||
+                plan.state !== "blocked" ||
+                !this.validArchitect(ownerSession) ||
+                ownerSession.id !== plan.owner ||
+                caller !== plan.owner ||
+                !settlement
+              )
+                throw new Error(
+                  "Startup recovery requires explicit resume of the exact settled attempt",
+                )
+              const workerEffects = this.store
+                .effects(plan.id)
                 .some(
                   (effect) =>
-                    ["intended", "uncertain"].includes(effect.state) &&
-                    !interruptedIDs.has(effect.id),
+                    effect.attempt_id === attempt!.id &&
+                    (effect.kind === "session" ||
+                      effect.kind === "prompt" ||
+                      effect.kind.startsWith("verify:") ||
+                      effect.kind.startsWith("graph-verify:")),
                 )
-            )
-              throw new Error("Reconcile other uncertain effects first")
-            for (const effect of interrupted)
+              if (
+                workerEffects ||
+                this.hasMeaningfulWorkerProgress(attempt!.id) ||
+                !this.preparationAllowed(attempt!)
+              )
+                throw new Error(
+                  "Startup recovery cannot continue after worker effects or conflicting ownership",
+                )
+
+              const recoveryID = crypto.randomUUID()
+              const authorization: StartupRecoveryAuthorization = {
+                schema: "lazers-worktree-startup-authorization/v1",
+                recoveryID,
+                sourceEffectID: settledStartupEffect.id,
+                settlementRequestID: settlement.requestID,
+                requestID: command.requestID,
+                owner: plan.owner,
+                planVersion: plan.version + 1,
+                ownerEpoch: this.store.planControlEpoch(plan.id),
+                planRevision: plan.revision,
+                taskID: attempt!.task_id,
+                attemptID: attempt!.id,
+                sessionID: attempt!.session_id,
+                messageID: attempt!.message_id,
+                workspace: attempt!.workspace,
+                base: attempt!.base_commit,
+                policy: attempt!.policy,
+              }
               db.query(
-                "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state='uncertain'",
-              ).run(effect.id)
-            const verificationEpoch =
-              (this.store.latestTransition<{ verificationEpoch: number }>(
+                "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
+              ).run(plan.id, plan.version)
+              this.store.record(
                 plan.id,
-                attempt.task_id,
-                "VERIFICATION_RESUMED",
-              )?.verificationEpoch ?? 0) + 1
-            this.store.record(plan.id, attempt.task_id, "VERIFICATION_RESUMED", {
-              attemptID: attempt.id,
-              interruptedEffectIDs: [...interruptedIDs],
-              verificationEpoch,
-              reason: command.reason,
-            })
+                attempt!.task_id,
+                "STARTUP_RECOVERY_AUTHORIZED",
+                authorization,
+              )
+              this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
+                attemptID: attempt!.id,
+                reason: command.reason,
+                usageRetained: true,
+                budget: null,
+                startupRecoveryID: recoveryID,
+                sourceEffectID: settledStartupEffect.id,
+              })
+              return {
+                status: "startup-recovery-authorized",
+                version: plan.version + 1,
+                attemptID: attempt!.id,
+                recoveryID,
+              }
+            }
+
+            if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
+            else if (node.state !== "running")
+              this.store.move(plan.id, node.task_id, "RESUME", command.reason)
+            const planInput = PlanInput.parse(JSON.parse(plan.body))
+            const sharedMode =
+              command.workspaceMode === "shared" ||
+              (command.workspaceMode === undefined && planInput.workspaceMode === "shared")
+            let selectedBaseline: string | null = null
+            if (
+              !continuingTerminalWorker &&
+              (command.workspaceMode === "shared" ||
+                (retry && sharedMode && command.baseCommit !== undefined))
+            ) {
+              const source = command.baseCommit ?? obs.git(this.directory, ["rev-parse", "HEAD"])
+              if (command.baseCommit !== undefined)
+                this.requireBaseReachable(preflight.bases, source)
+              if (!retry)
+                db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
+                  this.directory,
+                  source,
+                  attempt.id,
+                )
+              const revised = PlanInput.parse({
+                ...JSON.parse(plan.body),
+                workspaceMode: "shared",
+                baseCommit: source,
+              })
+              db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
+                JSON.stringify(revised),
+                plan.id,
+              )
+              db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
+                plan.id,
+                plan.revision + 1,
+                JSON.stringify(revised),
+                plan.owner,
+                Date.now(),
+              )
+              this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
+                attemptID: attempt.id,
+                from: attempt.workspace,
+                directory: this.directory,
+                source,
+                explicitBaseline: retry && command.baseCommit !== undefined,
+                mode: "shared",
+                reason: command.reason,
+              })
+              if (retry && command.baseCommit !== undefined) selectedBaseline = source
+            }
+            let resumedMessageID: string | undefined
+            if (retry)
+              db.query(
+                "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=? AND state='preparing'",
+              ).run(attempt.id)
+            else {
+              resumedMessageID = messageID()
+              db.query(
+                "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=?",
+              ).run(resumedMessageID, attempt.id)
+            }
             db.query(
               "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
             ).run(plan.id)
+            this.store.record(
+              plan.id,
+              node.task_id,
+              retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED",
+              {
+                attemptID: attempt.id,
+                reason: command.reason,
+                usageRetained: true,
+                budget: null,
+                ...(resumedMessageID
+                  ? {
+                      previousMessageID: attempt.message_id,
+                      messageID: resumedMessageID,
+                    }
+                  : {}),
+                ...(continuingTerminalWorker
+                  ? {
+                      terminalInputID: terminalContinuation!.inputID,
+                      terminalOutcome: terminalContinuation!.worker.outcome,
+                      ...(terminalContinuation!.worker.outcome === "interrupted"
+                        ? { interruptedInputID: terminalContinuation!.inputID }
+                        : {}),
+                    }
+                  : {}),
+                ...(continuingTerminalWorker && terminalRepairContinuation
+                  ? {
+                      retainedRepairContinuation: {
+                        schema: "lazers-retained-repair-continuation/v1",
+                        operationID: terminalRepairContinuation.operationID,
+                        owner: terminalRepairContinuation.owner,
+                        ownerEpoch: terminalRepairContinuation.ownerEpoch,
+                      },
+                    }
+                  : {}),
+                ...(retry ? { selectedBaseline } : {}),
+              },
+            )
             return {
-              status: "verification-resumed",
+              status: retry ? "retrying" : "resuming",
               version: this.store.plan(plan.id)!.version,
-              attemptID: attempt.id,
             }
           }
-        }
-        const continuingTerminalWorker = Boolean(
-          !retry &&
-          terminalContinuation &&
-          attempt?.id === terminalContinuation.attemptID &&
-          attempt.message_id === terminalContinuation.messageID,
-        )
-        if (continuingTerminalWorker) {
-          const retainedMode = attempt!.workspace === this.directory ? "shared" : "isolated"
-          if (
-            (command.workspaceMode !== undefined && command.workspaceMode !== retainedMode) ||
-            (command.baseCommit !== undefined && command.baseCommit !== attempt!.base_commit)
-          )
-            throw new Error("Terminal continuation preserves its workspace and baseline")
-          const problem = this.terminalWorkerContinuationProblem(
-            plan,
-            command,
-            caller,
-            ownerSession,
-            terminalContinuation!.worker,
-          )
-          if (problem) throw new Error(problem)
-          if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
-            throw new Error("Native terminal observation changed before continuation admission")
-          const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-            plan.id,
-            attempt!.task_id,
-          )
-          const currentRepair = this.retainedRepairForAttempt(attempt!)
-          if (
-            (latestRepair?.attemptID === attempt!.id &&
-              (!terminalRepairContinuation ||
-                !currentRepair ||
-                currentRepair.operationID !== terminalRepairContinuation.operationID ||
-                currentRepair.owner !== terminalRepairContinuation.owner ||
-                currentRepair.ownerEpoch !== terminalRepairContinuation.ownerEpoch)) ||
-            (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
-          )
-            throw new Error("Retained repair continuation authority changed before reservation")
-        }
-        if (retry && node?.state === "cancelled" && !attempt) {
-          if (
-            !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
-            plan.artifact !== null
-          )
-            throw new Error("Only an admitted, nonintegrated plan can requeue an unstarted task")
-          if (ownerSession.id !== plan.owner || ownerSession.projectID !== this.projectID)
-            throw new Error("Foreign owner session")
-          if (
-            this.store
-              .effects(plan.id)
-              .some((effect) => ["intended", "uncertain"].includes(effect.state))
-          )
-            throw new Error("Reconcile uncertain effects first")
+          if (command.action === "reconcile") {
+            if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+            if (!reviewInput) {
+              const quarantined = this.quarantinedVerification(plan)
+              if (quarantined) return quarantined
+            }
+            let existingReviewInput = false
+            if (reviewInput) {
+              const { binding, evidence } = reviewInput
+              if (
+                caller !== plan.owner ||
+                !this.validArchitect(ownerSession) ||
+                ownerSession.id !== binding.ownerSessionID ||
+                binding.planID !== plan.id ||
+                binding.expectedPlanVersion !== command.expectedVersion ||
+                binding.commandRequestID !== command.requestID ||
+                !["running", "blocked"].includes(plan.state)
+              )
+                throw new Error("Review input reconciliation authorization or plan version changed")
 
-          const input = PlanInput.parse(JSON.parse(plan.body))
-          if (command.baseCommit !== undefined && command.baseCommit !== input.baseCommit) {
-            if (this.store.attempts(plan.id).length)
-              throw new Error("A plan with prior attempts cannot change its unstarted baseline")
-            const baseCommit = git(this.directory, ["rev-parse", `${command.baseCommit}^{commit}`])
-            if (baseCommit !== command.baseCommit)
-              throw new Error("An explicit baseline must identify a commit")
-            git(this.directory, ["merge-base", "--is-ancestor", input.baseCommit, baseCommit])
-            this.requireBaseReachable(preflight.bases, baseCommit)
-            this.store.revisePlan(
-              plan,
-              PlanInput.parse({ ...input, baseCommit }),
-              "UNSTARTED_BASELINE_SELECTED",
-              { from: input.baseCommit, baseCommit, caller, reason: command.reason },
-            )
-          }
-          this.store.move(plan.id, node.task_id, "RETRY", command.reason)
-          if (plan.state !== "running")
-            db.query(
-              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-            ).run(plan.id)
-          this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
-            caller,
-            reason: command.reason,
-          })
-          return { status: "requeued", version: this.store.plan(plan.id)!.version }
-        }
-        if (
-          !["blocked", "cancelled", "failed"].includes(plan.state) ||
-          !node ||
-          !["exhausted", "cancelled", "running", "verifying", "failed", "blocked"].includes(
-            node.state,
-          ) ||
-          !attempt ||
-          (!continuingTerminalWorker &&
-            !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state))
-        )
-          throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
-        if (
-          this.store
-            .effects(plan.id)
-            .some((effect) => ["intended", "uncertain"].includes(effect.state))
-        )
-          throw new Error("Reconcile uncertain effects first")
+              const latest = this.store
+                .attempts(plan.id)
+                .filter((attempt) => attempt.task_id === binding.taskID)
+                .at(-1)
+              const node = this.store.nodes(plan.id).find((item) => item.task_id === binding.taskID)
+              const task = this.store.repository.get(binding.taskID)
+              if (
+                !latest ||
+                latest.id !== binding.attemptID ||
+                !["running", "verifying"].includes(latest.state) ||
+                latest.session_id !== binding.sessionID ||
+                latest.workspace !== binding.workspace ||
+                latest.message_id !== binding.assignedMessageID ||
+                !node ||
+                node.state !== latest.state ||
+                !task ||
+                task.provenance.projectID !== binding.projectID ||
+                task.provenance.projectDirectory !== binding.projectDirectory ||
+                task.revision !==
+                  PlanInput.parse(JSON.parse(plan.body)).nodes.find(
+                    (item) => item.taskID === binding.taskID,
+                  )?.revision
+              )
+                throw new Error("Review input worker assignment changed during native observation")
 
-        const settledStartupEffect = attempt
-          ? this.settledStartupEffect(plan.id, attempt)
-          : undefined
-        if (settledStartupEffect) {
-          const settlement = startupFailureSettlementFromReceipt(settledStartupEffect.receipt)
-          if (
-            retry ||
-            !command.attemptID ||
-            command.attemptID !== attempt!.id ||
-            attempt!.state !== "preparing" ||
-            plan.state !== "blocked" ||
-            !this.validArchitect(ownerSession) ||
-            ownerSession.id !== plan.owner ||
-            caller !== plan.owner ||
-            !settlement
-          )
-            throw new Error(
-              "Startup recovery requires explicit resume of the exact settled attempt",
-            )
-          const workerEffects = this.store
-            .effects(plan.id)
-            .some(
-              (effect) =>
-                effect.attempt_id === attempt!.id &&
-                (effect.kind === "session" ||
-                  effect.kind === "prompt" ||
-                  effect.kind.startsWith("verify:") ||
-                  effect.kind.startsWith("graph-verify:")),
-            )
-          if (
-            workerEffects ||
-            this.hasMeaningfulWorkerProgress(attempt!.id) ||
-            !this.preparationAllowed(attempt!)
-          )
-            throw new Error(
-              "Startup recovery cannot continue after worker effects or conflicting ownership",
-            )
+              const policy = ModelPolicy.parse(JSON.parse(latest.policy).model)
+              if (
+                policy.providerID !== binding.model.providerID ||
+                policy.id !== binding.model.id ||
+                policy.variant !== binding.model.variant
+              )
+                throw new Error("Review input worker route changed during native observation")
 
-          const recoveryID = crypto.randomUUID()
-          const authorization: StartupRecoveryAuthorization = {
-            schema: "lazers-worktree-startup-authorization/v1",
-            recoveryID,
-            sourceEffectID: settledStartupEffect.id,
-            settlementRequestID: settlement.requestID,
-            requestID: command.requestID,
-            owner: plan.owner,
-            planVersion: plan.version + 1,
-            ownerEpoch: this.store.planControlEpoch(plan.id),
-            planRevision: plan.revision,
-            taskID: attempt!.task_id,
-            attemptID: attempt!.id,
-            sessionID: attempt!.session_id,
-            messageID: attempt!.message_id,
-            workspace: attempt!.workspace,
-            base: attempt!.base_commit,
-            policy: attempt!.policy,
-          }
-          db.query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
-          ).run(plan.id, plan.version)
-          this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_AUTHORIZED", authorization)
-          this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
-            attemptID: attempt!.id,
-            reason: command.reason,
-            usageRetained: true,
-            budget: null,
-            startupRecoveryID: recoveryID,
-            sourceEffectID: settledStartupEffect.id,
-          })
-          return {
-            status: "startup-recovery-authorized",
-            version: plan.version + 1,
-            attemptID: attempt!.id,
-            recoveryID,
-          }
-        }
-
-        if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
-        else if (node.state !== "running")
-          this.store.move(plan.id, node.task_id, "RESUME", command.reason)
-        const planInput = PlanInput.parse(JSON.parse(plan.body))
-        const sharedMode =
-          command.workspaceMode === "shared" ||
-          (command.workspaceMode === undefined && planInput.workspaceMode === "shared")
-        let selectedBaseline: string | null = null
-        if (
-          !continuingTerminalWorker &&
-          (command.workspaceMode === "shared" ||
-            (retry && sharedMode && command.baseCommit !== undefined))
-        ) {
-          const source = command.baseCommit ?? git(this.directory, ["rev-parse", "HEAD"])
-          if (command.baseCommit !== undefined) this.requireBaseReachable(preflight.bases, source)
-          if (!retry)
-            db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
-              this.directory,
-              source,
-              attempt.id,
-            )
-          const revised = PlanInput.parse({
-            ...JSON.parse(plan.body),
-            workspaceMode: "shared",
-            baseCommit: source,
-          })
-          db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
-            JSON.stringify(revised),
-            plan.id,
-          )
-          db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
-            plan.id,
-            plan.revision + 1,
-            JSON.stringify(revised),
-            plan.owner,
-            Date.now(),
-          )
-          this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
-            attemptID: attempt.id,
-            from: attempt.workspace,
-            directory: this.directory,
-            source,
-            explicitBaseline: retry && command.baseCommit !== undefined,
-            mode: "shared",
-            reason: command.reason,
-          })
-          if (retry && command.baseCommit !== undefined) selectedBaseline = source
-        }
-        let resumedMessageID: string | undefined
-        if (retry)
-          db.query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=? AND state='preparing'",
-          ).run(attempt.id)
-        else {
-          resumedMessageID = messageID()
-          db.query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=?",
-          ).run(resumedMessageID, attempt.id)
-        }
-        db.query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-        ).run(plan.id)
-        this.store.record(plan.id, node.task_id, retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED", {
-          attemptID: attempt.id,
-          reason: command.reason,
-          usageRetained: true,
-          budget: null,
-          ...(resumedMessageID
-            ? {
-                previousMessageID: attempt.message_id,
-                messageID: resumedMessageID,
-              }
-            : {}),
-          ...(continuingTerminalWorker
-            ? {
-                terminalInputID: terminalContinuation!.inputID,
-                terminalOutcome: terminalContinuation!.worker.outcome,
-                ...(terminalContinuation!.worker.outcome === "interrupted"
-                  ? { interruptedInputID: terminalContinuation!.inputID }
-                  : {}),
-              }
-            : {}),
-          ...(continuingTerminalWorker && terminalRepairContinuation
-            ? {
-                retainedRepairContinuation: {
-                  schema: "lazers-retained-repair-continuation/v1",
-                  operationID: terminalRepairContinuation.operationID,
-                  owner: terminalRepairContinuation.owner,
-                  ownerEpoch: terminalRepairContinuation.ownerEpoch,
-                },
-              }
-            : {}),
-          ...(retry ? { selectedBaseline } : {}),
-        })
-        return {
-          status: retry ? "retrying" : "resuming",
-          version: this.store.plan(plan.id)!.version,
-        }
-      }
-      if (command.action === "reconcile") {
-        if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-        if (!reviewInput) {
-          const quarantined = this.quarantinedVerification(plan)
-          if (quarantined) return quarantined
-        }
-        let existingReviewInput = false
-        if (reviewInput) {
-          const { binding, evidence } = reviewInput
-          if (
-            caller !== plan.owner ||
-            !this.validArchitect(ownerSession) ||
-            ownerSession.id !== binding.ownerSessionID ||
-            binding.planID !== plan.id ||
-            binding.expectedPlanVersion !== command.expectedVersion ||
-            binding.commandRequestID !== command.requestID ||
-            !["running", "blocked"].includes(plan.state)
-          )
-            throw new Error("Review input reconciliation authorization or plan version changed")
-
-          const latest = this.store
-            .attempts(plan.id)
-            .filter((attempt) => attempt.task_id === binding.taskID)
-            .at(-1)
-          const node = this.store.nodes(plan.id).find((item) => item.task_id === binding.taskID)
-          const task = this.store.repository.get(binding.taskID)
-          if (
-            !latest ||
-            latest.id !== binding.attemptID ||
-            !["running", "verifying"].includes(latest.state) ||
-            latest.session_id !== binding.sessionID ||
-            latest.workspace !== binding.workspace ||
-            latest.message_id !== binding.assignedMessageID ||
-            !node ||
-            node.state !== latest.state ||
-            !task ||
-            task.provenance.projectID !== binding.projectID ||
-            task.provenance.projectDirectory !== binding.projectDirectory ||
-            task.revision !==
-              PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-                (item) => item.taskID === binding.taskID,
-              )?.revision
-          )
-            throw new Error("Review input worker assignment changed during native observation")
-
-          const policy = ModelPolicy.parse(JSON.parse(latest.policy).model)
-          if (
-            policy.providerID !== binding.model.providerID ||
-            policy.id !== binding.model.id ||
-            policy.variant !== binding.model.variant
-          )
-            throw new Error("Review input worker route changed during native observation")
-
-          const aliases = db
-            .query<{ id: number; payload: string }, [string, string]>(
-              `SELECT id,payload FROM runner_transitions
+              const aliases = db
+                .query<{ id: number; payload: string }, [string, string]>(
+                  `SELECT id,payload FROM runner_transitions
                WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
                ORDER BY id`,
-            )
-            .all(plan.id, binding.taskID)
-          for (const row of aliases) {
-            let prior: ReturnType<typeof parseReviewInputAlias>
-            try {
-              prior = parseReviewInputAlias(JSON.parse(row.payload))
-            } catch {
-              prior = undefined
+                )
+                .all(plan.id, binding.taskID)
+              for (const row of aliases) {
+                let prior: ReturnType<typeof parseReviewInputAlias>
+                try {
+                  prior = parseReviewInputAlias(JSON.parse(row.payload))
+                } catch {
+                  prior = undefined
+                }
+                if (!prior || prior.attemptID !== binding.attemptID) continue
+                if (prior.reviewInputID !== binding.reviewInputID) continue
+                if (
+                  !matchesReviewInputAlias(prior, {
+                    projectDirectory: binding.projectDirectory,
+                    projectID: binding.projectID,
+                    planID: binding.planID,
+                    taskID: binding.taskID,
+                    attemptID: binding.attemptID,
+                    sessionID: binding.sessionID,
+                    workspace: binding.workspace,
+                    assignedMessageID: binding.assignedMessageID,
+                    reviewInputID: binding.reviewInputID,
+                  }) ||
+                  prior.reviewRequestID !== evidence.reviewRequestID
+                )
+                  throw new Error(
+                    "Review input already has a different durable lineage relationship",
+                  )
+                existingReviewInput = true
+                break
+              }
             }
-            if (!prior || prior.attemptID !== binding.attemptID) continue
-            if (prior.reviewInputID !== binding.reviewInputID) continue
             if (
-              !matchesReviewInputAlias(prior, {
+              this.store.effects(plan.id).some((e) => ["intended", "uncertain"].includes(e.state))
+            )
+              return {
+                status: "blocked",
+                reason: "Uncertain effects require conclusive host/artifact evidence",
+                version: plan.version,
+              }
+            if (plan.state === "blocked") {
+              db.query(
+                "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+              ).run(plan.id)
+              for (const node of this.store.nodes(plan.id))
+                if (
+                  node.state === "blocked" &&
+                  !this.store.attempts(plan.id).some((a) => a.task_id === node.task_id)
+                )
+                  this.store.move(plan.id, node.task_id, "RECONCILE")
+            }
+            if (reviewInput && !existingReviewInput) {
+              const { binding, evidence } = reviewInput
+              this.store.record(plan.id, binding.taskID, "WORKER_REVIEW_INPUT_RECONCILED", {
+                schemaVersion: 1,
+                kind: "owner-reviewed-native-input-alias",
+                source: "observed-native-review-input",
+                runtimeSentMessage: false,
                 projectDirectory: binding.projectDirectory,
                 projectID: binding.projectID,
                 planID: binding.planID,
@@ -7725,137 +7969,102 @@ export class TaskRuntime {
                 workspace: binding.workspace,
                 assignedMessageID: binding.assignedMessageID,
                 reviewInputID: binding.reviewInputID,
-              }) ||
-              prior.reviewRequestID !== evidence.reviewRequestID
+                reviewRequestID: evidence.reviewRequestID,
+                ownerSessionID: binding.ownerSessionID,
+                commandRequestID: binding.commandRequestID,
+                expectedPlanVersion: binding.expectedPlanVersion,
+                model: binding.model,
+                input: evidence.input,
+                observation: evidence.observation,
+              })
+            }
+            this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+              caller,
+              verificationEpoch: this.store.plan(plan.id)!.version,
+              ...(reviewInput ? { reviewInputID: reviewInput.binding.reviewInputID } : {}),
+            })
+            return {
+              status: "reconciling",
+              version: this.store.plan(plan.id)!.version,
+              ...(reviewInput
+                ? {
+                    reviewInputID: reviewInput.binding.reviewInputID,
+                    relationshipRecorded: !existingReviewInput,
+                  }
+                : {}),
+            }
+          }
+          if (plan.state !== "draft" && plan.state !== "blocked")
+            throw new Error("Execution already requested or ended")
+          if (this.store.attempts(plan.id).length)
+            throw new Error(
+              "Existing execution must be reconciled; admission cannot replace its policy",
             )
-              throw new Error("Review input already has a different durable lineage relationship")
-            existingReviewInput = true
-            break
-          }
-        }
-        if (this.store.effects(plan.id).some((e) => ["intended", "uncertain"].includes(e.state)))
-          return {
-            status: "blocked",
-            reason: "Uncertain effects require conclusive host/artifact evidence",
-            version: plan.version,
-          }
-        if (plan.state === "blocked") {
-          db.query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-          ).run(plan.id)
-          for (const node of this.store.nodes(plan.id))
+          if (!ownerSession || ownerSession.archived)
+            return this.hold(plan, "Owner is missing or archived")
+          if (ownerSession.projectID !== this.projectID) throw new Error("Foreign owner session")
+          if (command.action === "run" && ownerSession.agent !== "architect")
+            throw new Error("Only an Architect session can own execution")
+          const proposal = PlanInput.parse(JSON.parse(plan.body))
+          const selectedModel = proposal.workerModel ?? configuredWorker
+          const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
+          const nodeRouteDecisions = proposal.nodes.map((node) =>
+            node.persona && proposal.workerAgent !== "auditor"
+              ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
+              : null,
+          )
+          const everyNodeHasRoute = proposal.nodes.every((node, index) =>
+            node.persona && proposal.workerAgent !== "auditor"
+              ? nodeRouteDecisions[index]?.status === "resolved"
+              : selectedModel !== undefined,
+          )
+          if (!everyNodeHasRoute)
+            return this.hold(
+              plan,
+              "Select an implementor model in native OpenCode agent configuration",
+            )
+          const model = selectedModel ? ModelPolicy.parse(selectedModel) : null
+          try {
             if (
-              node.state === "blocked" &&
-              !this.store.attempts(plan.id).some((a) => a.task_id === node.task_id)
+              obs.git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
+              proposal.baseCommit
             )
-              this.store.move(plan.id, node.task_id, "RECONCILE")
-        }
-        if (reviewInput && !existingReviewInput) {
-          const { binding, evidence } = reviewInput
-          this.store.record(plan.id, binding.taskID, "WORKER_REVIEW_INPUT_RECONCILED", {
-            schemaVersion: 1,
-            kind: "owner-reviewed-native-input-alias",
-            source: "observed-native-review-input",
-            runtimeSentMessage: false,
-            projectDirectory: binding.projectDirectory,
-            projectID: binding.projectID,
-            planID: binding.planID,
-            taskID: binding.taskID,
-            attemptID: binding.attemptID,
-            sessionID: binding.sessionID,
-            workspace: binding.workspace,
-            assignedMessageID: binding.assignedMessageID,
-            reviewInputID: binding.reviewInputID,
-            reviewRequestID: evidence.reviewRequestID,
-            ownerSessionID: binding.ownerSessionID,
-            commandRequestID: binding.commandRequestID,
-            expectedPlanVersion: binding.expectedPlanVersion,
-            model: binding.model,
-            input: evidence.input,
-            observation: evidence.observation,
+              throw new Error("Base mismatch")
+          } catch (error) {
+            if (error instanceof ObservationRequired) throw error
+            return this.hold(plan, `Unavailable committed source baseline: ${errorText(error)}`)
+          }
+          const audit = this.store.exactContentConflicts(proposal.nodes.map((n) => n.taskID))
+          const conflicts = audit.findings
+          if (conflicts.length)
+            return this.hold(
+              plan,
+              `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
+            )
+          db.query(
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),model=?,reason=NULL,version=version+1 WHERE id=?",
+          ).run(model ? JSON.stringify(model) : null, plan.id)
+          this.store.record(plan.id, null, "ADMITTED", {
+            model,
+            modelSource: proposal.workerModel
+              ? "explicit-plan-selection"
+              : configuredWorker
+                ? "native-agent-selection"
+                : "persona-mapping-selection",
+            auditWatermark: audit.watermark,
+            source: proposal.baseCommit,
+            enforcement: {
+              budget: "unconfigured; historical proposed limits are not execution policy",
+              tokens: "measured usage only",
+              cost: "API-equivalent price unavailable until resolved; never treated as zero",
+              tools: "measured usage only",
+              repairs: "one bounded verification repair by default",
+            },
           })
-        }
-        this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-          caller,
-          verificationEpoch: this.store.plan(plan.id)!.version,
-          ...(reviewInput ? { reviewInputID: reviewInput.binding.reviewInputID } : {}),
-        })
-        return {
-          status: "reconciling",
-          version: this.store.plan(plan.id)!.version,
-          ...(reviewInput
-            ? {
-                reviewInputID: reviewInput.binding.reviewInputID,
-                relationshipRecorded: !existingReviewInput,
-              }
-            : {}),
-        }
-      }
-      if (plan.state !== "draft" && plan.state !== "blocked")
-        throw new Error("Execution already requested or ended")
-      if (this.store.attempts(plan.id).length)
-        throw new Error(
-          "Existing execution must be reconciled; admission cannot replace its policy",
-        )
-      if (!ownerSession || ownerSession.archived)
-        return this.hold(plan, "Owner is missing or archived")
-      if (ownerSession.projectID !== this.projectID) throw new Error("Foreign owner session")
-      if (command.action === "run" && ownerSession.agent !== "architect")
-        throw new Error("Only an Architect session can own execution")
-      const proposal = PlanInput.parse(JSON.parse(plan.body))
-      const selectedModel = proposal.workerModel ?? configuredWorker
-      const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
-      const nodeRouteDecisions = proposal.nodes.map((node) =>
-        node.persona && proposal.workerAgent !== "auditor"
-          ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
-          : null,
-      )
-      const everyNodeHasRoute = proposal.nodes.every((node, index) =>
-        node.persona && proposal.workerAgent !== "auditor"
-          ? nodeRouteDecisions[index]?.status === "resolved"
-          : selectedModel !== undefined,
-      )
-      if (!everyNodeHasRoute)
-        return this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
-      const model = selectedModel ? ModelPolicy.parse(selectedModel) : null
-      try {
-        if (
-          git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
-          proposal.baseCommit
-        )
-          throw new Error("Base mismatch")
-      } catch (error) {
-        return this.hold(plan, `Unavailable committed source baseline: ${errorText(error)}`)
-      }
-      const audit = this.store.exactContentConflicts(proposal.nodes.map((n) => n.taskID))
-      const conflicts = audit.findings
-      if (conflicts.length)
-        return this.hold(
-          plan,
-          `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
-        )
-      db.query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),model=?,reason=NULL,version=version+1 WHERE id=?",
-      ).run(model ? JSON.stringify(model) : null, plan.id)
-      this.store.record(plan.id, null, "ADMITTED", {
-        model,
-        modelSource: proposal.workerModel
-          ? "explicit-plan-selection"
-          : configuredWorker
-            ? "native-agent-selection"
-            : "persona-mapping-selection",
-        auditWatermark: audit.watermark,
-        source: proposal.baseCommit,
-        enforcement: {
-          budget: "unconfigured; historical proposed limits are not execution policy",
-          tokens: "measured usage only",
-          cost: "API-equivalent price unavailable until resolved; never treated as zero",
-          tools: "measured usage only",
-          repairs: "one bounded verification repair by default",
-        },
-      })
-      return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
-    })
+          return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
+        }),
+      () => this.assertSchedulerActive(),
+    )
     if (
       (command.action === "run" && result?.status === "running") ||
       (command.action === "integrated" && result?.status === "cleanup-requested") ||
@@ -8127,18 +8336,65 @@ export class TaskRuntime {
     }
   }
 
+  private readonly sourceInvalidations = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; dirty: boolean }
+  >()
+
+  /**
+   * Called for every native event. O(1) for sessions that are not Architect
+   * sources; for sources the epoch bumps in memory at once and the durable
+   * invalidation is coalesced (250ms) off the event path.
+   */
   observeArchitectSourceEvent(sessionID?: string) {
-    if (!sessionID) this.sourceResyncPending = true
-    if (!sessionID)
-      for (const id of this.store.architectSourceSessionIDs())
-        if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
-    const ids = sessionID ? [sessionID] : [...this.sourceEpochs.keys()]
-    for (const id of ids) {
-      if (!this.sourceEpochs.has(id)) continue
-      this.sourceEpochs.set(id, this.sourceEpochs.get(id)! + 1)
+    if (sessionID) {
+      if (!this.sourceEpochs.has(sessionID)) return
+      this.scheduleSourceInvalidation(sessionID)
+      return
+    }
+    this.sourceResyncPending = true
+    for (const id of this.store.architectSourceSessionIDs())
+      if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
+    for (const id of [...this.sourceEpochs.keys()]) this.scheduleSourceInvalidation(id)
+    this.sourceResyncPending = false
+  }
+
+  /** Leading edge writes at once; further events in the 250ms window coalesce into one trailing write. */
+  private scheduleSourceInvalidation(sessionID: string) {
+    this.sourceEpochs.set(sessionID, (this.sourceEpochs.get(sessionID) ?? 0) + 1)
+    const pending = this.sourceInvalidations.get(sessionID)
+    if (pending) {
+      pending.dirty = true
+      return
+    }
+    this.store.invalidateArchitectSource(sessionID, this.now())
+    const entry = {
+      dirty: false,
+      timer: setTimeout(() => {
+        this.sourceInvalidations.delete(sessionID)
+        if (!entry.dirty) return
+        try {
+          this.store.invalidateArchitectSource(sessionID, this.now())
+        } catch {
+          // The next event or tick re-requests the invalidation.
+        }
+      }, 250),
+    }
+    entry.timer.unref?.()
+    this.sourceInvalidations.set(sessionID, entry)
+  }
+
+  /** Apply pending coalesced invalidations before a decision reads source state. */
+  private assertSchedulerActive() {
+    if (this.stopped) throw new Error("Scheduler registration was disposed")
+  }
+
+  flushSourceInvalidations() {
+    for (const [id, entry] of [...this.sourceInvalidations]) {
+      if (!entry.dirty) continue
+      entry.dirty = false
       this.store.invalidateArchitectSource(id, this.now())
     }
-    if (!sessionID) this.sourceResyncPending = false
   }
 
   async recordArchitectContinuity(sessionID: string, input: unknown) {
@@ -8226,6 +8482,7 @@ export class TaskRuntime {
   private async inspectArchitectSourcePage(renewal: ArchitectRenewalRow, fence: number) {
     if (!this.host.architectInputPage)
       throw new Error("Native Architect input/history observation is unavailable")
+    this.flushSourceInvalidations()
     const source = this.store.architectSource(renewal.previous_session_id)
     if (!source) throw new Error("Durable Architect predecessor source is unavailable")
     if (!this.sourceEpochs.has(source.session_id)) this.sourceEpochs.set(source.session_id, 0)
@@ -10237,6 +10494,7 @@ export class TaskRuntime {
       const fence = this.store.claim(this.owner)
       if (fence === null) return
       if (this.sourceResyncPending) this.observeArchitectSourceEvent()
+      this.flushSourceInvalidations()
       let heartbeatFailed = false
       let heartbeatError: unknown
       heartbeat = sharedScheduler.register(
@@ -11668,7 +11926,7 @@ export class TaskRuntime {
       }
     let branch: string
     try {
-      branch = capturedBranch ?? git(this.directory, ["branch", "--show-current"])
+      branch = capturedBranch ?? (await gitAsync(this.directory, ["branch", "--show-current"]))
     } catch {
       return { status: "unknown", reason: "The integrated source branch could not be read." }
     }
@@ -11802,7 +12060,7 @@ export class TaskRuntime {
     const base =
       previousBase ??
       (input.workspaceMode === "shared" && !taskPrerequisites.length
-        ? git(this.directory, ["rev-parse", "HEAD"])
+        ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
         : await this.dependencySource(plan, input, node))
     if (taskPrerequisites.length) {
       const proof = await this.taskDependencyIntegration(plan, input, node, base)
@@ -11918,7 +12176,7 @@ export class TaskRuntime {
     const effect = this.effect(plan.id, task.id, id, "worktree", { workspace, base }, fence)
     try {
       const actual = await this.host.worktree({ directory: workspace, base })
-      if (git(actual, ["rev-parse", "HEAD"]) !== base)
+      if ((await gitAsync(actual, ["rev-parse", "HEAD"])) !== base)
         throw new Error("Host worktree did not use the admitted starting revision")
       this.store.fenced(this.owner, fence, (db) =>
         db.query("UPDATE runner_attempts SET workspace=? WHERE id=?").run(actual, id),
@@ -12032,15 +12290,15 @@ export class TaskRuntime {
       )
       if (proof.status !== "ready" || proof.baseline !== currentAttempt.base_commit) return false
       try {
-        const treeHead = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
+        const treeHead = await gitAsync(currentAttempt.workspace, ["rev-parse", "HEAD"])
         if (!isCommitID(treeHead) || !isCommitID(currentAttempt.base_commit)) return false
-        git(currentAttempt.workspace, [
+        await gitAsync(currentAttempt.workspace, [
           "merge-base",
           "--is-ancestor",
           currentAttempt.base_commit,
           treeHead,
         ])
-        const taskChanges = changedPaths(currentAttempt.workspace, currentAttempt.base_commit)
+        const taskChanges = await changedPaths(currentAttempt.workspace, currentAttempt.base_commit)
         const inputLineage = new Set([currentAttempt.message_id])
         let inputID = currentAttempt.message_id
         const resumes = this.store.atomic((db) =>
@@ -12090,7 +12348,7 @@ export class TaskRuntime {
         if (
           scopeViolations(taskChanges, this.store.effectiveWriteScope(currentAttempt.task_id))
             .length > 0 ||
-          git(currentAttempt.workspace, ["ls-files", "-u", "-z"])
+          (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"]))
         )
           return false
       } catch {
@@ -12105,7 +12363,7 @@ export class TaskRuntime {
       // The reservation base is immutable prerequisite proof. A later HEAD is
       // acceptable only as scoped progress from a prompt already admitted to this attempt.
       const baseline = currentAttempt.base_commit
-      const head = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
+      const head = await gitAsync(currentAttempt.workspace, ["rev-parse", "HEAD"])
       if (!isCommitID(baseline) || !isCommitID(head)) return false
       const retainedPrompt = this.store.effects(planID).some((effect) => {
         if (
@@ -12125,10 +12383,10 @@ export class TaskRuntime {
           typeof payload.messageID === "string"
         )
       })
-      const changed = changedPaths(currentAttempt.workspace, baseline)
+      const changed = await changedPaths(currentAttempt.workspace, baseline)
       if ((head !== baseline || changed.length > 0) && !retainedPrompt) return false
-      git(currentAttempt.workspace, ["merge-base", "--is-ancestor", baseline, head])
-      if (git(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
+      await gitAsync(currentAttempt.workspace, ["merge-base", "--is-ancestor", baseline, head])
+      if (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
       if (scopeViolations(changed, this.store.effectiveWriteScope(currentAttempt.task_id)).length)
         return false
       return (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
@@ -12757,7 +13015,7 @@ export class TaskRuntime {
         !(
           attempt.state === "verifying" &&
           (this.hasSettledVerificationTimeout(plan, attempt) ||
-            this.hasSettledHumanEvidenceHold(plan, attempt))
+            (await this.hasSettledHumanEvidenceHold(plan, attempt)))
         )) ||
       attempt.workspace === this.directory ||
       !this.host.ensureSourceGuard ||
@@ -13169,16 +13427,16 @@ export class TaskRuntime {
       await this.isolateStoppedWorkerSource(current, retained, session)
   }
 
-  private prepareVerificationCandidate(
+  private async prepareVerificationCandidate(
     plan: PlanRow,
     attempt: AttemptRow,
     proposal: TaskProposal,
     fence: number,
-  ): "ready" | "prepared" | "pending" | "held" {
+  ): Promise<"ready" | "prepared" | "pending" | "held"> {
     if (!needsMechanicalQualityPreparation(proposal.verification.map((check) => check.command)))
       return "ready"
     const scope = this.store.effectiveWriteScope(attempt.task_id)
-    const paths = changedPaths(attempt.workspace, attempt.base_commit)
+    const paths = await changedPaths(attempt.workspace, attempt.base_commit)
     if (scopeViolations(paths, scope).length) return "ready"
     const formatterExtensions = new Set([
       ".css",
@@ -13234,9 +13492,9 @@ export class TaskRuntime {
       { id: "mechanical-preparation", command },
       this.verificationTimeoutDefaults,
     )
-    const inputFingerprint = workingTreeIdentity(attempt.workspace, attempt.base_commit)
+    const inputFingerprint = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
     const shared = attempt.workspace === this.directory
-    const sharedDirty = shared && changedPaths(attempt.workspace).length > 0
+    const sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
     const environmentIdentity = verificationEnvironmentIdentity()
     const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
     const payload = {
@@ -13332,7 +13590,7 @@ export class TaskRuntime {
         receipt.environmentIdentity !== recorded.environmentIdentity ||
         receipt.preparation.inputFingerprint !== recorded.inputFingerprint ||
         receipt.preparation.resultingFingerprint !==
-          workingTreeIdentity(attempt.workspace, attempt.base_commit)
+          (await workingTreeIdentity(attempt.workspace, attempt.base_commit))
       ) {
         this.hold(
           plan,
@@ -13390,12 +13648,12 @@ export class TaskRuntime {
         )
         const preparation = {
           inputFingerprint,
-          resultingFingerprint: workingTreeIdentity(attempt.workspace, attempt.base_commit),
+          resultingFingerprint: await workingTreeIdentity(attempt.workspace, attempt.base_commit),
           paths,
           scope,
         }
         const result = { ...receipt, preparation }
-        writeCheckReceipt(payload.receiptPath, result)
+        await writeCheckReceipt(payload.receiptPath, result)
         return result
       },
     })
@@ -13444,11 +13702,11 @@ export class TaskRuntime {
       })
     )
       return
-    const preparation = this.prepareVerificationCandidate(plan, attempt, proposal, fence)
+    const preparation = await this.prepareVerificationCandidate(plan, attempt, proposal, fence)
     if (preparation === "pending" || preparation === "held") return
     let artifact: Awaited<ReturnType<typeof commitArtifact>>
     try {
-      const head = git(attempt.workspace, ["rev-parse", "HEAD"])
+      const head = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
       const checkedCandidate = this.store.effects(plan.id).some((effect) => {
         if (
           effect.attempt_id !== attempt.id ||
@@ -13480,7 +13738,7 @@ export class TaskRuntime {
         this.store.effectiveWriteScope(attempt.task_id),
         attempt.workspace !== this.directory || retainFixes,
         attempt.workspace !== this.directory
-          ? git(this.directory, ["rev-parse", "HEAD"])
+          ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
           : undefined,
       )
       if (!verificationCurrent()) return
@@ -13488,7 +13746,7 @@ export class TaskRuntime {
       // commit-tree on each tick changes its identity
       // and can strand an otherwise valid receipt (or supersede worker edits).
       if ((attempt.workspace !== this.directory || retainFixes) && artifact.commit !== head)
-        git(attempt.workspace, ["update-ref", "HEAD", artifact.commit, head])
+        await gitAsync(attempt.workspace, ["update-ref", "HEAD", artifact.commit, head])
     } catch (error) {
       if (!verificationCurrent()) return
       try {
@@ -13699,20 +13957,20 @@ export class TaskRuntime {
     }
     try {
       // Capture automatic fixes in the delivered source; cleanliness is not a pass/fail condition.
-      if (!artifactUnchanged(attempt.workspace, artifact.commit)) {
-        const previousHead = git(attempt.workspace, ["rev-parse", "HEAD"])
+      if (!(await artifactUnchanged(attempt.workspace, artifact.commit))) {
+        const previousHead = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
         artifact = await commitArtifact(
           attempt.workspace,
           attempt.base_commit,
           this.store.effectiveWriteScope(attempt.task_id),
           true,
           attempt.workspace !== this.directory
-            ? git(this.directory, ["rev-parse", "HEAD"])
+            ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
             : undefined,
         )
         if (!verificationCurrent()) return
         if (artifact.commit !== previousHead)
-          git(attempt.workspace, ["update-ref", "HEAD", artifact.commit, previousHead])
+          await gitAsync(attempt.workspace, ["update-ref", "HEAD", artifact.commit, previousHead])
         this.store.fenced(this.owner, fence, (db) => {
           db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(
             artifact.commit,
@@ -13730,7 +13988,7 @@ export class TaskRuntime {
       this.hold(plan, errorText(error))
       return
     }
-    const missing = this.missingEvidence(
+    const missing = await this.missingEvidence(
       plan.id,
       attempt.task_id,
       artifact.commit,
@@ -13772,7 +14030,7 @@ export class TaskRuntime {
       // Progress facts never grant or revoke acceptance.
     }
   }
-  private missingEvidence(
+  private async missingEvidence(
     planID: string,
     taskID: string | null,
     artifact: string,
@@ -13790,7 +14048,7 @@ export class TaskRuntime {
           !receipts.some((r) => r.id === evidence.verificationID && checkSucceeded(r))
         )
           missing.push(assertion.id)
-        if (evidence.kind === "artifact" && !artifactExists(workspace, evidence.reference))
+        if (evidence.kind === "artifact" && !(await artifactExists(workspace, evidence.reference)))
           missing.push(`${assertion.id}:${evidence.reference}`)
         if (evidence.kind === "human") {
           const found = adoptionID
@@ -13910,7 +14168,7 @@ export class TaskRuntime {
       )
     }
     let artifact = ""
-    const continuationInputsCurrent = (candidateArtifact: string) => {
+    const continuationInputsCurrent = (candidateArtifact: string, obs: GitObservations) => {
       if (!continuation) return true
       const currentPlan = this.store.plan(plan.id)
       if (
@@ -13933,6 +14191,8 @@ export class TaskRuntime {
         const acceptedArtifacts = this.acceptedCombinedArtifacts(
           currentPlan,
           PlanInput.parse(JSON.parse(currentPlan.body)),
+          undefined,
+          obs,
         )
         const interruptedEffects = continuation.interruptedEffects.every((expected) => {
           const effect = this.store
@@ -13971,10 +14231,10 @@ export class TaskRuntime {
           settledTimeouts &&
           fingerprint(currentBinding) === continuation.inputFingerprint &&
           existsSync(continuation.workspace) &&
-          git(continuation.workspace, ["rev-parse", "HEAD"]) === candidateArtifact &&
-          artifactUnchanged(continuation.workspace, candidateArtifact),
+          obs.atArtifact(continuation.workspace, candidateArtifact),
         )
-      } catch {
+      } catch (error) {
+        if (error instanceof ObservationRequired) throw error
         return false
       }
     }
@@ -14034,12 +14294,22 @@ export class TaskRuntime {
         return false
       return true
     }
-    const acceptedInputsCurrent = () =>
+    const acceptedInputsCurrentWith = (obs: GitObservations) =>
       acceptedNodesCurrent() &&
       (!continuation ||
-        (continuationInputsCurrent(artifact) && continuationEffectsCurrent(artifact)))
+        (continuationInputsCurrent(artifact, obs) && continuationEffectsCurrent(artifact)))
+    const continuationCurrent = () => {
+      const obs = new GitObservations()
+      return obs.run(
+        () => continuationInputsCurrent(artifact, obs) && continuationEffectsCurrent(artifact),
+      )
+    }
+    const acceptedInputsCurrent = () => {
+      const obs = new GitObservations()
+      return obs.run(() => acceptedInputsCurrentWith(obs))
+    }
     try {
-      artifact = canonicalCombinedArtifact(
+      artifact = await canonicalCombinedArtifact(
         this.directory,
         await combineArtifacts(this.directory, input.baseCommit, branches),
         [continuation?.artifact],
@@ -14050,10 +14320,7 @@ export class TaskRuntime {
       return
     }
     if (!acceptedNodesCurrent()) return
-    if (
-      continuation &&
-      (!continuationInputsCurrent(artifact) || !continuationEffectsCurrent(artifact))
-    ) {
+    if (continuation && !(await continuationCurrent())) {
       if (this.store.plan(plan.id)?.state === "running")
         this.hold(
           plan,
@@ -14061,7 +14328,7 @@ export class TaskRuntime {
         )
       return
     }
-    if (!acceptedInputsCurrent()) {
+    if (!(await acceptedInputsCurrent())) {
       if (continuation && this.store.plan(plan.id)?.state === "running")
         this.hold(
           plan,
@@ -14076,15 +14343,11 @@ export class TaskRuntime {
         : input.workspaceMode === "shared"
     let workspace = continuation?.workspace ?? this.directory
     if (continuation) {
-      if (
-        !existsSync(workspace) ||
-        git(workspace, ["rev-parse", "HEAD"]) !== artifact ||
-        !artifactUnchanged(workspace, artifact)
-      ) {
+      if (!existsSync(workspace) || !(await workspaceAtArtifact(workspace, artifact))) {
         this.hold(plan, "Interrupted combined verification candidate changed; preserve it")
         return
       }
-    } else if (!shared || !artifactUnchanged(this.directory, artifact)) {
+    } else if (!shared || !(await artifactUnchanged(this.directory, artifact))) {
       const existing = this.store
         .effects(plan.id)
         .find(
@@ -14100,7 +14363,7 @@ export class TaskRuntime {
       else if (
         matchingAttempt &&
         existsSync(matchingAttempt.workspace) &&
-        artifactUnchanged(matchingAttempt.workspace, artifact)
+        (await artifactUnchanged(matchingAttempt.workspace, artifact))
       )
         workspace = matchingAttempt.workspace
       else {
@@ -14115,7 +14378,7 @@ export class TaskRuntime {
         )
         try {
           const actual = await this.host.worktree({ directory: proposed, base: artifact })
-          if (git(actual, ["rev-parse", "HEAD"]) !== artifact)
+          if ((await gitAsync(actual, ["rev-parse", "HEAD"])) !== artifact)
             throw new Error("Combined worktree did not use the accepted artifact")
           this.receipt(effect, { workspace: actual, base: artifact }, fence)
           workspace = actual
@@ -14134,7 +14397,7 @@ export class TaskRuntime {
         this.verificationTarget(plan, "combined", check, artifact, null, null, null),
       )
       const effectiveCheck = effectiveVerificationCheck(check, deadline)
-      if (!acceptedInputsCurrent()) {
+      if (!(await acceptedInputsCurrent())) {
         if (continuation && this.store.plan(plan.id)?.state === "running")
           this.hold(
             plan,
@@ -14242,11 +14505,11 @@ export class TaskRuntime {
       this.hold(plan, "Combined artifact verification failed")
       return
     }
-    if (!artifactUnchanged(workspace, artifact)) {
+    if (!(await artifactUnchanged(workspace, artifact))) {
       this.hold(plan, "Combined candidate changed after verification")
       return
     }
-    const missing = this.missingEvidence(
+    const missing = await this.missingEvidence(
       plan.id,
       null,
       artifact,
@@ -14260,7 +14523,8 @@ export class TaskRuntime {
       this.hold(plan, `Combined artifact evidence missing: ${missing.join(", ")}`)
       return
     }
-    if (!acceptedInputsCurrent()) {
+    const finalObservations = new GitObservations()
+    if (!(await finalObservations.run(() => acceptedInputsCurrentWith(finalObservations)))) {
       if (continuation && this.store.plan(plan.id)?.state === "running")
         this.hold(
           plan,
@@ -14269,7 +14533,7 @@ export class TaskRuntime {
       return
     }
     this.store.fenced(this.owner, fence, (db) => {
-      if (!acceptedInputsCurrent()) return
+      if (!acceptedInputsCurrentWith(finalObservations)) return
       db.query(
         "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'accepted'),artifact=?,version=version+1 WHERE id=?",
       ).run(artifact, plan.id)
@@ -14411,16 +14675,17 @@ export class TaskRuntime {
         // A typed native failure is affirmative terminal evidence, not a lost
         // success response. It can never be promoted to a ready workspace.
         if (nativeFailure) return
-        const possibleCandidates = nativeWorktrees
-          .filter((directory) =>
-            effect.kind === "worktree-recovery"
-              ? directory === payload.workspace
-              : isStartupWorktreeCandidate(payload.workspace, directory),
+        const possibleCandidates: string[] = []
+        for (const directory of nativeWorktrees.filter((directory) =>
+          effect.kind === "worktree-recovery"
+            ? directory === payload.workspace
+            : isStartupWorktreeCandidate(payload.workspace, directory),
+        ))
+          if (
+            existsSync(directory) &&
+            (await gitAsync(directory, ["rev-parse", "HEAD"])) === payload.base
           )
-          .filter(
-            (directory) =>
-              existsSync(directory) && git(directory, ["rev-parse", "HEAD"]) === payload.base,
-          )
+            possibleCandidates.push(directory)
         const candidates: string[] = []
         for (const directory of possibleCandidates) {
           if (
@@ -14534,7 +14799,7 @@ export class TaskRuntime {
             JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
             JSON.stringify(scope) === JSON.stringify(payload.scope) &&
             preparation.resultingFingerprint ===
-              workingTreeIdentity(payload.workspace, payload.baseCommit) &&
+              (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
             !scopeViolations(preparation.paths, scope).length
           ) {
             if (check.aborted) {

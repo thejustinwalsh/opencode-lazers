@@ -9,7 +9,7 @@ import type { ObservationChange } from "./contract.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 
-test("loaded observers share membership reads only within the same durable revision and synchronous batch", async () => {
+test("loaded observers share membership reads for the same durable revision and rescan only deltas", async () => {
   const f = makeFixture()
   try {
     const copy = await import(
@@ -49,12 +49,14 @@ test("loaded observers share membership reads only within the same durable revis
       db.query("UPDATE runner_plans SET owner=? WHERE id=?").run("ses-new-owner", f.receipt.planID),
     )
     expect(read().sessionIDs.has("ses-new-owner")).toBe(true)
-    expect(membershipReads).toBe(2)
+    // Plan owners are re-read; unchanged task rows are not rescanned.
+    expect(membershipReads).toBe(1)
     expect(read(secret, "/unrelated-project").sessionIDs.size).toBe(0)
-    expect(membershipReads).toBe(3)
+    expect(membershipReads).toBe(1)
     await Promise.resolve()
+    // The shared view is keyed by revision, so it survives the microtask boundary.
     expect(read().sessionIDs.has("ses-new-owner")).toBe(true)
-    expect(membershipReads).toBe(4)
+    expect(membershipReads).toBe(1)
   } finally {
     f.close()
   }

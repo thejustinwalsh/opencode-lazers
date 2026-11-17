@@ -165,7 +165,7 @@ let timer: (() => void) | undefined
 let stopRuntime: (() => void) | undefined
 const runtime = solid.createRoot((dispose) => {
   stopRuntime = dispose
-  return createInferenceRuntime(ctx, undefined, undefined, features, {
+  return createInferenceRuntime(ctx, () => 60_000, undefined, features, {
     wallNow: () => now,
     schedule: (callback, delayMs) => {
       assert.equal(delayMs, 500)
