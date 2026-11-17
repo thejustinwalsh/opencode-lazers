@@ -10,6 +10,7 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
+import { installChangeIdentity } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
 import { canonical, fingerprint } from "../identity.ts"
 import { sessionAssociations } from "../observability/associations.ts"
@@ -1234,6 +1235,7 @@ export class RunnerStore {
         db.query(
           "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'admitted'),receipt=COALESCE(receipt,?) WHERE state='delivered'",
         ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
+        installChangeIdentity(db)
         ensureObservationRevision(db)
         ensureArchitectSourceJournalRevisions(db)
       },
@@ -3627,12 +3629,9 @@ export class RunnerStore {
       for (const relation of plan.dispositions)
         if (!this.repository.get(relation.otherTaskID)) throw new Error("Foreign relation target")
       const id = crypto.randomUUID()
-      db.query("INSERT INTO runner_plans VALUES(?,?,?,1,1,'draft',?,NULL,NULL,NULL)").run(
-        id,
-        this.repository.projectDirectory,
-        owner,
-        JSON.stringify(plan),
-      )
+      db.query(
+        "INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body,model,reason,artifact) VALUES(?,?,?,1,1,'draft',?,NULL,NULL,NULL)",
+      ).run(id, this.repository.projectDirectory, owner, JSON.stringify(plan))
       db.query("INSERT INTO runner_plan_revisions VALUES(?,1,?,?,?)").run(
         id,
         JSON.stringify(plan),
@@ -3640,7 +3639,9 @@ export class RunnerStore {
         Date.now(),
       )
       for (const taskID of plan.integrationOrder)
-        db.query("INSERT INTO runner_nodes VALUES(?,?,1,?,'queued',1,NULL,NULL,?,?)").run(
+        db.query(
+          "INSERT INTO runner_nodes(plan_id,task_id,spec_revision,ordinal,state,version,reason,artifact,snapshot,machine_version) VALUES(?,?,1,?,'queued',1,NULL,NULL,?,?)",
+        ).run(
           id,
           taskID,
           plan.integrationOrder.indexOf(taskID),

@@ -5,8 +5,6 @@
  *
  * Every Git call here is asynchronous: nothing in this module blocks the event loop.
  */
-import type { Database } from "bun:sqlite"
-
 export const NOTES_REF = "refs/notes/lazers"
 const NOTES_NAME = "lazers"
 /** Bound the history window so a stale base cannot make containment checks unbounded. */
@@ -114,27 +112,6 @@ export async function patchIdOf(
         ).map((entry) => entry.patchId)
       : []
   return { combined, commits }
-}
-
-/** Reads an attempt's change id, assigning and storing a fresh UUID once. Run inside a transaction. */
-export function changeIdFor(db: Database, attemptID: string): string {
-  const row = db
-    .query<{ change_id: string | null }, [string]>(
-      "SELECT change_id FROM runner_attempts WHERE id=?",
-    )
-    .get(attemptID)
-  if (!row) throw new Error(`Unknown attempt ${attemptID}`)
-  if (row.change_id) return row.change_id
-  const created = crypto.randomUUID()
-  db.query("UPDATE runner_attempts SET change_id=? WHERE id=? AND change_id IS NULL").run(
-    created,
-    attemptID,
-  )
-  return (
-    db
-      .query<{ change_id: string }, [string]>("SELECT change_id FROM runner_attempts WHERE id=?")
-      .get(attemptID)?.change_id ?? created
-  )
 }
 
 export type ChangeNote = { changeId: string; taskId?: string; attemptId?: string }

@@ -6917,7 +6917,9 @@ export class TaskRuntime {
         const sourceGeneration = command.taskID
           ? this.retainedRepairGeneration(plan.id, command.taskID)
           : this.retainedRepairGeneration(plan.id)
-        db.query("INSERT INTO runner_evidence VALUES(?,?,?,?,?,'human',?,?,?)").run(
+        db.query(
+          "INSERT INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,?,'human',?,?,?)",
+        ).run(
           crypto.randomUUID(),
           plan.id,
           command.taskID ?? null,
@@ -14440,7 +14442,7 @@ export class TaskRuntime {
               this.store.atomic((db) =>
                 db
                   .query(
-                    "INSERT OR IGNORE INTO runner_evidence VALUES(?,?,?,?,NULL,'verification',?,?,?)",
+                    "INSERT OR IGNORE INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,NULL,'verification',?,?,?)",
                   )
                   .run(
                     effect.id,
