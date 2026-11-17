@@ -1789,27 +1789,37 @@ function TaskPanel(
                 <Show when={selectedPlanFacts()}>
                   {(facts) => (
                     <>
-                      <dt>Priority</dt>
-                      <dd>{facts().priority > 0 ? facts().priority : "None"}</dd>
-                      <dt>Plan</dt>
-                      <dd>
-                        {facts().title}
-                        <Show when={facts().state}>{(label) => <> · {label()}</>}</Show>
-                      </dd>
-                      <Show when={facts().planOrder !== undefined}>
-                        <dt>Order</dt>
+                      <div class="lazers-tasks-fact">
+                        <dt>Priority</dt>
+                        <dd>{facts().priority > 0 ? facts().priority : "None"}</dd>
+                      </div>
+                      <div class="lazers-tasks-fact">
+                        <dt>Plan</dt>
                         <dd>
-                          Plan {facts().planOrder! + 1}
-                          <Show when={facts().step !== undefined}>, step {facts().step! + 1}</Show>
+                          {facts().title}
+                          <Show when={facts().state}>{(label) => <> · {label()}</>}</Show>
                         </dd>
+                      </div>
+                      <Show when={facts().planOrder !== undefined}>
+                        <div class="lazers-tasks-fact">
+                          <dt>Order</dt>
+                          <dd>
+                            Plan {facts().planOrder! + 1}
+                            <Show when={facts().step !== undefined}>
+                              , step {facts().step! + 1}
+                            </Show>
+                          </dd>
+                        </div>
                       </Show>
                     </>
                   )}
                 </Show>
-                <dt>Sequencing</dt>
-                <dd>
-                  {selectedSequencing().label} · {selectedSequencing().detail}
-                </dd>
+                <div class="lazers-tasks-fact">
+                  <dt>Sequencing</dt>
+                  <dd>
+                    {selectedSequencing().label} · {selectedSequencing().detail}
+                  </dd>
+                </div>
               </dl>
               <Show when={selectedExecution()?.dispatchPause}>
                 {(pause) => (

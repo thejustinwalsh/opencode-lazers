@@ -1023,6 +1023,36 @@ test("the inspector, not the list, carries priority, order, plan and sequencing"
   })
 })
 
+test("scheduling facts render each label before its value inside one row", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      h.row(h.beta.join)!.click()
+      await until(() =>
+        Boolean(h.container.querySelector(".lazers-tasks-scheduling-facts .lazers-tasks-fact")),
+      )
+      const rows = [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-fact")]
+      expect(rows.length).toBeGreaterThanOrEqual(3)
+      for (const row of rows) {
+        expect([...row.children].map((child) => child.tagName)).toEqual(["DT", "DD"])
+        expect(row.parentElement?.tagName).toBe("DL")
+      }
+      expect(rows.map((row) => row.firstElementChild!.textContent)).toEqual([
+        "Priority",
+        "Plan",
+        "Order",
+        "Sequencing",
+      ])
+      // The generic detail dt margin must not offset a label from its value.
+      const css = getComputedStyle(rows[0]!.firstElementChild!)
+      expect(css.marginTop).toBe("0px")
+      expect(getComputedStyle(rows[0]!).display).toBe("grid")
+    },
+    {},
+    { prioritized: true, scheduling: true },
+  )
+})
+
 test("at the list top a live reorder of the first rows keeps scrollTop", async () => {
   await withPanel(async (h) => {
     await until(() => h.rows().length > 0)

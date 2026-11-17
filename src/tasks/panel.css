@@ -673,16 +673,26 @@
 /* Inspector scheduling facts: priority, plan, order and sequencing in one compact grid. */
 .lazers-tasks-detail .lazers-tasks-scheduling-facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 2px 12px;
+  gap: 2px;
   margin: 0 0 10px;
   font-size: 0.9em;
 }
-.lazers-tasks-detail .lazers-tasks-scheduling-facts dt {
-  color: var(--text-weak);
+/* One row per fact; the generic detail dt/dd margins would otherwise offset the pair. */
+.lazers-tasks-detail .lazers-tasks-fact {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
 }
-.lazers-tasks-detail .lazers-tasks-scheduling-facts dd {
+.lazers-tasks-detail .lazers-tasks-fact dt {
+  margin: 0;
+  color: var(--text-weak);
+  font-weight: 400;
+}
+.lazers-tasks-detail .lazers-tasks-fact dd {
   margin: 0;
   min-width: 0;
+  line-height: inherit;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
