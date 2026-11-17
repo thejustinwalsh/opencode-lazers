@@ -135,3 +135,13 @@ export function speechSegments(markdown: string): string[] {
   }
   return segments
 }
+
+/** Maps a LAZERS voice key to ruNNtime's typed `Lfm3SpeechOptions.voice`. */
+export function runntimeSpeechVoice(voice: SpeechVoice): {
+  language: string
+  gender: "female" | "male"
+} {
+  const selected = VOICES[voice]
+  if (!selected) throw new Error("Unsupported local voice")
+  return { language: selected.language, gender: selected.gender }
+}

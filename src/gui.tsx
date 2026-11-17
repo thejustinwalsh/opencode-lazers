@@ -19,7 +19,7 @@ import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
 import { panelErrorMessage } from "./panel-error.ts"
 import { registerDictation } from "./webgpu/dictation.tsx"
 import { audioFilePCM16 } from "./webgpu/audio.ts"
-import { DEFAULT_VOICE, voiceKeys } from "./webgpu/speech.ts"
+import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
 import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
@@ -61,7 +61,6 @@ export default Plugin.define({
       }),
       { keepAliveMs: NEVER_UNLOAD_MS },
     ),
-    // Retained so a saved choice survives; ruNNtime's Omni speech API has no voice input yet.
     voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
       selected: DEFAULT_VOICE,
     }),
@@ -508,6 +507,19 @@ export default Plugin.define({
                 ].map((item) => ({
                   label: item.label,
                   onSelect: () => ctx.stores.runtime.set({ keepAliveMs: item.value }),
+                }))}
+              />
+            </section>
+            <section aria-labelledby="lazers-voice-title">
+              <h2 id="lazers-voice-title">Voice</h2>
+              <p>Read aloud speaks with this language and gender.</p>
+              <Ui.Menu
+                label={`Voice: ${VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label}`}
+                trigger="button"
+                disabled={!enabled("readAloud")}
+                items={voiceKeys.map((key) => ({
+                  label: `${VOICES[key].label}${key === DEFAULT_VOICE ? " (default)" : ""}`,
+                  onSelect: () => ctx.stores.voice.set({ selected: key }),
                 }))}
               />
             </section>

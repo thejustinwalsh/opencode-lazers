@@ -151,6 +151,16 @@ const STAGES = {
       "packages/runntime/test/zoo/lfm3/",
     ],
   },
+  "lfm3-voice": {
+    baseCommit: "68e9e608dda71aad6c41263d435ed262d2a32de3",
+    directory: "contributions/runntime/lfm3-voice",
+    allowedPaths: [
+      "packages/runntime/src/zoo/index.ts",
+      "packages/runntime/src/zoo/lfm3/audio/prompts.ts",
+      "packages/runntime/src/zoo/tasks/audio/lfm3.ts",
+      "packages/runntime/test/zoo/lfm3/audio/prompts.test.ts",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/
@@ -372,34 +382,38 @@ function verifyEvidence(
   const required: EvidenceRecord["kind"][] =
     stage === "d1-safety-correction"
       ? ["unit", "gpu", "typecheck", "lint"]
-      : stage === "d1-q8" ||
-          stage === "lfm3-base-chat" ||
-          stage === "lfm3-base-audio" ||
-          stage === "omni-published-chat" ||
-          stage === "omni-published-audio"
-        ? [
-            "unit",
-            "gpu",
-            "typecheck",
-            "lint",
-            "build",
-            "conversion",
-            "parity",
-            "package",
-            "resource",
-          ]
-        : ["unit", "gpu"]
-  if (required.some((kind) => !kinds.has(kind))) {
-    const expected =
-      stage === "d1-safety-correction"
-        ? "unit, GPU, typecheck and lint"
+      : stage === "lfm3-voice"
+        ? ["unit", "typecheck", "build", "package"]
         : stage === "d1-q8" ||
             stage === "lfm3-base-chat" ||
             stage === "lfm3-base-audio" ||
             stage === "omni-published-chat" ||
             stage === "omni-published-audio"
-          ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
-          : "unit and GPU"
+          ? [
+              "unit",
+              "gpu",
+              "typecheck",
+              "lint",
+              "build",
+              "conversion",
+              "parity",
+              "package",
+              "resource",
+            ]
+          : ["unit", "gpu"]
+  if (required.some((kind) => !kinds.has(kind))) {
+    const expected =
+      stage === "d1-safety-correction"
+        ? "unit, GPU, typecheck and lint"
+        : stage === "lfm3-voice"
+          ? "unit, typecheck, build and package"
+          : stage === "d1-q8" ||
+              stage === "lfm3-base-chat" ||
+              stage === "lfm3-base-audio" ||
+              stage === "omni-published-chat" ||
+              stage === "omni-published-audio"
+            ? "unit, GPU, typecheck, lint, build, conversion, parity, package and resource"
+            : "unit and GPU"
     throw new Error(`retained checks must include passing ${expected} evidence`)
   }
   return checks.map((check) => check.kind)
@@ -499,10 +513,12 @@ function main(args: string[]): void {
       `usage: bun scripts/verify-runntime-contribution.ts --stage ${Object.keys(STAGES).join(" | ")}`,
     )
   }
+  const repositoryIndex = args.indexOf("--repository")
+  const repository = repositoryIndex < 0 ? undefined : args[repositoryIndex + 1]
   const root = dirname(dirname(fileURLToPath(import.meta.url)))
   const result = verifyContribution({
     stageDirectory: join(root, STAGES[stage].directory),
-    repositoryDirectory: join(root, "..", "runntime"),
+    repositoryDirectory: repository ? resolve(repository) : join(root, "..", "runntime"),
   })
   console.log(JSON.stringify(result, null, 2))
 }
