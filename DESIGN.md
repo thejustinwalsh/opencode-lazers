@@ -37,9 +37,31 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
 - Use native controls and icons where available. Keep visible keyboard focus,
   accessible names, usable hit targets, keyboard selection/resizing, and a
   non-color indication of state. Honor reduced motion.
-- Loading, empty, stale, disconnected and error states are distinct. Keep the
-  existing selection and scroll stable on live updates. Surface actionable
-  conflicts and uncertain operations beside their recovery controls.
+- Every panel follows one loading contract, rendered by the shared
+  `src/panel-status` module and nothing else:
+
+  | Situation                   | What the panel shows                                                             |
+  | --------------------------- | -------------------------------------------------------------------------------- |
+  | First load                  | A skeleton of the real layout and one status line                                |
+  | Longer than 10 s            | "Still loading · 12 s" and Retry                                                 |
+  | Refresh or reconnect        | The last content, dimmed, under one banner: "Reconnecting · as of 5:54 PM Retry" |
+  | Failed with nothing to show | One sentence in user terms and Retry; transport text behind Details              |
+  | Selection change            | The previous inspector content until the new one arrives                         |
+
+  A panel never shows a bare spinner, two status messages at once, or a blank
+  inspector. Empty is a separate state: it says what is true and offers the next
+  action. Keep the existing selection and scroll stable on live updates. Surface
+  actionable conflicts and uncertain operations beside their recovery controls.
+
+- Omit, do not label unknown. A missing optional fact removes its row or
+  segment. "Unknown", "unavailable", "not recorded", "not reported" and "—" are
+  not display values. A missing required fact (the model, price or timing of a
+  recorded call) is a defect: log it and show it once in a panel-level "Data
+  gaps" disclosure, not on every row.
+- Green means done and successful, and nothing else. Integrated tasks and passed
+  checks are green. Live, connected, current, available, running and accepted
+  are states, not successes: use the interactive, neutral or warning tokens.
+- Shape carries state; color reinforces it. Two states never share a glyph.
 
 ## Host appearance
 
@@ -61,34 +83,51 @@ to adapt the layout. Keep primary content and controls readable at those widths.
 
 ## Tasks
 
-Reference: [tasks-focus-v2](design/task-panel/tasks-focus-v2.png) and the
-[visual contract](design/task-panel/visual-contract.md).
+Reference: [tasks mockup](design/reviews/fable-ui-review-20261117/mockups/tasks.png).
 
-Use Linear as the reference for a compact, expandable list. Give each task one
-row with a readable title and a copyable project reference. Use theme-aware
-colors and icons to distinguish running, blocked, scheduled and attention states
-at a glance. Row status is colored icons only at every width, including Now and
-Attention rows, so the title keeps the width: the themed state icon names the
-state and a link icon opens the first blocker, each with an accessible name and
-tooltip. Full explanations stay in the inspector. Show dependencies in the list
-tree. Group parallel
-siblings and place sequential work under its actual plan relationships. Expose
-state filters, including completed tasks, and access to historical trajectories.
-Make current work, attention and next eligible work easy to distinguish. Show
-actual priorities, dependencies and reservation reasons from the runtime;
+One flat, expandable list in the manner of Linear. No sections, headings or
+group rows. Each task is a single 30px row:
+
+```
+[chevron] [priority] [reference] title ……………… [link] [elapsed] [state glyph]
+```
+
+- Priority is a two-character mono column and is the sort key. Leave it blank
+  for priority 0 and for nested rows.
+- The chevron is a button with an accessible name and `aria-expanded`.
+  Dependencies expand in place under their task with a guide line.
+- Row status is a glyph only, at every width, so the title keeps the width. A
+  link icon opens the first blocker. Running rows show elapsed time. Full
+  explanations stay in the inspector.
+- State glyphs: proposed (dashed ring), queued (ring), ready (ring with dot),
+  running (half disc, interactive), paused, waiting, blocked and needs-you
+  (warning), accepted (outlined check, neutral), integrated (filled disc with
+  check, green), failed (critical), cancelled (weak). Accepted is not finished;
+  integrated is.
+- The header reads "Tasks 23 open · 4 running", then scope, state filter and
+  search. The state menu marks the current value and counts each state, with
+  Accepted and Integrated listed separately.
+- State: All sorts open, then accepted, then integrated, then failed and
+  cancelled, by priority inside each. Open work stays on top.
+- A filter change keeps the selection when the task is still listed. Otherwise
+  the inspector keeps its content until something else is selected.
+
+Show actual priorities, dependencies and reservation reasons from the runtime;
 queued tasks inside running plans remain queued. Link executing work to its
 Radar session and trajectory. Keep acceptance, integration and cleanup distinct.
-Keep blocker reasons short in the row and put explanations in the inspector.
 Offer a contextual Run next action through the scheduler. A priority change
 moves eligible work ahead in the queue and keeps dependency and capacity checks
-in effect. Show the blocker when the task cannot start yet.
+in effect.
 
-The lower inspector leads with reference, title, waiting-on relationship and goal.
-**Done when stays visible as a checklist.** Details and Activity start collapsed.
-Render descriptive Markdown with native Markdown; commands/JSON use native code.
-Full specification starts collapsed and scrolls within `min(24rem, 45vh)`.
-Acceptance requirements are not passed checks. Keep available runtime actions
-small and contextual; specification changes go through Architect conversation.
+The inspector leads with reference, state and actions, then a two-line title
+and one meta line: "Priority 1 · plan name · step n". Sequencing appears only
+when the task has dependencies. The reason is one sentence in user terms; the
+runtime's own wording sits behind Details. **Done when stays visible as a
+checklist.** Details and Activity start collapsed. Render descriptive Markdown
+with native Markdown; commands/JSON use native code. Full specification starts
+collapsed and scrolls within `min(24rem, 45vh)`. Acceptance requirements are not
+passed checks. Keep available runtime actions small and contextual;
+specification changes go through Architect conversation.
 
 ## Radar
 
@@ -101,17 +140,25 @@ belong in Tasks.
 Use [Agent Radar](https://awesome-copilot.github.com/extension/agent-radar/) as
 the reference for live relationships and activity. At side-panel widths, show
 the current scheduler state and active or waiting sessions in a vertical
-overview. Keep the parent and worker relationship readable. Use the inspector
-for the selected session's calls, file activity and observed flows. Keep the map
-and statechart in Diagnostics, and use Trajectory for historical timelines.
+overview. Indent workers under their Architect with a guide line. Use
+Trajectory for historical timelines.
+
+Reference: [radar mockup](design/reviews/fable-ui-review-20261117/mockups/radar.png).
+One header serves every view: title, a `Monitor · Map · Flow` switch, the
+connection (Live, Reconnecting or Offline; never green), scope and a menu.
+Switching views moves nothing in the header. Under it, one summary line answers
+the first question: running, needs you, failed, queued, capacity. The inspector
+opens only when a session is selected; until then the list has the full height.
+It shows state, task link, one facts line, then Calls, Files and Messages.
+When nothing is running, say so and link to Tasks.
 
 Lead with compact live session activity above the existing horizontal inspector.
 Keep concurrent calls distinct. Show last meaningful activity and concrete wait
 or failure reasons; native busy state alone does not establish progress. Attribute
 file activity only when the tool/event supplies a trustworthy session/call target.
-Keep unavailable telemetry explicit. Selecting a session, call, file or flow event
+Omit telemetry that was not observed. Selecting a session, call, file or flow event
 shows its detail and related history below, with navigation to worker, task and
-trajectory. Keep C4/XState maps as optional diagnostics. Animate recorded activity
+trajectory. Animate recorded activity
 without shifting focus or rebuilding history on every event. Use small live
 summaries/deltas and fetch selected historical detail separately.
 
@@ -119,24 +166,41 @@ summaries/deltas and fetch selected historical detail separately.
 
 ## Trajectory
 
-Reference: [trajectory-review-v2](design/trajectory-panel/trajectory-review-v2.png).
-Lead with the task, selected attempt and its model/effort. Show a scrollable
+Reference: [trajectory mockup](design/reviews/fable-ui-review-20261117/mockups/trajectory.png).
+The header is three lines: reference, state and Open task; a two-line title; the
+attempt picker with model/effort, active time and counts. Show a scrollable
 session timeline with separate tracks for tool calls, recorded file activity
-and checks. Give the tracks equal height, distinct theme colors, and the same
-start, end, and line marks. Use red for recorded failures. Collapse
+and checks. Give the tracks equal height and the same start, end, and line marks.
+Label each lane with a word and its count ("Tools 31"). Track hues: attempt
+interactive blue, tools violet, files amber, checks strong neutral. No track
+uses a success color. Use red for recorded failures on any track. Collapse
 instantaneous events to a mark at their recorded time. Give each mark a
 keyboard-accessible selection and show its
 details below the split. Keep payloads and secondary activity collapsed.
-Show timing origin, units, coverage and gaps. Separate token categories and
-measurement scope; unknown cost remains unknown. Never expose private reasoning.
+The inspector gives state, kind and duration, the command, then Started, Ended
+and Result in clock time with the offset into the attempt. Output and Timing
+source are disclosures. No raw epoch values. Attempt usage shows market cost,
+tokens in (cached) and tokens out with the price source and date; omit the cost
+when no price applies. Never expose private reasoning.
 Compress long idle spans on the shared timeline axis so recorded activity stays
 close together. Mark each compressed interval and preserve actual timestamps
 and durations in the inspector. Keep recording gaps distinct from known idle
-time and keep all tracks aligned through zoom and scrolling.
+time and keep all tracks aligned through zoom and scrolling: hatch only real
+recording gaps, and draw compressed idle as a narrow labelled break ("1m32s
+idle"). Events stream in the background; show "118 of 184 events" with a thin
+progress line until the cursor is exhausted. There is no manual load control.
+Counts that disagree between sources belong in a Data gaps disclosure.
 
 ## Models
 
-Approved visual reference: [models-approved](design/models-panel/models-approved.png).
+Reference: [models mockup](design/reviews/fable-ui-review-20261117/mockups/models.png).
+The header is two rows: title, `Compare · Assignments` and the price time with
+refresh; then persona and kind chips with `Your runs · Benchmark`. Compare and
+Assignments are separate views: Assignments renders no chart or Compare filter.
+The header, filters and Assignments render at once; comparison data arrives
+progressively under the shared loading contract. The selected model shows its
+name, a price range in large type, four stats and one "Assign to <persona>"
+button; basis, coverage, sources and rates sit in disclosures below.
 Keep Compare first, compact filters, and the selected-model details below a
 horizontal split. The chart fills the comparison width at every panel size;
 there is no model table or separate information panel beside it. Point tooltips
@@ -173,6 +237,8 @@ An estimate does not require exact historical billing reconstruction. Use readab
 rounded prices in the summary; retain precise values and the estimate basis in
 accessible detail. Do not invent missing prices or present a known subtotal as a
 complete total. Omit genuinely unpriced costs without an unavailable label.
+The Benchmark empty state names what is missing and offers "Open provider
+settings".
 
 The researched default plot compares mean tokens and comparable cost per
 completed logical task, with acceptance quality alongside. Cost per accepted
@@ -195,12 +261,23 @@ Distinguish saved assignments from actual worker routes. Until dispatch
 integration is active, retain a concise visible notice.
 [Research and accounting contract](.agents/docs/research/phase-planning/models.md).
 
-## Inference indicator
+## Settings and header indicators
 
-Show only the short model name as text, including the loading target. The icon
-conveys loading/available/error, with accessible tooltip semantics. Available uses
-the normal theme indicator color; errors use the theme error color. No GPU vendor,
-Ready label, green success decoration, or inline error prose.
+Reference: [settings mockup](design/reviews/fable-ui-review-20261117/mockups/settings.png).
+LAZERS has one settings page. Every setting is a row: label and hint on the
+left, control on the right. Sections carry their runtime state once, in the
+section header. Provider usage is a section on this page and shows only the
+chosen provider's fields. The voice picker has a Preview button. Advanced
+diagnostics stay collapsed.
+
+Header indicators match the host's controls: 26px high with 16px glyphs. The
+inference indicator shows the short model name and a state glyph (unloaded,
+loading, available, working, error); compact headers drop the name and keep the
+glyph. Available uses the normal theme indicator color; errors use the theme
+error color and put the reason in the tooltip and Settings. No GPU vendor, Ready
+label, green success decoration, or inline error prose. The provider usage ring
+shows the amount beside it: neutral under budget, warning above 80 %, critical
+over. With no reading it is a dashed ring and no text.
 
 ## Design and acceptance
 
