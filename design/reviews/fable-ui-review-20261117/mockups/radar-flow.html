@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Radar Flow — recommended</title>
+    <link rel="stylesheet" href="shared.css" />
+    <style>
+      .live {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-weak);
+      }
+      .live .d {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--text-interactive-base);
+        box-shadow: 0 0 0 3px rgba(143, 203, 247, 0.14);
+      }
+      .sched {
+        display: flex;
+        gap: 14px;
+        padding: 0 16px 8px;
+        font-size: 12px;
+        color: var(--text-weak);
+      }
+      .sched b {
+        color: var(--text-strong);
+        font-weight: 500;
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+      /* flow canvas */
+      svg.flow {
+        display: block;
+        flex: none;
+      }
+      svg.flow text {
+        font: 12px var(--sans);
+        fill: var(--text-base);
+      }
+      svg.flow .grp {
+        font: 500 9.5px var(--sans);
+        letter-spacing: 0.08em;
+        fill: var(--text-weak);
+      }
+      svg.flow .name {
+        fill: var(--text-strong);
+        font-weight: 500;
+      }
+      svg.flow .ref {
+        font: 11px var(--mono);
+        fill: var(--text-weak);
+      }
+      svg.flow .doing {
+        font: 10.5px var(--mono);
+        fill: var(--text-weak);
+      }
+      svg.flow .sink {
+        font-size: 11.5px;
+      }
+      svg.flow .n {
+        font: 10px var(--mono);
+        fill: var(--text-weak);
+      }
+      svg.flow .link {
+        stroke: var(--border-base);
+        fill: none;
+        stroke-width: 1.25;
+      }
+      svg.flow .fam {
+        fill: rgba(143, 203, 247, 0.035);
+        stroke: var(--border-weak-base);
+      }
+      svg.flow .edge {
+        fill: none;
+        stroke-linecap: round;
+      }
+      svg.flow [data-dim] {
+        opacity: 0.16;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        padding: 4px 16px 8px;
+        font-size: 11px;
+        color: var(--text-weak);
+      }
+      .legend i {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        margin-right: 5px;
+        vertical-align: -1px;
+      }
+      /* feed */
+      .feedhd {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px 6px;
+        font-size: 12px;
+        color: var(--text-weak);
+      }
+      .feedhd span[data-on] {
+        color: var(--text-strong);
+        box-shadow: 0 1px 0 var(--text-strong);
+        padding-bottom: 3px;
+      }
+      .feedhd .sp {
+        flex: 1;
+      }
+      .feed {
+        padding: 0 16px;
+      }
+      .fr {
+        display: grid;
+        grid-template-columns: 38px 110px 92px minmax(0, 1fr);
+        column-gap: 8px;
+        align-items: center;
+        height: 25px;
+        font-size: 12px;
+        border-top: 1px solid var(--border-weak-base);
+        color: var(--text-base);
+      }
+      .fr[data-narrow] {
+        grid-template-columns: 38px 48px 84px minmax(0, 1fr);
+      }
+      .fr .w {
+        font: 10.5px var(--mono);
+        color: var(--text-weak);
+        white-space: nowrap;
+      }
+      .fr[data-live] .w {
+        color: var(--text-interactive-base);
+      }
+      .fr .a {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .fr .a .mono {
+        color: var(--text-weak);
+        margin-left: 5px;
+      }
+      .fr .dst {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .fr .dst i {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 2px;
+        margin-right: 6px;
+      }
+      .fr .c {
+        font: 11.5px var(--mono);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .fr[data-fail] .c {
+        color: var(--icon-critical-base);
+      }
+      /* model usage */
+      .mt {
+        margin: 0 16px 8px;
+        padding: 8px 10px 9px;
+        border: 1px solid var(--border-weak-base);
+        border-left: 2px solid var(--hue-tools);
+        border-radius: 7px;
+        background: var(--surface-base);
+      }
+      .mt[data-idle] {
+        opacity: 0.55;
+      }
+      .mt .t {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 12.5px;
+      }
+      .mt .t b {
+        font-weight: 500;
+      }
+      .mt .t .sp {
+        flex: 1;
+      }
+      .mt .t .r {
+        font: 11px var(--mono);
+        color: var(--text-weak);
+      }
+      .mt .g {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        margin-top: 6px;
+        font: 12px var(--mono);
+      }
+      .mt .g small {
+        display: block;
+        font: 10.5px var(--sans);
+        color: var(--text-weak);
+      }
+      .mt .bar {
+        display: flex;
+        height: 3px;
+        margin-top: 8px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: var(--border-weak-base);
+      }
+      .mt .bar span {
+        background: var(--text-interactive-base);
+      }
+      .mt .bar span + span {
+        background: var(--hue-tools);
+        opacity: 0.7;
+      }
+      .empty {
+        padding: 28px 20px;
+        text-align: center;
+        color: var(--text-weak);
+        font-size: 12.5px;
+      }
+      .empty b {
+        display: block;
+        color: var(--text-strong);
+        font-weight: 500;
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+      .note {
+        padding: 8px 16px 10px;
+        font-size: 11px;
+        color: var(--text-weak);
+        line-height: 1.5;
+      }
+    </style>
+    <script src="icons.js"></script>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="col" style="width: 500px">
+        <div class="cap"><b>Flow</b> · 500 px · live, nothing selected</div>
+        <div class="panel">
+          <div data-tabs="Radar"></div>
+          <div class="hdr">
+            <h2>Radar</h2>
+            <span class="seg" style="margin-left: 6px"
+              ><span>Monitor</span><span>Map</span><span data-on>Flow</span></span
+            >
+            <span class="sp"></span>
+            <span class="live"><span class="d"></span>Live</span>
+            <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
+            <span class="iconbtn"><i data-i="more"></i></span>
+          </div>
+          <div class="sched">
+            <span><b>3</b> running</span><span><b>1</b> needs you</span><span><b>1</b> failed</span
+            ><span style="margin-left: auto"><b>19</b> flows / 2 min</span>
+          </div>
+          <svg class="flow" id="f1" width="498" height="392"></svg>
+          <div class="split"></div>
+          <div class="feedhd">
+            <span data-on>Feed 18</span><span>Models 4</span><span class="sp"></span
+            ><span>last 2 min</span>
+          </div>
+          <div class="feed" id="feed1"></div>
+        </div>
+      </div>
+
+      <div class="col" style="width: 360px">
+        <div class="cap"><b>Narrow</b> · 360 px · worker selected, the rest dims</div>
+        <div class="panel">
+          <div data-tabs="Radar"></div>
+          <div class="hdr">
+            <h2>Radar</h2>
+            <span class="seg" style="margin-left: 6px"
+              ><span>Monitor</span><span>Map</span><span data-on>Flow</span></span
+            >
+            <span class="sp"></span>
+            <span class="live"><span class="d"></span>Live</span>
+            <span class="iconbtn"><i data-i="more"></i></span>
+          </div>
+          <svg class="flow" id="f2" width="358" height="350"></svg>
+          <div class="split"></div>
+          <div class="feedhd">
+            <span data-on>Feed 7</span><span>Models 1</span><span class="sp"></span
+            ><span class="blue">LZ-99</span><span>Clear</span>
+          </div>
+          <div class="feed" id="feed2"></div>
+          <div style="flex: 1"></div>
+          <div class="note">
+            Selecting a session or a destination dims everything not connected to it and filters the
+            feed. Open task and Trajectory stay one tap away in the ⋯ menu.
+          </div>
+        </div>
+      </div>
+
+      <div class="col" style="width: 340px">
+        <div class="cap"><b>States</b> · Models tab · quiet</div>
+        <div class="stack">
+          <div class="panel" style="flex: 0 0 420px">
+            <div class="feedhd" style="padding-top: 14px">
+              <span>Feed 18</span><span data-on>Models 4</span><span class="sp"></span
+              ><span>last 2 min</span>
+            </div>
+            <div class="mt">
+              <div class="t">
+                <b>gpt-6-luna</b><span class="weak">max</span><span class="sp"></span
+                ><span class="blue" style="font-size: 11px">active</span
+                ><span class="r">70k/min</span>
+              </div>
+              <div class="g">
+                <span>137k<small>in · 2 min</small></span
+                ><span>2.8k<small>out</small></span
+                ><span>3<small>calls</small></span
+                ><span>2.8M<small>in · session</small></span>
+              </div>
+              <div class="bar">
+                <span style="width: 58%"></span><span style="width: 27%"></span>
+              </div>
+            </div>
+            <div class="mt">
+              <div class="t">
+                <b>qwen3.8-flash</b><span class="sp"></span
+                ><span class="blue" style="font-size: 11px">active</span
+                ><span class="r">8.2k/min</span>
+              </div>
+              <div class="g">
+                <span>16k<small>in · 2 min</small></span
+                ><span>600<small>out</small></span
+                ><span>1<small>calls</small></span
+                ><span>260k<small>in · session</small></span>
+              </div>
+              <div class="bar"><span style="width: 100%"></span></div>
+            </div>
+            <div class="mt" data-idle>
+              <div class="t">
+                <b>kimi-k3.1-pro</b><span class="sp"></span><span class="r">6 min ago</span>
+              </div>
+              <div class="g">
+                <span>0<small>in · 2 min</small></span
+                ><span>0<small>out</small></span
+                ><span>0<small>calls</small></span
+                ><span>410k<small>in · session</small></span>
+              </div>
+            </div>
+            <div class="mt" data-idle>
+              <div class="t">
+                <b>gpt-6.1-sol</b><span class="weak">high</span><span class="sp"></span
+                ><span class="r">29 min ago</span>
+              </div>
+              <div class="g">
+                <span>0<small>in · 2 min</small></span
+                ><span>0<small>out</small></span
+                ><span>0<small>calls</small></span
+                ><span>1.1M<small>in · session</small></span>
+              </div>
+            </div>
+            <div class="note">
+              Bar: share of the last two minutes by session. Active models sort first.
+            </div>
+          </div>
+          <div class="panel">
+            <div class="hdr">
+              <h2>Radar</h2>
+              <span class="seg" style="margin-left: 6px"
+                ><span>Monitor</span><span>Map</span><span data-on>Flow</span></span
+              >
+              <span class="sp"></span><span class="live"><span class="d"></span>Live</span>
+            </div>
+            <div class="empty">
+              <b>Nothing is flowing</b>No session has called a model or a tool in the last two
+              minutes.<br />Architect is idle · 6 tasks are queued.
+              <div style="margin-top: 12px"><span class="btn">Open Tasks</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const HUE = {
+        model: "var(--hue-tools)",
+        local: "var(--hue-files)",
+        service: "var(--hue-checks)",
+        you: "var(--icon-warning-base)",
+      }
+      const TONE = {
+        run: "var(--text-interactive-base)",
+        wait: "var(--icon-warning-base)",
+        fail: "var(--icon-critical-base)",
+        idle: "var(--icon-base)",
+      }
+      const sessions = [
+        {
+          id: "arch",
+          role: "Architect",
+          ref: "",
+          title: "LAZERS roadmap",
+          tone: "idle",
+          doing: "idle 29m",
+          depth: 0,
+        },
+        {
+          id: "99",
+          role: "Implementer",
+          ref: "LZ-99",
+          tone: "run",
+          doing: "▸ bash: bun test src/runner/res…",
+          depth: 1,
+        },
+        {
+          id: "146",
+          role: "Implementer",
+          ref: "LZ-146",
+          tone: "run",
+          doing: "▸ read: src/models/comparison-pa…",
+          depth: 1,
+        },
+        {
+          id: "135",
+          role: "Implementer",
+          ref: "LZ-135",
+          tone: "wait",
+          doing: "waiting for you · git worktree…",
+          depth: 1,
+        },
+        {
+          id: "134",
+          role: "Verifier",
+          ref: "LZ-134",
+          tone: "run",
+          doing: "▸ check: bun run verify",
+          depth: 1,
+        },
+        {
+          id: "118",
+          role: "Implementer",
+          ref: "LZ-118",
+          tone: "fail",
+          doing: "exit 1 · 3 tests failed",
+          depth: 1,
+        },
+      ]
+      const sinks = [
+        { g: "MODELS" },
+        { id: "luna", name: "gpt-6-luna", kind: "model" },
+        { id: "kimi", name: "kimi-k3.1-pro", kind: "model" },
+        { id: "qwen", name: "qwen3.8-flash", kind: "model" },
+        { id: "sol", name: "gpt-6.1-sol", kind: "model" },
+        { g: "LOCAL MACHINE" },
+        { id: "files", name: "Files", kind: "local" },
+        { id: "shell", name: "Shell", kind: "local" },
+        { id: "git", name: "Git · worktrees", kind: "local" },
+        { g: "TOOLS & SERVICES" },
+        { id: "checks", name: "Checks", kind: "service" },
+        { id: "search", name: "Search", kind: "service" },
+        { id: "you", name: "You", kind: "you" },
+      ]
+      // [session, sink, count in 2 min, heat 0..1 (1 = a call is running now)]
+      const flows = [
+        ["99", "luna", 6, 1],
+        ["99", "shell", 4, 1],
+        ["99", "files", 9, 0.8],
+        ["99", "search", 2, 0.35],
+        ["146", "luna", 3, 0.9],
+        ["146", "files", 5, 1],
+        ["135", "kimi", 1, 0.2],
+        ["135", "you", 1, 1],
+        ["135", "git", 1, 0.5],
+        ["134", "qwen", 2, 0.8],
+        ["134", "checks", 3, 1],
+        ["118", "shell", 2, 0.12],
+        ["118", "luna", 1, 0.1],
+        ["arch", "sol", 1, 0.1],
+      ]
+
+      function draw(svgId, W, H, narrow, selected) {
+        const svg = document.getElementById(svgId)
+        const rowH = narrow ? 50 : 54
+        const top = 34
+        const sx = (d) => (narrow ? 26 : 30) + d * 18
+        const pos = {}
+        sessions.forEach((s, i) => (pos[s.id] = { x: sx(s.depth), y: top + i * rowH }))
+        const sinkX = W - 20
+        let y = -4
+        const sp = {}
+        const out = []
+        const related = (sid, kid) =>
+          !selected ||
+          sid === selected ||
+          (kid && flows.some((f) => f[0] === selected && f[1] === kid && !sid))
+        // family frame + child links
+        out.push(
+          `<rect class="fam" x="8" y="${top - 22}" width="${narrow ? 180 : 274}" height="${sessions.length * rowH - 6}" rx="8"/>`,
+        )
+        const a = pos.arch
+        sessions.slice(1).forEach((s) => {
+          const p = pos[s.id]
+          out.push(
+            `<path class="link" ${selected && s.id !== selected ? "data-dim" : ""} d="M${a.x} ${a.y + 9}V${p.y - 8}q0 8 8 8H${p.x - 9}"/>`,
+          )
+        })
+        // sinks
+        sinks.forEach((k) => {
+          if (k.g) {
+            y += 30
+            out.push(`<text class="grp" x="${sinkX + 6}" y="${y}" text-anchor="end">${k.g}</text>`)
+            y += 0
+            return
+          }
+          y += narrow ? 22 : 24
+          sp[k.id] = { x: sinkX, y }
+          const on = !selected || flows.some((f) => f[0] === selected && f[1] === k.id)
+          const n = flows
+            .filter((f) => f[1] === k.id && (!selected || f[0] === selected))
+            .reduce((t, f) => t + f[2], 0)
+          out.push(
+            `<g ${on ? "" : "data-dim"}><rect x="${sinkX - 4}" y="${y - 5}" width="9" height="9" rx="2" fill="${HUE[k.kind]}" fill-opacity=".22" stroke="${HUE[k.kind]}"/>` +
+              `<text class="sink" x="${sinkX - 12}" y="${y + 4}" text-anchor="end">${k.name}${n && !narrow ? ` <tspan class="n">${n}</tspan>` : ""}</text></g>`,
+          )
+        })
+        // edges under nodes
+        const edges = []
+        const x0 = narrow ? 192 : 286
+        const x1 = sinkX - (narrow ? 96 : 118)
+        flows.forEach(([sid, kid, n, heat]) => {
+          const p = pos[sid]
+          const q = sp[kid]
+          const kind = sinks.find((k) => k.id === kid).kind
+          const dim = selected && sid !== selected
+          const mx = (x0 + x1) / 2
+          const d = `M${x0} ${p.y}C${mx} ${p.y} ${mx} ${q.y} ${x1} ${q.y}`
+          edges.push(
+            `<path class="edge" ${dim ? "data-dim" : ""} d="${d}" stroke="${HUE[kind]}" stroke-width="${(0.9 + Math.min(n, 9) * 0.28).toFixed(2)}" stroke-opacity="${(0.18 + heat * 0.62).toFixed(2)}"/>`,
+          )
+          if (heat >= 0.8 && !dim) {
+            // particles: cubic point at t
+            for (const t of [0.22 + (n % 3) * 0.07, 0.61 + (n % 2) * 0.09]) {
+              const u = 1 - t
+              const bx = u * u * u * x0 + 3 * u * u * t * mx + 3 * u * t * t * mx + t * t * t * x1
+              const by =
+                u * u * u * p.y + 3 * u * u * t * p.y + 3 * u * t * t * q.y + t * t * t * q.y
+              edges.push(
+                `<circle cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="1.8" fill="#fff" fill-opacity=".9"/>`,
+              )
+            }
+          }
+        })
+        out.push(...edges)
+        // session nodes
+        sessions.forEach((s) => {
+          const p = pos[s.id]
+          const dim = selected && s.id !== selected && s.id !== "arch"
+          const c = TONE[s.tone]
+          const tx = p.x + 14
+          let node = ""
+          if (s.tone === "run")
+            node += `<circle cx="${p.x}" cy="${p.y}" r="11" fill="none" stroke="${c}" stroke-opacity=".28"/>`
+          if (s.tone === "wait")
+            node += `<circle cx="${p.x}" cy="${p.y}" r="11" fill="none" stroke="${c}" stroke-opacity=".4" stroke-dasharray="2 3"/>`
+          if (s.id === selected)
+            node += `<circle cx="${p.x}" cy="${p.y}" r="12.5" fill="none" stroke="var(--text-strong)" stroke-width="1.25"/>`
+          node += `<circle cx="${p.x}" cy="${p.y}" r="6.5" fill="var(--background-base)" stroke="${c}" stroke-width="1.5"/>`
+          if (s.tone === "run") node += `<path d="M${p.x} ${p.y - 4}a4 4 0 010 8z" fill="${c}"/>`
+          if (s.tone === "fail")
+            node += `<path d="M${p.x - 2.4} ${p.y - 2.4}l4.8 4.8M${p.x + 2.4} ${p.y - 2.4}l-4.8 4.8" stroke="${c}" stroke-width="1.4" stroke-linecap="round"/>`
+          if (s.tone === "wait")
+            node += `<path d="M${p.x} ${p.y - 3.4}v3.6M${p.x} ${p.y + 2.8}h.01" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/>`
+          const label = narrow && s.depth ? s.role.slice(0, 4) + "." : s.role
+          node +=
+            `<text x="${tx}" y="${p.y - 2}"><tspan class="name">${label}</tspan> <tspan class="ref">${s.ref || (narrow ? "" : "· " + s.title)}</tspan></text>` +
+            `<text class="doing" x="${tx}" y="${p.y + 12}" ${s.tone === "fail" ? 'style="fill:var(--icon-critical-base)"' : s.tone === "wait" ? 'style="fill:var(--icon-warning-base)"' : ""}>${narrow ? s.doing.slice(0, 19) + (s.doing.length > 19 ? "…" : "") : s.doing}</text>`
+          out.push(`<g ${dim ? "data-dim" : ""}>${node}</g>`)
+        })
+        svg.innerHTML = out.join("")
+      }
+      draw("f1", 498, 392, false, null)
+      draw("f2", 358, 350, true, "99")
+
+      const feed = [
+        ["live", "Implementer", "LZ-99", "shell", "Shell", "bun test src/runner/resume.test.ts"],
+        ["live", "Implementer", "LZ-146", "files", "Files", "read src/models/comparison-panel.tsx"],
+        ["live", "Verifier", "LZ-134", "checks", "Checks", "bun run verify"],
+        ["live", "Implementer", "LZ-135", "you", "You", "permission: git worktree prune"],
+        ["3s", "Implementer", "LZ-99", "files", "Files", "edit src/runner/lifecycle.ts"],
+        ["5s", "Implementer", "LZ-99", "luna", "gpt-6-luna", "request · 41k in · 620 out"],
+        ["24s", "Implementer", "LZ-99", "files", "Files", "read src/runner/lifecycle.ts"],
+        ["45s", "Implementer", "LZ-99", "shell", "Shell", "bun test src/runner · exit 1", "fail"],
+        ["1m", "Implementer", "LZ-99", "search", "Search", 'grep "interrupted" src/runner'],
+      ]
+      const kindOf = (id) => sinks.find((k) => k.id === id).kind
+      const row = (r, narrow) =>
+        `<div class="fr" ${narrow ? "data-narrow" : ""} ${r[0] === "live" ? "data-live" : ""} ${r[6] ? "data-fail" : ""}>` +
+        `<span class="w">${r[0] === "live" ? "live" : r[0]}</span>` +
+        `<span class="a"><span class="mono" style="margin:0 5px 0 0">${r[2]}</span>${narrow ? "" : r[1].replace("Implementer", "Impl.")}</span>` +
+        `<span class="dst"><i style="background:${HUE[kindOf(r[3])]}"></i>${r[4]}</span>` +
+        `<span class="c">${r[5]}</span></div>`
+      document.getElementById("feed1").innerHTML = feed.map((r) => row(r, false)).join("")
+      document.getElementById("feed2").innerHTML = feed
+        .filter((r) => r[2] === "LZ-99")
+        .map((r) => row(r, true))
+        .join("")
+    </script>
+  </body>
+</html>
