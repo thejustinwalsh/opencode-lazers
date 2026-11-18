@@ -6504,6 +6504,7 @@ test("scheduler retires an integrated worker without any idle report", async () 
   expect(await f.host.worktrees()).not.toContain(attempt.workspace)
 })
 
+// Eight command-and-tick rounds over a real git repository: about 5 s on a busy machine.
 test("cleanup preserves live worker activity but accepts authoritative worker absence", async () => {
   const f = fixture({ commit: true })
   await runPlan(f)
@@ -6594,7 +6595,7 @@ test("cleanup preserves live worker activity but accepts authoritative worker ab
   expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
     workerAdmissionsBefore,
   )
-})
+}, 20_000)
 
 test("location retirement uses active project ownership outside the display plan listing", async () => {
   const f = fixture()
