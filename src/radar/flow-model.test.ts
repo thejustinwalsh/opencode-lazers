@@ -323,3 +323,27 @@ test("layout fits 360 and 500 px with no node beyond the width; narrow abbreviat
   expect(abbreviateRole("Verifier")).toBe("Veri.")
   expect(abbreviateRole("Architect")).toBe("Architect")
 })
+
+test("the mockup fixture yields every destination, the failed worker and the waiting worker", async () => {
+  const { mockupFlowLive } = await import("../../test/radar/flow-fixture.ts")
+  const model = createFlowModel(mockupFlowLive(NOW), NOW)
+  expect(model.destinations.map((dest) => dest.name).toSorted()).toEqual(
+    [
+      "Checks",
+      "Files",
+      "Git · worktrees",
+      "Search",
+      "Shell",
+      "You",
+      "gpt-6-luna",
+      "gpt-6.1-sol",
+      "kimi-k3.1-pro",
+      "qwen3.8-flash",
+    ].toSorted(),
+  )
+  const byName = Object.fromEntries(model.sessions.map((item) => [item.ref || item.role, item]))
+  expect(byName["LZ-118"]!.doingFailed).toBe(true)
+  expect(byName["LZ-135"]!.waiting).toBe(true)
+  expect(byName["Architect"]!.doing).toBe("idle 29m")
+  expect(model.models.map((card) => card.name)[0]).toBe("gpt-6-luna")
+})

@@ -97,19 +97,21 @@ export function RadarMapView(props: {
               <text
                 class="lazers-radar-node-title"
                 x={node.x + node.width / 2}
-                y={node.y + (node.sub ? 16 : 22)}
+                y={node.y + layout().scale * (node.sub ? 16 : 22)}
+                style={{ "font-size": `${12 * layout().scale}px` }}
                 text-anchor="middle"
               >
-                {fitText(node.title, node.width)}
+                {fitText(node.title, node.width, 12 * layout().scale)}
               </text>
               <Show when={node.sub}>
                 <text
                   class="lazers-radar-node-sub"
                   x={node.x + node.width / 2}
-                  y={node.y + 29}
+                  y={node.y + 29 * layout().scale}
+                  style={{ "font-size": `${10 * layout().scale}px` }}
                   text-anchor="middle"
                 >
-                  {fitText(node.sub!, node.width, 10)}
+                  {fitText(node.sub!, node.width, 10 * layout().scale)}
                 </text>
               </Show>
             </g>

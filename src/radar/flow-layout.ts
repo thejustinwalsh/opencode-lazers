@@ -24,6 +24,8 @@ export type FlowLayout = {
   edges: PlacedEdge[]
   /** Characters of the mono "doing" line that fit beside the session node. */
   doingChars: number
+  /** Characters of a destination label that fit between the edges and the right edge. */
+  sinkChars: number
   links: Array<{ sessionID: string; d: string }>
 }
 
@@ -40,7 +42,16 @@ export function layoutFlow(model: FlowModel, width: number): FlowLayout {
   const sinkX = width - 20
   const frameW = narrow ? 180 : Math.min(274, Math.round(width * 0.55))
   const x0 = frameW + 12
-  const x1 = Math.max(x0 + 40, sinkX - (narrow ? 96 : 118))
+  const charPx = 6.2
+  // Edges end where the widest destination label begins; narrow panels truncate labels instead.
+  const widest = Math.max(
+    0,
+    ...model.destinations.map(
+      (dest) => dest.name.length * charPx + (narrow ? 0 : (String(dest.count).length + 1) * 6),
+    ),
+  )
+  const x1 = Math.max(x0 + 24, sinkX - 12 - Math.min(widest, 120) - 6)
+  const sinkChars = Math.max(6, Math.floor((sinkX - 12 - x1 - 6) / charPx))
   const sessions = model.sessions.map((session, index): PlacedSession => ({
     ...session,
     x: (narrow ? 26 : 30) + session.depth * 18,
@@ -101,6 +112,7 @@ export function layoutFlow(model: FlowModel, width: number): FlowLayout {
     destinations,
     edges,
     doingChars,
+    sinkChars,
     links,
   }
 }
