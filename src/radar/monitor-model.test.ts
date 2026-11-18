@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import type { LiveRadarResponse } from "../observability/contract.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import {
@@ -18,6 +18,8 @@ import {
   sessionModel,
   sessionRole,
   sessionState,
+  visibleSessions,
+  sessionActive,
   sessionTask,
   sessionTaskTitle,
 } from "./monitor-model.ts"
@@ -505,4 +507,109 @@ test("running calls count up as m:ss", () => {
   expect(formatTimer(42_000)).toBe("0:42")
   expect(formatTimer(125_400)).toBe("2:05")
   expect(formatTimer(3_725_000)).toBe("1:02:05")
+})
+
+describe("idle sessions are hidden by default", () => {
+  const NOW = 1_000_000
+  const arch = (id: string, change: Partial<LiveSession> = {}) =>
+    session({
+      sessionID: id,
+      isCurrentArchitect: true,
+      state: "idle",
+      assignment: null,
+      updatedAt: NOW - 14 * 3_600_000,
+      ...change,
+    })
+  const idle = (id: string, parent?: string) =>
+    session({
+      sessionID: id,
+      state: "idle",
+      assignment: null,
+      ...(parent ? { parentSessionID: parent } : {}),
+    })
+  const finished = (id: string, ago: number, change: Partial<LiveCall> = {}) =>
+    call({
+      id: `call:${id}`,
+      sessionID: id,
+      callID: `call-${id}`,
+      inputAt: NOW - ago - 500,
+      completedAt: NOW - ago,
+      observedAt: NOW - ago,
+      ...change,
+    })
+
+  test("active means running, checking, preparing, a call in progress, or recent activity", () => {
+    const response = live({
+      sessions: [
+        session({ sessionID: "run" }),
+        session({
+          sessionID: "check",
+          assignment: { ...session().assignment!, state: "verifying" },
+        }),
+        session({
+          sessionID: "prep",
+          assignment: { ...session().assignment!, state: "preparing" },
+        }),
+        idle("calling"),
+        idle("failed-recent"),
+        idle("failed-old"),
+        idle("quiet"),
+        session({ sessionID: "gone", availability: "missing" }),
+      ],
+      calls: [
+        call({ id: "c-run", sessionID: "calling", status: "running", completedAt: null }),
+        finished("failed-recent", 30_000, { status: "failed", error: "exit 1" }),
+        finished("failed-old", 400_000, { status: "failed", error: "exit 1" }),
+      ],
+    })
+    const active = (id: string) =>
+      sessionActive(
+        response,
+        response.sessions.find((item) => item.sessionID === id)!,
+        NOW,
+      )
+    expect(["run", "check", "prep", "calling", "failed-recent"].every(active)).toBe(true)
+    expect(["failed-old", "quiet", "gone"].some(active)).toBe(false)
+  })
+
+  test("a family shows when a member is active; its root stays, idle children go", () => {
+    const response = live({
+      sessions: [
+        arch("arch"),
+        idle("child-idle", "arch"),
+        session({ sessionID: "worker", parentSessionID: "arch" }),
+      ],
+    })
+    const view = visibleSessions(response, NOW)
+    expect([...view.shown].toSorted()).toEqual(["arch", "worker"])
+    expect(view.hidden).toBe(1)
+    expect(sessionGroups(response, view.shown).children.get("arch")).toEqual(["worker"])
+  })
+
+  test("a family with no active member is hidden whole and counted", () => {
+    const response = live({
+      sessions: [
+        arch("old-arch"),
+        idle("old-child", "old-arch"),
+        arch("live-arch", { isCurrentArchitect: null }),
+        session({ sessionID: "live-worker", parentSessionID: "live-arch" }),
+      ],
+    })
+    const view = visibleSessions(response, NOW)
+    expect(view.shown.has("old-arch")).toBe(false)
+    expect(view.shown.has("old-child")).toBe(false)
+    expect(view.shown.has("live-arch")).toBe(true)
+    expect(view.hidden).toBe(2)
+    expect(visibleSessions(live({ sessions: [arch("a"), idle("b", "a")] }), NOW).shown.size).toBe(0)
+  })
+
+  test("the selected session is never hidden, and showing idle lists everything", () => {
+    const response = live({ sessions: [arch("arch"), idle("child", "arch")] })
+    const selected = visibleSessions(response, NOW, { selectedID: "child" })
+    expect([...selected.shown].toSorted()).toEqual(["arch", "child"])
+    expect(selected.hidden).toBe(0)
+    const all = visibleSessions(response, NOW, { showIdle: true })
+    expect(all.shown.size).toBe(2)
+    expect(all.hidden).toBe(2)
+  })
 })

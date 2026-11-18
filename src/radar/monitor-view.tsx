@@ -25,8 +25,8 @@ import {
   formatTimer,
   idleSentence,
   flowSegments,
+  visibleSessions,
   monitorSegments,
-  nothingRunning,
   sessionActivity,
   sessionCallLines,
   sessionGlyph,
@@ -72,6 +72,9 @@ type Props = {
   onOpenTrajectory?: (taskID: string, reference?: string) => void
   /** The task lifecycle statechart, kept behind the ⋯ menu. */
   onOpenLifecycle?: () => void
+  /** Idle sessions are hidden by default; the choice is stored with the view state. */
+  showIdle: boolean
+  onShowIdleChange: (show: boolean) => void
 }
 
 type InspectorTab = "calls" | "files" | "messages"
@@ -101,9 +104,17 @@ export function RadarMonitorView(props: Props) {
     ...(props.data().asOf !== undefined ? { asOf: props.data().asOf! } : {}),
   }))
   const sessions = () => live()?.sessions ?? []
+  const visibility = createMemo(() =>
+    live()
+      ? visibleSessions(live()!, now(), {
+          showIdle: props.showIdle,
+          selectedID: inspecting() ? props.data().selectedSessionID : null,
+        })
+      : undefined,
+  )
   const groups = createMemo(() =>
     live()
-      ? sessionGroups(live()!)
+      ? sessionGroups(live()!, visibility()?.shown)
       : { leading: [] as string[], children: new Map<string, string[]>() },
   )
   const sessionByID = createMemo(
@@ -155,7 +166,9 @@ export function RadarMonitorView(props: Props) {
     observer.observe(root)
     onCleanup(() => observer.disconnect())
   })
-  const flowModel = createMemo(() => (live() ? createFlowModel(live()!, now()) : undefined))
+  const flowModel = createMemo(() =>
+    live() ? createFlowModel(live()!, now(), visibility()?.shown) : undefined,
+  )
   const [flowSelection, setFlowSelection] = createSignal<FlowSelection>(null)
   const [flowTab, setFlowTab] = createSignal<"feed" | "models">("feed")
   const flowPane = () => props.view === "flow" && flowModel() !== undefined && !flowModel()!.quiet
@@ -168,7 +181,9 @@ export function RadarMonitorView(props: Props) {
     const session = model.sessions.find((item) => item.sessionID === selection.id)
     return session ? session.ref || session.role : ""
   }
-  const map = createMemo(() => (live() ? createRadarMap(live()!, now()) : undefined))
+  const map = createMemo(() =>
+    live() ? createRadarMap(live()!, now(), visibility()?.shown) : undefined,
+  )
   const mapSelection = () => {
     const id = mapSelectedID()
     return id ? map()?.nodeByID.get(id) : undefined
@@ -608,7 +623,19 @@ export function RadarMonitorView(props: Props) {
   const summarySegments = (response: NonNullable<ReturnType<typeof live>>) =>
     props.view === "flow" ? flowSegments(response) : monitorSegments(response)
 
-  const menuActions = () => {
+  const idleAction = () =>
+    (visibility()?.hidden ?? 0) > 0 || props.showIdle
+      ? [
+          {
+            label: "Show idle sessions",
+            icon: props.showIdle ? ("check-small" as const) : undefined,
+            onSelect: () => props.onShowIdleChange(!props.showIdle),
+          },
+        ]
+      : []
+
+  const menuActions = () => [...menuItems(), ...idleAction()]
+  const menuItems = () => {
     const session = props.view === "flow" ? undefined : inspectorSession()
     const lifecycle =
       props.view === "flow" && props.onOpenLifecycle
@@ -653,7 +680,11 @@ export function RadarMonitorView(props: Props) {
         <PanelStatus ui={Ui} status={status} onRetry={props.onRefresh} skeleton="rows" />
         <Show
           when={
-            props.view !== "map" && live() && summarySegments(live()!).length > 0
+            props.view !== "map" &&
+            live() &&
+            (summarySegments(live()!).length > 0 ||
+              (visibility()?.hidden ?? 0) > 0 ||
+              props.showIdle)
               ? live()
               : undefined
           }
@@ -667,6 +698,16 @@ export function RadarMonitorView(props: Props) {
                   </span>
                 )}
               </For>
+              <Show when={(visibility()?.hidden ?? 0) > 0 || props.showIdle}>
+                <button
+                  type="button"
+                  class="lazers-radar-text-button lazers-radar-idle-toggle"
+                  aria-pressed={props.showIdle}
+                  onClick={() => props.onShowIdleChange(!props.showIdle)}
+                >
+                  {props.showIdle ? "Hide idle" : `${visibility()?.hidden ?? 0} idle hidden`}
+                </button>
+              </Show>
               <Show when={props.view === "flow" && flowModel()}>
                 {(model) => (
                   <span class="lazers-radar-summary-end">
@@ -741,7 +782,10 @@ export function RadarMonitorView(props: Props) {
                 }
               >
                 <Show
-                  when={!nothingRunning(response())}
+                  when={
+                    groups().leading.length > 0 &&
+                    (props.showIdle || (visibility()?.active.size ?? 0) > 0)
+                  }
                   fallback={
                     <div class="lazers-radar-idle">
                       <h3>Nothing is running</h3>

@@ -175,3 +175,21 @@ test("the layout fills the panel width with no horizontal overflow at 360 and 50
     expect(layout.edges.length).toBe(map.edges.length)
   }
 })
+
+test("Map lists only the sessions the shared idle filter shows", () => {
+  const response = live([architect, session("a"), session("b")], {
+    queued: 2,
+    needsYou: 0,
+    failed: 0,
+  })
+  const map = createRadarMap(response, 2_000, new Set(["arch", "a"]))
+  expect(map.nodes.filter((node) => node.kind === "session").map((node) => node.id)).toEqual([
+    "session:a",
+  ])
+  // Group counts come from what is shown here; the queue count comes from the workload.
+  expect(map.nodeByID.get("group:queue")?.sub).toBe("2 queued")
+  expect(createRadarMap(response, 2_000, new Set()).nodes.map((node) => node.id)).toEqual([
+    "you",
+    "group:queue",
+  ])
+})

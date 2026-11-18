@@ -49,6 +49,8 @@ const View = Schema.Struct({
   detailScroll: Schema.Number,
   detailScrollLeft: Schema.optionalKey(Schema.Number),
   monitorSplit: Schema.optionalKey(Schema.Number),
+  /** Idle sessions are hidden unless this is true. */
+  showIdle: Schema.optionalKey(Schema.Boolean),
   monitorSessionID: Schema.optionalKey(Schema.NullOr(Schema.String)),
 })
 const initial: typeof View.Type = {
@@ -66,6 +68,7 @@ const initial: typeof View.Type = {
   detailScroll: 0,
   detailScrollLeft: 0,
   monitorSplit: MONITOR_SPLIT.initial,
+  showIdle: false,
   monitorSessionID: null,
 }
 const ProjectView = Schema.Struct({
@@ -1107,6 +1110,8 @@ function RadarLiveMonitorPanel(
         }}
         onRefresh={() => state.refreshNow()}
         onLoadMoreHistory={() => state.loadMoreHistory()}
+        showIdle={prefs().showIdle === true}
+        onShowIdleChange={(showIdle) => save({ showIdle })}
         onView={props.onView}
         onOpenLifecycle={() => props.onView("lifecycle")}
         onOpenTasks={openTasks}

@@ -153,8 +153,13 @@ export function abbreviateRole(role: string) {
   return role.length > 5 && role !== "Architect" ? `${role.slice(0, 4)}.` : role
 }
 
-export function createFlowModel(live: Live, now: number): FlowModel {
-  const groups = sessionGroups(live)
+export function createFlowModel(
+  live: Live,
+  now: number,
+  /** Sessions the shared idle filter lists; absent lists every available session. */
+  visible?: ReadonlySet<string>,
+): FlowModel {
+  const groups = sessionGroups(live, visible)
   const byID = new Map(live.sessions.map((session) => [session.sessionID, session]))
   const routeByID = new Map(live.routes.map((route) => [route.id, route]))
   const order: Array<{ session: LiveSession; depth: number }> = []

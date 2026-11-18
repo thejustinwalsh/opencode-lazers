@@ -951,6 +951,12 @@
   .lazers-radar-session-lines {
     margin-left: 24px;
   }
+  .lazers-radar-idle-toggle {
+    min-height: 0;
+    padding: 0 4px;
+    color: var(--text-weak);
+    font-size: 13px;
+  }
   .lazers-radar-summary-end {
     display: none;
   }
