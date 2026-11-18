@@ -133,6 +133,8 @@ export interface PanelData {
   error: string
   /** Epoch ms of the last successful list read; the shown tasks were current then. */
   asOf?: number
+  /** Task count per state filter for this scope and search, from the first page of the last read. */
+  stateCounts?: NonNullable<TaskPage["stateCounts"]>
   /** The next page failed to load. Only `retryMore` requests it again; the list stays usable. */
   moreError: string
 }
@@ -268,6 +270,7 @@ export class TaskPanelState {
             linkedDetails: previous.linkedDetails,
             detail: previous.detail,
             asOf: previous.asOf,
+            stateCounts: previous.stateCounts,
             loading: false,
           }
         : {}
@@ -437,6 +440,7 @@ export class TaskPanelState {
     this.update({ activityError: "" })
     const signal = this.controller.signal
     try {
+      let stateCounts: PanelData["stateCounts"]
       let page: TaskPage | undefined
       let tasks: TaskSummary[] = []
       let topology: TopologyResponse | undefined
@@ -477,6 +481,7 @@ export class TaskPanelState {
             Math.max(0, first.count - (this.data.page?.count ?? first.count)),
         )
         page = first
+        stateCounts = first.stateCounts
         tasks = []
         const listed = new Set<string>()
         const append = (next: readonly TaskSummary[]) => {
@@ -580,6 +585,7 @@ export class TaskPanelState {
         stale: !transport.online(),
         error: "",
         asOf: Date.now(),
+        ...(stateCounts ? { stateCounts } : {}),
         // The failed page is gone with the cursor; a later one starts clean. A stalled chain keeps
         // its next page behind Retry.
         ...(stalled ? { moreError: STALLED_PAGE } : page.nextCursor ? {} : { moreError: "" }),

@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import type { ExecutionListRow } from "./execution-list.ts"
 import {
+  elapsedLabel,
   isRingGlyph,
+  runningStart,
   planStateLabel,
   rowBlockers,
   rowHoldReasons,
@@ -284,4 +286,17 @@ test("every state glyph is a circled mark: host circle icons or Tasks rings, nev
   // A state with no word is omitted, never labelled "Unknown".
   expect(taskRowPresentation(row({ status: "" as ExecutionListRow["status"] })).label).toBe("")
   expect(isRingGlyph("ring-dot")).toBe(true)
+})
+test("elapsed time counts whole minutes and shows only for running rows that have a start", () => {
+  const minute = 60_000
+  expect(elapsedLabel(0, 30_000)).toBe("<1m")
+  expect(elapsedLabel(0, 12 * minute + 5_000)).toBe("12m")
+  expect(elapsedLabel(0, 65 * minute)).toBe("1h 5m")
+  expect(elapsedLabel(0, 120 * minute)).toBe("2h")
+  expect(elapsedLabel(0, 49 * 60 * minute)).toBe("2d")
+  expect(elapsedLabel(10, 0)).toBe("<1m")
+  expect(runningStart({ status: "running", startedAt: 5 })).toBe(5)
+  expect(runningStart({ status: "verifying", startedAt: 5 })).toBe(5)
+  expect(runningStart({ status: "queued", startedAt: 5 })).toBeUndefined()
+  expect(runningStart({ status: "running" })).toBeUndefined()
 })

@@ -635,6 +635,12 @@
   border-left: 1px solid var(--border-weak-base);
   border-radius: 0 4px 4px 0;
 }
+/* Elapsed time, running rows only: mono, weak, right before the state glyph. */
+.lazers-tasks-row-elapsed {
+  color: var(--text-weak);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
 /* Right-hand signals: blocker link and state, icon only and never shrunk. */
 .lazers-tasks-row-signals {
   display: inline-flex;

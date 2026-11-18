@@ -76,10 +76,20 @@ export function createTestUI() {
         const menu = document.createElement("div")
         menu.setAttribute("role", "menu")
         for (const item of props.items ?? []) {
+          if ((item as { type?: string }).type === "separator") {
+            const rule = document.createElement("hr")
+            rule.setAttribute("role", "separator")
+            menu.append(rule)
+            continue
+          }
           const option = document.createElement("button")
           option.type = "button"
           option.setAttribute("role", "menuitem")
           option.textContent = item.label
+          // Trailing keys and the leading icon, as data so labels stay what tests match on.
+          const extra = item as { keys?: readonly string[]; icon?: string }
+          if (extra.keys?.length) option.dataset.keys = extra.keys.join(" ")
+          if (extra.icon) option.dataset.icon = extra.icon
           option.addEventListener("click", () => {
             item.onSelect()
             menu.remove()
