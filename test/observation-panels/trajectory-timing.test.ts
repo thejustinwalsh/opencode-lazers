@@ -114,6 +114,7 @@ function makeReport(attemptEndedAt: number | null, events: ReturnType<typeof eve
     schemaVersion: 1,
     task: {
       id: taskID,
+      reference: "LZ-7",
       revision: 1,
       status: "accepted",
       specification: { objective: "Show recorded verification timing precisely" },
@@ -629,6 +630,8 @@ test("registered Trajectory panel renders proportional check intervals and preci
         (details) => details.querySelector("summary")?.textContent?.startsWith("Timing source"),
       )
     expect(command()).toBe("bun test quality")
+    // The reference arrives with the report; the view store supplied none.
+    expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
     expect(duration()).toBe("240 ms")
     expect(container.querySelector(".lazers-trajectory-payload")?.hasAttribute("open")).toBe(false)
     expect(facts()).toContain("Started")
@@ -643,6 +646,8 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
     expect(attemptQualityMarker.getAttribute("tabindex")).toBe("0")
     expect(command()).toBe("bun test quality")
+    // The reference arrives with the report; the view store supplied none.
+    expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
     expect(container.querySelector(".lazers-trajectory-line1")?.textContent).not.toContain(
       taskID.slice(0, 8),
     )
@@ -766,6 +771,8 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(markerStarting("Attempt 1 check quality")?.getAttribute("aria-selected")).toBe("true")
     expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
     expect(command()).toBe("bun test quality")
+    // The reference arrives with the report; the view store supplied none.
+    expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
     expect(capturedEvents()[0]?.querySelector("time")?.textContent).toBe(initialHistoryTime)
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,

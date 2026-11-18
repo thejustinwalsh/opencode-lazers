@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite"
 import { acquireSharedConnection } from "../storage.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskSpecSchema } from "../task.ts"
+import { taskReferenceFor } from "../task-reference.ts"
 import { RunnerStore } from "../runner/store.ts"
 import type { RunnerStore as RunnerStoreType } from "../runner/store.ts"
 
@@ -26,6 +27,9 @@ export function openReadOnlyTrajectoryStore(path: string, projectDirectory: stri
           )
           .get(projectDirectory, id)
         return row ? TaskSpecSchema.parse(JSON.parse(row.body)) : undefined
+      },
+      referenceFor(taskID: string) {
+        return taskReferenceFor(db, projectDirectory, taskID)
       },
     } as unknown as TaskRepository
 

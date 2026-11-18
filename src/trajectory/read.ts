@@ -1179,6 +1179,10 @@ export async function inspectTrajectory(
     schemaVersion: 1,
     task: {
       id: safeText(task.id, stats, 128),
+      // The same resolver the Tasks read uses; omitted for a task that has none.
+      ...(store.repository.referenceFor(task.id)
+        ? { reference: safeText(store.repository.referenceFor(task.id)!, stats, 300) }
+        : {}),
       revision: task.revision,
       status: safeText(task.status, stats, 80),
       createdAt: safeText(task.createdAt, stats, 128),

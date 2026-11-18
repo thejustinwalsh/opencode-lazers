@@ -1759,3 +1759,19 @@ test.each(["cumulative", "additive", "missing"])(
     }
   },
 )
+
+test("the task report carries the Tasks reference when one exists and omits it otherwise", async () => {
+  const fixture = makeFixture()
+  try {
+    const read = () =>
+      inspectTrajectory(fixture.store, fixture.host, "project", parse({ taskID }), cursorSecret)
+    const expected = fixture.repository.referenceFor(taskID)
+    expect(expected).toMatch(/^LZ-\d+$/)
+    expect((await read()).task.reference).toBe(expected)
+    fixture.store.atomic((db) => db.query("DELETE FROM task_references").run())
+    const bare = await read()
+    expect(Object.hasOwn(bare.task, "reference")).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
