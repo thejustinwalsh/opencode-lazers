@@ -249,6 +249,58 @@ function missingDecisionRPC(error: unknown) {
   )
 }
 
+/** Only a snapshot with something to show is worth restoring. */
+export function isSeedable(data: ModelComparisonPanelData) {
+  return (
+    Boolean(data.decisionOverview || data.comparison) &&
+    (data.decisionStatus === "ready" || data.decisionStatus === "partial")
+  )
+}
+
+/** A cached snapshot as the starting point of a new connection: content kept, loading flags reset. */
+function seededData(
+  seed: ModelComparisonPanelData,
+  key: string,
+  projectID: string,
+  projectDirectory: string,
+  preferences: ModelComparisonPreferences,
+  decisionFilters: ModelDecisionFilters,
+): ModelComparisonPanelData {
+  return {
+    ...seed,
+    key,
+    projectID,
+    projectDirectory,
+    decisionFilters,
+    selectedTaskID: preferences.selectedTaskID,
+    selectedCandidateID: preferences.selectedCandidateID,
+    selectedConfigurationID: preferences.selectedConfigurationID ?? null,
+    decisionError: "",
+    decisionRowsLoading: false,
+    decisionConfigurationsLoading: false,
+    decisionInspectLoading: false,
+    decisionInspectError: "",
+    decisionNotFound: false,
+    decisionContributorsLoading: false,
+    comparisonLoading: true,
+    comparisonError: "",
+    comparisonStale: false,
+    taskLoading: false,
+    taskError: "",
+    effortLoading: false,
+    effortError: "",
+    settingsLoading: true,
+    settingsError: "",
+    tasksLoading: true,
+    tasksError: "",
+    catalogStatus: seed.catalogStatus === "ready" ? "ready" : "loading",
+    catalogError: "",
+    sourceRefresh: "idle",
+    sourceRefreshError: "",
+    stale: false,
+  }
+}
+
 function blank(
   key = "",
   projectID = "",
@@ -367,6 +419,8 @@ export class ModelComparisonPanelState {
     transport: ModelComparisonTransport,
     preferences: ModelComparisonPreferences,
     decisionFilters: ModelDecisionFilters = emptyModelDecisionFilters,
+    /** The last snapshot for this project and filters: shown at once, refreshed in place. */
+    seed?: ModelComparisonPanelData,
   ) {
     this.close()
     this.controller = new AbortController()
@@ -376,7 +430,10 @@ export class ModelComparisonPanelState {
     this.transport = transport
     this.projectID = projectID
     this.projectDirectory = projectDirectory
-    this.data = blank(key, projectID, projectDirectory, preferences, decisionFilters)
+    this.data =
+      seed && isSeedable(seed)
+        ? seededData(seed, key, projectID, projectDirectory, preferences, decisionFilters)
+        : blank(key, projectID, projectDirectory, preferences, decisionFilters)
     const generation = this.generation
     const selectionRevision = this.selectionRevision
 
@@ -535,7 +592,7 @@ export class ModelComparisonPanelState {
     return operation
   }
 
-  setDecisionFilters(filters: ModelDecisionFilters) {
+  setDecisionFilters(filters: ModelDecisionFilters, seed?: ModelComparisonPanelData) {
     if (JSON.stringify(filters) === JSON.stringify(this.data.decisionFilters)) return
     this.decisionController.abort()
     this.inspectionController.abort()
@@ -551,6 +608,33 @@ export class ModelComparisonPanelState {
     this.decisionConfigurationsPromise = undefined
     this.decisionContributorsPromise = undefined
     this.decisionNeedsRefresh = false
+    if (
+      seed &&
+      isSeedable(seed) &&
+      JSON.stringify(seed.decisionFilters) === JSON.stringify(filters)
+    ) {
+      // The last result for these filters shows at once; the refresh below replaces it in place.
+      this.update({
+        decisionFilters: filters,
+        decisionStatus: seed.decisionStatus,
+        decisionError: "",
+        decisionContext: seed.decisionContext,
+        decisionOverview: seed.decisionOverview,
+        decisionRows: seed.decisionRows,
+        decisionRowsNextCursor: seed.decisionRowsNextCursor,
+        decisionRowsLoading: false,
+        decisionConfigurations: seed.decisionConfigurations,
+        decisionConfigurationsNextCursor: seed.decisionConfigurationsNextCursor,
+        decisionConfigurationsLoading: false,
+        decisionInspection: seed.decisionInspection,
+        decisionInspectLoading: false,
+        decisionInspectError: "",
+        decisionNotFound: false,
+        decisionContributorsLoading: false,
+      })
+      void this.refreshDecisionSnapshot()
+      return
+    }
     this.update({
       decisionFilters: filters,
       decisionStatus: "loading",

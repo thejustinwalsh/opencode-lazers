@@ -12,6 +12,16 @@ const personaIcons = {
   "small-refactoring": "edit-small-2",
 } as const
 
+/** Writes recorded across the task, project and shared layers of one persona. */
+function historyChanges(persona: {
+  layers: Record<"task" | "project" | "shared", { revision: number } | null | undefined>
+}) {
+  return (["task", "project", "shared"] as const).reduce(
+    (total, scope) => total + (persona.layers[scope]?.revision ?? 0),
+    0,
+  )
+}
+
 export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Element }) {
   const ctl = props.ctl
   const {
@@ -37,6 +47,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     modelSelectionCaption,
     openAssignmentModelPicker,
     personas,
+    prefs,
     removeAssignmentRoute,
     revertAssignmentRoute,
     saveAssignmentRoute,
@@ -193,7 +204,8 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 options={[
                   { value: "shared", label: "All projects" },
                   { value: "project", label: "This project" },
-                  ...(visible()?.selectedTaskID
+                  // A task override is offered only once a task is chosen as a filter.
+                  ...(visible()?.selectedTaskID && prefs().taskFilter
                     ? [{ value: "task" as const, label: "This task" }]
                     : []),
                 ]}
@@ -305,8 +317,10 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
               )
             }}
           </Show>
-          <details class="lazers-models-assignment-manual-route">
-            <summary>Other model ID</summary>
+          <details class="lazers-models-disclosure lazers-models-assignment-manual-route">
+            <summary>
+              <span>Other model ID</span>
+            </summary>
             <p>Use exact IDs when a route is missing from the native catalog.</p>
             <div class="lazers-models-assignment-manual-fields">
               <div class="lazers-models-assignment-field">
@@ -338,8 +352,16 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
               </div>
             </div>
           </details>
-          <details class="lazers-models-assignment-layers">
-            <summary>History</summary>
+          <details class="lazers-models-disclosure lazers-models-assignment-layers">
+            <summary>
+              <span>History</span>
+              <Show when={historyChanges(persona()) > 0}>
+                <span class="lazers-models-disclosure-hint">
+                  {historyChanges(persona())}{" "}
+                  {historyChanges(persona()) === 1 ? "change" : "changes"}
+                </span>
+              </Show>
+            </summary>
             <p class="lazers-models-assignment-current">
               <strong>Current override:</strong>{" "}
               {assignmentLayer()?.route

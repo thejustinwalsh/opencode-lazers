@@ -5,6 +5,8 @@ import { ModelFiles } from "./webgpu/ipc.ts"
 import { setupMain } from "./webgpu/main.ts"
 import { setupNativeInteractionMain } from "./verification/opencode/native-interaction-main.ts"
 import { createInferenceRuntime } from "./webgpu/runtime.ts"
+import { runtimeStatusLine } from "./webgpu/runtime-status.ts"
+import { SettingLabel } from "./settings-label.tsx"
 import { LocalModel } from "./webgpu/contract.ts"
 import {
   DECISION_BYTES,
@@ -404,14 +406,14 @@ export default Plugin.define({
           ? standard
           : [...standard, { value: String(current), label: keepAliveLabel(current) }]
       }
+      // A short plain state; the runtime's own sentence stays in the tooltip and diagnostics.
       const runtimeLine = () =>
-        features().enabled
-          ? runtime.detail()
-          : runtime.state() === "disabled"
-            ? "Off"
-            : runtime.state() === "error"
-              ? runtime.detail()
-              : "Stopping local work…"
+        runtimeStatusLine({
+          enabled: features().enabled,
+          phase: runtime.phase(),
+          detail: runtime.detail(),
+          ...(runtime.modelName() ? { modelName: runtime.modelName()! } : {}),
+        })
       const testDecision = () =>
         perform("decision", async () => {
           test = new AbortController()
@@ -439,7 +441,9 @@ export default Plugin.define({
         <Ui.SettingsLayout title="LAZERS" description={pageLede}>
           <div class="lazers-settings-head">
             <h2 id="lazers-local-title">Local inference</h2>
-            <span role="status">{runtimeLine()}</span>
+            <span role="status" title={runtimeLine().tooltip}>
+              {runtimeLine().text}
+            </span>
           </div>
           <Ui.SettingsSection
             footer={
@@ -463,8 +467,12 @@ export default Plugin.define({
             }
           >
             <Ui.SettingsRow
-              title="Run local models on this device"
-              description="Off releases GPU memory. Downloads are kept."
+              title={
+                <SettingLabel
+                  name="Run local models on this device"
+                  hint="Off releases GPU memory; downloads are kept"
+                />
+              }
             >
               <Ui.Switch
                 label="Run local models on this device"
@@ -478,18 +486,16 @@ export default Plugin.define({
             </Ui.SettingsRow>
             {(
               [
-                ["questions", "Local questions", "For agents and the test panel."],
-                ["decisions", "System One decisions", "The typed decisions API."],
-                [
-                  "review",
-                  "Task review",
-                  "An advisory check before submission. Needs System One decisions.",
-                ],
-                ["dictation", "Dictation", "The microphone button and push-to-talk."],
-                ["readAloud", "Read aloud", "The speaker button and speech."],
+                ["questions", "Local questions", "for agents and the test panel"],
+                ["decisions", "System One decisions", "typed decisions API"],
+                ["review", "Task review", "advisory check before submission · needs decisions"],
+                ["dictation", "Dictation", "microphone button and push-to-talk"],
+                ["readAloud", "Read aloud", "speaker button and speech"],
               ] as const
-            ).map(([key, label, description]) => (
-              <Ui.SettingsRow title={label} description={description}>
+            ).map(([key, label, hint]) => (
+              <Ui.SettingsRow
+                title={<SettingLabel name={label} hint={hint} child off={!features().enabled} />}
+              >
                 <Ui.Switch
                   label={label}
                   hideLabel
@@ -521,8 +527,12 @@ export default Plugin.define({
           >
             <Show when={features().enabled}>
               <Ui.SettingsRow
-                title="Keep model loaded"
-                description="How long an idle model stays in GPU memory. Always avoids the reload wait."
+                title={
+                  <SettingLabel
+                    name="Keep model loaded"
+                    hint="Never unloading avoids the reload wait"
+                  />
+                }
               >
                 <Ui.Select
                   label="Keep model loaded"
@@ -531,7 +541,7 @@ export default Plugin.define({
                   onChange={(value) => ctx.stores.runtime.set({ keepAliveMs: Number(value) })}
                 />
               </Ui.SettingsRow>
-              <Ui.SettingsRow title="Voice" description="Used by Read aloud.">
+              <Ui.SettingsRow title={<SettingLabel name="Voice" hint="used by Read aloud" />}>
                 <div class="lazers-settings-controls">
                   <Ui.Button
                     size="small"
@@ -558,8 +568,12 @@ export default Plugin.define({
               </Ui.SettingsRow>
             </Show>
             <Ui.SettingsRow
-              title="Downloaded models"
-              description={`${cacheLabel()} · ${formatBytes(cachedBytes())} of ${formatBytes(MODEL_BYTES + DECISION_BYTES)}`}
+              title={
+                <SettingLabel
+                  name="Downloaded models"
+                  hint={`${cacheLabel()} · ${formatBytes(cachedBytes())} of ${formatBytes(MODEL_BYTES + DECISION_BYTES)}`}
+                />
+              }
             >
               <Ui.Button
                 size="small"
@@ -583,6 +597,9 @@ export default Plugin.define({
             <summary>
               Advanced diagnostics <span>GPU, model identity, renderer capture</span>
             </summary>
+            <Show when={runtime.detail()}>
+              <p class="lazers-local-meta">Runtime · {runtime.detail()}</p>
+            </Show>
             <p class="lazers-local-meta">
               Service completion contract: {runtime.contractStatus()} · required{" "}
               <code>{GENERATION_RESULT_CONTRACT_REVISION}</code>
@@ -950,7 +967,7 @@ export default Plugin.define({
       .lazers-local section { padding: 24px 0; border-top: 1px solid var(--border-weak-base); }
       .lazers-settings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: -20px; }
       .lazers-settings-head h2 { margin: 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
-      .lazers-settings-head span { min-width: 0; color: var(--text-weak); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+      .lazers-settings-head span { min-width: 0; color: var(--text-weak); font-size: 12.5px; text-align: right; overflow-wrap: anywhere; }
       .lazers-settings-controls { display: flex; align-items: center; gap: 8px; }
       .lazers-settings-number { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
       .lazers-settings-hint { margin: 8px 0 0; color: var(--text-weak); font-size: 12px; line-height: 1.5; }
@@ -962,7 +979,10 @@ export default Plugin.define({
       .lazers-local-path, .lazers-local-reply { overflow-wrap: anywhere; white-space: pre-wrap; font: 12px/1.6 var(--font-family-mono, monospace); }
       .lazers-local-reply { padding: 16px; background: var(--surface-base); border: 1px solid var(--border-weak-base); border-radius: 8px; }
       .lazers-local progress { width: 100%; height: 4px; }
-      .lazers-local-diagnostics summary { display: flex; align-items: baseline; gap: 12px; padding: 16px 0; cursor: pointer; font-size: 13px; font-weight: 500; }
+      .lazers-local-diagnostics summary { display: flex; align-items: center; gap: 8px; padding: 16px 0; cursor: pointer; font-size: 13px; font-weight: 400; list-style: none; }
+      .lazers-local-diagnostics summary::-webkit-details-marker { display: none; }
+      .lazers-local-diagnostics summary::before { content: ""; flex: none; box-sizing: border-box; width: 6px; height: 6px; margin: 0 5px 0 2px; border-right: 1.5px solid var(--icon-base, var(--text-weak)); border-bottom: 1.5px solid var(--icon-base, var(--text-weak)); transform: rotate(-45deg); transition: transform 100ms ease; }
+      .lazers-local-diagnostics[open] > summary::before { transform: translateY(-2px) rotate(45deg); }
       .lazers-local-diagnostics summary span { margin-left: auto; color: var(--text-weak); font-size: 12px; font-weight: 400; }
       .lazers-local-audio-label { display: grid; gap: 8px; margin-top: 20px; font-size: 13px; }
       .lazers-local audio { width: 100%; max-width: 420px; }

@@ -1,9 +1,7 @@
-import { CustomChart, LineChart, ScatterChart } from "echarts/charts"
-import type { CustomSeriesOption } from "echarts/charts"
+import { LineChart, ScatterChart } from "echarts/charts"
 import { AriaComponent, GridComponent, TooltipComponent } from "echarts/components"
 import * as echarts from "echarts/core"
 import type { EChartsCoreOption, EChartsType } from "echarts/core"
-import { LabelLayout } from "echarts/features"
 import { SVGRenderer } from "echarts/renderers"
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount } from "solid-js"
 import type { JSX } from "solid-js"
@@ -11,23 +9,14 @@ import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
   boundedModelEffortLabel,
-  chartModelEffortLabel,
+  boundedModelLabel,
   formatMarketAmount,
   formatMarketRange,
   modelEffortLabel,
   routeLabel,
 } from "./comparison-presentation.ts"
 
-echarts.use([
-  ScatterChart,
-  CustomChart,
-  LineChart,
-  GridComponent,
-  TooltipComponent,
-  AriaComponent,
-  LabelLayout,
-  SVGRenderer,
-])
+echarts.use([ScatterChart, LineChart, GridComponent, TooltipComponent, AriaComponent, SVGRenderer])
 
 export type ComparisonChartPoint = ModelDecisionGraphPoint & {
   route?: { providerID: string; modelID: string; variant: string | null }
@@ -47,6 +36,10 @@ export interface ComparisonChartTheme {
   mutedText: string
   grid: string
   accent: string
+  /** Panel background; hollow marks are filled with it. Falls back to `surface`. */
+  background?: string
+  /** Stroke of non-frontier marks. Falls back to `mutedText`. */
+  neutral?: string
   fontFamily: string
   monoFontFamily: string
   fontSize?: number
@@ -77,6 +70,8 @@ export interface ComparisonChartProps extends ComparisonChartData {
   appearanceVersion?: unknown
   /** Shown under the empty-state text, e.g. a switch to another comparison. */
   emptyAction?: JSX.Element
+  /** Right of the legend, e.g. "14 accepted tasks · OpenRouter prices". */
+  caption?: string
   /** Where the "Chart data as a table" disclosure renders; inline until the mount exists. */
   dataMount?: () => HTMLElement | undefined
 }
@@ -196,6 +191,30 @@ export function compactTokenAxisValue(value: number) {
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value))
 
+/** Chart text size from the mockup type scale; grows only when the host font is large. */
+export const CHART_FONT_SIZE = 11.5
+
+/**
+ * Round axis maximum and step for about `intervals` steps, so ticks read 0, 5M, 10M, 15M, 20M
+ * rather than whatever the renderer picks. The maximum covers `maxValue`.
+ */
+export function niceAxis(maxValue: number, intervals: number) {
+  const target = Math.max(1, Math.floor(intervals))
+  if (!(maxValue > 0) || !Number.isFinite(maxValue)) return { max: target, interval: 1 }
+  const raw = maxValue / target
+  const base = 10 ** Math.floor(Math.log10(raw))
+  const step = [1, 2, 2.5, 5, 10].map((unit) => unit * base).find((unit) => unit >= raw * 0.999999)!
+  const round = (value: number) => Number(value.toPrecision(10))
+  const interval = round(step)
+  return { max: round(Math.ceil(maxValue / interval - 1e-9) * interval), interval }
+}
+
+/** Dollar axis tick: `$3` for whole amounts, `$0.50` otherwise. */
+export function formatAxisMoney(value: number) {
+  if (Number.isInteger(value)) return `$${value}`
+  return `$${Math.round(value * 100) / 100 === value ? value.toFixed(2) : value.toFixed(3)}`
+}
+
 /** Reserve axis room from the rendered host size and inherited native font. */
 export function comparisonChartResponsiveLayout(
   width: number,
@@ -204,12 +223,13 @@ export function comparisonChartResponsiveLayout(
 ): ComparisonChartLayout {
   const safeWidth = Math.max(1, width)
   const safeHeight = Math.max(1, height)
-  const fontSize = clamp(Number.isFinite(inheritedFontSize) ? inheritedFontSize : 12, 10, 24)
+  const inherited = Number.isFinite(inheritedFontSize) ? inheritedFontSize : 12
+  const fontSize = clamp(Math.max(CHART_FONT_SIZE, inherited * 0.82), CHART_FONT_SIZE, 24)
   const grid = {
-    left: Math.max(72, Math.ceil(24 + fontSize * 6.3)),
-    right: Math.max(12, Math.ceil(fontSize * 0.8)),
-    top: Math.max(20, Math.ceil(5 + fontSize * 1.4)),
-    bottom: Math.max(48, Math.ceil(22 + fontSize * 2.1)),
+    left: Math.ceil(fontSize * 4.9),
+    right: Math.ceil(fontSize * 1.6),
+    top: Math.ceil(fontSize * 1.2),
+    bottom: Math.ceil(fontSize * 3.7),
     containLabel: false as const,
   }
   const plotWidth = Math.max(1, safeWidth - grid.left - grid.right)
@@ -219,9 +239,9 @@ export function comparisonChartResponsiveLayout(
     height: safeHeight,
     fontSize,
     grid,
-    xSplitNumber: clamp(Math.floor(plotWidth / (fontSize * 4.4)), 2, 8),
-    // Below ~420 px the y labels would collide, so keep at most three.
-    ySplitNumber: clamp(Math.floor(plotHeight / (fontSize * 2.5)), 2, safeWidth < 420 ? 3 : 6),
+    // About five round ticks: four steps. Fewer when the plot is small.
+    xSplitNumber: clamp(Math.floor(plotWidth / (fontSize * 7.5)), 2, 4),
+    ySplitNumber: clamp(Math.floor(plotHeight / (fontSize * 3.6)), 2, safeWidth < 420 ? 3 : 4),
   }
 }
 
@@ -241,7 +261,15 @@ export function resolveNativeComparisonChartTheme(
     text: styles ? nativeToken(styles, "--text-strong", "currentColor") : "currentColor",
     mutedText: styles ? nativeToken(styles, "--text-weak", "currentColor") : "currentColor",
     grid: styles ? nativeToken(styles, "--border-weak-base", "currentColor") : "currentColor",
-    accent: styles ? nativeToken(styles, "--border-selected", "currentColor") : "currentColor",
+    accent: styles
+      ? nativeToken(
+          styles,
+          "--text-interactive-base",
+          nativeToken(styles, "--border-selected", "currentColor"),
+        )
+      : "currentColor",
+    background: styles ? nativeToken(styles, "--background-base", "transparent") : "transparent",
+    neutral: styles ? nativeToken(styles, "--text-base", "currentColor") : "currentColor",
     fontFamily: fontFamily || styles?.fontFamily || "sans-serif",
     monoFontFamily: monoFontFamily || fontFamily || styles?.fontFamily || "monospace",
     fontSize: Number.parseFloat(styles?.fontSize ?? "") || 12,
@@ -390,139 +418,239 @@ function comparisonChartDescription(
   )
 }
 
-function intervalRenderer(
-  theme: ComparisonChartTheme,
-  subtotal: boolean,
-  selectedConfigurationIDs: readonly string[],
-  selectedConfigurationID: string | null | undefined,
-) {
-  const renderer: NonNullable<CustomSeriesOption["renderItem"]> = (params, api) => {
-    const x = Number(api.value(0))
-    const minimum = Number(api.value(1))
-    const maximum = Number(api.value(2))
-    const selected = selectedConfigurationIDs[params.dataIndexInside] === selectedConfigurationID
-    const lower = api.coord([x, minimum])
-    const upper = api.coord([x, maximum])
-    const middle = api.coord([x, minimum / 2 + maximum / 2])
-    const cap = 5
-    const style = {
-      stroke: theme.accent,
-      lineWidth: selected ? 3.5 : 2,
-      ...(subtotal ? { lineDash: [4, 3], opacity: 0.8 } : {}),
-    }
-    const children = [
-      {
-        type: "line" as const,
-        shape: { x1: lower[0]!, y1: lower[1]!, x2: upper[0]!, y2: upper[1]! },
-        style,
-      },
-      {
-        type: "line" as const,
-        shape: {
-          x1: lower[0]! - cap,
-          y1: lower[1]!,
-          x2: lower[0]! + cap,
-          y2: lower[1]!,
-        },
-        style,
-      },
-      ...(selected
-        ? [
-            {
-              type: "circle" as const,
-              shape: { cx: middle[0]!, cy: middle[1]!, r: 4 },
-              style: { fill: theme.surface, stroke: theme.text, lineWidth: 2 },
-            },
-          ]
-        : []),
-      {
-        type: "line" as const,
-        shape: {
-          x1: upper[0]! - cap,
-          y1: upper[1]!,
-          x2: upper[0]! + cap,
-          y2: upper[1]!,
-        },
-        style,
-      },
-    ]
-    return {
-      type: "group",
-      children,
-    }
-  }
-  return renderer
-}
+export type ChartLabelSide = "right" | "left" | "top" | "bottom"
 
 export type ChartLabelItem = {
   id: string
   x: number
   y: number
-  /** Possibly two lines, separated by a newline. */
   text: string
-  side: "left" | "right" | "top"
+  /** Preferred side; the others are tried, in a fixed order, when it would collide. */
+  side: ChartLabelSide
   /** 0 selected, 1 frontier, 2 the rest. */
   priority: number
-  /** Provider and model, so one model is never named twice beside the selection. */
-  model: string
 }
 
+const labelSideOrder: Record<ChartLabelSide, readonly ChartLabelSide[]> = {
+  right: ["right", "left", "top", "bottom"],
+  left: ["left", "right", "top", "bottom"],
+  top: ["top", "right", "left", "bottom"],
+  bottom: ["bottom", "right", "left", "top"],
+}
+const MARKER_RADIUS = 5
+
 /**
- * Which point labels fit. Keeps the selected label first, then frontier points, then the rest,
- * and drops any label that would overlap one already kept or repeat the selected model's name.
- * Positions are estimated from the value extents; tooltips and the data table name the rest.
+ * Where each point label goes. Labels are placed selected first, then frontier points, then the
+ * rest, so when space runs out the non-frontier labels are the ones dropped. A label tries its
+ * preferred side, then the others, and is dropped when every side overlaps an already placed
+ * label, any other mark, or the plot edge. Positions are estimated from the value extents.
  */
-export function visibleChartLabelIDs(
+export function placeChartLabels(
   items: readonly ChartLabelItem[],
   box: { plotWidth: number; plotHeight: number; xMax: number; yMax: number; fontSize: number },
 ) {
-  const kept: { left: number; right: number; top: number; bottom: number }[] = []
-  const shown = new Set<string>()
-  const selected = items.find((item) => item.priority === 0)
+  type Rect = { left: number; right: number; top: number; bottom: number }
+  const overlaps = (a: Rect, b: Rect, pad: number) =>
+    a.left < b.right + pad &&
+    a.right > b.left - pad &&
+    a.top < b.bottom + pad &&
+    a.bottom > b.top - pad
+  const centre = (item: ChartLabelItem) => ({
+    cx: box.xMax > 0 ? (item.x / box.xMax) * box.plotWidth : 0,
+    cy: box.yMax > 0 ? box.plotHeight - (item.y / box.yMax) * box.plotHeight : box.plotHeight,
+  })
+  const markers = items.map((item) => {
+    const { cx, cy } = centre(item)
+    return {
+      id: item.id,
+      left: cx - MARKER_RADIUS,
+      right: cx + MARKER_RADIUS,
+      top: cy - MARKER_RADIUS,
+      bottom: cy + MARKER_RADIUS,
+    }
+  })
+  const kept: Rect[] = []
+  const placed = new Map<string, ChartLabelSide>()
   const ordered = items.toSorted((left, right) => left.priority - right.priority)
   for (const item of ordered) {
-    if (item.priority > 0 && selected && item.model === selected.model) continue
     const lines = item.text.split("\n")
-    const width = Math.max(...lines.map((line) => line.length)) * box.fontSize * 0.6
+    const width = Math.max(...lines.map((line) => line.length)) * box.fontSize * 0.54
     const height = lines.length * box.fontSize * 1.3
-    const cx = box.xMax > 0 ? (item.x / box.xMax) * box.plotWidth : 0
-    const cy = box.yMax > 0 ? box.plotHeight - (item.y / box.yMax) * box.plotHeight : 0
-    const left =
-      item.side === "right" ? cx + 8 : item.side === "left" ? cx - 8 - width : cx - width / 2
-    const top = item.side === "top" ? cy - 6 - height : cy - height / 2
-    const rect = { left, right: left + width, top, bottom: top + height }
-    const clash = kept.some(
-      (other) =>
-        rect.left < other.right + 2 &&
-        rect.right > other.left - 2 &&
-        rect.top < other.bottom + 2 &&
-        rect.bottom > other.top - 2,
-    )
-    if (clash) continue
-    kept.push(rect)
-    shown.add(item.id)
+    const { cx, cy } = centre(item)
+    const rectOn = (side: ChartLabelSide): Rect => {
+      const left =
+        side === "right"
+          ? cx + MARKER_RADIUS + 3
+          : side === "left"
+            ? cx - MARKER_RADIUS - 3 - width
+            : cx - width / 2
+      const top =
+        side === "top"
+          ? cy - MARKER_RADIUS - 2 - height
+          : side === "bottom"
+            ? cy + MARKER_RADIUS + 2
+            : cy - height / 2
+      return { left, right: left + width, top, bottom: top + height }
+    }
+    const insidePlot = (rect: Rect) =>
+      rect.left >= 0 &&
+      rect.right <= box.plotWidth &&
+      rect.top >= 0 &&
+      rect.bottom <= box.plotHeight
+    const clearOfLabels = (rect: Rect) => !kept.some((other) => overlaps(rect, other, 2))
+    const clearOfMarks = (rect: Rect) =>
+      !markers.some((marker) => marker.id !== item.id && overlaps(rect, marker, 1))
+    // The best trade-off labels and the rest need a clear side. The selection is always named:
+    // when every side is crowded by other marks it sits over them, still clear of other labels,
+    // and as a last resort on its preferred side.
+    const candidates = labelSideOrder[item.side].map((side) => ({ side, rect: rectOn(side) }))
+    const choice =
+      candidates.find(
+        ({ rect }) => insidePlot(rect) && clearOfLabels(rect) && clearOfMarks(rect),
+      ) ??
+      (item.priority === 0
+        ? (candidates.find(({ rect }) => insidePlot(rect) && clearOfLabels(rect)) ?? candidates[0])
+        : undefined)
+    if (!choice) continue
+    kept.push(choice.rect)
+    placed.set(item.id, choice.side)
   }
-  return shown
+  return placed
 }
 
-/** The frontier line carries no text; the legend names it "Best trade-off". */
-export function frontierEndLabel(
-  _text: string,
-  _show: boolean,
-  theme: ComparisonChartTheme,
-  fontSize: number,
+/** The ids that keep a label; see `placeChartLabels` for where it goes. */
+export function visibleChartLabelIDs(
+  items: readonly ChartLabelItem[],
+  box: Parameters<typeof placeChartLabels>[1],
 ) {
-  return {
-    show: false,
-    formatter: "",
-    position: "top" as const,
-    align: "right" as const,
-    verticalAlign: "bottom" as const,
-    distance: 6,
-    color: theme.mutedText,
-    fontFamily: theme.fontFamily,
-    fontSize,
+  return new Set(placeChartLabels(items, box).keys())
+}
+
+/** One plotted mark: an observed point, or a catalog reference estimate at its midpoint. */
+export type ChartMark = {
+  configurationID: string
+  groupID?: string
+  label: string
+  route?: { providerID: string; modelID: string; variant?: string | null }
+  tokens: number
+  /** USD per accepted task; the midpoint for a range, the lower bound for a priced subtotal. */
+  amount: number
+  frontier: boolean
+  kind: "canonical" | "reference"
+}
+
+/**
+ * Every plotted mark, one per model configuration. An observed point wins over a catalog
+ * reference for the same configuration. Ranges plot at their midpoint; the range itself is in
+ * the selection summary, never drawn as whiskers.
+ */
+export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
+  const frontier = new Set(data.frontierConfigurationIDs)
+  const marks = new Map<string, ChartMark>()
+  for (const reference of data.references ?? []) {
+    const amount = referenceAmount(reference.estimate)
+    if (!amount || !referenceIsPlottable(reference) || reference.tokensPerAcceptedTask === null)
+      continue
+    marks.set(reference.configurationID, {
+      configurationID: reference.configurationID,
+      label: reference.label,
+      route: reference.estimate.route,
+      tokens: reference.tokensPerAcceptedTask,
+      amount:
+        amount.kind === "scalar" || amount.kind === "subtotal"
+          ? amount.value
+          : amount.kind === "range"
+            ? amount.minimum / 2 + amount.maximum / 2
+            : amount.minimum,
+      // Catalog estimates are a different measure: they never join the observed frontier.
+      frontier: false,
+      kind: "reference",
+    })
   }
+  for (const point of data.points) {
+    if (!plottable(point)) continue
+    marks.set(point.configurationID, {
+      configurationID: point.configurationID,
+      groupID: point.groupID,
+      label: point.label,
+      ...(point.route ? { route: point.route } : {}),
+      tokens: point.tokensPerAcceptedTask,
+      amount: point.currentMarketUSDPerAcceptedTask,
+      frontier: frontier.has(point.configurationID),
+      kind: "canonical",
+    })
+  }
+  return [...marks.values()]
+}
+
+/** The thin polyline through the best trade-off marks, left to right. Needs two or more. */
+export function chartFrontierLine(marks: readonly ChartMark[]): [number, number][] {
+  const line = marks
+    .filter((mark) => mark.frontier)
+    .toSorted(
+      (left, right) =>
+        left.tokens - right.tokens ||
+        left.amount - right.amount ||
+        (left.configurationID < right.configurationID
+          ? -1
+          : left.configurationID > right.configurationID
+            ? 1
+            : 0),
+    )
+    .map((mark): [number, number] => [mark.tokens, mark.amount])
+  return line.length > 1 ? line : []
+}
+
+/** Frame, weak grid and axis text shared by the Compare and Benchmark plots. */
+export function chartPlotFrame(theme: ComparisonChartTheme, layout: ComparisonChartLayout) {
+  const fontSize = layout.fontSize
+  const axisName = { color: theme.mutedText, fontFamily: theme.fontFamily, fontSize }
+  const axisLabel = (formatter: (value: number) => string) => ({
+    color: theme.mutedText,
+    fontFamily: theme.monoFontFamily,
+    fontSize,
+    margin: Math.max(6, Math.ceil(fontSize * 0.55)),
+    hideOverlap: true,
+    formatter,
+  })
+  return {
+    backgroundColor: "transparent",
+    grid: {
+      ...layout.grid,
+      show: true,
+      borderColor: theme.grid,
+      borderWidth: 1,
+      backgroundColor: "transparent",
+    },
+    axisName,
+    axisLabel,
+    axisLine: { lineStyle: { color: theme.grid } },
+    axisTick: { show: false },
+    splitLine: { lineStyle: { color: theme.grid, opacity: 0.7 } },
+    xNameGap: Math.ceil(fontSize * 2.1),
+    yNameGap: Math.ceil(fontSize * 3.1),
+  }
+}
+
+/**
+ * A mark's one-line label, "GPT-6 Luna · max". A long effort is cut to ten characters first so the
+ * model name keeps its room; the full route stays in the tooltip and the data table.
+ */
+export function chartMarkLabel(
+  label: string,
+  route: { providerID: string; modelID: string; variant?: string | null } | undefined,
+  limit: number,
+) {
+  const full = modelEffortLabel(label, route)
+  const split = full.lastIndexOf(" · ")
+  if (!route?.variant || split < 0 || Array.from(full).length <= limit)
+    return boundedModelEffortLabel(full, limit)
+  const effort = boundedModelLabel(full.slice(split + 3), 10)
+  const model = boundedModelLabel(
+    full.slice(0, split),
+    Math.max(6, limit - 3 - Array.from(effort).length),
+  )
+  return `${model} · ${effort}`
 }
 
 export function comparisonChartOptions(
@@ -532,149 +660,57 @@ export function comparisonChartOptions(
 ) {
   const points = data.points.filter(plottable)
   const references = data.references ?? []
-  type ReferenceMark = {
-    reference: ComparisonChartReference
-    amount: ReferenceAmount
-    tokens: number
-  }
-  const referenceMarks: ReferenceMark[] = references.flatMap((reference) => {
-    const amount = referenceAmount(reference.estimate)
-    if (!referenceIsPlottable(reference) || !amount || reference.tokensPerAcceptedTask === null)
-      return []
-    return [{ reference, amount, tokens: reference.tokensPerAcceptedTask }]
-  })
-  const scalarReferences = referenceMarks.filter(
-    (item): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "scalar" }> } =>
-      item.amount.kind === "scalar",
-  )
-  const subtotalReferences = referenceMarks.filter(
-    (item): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "subtotal" }> } =>
-      item.amount.kind === "subtotal",
-  )
-  const rangeReferences = referenceMarks.filter(
-    (item): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "range" }> } =>
-      item.amount.kind === "range",
-  )
-  const subtotalRangeReferences = referenceMarks.filter(
-    (
-      item,
-    ): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "subtotal-range" }> } =>
-      item.amount.kind === "subtotal-range",
-  )
-  const frontier = new Set(data.frontierConfigurationIDs)
-  const largestTokenValue = Math.max(
-    0,
-    ...points.map((point) => point.tokensPerAcceptedTask),
-    ...referenceMarks.map((item) => item.tokens),
-  )
-  const frontierPoints = points
-    .filter((point) => frontier.has(point.configurationID))
-    .toSorted(
-      (left, right) =>
-        left.tokensPerAcceptedTask - right.tokensPerAcceptedTask ||
-        left.currentMarketUSDPerAcceptedTask - right.currentMarketUSDPerAcceptedTask ||
-        (left.configurationID < right.configurationID
-          ? -1
-          : left.configurationID > right.configurationID
-            ? 1
-            : 0),
-    )
+  const marks = comparisonChartMarks(data)
+  const frame = chartPlotFrame(theme, layout)
+  const selectedID = data.selectedConfigurationID
   const description = comparisonChartDescription(points, references)
   const referenceByConfiguration = new Map(
-    referenceMarks.map((item) => [item.reference.configurationID, item.reference]),
+    references.map((reference) => [reference.configurationID, reference] as const),
   )
-  const selectedLabels = new Map<
-    string,
-    {
-      configurationID: string
-      label: string
-      route?: { providerID: string; modelID: string; variant?: string | null }
-      tokens: number
-      amount: number
-    }
-  >()
-  if (data.selectedConfigurationID) {
-    for (const point of points) {
-      if (point.configurationID !== data.selectedConfigurationID) continue
-      const key = `${point.configurationID}\u0000${point.tokensPerAcceptedTask}\u0000${point.currentMarketUSDPerAcceptedTask}`
-      selectedLabels.set(key, {
-        configurationID: point.configurationID,
-        label: point.label,
-        route: point.route,
-        tokens: point.tokensPerAcceptedTask,
-        amount: point.currentMarketUSDPerAcceptedTask,
-      })
-    }
-    // One name per selection: the reference range is labelled only when no point carries it.
-    for (const item of selectedLabels.size ? [] : referenceMarks) {
-      if (item.reference.configurationID !== data.selectedConfigurationID) continue
-      if (selectedLabels.size) break
-      const amount =
-        item.amount.kind === "scalar" || item.amount.kind === "subtotal"
-          ? item.amount.value
-          : item.amount.minimum / 2 + item.amount.maximum / 2
-      const key = `${item.reference.configurationID}\u0000${item.tokens}\u0000${amount}`
-      selectedLabels.set(key, {
-        configurationID: item.reference.configurationID,
-        label: item.reference.label,
-        route: item.reference.estimate.route,
-        tokens: item.tokens,
-        amount,
-      })
-    }
-  }
-  const selectedLabelData = [...selectedLabels.values()]
-  const labelPosition = (tokensValue: number) =>
-    largestTokenValue > 0 && tokensValue >= largestTokenValue * 0.68 ? "left" : "right"
-  const selectedLabelAlignment = (tokensValue: number) => {
-    if (largestTokenValue <= 0) return "center" as const
-    const relativePosition = tokensValue / largestTokenValue
-    if (relativePosition <= 0.32) return "left" as const
-    if (relativePosition >= 0.68) return "right" as const
-    return "center" as const
-  }
   const fontSize = layout.fontSize
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
-  const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.66)), 8, 18)
-  const roomForAllLabels = plotWidth >= fontSize * 22
-  const labelItems: ChartLabelItem[] = points.map((point) => ({
-    id: point.configurationID,
-    x: point.tokensPerAcceptedTask,
-    y: point.currentMarketUSDPerAcceptedTask,
-    text: chartModelEffortLabel(point.label, point.route, labelLimit),
-    side: labelPosition(point.tokensPerAcceptedTask),
-    priority:
-      point.configurationID === data.selectedConfigurationID
-        ? 0
-        : frontier.has(point.configurationID)
-          ? 1
-          : 2,
-    model: point.route ? `${point.route.providerID}/${point.route.modelID}` : point.configurationID,
-  }))
-  const visibleLabels = visibleChartLabelIDs(labelItems, {
-    plotWidth,
-    plotHeight: Math.max(1, layout.height - layout.grid.top - layout.grid.bottom),
-    xMax: largestTokenValue * 1.1,
-    yMax: Math.max(0, ...points.map((point) => point.currentMarketUSDPerAcceptedTask)) * 1.1,
-    fontSize,
-  })
-  const boundedSelectedLabels = selectedLabelData.map((item) => ({
-    ...item,
-    alignment: selectedLabelAlignment(item.tokens),
-    visibleLabel: chartModelEffortLabel(item.label, item.route, labelLimit),
-  }))
-  const axisTitleFontSize = Math.min(
-    fontSize,
-    layout.width < 400 ? 12 : layout.width < 600 ? 16 : 20,
+  const plotHeight = Math.max(1, layout.height - layout.grid.top - layout.grid.bottom)
+  const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 1.25)), 12, 30)
+  const xAxis = niceAxis(
+    Math.max(0, ...marks.map((mark) => mark.tokens)) * 1.05,
+    layout.xSplitNumber,
   )
-  const compactYAxisName = layout.height < 240 || (layout.height < 280 && fontSize >= 18)
+  const yAxis = niceAxis(
+    Math.max(0, ...marks.map((mark) => mark.amount)) * 1.08,
+    layout.ySplitNumber,
+  )
+  const labelText = (mark: ChartMark) => chartMarkLabel(mark.label, mark.route, labelLimit)
+  const placed = placeChartLabels(
+    marks.map((mark) => ({
+      id: mark.configurationID,
+      x: mark.tokens,
+      y: mark.amount,
+      text: labelText(mark),
+      side:
+        mark.configurationID === selectedID
+          ? ("top" as const)
+          : xAxis.max > 0 && mark.tokens >= xAxis.max * 0.68
+            ? ("left" as const)
+            : ("right" as const),
+      priority: mark.configurationID === selectedID ? 0 : mark.frontier ? 1 : 2,
+    })),
+    { plotWidth, plotHeight, xMax: xAxis.max, yMax: yAxis.max, fontSize },
+  )
+  const selected = marks.find((mark) => mark.configurationID === selectedID)
+  const neutral = theme.neutral ?? theme.mutedText
+  const background = theme.background ?? theme.surface
+  // The selection is drawn last so its mark and label sit above the rest.
+  const drawn = marks.toSorted(
+    (left, right) =>
+      Number(left.configurationID === selectedID) - Number(right.configurationID === selectedID),
+  )
 
   return {
     animation: false,
-    backgroundColor: theme.surface,
+    backgroundColor: frame.backgroundColor,
     textStyle: { fontFamily: theme.fontFamily, color: theme.text },
     aria: { enabled: true, description, decal: { show: false } },
-    grid: layout.grid,
+    grid: frame.grid,
     tooltip: {
       trigger: "item",
       confine: true,
@@ -693,229 +729,101 @@ export function comparisonChartOptions(
     },
     xAxis: {
       type: "value",
-      name: "Tokens / accepted task",
+      name: "Tokens per accepted task",
       nameLocation: "middle",
-      nameGap: Math.ceil(axisTitleFontSize * 2.1),
+      nameGap: frame.xNameGap,
       min: 0,
-      splitNumber: layout.xSplitNumber,
-      nameTextStyle: {
-        color: theme.mutedText,
-        fontFamily: theme.fontFamily,
-        fontSize: axisTitleFontSize,
-      },
-      axisLabel: {
-        color: theme.mutedText,
-        fontFamily: theme.monoFontFamily,
-        fontSize,
-        margin: Math.max(4, Math.ceil(fontSize * 0.4)),
-        hideOverlap: true,
-        formatter: compactTokenAxisValue,
-      },
-      axisLine: { lineStyle: { color: theme.grid } },
-      splitLine: { lineStyle: { color: theme.grid, opacity: 0.35 } },
+      max: xAxis.max,
+      interval: xAxis.interval,
+      nameTextStyle: frame.axisName,
+      axisLabel: frame.axisLabel(compactTokenAxisValue),
+      axisLine: frame.axisLine,
+      axisTick: frame.axisTick,
+      splitLine: frame.splitLine,
     },
     yAxis: {
       type: "value",
-      name: compactYAxisName ? "USD / task" : "USD / accepted task",
+      name: plotHeight < 140 ? "Cost per task" : "Cost per accepted task",
       nameLocation: "middle",
-      nameGap: Math.max(4, Math.ceil(axisTitleFontSize * 0.65)),
+      nameGap: frame.yNameGap,
       min: 0,
-      splitNumber: layout.ySplitNumber,
-      nameTextStyle: {
-        color: theme.mutedText,
-        fontFamily: theme.fontFamily,
-        fontSize: axisTitleFontSize,
-      },
-      axisLabel: {
-        color: theme.mutedText,
-        fontFamily: theme.monoFontFamily,
-        fontSize,
-        margin: Math.max(4, Math.ceil(fontSize * 0.4)),
-        hideOverlap: true,
-        formatter: formatMarketAmount,
-      },
-      axisLine: { lineStyle: { color: theme.grid } },
-      splitLine: { lineStyle: { color: theme.grid, opacity: 0.35 } },
+      max: yAxis.max,
+      interval: yAxis.interval,
+      nameTextStyle: frame.axisName,
+      axisLabel: frame.axisLabel(formatAxisMoney),
+      axisLine: frame.axisLine,
+      axisTick: frame.axisTick,
+      splitLine: frame.splitLine,
     },
     series: [
       {
         id: "observations",
         name: "Observed cohort",
         type: "scatter",
-        data: points.map((point) => {
-          const selected = point.configurationID === data.selectedConfigurationID
+        data: drawn.map((mark) => {
+          const isSelected = mark.configurationID === selectedID
           return {
-            name: point.label,
-            value: [point.tokensPerAcceptedTask, point.currentMarketUSDPerAcceptedTask],
-            configurationID: point.configurationID,
-            groupID: point.groupID,
-            markKind: "canonical",
-            symbol: frontier.has(point.configurationID) ? "diamond" : "circle",
-            symbolSize: selected ? 14 : 10,
+            name: mark.label,
+            value: [mark.tokens, mark.amount],
+            configurationID: mark.configurationID,
+            ...(mark.groupID ? { groupID: mark.groupID } : {}),
+            markKind: mark.kind === "reference" ? "reference" : "canonical",
+            // Filled blue: on the best trade-off frontier. Hollow neutral: any other.
+            symbol: "circle",
+            symbolSize: isSelected ? 11 : 9,
             itemStyle: {
-              color: selected ? theme.accent : theme.text,
-              borderColor: selected ? theme.text : theme.accent,
-              borderWidth: selected ? 2 : 1,
-              ...(selected ? { shadowBlur: 12, shadowColor: theme.accent } : {}),
+              color: mark.frontier ? theme.accent : background,
+              borderColor: isSelected ? theme.text : mark.frontier ? theme.accent : neutral,
+              borderWidth: isSelected ? 2 : 1.5,
             },
             label: {
-              // Narrow plots keep only frontier labels; the rest stay on tooltip and keyboard.
-              show:
-                !selected &&
-                visibleLabels.has(point.configurationID) &&
-                (roomForAllLabels || frontier.has(point.configurationID)),
-              formatter: chartModelEffortLabel(point.label, point.route, labelLimit),
-              position: labelPosition(point.tokensPerAcceptedTask),
-              color: selected ? theme.text : theme.mutedText,
+              show: placed.has(mark.configurationID),
+              formatter: labelText(mark),
+              position: placed.get(mark.configurationID) ?? "right",
+              distance: 6,
+              color: isSelected ? theme.text : neutral,
               fontFamily: theme.fontFamily,
               fontSize,
-              fontWeight: selected ? 600 : 400,
+              fontWeight: isSelected ? 500 : 400,
             },
           }
         }),
         emphasis: { focus: "self" },
-        labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
+        z: 3,
       },
       {
         id: "authoritative-frontier",
         name: "Observed frontier",
         type: "line",
-        data:
-          frontierPoints.length > 1
-            ? frontierPoints.map((point) => [
-                point.tokensPerAcceptedTask,
-                point.currentMarketUSDPerAcceptedTask,
-              ])
-            : [],
+        data: chartFrontierLine(marks),
         smooth: false,
         connectNulls: false,
         showSymbol: false,
         silent: true,
         z: 1,
-        lineStyle: { color: theme.accent, width: 2, type: "dashed" },
+        lineStyle: { color: theme.accent, width: 1.5, opacity: 0.75 },
         emphasis: { disabled: true },
-        blur: { lineStyle: { opacity: 1 }, endLabel: { opacity: 1 } },
-        endLabel: frontierEndLabel("Observed frontier", frontierPoints.length > 1, theme, fontSize),
+        blur: { lineStyle: { opacity: 0.75 } },
       },
       {
-        id: "openrouter-reference-scalars",
-        name: "OpenRouter model catalog scalar reference",
+        id: "selected-halo",
+        name: "Selected model",
         type: "scatter",
-        data: scalarReferences.map(({ reference, amount, tokens: tokenCount }) => ({
-          name: reference.label,
-          value: [tokenCount, amount.value],
-          configurationID: reference.configurationID,
-          markKind: "reference",
-          symbol: "triangle",
-          symbolSize: reference.configurationID === data.selectedConfigurationID ? 18 : 12,
-          itemStyle: {
-            color: theme.accent,
-            borderColor: theme.text,
-            borderWidth: reference.configurationID === data.selectedConfigurationID ? 3 : 1,
-          },
-        })),
-        emphasis: { focus: "self" },
-      },
-      {
-        id: "openrouter-reference-subtotals",
-        name: "Priced subtotal · total unknown",
-        type: "scatter",
-        data: subtotalReferences.map(({ reference, amount, tokens: tokenCount }) => ({
-          name: reference.label,
-          value: [tokenCount, amount.value],
-          configurationID: reference.configurationID,
-          markKind: "reference",
-          symbol: "diamond",
-          symbolSize: reference.configurationID === data.selectedConfigurationID ? 18 : 12,
-          itemStyle: {
-            color: theme.surface,
-            borderColor: theme.accent,
-            borderWidth: reference.configurationID === data.selectedConfigurationID ? 3 : 2,
-          },
-        })),
-        emphasis: { focus: "self" },
-      },
-      {
-        id: "openrouter-conditional-ranges",
-        name: "Conditional range",
-        type: "custom",
-        renderItem: intervalRenderer(
-          theme,
-          false,
-          rangeReferences.map(({ reference }) => reference.configurationID),
-          data.selectedConfigurationID,
-        ),
-        data: rangeReferences.map(({ reference, amount, tokens: tokenCount }) => ({
-          name: reference.label,
-          value: [tokenCount, amount.minimum, amount.maximum],
-          configurationID: reference.configurationID,
-          markKind: "reference",
-        })),
-        encode: { x: 0, y: [1, 2] },
-        z: 6,
-      },
-      {
-        id: "openrouter-subtotal-ranges",
-        name: "Priced subtotal range · total unknown",
-        type: "custom",
-        renderItem: intervalRenderer(
-          theme,
-          true,
-          subtotalRangeReferences.map(({ reference }) => reference.configurationID),
-          data.selectedConfigurationID,
-        ),
-        data: subtotalRangeReferences.map(({ reference, amount, tokens: tokenCount }) => ({
-          name: reference.label,
-          value: [tokenCount, amount.minimum, amount.maximum],
-          configurationID: reference.configurationID,
-          markKind: "reference",
-        })),
-        encode: { x: 0, y: [1, 2] },
-        z: 6,
-      },
-      {
-        id: "selected-identities",
-        name: "Selected model identity",
-        type: "scatter",
-        data: boundedSelectedLabels.map((item) => ({
-          name: modelEffortLabel(item.label, item.route),
-          value: [item.tokens, item.amount],
-          configurationID: item.configurationID,
-          markKind: "selected-identity",
-          symbol: "circle",
-          symbolSize: 1,
-          itemStyle: { color: theme.surface, borderWidth: 0 },
-          label: {
-            show: true,
-            formatter: item.visibleLabel,
-            position: "top",
-            align: item.alignment,
-            distance: 6,
-          },
-        })),
+        data: selected
+          ? [
+              {
+                value: [selected.tokens, selected.amount],
+                configurationID: selected.configurationID,
+                markKind: "halo",
+                symbol: "circle",
+                symbolSize: 26,
+                itemStyle: { color: theme.accent, opacity: 0.16, borderWidth: 0 },
+              },
+            ]
+          : [],
         silent: true,
         tooltip: { show: false },
-        z: 20,
-        label: {
-          show: true,
-          formatter: (parameters: { name?: string }) =>
-            boundedModelEffortLabel(parameters.name ?? "Selected model", labelLimit),
-          color: theme.text,
-          fontFamily: theme.fontFamily,
-          fontSize,
-          fontWeight: 700,
-        },
-        labelLayout: ({ labelRect }: { labelRect: { x: number; width: number } }) => {
-          const plotLeft = layout.grid.left + 1
-          const plotRight = layout.width - layout.grid.right - 1
-          const dx =
-            labelRect.x < plotLeft
-              ? plotLeft - labelRect.x
-              : labelRect.x + labelRect.width > plotRight
-                ? plotRight - labelRect.x - labelRect.width
-                : 0
-          return { dx, moveOverlap: "shiftY", hideOverlap: false }
-        },
+        z: 2,
       },
     ],
   } satisfies EChartsCoreOption
@@ -1012,7 +920,7 @@ export class ComparisonChartAdapter<Data = ComparisonChartData> {
       (this.chart.getOption() as { series?: Array<{ id?: string; data?: unknown[] }> }).series ?? []
     for (const [seriesIndex, item] of series.entries()) {
       if (
-        item.id === "selected-identities" ||
+        item.id === "selected-halo" ||
         item.id === "authoritative-frontier" ||
         item.id === "benchmark-frontier"
       )
@@ -1092,13 +1000,14 @@ export function ComparisonChart(props: ComparisonChartProps) {
     }
     return [...choices.entries()]
   }
-  const hasFrontierPoint = () =>
-    props.points.some((point) => props.frontierConfigurationIDs.includes(point.configurationID))
-  const hasOtherMark = () =>
-    props.points.some(
-      (point) =>
-        plottable(point) && !props.frontierConfigurationIDs.includes(point.configurationID),
-    ) || (props.references ?? []).some(referenceIsPlottable)
+  const marks = () =>
+    comparisonChartMarks({
+      points: props.points,
+      references: props.references,
+      frontierConfigurationIDs: props.frontierConfigurationIDs,
+    })
+  const hasFrontierPoint = () => marks().some((mark) => mark.frontier)
+  const hasOtherMark = () => marks().some((mark) => !mark.frontier)
 
   createEffect(() => {
     // Subscribe before onMount supplies the non-reactive adapter. Reading props only
@@ -1210,30 +1119,31 @@ export function ComparisonChart(props: ComparisonChartProps) {
       <p aria-live="polite" style={visuallyHidden}>
         {announcement()}
       </p>
-      <ul
-        class="lazers-models-comparison-chart-legend"
-        aria-label="Chart mark legend"
-        hidden={empty()}
-      >
-        <Show when={hasFrontierPoint()}>
-          <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-frontier"
-              aria-hidden="true"
-            />
-            Best trade-off
-          </li>
+      <div class="lazers-models-chart-foot" hidden={empty()}>
+        <ul class="lazers-models-comparison-chart-legend" aria-label="Chart mark legend">
+          <Show when={hasFrontierPoint()}>
+            <li>
+              <span
+                class="lazers-models-chart-key lazers-models-chart-key-frontier"
+                aria-hidden="true"
+              />
+              Best trade-off
+            </li>
+          </Show>
+          <Show when={hasOtherMark()}>
+            <li>
+              <span
+                class="lazers-models-chart-key lazers-models-chart-key-canonical"
+                aria-hidden="true"
+              />
+              Other
+            </li>
+          </Show>
+        </ul>
+        <Show when={props.caption}>
+          <p class="lazers-models-chart-caption">{props.caption}</p>
         </Show>
-        <Show when={hasOtherMark()}>
-          <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-canonical"
-              aria-hidden="true"
-            />
-            Other
-          </li>
-        </Show>
-      </ul>
+      </div>
       <div
         class="lazers-models-chart-data-slot"
         ref={(element) => {

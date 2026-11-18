@@ -2,8 +2,10 @@ import { Plugin, Slot, bindPlugin } from "@opencode/plugin/gui"
 import { createMemo, Show } from "solid-js"
 import type { Component, JSX } from "solid-js"
 import type { InferenceRuntime } from "./runtime.ts"
+import { runtimeErrorReason } from "./runtime-status.ts"
 
-type IndicatorRuntime = Pick<InferenceRuntime, "modelName" | "phase">
+type IndicatorRuntime = Pick<InferenceRuntime, "modelName" | "phase"> &
+  Partial<Pick<InferenceRuntime, "detail">>
 type Tooltip = Component<{ value: JSX.Element; children: JSX.Element }>
 
 function phaseLabel(phase: string) {
@@ -34,11 +36,13 @@ export function InferenceIndicator(props: {
   const name = () => props.runtime.modelName()
   const phase = () => props.runtime.phase()
   const label = createMemo(() => {
-    const status = phaseLabel(phase())
+    // An error carries its short reason; the full text is in Settings.
+    const reason = phase() === "error" ? runtimeErrorReason(props.runtime.detail?.()) : undefined
+    const status = reason ? `${phaseLabel(phase())} · ${reason}` : phaseLabel(phase())
     return `${name() ? `${name()}: ` : "Local inference: "}${status}. Open LAZERS settings.`
   })
   const loading = () => phase() === "loading" || phase() === "downloading"
-  const available = () => phase() === "ready" || phase() === "busy"
+  const available = () => phase() === "ready"
 
   return (
     <props.Tooltip value={label()}>
@@ -73,7 +77,15 @@ export function InferenceIndicator(props: {
               fallback={
                 <Show
                   when={available()}
-                  fallback={<path class="lazers-gpu-core" d="m12 7 4.3 5-4.3 5-4.3-5Z" />}
+                  fallback={
+                    <Show
+                      when={phase() === "busy"}
+                      fallback={<path class="lazers-gpu-core" d="m12 7 4.3 5-4.3 5-4.3-5Z" />}
+                    >
+                      {/* Working: half-filled, so it never shares a glyph with Available. */}
+                      <path class="lazers-gpu-working" d="M12 3a9 9 0 0 1 0 18Z" />
+                    </Show>
+                  }
                 >
                   <path class="lazers-gpu-available" d="m8.5 12.2 2.2 2.2 4.8-5" />
                 </Show>
@@ -123,11 +135,11 @@ export const inferenceIndicatorStyles = `
   .lazers-local-status-icon .lazers-gpu-orbit path { stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
   .lazers-local-status-icon .lazers-gpu-available { stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .lazers-local-status-icon .lazers-gpu-core { stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+  .lazers-local-status-icon .lazers-gpu-working { fill: currentColor; stroke: none; }
+  .lazers-local-icon[data-phase="busy"] .lazers-local-status-icon { color: var(--text-interactive-base, var(--icon-base)); }
   .lazers-local-status-icon .lazers-gpu-error { stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
   .lazers-local-icon[data-phase="error"] .lazers-local-status-icon { color: var(--text-critical-base); }
   .lazers-local-icon[data-phase="loading"] .lazers-gpu-orbit, .lazers-local-icon[data-phase="downloading"] .lazers-gpu-orbit { transform-origin: 12px 12px; animation: lazers-gpu-spin 2s linear infinite; }
-  .lazers-local-icon[data-phase="busy"] .lazers-local-status-icon { animation: lazers-gpu-breathe 1.6s ease-in-out infinite; }
   @keyframes lazers-gpu-spin { to { transform: rotate(360deg); } }
-  @keyframes lazers-gpu-breathe { 50% { opacity: .45; } }
   @media (prefers-reduced-motion: reduce) { .lazers-local-icon * { animation: none !important; } .lazers-local-icon:active .lazers-local-status-icon { transform: none; } }
 `

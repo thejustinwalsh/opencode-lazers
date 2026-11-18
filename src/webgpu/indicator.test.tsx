@@ -126,6 +126,32 @@ test("the indicator uses a native keyboard control, semantic theme colors and re
 
     expect(html).toContain('<button type="button"')
     expect(html).toContain('aria-label="LFM3: Working. Open LAZERS settings."')
+    // Working has its own glyph: two states never share one.
+    expect(html).toContain("lazers-gpu-working")
+    expect(html).not.toContain("lazers-gpu-available")
+    const idle = renderToString(() =>
+      createComponent(InferenceIndicator, {
+        runtime: { modelName: () => "LFM3", phase: () => "ready" } as never,
+        Tooltip: tooltip as never,
+        onSettings: () => {},
+      }),
+    )
+    expect(idle).toContain("lazers-gpu-available")
+    expect(idle).not.toContain("lazers-gpu-working")
+    // An error names its short reason in the tooltip; the raw text is only in Settings.
+    const failed = renderToString(() =>
+      createComponent(InferenceIndicator, {
+        runtime: {
+          modelName: () => "LFM3",
+          phase: () => "error",
+          detail: () => "The main-process provider changed without exact retirement evidence",
+        } as never,
+        Tooltip: tooltip as never,
+        onSettings: () => {},
+      }),
+    )
+    expect(failed).toContain('aria-label="LFM3: Error · Provider changed. Open LAZERS settings."')
+    expect(failed).not.toContain("retirement evidence")
     expect(html).toContain('<span class="lazers-local-model">LFM3</span>')
     expect(inferenceIndicatorStyles).toContain(":focus-visible")
     expect(inferenceIndicatorStyles).toContain("--icon-base")

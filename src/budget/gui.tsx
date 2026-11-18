@@ -4,6 +4,7 @@ import { Budget, BudgetSettings, defaults, unavailable } from "./contract.ts"
 import type { Settings, Usage } from "./contract.ts"
 import { localWeek, ring } from "./usage.ts"
 import { SharedUsage } from "./poller.ts"
+import { SettingLabel, settingLabelStyles } from "../settings-label.tsx"
 
 export const budgetStores = { budget: Store.global(BudgetSettings, defaults) }
 type SettingsStore = { readonly value: Settings | undefined; set(value: Settings): void }
@@ -215,8 +216,7 @@ export function setupBudget(
         }
       >
         <Ui.SettingsRow
-          title="Show usage ring"
-          description="Read-only. It never limits spending or changes model routing."
+          title={<SettingLabel name="Show usage ring" hint="read-only; never limits or reroutes" />}
         >
           <Ui.Switch
             label="Show usage ring"
@@ -237,7 +237,9 @@ export function setupBudget(
           />
         </Ui.SettingsRow>
         <Show when={settings().provider === "go"}>
-          <Ui.SettingsRow title="Allowance" description="The Go meter the ring follows.">
+          <Ui.SettingsRow
+            title={<SettingLabel name="Allowance" hint="the Go meter the ring follows" />}
+          >
             <Ui.Select
               label="Allowance"
               value={settings().mode}
@@ -251,8 +253,7 @@ export function setupBudget(
         </Show>
         <Show when={settings().provider === "openrouter"}>
           <Ui.SettingsRow
-            title="Weekly budget"
-            description="In US dollars. The week starts Sunday, local time."
+            title={<SettingLabel name="Weekly budget" hint="week starts Sunday, local time" />}
           >
             <Ui.TextInput
               label="Weekly budget in US dollars"
@@ -276,6 +277,7 @@ export function setupBudget(
 }
 
 export const budgetStyles = `
+${settingLabelStyles}
 .lazers-budget { display:inline-flex; align-items:center; justify-content:center; gap:5px; flex-shrink:0; height:26px; min-width:26px; padding:0 7px; border:0; border-radius:6px; background:transparent; color:var(--text-base); font:inherit; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; cursor:pointer; }
 .lazers-budget:hover { background:var(--surface-base-hover); }
 .lazers-budget:focus-visible { outline:2px solid var(--text-base); outline-offset:-2px; }
