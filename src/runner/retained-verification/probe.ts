@@ -6,18 +6,16 @@ export type RetainedProbeBasis = {
   environment: { recordID: string; revision: string }
 }
 
-/** Current probe basis is deterministic and bound to one retained operation phase. */
+/** Current probe basis is deterministic and bound to one retained operation. */
 export function retainedVerificationProbeBasis(
   operation: RetainedVerification,
-  phase: "task" | "combined",
+  phase: "task",
 ): RetainedProbeBasis {
-  const workspace = phase === "task" ? operation.taskWorkspace : operation.combinedWorkspace
+  const workspace = operation.taskWorkspace
   if (!workspace) throw new Error(`Retained ${phase} candidate checkout has not been reserved`)
-  const artifact = phase === "task" ? operation.artifact : operation.combinedArtifact
-  if (!artifact) throw new Error(`Retained ${phase} candidate is not available yet`)
-  const revision = `${operation.id}:${operation.generation}:${phase}`
+  const revision = `${operation.id}:${phase}`
   return {
-    candidate: { revision: artifact, workspace },
+    candidate: { revision: operation.artifact, workspace },
     inputs: {
       recordID: `retained-verification:${operation.id}:inputs`,
       revision,

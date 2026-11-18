@@ -33,7 +33,6 @@ import type {
 export type RetainedCheckContext = {
   schemaVersion: 1
   operationID: string
-  generation: number
   phase: "task" | "combined"
   checkID: string
   directory: string
@@ -80,7 +79,6 @@ export class RetainedSetupProcessTreeUncertainError extends Error {
 type OwnerMarker = {
   schemaVersion: 1
   operationID: string
-  generation: number
   phase: "task" | "combined"
   checkID: string
   identity: string
@@ -453,7 +451,6 @@ function candidateDependencyEnvironmentIdentity(
 
 function temporaryDirectoryAliasPath(input: {
   operationID: string
-  generation: number
   phase: "task" | "combined"
   checkID: string
 }): string | null {
@@ -462,7 +459,6 @@ function temporaryDirectoryAliasPath(input: {
   const targetLength = tmpdir().length
   const prefix = `lazers-${fingerprint({
     operationID: input.operationID,
-    generation: input.generation,
     phase: input.phase,
     checkID: input.checkID,
   }).slice(0, 32)}`
@@ -473,7 +469,6 @@ function temporaryDirectoryAliasPath(input: {
 
 export function retainedTemporaryDirectoryAliasPath(input: {
   operationID: string
-  generation: number
   phase: "task" | "combined"
   checkID: string
 }): string | null {
@@ -482,7 +477,6 @@ export function retainedTemporaryDirectoryAliasPath(input: {
 
 function temporaryDirectoryAlias(input: {
   operationID: string
-  generation: number
   phase: "task" | "combined"
   checkID: string
   target: string
@@ -521,7 +515,6 @@ function temporaryDirectoryAlias(input: {
 export async function createRetainedCheckContext(input: {
   rootDirectory: string
   operationID: string
-  generation: number
   phase: "task" | "combined"
   checkID: string
   originalWorkspace: string
@@ -580,10 +573,7 @@ export async function createRetainedCheckContext(input: {
       throw new Error("Candidate dependencies require a committed manifest and private directory")
     await assertOwnedDependencyTree(candidateDependencies)
   }
-  const directory = join(
-    root,
-    `retained-${input.operationID}-${input.generation}-${input.phase}-${input.checkID}`,
-  )
+  const directory = join(root, `retained-${input.operationID}-${input.phase}-${input.checkID}`)
   if (lstatIfPresent(directory))
     throw new Error("Retained verification resources already exist; ownership is uncertain")
   input.onSetupPathReserved?.(directory)
@@ -735,7 +725,6 @@ export async function createRetainedCheckContext(input: {
   )
   const temporaryDirectoryLink = temporaryDirectoryAlias({
     operationID: input.operationID,
-    generation: input.generation,
     phase: input.phase,
     checkID: input.checkID,
     target: temporaryDirectoryResource.realPath,
@@ -754,7 +743,6 @@ export async function createRetainedCheckContext(input: {
   const identity = fingerprint({
     schemaVersion: 1,
     operationID: input.operationID,
-    generation: input.generation,
     phase: input.phase,
     checkID: input.checkID,
     directory: canonicalDirectory,
@@ -778,7 +766,6 @@ export async function createRetainedCheckContext(input: {
   const owner: OwnerMarker = {
     schemaVersion: 1,
     operationID: input.operationID,
-    generation: input.generation,
     phase: input.phase,
     checkID: input.checkID,
     identity,
@@ -794,13 +781,12 @@ export async function createRetainedCheckContext(input: {
   const db = new Database(database)
   try {
     db.exec(`CREATE TABLE retained_verification_owner (
-      operation_id TEXT NOT NULL, generation INTEGER NOT NULL, phase TEXT NOT NULL,
+      operation_id TEXT NOT NULL, phase TEXT NOT NULL,
       check_id TEXT NOT NULL, identity TEXT NOT NULL
     );
     CREATE TABLE verification_witness (key TEXT PRIMARY KEY, value TEXT NOT NULL);`)
-    db.query("INSERT INTO retained_verification_owner VALUES(?,?,?,?,?)").run(
+    db.query("INSERT INTO retained_verification_owner VALUES(?,?,?,?)").run(
       owner.operationID,
-      owner.generation,
       owner.phase,
       owner.checkID,
       owner.identity,
@@ -835,7 +821,6 @@ export async function createRetainedCheckContext(input: {
   return {
     schemaVersion: 1,
     operationID: input.operationID,
-    generation: input.generation,
     phase: input.phase,
     checkID: input.checkID,
     directory: canonicalDirectory,
@@ -863,7 +848,6 @@ export async function observeRetainedCheckContext(context: RetainedCheckContext)
     if (
       owner.schemaVersion !== 1 ||
       owner.operationID !== context.operationID ||
-      owner.generation !== context.generation ||
       owner.phase !== context.phase ||
       owner.checkID !== context.checkID ||
       owner.identity !== context.identity
@@ -972,7 +956,6 @@ export async function observeRetainedCheckContext(context: RetainedCheckContext)
         .query<
           {
             operation_id: string
-            generation: number
             phase: string
             check_id: string
             identity: string
@@ -983,7 +966,6 @@ export async function observeRetainedCheckContext(context: RetainedCheckContext)
       return Boolean(
         row &&
         row.operation_id === context.operationID &&
-        row.generation === context.generation &&
         row.phase === context.phase &&
         row.check_id === context.checkID &&
         row.identity === context.identity,
@@ -1000,7 +982,6 @@ export function retainedCheckIsolationWitness(context: RetainedCheckContext) {
   return {
     schemaVersion: 1 as const,
     operationID: context.operationID,
-    generation: context.generation,
     phase: context.phase,
     checkID: context.checkID,
     originalWorkspace: context.originalWorkspace,
@@ -1104,7 +1085,6 @@ export async function observeRetainedCheckIsolationWitness(
   witness: unknown,
   expected: {
     operationID: string
-    generation: number
     phase: "task" | "combined"
     checkID: string
     originalWorkspace: string
@@ -1122,7 +1102,6 @@ export async function observeRetainedCheckIsolationWitness(
     if (
       record.schemaVersion !== 1 ||
       record.operationID !== expected.operationID ||
-      record.generation !== expected.generation ||
       record.phase !== expected.phase ||
       record.checkID !== expected.checkID ||
       record.originalWorkspace !== realpathSync(expected.originalWorkspace) ||
@@ -1165,7 +1144,6 @@ export async function observeRetainedCheckIsolationWitness(
     const marker = JSON.parse(readFileSync(join(root, markerName), "utf8")) as OwnerMarker
     if (
       marker.operationID !== expected.operationID ||
-      marker.generation !== expected.generation ||
       marker.phase !== expected.phase ||
       marker.checkID !== expected.checkID ||
       marker.identity !== record.contextIdentity
@@ -1303,7 +1281,6 @@ export async function observeRetainedCheckIsolationWitness(
         .query<
           {
             operation_id: string
-            generation: number
             phase: string
             check_id: string
             identity: string
@@ -1314,7 +1291,6 @@ export async function observeRetainedCheckIsolationWitness(
       return Boolean(
         owner &&
         owner.operation_id === expected.operationID &&
-        owner.generation === expected.generation &&
         owner.phase === expected.phase &&
         owner.check_id === expected.checkID &&
         owner.identity === record.contextIdentity,

@@ -244,7 +244,6 @@ test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
     const contextInput = {
       rootDirectory: state,
       operationID: crypto.randomUUID(),
-      generation: 1,
       phase: "task",
       checkID: check.id,
       originalWorkspace: root,
@@ -346,7 +345,6 @@ test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
     expect(existsSync(receiptPath)).toBe(true)
     const expected = {
       operationID: context.operationID,
-      generation: context.generation,
       phase: context.phase,
       checkID: context.checkID,
       originalWorkspace: root,
@@ -453,7 +451,6 @@ test("another project executes a new scoped target against its committed depende
   const context = await createRetainedCheckContext({
     rootDirectory: state,
     operationID: crypto.randomUUID(),
-    generation: 1,
     phase: "task",
     checkID: "other-project-scoped-test",
     originalWorkspace: root,
@@ -508,7 +505,6 @@ test("another project executes a new scoped target against its committed depende
   expect(
     await observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
       operationID: context.operationID,
-      generation: context.generation,
       phase: context.phase,
       checkID: context.checkID,
       originalWorkspace: root,
@@ -530,7 +526,6 @@ test("another project executes a new scoped target against its committed depende
   }
   await removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
     operationID: context.operationID,
-    generation: context.generation,
     phase: context.phase,
     checkID: context.checkID,
     originalWorkspace: root,
@@ -574,7 +569,6 @@ test("an unavailable candidate-committed dependency source blocks before resourc
     createRetainedCheckContext({
       rootDirectory: state,
       operationID,
-      generation: 1,
       phase: "task",
       checkID: "missing-dependency-source",
       originalWorkspace: root,
@@ -647,7 +641,6 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
     const permitted = await createRetainedCheckContext({
       rootDirectory: state,
       operationID: rejectedOperation,
-      generation: 1,
       phase: "task",
       checkID: "missing-project-script",
       originalWorkspace: root,
@@ -676,7 +669,6 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
     const context = await createRetainedCheckContext({
       rootDirectory: state,
       operationID: crypto.randomUUID(),
-      generation: 1,
       phase: "task",
       checkID: "authored-build",
       originalWorkspace: root,
@@ -735,7 +727,6 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
     expect(
       await observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, {
         operationID: context.operationID,
-        generation: context.generation,
         phase: context.phase,
         checkID: context.checkID,
         originalWorkspace: root,
@@ -749,7 +740,6 @@ test.each(["standalone", "chain", "failed-chain"] as const)(
     ).toBe(true)
     await removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, {
       operationID: context.operationID,
-      generation: context.generation,
       phase: context.phase,
       checkID: context.checkID,
       originalWorkspace: root,
@@ -786,7 +776,6 @@ test("a verification resource aliasing a retained workspace is rejected", async 
     createRetainedCheckContext({
       rootDirectory: candidate,
       operationID: crypto.randomUUID(),
-      generation: 1,
       phase: "task",
       checkID: "alias-check",
       originalWorkspace: repo,

@@ -64,43 +64,25 @@ dirty, unmerged, active, or uncertain resources for explicit reconciliation.
 Runner cleanup also retires only the exact cleaned native location through the
 supported host lifecycle.
 
-## Verify a sealed source-quarantined candidate
+## Verify a commit
 
-Use the registered `lz-plan-command` action `verify-retained` as the current
-same-project Architect. Supply the current `projectID`, `planRevision`,
+Use the registered `lz-plan-command` action `verify-retained` as a live Architect
+of the project. Supply the current `projectID`, `planRevision`,
 `taskID`/`taskRevision`, latest `attemptID`, exact committed `artifact`, and a
-reason. A `running` plan may use this route for a candidate belonging to the exact
-latest `verifying` attempt. Existing stopped/accepted-plan verification remains
-available; if its attempt has a source-quarantine record, that record must meet
-the same exact authority checks rather than falling through to legacy admission.
-The source quarantine must be sealed, unheld, bound to the original
-request/session/assignment/workspace and immutable review-input binding, and have
-an installed source guard. The recorded requester may differ from the current
-owner only when the current same-project Architect owner is authorized for the
-plan and the durable plan history proves an ordered `OWNER_CONTINUED` or
-`OWNER_REASSIGNED` path from that requester after the original attempt began.
-This continuity grants current verification authority only: it does not rewrite
-the original requester, quarantine request, or review-input pin. Stale owners or
-unproven/contradictory transfer history remain denied. Pending, held, absent-guard,
-or otherwise mismatched quarantine facts do not authorize verification. Admission,
-isolated checks, and result publication retain the current owner/control-epoch
-fences, including across reopen. An active source-only operation remains valid if
-supported reconciliation changes its plan from `running` to `blocked`, provided
-the exact source authority and original verifying attempt remain unchanged.
+reason. The plan must be blocked, accepted or cleanup-blocked. The call binds no
+plan version, generation or authorization: other work on the plan moves the
+version without changing the candidate.
 
-The action runs only the task's declared checks in a separate retained-verification
-checkout. It does not prompt or replay the original worker, or run checks in or
-alter its checkout. It does not settle original uncertain effects, infer
-background idleness, release the source/resource holds, or authorize original-
-checkout cleanup. Passing task checks can accept the task node, but combined-plan
-acceptance remains a separate gate. Failed checks retain their receipts without
-changing the original source assignment or holds. A lost response is retried with
-the same `requestID` and exact bindings so the original operation and receipts
-are reused.
-
-This route is not original execution settlement or safe cleanup. Keep the source
-quarantine and historical holds intact; ordinary cleanup removes the checkout
-only when it is contained, clean and idle.
+The action runs the task's declared checks on that commit in a temporary
+retained-verification checkout and records pass or fail. It does not prompt or
+replay the original worker, run checks in or alter its checkout, settle its
+effects, infer background idleness, or authorize original-checkout cleanup. A pass
+accepts the task node and runs a plan stopped on that task's failure again; the
+ordinary combined check is the plan's acceptance. A failure keeps its receipts,
+notifies the Architect and changes nothing else; run `verify-retained` again once
+the cause is fixed. A lost response is retried with the same `requestID` and exact
+bindings so the original operation and receipts are reused. Ordinary cleanup
+removes the checkout only when it is contained, clean and idle.
 
 ## Clean up an owned worktree
 
@@ -158,7 +140,7 @@ fixtures. In particular, preserve `lz182-review-recovered` and
 `lz184-review-recovered` and their exact native registrations unless their owner
 separately authorizes a reviewed cleanup.
 
-## Extend a settled verification deadline
+## Verification timing
 
 Checks default to 15 minutes without real stdout/stderr progress and a 60-minute
 total hard backstop, shared across recognized command phases. Project options
@@ -168,23 +150,7 @@ total hard backstop, shared across recognized command phases. Project options
 execution. Receipts and inspection distinguish authored timing, resolved limits,
 amendment provenance and the actual timeout cause without exposing check output.
 
-Inspect the exact task, combined or retained check receipt first. Only the current
-plan owner may use `extend-verification-deadline`, and only after the candidate is
-unchanged, the timeout receipt is conclusive, and every relevant process and
-resource obligation has settled. Bind `projectID`, `planRevision`, current
-`expectedVersion`, `verificationPhase`, `checkID` and exact `artifact`. Task
-checks also require `taskID`, `taskRevision` and latest `attemptID`; retained
-continuation additionally requires exact `retainedVerificationID` and
-`retainedGeneration`. Choose strictly larger effective inactivity and/or hard
-limits, with inactivity no greater than the hard backstop.
-
-For ordinary task and combined checks, the amendment does not change the authored
-plan/task, acceptance evidence, candidate or original receipt and does not itself
-start work; separately `resume` the same task attempt or combined candidate. For
-an exact held or cancelled-held retained timeout, the same owner command is also
-explicit authorization to continue only that isolated check. The runtime retains
-passing and prior failed/interrupted receipts, the accepted task gate, original
-quarantine and cleanup/resource obligations. It does not change the candidate,
-command or acceptance, or prompt/replay the implementation worker. If any owner,
-operation, generation, phase, check, command, receipt, process or resource binding
-is stale or uncertain, leave the operation held for reconciliation.
+A timed-out or interrupted check is a failed check. There is no deadline-extension
+command: raise the project or per-check limit in the authored check, then re-run
+the check (`resume` for a blocked plan's combined check, `verify-retained` for a
+retained candidate).

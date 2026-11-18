@@ -1,9 +1,3 @@
-import {
-  createRetainedVerification,
-  retainedVerification,
-  retainedVerificationChecks,
-  retainedVerificationsForPlan,
-} from "./retained-verification/store.ts"
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -41,7 +35,6 @@ import { taskInstructions } from "../tasks/instructions.ts"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { sharedScheduler, schedulerProjectKey } from "./scheduler-coordinator.ts"
-import { inspectPlan } from "./inspection.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import {
@@ -3572,7 +3565,7 @@ test("registered plan command resumes settled combined verification without repl
   expect(replay).toMatchObject({
     status: "combined-verification-resumed",
     planID,
-    artifact: expect.any(String),
+    supersededEffectIDs: [interrupted.id],
     verificationEpoch: command.expectedVersion + 1,
   })
   const oldAfterReplay = replayedRuntime.store
@@ -3596,7 +3589,6 @@ test("registered plan command resumes settled combined verification without repl
     artifact: string
     workspace: string
     verificationEpoch: number
-    combinedContinuationFingerprint: string
     receiptPath: string
   }
   await waitForPath(join(freshPayload.workspace, ".lazers-combined-started"))
@@ -3624,7 +3616,8 @@ test("registered plan command resumes settled combined verification without repl
   expect(freshPayload.workspace).toBe(
     (JSON.parse(interrupted.payload) as { workspace: string }).workspace,
   )
-  expect(freshPayload.combinedContinuationFingerprint).toBeTruthy()
+  // No fingerprint binds the re-run to the interrupted check: it only supersedes it.
+  expect(freshPayload).not.toHaveProperty("combinedContinuationFingerprint")
   const freshReceipt = (JSON.parse(freshCompleted.receipt!) as { check: CheckReceipt }).check
   expect(freshReceipt).toMatchObject({ artifact: freshPayload.artifact, exitCode: 0 })
   expect(freshReceipt.aborted).not.toBe(true)
@@ -3642,7 +3635,7 @@ test("registered plan command resumes settled combined verification without repl
   expect(readFileSync(receiptPath, "utf8")).toContain('"aborted":true')
 })
 
-test("combined verification resume rejects wrong authority, changed candidates and unresolved activity", async () => {
+test("combined verification resume needs a live Architect and no running check, and re-runs on the current candidate otherwise", async () => {
   const { f, reopened, interrupted, planID } = await prepareInterruptedCombinedCheck()
   const plan = reopened.store.plan(planID)!
   const baseCommand = {
@@ -3652,7 +3645,6 @@ test("combined verification resume rejects wrong authority, changed candidates a
     reason: "Continue the exact accepted artifacts after interruption.",
   }
   const command = (requestID: string) => ({ ...baseCommand, requestID })
-  const originalNodeArtifact = reopened.store.nodes(planID)[0]!.artifact!
   const originalReceipt = interrupted.receipt!
 
   await expect(reopened.runtime.command(command("wrong-owner"), "foreign")).rejects.toThrow(
@@ -3669,60 +3661,6 @@ test("combined verification resume rejects wrong authority, changed candidates a
     "A live Architect session of this project must command the plan",
   )
   f.sessions.get("owner")!.projectID = "project"
-
-  reopened.store.atomic((db) =>
-    db
-      .query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?")
-      .run(f.base, planID, f.tasks[0]!.id),
-  )
-  await expect(reopened.runtime.command(command("changed-candidate"), "owner")).rejects.toThrow(
-    "retain its accepted artifact",
-  )
-  reopened.store.atomic((db) =>
-    db
-      .query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?")
-      .run(originalNodeArtifact, planID, f.tasks[0]!.id),
-  )
-
-  const interruptedPayload = JSON.parse(interrupted.payload) as { workspace: string }
-  const changedCandidate = join(interruptedPayload.workspace, ".lazers-candidate-change")
-  writeFileSync(changedCandidate, "candidate changed\n")
-  await expect(reopened.runtime.command(command("changed-workspace"), "owner")).rejects.toThrow(
-    "candidate changed",
-  )
-  rmSync(changedCandidate, { force: true })
-
-  const missingCleanup = JSON.parse(originalReceipt) as { result: { check: CheckReceipt } }
-  delete missingCleanup.result.check.processCleanup
-  reopened.store.atomic((db) =>
-    db
-      .query("UPDATE runner_effects SET receipt=? WHERE id=?")
-      .run(JSON.stringify(missingCleanup), interrupted.id),
-  )
-  await expect(
-    reopened.runtime.command(command("missing-cleanup-evidence"), "owner"),
-  ).rejects.toThrow("conclusively settled")
-  reopened.store.atomic((db) =>
-    db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(originalReceipt, interrupted.id),
-  )
-
-  const unsettled = JSON.parse(originalReceipt) as { result: { check: CheckReceipt } }
-  unsettled.result.check.processCleanup = {
-    state: "uncertain",
-    capability: "process-group",
-    detail: "simulated unsettled combined check",
-  }
-  reopened.store.atomic((db) =>
-    db
-      .query("UPDATE runner_effects SET receipt=? WHERE id=?")
-      .run(JSON.stringify(unsettled), interrupted.id),
-  )
-  await expect(reopened.runtime.command(command("unsettled-resources"), "owner")).rejects.toThrow(
-    "conclusively settled",
-  )
-  reopened.store.atomic((db) =>
-    db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(originalReceipt, interrupted.id),
-  )
 
   const liveActivity = startVerificationActivity({
     databasePath: f.repository.path,
@@ -3743,19 +3681,6 @@ test("combined verification resume rejects wrong authority, changed candidates a
   await liveActivity.settled
   forgetVerificationActivity(liveActivity.key, liveActivity.identity)
 
-  const unrelatedEffectID = crypto.randomUUID()
-  reopened.store.atomic((db) =>
-    db
-      .query("INSERT INTO runner_effects VALUES(?,?,NULL,NULL,?,'uncertain',?,NULL,1)")
-      .run(unrelatedEffectID, planID, "unrelated", JSON.stringify({ uncertainty: true })),
-  )
-  await expect(reopened.runtime.command(command("unrelated-effect"), "owner")).rejects.toThrow(
-    "unrelated unresolved effects",
-  )
-  reopened.store.atomic((db) =>
-    db.query("DELETE FROM runner_effects WHERE id=?").run(unrelatedEffectID),
-  )
-
   expect(reopened.store.plan(planID)?.state).toBe("blocked")
   expect(
     reopened.store.effects(planID).filter((effect) => effect.kind === "graph-verify:combined"),
@@ -3765,8 +3690,8 @@ test("combined verification resume rejects wrong authority, changed candidates a
   ).toBe(originalReceipt)
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
 
-  const resumed = command("unrelated-effect-after-admission")
-  await reopened.runtime.command(resumed, "owner")
+  // The check re-runs on the unchanged candidate: no receipt, fingerprint or deadline gates it.
+  await reopened.runtime.command(command("resume-combined-check"), "owner")
   await reopened.runtime.tick()
   const fresh = reopened.store
     .effects(planID)
@@ -3776,18 +3701,12 @@ test("combined verification resume rejects wrong authority, changed candidates a
     (activity) => activity.metadata.effectID === fresh.id,
   )!
   await waitForPath(join(freshPayload.workspace, ".lazers-combined-started"))
-  reopened.store.atomic((db) =>
-    db
-      .query("INSERT INTO runner_effects VALUES(?,?,NULL,NULL,?,'uncertain',?,NULL,1)")
-      .run(unrelatedEffectID, planID, "unrelated", JSON.stringify({ uncertainty: true })),
-  )
   writeFileSync(join(freshPayload.workspace, ".lazers-combined-release"), "release\n")
   await freshActivity.settled
   rmSync(join(freshPayload.workspace, ".lazers-combined-started"), { force: true })
   rmSync(join(freshPayload.workspace, ".lazers-combined-release"), { force: true })
   await drive(reopened.runtime, 4)
-  expect(reopened.store.plan(planID)?.state).not.toBe("accepted")
-  expect(reopened.store.plan(planID)?.artifact).toBe(null)
+  expect(reopened.store.plan(planID)?.state).toBe("accepted")
   expect(reopened.store.effects(planID).find((effect) => effect.id === fresh.id)?.state).toBe(
     "completed",
   )
@@ -13288,66 +13207,6 @@ test("worker lookup failure preserves cancellation without starving independent 
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("cancelled")
 })
 
-test("an authorized same-worker resume retires its superseded held verification and dispatches", async () => {
-  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
-  const { planID, attempt } = await holdInterruptedAttempt(f)
-  const plan = f.store.plan(planID)!
-  const operationID = crypto.randomUUID()
-  f.store.atomic((db) =>
-    createRetainedVerification(db, f.root, {
-      schemaVersion: 1,
-      id: operationID,
-      generation: 1,
-      projectID: "project",
-      projectDirectory: f.root,
-      planID,
-      planRevision: plan.revision,
-      planVersion: plan.version,
-      owner: "owner",
-      taskID: attempt.task_id,
-      taskRevision: 1,
-      attemptID: attempt.id,
-      originalSessionID: attempt.session_id,
-      originalMessageID: attempt.message_id,
-      originalWorkspace: attempt.workspace,
-      artifact: attempt.base_commit,
-      combinedArtifact: null,
-      taskWorkspace: null,
-      taskWorkspaceState: null,
-      combinedWorkspace: null,
-      combinedWorkspaceState: null,
-      inputFingerprint: "fixture",
-      environmentIdentity: "fixture",
-      reason: "Earlier verification",
-      state: "held",
-      holdReason: "Interrupted check",
-      cleanupState: "pending",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }),
-  )
-  await f.runtime.command(
-    {
-      requestID: "resume-after-held-verification",
-      planID,
-      expectedVersion: plan.version,
-      action: "resume",
-      taskID: attempt.task_id,
-      attemptID: attempt.id,
-      reason: "Continue the original worker",
-    },
-    "owner",
-  )
-  await f.runtime.tick()
-  expect(f.store.attempts(planID)).toEqual([
-    expect.objectContaining({ id: attempt.id, session_id: attempt.session_id, state: "running" }),
-  ])
-  expect(f.store.atomic((db) => retainedVerification(db, operationID))).toMatchObject({
-    state: "cancelled",
-    originalMessageID: attempt.message_id,
-  })
-})
-
 test("an authoritatively missing worker releases its reservation without deleting partial work", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
   await runPlan(f)
@@ -13393,357 +13252,6 @@ test("a settled verification timeout preserves its attempt and keeps its reserva
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)?.reason).toBe("Verification content timed out")
   expect(readFileSync(join(old.workspace, "shared.txt"), "utf8")).toBe("a")
-})
-
-test(
-  "an Architect extends a settled task-check deadline and explicitly resumes the same attempt",
-  async () => {
-    const checkState = mkdtempSync(join(tmpdir(), "lazers-deadline-task-checks-"))
-    cleanup.push(() => rmSync(checkState, { recursive: true, force: true }))
-    const f = fixture({
-      delayed: true,
-      commit: true,
-      shared: true,
-      taskFiles: [{ name: "a", path: "a.txt" }],
-      beforeCheck: "true",
-      checkCommand: () =>
-        `printf x >> '${join(checkState, "task-check-count")}'; sleep 1.2; test "$(cat a.txt)" = "a"`,
-      combinedCheckCommand: "true",
-    })
-    await runPlan(f)
-    await f.runtime.tick()
-    const workerAttempt = f.store.attempts(f.receipt.planID)[0]!
-    f.completeWorker(workerAttempt.session_id)
-    await drive(f.runtime, 8)
-
-    const stoppedPlan = f.store.plan(f.receipt.planID)!
-    const attempt = f.store.attempts(stoppedPlan.id)[0]!
-    const task = f.repository.get(f.tasks[0]!.id)!
-    const timeoutEffect = f.store
-      .effects(stoppedPlan.id)
-      .find((effect) => effect.kind === "verify:content")!
-    const originalArtifact = attempt.artifact!
-    expect(stoppedPlan.state).toBe("blocked")
-    expect(stoppedPlan.reason).toBe("Verification content timed out")
-    expect(attempt.state).toBe("verifying")
-    expect(timeoutEffect.state).toBe("completed")
-    expect((JSON.parse(timeoutEffect.receipt!) as { check: CheckReceipt }).check).toMatchObject({
-      timedOut: true,
-      artifact: originalArtifact,
-    })
-    expect(readFileSync(join(checkState, "task-check-count"), "utf8")).toBe("x")
-
-    const extend = {
-      requestID: "extend-task-content-timeout",
-      planID: stoppedPlan.id,
-      expectedVersion: stoppedPlan.version,
-      action: "extend-verification-deadline" as const,
-      projectID: "project",
-      planRevision: stoppedPlan.revision,
-      verificationPhase: "task" as const,
-      taskID: task.id,
-      taskRevision: task.revision,
-      attemptID: attempt.id,
-      artifact: originalArtifact,
-      checkID: "content",
-      timeoutMs: 3_000,
-      inactivityTimeoutMs: 3_000,
-      reason: "Allow the exact candidate check more time to complete.",
-    }
-    const invalidExtensions = [
-      ["wrong-project", { projectID: "another-project" }, "current same-project Architect"],
-      ["stale-revision", { planRevision: stoppedPlan.revision + 1 }, "exact stopped plan revision"],
-      ["wrong-task-revision", { taskRevision: task.revision + 1 }, "Task, latest attempt"],
-      ["wrong-attempt", { attemptID: crypto.randomUUID() }, "Task, latest attempt"],
-      ["changed-candidate", { artifact: "b".repeat(40) }, "Task, latest attempt"],
-      ["unknown-check", { checkID: "unknown" }, "declared task check"],
-      ["stale-version", { expectedVersion: stoppedPlan.version - 1 }, "Stale plan version"],
-    ] as const
-    for (const [suffix, fields, message] of invalidExtensions)
-      await expect(
-        f.runtime.command(
-          { ...extend, ...fields, requestID: `reject-deadline-extension-${suffix}` },
-          "owner",
-        ),
-      ).rejects.toThrow(message)
-    await expect(
-      f.runtime.command({ ...extend, timeoutMs: 1_000, inactivityTimeoutMs: 1_000 }, "owner"),
-    ).rejects.toThrow("strictly larger")
-    await expect(f.runtime.command(extend, "foreign-owner")).rejects.toThrow(
-      "A live Architect session of this project must command the plan",
-    )
-    const activeProbe = deferred<void>()
-    const activeIdentity = "deadline-extension-active-check-probe"
-    const activeActivity = startVerificationActivity({
-      databasePath: f.repository.path,
-      key: verificationActivityKey(f.repository.path, `deadline-extension-probe:${stoppedPlan.id}`),
-      identity: activeIdentity,
-      owner: "test",
-      metadata: { planID: stoppedPlan.id },
-      run: () => activeProbe.promise,
-    }).activity
-    await Promise.resolve()
-    await expect(
-      f.runtime.command(
-        { ...extend, requestID: "reject-deadline-extension-active-check" },
-        "owner",
-      ),
-    ).rejects.toThrow("live verification activity")
-    activeProbe.resolve()
-    await activeActivity.settled
-    forgetVerificationActivity(activeActivity.key, activeIdentity)
-    expect(f.store.verificationTimeoutAmendments(stoppedPlan.id)).toHaveLength(0)
-    const result = await f.runtime.command(extend, "owner")
-    expect(result).toMatchObject({
-      status: "verification-deadline-extended",
-      phase: "task",
-      taskID: task.id,
-      attemptID: attempt.id,
-      artifact: originalArtifact,
-      authoredTimeoutMs: 1_000,
-      previousTimeoutMs: 1_000,
-      effectiveTimeoutMs: 3_000,
-      policyRevision: 1,
-    })
-    const amendedPlan = f.store.plan(stoppedPlan.id)!
-    expect(amendedPlan.state).toBe("blocked")
-    expect(amendedPlan.body).toBe(stoppedPlan.body)
-    expect(amendedPlan.revision).toBe(stoppedPlan.revision)
-    expect(f.repository.get(task.id)?.revision).toBe(task.revision)
-    expect(f.store.verificationTimeoutAmendments(stoppedPlan.id)).toHaveLength(1)
-    expect(await f.runtime.command(extend, "owner")).toEqual(result)
-    await f.runtime.tick()
-    expect(
-      f.store.effects(stoppedPlan.id).filter((effect) => effect.kind === "verify:content"),
-    ).toHaveLength(1)
-    expect(readFileSync(join(checkState, "task-check-count"), "utf8")).toBe("x")
-
-    await f.runtime.stop()
-    const reopened = reopenRuntime(f)
-    const runtime = reopened.runtime
-    const store = reopened.store
-    expect(store.verificationTimeoutAmendments(stoppedPlan.id)).toHaveLength(1)
-    expect(await runtime.command(extend, "owner")).toEqual(result)
-    expect(store.plan(stoppedPlan.id)?.version).toBe(amendedPlan.version)
-    await drive(runtime, 1)
-    expect(
-      store.effects(stoppedPlan.id).filter((effect) => effect.kind === "verify:content"),
-    ).toHaveLength(1)
-    expect(readFileSync(join(checkState, "task-check-count"), "utf8")).toBe("x")
-
-    await runtime.command(
-      {
-        requestID: "resume-task-content-timeout",
-        planID: stoppedPlan.id,
-        expectedVersion: amendedPlan.version,
-        action: "resume",
-        taskID: task.id,
-        attemptID: attempt.id,
-        reason: "Continue verification of the unchanged candidate.",
-      },
-      "owner",
-    )
-    expect(store.attempts(stoppedPlan.id)).toHaveLength(1)
-    await drive(runtime, 12)
-    expect(store.plan(stoppedPlan.id)?.state).toBe("accepted")
-    expect(store.attempts(stoppedPlan.id)).toHaveLength(1)
-    expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
-    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-    expect(readFileSync(join(checkState, "task-check-count"), "utf8")).toBe("xx")
-    const effects = store.effects(stoppedPlan.id)
-    expect(effects.filter((effect) => effect.kind === "verify:before")).toHaveLength(1)
-    const contentEffects = effects.filter((effect) => effect.kind === "verify:content")
-    expect(contentEffects).toHaveLength(2)
-    expect(JSON.parse(contentEffects[0]!.receipt!).check.timedOut).toBe(true)
-    expect(JSON.parse(contentEffects[1]!.payload)).toMatchObject({
-      authoredCheck: { timeoutMs: 1_000 },
-      check: { timeoutMs: 3_000 },
-      verificationDeadline: {
-        authoredTimeoutMs: 1_000,
-        effectiveTimeoutMs: 3_000,
-        amendmentID: expect.any(String),
-        policyRevision: 1,
-      },
-    })
-    expect(JSON.parse(contentEffects[1]!.receipt!).check).toMatchObject({
-      timedOut: false,
-      verificationDeadline: {
-        authoredTimeoutMs: 1_000,
-        effectiveTimeoutMs: 3_000,
-        amendmentID: expect.any(String),
-        policyRevision: 1,
-      },
-    })
-
-    const acceptedPlan = store.plan(stoppedPlan.id)!
-    await runtime.command(
-      {
-        requestID: "retained-verify-amended-task-check",
-        planID: acceptedPlan.id,
-        expectedVersion: acceptedPlan.version,
-        action: "verify-retained",
-        projectID: "project",
-        planRevision: acceptedPlan.revision,
-        taskRevision: task.revision,
-        taskID: task.id,
-        attemptID: attempt.id,
-        artifact: originalArtifact,
-        reason: "Confirm the same accepted candidate in isolated verification.",
-      },
-      "owner",
-    )
-    await drive(runtime, 20)
-    const retainedOperation = store.atomic((db) =>
-      retainedVerificationsForPlan(db, f.root, acceptedPlan.id).at(-1),
-    )!
-    expect(retainedOperation.state).toBe("accepted")
-    const retainedTaskCheck = store.atomic((db) =>
-      retainedVerificationChecks(db, retainedOperation.id, "task").find(
-        (check) => check.checkID === "content",
-      ),
-    )!
-    expect(retainedTaskCheck.state).toBe("completed")
-    expect(JSON.parse(retainedTaskCheck.checkJSON)).toMatchObject({ timeoutMs: 3_000 })
-    expect(JSON.parse(retainedTaskCheck.receipt!).verificationDeadline).toMatchObject({
-      authoredTimeoutMs: 1_000,
-      effectiveTimeoutMs: 3_000,
-      amendmentID: expect.any(String),
-      policyRevision: 1,
-    })
-    const retainedView = inspectPlan(store, {
-      planID: acceptedPlan.id,
-      view: "retained-verifications",
-      taskIDs: [task.id],
-      limit: 10,
-    })
-    if (retainedView.mode !== "retained-verifications")
-      throw new Error("Retained verification inspection returned another view")
-    const retainedRecords = (
-      retainedView as unknown as {
-        latest: Array<{
-          recordStatus: string
-          checks: Array<{ checkID: string; verificationDeadline: unknown }>
-        }>
-      }
-    ).latest
-    expect(retainedRecords[0]?.recordStatus).toBe("recorded")
-    expect(
-      retainedRecords
-        .flatMap((operation) => operation.checks)
-        .find((check) => check.checkID === "content")?.verificationDeadline,
-    ).toMatchObject({
-      authoredTimeoutMs: 1_000,
-      effectiveTimeoutMs: 3_000,
-      amendmentID: expect.any(String),
-      policyRevision: 1,
-    })
-    const planInspection = inspectPlan(store, {
-      planID: acceptedPlan.id,
-      full: true,
-    }) as unknown as { verificationTimeoutAmendments: unknown[] }
-    expect(planInspection.verificationTimeoutAmendments).toHaveLength(1)
-    const compactInspection = inspectPlan(store, {
-      planID: acceptedPlan.id,
-      full: false,
-    }) as unknown as { checks: Record<string, unknown>[] }
-    expect(compactInspection.checks.find((check) => check.kind === "verify:content")).toMatchObject(
-      {
-        verificationDeadline: {
-          authoredTimeoutMs: 1_000,
-          effectiveTimeoutMs: 3_000,
-          policyRevision: 1,
-        },
-      },
-    )
-    expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
-    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  },
-  { timeout: 20_000 },
-)
-
-test("an Architect extends a settled combined-check deadline without restarting accepted workers", async () => {
-  const f = fixture({
-    delayed: true,
-    commit: true,
-    taskFiles: [{ name: "a", path: "a.txt" }],
-    combinedCheckCommand: "sleep 1.2",
-  })
-  await runPlan(f)
-  await f.runtime.tick()
-  const attempt = f.store.attempts(f.receipt.planID)[0]!
-  f.completeWorker(attempt.session_id)
-  await drive(f.runtime, 10)
-
-  const plan = f.store.plan(f.receipt.planID)!
-  const timeoutEffect = f.store
-    .effects(plan.id)
-    .find((effect) => effect.kind === "graph-verify:combined")!
-  const artifact = (JSON.parse(timeoutEffect.payload) as { artifact: string }).artifact
-  expect(plan.state).toBe("blocked")
-  expect(f.store.nodes(plan.id)[0]?.state).toBe("accepted")
-  expect(timeoutEffect.state).toBe("completed")
-  expect(JSON.parse(timeoutEffect.receipt!).check).toMatchObject({
-    timedOut: true,
-    artifact,
-  })
-  const extend = {
-    requestID: "extend-combined-timeout",
-    planID: plan.id,
-    expectedVersion: plan.version,
-    action: "extend-verification-deadline" as const,
-    projectID: "project",
-    planRevision: plan.revision,
-    verificationPhase: "combined" as const,
-    artifact,
-    checkID: "combined",
-    timeoutMs: 3_000,
-    inactivityTimeoutMs: 3_000,
-    reason: "Allow the exact combined candidate check more time.",
-  }
-  const result = await f.runtime.command(extend, "owner")
-  expect(result).toMatchObject({
-    status: "verification-deadline-extended",
-    phase: "combined",
-    artifact,
-    effectiveTimeoutMs: 3_000,
-  })
-  await f.runtime.tick()
-  expect(
-    f.store.effects(plan.id).filter((effect) => effect.kind === "graph-verify:combined"),
-  ).toHaveLength(1)
-  const amended = f.store.plan(plan.id)!
-  await f.runtime.command(
-    {
-      requestID: "resume-combined-after-deadline-extension",
-      planID: plan.id,
-      expectedVersion: amended.version,
-      action: "resume",
-      reason: "Continue the same accepted artifacts with the explicit deadline extension.",
-    },
-    "owner",
-  )
-  await drive(f.runtime, 12)
-  expect(f.store.plan(plan.id)?.state).toBe("accepted")
-  expect(f.store.attempts(plan.id)).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
-  const checks = f.store
-    .effects(plan.id)
-    .filter((effect) => effect.kind === "graph-verify:combined")
-  expect(checks).toHaveLength(2)
-  expect(JSON.parse(checks[1]!.payload)).toMatchObject({
-    authoredCheck: { timeoutMs: 1_000 },
-    check: { timeoutMs: 3_000 },
-  })
-  expect(JSON.parse(checks[1]!.receipt!).check).toMatchObject({
-    timedOut: false,
-    artifact,
-    verificationDeadline: {
-      authoredTimeoutMs: 1_000,
-      effectiveTimeoutMs: 3_000,
-      policyRevision: 1,
-    },
-  })
 })
 
 test("a stalled queue requests one Architect review and leaves scheduling decisions with the Architect", async () => {

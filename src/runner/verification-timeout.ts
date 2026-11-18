@@ -106,11 +106,6 @@ export type VerificationTimeoutTarget = {
   authoredHardTimeoutMs: number | null
   defaultInactivityTimeoutMs: number
   defaultHardTimeoutMs: number
-  retainedVerificationID?: string
-  retainedGeneration?: number
-  retainedTaskID?: string
-  retainedTaskRevision?: number
-  retainedAttemptID?: string
 }
 
 export type VerificationDeadline = {
@@ -138,19 +133,13 @@ function sameTargetIdentity(
   amendment: VerificationTimeoutAmendment,
   target: VerificationTimeoutTarget,
 ) {
+  // Amendments recorded for a retained operation applied to that operation only; none applies now.
   const matchesRetainedTarget =
-    target.retainedVerificationID === undefined
-      ? amendment.retainedVerificationID === undefined &&
-        amendment.retainedGeneration === undefined &&
-        amendment.retainedTaskID === undefined &&
-        amendment.retainedTaskRevision === undefined &&
-        amendment.retainedAttemptID === undefined
-      : amendment.retainedVerificationID === undefined ||
-        (amendment.retainedVerificationID === target.retainedVerificationID &&
-          amendment.retainedGeneration === target.retainedGeneration &&
-          amendment.retainedTaskID === target.retainedTaskID &&
-          amendment.retainedTaskRevision === target.retainedTaskRevision &&
-          amendment.retainedAttemptID === target.retainedAttemptID)
+    amendment.retainedVerificationID === undefined &&
+    amendment.retainedGeneration === undefined &&
+    amendment.retainedTaskID === undefined &&
+    amendment.retainedTaskRevision === undefined &&
+    amendment.retainedAttemptID === undefined
   return (
     amendment.projectID === target.projectID &&
     amendment.projectDirectory === target.projectDirectory &&

@@ -99,56 +99,6 @@ test("plan-level resume requires a reason and excludes task or candidate control
   expect(CommandInput.shape.action.description).toContain("Without taskID")
 })
 
-test("verification deadline extension is bound to one exact task or combined check", () => {
-  const task = {
-    requestID: "extend-task-check-deadline",
-    planID: crypto.randomUUID(),
-    expectedVersion: 7,
-    action: "extend-verification-deadline" as const,
-    projectID: "project",
-    planRevision: 1,
-    verificationPhase: "task" as const,
-    taskID: crypto.randomUUID(),
-    taskRevision: 1,
-    attemptID: crypto.randomUUID(),
-    artifact: "a".repeat(40),
-    checkID: "tests",
-    timeoutMs: 5_000,
-    reason: "The settled timeout needs a larger allowance.",
-  }
-  expect(CommandInput.parse(task)).toEqual(task)
-  for (const field of [
-    "projectID",
-    "planRevision",
-    "verificationPhase",
-    "taskID",
-    "taskRevision",
-    "attemptID",
-    "artifact",
-    "checkID",
-    "timeoutMs",
-    "reason",
-  ] as const) {
-    const invalid = { ...task }
-    delete invalid[field]
-    expect(CommandInput.safeParse(invalid).success).toBe(false)
-  }
-  expect(
-    CommandInput.safeParse({
-      ...task,
-      verificationPhase: "combined",
-      taskID: undefined,
-      taskRevision: undefined,
-      attemptID: undefined,
-    }).success,
-  ).toBe(true)
-  expect(CommandInput.safeParse({ ...task, timeoutMs: 1_000 }).success).toBe(true)
-  expect(CommandInput.safeParse({ ...task, workspaceMode: "shared" }).success).toBe(false)
-  expect(CommandInput.safeParse({ ...task, nativeInputID: "caller-controlled" }).success).toBe(
-    false,
-  )
-})
-
 test("Architect continuity preserves exact authored decisions and bounds the handoff", () => {
   const continuity = {
     decisions: [" Keep the accepted direction. "],
@@ -232,7 +182,7 @@ test("retained repair commands bind the exact task attempt artifact and concrete
   expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(false)
 })
 
-test("retained verification requests bind current revisions and cancellation names its operation", () => {
+test("retained verification requests bind current revisions, not a plan version", () => {
   expect(CommandInput.shape.action.description).not.toContain("quarantine")
   const command = {
     requestID: "verify-exact-retained-candidate",
@@ -260,56 +210,34 @@ test("retained verification requests bind current revisions and cancellation nam
     delete invalid[field]
     expect(CommandInput.safeParse(invalid).success).toBe(false)
   }
-  const cancellation = {
-    requestID: "cancel-retained-candidate",
-    planID: command.planID,
-    expectedVersion: command.expectedVersion,
-    action: "cancel-retained-verification" as const,
-    retainedVerificationID: crypto.randomUUID(),
-  }
-  expect(CommandInput.parse(cancellation)).toEqual(cancellation)
-  expect(
-    CommandInput.safeParse({ ...cancellation, retainedVerificationID: undefined }).success,
-  ).toBe(false)
 })
 
-test("interrupted retained combined-check continuation binds the full accepted candidate without timing fields", () => {
-  const command = {
-    requestID: "continue-interrupted-retained-combined-check",
+test("the retained extend, continue and cancel commands and their fields are gone", () => {
+  const base = {
+    requestID: "retired-retained-command",
     planID: crypto.randomUUID(),
     expectedVersion: 7,
-    action: "continue-retained-check" as const,
-    projectID: "project-id",
-    planRevision: 2,
-    taskID: crypto.randomUUID(),
-    taskRevision: 3,
-    attemptID: crypto.randomUUID(),
-    retainedVerificationID: crypto.randomUUID(),
-    retainedGeneration: 1,
-    verificationPhase: "combined" as const,
-    checkID: "combined-check",
-    artifact: "a".repeat(40),
-    reason: "Continue only the settled interrupted combined test",
   }
-  expect(CommandInput.parse(command)).toEqual(command)
+  for (const action of [
+    "extend-verification-deadline",
+    "continue-retained-check",
+    "cancel-retained-verification",
+  ])
+    expect(CommandInput.safeParse({ ...base, action }).success).toBe(false)
   for (const field of [
-    "projectID",
-    "planRevision",
-    "taskID",
-    "taskRevision",
-    "attemptID",
     "retainedVerificationID",
     "retainedGeneration",
     "verificationPhase",
     "checkID",
-    "artifact",
-    "reason",
-  ] as const) {
-    const invalid = { ...command }
-    delete invalid[field]
-    expect(CommandInput.safeParse(invalid).success).toBe(false)
-  }
-  expect(CommandInput.safeParse({ ...command, verificationPhase: "task" }).success).toBe(false)
-  expect(CommandInput.safeParse({ ...command, hardTimeoutMs: 60_000 }).success).toBe(false)
-  expect(CommandInput.safeParse({ ...command, inactivityTimeoutMs: 30_000 }).success).toBe(false)
+    "timeoutMs",
+    "inactivityTimeoutMs",
+    "hardTimeoutMs",
+  ])
+    expect(
+      CommandInput.safeParse({ ...base, action: "audit", [field]: "x" }).success,
+      `${field} must not be accepted`,
+    ).toBe(false)
+  expect(CommandInput.shape.action.description).not.toContain("extend-verification-deadline")
+  expect(CommandInput.shape.action.description).not.toContain("continue-retained-check")
+  expect(CommandInput.shape.action.description).not.toContain("cancel-retained-verification")
 })

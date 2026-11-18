@@ -165,37 +165,13 @@ phases. Project options `verificationInactivityTimeoutMs` and
 override those defaults. Legacy `timeoutMs` remains readable but is historical
 metadata, not a current execution limit.
 
-When an exact check times out, inspect its receipt and confirm the process and
-owned resources have conclusively settled before changing its timing.
-`extend-verification-deadline` is a separate owner-authorized command: bind the
-current project, plan revision/version, phase, check ID, candidate and task
-revision/attempt when applicable; choose strictly larger current timing limits.
-For an ordinary task or combined check, the amendment preserves the specification,
-acceptance evidence, candidate and historical receipt; then explicitly `resume`
-the same task attempt or combined candidate. Do not restart or prompt the worker.
-
-For an exact retained check already held on a settled timeout, the same command
-also requires `retainedVerificationID` and `retainedGeneration` (plus exact task,
-revision, attempt, phase, check and artifact) and is an explicit continuation of
-that isolated check. It may continue a held or cancelled-held operation only when
-its original candidate, command, owner, prior receipt and all resource obligations
-still match and are conclusively settled. It preserves prior receipts, task
-acceptance; it does not reset acceptance or prompt/replay a
-worker. A timing amendment by itself never starts work or grants acceptance.
-For a held retained **combined** check interrupted without timing out, use the
-separate `continue-retained-check` action shown by exact retained-verification
-inspection. Bind the current `projectID`, `planRevision`, `taskID`,
-`taskRevision`, `attemptID`, `retainedVerificationID`, `retainedGeneration`,
-combined `verificationPhase`, `checkID` and candidate `artifact`; do not supply
-timeout fields. The runtime admits it only for the exact conclusively settled
-interruption, unchanged specification/timing, accepted task and combined
-candidate, unchanged command/environment, and settled owned resources. It retains
-the prior interrupted receipt and passing evidence, then runs only that check in
-isolation. A subprocess receipt with `aborted: true` does not itself mean the
-retained operation was cancelled: the operation must still be held. This action
-never revives an intentionally cancelled operation or plan, certifies the
-original worker idle, or permits cleanup. Never
-replay the worker to recover a check.
+A timed-out or interrupted check is a failed check. Inspect its receipt, fix the
+cause (a slow check needs a larger authored `inactivityTimeoutMs`/`hardTimeoutMs`,
+a flaky one a fix), then re-run it: `resume` without a task re-runs a blocked
+plan's combined check on the current candidate, and `verify-retained` verifies a
+given commit in a temporary worktree and records pass or fail. After a failed
+`verify-retained`, run it again; nothing holds or waits for a continue or cancel.
+Never replay the worker to recover a check.
 For substantive corrections, ensure an idle worker resumes execution. Once work
 is running and no decision remains, end the turn; runtime notifications resume
 orchestration.

@@ -146,7 +146,7 @@ test("S2-4 startup inventory reports three drift classes without mutating tables
   const drift = repository.schemaDrift()
   expect(drift.undeclaredTables).toContain("legacy_orphan")
   expect(drift.missingTables).toContain("runner_plans")
-  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 11 })
+  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 12 })
   expect(repository.read((db) => db.query("SELECT * FROM legacy_orphan").all())).toEqual([
     { value: "keep" },
   ])
@@ -1210,12 +1210,11 @@ test("preparing, running, verifying, and approval-held execution cannot be exter
   const held = createCancelledPlan("approval-held")
   repository.atomic((db) => {
     ensureRetainedVerificationTables(db)
-    db.query("INSERT INTO runner_retained_verifications VALUES(?,?,?,?,?,?,?)").run(
+    db.query("INSERT INTO runner_retained_verifications VALUES(?,?,?,?,?,?)").run(
       crypto.randomUUID(),
       "/repo",
       held.plan.planID,
       held.task.id,
-      1,
       "task-checks",
       "{}",
     )

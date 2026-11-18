@@ -4,7 +4,6 @@ import { appendOutboxReceipt } from "./store.ts"
 import { coalescedOutcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
 import type { OutcomeOwnership } from "./inbox.ts"
-import { retainedVerification } from "./retained-verification/store.ts"
 import { sameProject } from "../project-key.ts"
 
 import type { TaskRuntime } from "./runtime.ts"
@@ -17,7 +16,7 @@ function replaceable(row: OutboxRow) {
     return (
       status !== "architect-handoff" &&
       status !== "queue-review" &&
-      status !== "retained-verification-held"
+      status !== "retained-verification-failed"
     )
   } catch {
     return false
@@ -162,38 +161,17 @@ export class OutcomeDelivery {
         this.runtime.store.nodes(plan.id).every((node) => node.state === "accepted")
       )
         continue
-      if (older.status === "retained-verification-held") {
-        const operationID = older.operationID
-        const operation =
-          typeof operationID === "string"
-            ? this.runtime.store.atomic((db) => retainedVerification(db, operationID))
-            : undefined
-        if (
-          operation?.state !== "held" ||
-          operation.planID !== plan.id ||
-          ["cancelling", "cancelled", "integrated"].includes(plan.state)
-        ) {
-          this.outcomeState(
-            message,
-            "superseded",
-            { kind: "retained-verification-hold-cleared" },
-            "OUTCOME_SUPERSEDED",
-            fence,
-          )
-          continue
-        }
-      }
       const replacement =
         older.status === "architect-handoff" ||
         older.status === "queue-review" ||
-        older.status === "retained-verification-held"
+        older.status === "retained-verification-failed"
           ? undefined
           : ordered.slice(index + 1).findLast((candidate) => {
               const next = JSON.parse(candidate.payload)
               if (
                 next.status === "architect-handoff" ||
                 next.status === "queue-review" ||
-                next.status === "retained-verification-held"
+                next.status === "retained-verification-failed"
               )
                 return false
               // Current outcomes include the whole accepted-artifact review set.

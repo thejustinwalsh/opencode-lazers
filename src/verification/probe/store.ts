@@ -711,11 +711,9 @@ export class ProbeRepository {
     input: { candidate: ProbeCandidate; inputs: ProbeBasis; environment: ProbeBasis },
     attempt: AttemptIdentity,
   ): void {
-    const phase = target.kind === "task" ? "task" : "combined"
-    const workspace = phase === "task" ? operation.taskWorkspace : operation.combinedWorkspace
-    const workspaceState =
-      phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
-    const activeStates = ["pending", "task-checks", "combined-checks"]
+    const workspace = operation.taskWorkspace
+    const workspaceState = operation.taskWorkspaceState
+    const activeStates = ["pending", "task-checks"]
     if (
       input.inputs.recordID !== `retained-verification:${operation.id}:inputs` ||
       !activeStates.includes(operation.state) ||
@@ -726,11 +724,11 @@ export class ProbeRepository {
       operation.planID !== attempt.plan_id ||
       operation.attemptID !== attempt.id ||
       operation.originalSessionID !== attempt.session_id ||
-      (target.kind === "task" && target.taskID !== operation.taskID) ||
-      (target.kind === "combined-candidate" && target.planID !== operation.planID)
+      target.kind !== "task" ||
+      target.taskID !== operation.taskID
     )
-      throw new Error("Retained probe is not bound to the current owned verification generation")
-    const basis = retainedVerificationProbeBasis(operation, phase)
+      throw new Error("Retained probe is not bound to the current owned verification")
+    const basis = retainedVerificationProbeBasis(operation, "task")
     if (input.candidate.workspace !== basis.candidate.workspace)
       throw new Error("Retained probe workspace does not match its authorized operation")
     const plan = db
@@ -741,14 +739,6 @@ export class ProbeRepository {
         "SELECT owner,revision,version,state,body FROM runner_plans WHERE id=? AND project_directory=?",
       )
       .get(operation.planID, this.repository.projectDirectory)
-    const controlEpoch = db
-      .query<{ epoch: number }, [string]>(
-        `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
-         WHERE plan_id=? AND task_id IS NULL AND event IN (
-           'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
-         )`,
-      )
-      .get(operation.planID)!.epoch
     const latestAttempt = db
       .query<{ id: string }, [string, string]>(
         "SELECT id FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
@@ -757,11 +747,8 @@ export class ProbeRepository {
     const task = this.repository.get(operation.taskID)
     if (
       !plan ||
-      plan.owner !== operation.owner ||
-      plan.version !== operation.planVersion ||
       plan.revision !== operation.planRevision ||
       !["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
-      controlEpoch !== operation.ownerEpoch ||
       !task ||
       task.revision !== operation.taskRevision ||
       task.provenance.projectDirectory !== operation.projectDirectory ||
@@ -774,13 +761,6 @@ export class ProbeRepository {
       operation.taskRevision
     )
       throw new Error("Retained probe task revision changed in the current plan")
-    const latestGeneration = db
-      .query<{ generation: number | null }, [string, string, string]>(
-        "SELECT MAX(generation) AS generation FROM runner_retained_verifications WHERE project_directory=? AND plan_id=? AND task_id=?",
-      )
-      .get(operation.projectDirectory, operation.planID, operation.taskID)?.generation
-    if (latestGeneration !== operation.generation)
-      throw new Error("Retained verification generation is no longer current")
     const canonicalCandidate = realpathSync(workspace)
     const canonicalOriginal = realpathSync(attempt.workspace)
     // Two Git processes (was four): toplevel+HEAD, then one status that also

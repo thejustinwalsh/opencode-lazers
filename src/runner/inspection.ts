@@ -1,5 +1,4 @@
 import { z } from "zod"
-import { PlanInput } from "./schema.ts"
 import { planPrioritySortSQL } from "./priority.ts"
 import { retainedVerificationsForInspection } from "./retained-verification/store.ts"
 import type {
@@ -19,18 +18,6 @@ const JournalInspectPlanInput = z.strictObject({
   limit: z.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().min(1).max(8192).optional(),
 })
-const RetainedVerificationInspectPlanInput = z.strictObject({
-  planID: z.uuid(),
-  view: z.literal("retained-verifications"),
-  taskIDs: z
-    .array(z.uuid())
-    .min(1)
-    .max(100)
-    .refine((taskIDs) => new Set(taskIDs).size === taskIDs.length)
-    .optional(),
-  limit: z.number().int().min(1).max(20).optional().default(10),
-  cursor: z.string().min(1).max(8192).optional(),
-})
 export const SourceMessagesInspectPlanSchema = z.strictObject({
   planID: z.uuid(),
   view: z.literal("source-messages"),
@@ -47,12 +34,10 @@ export const SourceMessagesInspectPlanSchema = z.strictObject({
 export const InspectPlanInput = z.union([
   CompactInspectPlanInput,
   JournalInspectPlanInput,
-  RetainedVerificationInspectPlanInput,
   SourceMessagesInspectPlanSchema,
 ])
 export type InspectPlanInput = z.infer<typeof InspectPlanInput>
 export type SourceMessagesInspectPlanInput = z.infer<typeof SourceMessagesInspectPlanSchema>
-type RetainedVerificationInspectPlanInput = z.infer<typeof RetainedVerificationInspectPlanInput>
 
 export type CompactWaitingPlan = {
   planID: string
@@ -449,115 +434,19 @@ function retainedNextSteps(
   operation: RetainedVerificationProjection,
   plan: InspectablePlan,
   nodeStates: ReadonlyMap<string, string>,
-  store: RunnerStore,
 ) {
   const nextSteps: Record<string, unknown>[] = []
-  if (operation.recordStatus !== "recorded" || !operation.operationID || !operation.generation)
-    return nextSteps
-
-  if (
-    ["pending", "task-checks", "combined-checks", "task-accepted", "held"].includes(operation.state)
-  )
+  if (operation.recordStatus !== "recorded" || !operation.operationID) return nextSteps
+  if (["pending", "task-checks"].includes(operation.state))
     nextSteps.push({
-      action: "cancel-retained-verification",
+      action: "wait",
+      owner: "runtime",
       operationID: operation.operationID,
-      generation: operation.generation,
-      condition:
-        "Conditional: the current same-project Architect and runtime operation/owner fences must still authorize this exact operation.",
+      condition: "Runtime owns check progress and records pass or fail; nothing else is exposed.",
     })
-
-  const interruptedCombinedCheck =
-    operation.checks.find(
-      (check) =>
-        check.phase === "combined" &&
-        check.binding === "matched" &&
-        check.candidateArtifact === operation.combinedArtifact &&
-        check.state === "completed" &&
-        check.receipt === "recorded" &&
-        check.cleanupState === "complete" &&
-        check.result.status === "failed" &&
-        check.result.timedOut === false &&
-        check.result.aborted === true &&
-        check.result.phasesComplete === false &&
-        check.result.stopCause === "cancelled",
-    ) ?? null
-  let combinedCheckIDs: string[] | undefined
-  try {
-    combinedCheckIDs = PlanInput.parse(JSON.parse(plan.body)).verification.map((check) => check.id)
-  } catch {
-    combinedCheckIDs = undefined
-  }
-  const taskCheckIDs = operation.taskID
-    ? store.repository.get(operation.taskID)?.proposal.verification.map((check) => check.id)
-    : undefined
-  const expectedChecks = [
-    ...(taskCheckIDs ?? []).map((checkID) => ({ phase: "task", checkID })),
-    ...(combinedCheckIDs ?? []).map((checkID) => ({ phase: "combined", checkID })),
-  ]
-  const exactCheckSet =
-    !operation.checksTruncated &&
-    taskCheckIDs !== undefined &&
-    combinedCheckIDs !== undefined &&
-    operation.checks.length === expectedChecks.length &&
-    expectedChecks.every((expected) =>
-      operation.checks.some(
-        (check) => check.phase === expected.phase && check.checkID === expected.checkID,
-      ),
-    )
-  const otherChecksPass = expectedChecks.every((expected) => {
-    const check = operation.checks.find(
-      (candidate) => candidate.phase === expected.phase && candidate.checkID === expected.checkID,
-    )
-    if (!check) return false
-    if (check === interruptedCombinedCheck) return true
-    const expectedArtifact =
-      expected.phase === "task" ? operation.candidateArtifact : operation.combinedArtifact
-    return (
-      check.binding === "matched" &&
-      check.candidateArtifact === expectedArtifact &&
-      check.state === "completed" &&
-      check.receipt === "recorded" &&
-      check.cleanupState === "complete" &&
-      check.result.status === "passed" &&
-      check.result.timedOut === false &&
-      check.result.aborted !== true &&
-      check.result.phasesComplete !== false
-    )
-  })
-  if (
-    operation.state === "held" &&
-    operation.planRevision === plan.revision &&
-    ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) &&
-    operation.taskID &&
-    operation.taskRevision &&
-    operation.attemptID &&
-    operation.candidateArtifact &&
-    operation.combinedArtifact &&
-    nodeStates.get(operation.taskID) === "accepted" &&
-    interruptedCombinedCheck &&
-    exactCheckSet &&
-    otherChecksPass
-  )
-    nextSteps.push({
-      action: "continue-retained-check",
-      operationID: operation.operationID,
-      generation: operation.generation,
-      planRevision: operation.planRevision,
-      taskID: operation.taskID,
-      taskRevision: operation.taskRevision,
-      attemptID: operation.attemptID,
-      verificationPhase: "combined",
-      checkID: interruptedCombinedCheck.checkID,
-      artifact: operation.combinedArtifact,
-      reason: "Continue this exact settled combined-check interruption",
-      condition:
-        "Conditional: the current same-project Architect must still match the exact held generation, accepted task and combined candidate; all other checks and owned resources must remain settled. This authorizes only isolated check execution and does not establish original-worker idleness or permit source settlement or cleanup.",
-    })
-
   if (
     ["accepted", "failed", "cancelled"].includes(operation.state) &&
     operation.planRevision === plan.revision &&
-    operation.planVersion === plan.version &&
     operation.taskID &&
     operation.taskRevision &&
     operation.attemptID &&
@@ -569,27 +458,15 @@ function retainedNextSteps(
   )
     nextSteps.push({
       action: "verify-retained",
-      basedOn: { operationID: operation.operationID, generation: operation.generation },
-      generation: "new",
+      basedOn: { operationID: operation.operationID },
       planRevision: operation.planRevision,
       taskID: operation.taskID,
       taskRevision: operation.taskRevision,
       attemptID: operation.attemptID,
       candidateArtifact: operation.candidateArtifact,
       condition:
-        "Conditional: this is a fresh generation, never a same-generation retry; runtime admission rechecks current owner, plan, exact latest attempt/candidate and resource fences.",
+        "Conditional: this is a new call on a commit, never a retry of the recorded one; runtime admission rechecks the current owner, plan revision and exact latest attempt/candidate.",
     })
-
-  if (["pending", "task-checks", "combined-checks", "task-accepted"].includes(operation.state))
-    nextSteps.push({
-      action: "wait",
-      owner: "runtime",
-      operationID: operation.operationID,
-      generation: operation.generation,
-      condition:
-        "Runtime owns check progress and settlement; no same-generation resume/retry or public cleanup action is exposed.",
-    })
-
   return nextSteps
 }
 
@@ -597,68 +474,36 @@ function decorateRetainedInspection(
   inspection: RetainedVerificationInspection,
   plan: InspectablePlan,
   nodeStates: ReadonlyMap<string, string>,
-  store: RunnerStore,
 ) {
   return {
     ...inspection,
     latest: inspection.latest.map((operation) => ({
       ...operation,
-      nextSteps: retainedNextSteps(operation, plan, nodeStates, store),
+      nextSteps: retainedNextSteps(operation, plan, nodeStates),
     })),
-    history: {
-      ...inspection.history,
-      records: inspection.history.records.map((operation) => ({ ...operation, nextSteps: [] })),
-    },
   }
 }
 
-function retainedInspection(
-  store: RunnerStore,
-  plan: InspectablePlan,
-  taskIDs: string[] | undefined,
-  limit: number,
-  cursor?: string,
-) {
+function retainedInspection(store: RunnerStore, plan: InspectablePlan) {
   return store.atomic((db) =>
-    retainedVerificationsForInspection(
-      db,
-      store.repository.projectDirectory,
-      plan.id,
-      taskIDs,
-      limit,
-      cursor,
-    ),
+    retainedVerificationsForInspection(db, store.repository.projectDirectory, plan.id),
   )
 }
 
 export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
   if ("view" in input && input.view === "journal")
     return store.architectSourceJournalPage(input.planID, input.limit, input.cursor)
-  if ("view" in input && input.view === "retained-verifications") {
-    const plan = store.plan(input.planID)
-    if (!plan) throw new Error("Plan not found")
-    const nodes = store.nodes(plan.id)
-    const projection = retainedInspection(store, plan, input.taskIDs, input.limit, input.cursor)
-    return decorateRetainedInspection(
-      projection,
-      plan,
-      new Map(nodes.map((node) => [node.task_id, node.state])),
-      store,
-    )
-  }
   if ("view" in input)
     throw new Error("Selected source messages require an authenticated active Architect read")
   if (input.full) {
     if (!input.planID) return { plans: store.plans(), audit: store.audit() }
     const detail = store.detail(input.planID)
-    const projection = retainedInspection(store, detail.plan, undefined, 10)
     return {
       ...detail,
       retainedVerifications: decorateRetainedInspection(
-        projection,
+        retainedInspection(store, detail.plan),
         detail.plan,
         new Map(detail.nodes.map((node) => [node.task_id, node.state])),
-        store,
       ),
     }
   }

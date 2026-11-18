@@ -5,7 +5,7 @@ export type RetiredGateMove = {
   from: string
   to: string
   reason: string | null
-  retired: "human-evidence" | "source-quarantine" | "stale-hold"
+  retired: "human-evidence" | "source-quarantine" | "stale-hold" | "retained-verification"
 }
 
 /** `Combined artifact evidence missing: a:human` or `Required evidence missing: a:human, b:human`. */
@@ -225,4 +225,192 @@ export function retireOutboxLifecycle(db: Database) {
   db.exec(
     `UPDATE runner_outbox SET state='delivered' WHERE state IN ('admitted','consumed','unknown','reconciling')`,
   )
+}
+
+export type RetiredRetainedOperation = {
+  operationID: string
+  planID: string
+  from: string
+  to: "accepted" | "cancelled"
+}
+
+/** Plan holds raised by the retired retained and combined-continuation bindings. */
+const RETAINED_GATE_REASONS: readonly RegExp[] = [
+  /^Combined verification continuation /,
+  /^Interrupted combined verification candidate changed/,
+  /retained operation binds/i,
+  /^Retained (?:verification|check) /,
+  /^Explicit retained check continuation/,
+]
+
+function columnExists(db: Database, table: string, column: string) {
+  return db
+    .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+    .all()
+    .some((row) => row.name === column)
+}
+
+/**
+ * Offline, idempotent collapse of retained verification to one call that passes
+ * or fails.
+ *
+ * - An operation in a retired or running state is closed. Its task candidate was
+ *   accepted when a task-acceptance event names it (state `accepted`); otherwise
+ *   it is `cancelled` with its prior hold reason kept in the retirement reason,
+ *   so verification simply re-runs with `verify-retained`. The existing
+ *   terminal cleanup removes its checkouts and settles its resources.
+ * - Operation payloads lose the generation, plan-version, authorization,
+ *   quarantine and fingerprint bindings; the hold reason becomes the failure
+ *   reason. The generation column is dropped from the operation, evidence and
+ *   resource tables, and a retained check retry authorization becomes the
+ *   completed check it was issued for.
+ * - A plan blocked on a retired retained or continuation binding leaves
+ *   `blocked` through the plan machine, so the combined check re-runs.
+ * - Queued held-verification notices are superseded; the hold they describe is gone.
+ */
+export function retireRetainedVerificationGates(db: Database): {
+  operations: RetiredRetainedOperation[]
+  plans: RetiredGateMove[]
+} {
+  const operations: RetiredRetainedOperation[] = []
+  const plans: RetiredGateMove[] = []
+  if (tableExists(db, "runner_retained_verifications")) {
+    // Only the legacy shape holds retired operations; a current table's live calls are left alone.
+    const legacyShape = columnExists(db, "runner_retained_verifications", "generation")
+    const open = legacyShape
+      ? db
+          .query<{ id: string; plan_id: string; task_id: string; state: string }, []>(
+            `SELECT id,plan_id,task_id,state FROM runner_retained_verifications
+         WHERE state IN ('pending','task-checks','combined-checks','task-accepted','held')`,
+          )
+          .all()
+      : []
+    for (const operation of open) {
+      const taskAccepted = tableExists(db, "runner_transitions")
+        ? Boolean(
+            db
+              .query(
+                `SELECT 1 FROM runner_transitions
+                 WHERE plan_id=? AND event IN ('RETAINED_TASK_CANDIDATE_ACCEPTED','RETAINED_CANDIDATE_ACCEPTED')
+                   AND json_extract(payload,'$.operationID')=? LIMIT 1`,
+              )
+              .get(operation.plan_id, operation.id),
+          )
+        : false
+      const to = taskAccepted ? "accepted" : "cancelled"
+      db.query(
+        `UPDATE runner_retained_verifications SET state=?,
+           payload=json_set(payload,'$.state',?,'$.holdReason',
+             CASE WHEN ?='cancelled'
+               THEN 'Retired by the retained-verification collapse; run verify-retained again. Previous reason: '
+                 || COALESCE(json_extract(payload,'$.holdReason'),'none')
+               ELSE NULL END)
+         WHERE id=? AND state=?`,
+      ).run(to, to, to, operation.id, operation.state)
+      const version =
+        db
+          .query<{ version: number }, [string]>("SELECT version FROM runner_plans WHERE id=?")
+          .get(operation.plan_id)?.version ?? 0
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,'RETAINED_VERIFICATION_RETIRED',?,?)",
+      ).run(
+        operation.plan_id,
+        operation.task_id,
+        version,
+        JSON.stringify({ operationID: operation.id, from: operation.state, to }),
+        Date.now(),
+      )
+      operations.push({
+        operationID: operation.id,
+        planID: operation.plan_id,
+        from: operation.state,
+        to,
+      })
+    }
+    // Payloads carry the new shape; the column and its unique key go with the generation.
+    if (columnExists(db, "runner_retained_verifications", "generation")) {
+      db.exec(`UPDATE runner_retained_verifications SET payload=json_set(
+          json_remove(payload,'$.generation','$.planVersion','$.ownerEpoch','$.sourceQuarantine',
+            '$.combinedInputFingerprint','$.inputFingerprint','$.holdReason'),
+          '$.state',state,
+          '$.failureReason',COALESCE(json_extract(payload,'$.holdReason'),json_extract(payload,'$.failureReason')))`)
+      // Child tables reference the parent by name. Dropping it counts dangling rows
+      // against the deferred foreign-key check; inserting the rows back into a
+      // table of the same name clears the count before commit.
+      db.exec("PRAGMA defer_foreign_keys = ON")
+      db.exec(`CREATE TABLE runner_retained_verifications_stash AS
+          SELECT id,project_directory,plan_id,task_id,state,payload
+          FROM runner_retained_verifications ORDER BY rowid;
+        DROP INDEX IF EXISTS runner_retained_verifications_active;
+        DROP TABLE runner_retained_verifications;
+        CREATE TABLE runner_retained_verifications (
+          id TEXT PRIMARY KEY,
+          project_directory TEXT NOT NULL,
+          plan_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          state TEXT NOT NULL,
+          payload TEXT NOT NULL
+        );
+        INSERT INTO runner_retained_verifications(id,project_directory,plan_id,task_id,state,payload)
+          SELECT id,project_directory,plan_id,task_id,state,payload
+          FROM runner_retained_verifications_stash;
+        DROP TABLE runner_retained_verifications_stash;
+        CREATE INDEX runner_retained_verifications_active
+          ON runner_retained_verifications(project_directory,plan_id,task_id,state);`)
+    }
+    if (tableExists(db, "runner_retained_verification_checks"))
+      db.exec(
+        `UPDATE runner_retained_verification_checks SET state='completed' WHERE state='retry-authorized'`,
+      )
+    if (
+      tableExists(db, "runner_retained_verification_evidence") &&
+      columnExists(db, "runner_retained_verification_evidence", "generation")
+    ) {
+      db.exec("DROP INDEX IF EXISTS runner_retained_verification_evidence_lookup")
+      db.exec("ALTER TABLE runner_retained_verification_evidence DROP COLUMN generation")
+      db.exec(`CREATE INDEX IF NOT EXISTS runner_retained_verification_evidence_lookup
+        ON runner_retained_verification_evidence(operation_id,phase,task_id,assertion_id,artifact)`)
+    }
+    if (
+      tableExists(db, "runner_retained_verification_resources") &&
+      columnExists(db, "runner_retained_verification_resources", "generation")
+    )
+      db.exec("ALTER TABLE runner_retained_verification_resources DROP COLUMN generation")
+  }
+  if (tableExists(db, "runner_plans")) {
+    const blocked = db
+      .query<{ id: string; reason: string; version: number }, []>(
+        "SELECT id,reason,version FROM runner_plans WHERE state='blocked' AND reason IS NOT NULL AND artifact IS NULL",
+      )
+      .all()
+    for (const plan of blocked) {
+      if (!RETAINED_GATE_REASONS.some((pattern) => pattern.test(plan.reason))) continue
+      const changed = db
+        .query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+        )
+        .run(plan.id, plan.reason).changes
+      if (changed !== 1) continue
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,'PLAN_GATE_RETIRED',?,?)",
+      ).run(
+        plan.id,
+        plan.version + 1,
+        JSON.stringify({ gate: "retained-verification", previousReason: plan.reason }),
+        Date.now(),
+      )
+      plans.push({
+        planID: plan.id,
+        from: "blocked",
+        to: "running",
+        reason: plan.reason,
+        retired: "retained-verification",
+      })
+    }
+  }
+  if (tableExists(db, "runner_outbox"))
+    db.exec(`UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded'),
+        receipt=COALESCE(receipt,json_object('history',json_array(json_object('kind','retired-retained-hold'))))
+      WHERE state='pending' AND json_extract(payload,'$.status')='retained-verification-held'`)
+  return { operations, plans }
 }

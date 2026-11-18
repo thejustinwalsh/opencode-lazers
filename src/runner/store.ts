@@ -17,6 +17,7 @@ import {
   retireHumanEvidenceGate,
   retireOutboxLifecycle,
   retireSourceQuarantines,
+  retireRetainedVerificationGates,
   retireStaleHolds,
 } from "./retire-gates.ts"
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
@@ -1065,6 +1066,8 @@ export class RunnerStore {
         retireHumanEvidenceGate(db)
         retireSourceQuarantines(db)
         retireStaleHolds(db)
+        // Generation 12: retained verification is one call; its generations and bindings are gone.
+        retireRetainedVerificationGates(db)
       },
     )
     installPrioritySchema(repository)

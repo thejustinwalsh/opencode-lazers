@@ -1118,7 +1118,7 @@ export class TaskRepository {
               .query<{ present: number }, [string, string]>(
                 `SELECT 1 AS present FROM runner_retained_verifications
                  WHERE project_directory=? AND task_id=?
-                   AND state IN ('pending','task-checks','combined-checks')
+                   AND state IN ('pending','task-checks')
                  LIMIT 1`,
               )
               .get(this.projectDirectory, parsed.taskID),
