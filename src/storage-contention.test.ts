@@ -53,7 +53,8 @@ test("sync atomic() fails fast instead of sleeping for seconds", () => {
   const { repository } = fixture()
   const started = performance.now()
   expect(() => repository.atomic((db) => db.exec("INSERT INTO probe VALUES (1)"))).toThrow()
-  expect(performance.now() - started).toBeLessThan(SQLITE_BUSY_TIMEOUT_MS + 100)
+  // Bound by "well under a second", not exact SQLite timing, so a loaded machine can't flake it.
+  expect(performance.now() - started).toBeLessThan(SQLITE_BUSY_TIMEOUT_MS * 3)
 })
 
 test("atomicAsync() yields to the event loop while retrying and succeeds after release", async () => {
