@@ -121,6 +121,45 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     </section>
   )
 
+  /** The pane's one line: persona, then its model and effort. Also the collapsed pane. */
+  const detailsHeader = () => {
+    const persona = assignmentSettings()
+    if (!persona) return undefined
+    return (
+      <span class="lazers-models-selected-identity">
+        <h2 id={assignmentEditorTitleID()}>{persona.personaLabel}</h2>
+        <code>
+          {modelSelectionCaption()}
+          {assignmentRoute().variant ? ` · ${assignmentRoute().variant}` : ""}
+        </code>
+        <Show when={assignmentDirty()}>
+          <span class="lazers-models-selected-price">Edited · not saved</span>
+        </Show>
+      </span>
+    )
+  }
+  const detailsActions = () =>
+    assignmentSettings() && (assignmentDirty() || assignmentBusy()) ? (
+      <>
+        <Ui.Button
+          size="small"
+          variant="contrast"
+          disabled={!assignmentCanSave()}
+          busy={assignmentBusy()}
+          onClick={saveAssignmentRoute}
+        >
+          Save
+        </Ui.Button>
+        <Ui.Button
+          size="small"
+          variant="ghost-muted"
+          disabled={!assignmentDirty() || assignmentBlocked()}
+          onClick={revertAssignmentRoute}
+        >
+          Revert
+        </Ui.Button>
+      </>
+    ) : undefined
   const AssignmentEditor = () => (
     <Show when={assignmentSettings()}>
       {(persona) => (
@@ -128,12 +167,6 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
           class="lazers-models-assignment-editor"
           aria-labelledby={assignmentEditorTitleID()}
         >
-          <header class="lazers-models-assignment-editor-heading">
-            <h3 id={assignmentEditorTitleID()}>{persona().personaLabel}</h3>
-            <Show when={assignmentDirty()}>
-              <span>Edited · not saved</span>
-            </Show>
-          </header>
           <Show when={visible()?.catalogStatus === "loading"}>
             <p class="lazers-models-catalog-status" role="status">
               <Ui.Loader size="small" /> Loading native models…
@@ -221,25 +254,6 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
               </Show>
             )}
           </Show>
-          <div class="lazers-models-assignment-actions">
-            <Ui.Button
-              size="small"
-              variant="contrast"
-              disabled={!assignmentCanSave()}
-              busy={assignmentBusy()}
-              onClick={saveAssignmentRoute}
-            >
-              Save
-            </Ui.Button>
-            <Ui.Button
-              size="small"
-              variant="ghost-muted"
-              disabled={!assignmentDirty() || assignmentBlocked()}
-              onClick={revertAssignmentRoute}
-            >
-              Revert
-            </Ui.Button>
-          </div>
           <p class="lazers-models-note">New workers use this route. Running workers keep theirs.</p>
           <Show when={assignmentWrite()}>
             {(write) => {
@@ -392,6 +406,9 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
   return (
     <SplitPane
       ctl={ctl}
+      empty="No persona selected"
+      detailsHeader={detailsHeader()}
+      detailsActions={detailsActions()}
       header={props.header}
       top={<PersonaRows />}
       bottom={<AssignmentEditor />}

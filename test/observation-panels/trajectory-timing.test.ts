@@ -642,7 +642,9 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
     expect(duration()).toBe("240ms")
     // The outcome, kind and duration are the pane's sticky header, not part of the scrolling body.
-    expect(container.querySelector(".lazers-details-header")?.textContent).toContain("check · exit 0")
+    expect(container.querySelector(".lazers-details-header")?.textContent).toContain(
+      "check · exit 0",
+    )
     expect(
       container
         .querySelector(".lazers-trajectory-inspector")!

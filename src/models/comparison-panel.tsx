@@ -180,7 +180,7 @@ function ModelPanel(
   props: PanelProps & { ctx: ModelsContext; openTrajectory: TaskTrajectoryOpener },
 ) {
   const ctl = createModelsController(props)
-  const { refs, split, chartHeight, prefs } = ctl
+  const { refs, chartHeight, prefs } = ctl
   const header = <PanelHeader ctl={ctl} />
   return (
     <div
@@ -189,7 +189,6 @@ function ModelPanel(
         refs.root = element
       }}
       style={{
-        "--models-top-size": `${split()}%`,
         ...(chartHeight() ? { "--models-chart-height": `${chartHeight()}px` } : {}),
       }}
     >

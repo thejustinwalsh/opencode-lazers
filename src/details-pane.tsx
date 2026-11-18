@@ -27,6 +27,8 @@ export function DetailsPane(props: {
   /** The list or chart above the pane. */
   top: JSX.Element
   class?: string
+  /** Nothing to inspect: the bar stays, but it cannot open or resize. */
+  disabled?: boolean
   bodyClass?: string
   /** Dims the body while its content is stale (`data-panel-dimmed`). */
   dimmed?: "true" | undefined
@@ -52,9 +54,11 @@ export function DetailsPane(props: {
     if (next.open !== before.open) props.onOpen(next.open)
     if (next.open && Math.abs(next.size - before.size) > 0.0005) props.onSize(next.size)
   }
-  const toggle = () => props.onOpen(!stored().open)
+  const toggle = () => {
+    if (!props.disabled) props.onOpen(!stored().open)
+  }
   const startDrag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
-    if (event.button !== undefined && event.button > 0) return
+    if (props.disabled || (event.button !== undefined && event.button > 0)) return
     const handle = event.currentTarget
     const top = bar?.getBoundingClientRect().top ?? event.clientY
     const grab = event.clientY - top
@@ -87,6 +91,7 @@ export function DetailsPane(props: {
     handle.addEventListener("pointercancel", end)
   }
   const onKeyDown: JSX.EventHandler<HTMLDivElement, KeyboardEvent> = (event) => {
+    if (props.disabled) return
     const next = keyboardState(stored(), event.key, containerHeight())
     if (!next) return
     event.preventDefault()
@@ -97,6 +102,7 @@ export function DetailsPane(props: {
       class={`lazers-details${props.class ? ` ${props.class}` : ""}`}
       data-open={state().open ? "true" : "false"}
       data-dragging={drag() ? "true" : undefined}
+      data-disabled={props.disabled ? "true" : undefined}
       style={{ "--details-size": String(state().size) }}
       ref={(element) => {
         root = element
@@ -132,6 +138,7 @@ export function DetailsPane(props: {
             class="lazers-details-chevron"
             aria-expanded={state().open}
             aria-controls={bodyID}
+            disabled={props.disabled}
             aria-label={state().open ? "Collapse details" : "Expand details"}
             onClick={toggle}
           >
