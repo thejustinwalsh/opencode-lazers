@@ -1,9 +1,10 @@
-import { benchmarkPrice, routeKey } from "./benchmark-baseline.ts"
+import { BENCHMARK_PRICE_MIX, benchmarkPrice, routeKey } from "./benchmark-baseline.ts"
+import type { PublicCatalogItem } from "./comparison-schema.ts"
 import type { BenchmarkPrice, BenchmarkRoute, BenchmarkSourceDates } from "./benchmark-baseline.ts"
 import { paretoFrontier } from "./chart-layout.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
-import { createModelIndex, vendorSlug } from "./name-identity.ts"
+import { createModelIndex, parseModelName, vendorSlug } from "./name-identity.ts"
 import { chooseScoreBasis, scoreOn } from "./public-score.ts"
 import type { ScoreBasis } from "./public-score.ts"
 
@@ -157,6 +158,8 @@ export type CatalogInput = {
   observed: ReadonlyMap<string, ObservedFacts>
   /** Routes named by the model router. */
   routed: ReadonlyArray<BenchmarkRoute>
+  /** Public-catalog models no route of this install runs: listed and priced, not routable. */
+  external?: ReadonlyArray<PublicCatalogItem>
   label: (route: BenchmarkRoute, candidate: ModelCandidate | undefined) => string
 }
 
@@ -186,6 +189,8 @@ export type CatalogSummary = {
   anthropic: number
   openai: number
   routed: number
+  /** Models of the public catalogs beyond this install's routes (Anthropic, OpenAI, newest). */
+  external: number
   /** Where the ordering came from, when it was a source's listing. */
   orderSource: ModelPriceSource | null
   /** The public score that ranks the set, and how many loaded models it reaches. */
@@ -239,10 +244,33 @@ export function buildCatalog(input: CatalogInput): {
   entries: CatalogEntry[]
   summary: CatalogSummary
 } {
-  const groups = new Map<string, ModelCandidate[]>()
+  const routeGroups = new Map<string, ModelCandidate[]>()
   for (const candidate of input.candidates) {
     const key = routeKey(candidate.identity)
-    groups.set(key, [...(groups.get(key) ?? []), candidate])
+    routeGroups.set(key, [...(routeGroups.get(key) ?? []), candidate])
+  }
+  // A dated snapshot and its `latest` alias (`claude-opus-4-5-20251101`, `claude-opus-4-5`) are
+  // one model under one provider: one entry, spoken for by the undated alias, else the newest.
+  const sameModel = new Map<string, Array<{ key: string; id: string }>>()
+  for (const [key, group] of routeGroups) {
+    const { providerID, modelID } = group[0]!.identity
+    const identity = parseModelName(modelID, {
+      vendor: vendorSlug(providerID) ? providerID : null,
+    })
+    const alias = `${providerID}\u0000${identity.key}`
+    sameModel.set(alias, [...(sameModel.get(alias) ?? []), { key, id: modelID }])
+  }
+  const aliasOf = new Map<string, string>()
+  const groups = new Map<string, ModelCandidate[]>()
+  for (const members of sameModel.values()) {
+    const chosen = members.toSorted((a, b) => {
+      const left = parseModelName(a.id).date
+      const right = parseModelName(b.id).date
+      if ((left === null) !== (right === null)) return left === null ? -1 : 1
+      return (right ?? "").localeCompare(left ?? "") || a.id.length - b.id.length
+    })[0]!
+    groups.set(chosen.key, routeGroups.get(chosen.key)!)
+    for (const member of members) aliasOf.set(member.key, chosen.key)
   }
   type Base = {
     key: string
@@ -339,7 +367,8 @@ export function buildCatalog(input: CatalogInput): {
     }),
   )
   const joinedKey = (route: BenchmarkRoute) => {
-    const key = routeKey(route)
+    const own = routeKey(route)
+    const key = aliasOf.get(own) ?? own
     if (bases.has(key)) return key
     const result = catalogIndex.resolve(route.modelID, {
       vendor: vendorSlug(route.providerID) ? route.providerID : null,
@@ -356,6 +385,42 @@ export function buildCatalog(input: CatalogInput): {
     if ((observedFacts.get(target)?.accepted ?? -1) < facts.accepted)
       observedFacts.set(target, facts)
   }
+  // The public catalogs' models that no route runs join the set, priced by the source that
+  // listed them (when that source is among the configured ones) and scored on the same basis.
+  const externals = new Map<
+    string,
+    { item: PublicCatalogItem; price: BenchmarkPrice; score: number | null }
+  >()
+  for (const item of input.external ?? []) {
+    const source = item.source === "models-dev" ? "models-dev" : "openrouter"
+    if (!item.prices || !input.priceSources.includes(source)) continue
+    const key = routeKey({ providerID: item.providerID, modelID: item.modelID })
+    if (bases.has(key) || externals.has(key)) continue
+    const { input: inShare, output: outShare } = BENCHMARK_PRICE_MIX
+    const price: BenchmarkPrice = {
+      source,
+      input: item.prices.input,
+      output: item.prices.output,
+      cacheRead: item.prices.cacheRead,
+      cacheWrite: item.prices.cacheWrite,
+      blended: (item.prices.input * inShare + item.prices.output * outShare) / (inShare + outShare),
+      appliesBelowTokens: null,
+      retrievedAt:
+        (source === "models-dev" ? input.sourceDates.modelsDev : input.sourceDates.openrouter) ??
+        null,
+    }
+    const rows =
+      choice.basis.source === "epoch"
+        ? item.benchmarks.filter((row) => row.benchmarkID === choice.basis.benchmarkID)
+        : []
+    const best = rows.reduce<number | null>(
+      (top, row) => (top === null || row.score > top ? row.score : top),
+      null,
+    )
+    externals.set(key, { item, price, score: best === null ? null : Math.round(best * 1000) / 10 })
+    catalogKeys.add(key)
+  }
+
   const tags = new Map<string, Set<SourceTag>>()
   const add = (key: string, tag: SourceTag) => tags.set(key, (tags.get(key) ?? new Set()).add(tag))
   for (const key of observedFacts.keys()) add(key, "observed")
@@ -368,18 +433,21 @@ export function buildCatalog(input: CatalogInput): {
     const route = base?.route ?? { providerID, modelID }
     const observed = observedFacts.get(key) ?? null
     const representative = base?.representative
+    const outside = base ? undefined : externals.get(key)
+    const price = base?.price ?? outside?.price ?? null
     return {
       id: representative?.candidateID ?? key,
       route,
-      label: input.label(route, representative),
+      label: outside ? (outside.item.name ?? modelID) : input.label(route, representative),
       tags: (["observed", "routed", "catalog"] as const).filter((tag) => set.has(tag)),
-      price: base?.price ?? null,
-      projection: base?.price && input.profile ? projectCost(input.profile, base.price) : null,
-      score: base?.score ?? null,
+      price,
+      projection: price && input.profile ? projectCost(input.profile, price) : null,
+      score: base?.score ?? outside?.score ?? null,
       scoreName: choice.basis.label,
       contextTokens:
         representative?.native.contextTokens ??
         representative?.externalModel?.contextLength ??
+        outside?.item.contextTokens ??
         null,
       observed,
       frontier: false,
@@ -399,6 +467,7 @@ export function buildCatalog(input: CatalogInput): {
       anthropic: byok.anthropic,
       openai: byok.openai,
       routed: entries.filter((entry) => entry.tags.includes("routed")).length,
+      external: externals.size,
       orderSource,
       scoreBasis: choice.basis,
       scored: scored.length,
@@ -413,6 +482,7 @@ export function catalogSummaryText(summary: CatalogSummary) {
     summary.anthropic ? `${summary.anthropic} Anthropic` : "",
     summary.openai ? `${summary.openai} OpenAI` : "",
     summary.routed ? `${summary.routed} routed` : "",
+    summary.external ? `${summary.external} more from public catalogs` : "",
   ]
     .filter(Boolean)
     .join(" · ")

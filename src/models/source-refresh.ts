@@ -398,6 +398,9 @@ async function boundedJSON(
   }
 }
 
+/** Let queued requests run between the large steps of a public-source refresh. */
+const yieldTurn = () => new Promise<void>((resolve) => setImmediate(resolve))
+
 async function boundedBytes(
   response: Response,
   signal: AbortSignal,
@@ -860,6 +863,7 @@ export class ModelEvidenceRefresher {
       const payload = await boundedJSON(response, requestSignal, MAX_MODELS_DEV_BYTES)
       signal.throwIfAborted()
       if (timeout.aborted) throw new SourceFailure("timeout")
+      await yieldTurn()
       let records
       try {
         records = parseModelsDev(payload, this.routedProviders(native))
@@ -867,6 +871,7 @@ export class ModelEvidenceRefresher {
       } catch {
         throw new SourceFailure("malformed-response")
       }
+      await yieldTurn()
       return {
         state: "success",
         snapshot: makeSnapshot("models-dev", this.store.projectDirectory, generation, {
@@ -898,6 +903,7 @@ export class ModelEvidenceRefresher {
       const bytes = await boundedBytes(response, requestSignal, MAX_EPOCH_ARCHIVE_BYTES)
       signal.throwIfAborted()
       if (timeout.aborted) throw new SourceFailure("timeout")
+      await yieldTurn()
       let records
       try {
         records = parseEpochArchive(bytes).slice(0, 2_000)

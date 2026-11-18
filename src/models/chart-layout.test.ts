@@ -272,3 +272,27 @@ test("the ranking keeps the order given, spreads cost along x and scrolls past t
   ).toBe(false)
   expect(truncateText("abcdef", 4)).toBe("abc…")
 })
+
+test("the ranking axis is linear from $0 unless the spread is extreme, and reserves the score label", () => {
+  const rows = (values: number[]) =>
+    values.map((value, index) => ({ id: `m${index}`, label: `M${index}`, value, score: 69.5 }))
+  const common = { width: 474, formatValue: String, showScore: true }
+  // $0.10 to $42 (420x) is log; $15 to $42 and even $0.30 to $42 (140x) stay linear.
+  expect(layoutRanking({ ...common, rows: rows([0.1, 15, 42]) }).xScale.kind).toBe("log")
+  const spread = layoutRanking({ ...common, rows: rows([0.3, 15, 42]) })
+  expect(spread.xScale.kind).toBe("linear")
+  expect(spread.xScale.min).toBe(0)
+  const close = layoutRanking({ ...common, rows: rows([15, 20, 42]) })
+  expect(close.xScale.kind).toBe("linear")
+  // Bars differ in length by cost.
+  expect(close.rows[2]!.cx - close.plotLeft).toBeGreaterThan(
+    2 * (close.rows[0]!.cx - close.plotLeft),
+  )
+  // The widest label, "score 69.5", fits inside the reserved column.
+  expect(close.scoreWidth).toBeGreaterThanOrEqual("score 69.5".length * 11.5 * 0.55)
+  const wide = layoutRanking({
+    ...common,
+    rows: [{ id: "a", label: "a", value: 1, score: 100.25 }],
+  })
+  expect(wide.scoreWidth).toBeGreaterThan(close.scoreWidth)
+})

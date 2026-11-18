@@ -86,15 +86,23 @@ export type ScaleOptions = {
   headroom: number
   /** A linear axis starts at zero. */
   zero?: boolean
+  /** The max / min spread beyond which `auto-log` switches to log; `LOG_RATIO` when absent. */
+  logRatio?: number
 }
 
 export const LOG_RATIO = 50
+/** The Projected ranking stays linear (bars to scale) until the spread is this large. */
+export const RANK_LOG_RATIO = 200
 
 export function buildScale(options: ScaleOptions): Scale {
   const positive = options.values.filter((value) => Number.isFinite(value) && value > 0)
   const max = Math.max(0, ...options.values.filter((value) => Number.isFinite(value)))
   const min = positive.length ? Math.min(...positive) : 0
-  if (options.scale === "auto-log" && positive.length > 1 && max / min > LOG_RATIO) {
+  if (
+    options.scale === "auto-log" &&
+    positive.length > 1 &&
+    max / min > (options.logRatio ?? LOG_RATIO)
+  ) {
     const low = 10 ** Math.floor(Math.log10(min))
     const target = max * (1 + options.headroom)
     // Ticks at 1 and 3 of each decade, from the decade below the smallest value up to the first
@@ -476,13 +484,21 @@ export function layoutRanking(input: {
 }): RankLayout {
   const { width } = input
   const labelWidth = Math.round(clamp(width * 0.38, 110, 190))
-  const scoreWidth = input.showScore ? 62 : 0
+  // The widest score label sets the column; the numbers are right-aligned at its edge.
+  const scoreChars = Math.max(
+    0,
+    ...input.rows.map((row) => (row.score == null ? 0 : `score ${row.score}`.length)),
+  )
+  const scoreWidth = input.showScore
+    ? Math.ceil(Math.max(scoreChars, 8) * CHART_FONT * 0.6) + 10
+    : 0
   const plotLeft = labelWidth + 8
   const plotRight = width - 12 - scoreWidth
   const xScale = buildScale({
     values: input.rows.map((row) => row.value),
-    // One very dear model must not squash the rest into the first tick.
+    // Linear from $0 so bar length means cost; log only when the spread is extreme.
     scale: "auto-log",
+    logRatio: RANK_LOG_RATIO,
     intervals: width < 420 ? 3 : 4,
     format: formatAxisMoney,
     // Room for the value label to the right of the longest bar.

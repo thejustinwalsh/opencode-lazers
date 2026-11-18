@@ -422,6 +422,11 @@ function snapshotSelection(
   )
 }
 
+/** The last few snapshot sets' joins, oldest first; a page of a read in progress reuses its. */
+const publicJoins = new Map<string, PublicJoin>()
+/** The last two candidate lists, oldest first, keyed by snapshot set and filters. */
+const candidateLists = new Map<string, Candidate[]>()
+
 /** Project a stable, filtered page from pinned source snapshots. */
 export function readModelComparison(
   store: Pick<ModelEvidenceReadStore, "readComparisonSources">,
@@ -443,28 +448,58 @@ export function readModelComparison(
   const native = nativeSource?.source === "native-catalog" ? nativeSource : null
   const devSnapshot = sources.find((source) => source.source === "models-dev")?.snapshot
   const epochSnapshot = sources.find((source) => source.source === "epoch-benchmarks")?.snapshot
-  const join = createPublicJoin({
-    modelsDev: devSnapshot?.source === "models-dev" ? devSnapshot.records : [],
-    epoch: epochSnapshot?.source === "epoch-benchmarks" ? epochSnapshot.records : [],
-    routes: native
-      ? [
-          ...new Map(
-            native.records.map((record) => [`${record.providerID}\u0000${record.id}`, record]),
-          ).values(),
-        ].map((record) => ({
-          providerID: record.providerID,
-          modelID: record.id,
-          name: record.name,
-        }))
-      : [],
-  })
-  const allCandidates = candidatesFor(
-    native,
-    modelSource,
-    benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
-    filters,
-    join,
-  )
+  // Every page of one catalog read shares the pinned snapshots, so the indexes (thousands of
+  // parsed names) are built once per snapshot set, not once per page.
+  const joinKey = [
+    native?.snapshotID,
+    modelSource.snapshot?.snapshotID,
+    devSnapshot?.snapshotID,
+    epochSnapshot?.snapshotID,
+  ].join("|")
+  const cachedJoin = publicJoins.get(joinKey)
+  if (cachedJoin) publicJoins.delete(joinKey)
+  const join =
+    cachedJoin ??
+    createPublicJoin({
+      modelsDev: devSnapshot?.source === "models-dev" ? devSnapshot.records : [],
+      epoch: epochSnapshot?.source === "epoch-benchmarks" ? epochSnapshot.records : [],
+      openrouter:
+        modelSource.snapshot?.source === "openrouter-models" ? modelSource.snapshot.records : [],
+      routes: native
+        ? [
+            ...new Map(
+              native.records.map((record) => [`${record.providerID}\u0000${record.id}`, record]),
+            ).values(),
+          ].map((record) => ({
+            providerID: record.providerID,
+            modelID: record.id,
+            name: record.name,
+          }))
+        : [],
+    })
+  publicJoins.set(joinKey, join)
+  for (const stale of [...publicJoins.keys()].slice(0, Math.max(0, publicJoins.size - 4)))
+    publicJoins.delete(stale)
+  // The full candidate list for one pinned snapshot set and filter is the same for every page
+  // of it: build it once, slice it per page.
+  const listKey = JSON.stringify([
+    selection,
+    stableJSON(filters),
+    sources.map((source) => source.snapshotID),
+  ])
+  let allCandidates = candidateLists.get(listKey)
+  if (allCandidates) candidateLists.delete(listKey)
+  else
+    allCandidates = candidatesFor(
+      native,
+      modelSource,
+      benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
+      filters,
+      join,
+    )
+  candidateLists.set(listKey, allCandidates)
+  for (const stale of [...candidateLists.keys()].slice(0, Math.max(0, candidateLists.size - 2)))
+    candidateLists.delete(stale)
   const offset = decoded?.offset ?? 0
   if (offset > allCandidates.length) throw new Error("Model comparison cursor is unavailable")
   const candidates = allCandidates.slice(offset, offset + request.limit)
@@ -480,7 +515,9 @@ export function readModelComparison(
     candidates,
     totalCandidates: allCandidates.length,
     nextCursor,
-    ...(offset === 0 ? { publicCoverage: { epoch: join.coverage() } } : {}),
+    ...(offset === 0
+      ? { publicCoverage: { epoch: join.coverage() }, publicCatalog: join.external() }
+      : {}),
   })
 }
 

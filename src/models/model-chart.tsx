@@ -387,10 +387,17 @@ export function RankingChart(props: RankingChartProps) {
     equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]),
   })
   const roving = () => props.selectedID ?? props.rows[0]?.id ?? null
+  // The list opens at the top, cheapest first. It scrolls to a selection only when the user made
+  // that selection here; a selection made elsewhere does not move the list.
+  let chosenHere = false
+  const choose = (id: string) => {
+    chosenHere = true
+    props.onSelect(id)
+  }
   const key = (event: KeyboardEvent, id: string) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault()
-      props.onSelect(id)
+      choose(id)
       return
     }
     const order = ids()
@@ -412,6 +419,8 @@ export function RankingChart(props: RankingChartProps) {
   // The selection stays in view when the list scrolls.
   createEffect(() => {
     void props.selectedID
+    if (!chosenHere) return
+    chosenHere = false
     queueMicrotask(() =>
       wrapper
         ?.querySelector<SVGGElement>("[data-selected]")
@@ -489,7 +498,7 @@ export function RankingChart(props: RankingChartProps) {
                   tabindex={id === roving() ? 0 : -1}
                   aria-pressed={selected()}
                   aria-label={data()?.description ?? row().label}
-                  onClick={() => props.onSelect(id)}
+                  onClick={() => choose(id)}
                   onKeyDown={(event) => key(event, id)}
                 >
                   <title>{data()?.tooltip.join("\n")}</title>
@@ -538,7 +547,7 @@ export function RankingChart(props: RankingChartProps) {
                   <Show when={layout().scoreWidth > 0 && row().score != null}>
                     <text
                       class="lazers-rank-score"
-                      x={layout().width - 4}
+                      x={layout().width - 10}
                       y={row().cy + 4}
                       text-anchor="end"
                     >

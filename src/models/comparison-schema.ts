@@ -145,6 +145,31 @@ export const PublicCoverageSchema = z.strictObject({
 })
 export type PublicCoverage = z.infer<typeof PublicCoverageSchema>
 
+/**
+ * A model of the public catalogs that no route of this install runs: the Anthropic and OpenAI
+ * lineups (BYOK) and the newest or most listed models of models.dev and OpenRouter. They are
+ * listed and priced, never offered as a route.
+ */
+export const PublicCatalogItemSchema = z.strictObject({
+  source: z.enum(["models-dev", "openrouter"]),
+  providerID: z.string().min(1).max(512),
+  modelID: z.string().min(1).max(512),
+  name: z.string().max(512).nullable(),
+  releaseDate: z.string().max(32).nullable(),
+  contextTokens: z.number().finite().nonnegative().nullable(),
+  /** USD per million tokens. */
+  prices: z
+    .strictObject({
+      input: z.number().finite().nonnegative(),
+      output: z.number().finite().nonnegative(),
+      cacheRead: z.number().finite().nonnegative().nullable(),
+      cacheWrite: z.number().finite().nonnegative().nullable(),
+    })
+    .nullable(),
+  benchmarks: z.array(EpochBenchmarkRecordSchema).max(24),
+})
+export type PublicCatalogItem = z.infer<typeof PublicCatalogItemSchema>
+
 export const ModelComparisonOutputSchema = z.strictObject({
   filters: ModelComparisonFiltersSchema,
   sources: z.array(ModelComparisonSourceSchema).length(MODEL_EVIDENCE_SOURCES.length),
@@ -153,6 +178,8 @@ export const ModelComparisonOutputSchema = z.strictObject({
   nextCursor: z.string().max(8192).nullable(),
   /** How many public benchmark rows reach a model of this catalog. First page only. */
   publicCoverage: PublicCoverageSchema.optional(),
+  /** Public-catalog models beyond this install's routes. First page only. */
+  publicCatalog: z.array(PublicCatalogItemSchema).max(200).optional(),
 })
 export type ModelComparisonOutput = z.infer<typeof ModelComparisonOutputSchema>
 

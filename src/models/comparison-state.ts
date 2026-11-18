@@ -478,7 +478,14 @@ export class ModelComparisonPanelState {
           : (this.data.selectedCandidateID ?? candidates[0]?.candidateID ?? null)
         this.comparisonRevision++
         this.update({
-          comparison: output,
+          // The coverage and public catalog come with the first page only; later pages keep them.
+          comparison: cursor
+            ? {
+                ...output,
+                publicCoverage: output.publicCoverage ?? this.data.comparison?.publicCoverage,
+                publicCatalog: output.publicCatalog ?? this.data.comparison?.publicCatalog,
+              }
+            : output,
           candidates,
           selectedCandidateID,
           comparisonLoading: false,

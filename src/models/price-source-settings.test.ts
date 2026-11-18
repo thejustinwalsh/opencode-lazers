@@ -45,9 +45,10 @@ test("price-source policy defaults to OpenRouter then OpenCode and persists acro
   })
 
   const reopened = new ModelPriceSourceSettingsStore(host.storage, "/project")
+  // models.dev is keyless: a saved policy without it reads back with it appended.
   expect(await reopened.read()).toMatchObject({
     revision: 2,
-    sources: ["opencode"],
+    sources: ["opencode", "models-dev"],
     fallback: "whole-model",
   })
   await expect(
@@ -102,9 +103,9 @@ test("stale and concurrent writes return the current revision without overwritin
     status: "conflict",
     expectedRevision: 0,
     currentRevision: 1,
-    current: { revision: 1, sources: ["opencode"] },
+    current: { revision: 1, sources: ["opencode", "models-dev"] },
   })
-  expect(await store.read()).toMatchObject({ revision: 1, sources: ["opencode"] })
+  expect(await store.read()).toMatchObject({ revision: 1, sources: ["opencode", "models-dev"] })
   expect(host.calls.set).toBe(1)
 
   const stale = await store.configure({ expectedRevision: 0, sources: ["openrouter", "opencode"] })
@@ -139,7 +140,7 @@ test("concurrent writes from independently loaded module instances share the pro
     status: "conflict",
     expectedRevision: 0,
     currentRevision: 1,
-    current: successful[0]?.policy,
+    current: { ...successful[0]?.policy, sources: ["opencode", "models-dev"] },
   })
   expect(independentWrite).toMatchObject({
     status: "updated",
@@ -147,7 +148,10 @@ test("concurrent writes from independently loaded module instances share the pro
   })
 
   const reopened = new isolatedModule.ModelPriceSourceSettingsStore(host.storage, "/project")
-  expect(await reopened.read()).toEqual(successful[0]?.policy)
+  expect(await reopened.read()).toEqual({
+    ...successful[0]?.policy,
+    sources: [...(successful[0]?.policy.sources ?? []), "models-dev"],
+  })
   expect(await independentProject.read()).toEqual(independentWrite.policy)
   expect(host.calls.set).toBe(2)
 })
@@ -195,4 +199,21 @@ test("aborted writes do not mutate policy", async () => {
   expect(await new ModelPriceSourceSettingsStore(host.storage, "/project").read()).toEqual(
     defaultModelPriceSourcePolicy(),
   )
+})
+
+test("a policy saved before models.dev existed gains it, last, without a new revision", async () => {
+  const host = memoryStorage()
+  await host.storage.set("models.price-source-policy.%2Fproject", {
+    schemaVersion: 1,
+    revision: 3,
+    sources: ["opencode", "openrouter"],
+    fallback: "whole-model",
+  } as never)
+  const store = new ModelPriceSourceSettingsStore(host.storage, "/project")
+  expect(await store.read()).toEqual({
+    schemaVersion: 1,
+    revision: 3,
+    sources: ["opencode", "openrouter", "models-dev"],
+    fallback: "whole-model",
+  })
 })

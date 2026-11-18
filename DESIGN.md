@@ -345,6 +345,16 @@ line reads "Epoch AI · CC BY 4.0" with the snapshot date; benchmarks the hub li
 elsewhere keep their own licences and are named by their origin. Requests are plain GETs
 with a generic User-Agent and no user, project or machine identifier.
 
+The model set is a union, not only this install's routes. Beyond Observed, Routed, agent and
+catalog models, the first page of a comparison read carries `publicCatalog`: the newest
+Anthropic and OpenAI models (12 each, whether or not those providers are routed: BYOK), the
+newest 30 first-party models of other vendors from models.dev, and the first 30 tool-capable
+OpenRouter listings, each once per identity (dated snapshots and `latest` aliases are one
+model) and never a model a route already runs. They are listed, priced by the source that
+listed them (when it is configured) and scored on the same basis; they are never offered as a
+route. A policy saved before models.dev existed gains it, last, when read; an explicitly empty
+list stays empty.
+
 Every cross-source join (native routes, OpenRouter, models.dev, Epoch, our recorded runs and
 routes) goes through one name identity resolver (`name-identity.ts`): family, version, tier
 words, size and variants make an identity; dates, `latest`, `preview`, `:free`, routing and

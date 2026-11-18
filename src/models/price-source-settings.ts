@@ -175,6 +175,10 @@ export class ModelPriceSourceSettingsStore {
 
     const parsed = ModelPriceSourcePolicySchema.safeParse(stored)
     if (!parsed.success) throw new Error("Stored model price-source policy is invalid")
-    return parsed.data
+    // models.dev is keyless and additive: a policy saved before it existed gains it, last.
+    // An explicitly empty list stays empty.
+    return parsed.data.sources.includes("models-dev") || parsed.data.sources.length === 0
+      ? parsed.data
+      : { ...parsed.data, sources: [...parsed.data.sources, "models-dev"] }
   }
 }
