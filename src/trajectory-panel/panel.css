@@ -352,6 +352,9 @@
   flex: none;
   gap: 0;
 }
+.lazers-trajectory-scroll:not([data-zoomed="true"]) {
+  overflow-x: hidden;
+}
 .lazers-trajectory-scroll {
   overflow-x: auto;
   overflow-y: hidden;
@@ -414,10 +417,10 @@
   transform: translateX(-50%);
   white-space: nowrap;
 }
-.lazers-trajectory-tick:first-child {
+.lazers-trajectory-tick[data-edge="start"] {
   transform: none;
 }
-.lazers-trajectory-tick:last-child:not(:first-child) {
+.lazers-trajectory-tick[data-edge="end"] {
   transform: translateX(-100%);
 }
 .lazers-trajectory-gridlines {

@@ -338,14 +338,19 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       "OpenRouter · generation 5 · average · current freshness",
     )
     expect(container.textContent).not.toMatch(/Unix ms|unknown|not recorded|unavailable/i)
-    expect(container.querySelector(".lazers-trajectory-valuation summary")?.textContent).toContain(
-      "Pricing coverage and provenance",
+    // One row for pricing and estimate details, summarised by source and date.
+    const valuation = container.querySelectorAll(".lazers-trajectory-valuation")
+    expect(valuation).toHaveLength(1)
+    expect(valuation[0]!.querySelector("summary")?.textContent).toMatch(
+      /^Estimate basis and prices\s*OpenRouter · \w+ \d+$/,
     )
-    const estimateDetails = [...container.querySelectorAll(".lazers-trajectory-valuation summary")]
-      .map((summary) => summary.textContent)
-      .find((text) => text?.includes("Estimate assumptions and published-rate basis"))
-    expect(estimateDetails).toContain("19 retained calls")
-    expect(estimateDetails).toContain("published-rate basis")
+    expect(valuation[0]!.textContent).toContain("Retained calls · 19")
+    expect(container.textContent).not.toContain("Pricing coverage and provenance")
+    // The timeline opens fitted: no horizontal scroll until the person zooms in.
+    expect(container.querySelector(".lazers-trajectory-scroll")?.getAttribute("data-zoomed")).toBe(
+      "false",
+    )
+    expect(container.querySelector(".lazers-trajectory-cost span")?.textContent).toBe("market cost")
     expect(container.textContent).toContain(
       "Estimate basis · deduplicated-retained-token-usage-at-published-current-rates",
     )
@@ -457,6 +462,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     await until(() => coverage()?.textContent?.includes("events") === true)
     expect(coverage()?.textContent).not.toContain("loading the rest")
 
+    trajectoryViewCache.clear()
     // No task chosen: a title and scope picker, one statement with its action, recent tasks that
     // open on click. There is no split and no inspector until a trajectory is loaded.
     disposePanel?.()

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { compactCount, sourceName } from "../../src/trajectory-panel/projection.ts"
 import { rulerLabels, slowSeconds } from "../../src/trajectory-panel/panel-layout.ts"
 import {
   MIN_GAP_PX,
@@ -114,4 +115,23 @@ test("a label that does not fit the plot is dropped and its ticks stay", () => {
 test("the slow-load seconds come from the shared status line", () => {
   expect(slowSeconds("Still loading · 40 s")).toBe(40)
   expect(slowSeconds("Loading this trajectory")).toBeNull()
+})
+
+test("the timing source summary is the plain name; the field path stays out of it", () => {
+  expect(sourceName("Verification receipt check.startedAt/check.endedAt; absent endpoints")).toBe(
+    "verification receipt",
+  )
+  expect(sourceName("native tool call time")).toBe("native tool call time")
+  expect(sourceName("Report model-activity interval: a.b")).toBe("report model-activity interval")
+  expect(sourceName("")).toBe("")
+})
+
+test("token counts use lower-case k and upper-case M", () => {
+  expect([950, 20_300, 55_700, 16_000_000, 877_400].map(compactCount)).toEqual([
+    "950",
+    "20.3k",
+    "55.7k",
+    "16M",
+    "877.4k",
+  ])
 })
