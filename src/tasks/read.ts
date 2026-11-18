@@ -161,7 +161,12 @@ export class TaskReads {
           ...(execution
             ? { recordedState: this.recordedNodeState(task.id, execution.planID) }
             : {}),
-          ...(execution && ["running", "verifying"].includes(execution.state)
+          // Same definition as the Running filter: a running node in a plan that is not held or
+          // cancelled, and not paused.
+          ...(execution &&
+          execution.state === "running" &&
+          !["blocked", "cancelled"].includes(this.runner.plan(execution.planID)?.state ?? "") &&
+          !execution.dispatchPause
             ? this.startedAt(task.id, execution.planID)
             : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,

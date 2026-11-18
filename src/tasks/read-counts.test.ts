@@ -157,6 +157,23 @@ test("a running task carries its current attempt's start; others carry none", ()
     expect(task.startedAt).toBeUndefined()
 })
 
+test("elapsed start follows the Running filter: a running node under a held plan has none", () => {
+  const { repository, reads } = seed()
+  const held = addTask(repository, reads, "held running", "running", {
+    startedAt: 1_700_000_000_000,
+  })
+  repository.atomic((db) => {
+    db.query(
+      "UPDATE runner_plans SET state='blocked' WHERE id=(SELECT plan_id FROM runner_nodes WHERE task_id=?)",
+    ).run(held)
+  })
+  const page = reads.query({ sessionID: "session-a", state: "all" })
+  expect(page.tasks.find((task) => task.taskID === held)?.startedAt).toBeUndefined()
+  const running = reads.query({ sessionID: "session-a", state: "running" })
+  expect(running.count).toBe(page.stateCounts?.running ?? -1)
+  expect(running.tasks.every((task) => task.startedAt !== undefined)).toBe(true)
+})
+
 test("a stored Completed preference maps to All, which lists everything Completed did", () => {
   expect(preferredTaskStateFilter("completed", undefined)).toBe("all")
   expect(preferredTaskStateFilter("accepted", undefined)).toBe("accepted")
