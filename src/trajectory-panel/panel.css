@@ -9,7 +9,15 @@
    * resolve to either; failures turn red on any track.
    */
   --trajectory-hue-attempts: var(--text-interactive-base, var(--text-base));
-  --trajectory-hue-tools: var(--icon-agent-plan-base, var(--icon-info-base, var(--text-base)));
+  /*
+   * Violet, derived rather than named: host themes map their own violet tokens to blue or
+   * orange, so mix the theme's interactive blue with its critical red. Still theme-reactive.
+   */
+  --trajectory-hue-tools: color-mix(
+    in oklch,
+    var(--text-interactive-base, var(--text-base)) 58%,
+    var(--icon-critical-base, var(--text-base))
+  );
   --trajectory-hue-files: var(--icon-warning-base, var(--text-base));
   --trajectory-hue-checks: var(--text-strong);
   --trajectory-gap: var(--text-weak);
