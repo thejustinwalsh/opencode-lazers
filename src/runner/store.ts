@@ -13,7 +13,11 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
-import { retireHumanEvidenceGate, retireSourceQuarantines } from "./retire-gates.ts"
+import {
+  retireHumanEvidenceGate,
+  retireSourceQuarantines,
+  retireStaleHolds,
+} from "./retire-gates.ts"
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
@@ -1249,6 +1253,7 @@ export class RunnerStore {
         // Generation 6: the human-evidence gate is retired; move its blocked plans on.
         retireHumanEvidenceGate(db)
         retireSourceQuarantines(db)
+        retireStaleHolds(db)
       },
     )
     installPrioritySchema(repository)

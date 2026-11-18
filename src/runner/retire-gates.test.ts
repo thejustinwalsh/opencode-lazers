@@ -4,7 +4,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { retireHumanEvidenceGate, retireSourceQuarantines } from "./retire-gates.ts"
+import {
+  retireHumanEvidenceGate,
+  retireSourceQuarantines,
+  retireStaleHolds,
+} from "./retire-gates.ts"
 import { RunnerStore } from "./store.ts"
 
 const directories: string[] = []
@@ -139,4 +143,61 @@ test("a plan blocked by a source quarantine resumes through the plan machine and
   expect(f.store.atomic((db) => retireSourceQuarantines(db))).toEqual([])
   expect(f.store.plan(quarantined)!.state).toBe("running")
   expect(tableExists()).toBe(false)
+})
+
+test("plans held by retired reasons move through the plan machine; real failures stay; idempotent", () => {
+  const f = fixture()
+  const reasons = {
+    idle: "Native idle background observation is unknown: No experimental.idle background report was observed",
+    lineage: "Native idle background observation does not match the current worker input lineage",
+    interrupted:
+      "Worker execution was interrupted; explicit reconciliation or cancellation is required",
+    scope:
+      "Mechanical candidate preparation is blocked by an active scope reservation; no files were changed",
+    recovery:
+      "Recovery uncertain for verify:content 0123abcd: No conclusive host/artifact receipt; effect was not repeated",
+  }
+  const stale = Object.entries(reasons).map(([name, reason]) => {
+    const planID = f.submit(`stale-${name}`).planID
+    block(f.store, planID, reason)
+    return planID
+  })
+  const failing = f.submit("real-failure").planID
+  block(f.store, failing, "Combined artifact verification failed")
+  const conflict = f.submit("real-conflict").planID
+  block(f.store, conflict, "Combined artifact conflict: Conflicting accepted artifacts a and b")
+  const cleanup = f.submit("cleanup-idle").planID
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='cleanup-blocked',reason=? WHERE id=?")
+      .run(
+        "A current confirmed experimental.idle background report is unavailable; preserve the worktree",
+        cleanup,
+      ),
+  )
+  // A verification effect that never produced a receipt is superseded so the check re-runs.
+  const recoveryPlan = stale[stale.length - 1]!
+  f.store.atomic((db) =>
+    db
+      .query(
+        "INSERT INTO runner_effects VALUES('e1',?,NULL,NULL,'verify:content','uncertain','{}',?,1)",
+      )
+      .run(
+        recoveryPlan,
+        JSON.stringify({ error: "No conclusive host/artifact receipt; effect was not repeated" }),
+      ),
+  )
+
+  const moves = f.store.atomic((db) => retireStaleHolds(db))
+  expect(moves.map((move) => move.planID).sort()).toEqual([...stale, cleanup].sort())
+  for (const planID of stale)
+    expect(f.store.plan(planID)).toMatchObject({ state: "running", reason: null })
+  expect(f.store.plan(cleanup)!.state).toBe("cleaning")
+  expect(f.store.plan(failing)!.state).toBe("blocked")
+  expect(f.store.plan(conflict)!.state).toBe("blocked")
+  const effect = f.store.effects(recoveryPlan).find((item) => item.id === "e1")!
+  expect(effect.state).toBe("failed")
+  expect(JSON.parse(effect.receipt!)).toMatchObject({ superseded: true })
+
+  expect(f.store.atomic((db) => retireStaleHolds(db))).toEqual([])
 })

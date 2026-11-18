@@ -371,6 +371,8 @@ export type TaskRuntimeOptions = {
   /** Deprecated alias of `architectCacheWindowMs`. */
   architectIdleWindowMs?: number
   architectCacheWindowMs?: number
+  /** Resume an interrupted worker without a command. Default true; tests of explicit resume turn it off. */
+  autoResumeInterrupted?: boolean
   architectReuseMaxContextTokens?: number
   verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
@@ -622,6 +624,7 @@ export class TaskRuntime {
   >()
   private readonly now: () => number
   private readonly architectRouting: ArchitectRoutingOptions
+  private readonly autoResumeInterrupted: boolean
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
@@ -642,6 +645,7 @@ export class TaskRuntime {
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
     this.schedulingRead = new TaskSchedulingRead(store, this.now)
+    this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
     this.architectRouting = {
       architectCacheWindowMs: architectCacheWindowMs(
         options.architectCacheWindowMs ?? options.architectIdleWindowMs,
@@ -12050,7 +12054,7 @@ export class TaskRuntime {
         )
         const reason = detailedBackgroundReason
           ? `Worker execution was interrupted; ${detailedBackgroundReason}`
-          : "Worker execution was interrupted; explicit reconciliation or cancellation is required"
+          : "Worker execution was interrupted; the runtime could not resume it"
         if (detailedBackgroundReason)
           this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         this.hold(
@@ -12060,6 +12064,7 @@ export class TaskRuntime {
           this.terminalWorkerObservation(attempt, session),
           observation,
         )
+        if (!detailedBackgroundReason) await this.autoResumeInterruptedWorker(plan.id, attempt.id)
         return
       }
       if (detailedBackgroundReason) {
@@ -12111,12 +12116,24 @@ export class TaskRuntime {
         session.turn.state === "pending"
       )
         return
-      this.hold(
+      // A completed turn for a different input is a follow-up the Architect can bind
+      // (reconcile); say so and advertise it.
+      if (session.turn && !this.matchesWorkerInput(attempt, session.turn.inputID)) {
+        this.hold(
+          plan,
+          "Native worker success does not match a completed response to the current assigned input",
+          ["audit", "reconcile", "retry", "cancel"],
+          undefined,
+          observation,
+        )
+        return
+      }
+      // The worker went idle without a completed response to its assigned input:
+      // an observable failure of the attempt, retried through the normal path.
+      this.failAttempt(
         plan,
-        "Native worker success does not match a completed response to the current assigned input",
-        ["audit", "reconcile", "cancel"],
-        undefined,
-        observation,
+        attempt,
+        "Worker went idle without a completed response to the assigned input",
       )
       return
     }
@@ -12125,11 +12142,12 @@ export class TaskRuntime {
       if (session.outcome === "interrupted") {
         this.hold(
           plan,
-          "Worker execution was interrupted; explicit reconciliation or cancellation is required",
-          ["audit", "reconcile", "cancel"],
+          "Worker execution was interrupted; the runtime could not resume it",
+          ["audit", "reconcile", "resume", "cancel"],
           this.terminalWorkerObservation(attempt, session),
           observation,
         )
+        await this.autoResumeInterruptedWorker(plan.id, attempt.id)
         return
       }
       this.failAttempt(
@@ -12151,6 +12169,49 @@ export class TaskRuntime {
       )
     }
     await this.verify(plan, attempt, task.proposal, fence)
+  }
+
+  /**
+   * An interrupted worker resumes from its live state; nobody has to command it.
+   * Bounded per attempt so a worker that keeps being interrupted surfaces in the hold.
+   */
+  private async autoResumeInterruptedWorker(planID: string, attemptID: string) {
+    if (!this.autoResumeInterrupted) return
+    const plan = this.store.plan(planID)
+    const attempt = this.store.attempts(planID).find((candidate) => candidate.id === attemptID)
+    if (!plan || plan.state !== "blocked" || !attempt) return
+    const prior = this.store.activity(planID, attempt.task_id).filter(
+      (event) =>
+        event.event === "WORKER_AUTO_RESUMED" &&
+        (() => {
+          try {
+            return (JSON.parse(event.payload) as { attemptID?: unknown }).attemptID === attempt.id
+          } catch {
+            return false
+          }
+        })(),
+    ).length
+    if (prior >= 3 || !this.validArchitect(await this.host.session(plan.owner))) return
+    this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUMED", {
+      attemptID: attempt.id,
+      messageID: attempt.message_id,
+    })
+    try {
+      await this.command(
+        {
+          requestID: `auto-resume:${attempt.id}:${attempt.message_id}`,
+          planID,
+          expectedVersion: plan.version,
+          action: "resume",
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          reason: "The worker was interrupted; the runtime resumes it from its live state",
+        },
+        plan.owner,
+      )
+    } catch {
+      // The hold stays and advertises resume; the next observation tries again within the bound.
+    }
   }
 
   private async prepareVerificationCandidate(
@@ -12198,13 +12259,12 @@ export class TaskRuntime {
       if (lintExtensions.has(extension)) lintPaths.push(path)
     }
     if (!formatPaths.length && !lintPaths.length) return "ready"
-    if (!this.preparationAllowed(attempt)) {
-      this.hold(
-        plan,
-        "Mechanical candidate preparation is blocked by an active scope reservation; no files were changed",
-      )
-      return "held"
-    }
+    // A write-scope overlap is a warning only: parallel work stays allowed.
+    if (!this.preparationAllowed(attempt))
+      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING", {
+        attemptID: attempt.id,
+        phase: "mechanical-preparation",
+      })
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
     const commands = [
       ...(formatPaths.length ? [`bun fmt ${formatPaths.map(quote).join(" ")}`] : []),

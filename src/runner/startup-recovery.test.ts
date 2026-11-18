@@ -144,7 +144,9 @@ function fixture() {
     notify: async () => {},
     interrupt: async () => {},
   }
-  const runtime = new TaskRuntime(store, host, "project")
+  const runtime = new TaskRuntime(store, host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   runtimes.push(runtime)
   return {
     temporary,
@@ -298,7 +300,9 @@ async function reopenFixture(f: ReturnType<typeof fixture>) {
   const repository = new TaskRepository(databasePath, f.root)
   repositories.push(repository)
   const store = new RunnerStore(repository)
-  const runtime = new TaskRuntime(store, f.host, "project")
+  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   runtimes.push(runtime)
   f.repository = repository
   f.store = store
@@ -642,7 +646,9 @@ test("typed native failure settles only after fresh absence and resumes the same
   repositories.push(repository)
   f.repository = repository
   f.store = new RunnerStore(repository)
-  const reopenedAfterSettlement = new TaskRuntime(f.store, f.host, "project")
+  const reopenedAfterSettlement = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   runtimes.push(reopenedAfterSettlement)
   f.runtime = reopenedAfterSettlement
   const durableEffect = f.store.effects(f.planID).find((candidate) => candidate.id === effect.id)!
@@ -688,7 +694,9 @@ test("typed native failure settles only after fresh absence and resumes the same
   }
   await f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   runtimes.push(reopened)
   await reopened.tick()
   expect(f.calls).toEqual({ worktree: 2, create: 1, prompt: 1 })
@@ -796,7 +804,9 @@ test("legacy error-only receipts settle generically from current runtime identit
   repositories.push(repository)
   f.repository = repository
   f.store = new RunnerStore(repository)
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   runtimes.push(reopened)
   f.runtime = reopened
   await reopened.tick()
@@ -1106,7 +1116,9 @@ test("each conclusively failed linked recovery can be settled before another exp
   repositories.push(repository)
   f.repository = repository
   f.store = new RunnerStore(repository)
-  f.runtime = new TaskRuntime(f.store, f.host, "project")
+  f.runtime = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   runtimes.push(f.runtime)
   await f.runtime.tick()
   expect(f.calls).toEqual({ worktree: 2, create: 0, prompt: 0 })
