@@ -371,14 +371,16 @@ function CompareInspector(props: { ctl: ModelsController }) {
                   <Show
                     when={filterPersona()}
                     fallback={
-                      <Ui.Menu
-                        label="Assign to…"
-                        trigger="button"
-                        icon="chevron-down"
-                        placement="bottom-end"
-                        disabled={assignDisabled()}
-                        items={assignMenuItems(() => ({ ...route(), variant: null }))}
-                      />
+                      <span class="lazers-models-chip">
+                        <Ui.Menu
+                          label="Assign to…"
+                          trigger="button"
+                          icon="chevron-down"
+                          placement="bottom-end"
+                          disabled={assignDisabled()}
+                          items={assignMenuItems(() => ({ ...route(), variant: null }))}
+                        />
+                      </span>
                     }
                   >
                     {(persona) => (
@@ -544,17 +546,19 @@ function CompareInspector(props: { ctl: ModelsController }) {
                 <Show
                   when={filterPersona()}
                   fallback={
-                    <Ui.Menu
-                      label="Assign to…"
-                      trigger="button"
-                      icon="chevron-down"
-                      placement="bottom-end"
-                      disabled={assignDisabled()}
-                      items={personas().map((persona) => ({
-                        label: persona.personaLabel,
-                        onSelect: () => assignSelectedRoute(persona.persona),
-                      }))}
-                    />
+                    <span class="lazers-models-chip">
+                      <Ui.Menu
+                        label="Assign to…"
+                        trigger="button"
+                        icon="chevron-down"
+                        placement="bottom-end"
+                        disabled={assignDisabled()}
+                        items={personas().map((persona) => ({
+                          label: persona.personaLabel,
+                          onSelect: () => assignSelectedRoute(persona.persona),
+                        }))}
+                      />
+                    </span>
                   }
                 >
                   {(persona) => (

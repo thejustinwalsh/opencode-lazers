@@ -155,6 +155,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
               <span>Model</span>
               <Ui.Button
                 size="small"
+                icon="chevron-down"
                 class="lazers-models-form-control"
                 disabled={
                   assignmentBlocked() ||

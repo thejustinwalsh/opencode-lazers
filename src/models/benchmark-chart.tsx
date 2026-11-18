@@ -7,6 +7,7 @@ import {
   ComparisonChartAdapter,
   chartKeyStep,
   frontierEndLabel,
+  visibleChartLabelIDs,
   resolveNativeComparisonChartTheme,
   visuallyHidden,
 } from "./comparison-chart.tsx"
@@ -105,6 +106,27 @@ export function benchmarkChartOptions(
   const frontier = benchmarkFrontier(data.points)
   const frontierIDs = new Set(frontier.map((point) => point.id))
   const largest = Math.max(0, ...data.points.map((point) => point.price.blended))
+  const visibleLabels = visibleChartLabelIDs(
+    data.points.map((point) => ({
+      id: point.id,
+      x: point.price.blended,
+      y: point.benchmark.codingIndex,
+      text: boundedModelLabel(point.label, labelLimit),
+      side:
+        largest > 0 && point.price.blended >= largest * 0.68
+          ? ("left" as const)
+          : ("right" as const),
+      priority: point.id === data.selectedID ? 0 : frontierIDs.has(point.id) ? 1 : 2,
+      model: `${point.route.providerID}/${point.route.modelID}`,
+    })),
+    {
+      plotWidth,
+      plotHeight: Math.max(1, layout.height - layout.grid.top - layout.grid.bottom),
+      xMax: largest * 1.1,
+      yMax: Math.max(0, ...data.points.map((point) => point.benchmark.codingIndex)) * 1.1,
+      fontSize,
+    },
+  )
   const narrowAxis = layout.width < 400 || layout.height < 240
   const axisTitleFontSize = Math.min(fontSize, layout.width < 400 ? 12 : 16)
   const axisText = {
@@ -190,7 +212,7 @@ export function benchmarkChartOptions(
               ...(selected ? { shadowBlur: 12, shadowColor: theme.accent } : {}),
             },
             label: {
-              show: selected || roomForAllLabels,
+              show: selected || (roomForAllLabels && visibleLabels.has(point.id)),
               formatter: boundedModelLabel(point.label, labelLimit),
               position: largest > 0 && point.price.blended >= largest * 0.68 ? "left" : "right",
               color: selected ? theme.text : theme.mutedText,
