@@ -15,6 +15,8 @@ export type ExecutionListRow = {
   holdReason: string | null
   ordinal: number
   reference?: string
+  /** Epoch ms the running task's current attempt began; absent unless the read supplied it. */
+  startedAt?: number
   sourcePlan?: TaskSummary["sourcePlan"]
   dispatchPause?: TaskSummary["dispatchPause"]
   dispatchPausePlanID?: string
@@ -125,6 +127,7 @@ function buildScheduledGroups(input: {
       ...((summary?.reference ?? node.reference)
         ? { reference: summary?.reference ?? node.reference }
         : {}),
+      ...(summary?.startedAt !== undefined ? { startedAt: summary.startedAt } : {}),
       contextOnly,
       prerequisites: node.prerequisites,
       successors: successors.get(node.taskID) ?? [],
@@ -387,6 +390,7 @@ function row(
     ...((summary?.reference ?? node.reference)
       ? { reference: summary?.reference ?? node.reference }
       : {}),
+    ...(summary?.startedAt !== undefined ? { startedAt: summary.startedAt } : {}),
     dependencyTasks,
     ...(["queued", "ready"].includes(node.state) && plan.dispatchPause
       ? { dispatchPause: plan.dispatchPause }
@@ -523,6 +527,7 @@ export function buildExecutionList(input: {
         holdReason: null,
         ordinal,
         ...(summary?.reference ? { reference: summary.reference } : {}),
+        ...(summary?.startedAt !== undefined ? { startedAt: summary.startedAt } : {}),
         sourcePlan: summary?.sourcePlan,
         dispatchPause: summary?.dispatchPause,
         dispatchPausePlanID: summary?.dispatchPausePlanID,

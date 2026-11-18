@@ -247,7 +247,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       } else if (input.state === "blocked") {
         taskIDs = input.cursor === "blocked-page-two" ? allQueued : allRunning
         nextCursor = input.cursor ? null : "blocked-page-two"
-      } else if (input.state === "completed") {
+      } else if (input.state === "accepted") {
         taskIDs = [ids.completed]
       } else if (input.state === "failed" || input.state === "cancelled") {
         taskIDs = []
@@ -980,8 +980,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => queryCalls.at(-1)?.state === "blocked" && Boolean(row(ids.active)))
     expect(container.textContent).not.toContain("Node or plan holds may overlap")
 
-    await chooseFilter("Completed")
-    await until(() => queryCalls.at(-1)?.state === "completed" && Boolean(row(ids.completed)))
+    await chooseFilter("Accepted")
+    await until(() => queryCalls.at(-1)?.state === "accepted" && Boolean(row(ids.completed)))
     expect(row(ids.completed)?.getAttribute("aria-label")).toContain("recorded lifecycle accepted")
     expect(row(ids.completed)?.getAttribute("aria-label")).not.toContain("waiting")
     // The earlier selection is kept (it is not in this list), so the inspector keeps its task until
@@ -1017,7 +1017,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(row(ids.completed)).not.toBeNull()
     expect(row(ids.completed)?.getAttribute("aria-selected")).toBe("true")
     expect(container.querySelectorAll("[data-task-id]").length).toBeGreaterThanOrEqual(1)
-    expect(queryCalls.at(-1)?.state).toBe("completed")
+    expect(queryCalls.at(-1)?.state).toBe("accepted")
   } finally {
     mounted?.dispose()
     disposeSetup?.()

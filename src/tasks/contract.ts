@@ -37,6 +37,8 @@ export const TaskSummary = z.strictObject({
   status: z.union([z.literal("submitted"), TaskState]),
   /** Raw task-node lifecycle, distinct from a plan-level effective hold. */
   recordedState: TaskState.optional(),
+  /** Epoch ms the current attempt started; present only while the task is running or verifying. */
+  startedAt: z.number().finite().optional(),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
   classification: TaskClassificationRevision,
@@ -51,6 +53,8 @@ export const QueryOutput = z.strictObject({
   projectDirectory: z.string(),
   snapshot: z.int().nonnegative(),
   count: z.int().nonnegative(),
+  /** Tasks per state filter for this scope and search; first page only, absent on later pages. */
+  stateCounts: z.partialRecord(TaskStateFilter, z.int().nonnegative()).optional(),
   tasks: z.array(TaskSummary).max(100),
   nextCursor: z.string().nullable(),
   serverTime: z.iso.datetime(),

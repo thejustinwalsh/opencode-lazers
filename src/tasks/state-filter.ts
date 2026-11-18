@@ -7,6 +7,8 @@ export const TaskStateFilter = z.enum([
   "blocked",
   "paused",
   "completed",
+  "accepted",
+  "integrated",
   "failed",
   "cancelled",
   "all",
@@ -27,6 +29,9 @@ export function preferredTaskStateFilter(
   state: TaskStateFilter | undefined,
   history: boolean | undefined,
 ): TaskStateFilter {
+  // "Completed" was accepted plus integrated. Neither new filter alone holds both, and All is the
+  // smallest filter that still lists every task Completed did.
+  if (state === "completed") return "all"
   return state ?? (history ? "all" : "open")
 }
 
@@ -66,6 +71,8 @@ export function taskStatePredicate(state: TaskQueryState, taskAlias: "tasks" | "
       `p.state!='cancelled' AND (n.state='blocked' OR (p.state='blocked' AND n.state NOT IN ('accepted','incorporated','failed','exhausted','cancelled')))`,
     )
   if (state === "completed") return matchingExecution(`${effective} IN ('accepted','incorporated')`)
+  if (state === "accepted") return matchingExecution(`${effective}='accepted'`)
+  if (state === "integrated") return matchingExecution(`${effective}='incorporated'`)
   if (state === "failed") return matchingExecution(`${effective} IN ('failed','exhausted')`)
   if (state === "cancelled") return matchingExecution(`${effective}='cancelled'`)
   return `NOT ${matchingExecution(`${effective} IN ('accepted','incorporated','failed','exhausted','cancelled')`)}`

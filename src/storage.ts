@@ -33,7 +33,11 @@ import type {
   TaskCorrectionRecord as TaskCorrectionRecordType,
   TaskCorrectionReceipt as TaskCorrectionReceiptType,
 } from "./task-correction.ts"
-import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
+import {
+  TaskStateFilter,
+  effectiveTaskStateFilter,
+  taskStatePredicate,
+} from "./tasks/state-filter.ts"
 import type { TaskQueryState } from "./tasks/state-filter.ts"
 import { canonical, fingerprint } from "./identity.ts"
 import { databaseChanges } from "./database-events.ts"
@@ -685,6 +689,8 @@ export class TaskRepository {
     state?: TaskQueryState
     includeCompleted?: boolean
     includeRetired?: boolean
+    /** Also count every state filter for this scope and search (first page only). */
+    stateCounts?: boolean
   }) {
     return this.db.transaction(() => {
       const current = this.version()
@@ -705,7 +711,7 @@ export class TaskRepository {
         effectiveTaskStateFilter(input.state, input.includeCompleted),
         "tasks",
       )
-      if (statePredicate) clauses.push(statePredicate)
+      const stateClauseIndex = statePredicate ? clauses.push(statePredicate) - 1 : -1
       if (input.includeRetired !== true)
         clauses.push(
           "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)",
@@ -737,6 +743,12 @@ export class TaskRepository {
           `SELECT COUNT(*) AS count FROM tasks WHERE ${where}`,
         )
         .get(...values)!.count
+      const stateCounts = input.stateCounts
+        ? this.stateCounts(
+            clauses.filter((_, index) => index !== stateClauseIndex).join(" AND "),
+            values,
+          )
+        : undefined
       const before = input.before === undefined ? "" : " AND tasks.rowid < ?"
       const rows = this.db
         .query<{ body: string; position: number; reference: string }, (string | number)[]>(
@@ -751,6 +763,7 @@ export class TaskRepository {
       return {
         version,
         count,
+        ...(stateCounts ? { stateCounts } : {}),
         rows: rows.map((row) => {
           const task = TaskSpecSchema.parse(JSON.parse(row.body))
           return {
@@ -762,6 +775,24 @@ export class TaskRepository {
         }),
       }
     })()
+  }
+
+  /** One pass over the scoped tasks: a sum per state filter, from the filters' own predicates. */
+  private stateCounts(where: string, values: (string | number)[]) {
+    const filters = TaskStateFilter.options.filter((state) => state !== "completed")
+    const sums = filters.map((state) => {
+      const predicate = taskStatePredicate(state, "tasks")
+      return `COALESCE(SUM(CASE WHEN ${predicate || "1"} THEN 1 ELSE 0 END),0) AS "${state}"`
+    })
+    const row = this.db
+      .query<Record<string, number>, (string | number)[]>(
+        `SELECT ${sums.join(",")} FROM tasks WHERE ${where}`,
+      )
+      .get(...values)!
+    return Object.fromEntries(filters.map((state) => [state, row[state] ?? 0])) as Record<
+      TaskStateFilter,
+      number
+    >
   }
 
   get(id: string): TaskSpec | undefined {

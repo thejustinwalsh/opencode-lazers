@@ -117,7 +117,9 @@ test("state preferences remain independent while old history preferences retain 
   expect(preferredTaskStateFilter(undefined, false)).toBe("open")
   expect(preferredTaskStateFilter(undefined, true)).toBe("all")
   expect(preferredTaskStateFilter("failed", true)).toBe("failed")
-  expect(preferredTaskStateFilter("completed", false)).toBe("completed")
+  // A stored Completed meant accepted plus integrated; All lists both.
+  expect(preferredTaskStateFilter("completed", false)).toBe("all")
+  expect(preferredTaskStateFilter("integrated", true)).toBe("integrated")
 })
 
 test("healthy connected Tasks does not repeat list and inspector reads without changes", async () => {

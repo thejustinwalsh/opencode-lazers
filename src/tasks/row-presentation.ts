@@ -212,6 +212,21 @@ export function taskRowPresentation(
   }
 }
 
+/** How long a running attempt has been going: "<1m", "12m", "1h 5m", "2d". Minutes, never seconds. */
+export function elapsedLabel(startedAt: number, now: number) {
+  const minutes = Math.max(0, Math.floor((now - startedAt) / 60_000))
+  if (minutes < 1) return "<1m"
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`
+  return `${Math.floor(hours / 24)}d`
+}
+
+/** Elapsed time shows only while a task is running or verifying and the read supplied a start. */
+export function runningStart(row: Pick<ExecutionListRow, "status" | "startedAt">) {
+  return ["running", "verifying"].includes(row.status) ? row.startedAt : undefined
+}
+
 function stateWord(status: string) {
   const word = status.split(/[^a-z]/iu).find(Boolean)
   // An unrecognized state has no word to show; the row omits it rather than naming a gap.

@@ -56,6 +56,8 @@ import {
   taskRowPresentation,
   planStateLabel,
   taskRowBlocker,
+  elapsedLabel,
+  runningStart,
   taskSequencing,
   taskStateTooltip,
 } from "./row-presentation.ts"
@@ -98,6 +100,8 @@ const View = Schema.Struct({
       "blocked",
       "paused",
       "completed",
+      "accepted",
+      "integrated",
       "failed",
       "cancelled",
       "all",
@@ -106,6 +110,12 @@ const View = Schema.Struct({
   history: Schema.optionalKey(Schema.Boolean),
   revealTaskID: Schema.optionalKey(Schema.String),
 })
+/** State menu order: live work, then finished work, then everything. */
+const STATE_MENU = [
+  ["open", "queued", "running", "blocked", "paused"],
+  ["accepted", "integrated", "failed", "cancelled"],
+  ["all"],
+] as const
 const initial: typeof View.Type = {
   scope: "session",
   selectedID: null,
@@ -438,6 +448,10 @@ function TaskPanel(
     const value = visible()
     if (value?.detail) setLastInspected({ identity: identity(), data: value })
   })
+  // One clock for every elapsed cell, once a minute; only those cells read it.
+  const [minute, setMinute] = createSignal(Date.now())
+  const minuteTimer = setInterval(() => setMinute(Date.now()), 60_000)
+  onCleanup(() => clearInterval(minuteTimer))
   const status = createPanelStatus(() => {
     const value = visible()
     const error = scope.error ? String(scope.error) : (value?.error ?? "")
@@ -901,6 +915,16 @@ function TaskPanel(
           <span class="lazers-tasks-row-signals">
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
+            </Show>
+            <Show when={runningStart(taskRow())}>
+              {(start) => (
+                <span
+                  class="lazers-tasks-row-elapsed"
+                  style={{ "font-family": ctx.appearance.font("mono") }}
+                >
+                  {elapsedLabel(start(), minute())}
+                </span>
+              )}
             </Show>
             <Ui.Tooltip value={taskStateTooltip(presentation())}>
               <span
@@ -1502,30 +1526,25 @@ function TaskPanel(
               label={stateLabel(stateFilter())}
               trigger="button"
               icon="chevron-down"
-              items={(
-                [
-                  "open",
-                  "queued",
-                  "running",
-                  "blocked",
-                  "paused",
-                  "completed",
-                  "failed",
-                  "cancelled",
-                  "all",
-                ] as const
-              ).map((state) => ({
-                label: stateLabel(state),
-                ...(state === stateFilter() ? { icon: "check" as const } : {}),
-                // The selection survives: it stays while the task is listed, and the inspector keeps
-                // its content otherwise.
-                onSelect: () =>
-                  save({
-                    state,
-                    history: state !== "open",
-                    listScroll: 0,
-                  }),
-              }))}
+              items={STATE_MENU.flatMap((group, index) => [
+                ...(index ? [{ type: "separator" as const }] : []),
+                ...group.map((state) => ({
+                  label: stateLabel(state),
+                  // Counts come from the read; an older server sends none and the menu omits them.
+                  ...(visible()?.stateCounts?.[state] !== undefined
+                    ? { keys: [String(visible()!.stateCounts![state])] }
+                    : {}),
+                  ...(state === stateFilter() ? { icon: "check" as const } : {}),
+                  // The selection survives: it stays while the task is listed, and the inspector keeps
+                  // its content otherwise.
+                  onSelect: () =>
+                    save({
+                      state,
+                      history: state !== "open",
+                      listScroll: 0,
+                    }),
+                })),
+              ])}
             />
           </span>
           <Ui.Tooltip value="Search tasks">

@@ -63,6 +63,10 @@ type Fixture = {
   extraPlans?: number
   /** Queued pages advertise a next cursor only once opened. */
   queuePagesClosed?: boolean
+  /** The first Alpha task is running since this epoch ms. */
+  runningSince?: number
+  /** The list read carries per-state counts. */
+  stateCounts?: boolean
 }
 
 async function withPanel(
@@ -231,6 +235,9 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     revision: 1,
     status: stateOf(taskID),
     recordedState: stateOf(taskID),
+    ...(fixture.runningSince !== undefined && taskID === alpha[0]
+      ? { status: "running", recordedState: "running", startedAt: fixture.runningSince }
+      : {}),
     ...(paused(taskID)
       ? {
           dispatchPause: pause,
@@ -269,6 +276,9 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     snapshot,
     count,
     tasks: ids.map(summary),
+    ...(fixture.stateCounts
+      ? { stateCounts: { open: 23, queued: 6, running: 4, accepted: 31, integrated: 52, all: 112 } }
+      : {}),
     nextCursor,
     serverTime: "2026-11-05T00:00:00.000Z",
   })
@@ -1052,6 +1062,81 @@ test("the disclosure chevron is a named button that toggles without selecting", 
     },
     {},
     { prioritized: true },
+  )
+})
+
+test("the state menu groups live, finished and all, marks the current value and shows read counts", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.alpha[0]!)))
+      h.container
+        .querySelector<HTMLButtonElement>(".lazers-tasks-state-filter button[aria-haspopup=menu]")!
+        .click()
+      const items = () => [...h.container.querySelectorAll<HTMLElement>("[role=menuitem]")]
+      await until(() => items().length > 0)
+      const names = items().map((item) => item.textContent)
+      expect(names).toEqual([
+        "Open",
+        "Queued",
+        "Running",
+        "Blocked / waiting",
+        "Paused",
+        "Accepted",
+        "Integrated",
+        "Failed / exhausted",
+        "Cancelled",
+        "All",
+      ])
+      // Three groups: live work, finished work, everything.
+      expect(h.container.querySelectorAll("[role=menu] [role=separator]")).toHaveLength(2)
+      // The current value carries the check; counts ride in the trailing keys column.
+      expect(items().map((item) => item.dataset.icon)).toEqual([
+        "check",
+        ...Array(9).fill(undefined),
+      ])
+      const counts = items().map((item) => item.dataset.keys)
+      expect([counts[0], counts[1], counts[2], counts[5], counts[6], counts[9]]).toEqual([
+        "23",
+        "6",
+        "4",
+        "31",
+        "52",
+        "112",
+      ])
+      // A count the read did not send is omitted, not shown as zero.
+      expect(counts[4]).toBeUndefined()
+    },
+    {},
+    { stateCounts: true },
+  )
+})
+
+test("a server without counts leaves the menu without them", async () => {
+  await withPanel(async (h) => {
+    await until(() => Boolean(h.row(h.alpha[0]!)))
+    h.container
+      .querySelector<HTMLButtonElement>(".lazers-tasks-state-filter button[aria-haspopup=menu]")!
+      .click()
+    await until(() => h.container.querySelectorAll("[role=menuitem]").length > 0)
+    for (const item of h.container.querySelectorAll("[role=menuitem]"))
+      expect((item as HTMLElement).dataset.keys).toBeUndefined()
+  })
+})
+
+test("only a running row shows elapsed minutes, before the state glyph", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.alpha[0]!)))
+      const elapsed = (taskID: string) =>
+        h.row(taskID)!.querySelector<HTMLElement>(".lazers-tasks-row-elapsed")
+      expect(elapsed(h.alpha[0]!)?.textContent).toMatch(/^1\d\dm$|^\d+h|^\d+d|^\d+m$/u)
+      expect(elapsed(h.alpha[1]!)).toBeNull()
+      const signals = [...h.row(h.alpha[0]!)!.querySelector(".lazers-tasks-row-signals")!.children]
+      expect(signals.at(-1)?.querySelector(".lazers-tasks-state")).not.toBeNull()
+      expect(signals.at(-2)?.className).toContain("lazers-tasks-row-elapsed")
+    },
+    {},
+    { runningSince: Date.now() - 12 * 60_000 - 5_000 },
   )
 })
 
