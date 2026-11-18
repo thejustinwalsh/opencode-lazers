@@ -1,5 +1,3 @@
-# Trajectory marks and idle breaks
-
 - Marks use plot-relative percentages that are converted to pixels using the plot width.
 - A mark under 6 drawn pixels becomes a 2-pixel tick centered on its start.
 - A mark at least 6 pixels wide becomes a span from its start through its recorded width.
@@ -12,5 +10,6 @@
 - Loading history, nonpositive duration, or no qualifying idle gap leaves the axis linear.
 - Detection uses unique valid activity times plus zero; it does not add the duration endpoint.
 - Only gaps between known points are tested; gaps of 60 seconds or more are idle breaks.
-- Each break is displayed at the lesser of its duration and the larger of 8 seconds or 2% of run duration.
+- Each break is shown no longer than its actual interval.
+- The display limit is the larger of 8 seconds or 2% of run duration.
 - A trailing interval after the last known point stays ordinary time, not an inferred idle break.
