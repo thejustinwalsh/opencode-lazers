@@ -152,6 +152,31 @@ opens only when a session is selected; until then the list has the full height.
 It shows state, task link, one facts line, then Calls, Files and Messages.
 When nothing is running, say so and link to Tasks.
 
+The three views answer different questions and share one live snapshot, so
+switching between them never reloads.
+
+| View    | Question                        | Form                                                                |
+| ------- | ------------------------------- | ------------------------------------------------------------------- |
+| Monitor | What is each session doing now? | Architect row, workers indented beneath, current calls under each   |
+| Map     | Who is connected to whom?       | Compact tree: You, Architect, runtime groups, concrete workers      |
+| Flow    | Where is the work going, live?  | Sessions on the left, destinations on the right, flow lines between |
+
+Map: stroke carries status. A path that leads to something running is
+interactive blue; a failed or needs-you node colours itself and the one edge
+into it; ancestors never inherit those tones. Selecting a node dims the rest.
+
+Flow reference: [flow mockup](design/reviews/fable-ui-review-20261117/mockups/radar-flow.png).
+It is the Agent Radar canvas turned for a narrow, tall panel. Destinations are
+grouped as Models, Local machine and Tools & services, and only those with
+activity in the last two minutes are listed. Line weight is volume in that
+window, opacity is recency, and moving dots mark a call running now (static
+under reduced motion). Line hue follows the destination group and reuses the
+Trajectory track hues: models violet, local amber, tools neutral, You warning.
+Selecting a session or destination dims everything unconnected and filters the
+feed. Below the split, `Feed` lists recent calls newest first and `Models`
+shows per-model calls, tokens and rate; omit token figures that were not
+recorded. The task lifecycle statechart is a diagnostic in the menu, not a view.
+
 Lead with compact live session activity above the existing horizontal inspector.
 Keep concurrent calls distinct. Show last meaningful activity and concrete wait
 or failure reasons; native busy state alone does not establish progress. Attribute
