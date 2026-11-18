@@ -119,33 +119,34 @@ export default Plugin.define({
       })
       ctx.layout.open(`${ctx.id}:trajectory`, session, { tab: "select" })
     }
+    const openTask = (
+      session: Parameters<TaskTrajectoryOpener>[0],
+      target: { projectDirectory: string; taskID: string },
+    ) => {
+      ctx.stores.taskView(session).update((draft) => {
+        const previous = draft.projects[target.projectDirectory] ?? {
+          scope: "project" as const,
+          selectedID: null,
+          search: "",
+          split: 48,
+          listScroll: 0,
+          detailScroll: 0,
+        }
+        draft.projects[target.projectDirectory] = {
+          ...previous,
+          scope: "project",
+          search: "",
+          selectedID: target.taskID,
+          detailScroll: 0,
+          revealTaskID: target.taskID,
+        }
+      })
+      ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
+    }
     setupTaskPanel(ctx, openTaskTrajectory)
     setupModelsPanel(ctx, openTaskTrajectory)
-    setupTrajectoryPanel(ctx)
-    setupRadarPanel(ctx, {
-      openTrajectory: openTaskTrajectory,
-      openTask(session, target) {
-        ctx.stores.taskView(session).update((draft) => {
-          const previous = draft.projects[target.projectDirectory] ?? {
-            scope: "project" as const,
-            selectedID: null,
-            search: "",
-            split: 48,
-            listScroll: 0,
-            detailScroll: 0,
-          }
-          draft.projects[target.projectDirectory] = {
-            ...previous,
-            scope: "project",
-            search: "",
-            selectedID: target.taskID,
-            detailScroll: 0,
-            revealTaskID: target.taskID,
-          }
-        })
-        ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
-      },
-    })
+    setupTrajectoryPanel(ctx, { openTask })
+    setupRadarPanel(ctx, { openTrajectory: openTaskTrajectory, openTask })
     const Ui = ctx.ui
     const pageLede =
       "Architect, tasks and panels work without local inference. Everything below is optional."
