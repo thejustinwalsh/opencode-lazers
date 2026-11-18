@@ -138,6 +138,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
       setupGui,
       trajectoryPanelRegistration,
       mountTrajectoryPanel,
+      trajectoryViewCache,
     } = await import(pathToFileURL(`${outputDirectory}/targeted-trajectory-dom-test.js`).href)
     expect(replacedInferenceRuntime).toBe(true)
 
@@ -313,7 +314,8 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     )
     expect(snapshotCalls).toBe(0)
     expect(historyCalls).toBeGreaterThan(0)
-    const costRow = container.querySelector(".lazers-trajectory-cost")?.textContent ?? ""
+    const costCell = container.querySelector(".lazers-trajectory-cost")
+    const costRow = costCell?.getAttribute("title") ?? ""
     expect(latestHistoryReport).toMatchObject({
       effort: {
         recordedCost: { apiEquivalentTotalUsd: 0.03197324 },
@@ -325,6 +327,9 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     expect(costRow).toContain("Current-market observed-usage estimate")
     expect(costRow).toContain("$0.01598662 estimate")
     expect(costRow).not.toContain("$0.03197324")
+    // The cell shows a short value over a muted label; the exact figure sits in its tooltip.
+    expect(costCell?.querySelector("b")?.textContent).toBe("$0.016")
+    expect(costCell?.querySelector("span")?.textContent).toBe("market cost")
     // The summary names the price source and date; generation and freshness sit behind the disclosure.
     expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toMatch(
       /^OpenRouter prices · \w+ \d+$/,
@@ -360,11 +365,23 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     expect(container.querySelector(".lazers-trajectory-attempt-state")).toBeNull()
     for (const segment of container.querySelectorAll(".lazers-trajectory-segment"))
       expect(segment.classList.contains("lazers-trajectory-rail")).toBe(true)
+    // Marks are transparent hit targets; their shapes are drawn by one glyph layer per lane.
     for (const mark of container.querySelectorAll(
       ".lazers-trajectory-lane .lazers-trajectory-mark",
     ))
-      if (mark.getAttribute("data-kind") !== "gap")
-        expect(mark.querySelector(".lazers-trajectory-rail")).not.toBeNull()
+      expect(mark.querySelector(".lazers-trajectory-rail")).toBeNull()
+    for (const lane of container.querySelectorAll(".lazers-trajectory-lane"))
+      expect(lane.querySelector(".lazers-trajectory-glyphs")).not.toBeNull()
+    for (const glyph of container.querySelectorAll(".lazers-trajectory-glyph"))
+      expect(["tick", "span", "run"]).toContain(glyph.getAttribute("data-shape") ?? "")
+    // One state glyph and word in the head; no copy icon, zoom label or Checks list.
+    expect(
+      container.querySelector(".lazers-trajectory-line1 .lazers-trajectory-state"),
+    ).not.toBeNull()
+    expect(container.querySelector(".lazers-trajectory-copy")).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-zoom-level")).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-check-list")).toBeNull()
+    expect(container.textContent).not.toContain("No file calls")
     expect(measuredSegment?.title).toContain("Report model-activity interval:")
     expect(measuredSegment?.title).not.toContain("WORKER_STARTED")
     const attemptOptions = [
@@ -400,6 +417,20 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     )
     expect(attemptOptions[0]!.getAttribute("aria-selected")).toBe("false")
 
+    // Switching to another panel tab and back re-mounts the panel: the last loaded trajectory is
+    // on screen at once, with no skeleton, and refreshes in place.
+    disposePanel?.()
+    const remounted = browserDocument.createElement("main")
+    browserDocument.body.append(remounted)
+    disposePanel = mountTrajectoryPanel(panel!, context, session, remounted).dispose
+    expect(remounted.querySelector(".lazers-trajectory-heading")?.textContent).toBe(
+      fixture.repository.get(taskID)!.proposal.objective,
+    )
+    expect(remounted.querySelectorAll(".lazers-trajectory-attempt").length).toBe(2)
+    expect(remounted.querySelector(".lazers-panel-loading")).toBeNull()
+    expect(remounted.textContent).not.toContain("Loading this trajectory")
+    trajectoryViewCache.clear()
+
     // An expired continuation surfaces beside the pagination controls with its recovery.
     disposePanel?.()
     forcedHistoryLimit = 2
@@ -425,6 +456,43 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     await until(() => coverage()?.querySelector('[role="alert"]') == null)
     await until(() => coverage()?.textContent?.includes("events") === true)
     expect(coverage()?.textContent).not.toContain("loading the rest")
+
+    // No task chosen: a title and scope picker, one statement with its action, recent tasks that
+    // open on click. There is no split and no inspector until a trajectory is loaded.
+    disposePanel?.()
+    trajectoryStore.update((draft: { projects: Record<string, unknown> }) => {
+      draft.projects[fixture.directory] = {
+        scope: "project",
+        selectedTaskID: null,
+        selectedReference: null,
+        target: null,
+        selectedKind: "",
+        selectedRecordID: "",
+        split: 56,
+      }
+    })
+    const emptyContainer = browserDocument.createElement("main")
+    browserDocument.body.append(emptyContainer)
+    disposePanel = mountTrajectoryPanel(panel!, context, session, emptyContainer).dispose
+    await until(() => emptyContainer.querySelectorAll(".lazers-trajectory-recent-row").length > 0)
+    expect(emptyContainer.querySelector(".lazers-trajectory-panel-title")?.textContent).toBe(
+      "Trajectory",
+    )
+    expect(emptyContainer.querySelector(".lazers-trajectory-empty b")?.textContent).toBe(
+      "Pick a task",
+    )
+    expect(emptyContainer.querySelector(".lazers-trajectory")?.getAttribute("data-split")).toBe(
+      "false",
+    )
+    expect(emptyContainer.querySelector(".lazers-trajectory-separator")).toBeNull()
+    expect(emptyContainer.querySelector(".lazers-trajectory-inspector")).toBeNull()
+    expect(emptyContainer.querySelector(".lazers-trajectory-timeline")).toBeNull()
+    emptyContainer.querySelector<HTMLButtonElement>(".lazers-trajectory-recent-row")!.click()
+    await until(() => emptyContainer.querySelector(".lazers-trajectory-heading") !== null)
+    expect(emptyContainer.querySelector(".lazers-trajectory")?.getAttribute("data-split")).toBe(
+      "true",
+    )
+    expect(emptyContainer.querySelector(".lazers-trajectory-separator")).not.toBeNull()
   } finally {
     disposePanel?.()
     disposeSetup?.()

@@ -590,10 +590,11 @@ export function elapsedLabel(elapsedMs: number) {
   return `${seconds}s`
 }
 
-/** Human duration for inspector rows: 240 ms, 4.2 s, 4m 47s, 1h 02m. */
+/** Human duration for inspector rows: 240ms, 4.2s, 18s, 4m 47s, 1h 02m. */
 export function durationText(durationMs: number) {
-  if (durationMs < SECOND) return `${Math.round(durationMs)} ms`
-  if (durationMs < MINUTE) return `${(durationMs / SECOND).toFixed(1)} s`
+  if (durationMs < SECOND) return `${Math.round(durationMs)}ms`
+  if (durationMs < 10 * SECOND) return `${(durationMs / SECOND).toFixed(1)}s`
+  if (durationMs < MINUTE) return `${Math.round(durationMs / SECOND)}s`
   const total = Math.round(durationMs / SECOND)
   if (durationMs < HOUR) return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s`
   return `${Math.floor(total / 3_600)}h ${String(Math.floor((total % 3_600) / 60)).padStart(2, "0")}m`
