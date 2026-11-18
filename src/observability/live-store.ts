@@ -5,7 +5,7 @@ import type { LiveHistoryRequest } from "./contract.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
-import { terminalPlanStates } from "../runner/plan-control.ts"
+import { taskStatePredicate } from "../tasks/state-filter.ts"
 
 export const LIVE_LIMITS = {
   sessions: 32,
@@ -330,29 +330,32 @@ function assignmentFromRow(row: AssignmentRow): LiveAttemptAssignment {
 }
 
 /**
- * Queued, blocked and failed task counts from the runner nodes of plans that are still open.
- * One grouped query over a project's open plans; absent when the tables are not readable.
+ * Queued, blocked and failed task counts with the Tasks panel's own definition: each count is a
+ * sum of `taskStatePredicate` for that filter over the project's non-retired tasks, the same
+ * scope `TaskRepository.stateCounts` uses. The repository method is private to a writable store
+ * handle, so this read applies the shared predicates itself. One pass; absent when unreadable.
  */
 function readWorkload(db: Database, metrics: LiveStoreMetrics, projectDirectory: string) {
   try {
-    const terminal = [...terminalPlanStates]
+    const filters = ["queued", "blocked", "failed"] as const
+    const sums = filters.map(
+      (state) =>
+        `COALESCE(SUM(CASE WHEN ${taskStatePredicate(state, "tasks")} THEN 1 ELSE 0 END),0) AS "${state}"`,
+    )
     countQuery(metrics)
-    const rows = db
-      .query<{ state: string; count: number }, string[]>(
-        `SELECT n.state AS state,COUNT(*) AS count
-           FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
-          WHERE p.project_directory=? AND p.state NOT IN (${terminal.map(() => "?").join(",")})
-            AND n.state IN ('queued','ready','blocked','failed','exhausted')
-          GROUP BY n.state`,
+    const row = db
+      .query<Record<string, number>, string[]>(
+        `SELECT ${sums.join(",")} FROM tasks
+          WHERE tasks.project_directory=?
+            AND NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)`,
       )
-      .all(projectDirectory, ...terminal)
-    countRows(metrics, rows)
-    const count = (...states: string[]) =>
-      rows.filter((row) => states.includes(row.state)).reduce((sum, row) => sum + row.count, 0)
+      .get(projectDirectory)
+    if (!row) return undefined
+    countRows(metrics, [row])
     return {
-      queued: count("queued", "ready"),
-      needsYou: count("blocked"),
-      failed: count("failed", "exhausted"),
+      queued: row.queued ?? 0,
+      needsYou: row.blocked ?? 0,
+      failed: row.failed ?? 0,
     } satisfies LiveWorkload
   } catch {
     return undefined

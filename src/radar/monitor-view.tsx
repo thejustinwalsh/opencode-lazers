@@ -197,6 +197,11 @@ export function RadarMonitorView(props: Props) {
     const title = sessionTaskTitle(session)
     return `${sessionRole(session).label}${title ? ` · ${title}` : ""}`
   }
+  /** Event lines name a session by role and reference only; the title stays on its row. */
+  const sessionShortLabel = (session: LiveSession) => {
+    const reference = session.assignment?.taskReference
+    return `${sessionRole(session).label}${reference ? ` · ${reference}` : ""}`
+  }
   const sessionTitle = (session: LiveSession) => {
     const task = sessionTask(session)
     return `${sessionRole(session).label}${task ? ` · ${task}` : ""}`
@@ -435,7 +440,7 @@ export function RadarMonitorView(props: Props) {
               </time>
               <span class="lazers-radar-flow-label">
                 <span class="lazers-radar-flow-subject">
-                  {owner() ? sessionTitle(owner()!) : "Session"}
+                  {owner() ? sessionShortLabel(owner()!) : "Session"}
                 </span>
                 {" / "}
                 {flowPhase(value(), live()).label}

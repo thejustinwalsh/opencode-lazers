@@ -204,14 +204,33 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
       taskTitle: "Inspect a worker attempt without disclosing private data",
     })
     expect(worker.assignment?.taskReference).toMatch(/\S/)
+    // The workload is the Tasks panel's own definition: it must equal TaskRepository.stateCounts.
+    const tasksCounts = () => {
+      const counts = fixture.repository.readPage({
+        search: "",
+        limit: 1,
+        state: "all",
+        stateCounts: true,
+      }).stateCounts!
+      return { queued: counts.queued, needsYou: counts.blocked, failed: counts.failed }
+    }
+    expect(live.workload).toEqual(tasksCounts())
     expect(live.workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='blocked'").run())
+    expect((await read()).workload).toEqual(tasksCounts())
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 1, failed: 0 })
     fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='failed'").run())
+    expect((await read()).workload).toEqual(tasksCounts())
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 1 })
-    // Terminal plans do not count.
-    fixture.store.atomic((db) => db.query("UPDATE runner_plans SET state='failed'").run())
+    // A paused plan's queued work is Paused, not Queued, exactly as in Tasks.
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_nodes SET state='queued'").run()
+      db.query(
+        "INSERT INTO runner_dispatch_controls(plan_id,state,reason,until_plans,updated_at) SELECT id,'paused','test','[]',1 FROM runner_plans",
+      ).run()
+    })
+    expect((await read()).workload).toEqual(tasksCounts())
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
 
     // A session without a native parent omits the field rather than carrying null.

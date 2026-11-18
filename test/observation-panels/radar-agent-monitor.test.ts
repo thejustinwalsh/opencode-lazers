@@ -525,6 +525,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         lines().some((line) => line.textContent?.includes("patch failed")),
     )
     expect(sessionButton("ses-failed")?.textContent).toContain("Inspect a worker attempt")
+    // Event lines carry the short label, never the full task title.
+    expect(
+      [...container.querySelectorAll(".lazers-radar-flow-row")].some((row) =>
+        row.textContent?.includes("Inspect a worker attempt"),
+      ),
+    ).toBe(false)
     expect(container.querySelector(".lazers-radar-monitor-activity")?.textContent).not.toMatch(
       /[0-9a-f]{8}-[0-9a-f]{4}-/,
     )
