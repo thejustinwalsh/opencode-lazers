@@ -2,6 +2,14 @@
  * Type scale (mockups/shared.css): body 13, controls and disclosures 12.5, meta 12, small meta
  * 11.5, mono 10.5-12. Sizes are fixed px so the panel reads the same at every host font size.
  */
+/* Shared with Radar Flow: the one definition of the tools (violet) hue. */
+:root {
+  --lazers-hue-tools: color-mix(
+    in oklch,
+    var(--text-interactive-base, var(--text-base)) 58%,
+    var(--icon-critical-base, var(--text-base))
+  );
+}
 .lazers-trajectory {
   --trajectory-inset: 16px;
   --trajectory-label: 88px;
@@ -20,11 +28,7 @@
    * Violet, derived rather than named: host themes map their own violet tokens to blue or
    * orange, so mix the theme's interactive blue with its critical red. Still theme-reactive.
    */
-  --trajectory-hue-tools: color-mix(
-    in oklch,
-    var(--text-interactive-base, var(--text-base)) 58%,
-    var(--icon-critical-base, var(--text-base))
-  );
+  --trajectory-hue-tools: var(--lazers-hue-tools);
   --trajectory-hue-files: var(--icon-warning-base, var(--text-base));
   --trajectory-hue-checks: var(--text-strong);
   --trajectory-gap: var(--text-weak);

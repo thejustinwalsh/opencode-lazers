@@ -36,7 +36,7 @@ import { connectionChip } from "./monitor-model.ts"
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
   // "timeline" is a retired diagnostics view; stored values still decode and read as "map".
-  view: Schema.Literals(["map", "flow", "timeline"]),
+  view: Schema.Literals(["map", "flow", "timeline", "lifecycle"]),
   includeUnmanagedSessions: Schema.Boolean,
   planID: Schema.NullOr(Schema.String),
   taskID: Schema.NullOr(Schema.String),
@@ -137,7 +137,13 @@ function createRadarLocation(props: PanelProps) {
 }
 
 function RadarDiagnosticsPanel(
-  props: PanelProps & { ctx: RadarContext; radarLocation: RadarLocation; onBack: () => void },
+  props: PanelProps & {
+    ctx: RadarContext
+    radarLocation: RadarLocation
+    /** Back to the Flow overview; this panel is the task lifecycle diagram. */
+    onBack: () => void
+    onView: (view: RadarViewChoice) => void
+  },
 ) {
   const ctx = props.ctx
   const Ui = ctx.ui
@@ -174,7 +180,7 @@ function RadarDiagnosticsPanel(
     return {
       ...initial,
       ...view,
-      view: view.view === "flow" ? ("flow" as const) : ("map" as const),
+      view: "flow" as const,
       visualScrollLeft: view.visualScrollLeft ?? 0,
       detailScrollLeft: view.detailScrollLeft ?? 0,
     }
@@ -458,7 +464,7 @@ function RadarDiagnosticsPanel(
       <RadarHeader
         ui={Ui}
         view="flow"
-        onView={(view) => (view === "monitor" ? props.onBack() : save({ view }))}
+        onView={props.onView}
         scope={scopeChoice()}
         onScope={changeScope}
         connection={connection()}
@@ -482,6 +488,9 @@ function RadarDiagnosticsPanel(
             })
         }}
       >
+        <button type="button" class="lazers-radar-text-button" onClick={props.onBack}>
+          Back to Flow
+        </button>
         <PanelStatus ui={Ui} status={status} onRetry={() => state.refreshNow()} skeleton="chart" />
         <Show when={prefs().view !== "map" && snapshot()}>
           {(value) => (
@@ -943,8 +952,8 @@ function RadarLiveMonitorPanel(
     ctx: RadarContext
     radarLocation: RadarLocation
     navigation: RadarNavigation
-    view: "monitor" | "map"
-    onView: (view: RadarViewChoice) => void
+    view: "monitor" | "map" | "flow"
+    onView: (view: RadarViewChoice | "lifecycle") => void
   },
 ) {
   const ctx = props.ctx
@@ -1099,6 +1108,7 @@ function RadarLiveMonitorPanel(
         onRefresh={() => state.refreshNow()}
         onLoadMoreHistory={() => state.loadMoreHistory()}
         onView={props.onView}
+        onOpenLifecycle={() => props.onView("lifecycle")}
         onOpenTasks={openTasks}
         onOpenWorker={(sessionID) =>
           ctx.tabs.open({ server: props.session.server.id, id: sessionID }, { focus: true })
@@ -1141,9 +1151,15 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext; navigation: RadarNa
     return value[value.scope].view
   }
   /** Monitor, Map and Flow: one switch. Monitor and Map share the live panel; Flow keeps its own. */
-  const view = (): RadarViewChoice =>
-    store().value?.diagnostics === true ? (savedView() === "flow" ? "flow" : "map") : "monitor"
-  const changeView = (next: RadarViewChoice) => {
+  const view = (): RadarViewChoice | "lifecycle" =>
+    store().value?.diagnostics !== true
+      ? "monitor"
+      : savedView() === "lifecycle"
+        ? "lifecycle"
+        : savedView() === "flow"
+          ? "flow"
+          : "map"
+  const changeView = (next: RadarViewChoice | "lifecycle") => {
     const key = projectKey()
     store().update((draft) => {
       draft.diagnostics = next !== "monitor"
@@ -1157,13 +1173,13 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext; navigation: RadarNa
   }
   return (
     <Show
-      when={view() === "flow"}
+      when={view() === "lifecycle"}
       fallback={
         <RadarLiveMonitorPanel
           {...props}
           radarLocation={radarLocation}
           navigation={props.navigation}
-          view={view() === "map" ? "map" : "monitor"}
+          view={view() as "monitor" | "map" | "flow"}
           onView={changeView}
         />
       }
@@ -1171,7 +1187,8 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext; navigation: RadarNa
       <RadarDiagnosticsPanel
         {...props}
         radarLocation={radarLocation}
-        onBack={() => changeView("monitor")}
+        onBack={() => changeView("flow")}
+        onView={changeView}
       />
     </Show>
   )

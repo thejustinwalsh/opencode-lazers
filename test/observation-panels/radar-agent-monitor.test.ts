@@ -696,6 +696,41 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       new dom.window.MouseEvent("click", { bubbles: true }) as unknown as MouseEvent,
     )
     await until(() => container.querySelector(".lazers-radar-node[data-selected='true']") !== null)
+    // Flow shares the panel, header and snapshot: no reload, and the lifecycle chart sits in ⋯.
+    tab("Flow").click()
+    await until(() => tab("Flow")?.getAttribute("aria-selected") === "true")
+    expect(headerShape()).toEqual(monitorHeaderShape)
+    expect(container.querySelector(".lazers-panel-loading")).toBeNull()
+    await until(
+      () =>
+        container.querySelector(".lazers-radar-flowcanvas svg") !== null ||
+        text().includes("Nothing is flowing"),
+    )
+    expect(text()).not.toMatch(/Unavailable|not observed/)
+    const flowCanvas = container.querySelector(".lazers-radar-flowcanvas svg")
+    if (flowCanvas) {
+      expect(
+        [...container.querySelectorAll('.lazers-radar-flow-tabs [role="tab"]')].map((item) =>
+          item.textContent?.replace(/\d+$/, "").trim(),
+        ),
+      ).toEqual(["Feed", "Models"])
+    }
+    menu().click()
+    const lifecycle = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (button) => button.textContent === "Task lifecycle diagram",
+    )
+    expect(lifecycle).toBeDefined()
+    lifecycle!.click()
+    await until(() =>
+      [...container.querySelectorAll("button")].some(
+        (button) => button.textContent === "Back to Flow",
+      ),
+    )
+    expect(headerShape()).toEqual(monitorHeaderShape)
+    ;[...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Back to Flow")!
+      .click()
+    await until(() => container.querySelector(".lazers-radar-monitor") !== null)
     tab("Monitor").click()
     await until(() => container.querySelector(".lazers-radar-session") !== null)
     expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(false)
