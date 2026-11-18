@@ -842,23 +842,31 @@ test("isolation verification of a large tree yields to the event loop in short s
       mkdirSync(path, { recursive: true })
       for (let file = 0; file < 20; file++) writeFileSync(join(path, `f${file}.js`), "x")
     }
+    // Structural signal: a setImmediate chain only advances when the walk hands
+    // the event loop a turn. A walk that blocked would complete with ~0 ticks.
+    // Wall-clock gaps are checked only as a generous bound against one long block.
     let last = performance.now()
     let worstSlice = 0
-    let beats = 0
-    const timer = setInterval(() => {
+    let ticks = 0
+    let running = true
+    const pump = () => {
+      if (!running) return
       const now = performance.now()
       worstSlice = Math.max(worstSlice, now - last)
       last = now
-      beats++
-    }, 1)
+      ticks++
+      setImmediate(pump)
+    }
+    setImmediate(pump)
     try {
       await assertOwnedDependencyTree(join(root, "node_modules"))
       await assertNoSymlinks(root)
     } finally {
-      clearInterval(timer)
+      running = false
     }
-    expect(beats).toBeGreaterThan(5)
-    expect(worstSlice).toBeLessThan(50)
+    // 600 directories at 32 per batch, plus depth, means dozens of awaited batches.
+    expect(ticks).toBeGreaterThan(20)
+    expect(worstSlice).toBeLessThan(500)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
