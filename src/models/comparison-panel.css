@@ -1437,3 +1437,83 @@ span.lazers-models-assignment-route {
 .lazers-models-all-models tr[data-frontier] td:nth-child(3) {
   color: var(--text-interactive-base, var(--text-base));
 }
+
+/* The Projected ranking: a fixed axis over rows that scroll inside the chart area. */
+.lazers-rank-title {
+  color: var(--text-weak);
+  font-size: 11.5px;
+}
+
+.lazers-rank-axis {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.lazers-rank-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.lazers-rank-hit {
+  fill: transparent;
+}
+
+.lazers-rank-row:hover .lazers-rank-hit,
+.lazers-rank-row:focus-visible .lazers-rank-hit {
+  fill: var(--surface-base-hover);
+}
+
+.lazers-rank-stem {
+  stroke: var(--text-interactive-base, var(--border-selected));
+  stroke-width: 1.5;
+  opacity: 0.5;
+}
+
+.lazers-rank-mark {
+  fill: var(--text-interactive-base, var(--border-selected));
+  stroke: var(--text-interactive-base, var(--border-selected));
+}
+
+.lazers-chart-value {
+  fill: var(--text-strong);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+
+.lazers-rank-score {
+  fill: var(--text-weak);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+
+.lazers-models-tabs {
+  margin-right: auto;
+}
+
+.lazers-models-prices {
+  flex: 0 0 auto;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.lazers-chart-modes {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 6px;
+}
+
+.lazers-models-source-line {
+  margin: 0 0 8px;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+
+.lazers-models-basis-line {
+  margin: 8px 0;
+  color: var(--text-base);
+  font-size: 12.5px;
+}

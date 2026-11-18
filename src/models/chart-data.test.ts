@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
-import { FRONTIER_MIN_TERMINAL_TASKS } from "./chart-layout.ts"
+import { SMALL_SAMPLE_TERMINAL_TASKS } from "./chart-layout.ts"
 import {
   benchmarkChartPoints,
   comparisonChartMarks,
   observedChartPoints,
+  projectedRankRows,
   projectedChartPoints,
 } from "./chart-data.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
@@ -70,15 +71,20 @@ test("the best trade-off is the Pareto set over cost, tokens and acceptance rate
   expect(ids(marks)).toEqual(["qwen", "kimi", "sol-medium"])
 })
 
-test("a model below the minimum sample is plotted but never on the frontier", () => {
-  expect(FRONTIER_MIN_TERMINAL_TASKS).toBe(2)
-  const marks = comparisonChartMarks({
+test("a small sample still counts toward the frontier and is flagged, not excluded", () => {
+  expect(SMALL_SAMPLE_TERMINAL_TASKS).toBe(3)
+  const data = {
     points: [point("thin", 1e6, 0.1, 1, 1), point("steady", 2e6, 0.2, 3, 3)],
     frontierConfigurationIDs: [],
-  })
-  // Without the minimum the one-task model would dominate; with it the steady one is the frontier.
+  }
+  const marks = comparisonChartMarks(data)
   expect(marks.map((mark) => mark.configurationID)).toEqual(["thin", "steady"])
-  expect(ids(marks)).toEqual(["steady"])
+  // One accepted task is enough to be eligible: the frontier is drawn even for a tiny install.
+  expect(ids(marks)).toEqual(["thin"])
+  const [thin, steady] = observedChartPoints(data, "OpenRouter")
+  expect(thin!.tooltip).toContain("small sample · 1 of 1")
+  expect(steady!.tooltip.join(" ")).not.toContain("small sample")
+  expect(thin!.frontier).toBe(true)
   // A partial cohort is not eligible either.
   const partial = comparisonChartMarks({
     points: [point("partial", 1e6, 0.1, 3, 3, { partial: true }), point("whole", 2e6, 0.2, 3, 3)],
@@ -175,6 +181,7 @@ const entry = (id: string, extra: Partial<CatalogEntry> = {}): CatalogEntry => (
   },
   projection: { usd: 0.8, cacheAtInputRate: false },
   score: 61,
+  contextTokens: null,
   observed: null,
   frontier: false,
   ...extra,
@@ -228,4 +235,23 @@ test("benchmark points mark the price and score frontier", () => {
     ["dominated", false],
   ])
   expect(points[0]).toMatchObject({ x: 1, y: 30 })
+})
+
+test("the projected ranking lists every priced model cheapest first, scored or not", () => {
+  const rows = projectedRankRows([
+    entry("dear", { projection: { usd: 14.4, cacheAtInputRate: false }, score: null }),
+    entry("unpriced", { projection: null, price: null }),
+    entry("cheap", { projection: { usd: 0.4, cacheAtInputRate: false }, score: 42 }),
+    entry("backed", {
+      projection: { usd: 2, cacheAtInputRate: false },
+      score: null,
+      tags: ["observed"],
+      observed: { configurationID: "c", usd: 2.1, tokens: 1e6, accepted: 2, terminal: 2 },
+    }),
+  ])
+  // No score is needed to appear: the ranking exists whenever any source prices anything.
+  expect(rows.map((row) => row.id)).toEqual(["cheap", "backed", "dear"])
+  expect(rows.map((row) => row.backed)).toEqual([false, true, false])
+  expect(rows[0]!.tooltip).toContain("Projected ≈$0.4 per accepted task")
+  expect(projectedRankRows([])).toEqual([])
 })

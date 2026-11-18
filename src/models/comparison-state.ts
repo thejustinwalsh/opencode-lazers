@@ -47,7 +47,8 @@ export type ModelAssignmentWrite = {
 
 export type ModelComparisonTransport = {
   comparison(cursor: string | undefined, signal: AbortSignal): Promise<ModelComparisonOutput>
-  refreshSources(signal: AbortSignal): Promise<ModelEvidenceOutput>
+  /** `force` is the refresh button: fetch every source now. Otherwise only stale ones, in the background. */
+  refreshSources(signal: AbortSignal, force?: boolean): Promise<ModelEvidenceOutput>
   settings(taskID: string | undefined, signal: AbortSignal): Promise<ModelSettingsOutput>
   catalog(signal: AbortSignal): Promise<ModelCatalogOutput>
   configure(update: ModelMappingUpdate, signal: AbortSignal): Promise<ModelMappingWriteOutput>
@@ -355,6 +356,8 @@ function blank(
 /** Coordinates bounded comparison reads and the selected task's actual observation. */
 /** Longest the first decision read waits for a source refresh before using saved prices. */
 export const SOURCE_WAIT_MS = 10_000
+const BACKGROUND_POLL_MS = 3_000
+const BACKGROUND_POLLS = 20
 
 function settleWithin(promise: Promise<unknown>, ms: number) {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -554,7 +557,7 @@ export class ModelComparisonPanelState {
     const selectionRevision = this.selectionRevision
     const operation = Promise.all([
       this.loadTasks(generation, selectedTaskID ?? undefined),
-      this.refreshSources(generation),
+      this.refreshSources(generation, true),
       this.refreshDecisionSnapshot(generation),
       selectedTaskID
         ? this.loadSelectedTask(generation, selectedTaskID, selectionRevision)
@@ -567,7 +570,7 @@ export class ModelComparisonPanelState {
       this.refreshPromise = undefined
   }
 
-  async refreshSources(generation = this.generation): Promise<void> {
+  async refreshSources(generation = this.generation, force = false): Promise<void> {
     if (this.sourceRefreshPromise) return this.sourceRefreshPromise
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
@@ -575,10 +578,14 @@ export class ModelComparisonPanelState {
     this.update({ sourceRefresh: "refreshing", sourceRefreshError: "" })
     const operation = (async () => {
       try {
-        await transport.refreshSources(signal)
+        // The server answers from its stored snapshots at once and refreshes only what is past
+        // its TTL in the background; a forced refresh waits for the fetch.
+        const output = await transport.refreshSources(signal, force)
         if (generation !== this.generation || signal.aborted) return
         this.update({ sourceRefresh: "succeeded", sourceRefreshError: "" })
         await this.refreshComparison(generation)
+        if (output.sources.some((source) => source.state === "refreshing"))
+          void this.followBackgroundRefresh(generation)
       } catch (error) {
         if (generation === this.generation && !signal.aborted)
           this.update({
@@ -592,6 +599,26 @@ export class ModelComparisonPanelState {
     })()
     this.sourceRefreshPromise = operation
     return operation
+  }
+
+  /** Re-read the comparison once a background source refresh finishes; the panel never waits on it. */
+  private async followBackgroundRefresh(generation: number) {
+    const transport = this.transport
+    const signal = this.controller.signal
+    for (let attempt = 0; attempt < BACKGROUND_POLLS; attempt++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, BACKGROUND_POLL_MS))
+      if (!transport || generation !== this.generation || signal.aborted) return
+      try {
+        const output = await transport.refreshSources(signal)
+        if (generation !== this.generation || signal.aborted) return
+        if (output.sources.every((source) => source.state !== "refreshing")) {
+          await this.refreshComparison(generation)
+          return
+        }
+      } catch {
+        return
+      }
+    }
   }
 
   setDecisionFilters(filters: ModelDecisionFilters, seed?: ModelComparisonPanelData) {

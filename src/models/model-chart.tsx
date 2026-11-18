@@ -1,7 +1,14 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { JSX } from "solid-js"
-import { fanOut, layoutChart, nextPointID } from "./chart-layout.ts"
-import type { ChartDatum } from "./chart-layout.ts"
+import {
+  RANK_ROW_HEIGHT,
+  RANK_VISIBLE_ROWS,
+  fanOut,
+  layoutChart,
+  layoutRanking,
+  nextPointID,
+} from "./chart-layout.ts"
+import type { ChartDatum, RankRow } from "./chart-layout.ts"
 
 /** One plotted model: its position, its label and the words for the tooltip and screen readers. */
 export type ModelChartPoint = ChartDatum & {
@@ -323,6 +330,244 @@ export function ModelChart(props: ModelChartProps) {
           </Show>
         </div>
       </Show>
+    </div>
+  )
+}
+
+export type RankingChartRow = RankRow & {
+  tooltip: readonly string[]
+  description: string
+}
+
+export type RankingChartProps = {
+  rows: readonly RankingChartRow[]
+  selectedID: string | null
+  onSelect: (id: string) => void
+  formatValue: (value: number) => string
+  label: string
+  caption?: string | undefined
+  /** Name the ring mark in the legend. */
+  backedLegend?: string
+  /** Show the public score as a muted right-hand column. */
+  showScore?: boolean
+  /** Title above the axis, e.g. "Projected cost per accepted task". */
+  title: string
+}
+
+/**
+ * The Projected view: one row per priced model, cheapest first, cost along x. It needs no second
+ * measure. At most `RANK_VISIBLE_ROWS` rows show; the rest scroll inside the chart area under a
+ * fixed axis. Rows are focusable like the scatter's points.
+ */
+export function RankingChart(props: RankingChartProps) {
+  let wrapper: HTMLDivElement | undefined
+  const [width, setWidth] = createSignal(DEFAULT_WIDTH)
+  onMount(() => {
+    if (!wrapper) return
+    const measure = () => {
+      const next = Math.floor(wrapper!.clientWidth)
+      if (next > 0 && next !== width()) setWidth(next)
+    }
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(wrapper)
+    onCleanup(() => observer.disconnect())
+  })
+  const layout = createMemo(() =>
+    layoutRanking({
+      width: width(),
+      rows: props.rows,
+      formatValue: props.formatValue,
+      showScore: Boolean(props.showScore),
+    }),
+  )
+  const byID = createMemo(() => new Map(props.rows.map((row) => [row.id, row] as const)))
+  const ids = createMemo(() => props.rows.map((row) => row.id), [], {
+    equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]),
+  })
+  const roving = () => props.selectedID ?? props.rows[0]?.id ?? null
+  const key = (event: KeyboardEvent, id: string) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      props.onSelect(id)
+      return
+    }
+    const order = ids()
+    const index = order.indexOf(id)
+    const next =
+      event.key === "ArrowDown" || event.key === "ArrowRight"
+        ? order[Math.min(order.length - 1, index + 1)]
+        : event.key === "ArrowUp" || event.key === "ArrowLeft"
+          ? order[Math.max(0, index - 1)]
+          : event.key === "Home"
+            ? order[0]
+            : event.key === "End"
+              ? order.at(-1)
+              : undefined
+    if (next === undefined) return
+    event.preventDefault()
+    wrapper?.querySelector<SVGGElement>(`[data-point-id="${CSS.escape(next)}"]`)?.focus()
+  }
+  // The selection stays in view when the list scrolls.
+  createEffect(() => {
+    void props.selectedID
+    queueMicrotask(() =>
+      wrapper
+        ?.querySelector<SVGGElement>("[data-selected]")
+        ?.scrollIntoView?.({ block: "nearest" }),
+    )
+  })
+  // Tick labels that would touch their neighbour are left out.
+  const axisTicks = () => {
+    let last = -1
+    return layout().xScale.ticks.filter((tick) => {
+      if (tick.position - last < 0.22) return false
+      last = tick.position
+      return true
+    })
+  }
+  const left = () => layout().plotLeft
+  const right = () => layout().plotRight
+  const at = (position: number) => left() + position * (right() - left())
+  const hasBacked = () => props.rows.some((row) => row.backed)
+
+  return (
+    <div class="lazers-chart lazers-rank" ref={wrapper}>
+      <div class="lazers-rank-title">
+        {props.title}
+        {layout().xScale.kind === "log" ? " · log" : ""}
+      </div>
+      <svg class="lazers-rank-axis" width={layout().width} height="20" aria-hidden="true">
+        <For each={axisTicks()}>
+          {(tick) => (
+            <text
+              class="lazers-chart-tick"
+              x={at(tick.position)}
+              y="14"
+              text-anchor={tick.position > 0.97 ? "end" : tick.position < 0.03 ? "start" : "middle"}
+            >
+              {tick.label}
+            </text>
+          )}
+        </For>
+      </svg>
+      <div
+        class="lazers-rank-scroll"
+        style={{ "max-height": `${RANK_VISIBLE_ROWS * RANK_ROW_HEIGHT}px` }}
+      >
+        <svg
+          class="lazers-chart-svg"
+          width={layout().width}
+          height={layout().height}
+          role="group"
+          aria-roledescription="chart"
+          aria-label={props.label}
+        >
+          <For each={layout().xScale.ticks}>
+            {(tick) => (
+              <line
+                class="lazers-chart-grid"
+                x1={at(tick.position)}
+                x2={at(tick.position)}
+                y1="0"
+                y2={layout().height}
+              />
+            )}
+          </For>
+          <For each={ids()}>
+            {(id) => {
+              const row = () => layout().rows.find((entry) => entry.id === id)!
+              const data = () => byID().get(id)
+              const selected = () => id === props.selectedID
+              return (
+                <g
+                  class="lazers-chart-point lazers-rank-row"
+                  data-point-id={id}
+                  data-selected={selected() ? "" : undefined}
+                  role="button"
+                  tabindex={id === roving() ? 0 : -1}
+                  aria-pressed={selected()}
+                  aria-label={data()?.description ?? row().label}
+                  onClick={() => props.onSelect(id)}
+                  onKeyDown={(event) => key(event, id)}
+                >
+                  <title>{data()?.tooltip.join("\n")}</title>
+                  <rect
+                    class="lazers-rank-hit"
+                    x="0"
+                    y={row().cy - RANK_ROW_HEIGHT / 2}
+                    width={layout().width}
+                    height={RANK_ROW_HEIGHT}
+                  />
+                  <Show when={selected()}>
+                    <circle class="lazers-chart-halo" cx={row().cx} cy={row().cy} r="12" />
+                  </Show>
+                  <text
+                    class="lazers-chart-label"
+                    data-selected={selected() ? "" : undefined}
+                    x="0"
+                    y={row().cy + 4}
+                  >
+                    {row().text}
+                  </text>
+                  <line
+                    class="lazers-rank-stem"
+                    x1={left()}
+                    x2={row().cx}
+                    y1={row().cy}
+                    y2={row().cy}
+                  />
+                  <Show when={row().backed}>
+                    <circle class="lazers-chart-ring" cx={row().cx} cy={row().cy} r="8" />
+                  </Show>
+                  <circle
+                    class="lazers-chart-mark lazers-rank-mark"
+                    cx={row().cx}
+                    cy={row().cy}
+                    r={selected() ? 5.5 : 4.5}
+                  />
+                  <text
+                    class="lazers-chart-value"
+                    x={row().valueInside ? row().cx - 10 : row().cx + 10}
+                    y={row().cy + 4}
+                    text-anchor={row().valueInside ? "end" : "start"}
+                  >
+                    {row().valueText}
+                  </text>
+                  <Show when={layout().scoreWidth > 0 && row().score != null}>
+                    <text
+                      class="lazers-rank-score"
+                      x={layout().width - 4}
+                      y={row().cy + 4}
+                      text-anchor="end"
+                    >
+                      score {row().score}
+                    </text>
+                  </Show>
+                </g>
+              )
+            }}
+          </For>
+        </svg>
+      </div>
+      <div class="lazers-chart-foot">
+        <ul class="lazers-chart-legend" aria-label="Chart mark legend">
+          <li>
+            <span class="lazers-chart-key" data-kind="frontier" aria-hidden="true" />
+            Projected cost
+          </li>
+          <Show when={hasBacked() && props.backedLegend}>
+            <li>
+              <span class="lazers-chart-key" data-kind="backed" aria-hidden="true" />
+              {props.backedLegend}
+            </li>
+          </Show>
+        </ul>
+        <Show when={props.caption}>
+          <p class="lazers-chart-caption">{props.caption}</p>
+        </Show>
+      </div>
     </div>
   )
 }

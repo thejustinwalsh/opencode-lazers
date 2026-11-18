@@ -203,7 +203,19 @@ test("source presentation distinguishes no-cache failure from missing refresh hi
     snapshotState: "available",
     snapshot: { recordCount: 3, retrievedAt: "2026-11-03T00:00:00.000Z" },
   } as ModelSource
-  expect(sourceState(cached)).toContain("3 records · retrieved")
+  // A model list shows two times: prices, and model info.
+  const listed = { ...cached, source: "openrouter-models" } as ModelSource
+  expect(sourceState(listed)).toMatch(/^3 records · prices .+ · model info Nov 3$/)
+  // A failed refresh says when, and which data is still in use.
+  const failedRefresh = {
+    ...listed,
+    refresh: { state: "failed", completedAt: "2026-11-18T15:15:00.000Z" },
+  } as ModelSource
+  expect(sourceState(failedRefresh)).toMatch(/refresh failed .+ · using Nov 3 data$/)
+  // The benchmark rows are info only.
+  expect(sourceState({ ...cached, source: "openrouter-benchmarks" } as ModelSource)).toBe(
+    "3 records · retrieved Nov 3",
+  )
 })
 
 const marketEstimate = (

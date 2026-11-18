@@ -474,10 +474,24 @@ export function sourceState(source: ModelSource) {
       ? "No cached snapshot · latest refresh failed"
       : "No cached snapshot"
   if (!source.snapshot) return "No snapshot"
-  return joinSegments([
-    `${source.snapshot.recordCount.toLocaleString()} records`,
-    retrievedLabel(source.snapshot.retrievedAt),
-  ])
+  const clock = (value: string) =>
+    new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  const day = (value: string) =>
+    new Date(value).toLocaleDateString([], { day: "numeric", month: "short" })
+  // A model list carries prices (fetched hourly) and model info (kept a week): two times. The
+  // benchmark rows are info only.
+  const isList = source.source !== "openrouter-benchmarks"
+  const times = isList
+    ? [
+        `prices ${clock(source.snapshot.retrievedAt)}`,
+        `model info ${day(source.snapshot.asOf ?? source.snapshot.retrievedAt)}`,
+      ]
+    : [`retrieved ${day(source.snapshot.retrievedAt)}`]
+  const failed =
+    source.refresh?.state === "failed" && source.refresh.completedAt
+      ? `refresh failed ${clock(source.refresh.completedAt)} · using ${day(source.snapshot.retrievedAt)} data`
+      : undefined
+  return joinSegments([`${source.snapshot.recordCount.toLocaleString()} records`, ...times, failed])
 }
 
 /** A local date and time; absent when there is none. */

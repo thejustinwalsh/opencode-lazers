@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test"
 import {
   BYOK_PER_PROVIDER,
+  CATALOG_SOURCE_TOP,
   CATALOG_TOP,
+  buildCatalog,
   buildCatalogSet,
+  catalogSummaryText,
   entryCost,
   projectCost,
   rankCatalog,
@@ -339,6 +342,7 @@ const row = (id: string, extra: Partial<CatalogEntry>): CatalogEntry => ({
   price: null,
   projection: null,
   score: null,
+  contextTokens: null,
   observed: null,
   frontier: false,
   ...extra,
@@ -368,4 +372,65 @@ test("ranking puts the best trade-off first, then cost per task ascending, unpri
     "none-b",
   ])
   expect(entryCost(ranked[3]!)).toBe(1)
+})
+
+test("without any public score the catalog is the first priced models in the source's own order", () => {
+  const listed = (index: number, modelID: string, extra: Record<string, unknown> = {}) => {
+    const entry = candidate("acme", modelID, {
+      openrouter: { prompt: "0.000001", completion: "0.000004" },
+    }) as unknown as {
+      externalModelEvidence: { records: unknown[] }
+      externalModel: Record<string, unknown>
+    }
+    entry.externalModelEvidence = {
+      records: [{ source: "openrouter-models", recordIndex: index, recordID: modelID }],
+    } as never
+    Object.assign(entry.externalModel, extra)
+    return entry as unknown as ModelCandidate
+  }
+  const candidates = [
+    // Listed out of order on purpose: the listing index, not array position, decides.
+    ...Array.from({ length: CATALOG_SOURCE_TOP + 10 }, (_, index) =>
+      listed(CATALOG_SOURCE_TOP + 10 - index, `m-${index}`),
+    ),
+    // Image-only and no-tools models are left out when their source says so.
+    listed(0, "image-only", { architecture: { outputModalities: ["image"] } }),
+    listed(0, "no-tools", { supportedParameters: ["temperature"] }),
+  ]
+  const { entries, summary } = buildCatalog({ ...base, candidates })
+  const names = new Set(entries.map((item) => item.route.modelID))
+  expect(entries).toHaveLength(CATALOG_SOURCE_TOP)
+  expect(names.has("image-only")).toBe(false)
+  expect(names.has("no-tools")).toBe(false)
+  // The highest listing indexes are the earliest in the list: the last-built candidates.
+  expect(names.has(`m-${CATALOG_SOURCE_TOP + 9}`)).toBe(true)
+  expect(names.has("m-0")).toBe(false)
+  expect(summary).toMatchObject({
+    primary: CATALOG_SOURCE_TOP,
+    ordering: "OpenRouter listing order",
+    orderSource: "openrouter",
+  })
+  expect(catalogSummaryText(summary)).toBe(`${CATALOG_SOURCE_TOP} by OpenRouter listing order`)
+})
+
+test("the summary counts what BYOK and routing added beyond the primary set", () => {
+  const priced = { openrouter: { prompt: "0.000001", completion: "0.000001" } }
+  const { summary, entries } = buildCatalog({
+    ...base,
+    candidates: [
+      candidate("anthropic", "claude-a", priced),
+      candidate("anthropic", "claude-b", priced),
+      candidate("openai", "gpt-a", priced),
+      candidate("zed", "router-pick", priced),
+    ],
+    routed: [{ providerID: "zed", modelID: "router-pick" }],
+  })
+  // Few enough models that listing order takes them all; BYOK adds nothing beyond that.
+  expect(summary.primary).toBe(4)
+  expect(summary.anthropic).toBe(0)
+  expect(summary.routed).toBe(1)
+  expect(entries.find((item) => item.route.modelID === "claude-a")!.tags).toContain("catalog")
+  expect(catalogSummaryText({ ...summary, anthropic: 12, openai: 12, routed: 3 })).toBe(
+    "4 by OpenRouter listing order · 12 Anthropic · 12 OpenAI · 3 routed",
+  )
 })
