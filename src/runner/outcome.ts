@@ -29,7 +29,7 @@ export function outcomeText(serialized: string) {
         `Predecessor: ${String(payload.predecessorSessionID ?? "unknown")} (archived; linked as parent).`,
         `Plan IDs: ${planIDs.join(", ") || "none recorded"}.`,
         `Predecessor input-history scan: ${coverage.complete === true ? "complete for the recorded pass" : `continuing at cursor ${String(coverage.cursor ?? "unknown")}`}; later scans remain required.`,
-        "Native input IDs, dispositions and assistant-result changes remain in the durable predecessor source journal. Compact source-change pointers are delivered separately; page the metadata journal and explicitly fetch selected original messages when needed.",
+        "Native input IDs, dispositions and assistant-result changes remain in the durable predecessor source journal. Page the metadata journal and explicitly fetch selected original messages when needed.",
         ...(decisions.length
           ? ["Recorded decisions:", ...decisions.map((item) => `- ${item}`)]
           : ["Recorded decisions: none."]),
@@ -40,52 +40,6 @@ export function outcomeText(serialized: string) {
         "Existing workers continue unchanged; do not restart them.",
       ].join("\n")
     }
-    case "architect-source-reference": {
-      const inputs = Array.isArray(payload.inputIDs) ? payload.inputIDs : []
-      const results = Array.isArray(payload.results) ? payload.results : []
-      const references = inputs.flatMap((input: unknown) => {
-        if (typeof input !== "object" || input === null) return []
-        const row = input as { id?: unknown; disposition?: unknown; type?: unknown }
-        if (typeof row.id !== "string") return []
-        return [
-          `- ${row.id}: ${String(row.disposition ?? "unknown")} ${String(row.type ?? "input")}`,
-        ]
-      })
-      const resultReferences = results.flatMap((result: unknown) => {
-        if (typeof result !== "object" || result === null) return []
-        const row = result as {
-          id?: unknown
-          revision?: unknown
-          state?: unknown
-          finish?: unknown
-          toolCounts?: unknown
-        }
-        if (typeof row.id !== "string" || typeof row.revision !== "number") return []
-        const counts =
-          typeof row.toolCounts === "object" && row.toolCounts !== null
-            ? (row.toolCounts as Record<string, unknown>)
-            : {}
-        return [
-          `- assistant result ${row.id} revision ${row.revision}: ${String(row.state ?? "unknown")}; finish ${String(row.finish ?? "unknown")}; tools running/completed/failed/other ${String(counts.running ?? 0)}/${String(counts.completed ?? 0)}/${String(counts.failed ?? 0)}/${String(counts.other ?? 0)}`,
-        ]
-      })
-      return [
-        "LAZERS retained Architect input update",
-        `Source session: ${String(payload.sourceSessionID ?? "unknown")} (reconciliation revision ${String(payload.sourceRevision ?? "unknown")}).`,
-        "Original native inputs remain on the predecessor. These references do not authorize execution, replay, cancellation, permission grants, or answering forms.",
-        ...(references.length ? references : ["- No input IDs in this update."]),
-        ...resultReferences,
-        "Inspect current durable plan state and the original source session before deciding what to do.",
-      ].join("\n")
-    }
-    case "architect-source-change":
-      return [
-        "LAZERS Architect source changed",
-        `Source session: ${String(payload.sourceSessionID ?? "unknown")} (journal revision ${String(payload.sourceRevision ?? "unknown")}).`,
-        "The durable source journal is progressively inspectable with lz-inspect-plan view='journal'. It contains metadata and original message IDs, not transcript bodies or proof of completeness/consumption.",
-        "Use the authenticated selected-message view only for relevant user/synthetic inputs or assistant results. Pending, steering and unknown input dispositions remain blockers; this notice does not replay input or authorize execution.",
-        "Existing workers continue unchanged.",
-      ].join("\n")
     case "task-accepted":
       action =
         "Review the accepted task artifact now. For a concrete defect in an unintegrated isolated artifact, use retained-repair with the latest attempt, exact artifact and defect reason; it continues the same worker and re-verifies. Otherwise integrate the reviewed result through runtime commands and continue the existing backlog. Do not disturb unrelated active workers."
@@ -128,4 +82,17 @@ export function outcomeText(serialized: string) {
       )
     : payload.evidence
   return `LAZERS outcome\n${action}\n${JSON.stringify({ ...payload, ...(evidence ? { evidence } : {}) })}`
+}
+
+/**
+ * One notice for everything pending on an Architect session: the latest outcome
+ * of each plan, never one message per change.
+ */
+export function coalescedOutcomeText(entries: ReadonlyArray<{ planID: string; payload: string }>) {
+  if (entries.length === 1) return outcomeText(entries[0]!.payload)
+  const plans = new Set(entries.map((entry) => entry.planID)).size
+  return [
+    `LAZERS outcomes: ${entries.length} updates across ${plans} ${plans === 1 ? "plan" : "plans"}, the latest state of each`,
+    ...entries.map((entry) => `--- plan ${entry.planID} ---\n${outcomeText(entry.payload)}`),
+  ].join("\n\n")
 }

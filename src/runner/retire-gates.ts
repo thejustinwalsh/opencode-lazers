@@ -119,3 +119,22 @@ export function retireSourceQuarantines(db: Database): RetiredGateMove[] {
   db.exec("DROP TABLE IF EXISTS runner_source_quarantines")
   return moves
 }
+
+/**
+ * Offline, idempotent collapse of the outbox lifecycle to pending, delivered and
+ * superseded. Notices about notices (source-change and source-reference
+ * pointers) are retired unsent. Every other notice that reached the host is
+ * delivered; one that had not stays pending. Consumption was never provable, so
+ * the old consumed, unknown and reconciling distinctions carry no state.
+ */
+export function retireOutboxLifecycle(db: Database) {
+  if (!tableExists(db, "runner_outbox")) return
+  const notice = `json_extract(payload,'$.status') IN ('architect-source-reference','architect-source-change')`
+  db.exec(`UPDATE runner_outbox SET state='superseded',
+      receipt=COALESCE(receipt,json_object('history',json_array(json_object('kind','retired-notice-about-notices'))))
+    WHERE ${notice} AND state IN ('pending','sending','uncertain')`)
+  db.exec(`UPDATE runner_outbox SET state='pending' WHERE state IN ('sending','uncertain')`)
+  db.exec(
+    `UPDATE runner_outbox SET state='delivered' WHERE state IN ('admitted','consumed','unknown','reconciling')`,
+  )
+}

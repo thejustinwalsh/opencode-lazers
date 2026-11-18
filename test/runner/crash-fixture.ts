@@ -117,7 +117,7 @@ const host: RunnerHost = {
   notify: async (input) => {
     // This is external host behavior: inspect the committed outbox before accepting delivery.
     const persisted = store.atomic((db) =>
-      db.query("SELECT id FROM runner_outbox WHERE message_id=? AND state='sending'").get(input.id),
+      db.query("SELECT id FROM runner_outbox WHERE message_id=? AND state='pending'").get(input.id),
     )
     if (!persisted) throw new Error("Notification preceded its durable outbox")
     cut("before-notify")

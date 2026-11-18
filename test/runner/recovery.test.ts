@@ -126,7 +126,7 @@ async function run(root: string, fault: string) {
   return { stdout, stderr, code }
 }
 
-test("legacy delivered outbox rows reopen as host-admitted with unknown consumption", () => {
+test("legacy delivered outbox rows reopen as delivered", () => {
   const f = fixture()
   // S2-4: the legacy delivery marker predates the runner generation migration.
   f.store.atomic((db) => db.query("DELETE FROM schema_modules WHERE module='runner'").run())
@@ -150,11 +150,7 @@ test("legacy delivered outbox rows reopen as host-admitted with unknown consumpt
   expect(migrated).toMatchObject({
     id: "legacy-outbox",
     message_id: "msg_legacy_outcome",
-    state: "admitted",
-  })
-  expect(JSON.parse(migrated!.receipt)).toEqual({
-    kind: "legacy-host-admitted",
-    consumption: "unknown",
+    state: "delivered",
   })
 
   new RunnerStore(f.repository)
@@ -166,7 +162,7 @@ test("legacy delivered outbox rows reopen as host-admitted with unknown consumpt
         )
         .get(),
     ),
-  ).toEqual({ state: "admitted", receipt: migrated!.receipt })
+  ).toEqual({ state: "delivered", receipt: migrated!.receipt })
 })
 
 test("fresh processes recover accepted session/prompt effects without replay", async () => {
@@ -278,17 +274,14 @@ test("durable outbox survives process death before/after host delivery without d
         .get(f.plan.planID),
     )
     expect(JSON.parse(latest!.payload).status).toBe("accepted")
-    // Same-owner admission is not polled into consumption by ordinary delivery ticks.
-    expect(latest?.state).toBe("admitted")
-    expect(JSON.parse(latest!.receipt!).history.at(-1)).toMatchObject({
-      kind: "host-admitted",
-      consumption: "unknown",
-    })
+    // Delivery ends at the host's inbox; consumption is never polled.
+    expect(latest?.state).toBe("delivered")
+    expect(JSON.parse(latest!.receipt!).history.at(-1)).toMatchObject({ kind: "host-admitted" })
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
 }, 20000)
 
-test("legacy unowned transcript does not prove post-crash consumption of an admitted notice", async () => {
+test("a crash after native admission neither repeats the notice nor loses its delivery", async () => {
   const f = fixture()
   writeFileSync(
     join(f.root, "fixture.json"),
@@ -303,12 +296,15 @@ test("legacy unowned transcript does not prove post-crash consumption of an admi
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const resumed = await run(f.root, "none")
   expect(resumed.code, resumed.stderr).toBe(0)
-  const latest = f.store.outboxForDelivery().at(-1)!
-  expect(latest.state).toBe("admitted")
-  expect(JSON.parse(latest.receipt!).history.at(-1)).toMatchObject({
-    kind: "host-admitted",
-    consumption: "unknown",
-  })
+  const latest = f.store.atomic((db) =>
+    db
+      .query<{ state: string; receipt: string; message_id: string }, []>(
+        "SELECT state,receipt,message_id FROM runner_outbox ORDER BY rowid DESC LIMIT 1",
+      )
+      .get()!,
+  )
+  expect(latest.state).toBe("delivered")
+  expect(JSON.parse(latest.receipt).history.at(-1)).toMatchObject({ kind: "host-admitted" })
   const state = JSON.parse(readFileSync(join(f.root, "host.json"), "utf8")) as {
     calls: { kind: string; id: string }[]
   }

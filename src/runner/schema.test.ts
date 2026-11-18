@@ -195,22 +195,6 @@ test("CommandInput scopes exact review-input aliases to owner reconciliation", (
   ).toBe(false)
 })
 
-test("source notice reconciliation requires its exact source and excludes other reconciliation inputs", () => {
-  const command = {
-    requestID: "source-notice-reconcile",
-    planID: crypto.randomUUID(),
-    expectedVersion: 3,
-    action: "reconcile-source-notices" as const,
-    sourceSessionID: "ses_architect_predecessor",
-  }
-  expect(CommandInput.parse(command)).toEqual(command)
-  expect(CommandInput.safeParse({ ...command, sourceSessionID: undefined }).success).toBe(false)
-  expect(CommandInput.safeParse({ ...command, action: "reconcile" }).success).toBe(false)
-  expect(CommandInput.safeParse({ ...command, reviewInputID: "msg_worker_input" }).success).toBe(
-    false,
-  )
-})
-
 test("selected source-message inspection is bounded, unique and strict", () => {
   const input = {
     planID: crypto.randomUUID(),
