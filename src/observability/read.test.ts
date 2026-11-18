@@ -614,7 +614,17 @@ test("target trajectory reads survive unrelated project transition volume and ke
     expect(broad.boundary.transitionSequence).toBe(fullScopeSequence)
     const taskTrajectory = await reads.trajectory({ scope, taskID, limit: 20 }, tracker)
     expect(taskTrajectory.boundary.transitionSequence).toBe(fullScopeSequence)
-    expect((taskTrajectory.report as { task: { id: string } }).task.id).toBe(taskID)
+    expect(taskTrajectory.report).toMatchObject({ task: { id: taskID } })
+    expect(JSON.stringify(taskTrajectory.report)).not.toContain("UNRELATED")
+    expect(
+      (
+        taskTrajectory.report as {
+          trajectory: { events: Array<{ kind: string; event?: string }> }
+        }
+      ).trajectory.events.some(
+        (event) => event.kind === "runner-transition" && event.event === "ACCEPT",
+      ),
+    ).toBe(true)
 
     const attemptTrajectory = await reads.trajectory(
       { scope, attemptID: firstAttemptID, limit: 20 },
@@ -626,6 +636,7 @@ test("target trajectory reads survive unrelated project transition volume and ke
       focusedAttemptID: firstAttemptID,
       attempts: [{ id: firstAttemptID }],
     })
+    expect(JSON.stringify(attemptTrajectory.report)).not.toContain("UNRELATED")
 
     const firstPage = await reads.trajectoryHistory({ scope, taskID, limit: 2 }, tracker)
     const firstTrajectory = firstPage.report.trajectory as {
@@ -684,6 +695,7 @@ test("target trajectory reads survive unrelated project transition volume and ke
         toolCalls: { count: 5 },
       },
     })
+    expect(JSON.stringify(status.report)).not.toContain("UNRELATED")
 
     await expect(
       reads.trajectory(

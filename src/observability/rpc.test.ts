@@ -5,6 +5,8 @@ import { ObservationReadChangedError, ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
+import { sharedConnectionCount } from "../storage.ts"
+import { closeSourceStampConnections } from "./changes.ts"
 import {
   makeFixture,
   taskID,
@@ -240,6 +242,102 @@ test.each([false, true])(
     }
   },
 )
+
+test("cancelled targeted status reads cannot publish stale success and release their connection", async () => {
+  const fixture = makeFixture()
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let statusStarted = false
+  const reads = new ObservationReads(
+    fixture.store,
+    {
+      session: (id) => fixture.host.session(id),
+      status: async (id) => {
+        if (id === "ses-failed") {
+          statusStarted = true
+          started.resolve()
+          await release.promise
+        }
+        const session = fixture.sessions.get(id)
+        return session
+          ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+          : null
+      },
+    },
+    "project",
+    new Uint8Array(32).fill(26),
+  )
+  let handlers: { trajectoryStatus(input: unknown): Effect.Effect<unknown> } | undefined
+  const ctx = {
+    rpc: {
+      register: (_definition: unknown, methods: typeof handlers) => {
+        handlers = methods
+        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+      },
+    },
+    session: {
+      get: ({ sessionID }: { sessionID: string }) =>
+        Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "architect",
+          time: { archived: undefined },
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    event: { subscribe: () => Stream.empty },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  const scope = { kind: "project" as const, sessionID: "ses-owner" }
+
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerObservability(ctx, reads, "project")
+        }),
+      ),
+    )
+    let connectionsBeforeRelease: number | undefined
+    try {
+      const cancelled = Effect.runFork(handlers!.trajectoryStatus({ scope, taskID }))
+      await started.promise
+      // The source-stamp pool shares this read-only connection. Release its
+      // leases so the pending status read owns the final handle under test.
+      closeSourceStampConnections()
+      connectionsBeforeRelease = sharedConnectionCount()
+      fixture.store.atomic((db) =>
+        db
+          .query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?")
+          .run(firstAttemptID),
+      )
+      await Effect.runPromise(Fiber.interrupt(cancelled))
+      expect((await Effect.runPromise(Fiber.await(cancelled)))._tag).toBe("Failure")
+
+      release.resolve()
+      for (
+        let attempt = 0;
+        attempt < 100 && sharedConnectionCount() !== connectionsBeforeRelease - 1;
+        attempt++
+      )
+        await Bun.sleep(5)
+      expect(sharedConnectionCount()).toBe(connectionsBeforeRelease - 1)
+    } finally {
+      release.resolve()
+      if (statusStarted)
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (
+            connectionsBeforeRelease === undefined ||
+            sharedConnectionCount() === connectionsBeforeRelease - 1
+          )
+            break
+          await Bun.sleep(5)
+        }
+    }
+  } finally {
+    release.resolve()
+    fixture.close()
+  }
+})
 
 test("independent registrations share read boundaries and recover a failed gap on publisher handoff", async () => {
   const fixture = makeFixture()
