@@ -36,9 +36,16 @@ export const detailsPaneStyles = `
   .lazers-details-chevron:focus-visible { outline: 2px solid var(--border-selected); outline-offset: -2px; }
   .lazers-details-chevron > * { transition: transform 120ms ease; }
   .lazers-details[data-open="false"] .lazers-details-chevron > * { transform: rotate(180deg); }
+  /* One line whatever the caller passes: wrappers such as tooltips are blocks, so lay the
+     pieces out as a row and let only the last one give way. */
   .lazers-details-header {
-    flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap;
+    display: flex; align-items: center; gap: 6px;
     color: var(--text-base);
+  }
+  .lazers-details-header > * { flex: none; min-width: 0; }
+  .lazers-details-header > :last-child {
+    flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis;
   }
   .lazers-details-header[data-empty="true"] { color: var(--text-weak); }
   .lazers-details-actions { flex: none; display: flex; align-items: center; gap: 4px; }
