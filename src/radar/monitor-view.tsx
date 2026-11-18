@@ -24,6 +24,7 @@ import {
   formatDuration,
   formatTimer,
   idleSentence,
+  flowSegments,
   monitorSegments,
   nothingRunning,
   sessionActivity,
@@ -605,9 +606,7 @@ export function RadarMonitorView(props: Props) {
 
   /** Flow's line leaves out the queue: it is about what is moving. */
   const summarySegments = (response: NonNullable<ReturnType<typeof live>>) =>
-    monitorSegments(response).filter(
-      (segment) => props.view !== "flow" || segment.word !== "queued",
-    )
+    props.view === "flow" ? flowSegments(response) : monitorSegments(response)
 
   const menuActions = () => {
     const session = props.view === "flow" ? undefined : inspectorSession()

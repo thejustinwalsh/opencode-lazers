@@ -137,7 +137,7 @@ export function RadarFlowCanvas(props: {
                 stroke={HUE[dest.kind]}
               />
               <text class="lazers-radar-flow-sink" x={dest.x - 12} y={dest.y + 4} text-anchor="end">
-                {dest.name}
+                {truncate(dest.name, layout().sinkChars)}
                 <Show when={!layout().narrow}>
                   <tspan class="lazers-radar-flow-count"> {dest.count}</tspan>
                 </Show>
@@ -184,11 +184,13 @@ export function RadarFlowCanvas(props: {
         <For each={layout().sessions}>
           {(session) => {
             const color = () =>
-              session.waiting
-                ? "var(--icon-warning-base)"
-                : session.tone === "run"
-                  ? "var(--text-interactive-base)"
-                  : "var(--icon-base)"
+              session.doingFailed
+                ? "var(--icon-critical-base)"
+                : session.waiting
+                  ? "var(--icon-warning-base)"
+                  : session.tone === "run"
+                    ? "var(--text-interactive-base)"
+                    : "var(--icon-base)"
             const selected = () =>
               props.selection?.kind === "session" && props.selection.id === session.sessionID
             const label = () => (layout().narrow ? abbreviateRole(session.role) : session.role)
@@ -214,7 +216,7 @@ export function RadarFlowCanvas(props: {
                   height={34}
                   fill="transparent"
                 />
-                <Show when={session.tone === "run" && !session.waiting}>
+                <Show when={session.tone === "run" && !session.waiting && !session.doingFailed}>
                   <circle
                     class="lazers-radar-flow-halo"
                     cx={session.x}
@@ -254,8 +256,17 @@ export function RadarFlowCanvas(props: {
                   stroke={color()}
                   stroke-width={1.5}
                 />
-                <Show when={session.tone === "run" && !session.waiting}>
+                <Show when={session.tone === "run" && !session.waiting && !session.doingFailed}>
                   <path d={`M${session.x} ${session.y - 4}a4 4 0 010 8z`} fill={color()} />
+                </Show>
+                <Show when={session.doingFailed}>
+                  <path
+                    d={`M${session.x - 2.4} ${session.y - 2.4}l4.8 4.8M${session.x + 2.4} ${session.y - 2.4}l-4.8 4.8`}
+                    stroke={color()}
+                    stroke-width={1.4}
+                    stroke-linecap="round"
+                    fill="none"
+                  />
                 </Show>
                 <Show when={session.waiting}>
                   <path

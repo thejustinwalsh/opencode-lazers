@@ -396,6 +396,16 @@ export function monitorSegments(live: Live): SummarySegment[] {
   ].filter((segment) => segment.count > 0)
 }
 
+/** Flow's line: what is moving. Verifying counts as running, and the queue is not shown. */
+export function flowSegments(live: Live): SummarySegment[] {
+  const { running, verifying } = runningCounts(live)
+  return [
+    { count: running + verifying, word: "running" },
+    { count: live.workload?.needsYou ?? 0, word: "needs you" },
+    { count: live.workload?.failed ?? 0, word: "failed" },
+  ].filter((segment) => segment.count > 0)
+}
+
 /** What is true when nothing is running, in one plain sentence. */
 export function idleSentence(live: Live) {
   const architect = live.sessions.find(

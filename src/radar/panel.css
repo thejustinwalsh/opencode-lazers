@@ -951,6 +951,9 @@
   .lazers-radar-session-lines {
     margin-left: 24px;
   }
+  .lazers-radar-summary-end {
+    display: none;
+  }
 }
 
 /* ---- Map: the compact org tree ---- */
@@ -1059,17 +1062,17 @@
   fill: var(--text-base);
   font-size: 12px;
 }
-.lazers-radar-flow-group {
+.lazers-radar-flowcanvas .lazers-radar-flow-group {
   fill: var(--text-weak);
   font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.08em;
 }
-.lazers-radar-flow-name {
+.lazers-radar-flowcanvas .lazers-radar-flow-name {
   fill: var(--text-strong);
   font-weight: 500;
 }
-.lazers-radar-flow-ref {
+.lazers-radar-flowcanvas .lazers-radar-flow-ref {
   fill: var(--text-weak);
   font-family: var(--font-family-mono, ui-monospace, monospace);
   font-size: 11px;
