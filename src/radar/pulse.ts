@@ -1,4 +1,16 @@
-import type { RadarMapEdge } from "./map-model.ts"
+/** The slice of an edge the quiet-baseline tracker reads. */
+export type RadarMapEdge = {
+  id: string
+  kind: string
+  from: string
+  to: string
+  status: string
+  records: unknown[]
+  evidence: unknown[]
+  routeRecords: unknown[]
+  related: string[]
+  pulseEventIDs: string[]
+}
 
 export type RadarPulse = { edgeID: string; eventID: string }
 

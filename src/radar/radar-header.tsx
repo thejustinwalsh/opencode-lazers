@@ -1,5 +1,5 @@
 import { For } from "solid-js"
-import type { Ui } from "@opencode/plugin/gui"
+import type { IconName, Ui } from "@opencode/plugin/gui"
 import type { ConnectionChip } from "./monitor-model.ts"
 
 export type RadarViewChoice = "monitor" | "map" | "flow"
@@ -29,6 +29,8 @@ export function RadarHeader(props: {
   onScope: (choice: RadarScopeChoice) => void
   connection: ConnectionChip
   onRefresh: () => void
+  /** Extra ⋯ menu items, after Refresh. */
+  actions?: Array<{ label: string; icon?: IconName; onSelect: () => void }>
   ref?: (element: HTMLElement) => void
 }) {
   const Ui = props.ui
@@ -73,7 +75,10 @@ export function RadarHeader(props: {
       <Ui.Menu
         label="Radar actions"
         icon="outline-dots"
-        items={[{ label: "Refresh", icon: "refresh", onSelect: props.onRefresh }]}
+        items={[
+          { label: "Refresh", icon: "refresh", onSelect: props.onRefresh },
+          ...(props.actions ?? []),
+        ]}
       />
     </header>
   )

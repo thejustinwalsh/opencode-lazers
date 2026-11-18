@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test"
+import { beforeEach, expect, test } from "bun:test"
+import { clearKept } from "./kept.ts"
 import { ObservationChangeTracker } from "../observability/changes.ts"
 import type {
   ObservationChange,
@@ -10,7 +11,7 @@ import { makeFixture } from "../../test/trajectory/fixture.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 import { RadarPanelState } from "./state.ts"
 import { RadarPulseTracker } from "./pulse.ts"
-import type { RadarMapEdge } from "./map-model.ts"
+import type { RadarMapEdge } from "./pulse.ts"
 import type { RadarTransport } from "./transport.ts"
 
 type QueueItem<T> = { value: T; done: false } | { value: undefined; done: true }
@@ -96,6 +97,8 @@ function snapshots() {
     ),
   }
 }
+
+beforeEach(clearKept)
 
 test("F-S14-1 Radar read errors preserve the readable RPC envelope message", async () => {
   const message = "Observation scope is too large; narrow it"

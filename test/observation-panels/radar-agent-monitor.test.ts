@@ -370,9 +370,9 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const styles = registrations.find((item) => item.token === tokens.Style)?.value
     expect(String(styles)).toContain(".lazers-radar-monitor")
     expect(String(styles)).toContain("@container lazers-radar (max-width: 360px)")
-    expect(String(styles)).toContain("@container lazers-radar (min-width: 640px)")
+    expect(String(styles)).toContain("@container lazers-radar (max-width: 420px)")
     expect(String(styles)).not.toContain("lazers-radar-timeline")
-    expect(String(styles)).toContain(".lazers-radar-session-main > .lazers-radar-session-icon")
+    expect(String(styles)).toContain(".lazers-radar-session-children")
     expect(String(styles)).not.toMatch(/\n\.lazers-radar-session-icon \{\n\s+grid-area/)
     expect(String(styles)).not.toContain("--icon-success-base);\n}\n.lazers-radar-status-dot")
     expect(String(styles)).toContain("prefers-reduced-motion")
@@ -407,7 +407,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       includeUnmanagedSessions: false,
     })
     expect(text()).not.toContain("No model or tool events in this read")
-    expect(text()).toContain("Busy · no call in progress")
+    expect(text()).not.toContain("Busy · no call in progress")
     expect(["Live", "Reconnecting", "Offline"]).toContain(
       container.querySelector(".lazers-radar-connection")?.textContent ?? "",
     )
@@ -483,21 +483,26 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     })
     await until(
       () =>
-        text().includes("Model request") &&
         text().includes("gpt-6-luna") &&
-        text().includes("Read completed"),
+        container.querySelector(".lazers-radar-session-lines .lazers-radar-call-tool")
+          ?.textContent === "Read",
     )
+    expect(text()).not.toContain("completed")
     expect(sessionButton("ses-view-architect")?.textContent).toContain("gpt-6-luna · high")
-    const modelFlow = [
-      ...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-flow-row"),
-    ].find((button) => button.textContent?.includes("Model request"))!
-    expect(modelFlow.textContent).toContain("Architect / Model request")
-    modelFlow.click()
-    await until(() => modelFlow.getAttribute("aria-pressed") === "true")
+    sessionButton("ses-view-architect")!.click()
+    await until(() => container.querySelector(".lazers-radar-monitor-inspector") !== null)
     const inspectorText = () =>
       container.querySelector(".lazers-radar-monitor-inspector")?.textContent ?? ""
+    container
+      .querySelector<HTMLButtonElement>('.lazers-radar-inspector-tabs [role="tab"]:nth-child(3)')!
+      .click()
+    await until(() =>
+      [...container.querySelectorAll(".lazers-radar-message")].some((row) =>
+        row.textContent?.includes("Architect Model request"),
+      ),
+    )
     expect(inspectorText()).not.toContain("msg_ui_architect")
-    expect(inspectorText()).toContain("openai / gpt-6-luna · high")
+    expect(inspectorText()).toContain("gpt-6-luna · high")
     expect(container.querySelector('[role="separator"]')).not.toBeNull()
     for (const decoy of [
       "PRIVATE ARCHITECT TEXT DECOY",
@@ -518,25 +523,19 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => sessionButton("ses-failed") !== undefined)
     expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe("Project")
     sessionButton("ses-failed")!.click()
-    const lines = () => [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-line")]
+    const lines = () => [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-call")]
     await until(
       () =>
         lines().some((line) => line.textContent?.includes("src/worker.ts")) &&
-        lines().some((line) => line.textContent?.includes("patch failed")),
+        lines().some((line) => line.textContent?.includes("Patch failed")),
     )
     expect(sessionButton("ses-failed")?.textContent).toContain("Inspect a worker attempt")
-    // Event lines carry the short label, never the full task title.
-    expect(
-      [...container.querySelectorAll(".lazers-radar-flow-row")].some((row) =>
-        row.textContent?.includes("Inspect a worker attempt"),
-      ),
-    ).toBe(false)
     expect(container.querySelector(".lazers-radar-monitor-activity")?.textContent).not.toMatch(
       /[0-9a-f]{8}-[0-9a-f]{4}-/,
     )
-    expect(sessionButton("ses-failed")?.textContent).toContain("Running")
+    expect(sessionButton("ses-failed")?.textContent).toContain("running")
     expect(
-      lines().find((line) => line.textContent?.includes("patch failed"))?.textContent,
+      lines().find((line) => line.textContent?.includes("Patch failed"))?.textContent,
     ).toContain("Patch failed after the request; change is unknown.")
     expect(text()).not.toContain("NATIVE FILE BODY DECOY")
     expect(text()).not.toContain("PRIVATE TOKEN DECOY")
@@ -552,6 +551,9 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       "Project · all sessions",
     )
     await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
+    container
+      .querySelector<HTMLButtonElement>('.lazers-radar-inspector-tabs [role="tab"]:nth-child(1)')!
+      .click()
     expect(inspectorText()).toContain("ses-failed")
     expect(container.querySelector(".lazers-radar-inspector-title")?.textContent).toContain(
       "Inspect a worker attempt without disclosing private data",
@@ -567,14 +569,14 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     ).toEqual(["Calls", "Files", "Messages"])
     expect(historyRequests).toContain("ses-failed")
     const inspectorHead = container.querySelector(".lazers-radar-inspector-head")!
-    expect(inspectorHead.querySelector(".lazers-radar-state-dot")).not.toBeNull()
+    expect(inspectorHead.querySelector(".lazers-radar-inspector-glyph")).not.toBeNull()
     expect(inspectorHead.querySelector(".lazers-radar-session-icon")).toBeNull()
     const rowStates = [
       ...container.querySelectorAll(".lazers-radar-sessions .lazers-radar-session-state"),
     ].map((state) => state.textContent ?? "")
     expect(rowStates.length).toBeGreaterThan(2)
-    expect(rowStates.findIndex((state) => state.startsWith("Idle"))).toBeGreaterThan(
-      rowStates.findLastIndex((state) => state === "Busy" || state === "Running"),
+    expect(rowStates.findIndex((state) => state.startsWith("idle"))).toBeGreaterThan(
+      rowStates.findLastIndex((state) => state === "running"),
     )
     expect(container.querySelector(".lazers-radar-unavailable")).toBeNull()
     const summary = container.querySelector(".lazers-radar-summary")!
@@ -586,7 +588,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const readLine = lines().find((line) => line.textContent?.includes("src/worker.ts"))!
     readLine.focus()
     readLine.click()
-    await until(() => inspectorText().includes("Requested read target"))
+    await until(() => readLine.getAttribute("aria-pressed") === "true")
     expect(readLine.getAttribute("aria-pressed")).toBe("true")
     expect(readLine.querySelector("code")?.getAttribute("style")).toContain("test-mono")
     expect(inspectorText()).toContain("src/worker.ts")
@@ -595,7 +597,18 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-links button")].find(
         (button) => button.textContent === label,
       )!
-    linkButton("Open worker").click()
+    const menu = () =>
+      [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => button.getAttribute("aria-label") === "Radar actions",
+      )!
+    menu().click()
+    const menuLabels = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map(
+      (button) => button.textContent,
+    )
+    expect(menuLabels).toEqual(["Refresh", "Open worker"])
+    ;[...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      .find((button) => button.textContent === "Open worker")!
+      .click()
     linkButton("Open task").click()
     linkButton("Trajectory").click()
     expect(opened).toEqual([
@@ -649,17 +662,6 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(legacyCalls).toEqual({ snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 })
     expect(text()).not.toContain("Tool completed")
 
-    // The ⋯ menu keeps Refresh and no longer carries Diagnostics.
-    const actions = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.getAttribute("aria-label") === "Radar actions",
-    )!
-    actions.click()
-    expect(
-      [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map(
-        (button) => button.textContent,
-      ),
-    ).toEqual(["Refresh"])
-    actions.click()
     const tab = (label: string) =>
       [...container.querySelectorAll<HTMLButtonElement>('.lazers-radar-views [role="tab"]')].find(
         (button) => button.textContent === label,
@@ -679,8 +681,23 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe(
       "Project · all sessions",
     )
+    // Map is the compact tree in the same panel: Architect on top, concrete nodes below.
+    await until(() => container.querySelector(".lazers-radar-orgmap svg") !== null)
+    const nodeTitles = () =>
+      [...container.querySelectorAll(".lazers-radar-node-title")].map((node) => node.textContent)
+    expect(nodeTitles()).toContain("You · session")
+    expect(nodeTitles()).toContain("Architect")
+    expect(container.querySelectorAll(".lazers-radar-session").length).toBe(0)
+    expect(text()).not.toMatch(/nknown|navailable|Operational overview|Task runtime/)
+    const architectNode = [...container.querySelectorAll<SVGGElement>(".lazers-radar-node")].find(
+      (node) => node.dataset.kind === "architect",
+    )!
+    architectNode.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }) as unknown as MouseEvent,
+    )
+    await until(() => container.querySelector(".lazers-radar-node[data-selected='true']") !== null)
     tab("Monitor").click()
-    await until(() => container.querySelector(".lazers-radar-monitor") !== null)
+    await until(() => container.querySelector(".lazers-radar-session") !== null)
     expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(false)
     expect(headerShape()).toEqual(monitorHeaderShape)
 
