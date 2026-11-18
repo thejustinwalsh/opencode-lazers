@@ -6,6 +6,7 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { validProposal } from "../proposal.ts"
 import { installTasksLayout } from "./virtual-layout.ts"
+import { openedTaskView } from "./fixtures/open-details.ts"
 
 /**
  * The Tasks list virtualizes: these tests drive the built panel in Happy DOM with a layout shim
@@ -37,6 +38,8 @@ function deferred(): Deferred {
 
 /** Fixture variations; the defaults reproduce the original list. */
 type Fixture = {
+  /** Leave the stored view empty so the details pane starts in its default collapsed state. */
+  closedDetails?: boolean
   /** Beta outranks Alpha: Beta priority 1, Alpha priority 2. */
   prioritized?: boolean
   /** The first two Alpha tasks depend on each other. */
@@ -573,7 +576,11 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
           : rpc,
     event,
   }
-  const taskStore = host.createReactiveStore({ projects: {} })
+  const taskStore = host.createReactiveStore({
+    projects: fixture.closedDetails
+      ? {}
+      : ({ [projectDirectory]: openedTaskView() } as Record<string, unknown>),
+  })
   const registrations: Array<{ token: unknown; value: unknown }> = []
   // The host replaces a session's location object on session updates, fields unchanged.
   const [location, setLocation] = host.createSignal({ directory: projectDirectory })
@@ -1431,5 +1438,32 @@ test("a pinned selected row near the end does not page; the viewport reaching th
     },
     {},
     { queuePagesClosed: true },
+  )
+})
+
+test("the details pane starts collapsed; selecting fills the header and does not open it", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      const chevron = () => h.container.querySelector<HTMLButtonElement>(".lazers-details-chevron")!
+      const header = () => h.container.querySelector(".lazers-details-header")!
+      expect(chevron().getAttribute("aria-expanded")).toBe("false")
+      expect(h.container.querySelector(".lazers-tasks-detail")).toBeNull()
+      h.row(h.beta.join)!.click()
+      await until(() => h.detailCalls.includes(h.beta.join))
+      await until(() => header().textContent !== "No task selected")
+      expect(header().textContent).toMatch(/^[A-Z]+-\d+/u)
+      expect(chevron().getAttribute("aria-expanded")).toBe("false")
+      expect(h.container.querySelector(".lazers-tasks-detail")).toBeNull()
+      chevron().click()
+      await until(() => Boolean(h.container.querySelector(".lazers-tasks-detail")))
+      expect(chevron().getAttribute("aria-expanded")).toBe("true")
+      // The title stays the first body element; the pane header carries the single line.
+      expect(h.container.querySelector(".lazers-tasks-detail > .lazers-tasks-title")).not.toBeNull()
+      // The reference, state and title never scroll with the body.
+      expect(h.container.querySelector(".lazers-tasks-detail")!.contains(header())).toBe(false)
+    },
+    {},
+    { prioritized: true, closedDetails: true },
   )
 })

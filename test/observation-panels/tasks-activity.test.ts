@@ -6,6 +6,7 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { validProposal } from "../proposal.ts"
 import { installTasksLayout } from "./virtual-layout.ts"
+import { openedTaskView } from "./fixtures/open-details.ts"
 
 function until(predicate: () => boolean) {
   return (async () => {
@@ -450,7 +451,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         contract.id === "lazers.observability" ? { topology } : rpc,
       event,
     }
-    const taskStore = host.createReactiveStore({ projects: {} })
+    const taskStore = host.createReactiveStore({
+      projects: { [projectDirectory]: openedTaskView() } as Record<string, unknown>,
+    })
     const trajectoryStore = host.createReactiveStore({ projects: {} as Record<string, unknown> })
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const opened: unknown[][] = []
@@ -736,7 +739,11 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(inspectorPane.querySelector(".lazers-tasks-title")?.textContent).toBe(taskNames.held)
     // A one-sentence objective is the title; the goal is not repeated beneath it.
     expect(inspectorPane.querySelector(".lazers-tasks-objective")).toBeNull()
-    expect(inspectorText.indexOf("LZ-1")).toBeLessThan(inspectorText.indexOf(taskNames.held))
+    // The reference, state and title live in the pane's sticky header line, not the scrolling body.
+    const paneHeader = container.querySelector(".lazers-details-header")!
+    expect(paneHeader.textContent).toContain("LZ-1")
+    expect(paneHeader.textContent).toContain(taskNames.held)
+    expect(inspectorPane.contains(paneHeader)).toBe(false)
     expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Waiting on"))
     expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Done when"))
     expect(inspectorPane.querySelectorAll(".lazers-tasks-assertions li").length).toBe(
@@ -784,16 +791,26 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect((tasksCSS ?? "").match(/\.lazers-tasks-assertion-text p \{[^}]*\}/)![0]).toContain(
       "margin: 0;",
     )
-    // Running work leads with Radar; trajectory, plan and link stay in the overflow menu.
-    const radarAction = [...inspectorPane.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Open in Radar",
-    )!
-    expect(radarAction.getAttribute("aria-label")).toBe("Open LZ-1 in Radar")
+    // Running work leads with Trajectory; Radar, plan and link stay in the overflow menu.
+    const barActions = container.querySelector(".lazers-details-actions")!
     expect(
-      [...inspectorPane.querySelectorAll("button")].some(
-        (button) => button.textContent === "Open trajectory",
+      [...barActions.querySelectorAll<HTMLButtonElement>("button")].some(
+        (button) => button.textContent === "Open in Trajectory",
+      ),
+    ).toBe(true)
+    expect(
+      [...barActions.querySelectorAll("button")].some(
+        (button) => button.textContent === "Open in Radar",
       ),
     ).toBe(false)
+    barActions
+      .querySelector<HTMLButtonElement>(
+        'button[aria-haspopup=menu][aria-label="More task actions"]',
+      )!
+      .click()
+    const radarAction = [...container.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].find(
+      (button) => button.textContent === "Open in Radar",
+    )!
     opened.length = 0
     radarAction.click()
     expect(opened.at(-1)?.[0]).toBe("lazers:radar")
@@ -883,7 +900,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(diagnosticText).toContain("Additional hold: retain the audit trail")
     toggleActivityDetailsFromKeyboard(" ")
     await until(() => !activityDetails().open)
-    chooseAction("Open trajectory")
+    ;[...container.querySelectorAll<HTMLButtonElement>(".lazers-details-actions button")]
+      .find((button) => button.textContent === "Open in Trajectory")!
+      .click()
     expect(opened).toHaveLength(1)
     expect(
       (trajectoryStore.value as { projects: Record<string, { selectedTaskID?: string }> }).projects[
@@ -963,22 +982,23 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(list.scrollTop).toBe(37)
     expect(detailPane.scrollTop).toBe(23)
 
-    // The split follows content until the person resizes it; then the explicit value persists.
-    const separator = container.querySelector<HTMLDivElement>(".lazers-tasks-separator")!
-    const root = container.querySelector<HTMLDivElement>(".lazers-tasks")!
+    // The pane persists `open` and `size` in the stored view; Up grows the body by 5 %.
+    const separator = container.querySelector<HTMLDivElement>(".lazers-details-resize")!
     const view = () =>
-      (taskStore.value as { projects: Record<string, { split?: number; splitAdjusted?: boolean }> })
-        .projects[projectDirectory]
-    expect(view()?.splitAdjusted).toBeUndefined()
-    expect(root.style.getPropertyValue("--task-list-fr")).toBe("48fr")
-    expect(separator.getAttribute("aria-controls")?.split(" ")).toEqual([list.id, detailPane.id])
-    key(separator, "PageDown")
-    await until(() => view()?.split === 58)
-    expect(view()?.splitAdjusted).toBe(true)
-    expect(separator.getAttribute("aria-valuetext")).toBe("Task list 58% of the panel")
-    expect(root.style.getPropertyValue("--task-list-fr")).toBe("58fr")
-    key(separator, "Home")
-    await until(() => view()?.split === 20)
+      (taskStore.value as { projects: Record<string, { open?: boolean; size?: number }> }).projects[
+        projectDirectory
+      ]
+    expect(view()?.open).toBe(true)
+    expect(separator.getAttribute("aria-controls")).toBe(detailPane.id)
+    key(separator, "ArrowUp")
+    await until(() => view()?.size !== undefined)
+    expect(view()?.size).toBeCloseTo(0.5)
+    key(separator, "Enter")
+    await until(() => view()?.open === false)
+    expect(container.querySelector(".lazers-tasks-detail")).toBeNull()
+    expect(container.querySelector(".lazers-details-header")?.textContent).toContain("LZ-")
+    key(separator, "Enter")
+    await until(() => view()?.open === true)
 
     const chooseFilter = async (label: string) => {
       const trigger = container.querySelector<HTMLButtonElement>(

@@ -41,15 +41,8 @@ import {
 } from "./panel-state.ts"
 import { taskChanges } from "./events.ts"
 import type { PanelData } from "./panel-state.ts"
-import {
-  SPLIT_DEFAULT,
-  SPLIT_MAX,
-  SPLIT_MIN,
-  clampSplit,
-  contentSplit,
-  splitFromPointer,
-  splitWasAdjusted,
-} from "./panel-layout.ts"
+import { DetailsPane } from "../details-pane.tsx"
+import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { createPanelStatus, PanelSkeleton, PanelStatus } from "../panel-status.tsx"
 import { taskTitle, taskHeading, taskReasonView, sourcePlanLine } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
@@ -72,7 +65,6 @@ import type { ExecutionListRow } from "./execution-list.ts"
 import type { TaskBlocker, TaskGlyph, TaskRowPresentation } from "./row-presentation.ts"
 import { TaskRing } from "./state-glyph.tsx"
 import {
-  LOADER_HEIGHT,
   anchoredScrollTop,
   viewportAnchor,
   estimateItemSize,
@@ -93,9 +85,12 @@ const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
   selectedID: Schema.NullOr(Schema.String),
   search: Schema.String,
-  split: Schema.Number,
-  /** Set once the person resizes; until then the split follows the list's content. */
+  /** Retired list/inspector split; read once to size the details pane. */
+  split: Schema.optionalKey(Schema.Number),
   splitAdjusted: Schema.optionalKey(Schema.Boolean),
+  /** Details pane: closed by default; size is the body's fraction of the panel. */
+  open: Schema.optionalKey(Schema.Boolean),
+  size: Schema.optionalKey(Schema.Number),
   listScroll: Schema.Number,
   detailScroll: Schema.Number,
   state: Schema.optionalKey(
@@ -126,7 +121,6 @@ const initial: typeof View.Type = {
   scope: "session",
   selectedID: null,
   search: "",
-  split: SPLIT_DEFAULT,
   listScroll: 0,
   detailScroll: 0,
   history: false,
@@ -247,11 +241,8 @@ function TaskPanel(
     error: "",
   })
   const [searchOpen, setSearchOpen] = createSignal(false)
-  const [dragSplit, setDragSplit] = createSignal<number | null>(null)
-  const [paneHeight, setPaneHeight] = createSignal(0)
   const [showAllCriteria, setShowAllCriteria] = createSignal(false)
   const listID = createUniqueId()
-  const detailID = createUniqueId()
   const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
   const [copyStatus, setCopyStatus] = createSignal("")
   const [revealedTaskIDs, setRevealedTaskIDs] = createSignal<Set<string>>(new Set())
@@ -265,12 +256,10 @@ function TaskPanel(
   const listRestore = new ScrollRestoration()
   const detailRestore = new ScrollRestoration()
   let root: HTMLDivElement | undefined
-  let header: HTMLElement | undefined
   let list: HTMLDivElement | undefined
   let tree: HTMLDivElement | undefined
-  let separator: HTMLDivElement | undefined
-  let detail: HTMLDivElement | undefined
-  let endDrag: (() => void) | undefined
+  /** The details body while the pane is open; scroll restoration waits for it. */
+  const [detail, setDetail] = createSignal<HTMLDivElement>()
   /**
    * What the project lookup depends on. The host replaces session objects (its location) on any
    * session update; with the same client, session, server and directory this keeps its identity,
@@ -351,7 +340,6 @@ function TaskPanel(
     feedback.reset("")
     listRestore.restore("", false, undefined, 0)
     detailRestore.restore("", false, undefined, 0)
-    endDrag?.()
   })
   createKeyed(
     () => {
@@ -558,8 +546,10 @@ function TaskPanel(
     listRestore.restore(expectedKey(), Boolean(value && !value.loading), list, view.listScroll)
     detailRestore.restore(
       selectionKey(),
-      value?.detail?.status === "found" && value.detail.task.id === value.selectedID,
-      detail,
+      value?.detail?.status === "found" &&
+        value.detail.task.id === value.selectedID &&
+        Boolean(detail()),
+      detail(),
       view.detailScroll,
     )
   })
@@ -1205,10 +1195,9 @@ function TaskPanel(
     inspected()?.tasks.find((task) => task.taskID === inspected()?.selectedID)?.sourcePlan ??
     selectedRow()?.sourcePlan
   /** One contextual action leads; the rest stay one menu away. */
-  const primaryAction = (): "start" | "architect" | "radar" | "trajectory" => {
+  const primaryAction = (): "start" | "architect" | "trajectory" => {
     if (canStart(selectedExecution()?.state ?? selectedTask()?.status ?? "")) return "start"
     if (selectedIsWaiting() && selectedDetail()?.architectSessionID) return "architect"
-    if (["running", "verifying"].includes(selectedRecordedState() ?? "")) return "radar"
     return "trajectory"
   }
   const openArchitect = () => {
@@ -1235,16 +1224,15 @@ function TaskPanel(
       ...(primary !== "trajectory"
         ? [
             {
-              label: "Open trajectory",
+              label: "Open in Trajectory",
               icon: "window-analytics" as const,
               disabled: !reference,
               onSelect: openSelectedTrajectory,
             },
           ]
         : []),
-      ...(primary !== "radar" &&
-      (selectedActivity()?.workerSessionID ||
-        ["running", "verifying"].includes(selectedRecordedState() ?? ""))
+      ...(selectedActivity()?.workerSessionID ||
+      ["running", "verifying"].includes(selectedRecordedState() ?? "")
         ? [{ label: "Open in Radar", icon: "eye" as const, onSelect: openSelectedRadar }]
         : []),
       ...(primary !== "architect" && selectedDetail()?.architectSessionID
@@ -1481,76 +1469,110 @@ function TaskPanel(
     if (Math.min(end + VIRTUAL_OVERSCAN, count - 1) < count - 1 - LOAD_MORE_WITHIN) return
     void state.more(expectedKey())
   })
-  const measure = () => {
-    if (!root) return
-    setPaneHeight(
-      root.getBoundingClientRect().height -
-        (header?.getBoundingClientRect().height ?? 0) -
-        (separator?.getBoundingClientRect().height ?? 0),
-    )
-  }
   onMount(() => {
-    measure()
     measureTreeOffset()
     if (typeof ResizeObserver === "undefined" || !root) return
-    const observer = new ResizeObserver(measure)
-    observer.observe(root)
-    if (header) observer.observe(header)
-    onCleanup(() => observer.disconnect())
     listObserver = new ResizeObserver(measureTreeOffset)
     if (list) listObserver.observe(list)
     onCleanup(() => listObserver?.disconnect())
   })
-  // Hold the last fitted value while a view loads so the divider does not jump to its minimum.
-  // Fit the listed content, not the disclosure state: collapsing a plan does not move the divider.
-  const autoSplit = createMemo<number>((previous) => {
-    const value = visible()
-    if (!value || value.loading) return previous
-    return contentSplit({
-      rows: listedRows(executionList()).length,
-      headings: 0,
-      extra: 16 + (value.page?.nextCursor ? LOADER_HEIGHT : 0),
-      available: paneHeight(),
-    })
-  }, SPLIT_DEFAULT)
-  const split = () => {
-    const dragged = dragSplit()
-    if (dragged !== null) return dragged
+  const details = createMemo(() => {
     const view = prefs()
-    return splitWasAdjusted(view) ? clampSplit(view.split) : autoSplit()
+    return storedState({
+      open: view.open,
+      size: view.size ?? sizeFromLegacySplit(view.splitAdjusted ? view.split : undefined),
+    })
+  })
+  // A failed start is an answer to something the person did; show it even if the pane is closed.
+  createEffect(() => {
+    if (startFeedback().error && !details().open) save({ open: true })
+  })
+  const detailsEmpty = () =>
+    visible()?.detail?.status === "not_found"
+      ? "Task is not available in this view"
+      : visible()?.selectedID
+        ? "Loading task…"
+        : "No task selected"
+  /** One line: reference, state glyph and word, then the title. Also the collapsed pane. */
+  const detailsHeader = () => {
+    const task = selectedTask()
+    if (!task) return undefined
+    return (
+      <>
+        <span
+          class="lazers-tasks-reference"
+          style={{ "font-family": ctx.appearance.font("mono") }}
+          aria-label={`Task reference ${selectedDetail()?.reference ?? ""}`.trim()}
+        >
+          <Ui.Tooltip value={task.id}>{selectedDetail()?.reference ?? "Task"}</Ui.Tooltip>
+        </span>
+        <span
+          class="lazers-tasks-inspector-icon"
+          data-tone={selectedPresentation().tone}
+          aria-hidden="true"
+        >
+          {renderGlyph(selectedPresentation().icon)}
+        </span>
+        <span
+          class="lazers-tasks-inspector-state"
+          data-state={selectedRecordedState()}
+          data-waiting={selectedIsWaiting()}
+          data-tone={selectedPresentation().tone}
+          aria-label={`${selectedInspectorStatus()}${selectedRecordedState() ? `; recorded lifecycle ${selectedRecordedState()}` : ""}`}
+        >
+          {selectedInspectorStatus()}
+        </span>
+        <span class="lazers-tasks-inspector-title">
+          {" · "}
+          {taskTitle(task.proposal.objective)}
+        </span>
+      </>
+    )
   }
-  const commitSplit = (next: number) => save({ split: clampSplit(next), splitAdjusted: true })
-  const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
-    endDrag?.()
-    const key = expectedKey()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    const element = event.currentTarget
-    const move = (moveEvent: PointerEvent) => {
-      const rect = root?.getBoundingClientRect()
-      if (rect)
-        setDragSplit(
-          splitFromPointer(
-            split(),
-            rect.top,
-            rect.height,
-            header?.getBoundingClientRect().height ?? 0,
-            separator?.getBoundingClientRect().height ?? 0,
-            moveEvent.clientY,
-          ),
-        )
-    }
-    const end = () => {
-      element.removeEventListener("pointermove", move)
-      element.removeEventListener("pointerup", end)
-      element.removeEventListener("pointercancel", end)
-      if (expectedKey() === key) commitSplit(split())
-      setDragSplit(null)
-      endDrag = undefined
-    }
-    element.addEventListener("pointermove", move)
-    element.addEventListener("pointerup", end, { once: true })
-    element.addEventListener("pointercancel", end, { once: true })
-    endDrag = end
+  const detailsActions = () => {
+    const task = selectedTask()
+    if (!task) return undefined
+    return (
+      <>
+        <Show when={copyStatus()}>
+          <span class="lazers-tasks-copy-status" role="status">
+            {copyStatus()}
+          </span>
+        </Show>
+        <Switch>
+          <Match when={primaryAction() === "start"}>
+            <Ui.Button
+              size="small"
+              variant="ghost-muted"
+              class="lazers-tasks-start"
+              busy={startFeedback().taskID === task.id}
+              disabled={Boolean(startFeedback().taskID)}
+              aria-label={`Start ${taskTitle(task.proposal.objective)}`}
+              onClick={() => void startTask(task.id, task.revision)}
+            >
+              Start
+            </Ui.Button>
+          </Match>
+          <Match when={primaryAction() === "architect"}>
+            <Ui.Button size="small" variant="ghost-muted" onClick={openArchitect}>
+              Open Architect
+            </Ui.Button>
+          </Match>
+          <Match when={primaryAction() === "trajectory"}>
+            <Ui.Button
+              size="small"
+              variant="ghost-muted"
+              aria-label={`Open trajectory for ${selectedDetail()?.reference ?? "selected task"}`}
+              disabled={!selectedDetail()?.reference}
+              onClick={openSelectedTrajectory}
+            >
+              Open in Trajectory
+            </Ui.Button>
+          </Match>
+        </Switch>
+        <Ui.Menu label="More task actions" items={secondaryActions()} />
+      </>
+    )
   }
   return (
     <div
@@ -1558,17 +1580,8 @@ function TaskPanel(
       ref={(element) => {
         root = element
       }}
-      style={{
-        "--task-list-fr": `${split()}fr`,
-        "--task-detail-fr": `${100 - split()}fr`,
-      }}
     >
-      <header
-        class="lazers-tasks-header"
-        ref={(element) => {
-          header = element
-        }}
-      >
+      <header class="lazers-tasks-header">
         <h2>Tasks</h2>
         <Show when={headerCount()}>
           {(text) => <span class="lazers-tasks-count">{text()}</span>}
@@ -1661,179 +1674,167 @@ function TaskPanel(
           </div>
         </Show>
       </header>
-      <div
-        class="lazers-tasks-list"
-        id={listID}
-        ref={(element) => {
-          list = element
-        }}
-        onScroll={(event) => {
-          captureAnchor()
-          if (listRestore.restored(expectedKey()))
-            save({ listScroll: event.currentTarget.scrollTop })
-        }}
-      >
-        <PanelStatus ui={Ui} status={status} onRetry={() => void state.refresh()} skeleton="rows" />
-        <Show when={status.showContent() && visible()?.topologyError}>
-          {(message) => (
-            <div class="lazers-tasks-note" role="status">
-              {message()}
-            </div>
-          )}
-        </Show>
-        <Show when={status.showContent() && visible()?.activityError}>
-          {(message) => (
-            <div class="lazers-tasks-note" role="status">
-              {message()}
-            </div>
-          )}
-        </Show>
-        <Show when={status.showContent() && visible()?.schedulingError}>
-          {(message) => (
-            <div class="lazers-tasks-scheduling-warning" role="status">
-              {message()}
-            </div>
-          )}
-        </Show>
-        <Show
-          when={
-            status.showContent() && visible() && !visible()?.topology && !visible()?.topologyError
-          }
-        >
-          <div class="lazers-tasks-note" role="status">
-            {visible()?.scheduling && !visible()?.schedulingError
-              ? "Execution topology unavailable. Showing scheduling-backed tasks where covered."
-              : "Execution topology unavailable. Showing tasks without dependency detail."}
-          </div>
-        </Show>
-        <Show
-          when={status.showContent() ? visible() : undefined}
-          fallback={
-            <Show when={!props.session.location}>
-              <div class="lazers-tasks-note">Session location is unavailable.</div>
-            </Show>
-          }
-        >
-          {(value) => (
-            <>
-              <Show
-                when={listedRows(executionList()).length}
-                fallback={
-                  <div class="lazers-tasks-note">
-                    {prefs().search
-                      ? "No matching tasks."
-                      : stateFilter() === "all"
-                        ? "No tasks in this view."
-                        : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
-                  </div>
-                }
-              >
-                <div
-                  class="lazers-tasks-tree"
-                  role="tree"
-                  data-panel-dimmed={status.dimmed()}
-                  aria-label={`${stateLabel(stateFilter())} tasks`}
-                  style={{ height: `${virtualizer.getTotalSize()}px` }}
-                  ref={(element) => {
-                    tree = element
-                  }}
-                  onFocusIn={(event) =>
-                    setFocusedTreeKey(
-                      (event.target as Element).closest<HTMLElement>("[role=treeitem]")?.dataset
-                        .itemKey,
-                    )
-                  }
-                  onFocusOut={(event) => {
-                    // A node the window reorders is detached for a moment and blurs; that is
-                    // not the person leaving the tree, and the guard below restores focus.
-                    if (!(event.target as Element).isConnected) return
-                    const next = event.relatedTarget
-                    if (!(next instanceof Node) || !event.currentTarget.contains(next))
-                      setFocusedTreeKey(undefined)
-                  }}
-                >
-                  <Keyed each={virtualRows()} by={(virtual) => virtual.key}>
-                    {(virtual) => (
-                      <VirtualItemView
-                        virtual={virtual}
-                        measure={virtualizer.measureElement}
-                        render={(item) => {
-                          const current = () => item()
-                          switch (virtual().item.kind) {
-                            case "task":
-                              return renderTaskRow(current as Accessor<VirtualTaskItem>)
-                            case "loader":
-                              return (
-                                <div class="lazers-tasks-loader" role="status">
-                                  <Show
-                                    when={value().moreError}
-                                    fallback={
-                                      <>
-                                        <Ui.Loader size="small" />
-                                        Loading more tasks…
-                                      </>
-                                    }
-                                  >
-                                    Could not load more tasks.
-                                    <Ui.Button
-                                      variant="ghost"
-                                      onClick={() => state.retryMore(expectedKey())}
-                                    >
-                                      Retry
-                                    </Ui.Button>
-                                  </Show>
-                                </div>
-                              )
-                          }
-                        }}
-                      />
-                    )}
-                  </Keyed>
-                </div>
-              </Show>
-            </>
-          )}
-        </Show>
-      </div>
-      <div
-        class="lazers-tasks-separator"
-        ref={(element) => {
-          separator = element
-        }}
-        role="separator"
-        aria-label="Resize task list"
-        aria-orientation="horizontal"
-        aria-controls={`${listID} ${detailID}`}
-        aria-valuemin={SPLIT_MIN}
-        aria-valuemax={SPLIT_MAX}
-        aria-valuenow={Math.round(split())}
-        aria-valuetext={`Task list ${Math.round(split())}% of the panel`}
-        tabIndex={0}
-        onPointerDown={drag}
-        onKeyDown={(event) => {
-          const step: Record<string, number> = {
-            ArrowUp: -5,
-            ArrowDown: 5,
-            PageUp: -10,
-            PageDown: 10,
-          }
-          if (event.key === "Home") commitSplit(SPLIT_MIN)
-          else if (event.key === "End") commitSplit(SPLIT_MAX)
-          else if (step[event.key] !== undefined) commitSplit(split() + step[event.key]!)
-          else return
-          event.preventDefault()
-        }}
-      />
-      <div
-        class="lazers-tasks-detail"
-        id={detailID}
-        ref={(element) => {
-          detail = element
-        }}
-        onScroll={(event) => {
+      <DetailsPane
+        ui={Ui}
+        class="lazers-tasks-pane"
+        bodyClass="lazers-tasks-detail"
+        label="Resize task details"
+        open={details().open}
+        size={details().size}
+        onOpen={(open) => save({ open })}
+        onSize={(size) => save({ size })}
+        empty={detailsEmpty()}
+        header={detailsHeader()}
+        actions={detailsActions()}
+        bodyRef={setDetail}
+        onBodyScroll={(event) => {
           if (detailRestore.restored(selectionKey()))
             save({ detailScroll: event.currentTarget.scrollTop })
         }}
+        top={
+          <div
+            class="lazers-tasks-list"
+            id={listID}
+            ref={(element) => {
+              list = element
+            }}
+            onScroll={(event) => {
+              captureAnchor()
+              if (listRestore.restored(expectedKey()))
+                save({ listScroll: event.currentTarget.scrollTop })
+            }}
+          >
+            <PanelStatus
+              ui={Ui}
+              status={status}
+              onRetry={() => void state.refresh()}
+              skeleton="rows"
+            />
+            <Show when={status.showContent() && visible()?.topologyError}>
+              {(message) => (
+                <div class="lazers-tasks-note" role="status">
+                  {message()}
+                </div>
+              )}
+            </Show>
+            <Show when={status.showContent() && visible()?.activityError}>
+              {(message) => (
+                <div class="lazers-tasks-note" role="status">
+                  {message()}
+                </div>
+              )}
+            </Show>
+            <Show when={status.showContent() && visible()?.schedulingError}>
+              {(message) => (
+                <div class="lazers-tasks-scheduling-warning" role="status">
+                  {message()}
+                </div>
+              )}
+            </Show>
+            <Show
+              when={
+                status.showContent() &&
+                visible() &&
+                !visible()?.topology &&
+                !visible()?.topologyError
+              }
+            >
+              <div class="lazers-tasks-note" role="status">
+                {visible()?.scheduling && !visible()?.schedulingError
+                  ? "Execution topology unavailable. Showing scheduling-backed tasks where covered."
+                  : "Execution topology unavailable. Showing tasks without dependency detail."}
+              </div>
+            </Show>
+            <Show
+              when={status.showContent() ? visible() : undefined}
+              fallback={
+                <Show when={!props.session.location}>
+                  <div class="lazers-tasks-note">Session location is unavailable.</div>
+                </Show>
+              }
+            >
+              {(value) => (
+                <>
+                  <Show
+                    when={listedRows(executionList()).length}
+                    fallback={
+                      <div class="lazers-tasks-note">
+                        {prefs().search
+                          ? "No matching tasks."
+                          : stateFilter() === "all"
+                            ? "No tasks in this view."
+                            : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
+                      </div>
+                    }
+                  >
+                    <div
+                      class="lazers-tasks-tree"
+                      role="tree"
+                      data-panel-dimmed={status.dimmed()}
+                      aria-label={`${stateLabel(stateFilter())} tasks`}
+                      style={{ height: `${virtualizer.getTotalSize()}px` }}
+                      ref={(element) => {
+                        tree = element
+                      }}
+                      onFocusIn={(event) =>
+                        setFocusedTreeKey(
+                          (event.target as Element).closest<HTMLElement>("[role=treeitem]")?.dataset
+                            .itemKey,
+                        )
+                      }
+                      onFocusOut={(event) => {
+                        // A node the window reorders is detached for a moment and blurs; that is
+                        // not the person leaving the tree, and the guard below restores focus.
+                        if (!(event.target as Element).isConnected) return
+                        const next = event.relatedTarget
+                        if (!(next instanceof Node) || !event.currentTarget.contains(next))
+                          setFocusedTreeKey(undefined)
+                      }}
+                    >
+                      <Keyed each={virtualRows()} by={(virtual) => virtual.key}>
+                        {(virtual) => (
+                          <VirtualItemView
+                            virtual={virtual}
+                            measure={virtualizer.measureElement}
+                            render={(item) => {
+                              const current = () => item()
+                              switch (virtual().item.kind) {
+                                case "task":
+                                  return renderTaskRow(current as Accessor<VirtualTaskItem>)
+                                case "loader":
+                                  return (
+                                    <div class="lazers-tasks-loader" role="status">
+                                      <Show
+                                        when={value().moreError}
+                                        fallback={
+                                          <>
+                                            <Ui.Loader size="small" />
+                                            Loading more tasks…
+                                          </>
+                                        }
+                                      >
+                                        Could not load more tasks.
+                                        <Ui.Button
+                                          variant="ghost"
+                                          onClick={() => state.retryMore(expectedKey())}
+                                        >
+                                          Retry
+                                        </Ui.Button>
+                                      </Show>
+                                    </div>
+                                  )
+                              }
+                            }}
+                          />
+                        )}
+                      </Keyed>
+                    </div>
+                  </Show>
+                </>
+              )}
+            </Show>
+          </div>
+        }
       >
         <Show
           when={selectedTask()}
@@ -1857,80 +1858,6 @@ function TaskPanel(
         >
           {(task) => (
             <>
-              <div class="lazers-tasks-inspector-head">
-                <span
-                  class="lazers-tasks-reference"
-                  style={{ "font-family": ctx.appearance.font("mono") }}
-                  aria-label={`Task reference ${selectedDetail()?.reference ?? ""}`.trim()}
-                >
-                  <Ui.Tooltip value={task().id}>{selectedDetail()?.reference ?? "Task"}</Ui.Tooltip>
-                </span>
-                <span
-                  class="lazers-tasks-inspector-icon"
-                  data-tone={selectedPresentation().tone}
-                  aria-hidden="true"
-                >
-                  {renderGlyph(selectedPresentation().icon)}
-                </span>
-                <span
-                  class="lazers-tasks-inspector-state"
-                  data-state={selectedRecordedState()}
-                  data-waiting={selectedIsWaiting()}
-                  data-tone={selectedPresentation().tone}
-                  aria-label={`${selectedInspectorStatus()}${selectedRecordedState() ? `; recorded lifecycle ${selectedRecordedState()}` : ""}`}
-                >
-                  {selectedInspectorStatus()}
-                </span>
-                <span class="lazers-tasks-inspector-actions">
-                  <Switch>
-                    <Match when={primaryAction() === "start"}>
-                      <Ui.Button
-                        size="small"
-                        variant="ghost-muted"
-                        class="lazers-tasks-start"
-                        busy={startFeedback().taskID === task().id}
-                        disabled={Boolean(startFeedback().taskID)}
-                        aria-label={`Start ${taskTitle(task().proposal.objective)}`}
-                        onClick={() => void startTask(task().id, task().revision)}
-                      >
-                        Start
-                      </Ui.Button>
-                    </Match>
-                    <Match when={primaryAction() === "architect"}>
-                      <Ui.Button size="small" variant="ghost-muted" onClick={openArchitect}>
-                        Open Architect
-                      </Ui.Button>
-                    </Match>
-                    <Match when={primaryAction() === "radar"}>
-                      <Ui.Button
-                        size="small"
-                        variant="ghost-muted"
-                        aria-label={`Open ${selectedDetail()?.reference ?? "selected task"} in Radar`}
-                        onClick={openSelectedRadar}
-                      >
-                        Open in Radar
-                      </Ui.Button>
-                    </Match>
-                    <Match when={primaryAction() === "trajectory"}>
-                      <Ui.Button
-                        size="small"
-                        variant="ghost-muted"
-                        aria-label={`Open trajectory for ${selectedDetail()?.reference ?? "selected task"}`}
-                        disabled={!selectedDetail()?.reference}
-                        onClick={openSelectedTrajectory}
-                      >
-                        Open trajectory
-                      </Ui.Button>
-                    </Match>
-                  </Switch>
-                  <Ui.Menu label="More task actions" items={secondaryActions()} />
-                </span>
-              </div>
-              <Show when={copyStatus()}>
-                <p class="lazers-tasks-reason" role="status">
-                  {copyStatus()}
-                </p>
-              </Show>
               <Show when={startFeedback().error}>
                 <p class="lazers-tasks-error" role="alert">
                   {startFeedback().error}
@@ -2399,7 +2326,7 @@ function TaskPanel(
             </>
           )}
         </Show>
-      </div>
+      </DetailsPane>
     </div>
   )
 }

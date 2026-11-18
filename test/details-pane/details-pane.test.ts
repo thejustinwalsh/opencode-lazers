@@ -113,11 +113,10 @@ test("an open pane stays open across selection changes", () => {
 
 test("double-clicking the bar toggles; double-clicking a button does not", () => {
   const { pane, q } = mount()
-  q(".lazers-details-bar")!.dispatchEvent(new dom.window.MouseEvent("dblclick", { bubbles: true }))
+  const dbl = () => new dom.window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event
+  q(".lazers-details-bar")!.dispatchEvent(dbl())
   expect(pane.open()).toBe(true)
-  q(".lazers-details-chevron")!.dispatchEvent(
-    new dom.window.MouseEvent("dblclick", { bubbles: true }),
-  )
+  q(".lazers-details-chevron")!.dispatchEvent(dbl())
   expect(pane.open()).toBe(true)
   pane.dispose()
 })
@@ -132,7 +131,9 @@ test("the handle is a focusable horizontal separator; keys resize and Enter togg
   const root = q<HTMLElement>(".lazers-details")!
   root.getBoundingClientRect = () => ({ top: 0, height: 600 }) as DOMRect
   const key = (name: string) =>
-    handle.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: name, bubbles: true }))
+    handle.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", { key: name, bubbles: true }) as unknown as Event,
+    )
   key("ArrowUp")
   expect(pane.size()).toBeCloseTo(0.5)
   expect(handle.getAttribute("aria-valuenow")).toBe("50")

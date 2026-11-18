@@ -1,5 +1,5 @@
 import type { Ui as HostUi } from "@opencode/plugin/gui"
-import { Show, createMemo, createSignal, createUniqueId } from "solid-js"
+import { Show, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { dragState, keyboardState, storedState } from "./details-pane.ts"
 import type { DetailsState } from "./details-pane.ts"
@@ -28,7 +28,8 @@ export function DetailsPane(props: {
   top: JSX.Element
   class?: string
   bodyClass?: string
-  bodyRef?: (element: HTMLDivElement) => void
+  /** Called with the body element while it is mounted and with undefined when it unmounts. */
+  bodyRef?: (element: HTMLDivElement | undefined) => void
   onBodyScroll?: JSX.EventHandler<HTMLDivElement, Event>
   /** Accessible name of the resize handle. */
   label?: string
@@ -149,7 +150,10 @@ export function DetailsPane(props: {
             id={bodyID}
             role="region"
             aria-label="Details"
-            ref={(element) => props.bodyRef?.(element)}
+            ref={(element) => {
+              props.bodyRef?.(element)
+              onCleanup(() => props.bodyRef?.(undefined))
+            }}
             onScroll={props.onBodyScroll}
           >
             {props.children}

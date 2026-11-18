@@ -132,7 +132,6 @@ export default Plugin.define({
           scope: "project" as const,
           selectedID: null,
           search: "",
-          split: 48,
           listScroll: 0,
           detailScroll: 0,
         }
