@@ -1,4 +1,5 @@
 import { Show, For } from "solid-js"
+import { isAgentSubject } from "./agent-ids.ts"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { routeLabel } from "./comparison-presentation.ts"
@@ -97,7 +98,17 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
           <For each={agentRows()}>
             {(agent) => (
               <>
-                <div class="lazers-models-assignment-row" data-agent={agent.agentID} data-readonly>
+                <button
+                  type="button"
+                  class="lazers-models-assignment-row"
+                  data-agent={agent.agentID}
+                  aria-pressed={assignmentPersona() === agent.agentID}
+                  disabled={assignmentBlocked()}
+                  onClick={() => {
+                    revealDetails(ctl)
+                    selectAssignmentPersona(agent.agentID)
+                  }}
+                >
                   <Ui.Icon name={agentIcons[agent.agentID]} size="small" />
                   <strong>{agent.label}</strong>
                   <Show
@@ -113,7 +124,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                       </>
                     )}
                   </Show>
-                </div>
+                </button>
                 <Show when={agent.agentID === "lazers-implementor"}>
                   <For each={personas()}>
                     {(persona) => (
@@ -128,7 +139,10 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                           selectAssignmentPersona(persona.persona)
                         }}
                       >
-                        <Ui.Icon name={personaIcons[persona.persona]} size="small" />
+                        <Ui.Icon
+                          name={personaIcons[persona.persona as keyof typeof personaIcons]}
+                          size="small"
+                        />
                         <strong>{persona.personaLabel}</strong>
                         <Show
                           when={
@@ -163,7 +177,9 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
           </For>
         </div>
         <p class="lazers-models-assignment-hint">
-          Architect, Implementor and Auditor models are set in OpenCode agent settings.
+          Used when LAZERS starts or continues an Architect session, and for every Implementor and
+          Auditor run. A model you pick yourself for a session you start still applies to that
+          session.
         </p>
       </Show>
     </section>
@@ -284,7 +300,8 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 options={[
                   { value: "shared", label: "All projects" },
                   { value: "project", label: "This project" },
-                  ...(visible()?.selectedTaskID
+                  // An agent is the same agent in every task: only personas have a task override.
+                  ...(visible()?.selectedTaskID && !isAgentSubject(persona().persona)
                     ? [{ value: "task" as const, label: "This task" }]
                     : []),
                 ]}
@@ -434,7 +451,9 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                   ? "Removed"
                   : "Not set"}
             </p>
-            <p>{assignmentLayerLabel("Task override", persona().layers.task)}</p>
+            <Show when={!isAgentSubject(persona().persona)}>
+              <p>{assignmentLayerLabel("Task override", persona().layers.task)}</p>
+            </Show>
             <p>{assignmentLayerLabel("Project override", persona().layers.project)}</p>
             <p>{assignmentLayerLabel("Shared default", persona().layers.shared)}</p>
             <Ui.Button

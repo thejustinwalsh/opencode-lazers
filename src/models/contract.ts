@@ -1,6 +1,7 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
-import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
+import { ModelPolicy } from "../runner/schema.ts"
+import { ModelMappingSubject } from "./agent-ids.ts"
 import { ModelComparisonOutputSchema, ModelComparisonReadInputSchema } from "./comparison-schema.ts"
 import {
   ModelMappingRecordSchema,
@@ -66,7 +67,8 @@ export const ModelPriceSourceConfigureRPCInputSchema = z.strictObject({
 })
 
 export const ModelPersonaSettingsSchema = z.strictObject({
-  persona: WorkerPersona,
+  /** A worker persona, or an agent id: both are routes in the one mapping store. */
+  persona: ModelMappingSubject,
   personaLabel: z.string().min(1),
   layers: z.strictObject({
     task: ModelMappingRecordSchema.nullable(),
@@ -79,10 +81,12 @@ export const ModelPersonaSettingsSchema = z.strictObject({
 export const ModelSettingsOutputSchema = z.strictObject({
   projectDirectory: z.string().min(1),
   taskID: z.uuid().nullable(),
-  personas: z.array(ModelPersonaSettingsSchema).length(3),
+  // The three personas, then the three agents (Architect, Implementor, Auditor).
+  personas: z.array(ModelPersonaSettingsSchema).min(3).max(6),
   /**
-   * Every agent LAZERS starts, with the model native OpenCode resolves for it. Read-only: these
-   * models are set in OpenCode agent settings, not in LAZERS. Absent from older servers.
+   * Every agent LAZERS starts, with the model native OpenCode resolves for it: a LAZERS route
+   * (project, then all projects) when one is set, else the agent's native configuration, else
+   * the plugin default. Absent from older servers.
    */
   agents: z
     .array(
@@ -91,7 +95,7 @@ export const ModelSettingsOutputSchema = z.strictObject({
         label: z.string().min(1),
         /** The effective model; null when the agent pins none and uses the session's. */
         model: ModelPolicy.nullable(),
-        source: z.enum(["native", "plugin-default", "none"]),
+        source: z.enum(["project", "shared", "native", "plugin-default", "none"]),
       }),
     )
     .optional(),

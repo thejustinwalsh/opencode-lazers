@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { z } from "zod"
-import { WorkerPersona } from "../runner/schema.ts"
-import type { WorkerPersona as WorkerPersonaType } from "../runner/schema.ts"
+import { ModelMappingSubject as WorkerPersona } from "./agent-ids.ts"
+import type { ModelMappingSubject as WorkerPersonaType } from "./agent-ids.ts"
 import type { TaskRepository } from "../storage.ts"
 import {
   ModelMappingRecordSchema,
@@ -87,7 +87,11 @@ function currentIn(db: Database, key: MappingKey): ModelMappingRecord | null {
   return row ? decode(row.payload) : null
 }
 
-/** Versioned persona routes only; this store never changes task or runner state. */
+/**
+ * Versioned persona and agent routes; this store never changes task or runner state. The
+ * subject column holds a persona (`ui`) or an agent id (`architect`); an agent route is never
+ * task-scoped.
+ */
 export class ModelMappingStore {
   constructor(readonly repository: TaskRepository) {}
 
@@ -155,6 +159,23 @@ export class ModelMappingStore {
         .all(key.scope, key.projectDirectory, key.taskID, key.persona)
         .map((row) => decode(row.payload))
     })
+  }
+
+  /**
+   * The route an agent is configured to use: this project's, else the shared one. Synchronous,
+   * so an agent transform can read it while the host builds the agent.
+   */
+  agentRoute(agentID: string): {
+    route: NonNullable<ModelMappingRecord["route"]>
+    scope: "project" | "shared"
+    revision: number
+  } | null {
+    const layers = this.layers(WorkerPersona.parse(agentID))
+    for (const scope of ["project", "shared"] as const) {
+      const record = layers[scope]
+      if (record?.route) return { route: record.route, scope, revision: record.revision }
+    }
+    return null
   }
 
   /** Read all applicable layers in one SQLite transaction for a consistent resolution snapshot. */

@@ -210,6 +210,8 @@ export type LayoutInput = {
   points: readonly ChartDatum[]
   selectedID: string | null
   xScale: "linear" | "auto-log"
+  /** The spread beyond which `auto-log` goes log; 50 when absent. */
+  xLogRatio?: number
   formatX: (value: number) => string
   formatY: (value: number) => string
 }
@@ -324,6 +326,7 @@ export function layoutChart(input: LayoutInput): ChartLayout {
   const xScale = buildScale({
     values: input.points.map((point) => point.x),
     scale: input.xScale,
+    ...(input.xLogRatio === undefined ? {} : { logRatio: input.xLogRatio }),
     intervals: width < 420 ? 3 : 4,
     format: input.formatX,
     headroom: 0.06,

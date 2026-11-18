@@ -4,6 +4,7 @@ import { Plugin } from "@opencode/plugin/effect"
 import { dirname } from "node:path"
 import { Effect } from "effect"
 import { registerArchitect } from "./architect.ts"
+import { agentRouteReader } from "./models/agent-route-apply.ts"
 import { registerTaskTools } from "./tools.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
@@ -84,7 +85,8 @@ export default Plugin.define({
       yield* sectionEffect("setup:ModelsServer", () =>
         registerModelsServer(ctx, repository).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:Architect", () => registerArchitect(ctx))
+      const agentRoutes = agentRouteReader(repository)
+      yield* sectionEffect("setup:Architect", () => registerArchitect(ctx, agentRoutes))
       yield* sectionEffect("setup:AuditTools", () => registerAuditTools(ctx, repository))
       yield* timedHooks(ctx.session, "session").hook("prompt", (prompt) =>
         Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
@@ -92,7 +94,7 @@ export default Plugin.define({
       yield* sectionEffect("setup:TaskReads", () =>
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store))
+      yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, agentRoutes))
       yield* sectionEffect("setup:ArchitectContact", () =>
         registerArchitectContact(ctx, runtime.store, () => core.wake()).pipe(Effect.orDie),
       )

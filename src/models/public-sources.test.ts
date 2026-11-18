@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { benchmarkBaseline, benchmarkPrice } from "./benchmark-baseline.ts"
-import { buildCatalog } from "./catalog-projection.ts"
+import { buildCatalog, entryProvenanceText } from "./catalog-projection.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import { sourceState } from "./comparison-presentation.ts"
 import { parseCSV } from "./csv.ts"
@@ -606,4 +606,132 @@ test("public-catalog models join the ranked set, priced by their source and scor
       label: (route) => route.modelID,
     }).entries,
   ).toHaveLength(0)
+})
+
+// -- ordered price lookup for public-catalog models ---------------------------------------------
+
+const orRecord = (id: string, prompt: string, completion: string, name = id) =>
+  ({
+    kind: "openrouter-model",
+    id,
+    canonicalSlug: null,
+    name,
+    contextLength: 200000,
+    architecture: {
+      modality: null,
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      tokenizer: null,
+      instructType: null,
+    },
+    supportedParameters: ["tools"],
+    prices: {
+      unit: "USD per token",
+      tiers: [
+        { minPromptTokens: null, prompt, completion, inputCacheRead: null, inputCacheWrite: null },
+      ],
+    },
+  }) as never
+
+const catalogOf = (
+  join: ReturnType<typeof createPublicJoin>,
+  priceSources: Array<"openrouter" | "opencode" | "models-dev">,
+) =>
+  buildCatalog({
+    candidates: [],
+    priceSources,
+    sourceDates: dates,
+    profile,
+    observed: new Map(),
+    routed: [],
+    external: join.external(),
+    label: (route) => route.modelID,
+  }).entries
+
+test("a models.dev-listed Anthropic model is priced by OpenRouter when OpenRouter lists it", () => {
+  const dev = parseModelsDev(modelsDevPayload())
+  // OpenRouter lists Opus 4.6 at a different rate than models.dev, under its own spelling.
+  const join = createPublicJoin({
+    modelsDev: dev,
+    epoch: [],
+    routes: [],
+    openrouter: [
+      orRecord("anthropic/claude-opus-4.6", "0.000004", "0.00002", "Anthropic: Claude Opus 4.6"),
+    ],
+  })
+  const opus = catalogOf(join, ["openrouter", "opencode", "models-dev"]).find(
+    (entry) => entry.route.modelID === "claude-opus-4-6",
+  )!
+  expect(opus.listedBy).toBe("models-dev")
+  expect(opus.price).toMatchObject({
+    source: "openrouter",
+    input: 4,
+    output: 20,
+    retrievedAt: dates.openrouter,
+  })
+  expect(entryProvenanceText(opus)).toMatch(
+    /^Catalog · listed by models\.dev · priced by OpenRouter · /,
+  )
+  // Not listed by OpenRouter: it falls to models.dev, and says so.
+  const without = createPublicJoin({ modelsDev: dev, epoch: [], routes: [], openrouter: [] })
+  const fallback = catalogOf(without, ["openrouter", "opencode", "models-dev"]).find(
+    (entry) => entry.route.modelID === "claude-opus-4-6",
+  )!
+  expect(fallback.price).toMatchObject({ source: "models-dev", input: 5, output: 25 })
+  expect(entryProvenanceText(fallback)).toContain("priced by models.dev")
+  // The order is the user's: models.dev first takes models.dev's rate.
+  expect(
+    catalogOf(join, ["models-dev", "openrouter"]).find(
+      (e) => e.route.modelID === "claude-opus-4-6",
+    )!.price?.source,
+  ).toBe("models-dev")
+})
+
+test("an OpenRouter-listed model is priced by OpenRouter and its models.dev entry is the fallback quote", () => {
+  const join = createPublicJoin({
+    modelsDev: parseModelsDev(modelsDevPayload(), new Set()),
+    epoch: [],
+    routes: [],
+    openrouter: [orRecord("openai/gpt-5", "0.0000012", "0.00001", "OpenAI: GPT-5")],
+  })
+  const gpt5 = join.external().find((item) => item.modelID === "gpt-5")!
+  expect(gpt5.quotes?.map((quote) => quote.source)).toEqual(["openrouter", "models-dev"])
+})
+
+test("the price join never crosses a tier or a version, and a reseller is not the model's price", () => {
+  const dev = parseModelsDev(modelsDevPayload())
+  const join = createPublicJoin({
+    modelsDev: dev,
+    epoch: [],
+    routes: [],
+    openrouter: [
+      // Different tier of the same family and a different major version: neither may be used.
+      orRecord("openai/gpt-5-mini", "0.0000001", "0.0000004", "OpenAI: GPT-5 Mini"),
+      orRecord("openai/gpt-6", "0.00002", "0.0001", "OpenAI: GPT-6"),
+      // A reseller's copy of Haiku, marked up, beside no first-party listing: it is the only
+      // listing in this source, so it is taken; with the vendor's own listing present it is not.
+      orRecord("resellerco/claude-haiku-4.5", "0.000009", "0.000045", "Reseller: Claude Haiku 4.5"),
+    ],
+  })
+  const entries = catalogOf(join, ["openrouter", "models-dev"])
+  const price = (id: string) => entries.find((entry) => entry.route.modelID === id)!.price!
+  expect(price("gpt-5")).toMatchObject({ source: "models-dev" })
+  expect(price("gpt-5-mini").source).toBe("openrouter")
+  expect(price("gpt-5-mini").input).toBeCloseTo(0.1, 9)
+  const both = createPublicJoin({
+    modelsDev: dev,
+    epoch: [],
+    routes: [],
+    openrouter: [
+      orRecord("resellerco/claude-haiku-4.5", "0.000009", "0.000045"),
+      orRecord("anthropic/claude-haiku-4.5", "0.000001", "0.000005"),
+    ],
+  })
+  expect(
+    catalogOf(both, ["openrouter", "models-dev"]).find(
+      (e) => e.route.modelID === "claude-haiku-4-5",
+    )!.price,
+  ).toMatchObject({ source: "openrouter", input: 1, output: 5 })
+  // The lone reseller listing is the only OpenRouter listing for Haiku, so it prices Haiku.
+  expect(price("claude-haiku-4-5")).toMatchObject({ source: "openrouter", input: 9 })
 })

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { SMALL_SAMPLE_TERMINAL_TASKS } from "./chart-layout.ts"
+import { chooseScoreBasis, scoreOn, scoreOptions } from "./public-score.ts"
+import { SMALL_SAMPLE_TERMINAL_TASKS, layoutChart } from "./chart-layout.ts"
 import {
   benchmarkChartPoints,
   comparisonChartMarks,
@@ -199,7 +200,7 @@ test("projected points need a projection and a score; observed models carry a ri
   ])
   expect(points.map((chartPoint) => chartPoint.id)).toEqual(["scored", "backed"])
   expect(points.map((chartPoint) => chartPoint.backed)).toEqual([false, true])
-  expect(points[0]).toMatchObject({ x: 61, y: 0.8 })
+  expect(points[0]).toMatchObject({ x: 0.8, y: 61 })
   expect(points[0]!.tooltip).toContain("Coding index 61")
   expect(points[1]!.tooltip.join(" ")).toContain("9 of 11 accepted")
   expect(points[0]!.tooltip.at(-1)).toBe("OpenRouter prices · 2026-11-17")
@@ -287,4 +288,96 @@ test("live Bug repair points: partial cohorts with no terminal count are both on
       }),
     ),
   ).toEqual([])
+})
+
+test("the cost-vs-score scatter puts cost on x and the score on y, best at the upper left", () => {
+  const entries = [
+    entry("cheap-weak", { score: 40, projection: { usd: 0.5, cacheAtInputRate: false } }),
+    entry("mid", { score: 60, projection: { usd: 1.5, cacheAtInputRate: false } }),
+    entry("dear-strong", { score: 80, projection: { usd: 4, cacheAtInputRate: false } }),
+    entry("dominated", { score: 50, projection: { usd: 3, cacheAtInputRate: false } }),
+  ]
+  // The frontier is cost down, score up: `dominated` costs more than `mid` and scores less.
+  const withFrontier = entries.map((item) => ({
+    ...item,
+    frontier: item.route.modelID !== "dominated",
+  }))
+  const points = projectedChartPoints(withFrontier)
+  expect(points.find((p) => p.id === "mid")).toMatchObject({ x: 1.5, y: 60 })
+  const layout = layoutChart({
+    width: 474,
+    points,
+    selectedID: null,
+    xScale: "auto-log",
+    xLogRatio: 200,
+    formatX: String,
+    formatY: String,
+  })
+  // Linear from $0, spread under 200x: cost grows to the right, the score upward.
+  expect(layout.xScale.kind).toBe("linear")
+  const at = (id: string) => layout.points.find((p) => p.id === id)!
+  expect(at("dear-strong").cx).toBeGreaterThan(at("cheap-weak").cx)
+  expect(at("dear-strong").cy).toBeLessThan(at("cheap-weak").cy)
+  // The polyline runs the upper-left envelope in cost order and skips the dominated model.
+  const order = [...layout.frontierPath.matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => Number(m[1]))
+  expect(order).toEqual(
+    [at("cheap-weak").cx, at("mid").cx, at("dear-strong").cx].map((v) => Number(v.toFixed(1))),
+  )
+  // A spread past 200x goes log, and says so.
+  const wide = layoutChart({
+    width: 474,
+    points: [
+      { id: "a", x: 0.01, y: 10, label: "a", frontier: false },
+      { id: "b", x: 5, y: 20, label: "b", frontier: false },
+    ],
+    selectedID: null,
+    xScale: "auto-log",
+    xLogRatio: 200,
+    formatX: String,
+    formatY: String,
+  })
+  expect(wide.xScale.kind).toBe("log")
+})
+
+test("the score basis switch re-bases the scores on the picked benchmark", () => {
+  const rows = (id: string, name: string, score: number) => [
+    {
+      kind: "epoch-benchmark",
+      benchmarkID: id,
+      benchmark: name,
+      score,
+      origin: "x",
+      modelVersion: "m",
+      modelKey: "m",
+      effort: null,
+      stderr: null,
+      agent: null,
+      releaseDate: null,
+    },
+  ]
+  const candidate = (modelID: string, swe: number, aider: number) =>
+    ({
+      candidateID: modelID,
+      identity: { providerID: "p", modelID, variant: null },
+      benchmarkCorrespondence: { status: "none" },
+      externalBenchmark: null,
+      publicBenchmarks: [
+        ...rows("swe-bench-verified", "SWE-bench Verified", swe),
+        ...rows("aider-polyglot", "Aider polyglot", aider),
+      ],
+    }) as never
+  const set = [candidate("a", 0.7, 0.3), candidate("b", 0.5, 0.9)]
+  const options = scoreOptions(set)
+  expect(options.map((option) => option.key).sort()).toEqual([
+    "aider-polyglot",
+    "swe-bench-verified",
+  ])
+  expect(chooseScoreBasis(set).basis).toMatchObject({ benchmarkID: "swe-bench-verified" })
+  const picked = chooseScoreBasis(set, "aider-polyglot").basis
+  expect(picked).toMatchObject({ benchmarkID: "aider-polyglot", label: "Aider polyglot (%)" })
+  expect(scoreOn(set[1]!, picked)?.value).toBe(90)
+  // An unavailable pick is ignored rather than leaving the set unscored.
+  expect(chooseScoreBasis(set, "terminal-bench").basis).toMatchObject({
+    benchmarkID: "swe-bench-verified",
+  })
 })

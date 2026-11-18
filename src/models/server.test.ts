@@ -135,6 +135,7 @@ function modelContext(options: {
   const storage = options.storage ?? new Map<string, unknown>()
   const storageCalls = options.storageCalls ?? { get: 0, set: 0 }
   const modelListCalls = { count: 0 }
+  const agentReloads = { count: 0 }
   const server: ModelRPC = {
     settings: () => Effect.die(new Error("RPC not registered")),
     configure: () => Effect.die(new Error("RPC not registered")),
@@ -226,9 +227,16 @@ function modelContext(options: {
       remove: () => Effect.void,
       scan: () => Effect.succeed({ entries: [] }),
     },
-    agent: { get: () => Effect.succeed({ data: { model: null } }) },
+    agent: {
+      get: () => Effect.succeed({ data: { model: null } }),
+      reload: () => {
+        agentReloads.count += 1
+        return Effect.void
+      },
+    },
   }
   return {
+    agentReloads,
     context,
     server,
     methods: () => registered ?? server,
@@ -3430,6 +3438,81 @@ test("cancelled Models source refresh stops after late permission and writes no 
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
     expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("saving an agent route re-applies the agent transforms and the settings read names its source", async () => {
+  const root = directory()
+  const repository = new TaskRepository(join(root, "tasks.sqlite"), projectDirectory)
+  const harness = await register(repository)
+  const methods = harness.methods()
+  repository.close()
+  try {
+    const agents = async () =>
+      (
+        (await Effect.runPromise(methods.settings({ sessionID: "ses-native" }))) as {
+          agents: Array<{ agentID: string; source: string }>
+        }
+      ).agents
+    // Nothing set: no reload, and no LAZERS source.
+    expect((await agents()).find((agent) => agent.agentID === "architect")?.source).toBe("none")
+
+    const route = { providerID: "anthropic", id: "claude-opus-5", variant: "max" }
+    expect(
+      await Effect.runPromise(
+        methods.configure({
+          sessionID: "ses-native",
+          target: { scope: "project" },
+          persona: "architect",
+          expectedRevision: 0,
+          route,
+        }),
+      ),
+    ).toMatchObject({ status: "updated", mapping: { persona: "architect", route } })
+    // The agent transforms run again, so the next Architect session starts on the new model.
+    expect(harness.agentReloads.count).toBe(1)
+    expect((await agents()).find((agent) => agent.agentID === "architect")?.source).toBe("project")
+
+    // A persona route is not an agent route: it does not reload.
+    await Effect.runPromise(
+      methods.configure({
+        sessionID: "ses-native",
+        target: { scope: "shared" },
+        persona: "ui",
+        expectedRevision: 0,
+        route,
+      }),
+    )
+    expect(harness.agentReloads.count).toBe(1)
+
+    // A stale write is a conflict and re-applies nothing.
+    expect(
+      await Effect.runPromise(
+        methods.configure({
+          sessionID: "ses-native",
+          target: { scope: "project" },
+          persona: "architect",
+          expectedRevision: 0,
+          route: null,
+        }),
+      ),
+    ).toMatchObject({ status: "conflict" })
+    expect(harness.agentReloads.count).toBe(1)
+
+    // An agent route cannot be task-scoped.
+    await expect(
+      Effect.runPromise(
+        methods.configure({
+          sessionID: "ses-native",
+          target: { scope: "task", taskID: crypto.randomUUID() },
+          persona: "auditor",
+          expectedRevision: 0,
+          route,
+        }),
+      ),
+    ).rejects.toThrow()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

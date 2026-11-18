@@ -60,7 +60,35 @@ export type ScoreChoice = {
   epochRoutes: Record<string, number>
 }
 
-export function chooseScoreBasis(candidates: readonly ModelCandidate[]): ScoreChoice {
+/** The bases a user may pick between, most covered first; `key` is `aa` or an Epoch benchmark id. */
+export type ScoreOption = { key: string; basis: ScoreBasis; routes: number }
+
+const epochBasis = (id: string, name: string): ScoreBasis => ({
+  source: "epoch",
+  label: `${name} (%)`,
+  caption: `${name} · ${EPOCH_ATTRIBUTION}`,
+  benchmarkID: id,
+})
+
+export function scoreOptions(candidates: readonly ModelCandidate[]): ScoreOption[] {
+  const choice = chooseScoreBasis(candidates)
+  const names = new Map<string, string>()
+  for (const candidate of candidates)
+    for (const row of candidate.publicBenchmarks ?? []) names.set(row.benchmarkID, row.benchmark)
+  const options: ScoreOption[] = Object.entries(choice.epochRoutes).map(([id, routes]) => ({
+    key: id,
+    basis: epochBasis(id, names.get(id) ?? id),
+    routes,
+  }))
+  if (choice.aaRoutes > 0) options.push({ key: "aa", basis: AA_BASIS, routes: choice.aaRoutes })
+  return options.toSorted((a, b) => b.routes - a.routes || a.key.localeCompare(b.key))
+}
+
+export function chooseScoreBasis(
+  candidates: readonly ModelCandidate[],
+  /** A basis the user picked (`aa` or an Epoch benchmark id); used when it has any coverage. */
+  picked?: string | null,
+): ScoreChoice {
   const aa = new Set<string>()
   const epoch = new Map<string, Set<string>>()
   for (const candidate of candidates) {
@@ -74,6 +102,16 @@ export function chooseScoreBasis(candidates: readonly ModelCandidate[]): ScoreCh
       epoch.set(row.benchmarkID, (epoch.get(row.benchmarkID) ?? new Set()).add(key))
   }
   const epochRoutes = Object.fromEntries([...epoch].map(([id, keys]) => [id, keys.size]))
+  if (picked) {
+    if (picked === "aa" && aa.size > 0) return { basis: AA_BASIS, aaRoutes: aa.size, epochRoutes }
+    if (epochRoutes[picked]) {
+      const name =
+        candidates
+          .flatMap((c) => c.publicBenchmarks ?? [])
+          .find((row) => row.benchmarkID === picked)?.benchmark ?? picked
+      return { basis: epochBasis(picked, name), aaRoutes: aa.size, epochRoutes }
+    }
+  }
   const order = (id: string) => {
     const at = EPOCH_BENCHMARK_ORDER.indexOf(id)
     return at < 0 ? EPOCH_BENCHMARK_ORDER.length : at

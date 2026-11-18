@@ -62,6 +62,9 @@ export const modelPersonaLabels = {
   ui: "UI",
   systems: "Systems",
   "small-refactoring": "Small task / refactoring",
+  architect: "Architect",
+  "lazers-implementor": "Implementor",
+  auditor: "Auditor",
 } as const
 export const modelTaskKindLabels: Record<ModelDecisionTaskKind, string> = {
   "bug-repair": "Bug repair",
@@ -152,6 +155,15 @@ export function agentModelText(agent: {
     : null
 }
 
-export function agentSourceText(source: "native" | "plugin-default" | "none") {
-  return source === "plugin-default" ? "default" : source === "native" ? "OpenCode" : ""
+/** Whose model an agent runs on: this project's route, the shared one, native config, or default. */
+export function agentSourceText(
+  source: "project" | "shared" | "native" | "plugin-default" | "none",
+) {
+  return source === "plugin-default"
+    ? "default"
+    : source === "native"
+      ? "OpenCode"
+      : source === "none"
+        ? ""
+        : source
 }

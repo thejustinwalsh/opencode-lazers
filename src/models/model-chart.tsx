@@ -28,6 +28,8 @@ export type ModelChartProps = {
   formatY: (value: number) => string
   /** `auto-log` switches the x axis to a log scale when the spread exceeds 50x. */
   xScale?: "linear" | "auto-log"
+  /** The spread beyond which `auto-log` goes log; 50 when absent. */
+  xLogRatio?: number
   /** The accessible name of the whole chart. */
   label: string
   /** Right of the legend, e.g. "14 accepted tasks · OpenRouter prices". */
@@ -69,6 +71,7 @@ export function ModelChart(props: ModelChartProps) {
       points: props.points,
       selectedID: props.selectedID,
       xScale: props.xScale ?? "linear",
+      ...(props.xLogRatio === undefined ? {} : { xLogRatio: props.xLogRatio }),
       formatX: props.formatX,
       formatY: props.formatY,
     }),
