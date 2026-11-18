@@ -615,7 +615,6 @@ export class TaskRuntime {
   private tickPromise: Promise<void> | undefined
   private readonly idleWaiters: (() => void)[] = []
   private readonly renewalLocks = new Map<string, Promise<void>>()
-  private readonly sourceNoticeReconciliationLocks = new Set<string>()
   private readonly retainedVerificationAborts = new Map<string, AbortController>()
   private readonly retainedVerificationRuns = new Map<string, Promise<void>>()
   private readonly terminalRetainedVerificationCleanupChecks = new Map<
@@ -672,7 +671,6 @@ export class TaskRuntime {
       reconcilePlan: (...args) => this.reconcilePlan(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
-      wakeRecoveredArchitect: (...args) => this.wakeRecoveredArchitect(...args),
     })
     this.worktreeCleanup = new WorktreeCleanup({
       adoptionCheckReceiptMatches: (...args) =>
@@ -5124,10 +5122,8 @@ export class TaskRuntime {
     if (command.action !== "audit" && !admission) {
       if (!this.validArchitect(await this.host.session(caller)))
         throw new Error("A live Architect session of this project must command the plan")
-      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller)) {
-        this.refreshArchitectSourceOwners()
+      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller))
         old = this.store.plan(command.planID)!
-      }
     }
     let continuedOwner: string | undefined
     const configuredWorker =
@@ -5143,7 +5139,6 @@ export class TaskRuntime {
         "unpause",
         "reassign",
         "reconcile",
-        "reconcile-source-notices",
         "resume",
         "retry",
         "adopt-descendant",
@@ -5326,10 +5321,6 @@ export class TaskRuntime {
       caller,
       ownerSession,
     )
-    const sourceNoticeReconciliation =
-      command.action === "reconcile-source-notices"
-        ? await this.reconcileArchitectSourceNotices(old, command, caller, ownerSession)
-        : undefined
     let startupSettlement:
       | {
           attempt: AttemptRow
@@ -5496,9 +5487,7 @@ export class TaskRuntime {
           const activeAdoptions = this.store.activeAdoptions(plan.id)
           if (
             activeAdoptions.length &&
-            !["adopt-descendant", "cancel", "audit", "reconcile-source-notices"].includes(
-              command.action,
-            )
+            !["adopt-descendant", "cancel", "audit"].includes(command.action)
           )
             throw new Error(
               "A descendant adoption is pending; only its adoption or cancellation is allowed",
@@ -6055,13 +6044,6 @@ export class TaskRuntime {
               writeScope,
               instructionUpdates,
             }
-          }
-          if (command.action === "reconcile-source-notices") {
-            if (!sourceNoticeReconciliation || !command.sourceSessionID)
-              throw new Error("Source notice reconciliation was not prepared")
-            if (plan.owner !== caller || plan.version !== command.expectedVersion)
-              throw new Error("Source notice reconciliation owner or version changed")
-            return sourceNoticeReconciliation
           }
           if (command.action === "adopt-descendant") {
             if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
@@ -7243,7 +7225,6 @@ export class TaskRuntime {
       command.action === "unpause"
     )
       await this.requestTick()
-    if (command.action === "reassign" || continuedOwner) this.refreshArchitectSourceOwners()
     return result
   }
 
@@ -7433,13 +7414,11 @@ export class TaskRuntime {
   }
 
   private adoptArchitectOwner(plan: PlanRow, sessionID: string) {
-    const changed = this.store.atomic(() => {
-      if (!this.store.adoptPlanOwner(plan.id, plan.owner, sessionID)) return false
+    this.store.atomic(() => {
+      if (!this.store.adoptPlanOwner(plan.id, plan.owner, sessionID)) return
       // Persist the replacement's wake with ownership so a restart cannot split them.
       this.wakeRecoveredArchitect(plan.id)
-      return true
     })
-    if (changed) this.refreshArchitectSourceOwners()
   }
 
   private wakeRecoveredArchitect(planID: string) {
@@ -7448,7 +7427,7 @@ export class TaskRuntime {
     const pending = this.store.atomic((db) =>
       db
         .query<{ id: string }, [string]>(
-          "SELECT id FROM runner_outbox WHERE plan_id=? AND state IN ('pending','sending','uncertain','admitted','delivered') LIMIT 1",
+          "SELECT id FROM runner_outbox WHERE plan_id=? AND state='pending' LIMIT 1",
         )
         .get(planID),
     )
@@ -7662,7 +7641,6 @@ export class TaskRuntime {
       cacheCurrent: epoch === this.sourceEpochs.get(source.session_id),
     })
     if (!result) throw new Error("Architect predecessor source changed during reconciliation")
-    await this.ensureArchitectSourceChangeNotices(renewal, result)
     if (result.changedInputs.length)
       this.renewalEvent(
         renewal,
@@ -7697,638 +7675,6 @@ export class TaskRuntime {
         this.store.retireArchitectSource(source.session_id, this.owner, fence, this.now())
     }
     return result
-  }
-
-  private async ensureArchitectSourceChangeNotices(
-    renewal: ArchitectRenewalRow,
-    result: {
-      hasJournal: boolean
-      changedInputs: Array<{ id: string; type: string; disposition: string }>
-      changedResults: Array<{ id: string; revision: number; state: string }>
-    },
-  ) {
-    const source = this.store.architectSource(renewal.previous_session_id)
-    if (!source || source.state !== "active" || !result.hasJournal) return
-    if (result.changedInputs.length || result.changedResults.length) {
-      const targets = this.store.architectSourceNoticeTargets(source.session_id)
-      const rows = this.store.architectCurrentSourceChangeNoticeRows(source.session_id)
-      for (const target of targets) {
-        const current = rows.find((row) => row.session_id === target.owner)
-        if (!current || !["admitted", "delivered", "uncertain", "unknown"].includes(current.state))
-          continue
-        const ownership = this.outcomeDelivery.ownership(current)
-        if (
-          !ownership ||
-          !sameProject(ownership.lazersProjectID, this.projectID) ||
-          ownership.lazersProjectDirectory !== this.directory ||
-          ownership.lazersStatus !== "architect-source-change"
-        )
-          continue
-        try {
-          const observation = await this.outcomeDelivery.outcomeObservation(
-            current,
-            target.owner,
-            ownership,
-          )
-          const state =
-            observation === "queued"
-              ? "admitted"
-              : observation === "consumed"
-                ? "consumed"
-                : "unknown"
-          this.store.recordArchitectSourceChangeObservation({
-            outboxID: current.id,
-            expectedState: current.state,
-            state,
-            receipt: {
-              kind: "source-change-native-observation",
-              sourceSessionID: source.session_id,
-              disposition:
-                observation === "queued"
-                  ? "queued-native-input"
-                  : observation === "consumed"
-                    ? "native-transcript-consumed"
-                    : observation === "missing"
-                      ? "ambiguous-native-absence"
-                      : "native-identity-conflict",
-            },
-            event:
-              observation === "consumed"
-                ? "ARCHITECT_SOURCE_CHANGE_CONSUMED"
-                : observation === "queued"
-                  ? "ARCHITECT_SOURCE_CHANGE_QUEUED"
-                  : "ARCHITECT_SOURCE_CHANGE_UNCERTAIN",
-          })
-        } catch (error) {
-          this.store.recordArchitectSourceChangeObservation({
-            outboxID: current.id,
-            expectedState: current.state,
-            state: current.state === "unknown" ? "unknown" : "admitted",
-            receipt: {
-              kind: "source-change-native-observation-unavailable",
-              sourceSessionID: source.session_id,
-              error: errorText(error),
-            },
-            event: "ARCHITECT_SOURCE_CHANGE_OBSERVATION_UNAVAILABLE",
-          })
-        }
-      }
-    }
-    const targets = this.store.architectSourceNoticeTargets(source.session_id)
-    const representative = targets[0]
-    const plan = representative ? this.store.plan(representative.planID) : undefined
-    if (!representative || !plan) return
-    this.store.ensureArchitectSourceChangeNotices({
-      planID: representative.planID,
-      sourceSessionID: source.session_id,
-      expectedOwner: representative.owner,
-      expectedPlanVersion: plan.version,
-      projectID: this.projectID,
-    })
-  }
-
-  private ensureCurrentArchitectSourceChangeNotices(sourceSessionID: string) {
-    const source = this.store.architectSource(sourceSessionID)
-    if (!source || source.state === "preparing") return
-    for (const target of this.store.architectSourceNoticeTargets(sourceSessionID)) {
-      const plan = this.store.plan(target.planID)
-      if (!plan || plan.owner !== target.owner) continue
-      try {
-        this.store.ensureArchitectSourceChangeNotices({
-          planID: target.planID,
-          sourceSessionID,
-          expectedOwner: target.owner,
-          expectedPlanVersion: plan.version,
-          projectID: this.projectID,
-        })
-      } catch {
-        // A later source scan or explicit reconciliation will retry with fresh ownership facts.
-      }
-    }
-  }
-
-  /** Ownership changes rebind reference-only notices without rescanning retired history. */
-  private refreshArchitectSourceOwners() {
-    for (const source of this.store.architectSourceSessionIDs())
-      this.ensureCurrentArchitectSourceChangeNotices(source)
-  }
-
-  private async reconcileArchitectSourceNotices(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ) {
-    const sourceSessionID = command.sourceSessionID
-    if (!sourceSessionID) throw new Error("Source notice reconciliation requires sourceSessionID")
-    const lock = `${plan.id}:${sourceSessionID}`
-    if (this.sourceNoticeReconciliationLocks.has(lock))
-      return {
-        status: "deferred" as const,
-        reason: "Source notice reconciliation is already in progress for this plan and source",
-        sourceSessionID,
-        legacyNoticeCount: 0,
-        results: [],
-      }
-    this.sourceNoticeReconciliationLocks.add(lock)
-    try {
-      return await this.reconcileArchitectSourceNoticesLocked(plan, command, caller, ownerSession)
-    } finally {
-      this.sourceNoticeReconciliationLocks.delete(lock)
-    }
-  }
-
-  private async reconcileArchitectSourceNoticesLocked(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ) {
-    const sourceSessionID = command.sourceSessionID
-    if (!sourceSessionID || !this.validArchitect(ownerSession))
-      throw new Error("Source notice reconciliation requires the current active Architect owner")
-    const legacyPage = this.store.architectLegacySourceNoticePage(sourceSessionID, 20)
-    if (!legacyPage.total)
-      return {
-        status: "no-legacy-notices" as const,
-        sourceSessionID,
-        legacyNoticeCount: 0,
-        results: [],
-      }
-    const legacyRows = legacyPage.rows
-    const remainingLegacyNoticeCount = legacyPage.total - legacyRows.length
-
-    const ensured = this.store.ensureArchitectSourceChangeNotices({
-      planID: plan.id,
-      sourceSessionID,
-      expectedOwner: plan.owner,
-      expectedPlanVersion: command.expectedVersion,
-      projectID: this.projectID,
-    })
-    if (!ensured.targets.length || ensured.notices.length !== ensured.targets.length)
-      return {
-        status: "deferred" as const,
-        reason: "No complete current-owner source-change pointer coverage is available",
-        sourceSessionID,
-        legacyNoticeCount: legacyPage.total,
-        replacementNoticeIDs: ensured.notices.map((notice) => notice.id),
-        results: [],
-      }
-
-    const targetFingerprint = fingerprint(
-      ensured.targets.map((target) => ({
-        owner: target.owner,
-        planID: target.planID,
-        planIDs: target.planIDs,
-      })),
-    )
-    const refreshedRows = this.store.architectSourceChangeNoticeRowsByIDs(
-      sourceSessionID,
-      ensured.notices,
-    )
-    const refreshedByID = new Map(refreshedRows.map((row) => [row.id, row]))
-    for (const notice of ensured.notices) {
-      const replacement = refreshedByID.get(notice.id)
-      if (!replacement || replacement.session_id !== notice.sessionID) {
-        return {
-          status: "deferred" as const,
-          reason: "Current source-change pointer is not present in the durable outbox",
-          sourceSessionID,
-          legacyNoticeCount: legacyPage.total,
-          replacementNoticeIDs: ensured.notices.map((item) => item.id),
-          results: [],
-        }
-      }
-      const ownership = this.outcomeDelivery.ownership(replacement)
-      if (
-        !ownership ||
-        !sameProject(ownership.lazersProjectID, this.projectID) ||
-        ownership.lazersProjectDirectory !== this.directory ||
-        ownership.lazersSessionID !== notice.sessionID ||
-        ownership.lazersStatus !== "architect-source-change"
-      )
-        return {
-          status: "deferred" as const,
-          reason: "Current source-change pointer lacks exact native ownership metadata",
-          sourceSessionID,
-          legacyNoticeCount: legacyPage.total,
-          replacementNoticeIDs: ensured.notices.map((item) => item.id),
-          results: [],
-        }
-      let observation: "queued" | "consumed" | "missing" | "unowned"
-      try {
-        observation = await this.outcomeDelivery.outcomeObservation(
-          replacement,
-          notice.sessionID,
-          ownership,
-        )
-      } catch (error) {
-        return {
-          status: "deferred" as const,
-          reason: `Current source-change pointer observation unavailable: ${errorText(error)}`,
-          sourceSessionID,
-          legacyNoticeCount: legacyPage.total,
-          replacementNoticeIDs: ensured.notices.map((item) => item.id),
-          results: [],
-        }
-      }
-      const observedState =
-        observation === "queued" ? "admitted" : observation === "consumed" ? "consumed" : "unknown"
-      if (observation === "queued" || observation === "consumed")
-        this.store.recordArchitectSourceChangeObservation({
-          outboxID: replacement.id,
-          expectedState: replacement.state,
-          state: observedState,
-          receipt: {
-            kind: "source-change-native-coverage-observed",
-            sourceSessionID,
-            disposition:
-              observation === "queued" ? "queued-native-input" : "native-transcript-consumed",
-          },
-          event:
-            observation === "queued"
-              ? "ARCHITECT_SOURCE_CHANGE_QUEUED"
-              : "ARCHITECT_SOURCE_CHANGE_CONSUMED",
-        })
-      else
-        return {
-          status: "deferred" as const,
-          reason:
-            observation === "missing"
-              ? "Current source-change pointer is absent from both inbox and transcript; legacy notices remain untouched"
-              : "Current source-change pointer identity is not positively owned; legacy notices remain untouched",
-          sourceSessionID,
-          legacyNoticeCount: legacyPage.total,
-          replacementNoticeIDs: ensured.notices.map((item) => item.id),
-          results: [],
-        }
-    }
-
-    const context = this.store.architectSourceNoticeContext({
-      planID: plan.id,
-      sourceSessionID,
-      expectedOwner: plan.owner,
-      expectedPlanVersion: command.expectedVersion,
-    })
-    if (
-      !context ||
-      fingerprint(
-        context.targets.map((target) => ({
-          owner: target.owner,
-          planID: target.planID,
-          planIDs: target.planIDs,
-        })),
-      ) !== targetFingerprint
-    ) {
-      this.ensureCurrentArchitectSourceChangeNotices(sourceSessionID)
-      return {
-        status: "deferred" as const,
-        reason: "Current plan owners changed during replacement-coverage observation",
-        sourceSessionID,
-        legacyNoticeCount: legacyPage.total,
-        replacementNoticeIDs: ensured.notices.map((notice) => notice.id),
-        results: [],
-      }
-    }
-
-    const results: Array<{ outboxID: string; state: string; disposition: string }> = []
-    for (const legacy of legacyRows) {
-      const claimID = crypto.randomUUID()
-      const claim = this.store.beginArchitectSourceNoticeReconciliation({
-        planID: plan.id,
-        sourceSessionID,
-        expectedOwner: plan.owner,
-        expectedPlanVersion: command.expectedVersion,
-        projectID: this.projectID,
-        outboxID: legacy.id,
-        requestID: command.requestID,
-        claimID,
-      })
-      if (claim.status !== "claimed") {
-        const state = claim.status === "terminal" ? claim.row.state : claim.status
-        results.push({ outboxID: legacy.id, state, disposition: claim.status })
-        continue
-      }
-      const row = claim.row
-      const ownership = this.outcomeDelivery.ownership(row)
-      if (!ownership) {
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "unknown",
-          receipt: { kind: "source-notice-ownership-lost-before-observation" },
-          event: "ARCHITECT_SOURCE_NOTICE_OWNERSHIP_UNKNOWN",
-        })
-        results.push({ outboxID: row.id, state: "unknown", disposition: "ownership-unavailable" })
-        continue
-      }
-      if (!this.store.architectSourceNoticeClaimCurrent(row.id, claimID)) {
-        results.push({ outboxID: row.id, state: "reconciling", disposition: "claim-lost" })
-        continue
-      }
-      if (legacy.state === "pending") {
-        const latest = this.store.architectSourceNoticeContext({
-          planID: plan.id,
-          sourceSessionID,
-          expectedOwner: plan.owner,
-          expectedPlanVersion: command.expectedVersion,
-        })
-        if (
-          !latest ||
-          fingerprint(
-            latest.targets.map((target) => ({
-              owner: target.owner,
-              planID: target.planID,
-              planIDs: target.planIDs,
-            })),
-          ) !== targetFingerprint
-        ) {
-          this.store.finishArchitectSourceNoticeReconciliation({
-            outboxID: row.id,
-            claimID,
-            state: "reconciling",
-            receipt: { kind: "source-notice-owner-changed-before-admission-suppression" },
-            event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_DEFERRED",
-          })
-          results.push({ outboxID: row.id, state: "reconciling", disposition: "owner-changed" })
-          continue
-        }
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "superseded",
-          receipt: {
-            kind: "source-notice-superseded-before-native-admission",
-            replacementOutboxIDs: ensured.notices.map((notice) => notice.id),
-          },
-          event: "ARCHITECT_SOURCE_NOTICE_SUPERSEDED",
-        })
-        results.push({ outboxID: row.id, state: "superseded", disposition: "never-admitted" })
-        continue
-      }
-
-      let observation: "queued" | "consumed" | "missing" | "unowned"
-      try {
-        observation = await this.outcomeDelivery.outcomeObservation(row, row.session_id, ownership)
-      } catch (error) {
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "reconciling",
-          receipt: { kind: "source-notice-observation-unavailable", error: errorText(error) },
-          event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_DEFERRED",
-        })
-        results.push({
-          outboxID: row.id,
-          state: "reconciling",
-          disposition: "observation-unavailable",
-        })
-        continue
-      }
-      if (observation === "consumed") {
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "consumed",
-          receipt: { kind: "source-notice-transcript-consumption-observed" },
-          event: "ARCHITECT_SOURCE_NOTICE_CONSUMED",
-        })
-        results.push({ outboxID: row.id, state: "consumed", disposition: "already-consumed" })
-        continue
-      }
-      if (observation === "missing" || observation === "unowned") {
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "unknown",
-          receipt: {
-            kind:
-              observation === "missing"
-                ? "source-notice-absence-ambiguous"
-                : "source-notice-native-identity-conflict",
-          },
-          event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_UNCERTAIN",
-        })
-        results.push({ outboxID: row.id, state: "unknown", disposition: observation })
-        continue
-      }
-
-      const beforeCancellation = this.store.architectSourceNoticeContext({
-        planID: plan.id,
-        sourceSessionID,
-        expectedOwner: plan.owner,
-        expectedPlanVersion: command.expectedVersion,
-      })
-      if (
-        !beforeCancellation ||
-        fingerprint(
-          beforeCancellation.targets.map((target) => ({
-            owner: target.owner,
-            planID: target.planID,
-            planIDs: target.planIDs,
-          })),
-        ) !== targetFingerprint
-      ) {
-        this.ensureCurrentArchitectSourceChangeNotices(sourceSessionID)
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "reconciling",
-          receipt: { kind: "source-notice-owner-changed-before-native-cancellation" },
-          event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_DEFERRED",
-        })
-        results.push({ outboxID: row.id, state: "reconciling", disposition: "owner-changed" })
-        continue
-      }
-      if (!this.host.cancelOutcome) {
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "reconciling",
-          receipt: { kind: "source-notice-native-cancellation-unavailable" },
-          event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_DEFERRED",
-        })
-        results.push({
-          outboxID: row.id,
-          state: "reconciling",
-          disposition: "cancellation-unavailable",
-        })
-        continue
-      }
-      if (!this.store.architectSourceNoticeClaimCurrent(row.id, claimID)) {
-        results.push({ outboxID: row.id, state: "reconciling", disposition: "claim-lost" })
-        continue
-      }
-      try {
-        await this.host.cancelOutcome({
-          sessionID: row.session_id,
-          inboxID: row.message_id,
-          ownership,
-        })
-      } catch (error) {
-        let afterFailure: "queued" | "consumed" | "missing" | "unowned"
-        try {
-          afterFailure = await this.outcomeDelivery.outcomeObservation(
-            row,
-            row.session_id,
-            ownership,
-          )
-        } catch (observationError) {
-          this.store.finishArchitectSourceNoticeReconciliation({
-            outboxID: row.id,
-            claimID,
-            state: "reconciling",
-            receipt: {
-              kind: "source-notice-cancellation-and-readback-unavailable",
-              cancellationError: errorText(error),
-              observationError: errorText(observationError),
-            },
-            event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_DEFERRED",
-          })
-          results.push({
-            outboxID: row.id,
-            state: "reconciling",
-            disposition: "readback-unavailable",
-          })
-          continue
-        }
-        const nextState =
-          afterFailure === "consumed"
-            ? "consumed"
-            : afterFailure === "queued"
-              ? "reconciling"
-              : "unknown"
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: nextState,
-          receipt: {
-            kind:
-              afterFailure === "consumed"
-                ? "source-notice-cancellation-raced-with-consumption"
-                : afterFailure === "queued"
-                  ? "source-notice-cancellation-failed-still-queued"
-                  : "source-notice-cancellation-absence-ambiguous",
-            cancellationError: errorText(error),
-            readback: afterFailure,
-          },
-          event:
-            afterFailure === "consumed"
-              ? "ARCHITECT_SOURCE_NOTICE_CANCEL_RACED_WITH_CONSUMPTION"
-              : "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_UNCERTAIN",
-        })
-        results.push({
-          outboxID: row.id,
-          state: nextState,
-          disposition: `cancel-failed-${afterFailure}`,
-        })
-        continue
-      }
-
-      this.store.finishArchitectSourceNoticeReconciliation({
-        outboxID: row.id,
-        claimID,
-        state: "reconciling",
-        receipt: { kind: "source-notice-native-cancellation-call-returned" },
-        event: "ARCHITECT_SOURCE_NOTICE_CANCEL_RETURNED",
-      })
-      let afterCancellation: "queued" | "consumed" | "missing" | "unowned"
-      try {
-        afterCancellation = await this.outcomeDelivery.outcomeObservation(
-          row,
-          row.session_id,
-          ownership,
-        )
-      } catch (error) {
-        this.store.finishArchitectSourceNoticeReconciliation({
-          outboxID: row.id,
-          claimID,
-          state: "reconciling",
-          receipt: {
-            kind: "source-notice-cancellation-readback-unavailable",
-            error: errorText(error),
-          },
-          event: "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_DEFERRED",
-        })
-        results.push({
-          outboxID: row.id,
-          state: "reconciling",
-          disposition: "readback-unavailable",
-        })
-        continue
-      }
-      const ownerAfterCancellation = this.store.architectSourceNoticeContext({
-        planID: plan.id,
-        sourceSessionID,
-        expectedOwner: plan.owner,
-        expectedPlanVersion: command.expectedVersion,
-      })
-      if (
-        !ownerAfterCancellation ||
-        fingerprint(
-          ownerAfterCancellation.targets.map((target) => ({
-            owner: target.owner,
-            planID: target.planID,
-            planIDs: target.planIDs,
-          })),
-        ) !== targetFingerprint
-      )
-        this.ensureCurrentArchitectSourceChangeNotices(sourceSessionID)
-      const finalState =
-        afterCancellation === "missing"
-          ? "superseded"
-          : afterCancellation === "consumed"
-            ? "consumed"
-            : afterCancellation === "unowned"
-              ? "unknown"
-              : "reconciling"
-      this.store.finishArchitectSourceNoticeReconciliation({
-        outboxID: row.id,
-        claimID,
-        state: finalState,
-        receipt: {
-          kind:
-            afterCancellation === "missing"
-              ? "source-notice-cancellation-confirmed-by-native-readback"
-              : afterCancellation === "consumed"
-                ? "source-notice-cancellation-raced-with-consumption"
-                : afterCancellation === "queued"
-                  ? "source-notice-still-queued-after-cancellation"
-                  : "source-notice-identity-changed-after-cancellation",
-          readback: afterCancellation,
-        },
-        event:
-          afterCancellation === "missing"
-            ? "ARCHITECT_SOURCE_NOTICE_CANCELLED"
-            : afterCancellation === "consumed"
-              ? "ARCHITECT_SOURCE_NOTICE_CANCEL_RACED_WITH_CONSUMPTION"
-              : "ARCHITECT_SOURCE_NOTICE_RECONCILIATION_UNCERTAIN",
-      })
-      results.push({
-        outboxID: row.id,
-        state: finalState,
-        disposition:
-          afterCancellation === "missing"
-            ? "cancelled-and-read-back-absent"
-            : afterCancellation === "consumed"
-              ? "consumption-observed-after-cancel"
-              : afterCancellation,
-      })
-    }
-    const unresolved = results.some((result) => !["superseded", "consumed"].includes(result.state))
-    return {
-      status:
-        unresolved || remainingLegacyNoticeCount > 0
-          ? ("deferred" as const)
-          : ("reconciled" as const),
-      sourceSessionID,
-      sourceRevision: ensured.sourceRevision,
-      replacementNoticeIDs: ensured.notices.map((notice) => notice.id),
-      legacyNoticeCount: legacyPage.total,
-      remainingLegacyNoticeCount,
-      processedLegacyNoticeCount: legacyRows.length,
-      results,
-    }
   }
 
   private async inspectArchitectSourceSweep(renewal: ArchitectRenewalRow, fence: number) {
@@ -8414,7 +7760,6 @@ export class TaskRuntime {
         "deferred",
         null,
       )
-      if (changed) this.refreshArchitectSourceOwners()
       if (!changed) {
         const current = this.store.architectRenewal(renewal.id)
         if (current && ["archiving", "recovering-input", "rolling-back"].includes(current.state))
@@ -8992,7 +8337,7 @@ export class TaskRuntime {
             { predecessorSessionID: renewal.previous_session_id },
             fence,
           )
-        } else this.refreshArchitectSourceOwners()
+        }
       })
     } catch (error) {
       const current = this.store.architectRenewal(initial.id)
@@ -9046,8 +8391,7 @@ export class TaskRuntime {
     const restored = await this.host.session(renewal.previous_session_id)
     if (!restored || restored.archived)
       throw new Error("Architect renewal rollback did not restore the predecessor")
-    if (this.store.rollbackArchitectRenewal(this.owner, fence, renewal.id, state, error))
-      this.refreshArchitectSourceOwners()
+    this.store.rollbackArchitectRenewal(this.owner, fence, renewal.id, state, error)
   }
 
   private hold(
@@ -9459,7 +8803,7 @@ export class TaskRuntime {
         .get(anchor.planID, JSON.stringify(waiting)),
     )
     if (prior && this.now() - prior.requestedAt < PROJECT_RECONCILIATION_INTERVAL_MS) return
-    if (prior && !["admitted", "consumed", "unknown", "superseded"].includes(prior.state)) return
+    if (prior?.state === "pending") return
     const checking = () =>
       verificationActivitiesForDatabase(this.store.repository.path).some(
         (activity) =>
@@ -9489,11 +8833,10 @@ export class TaskRuntime {
     )
       return
 
-    let observation: Awaited<ReturnType<OutcomeDelivery["outcomeObservation"]>> | undefined
-    if (prior?.state === "admitted") {
-      // The existing delivery path retargets admitted notices when the owner changes.
+    if (prior?.state === "delivered") {
+      // A delivered review still waiting in the Architect's inbox is not asked again.
       if (prior.session_id !== owner || !this.validArchitect(architect)) return
-      observation = await this.outcomeDelivery.outcomeObservation(
+      const observation = await this.outcomeDelivery.outcomeObservation(
         prior,
         owner,
         this.outcomeDelivery.ownership(prior),
@@ -9516,18 +8859,6 @@ export class TaskRuntime {
                   observed.state === attempt.state,
               ),
           )
-      )
-        return
-      if (
-        prior?.state === "admitted" &&
-        !this.outcomeDelivery.outcomeState(
-          prior,
-          ["admitted"],
-          observation === "consumed" ? "consumed" : "unknown",
-          { kind: "queue-review-reobserved", observation },
-          "QUEUE_REVIEW_DELIVERY_OBSERVED",
-          fence,
-        )
       )
         return
       const requestedAt = this.now()

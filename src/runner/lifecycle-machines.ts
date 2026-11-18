@@ -125,23 +125,14 @@ function defineLifecycle(id: string, initial: string, edges: Record<string, read
   })
 }
 
+/**
+ * A notice is queued until the Architect session's inbox holds it, then delivered.
+ * A queued notice replaced by a newer outcome for the same plan, or one retired
+ * before admission, ends superseded. Whether OpenCode later consumes it is not tracked.
+ */
 export const outboxMachine = defineLifecycle("runner-outbox", "pending", {
-  pending: ["sending", "admitted", "consumed", "superseded", "unknown", "reconciling"],
-  sending: ["admitted", "consumed", "uncertain", "superseded", "unknown", "pending"],
-  uncertain: ["sending", "admitted", "consumed", "superseded", "unknown", "pending"],
-  admitted: ["consumed", "superseded", "unknown", "reconciling", "pending"],
-  unknown: ["admitted", "consumed", "superseded", "reconciling", "pending"],
-  reconciling: ["consumed", "superseded", "unknown", "admitted", "pending"],
-  delivered: [
-    "sending",
-    "uncertain",
-    "admitted",
-    "consumed",
-    "superseded",
-    "unknown",
-    "reconciling",
-  ],
-  consumed: [],
+  pending: ["delivered", "superseded"],
+  delivered: [],
   superseded: [],
 })
 export const renewalMachine = defineLifecycle("runner-architect-renewal", "creating", {

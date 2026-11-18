@@ -10,7 +10,6 @@ import { TaskRepository } from "../storage.ts"
 import { scopePatternsConflict } from "./artifacts.ts"
 import { PlanInput } from "./schema.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
-import { outcomeText } from "./outcome.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -625,132 +624,6 @@ test("retained repair generations remain task-bound and the latest plan operatio
   })
 })
 
-test("unchanged native source-change observations do not append receipts or transitions", () => {
-  const f = fixture("architect-source-observation-idempotence")
-  const { planID } = f.store.submit(f.input, "owner")
-  const source = seedSourceJournal(f.store, planID, 1, 0)
-  const plan = f.store.plan(planID)!
-  const { notices } = f.store.ensureArchitectSourceChangeNotices({
-    planID,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: plan.owner,
-    expectedPlanVersion: plan.version,
-    projectID: "project",
-  })
-  const notice = notices.find((notice) => notice.sessionID === plan.owner)!
-  const pointer = f.store.architectSourceChangeNoticeRowsByIDs(source.sourceSessionID, [notice])[0]!
-  const receipt = { kind: "native-observation", disposition: "queued-native-input" }
-  const input = {
-    outboxID: pointer.id,
-    expectedState: pointer.state,
-    state: "admitted" as const,
-    receipt,
-    event: "ARCHITECT_SOURCE_CHANGE_QUEUED",
-  }
-  expect(f.store.recordArchitectSourceChangeObservation(input)).toBe(true)
-  expect(
-    f.store.recordArchitectSourceChangeObservation({ ...input, expectedState: "admitted" }),
-  ).toBe(false)
-  expect(
-    f.store.recordArchitectSourceChangeObservation({
-      ...input,
-      expectedState: "admitted",
-      state: "consumed",
-      receipt: { ...receipt, disposition: "native-transcript-consumed" },
-      event: "ARCHITECT_SOURCE_CHANGE_CONSUMED",
-    }),
-  ).toBe(true)
-  const observed = f.store
-    .architectSourceNoticeRows(source.sourceSessionID)
-    .find((row) => row.id === pointer.id)!
-  const history = JSON.parse(observed.receipt!).history
-  expect(
-    history.filter((entry: { disposition?: string }) => entry.disposition === receipt.disposition),
-  ).toHaveLength(1)
-  expect(history.at(-1).disposition).toBe("native-transcript-consumed")
-})
-
-test("source-notice pointer readers materialize only current owners or exact replacement IDs", () => {
-  const f = fixture("architect-bounded-source-notice-reads")
-  const anchor = f.store.submit(f.input, "owner")
-  const source = seedSourceJournal(f.store, anchor.planID, 4, 3)
-  const owners = ["ses_current_owner_a", "ses_current_owner_b"]
-  f.store.atomic((db) => {
-    db.query("UPDATE runner_plans SET owner=? WHERE id=?").run(owners[0]!, anchor.planID)
-    db.query("UPDATE runner_plans SET owner=? WHERE id=?").run(owners[1]!, source.mappedPlanID)
-  })
-  const plan = f.store.plan(anchor.planID)!
-  const ensured = f.store.ensureArchitectSourceChangeNotices({
-    planID: plan.id,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: owners[0]!,
-    expectedPlanVersion: plan.version,
-    projectID: "project",
-  })
-  expect(ensured.targets.map((target) => target.owner)).toEqual(owners)
-  expect(ensured.notices).toHaveLength(2)
-
-  const padding = "historical-notice-payload-".repeat(512)
-  f.store.atomic((db) => {
-    const insert = db.query(
-      `INSERT INTO runner_outbox(
-         id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
-       ) VALUES(?,?,?,?,?,'admitted',0,NULL,NULL)`,
-    )
-    for (let index = 0; index < 512; index++) {
-      const payload = JSON.stringify({
-        status: "architect-source-reference",
-        sourceSessionID: source.sourceSessionID,
-        version: index,
-        padding,
-      })
-      insert.run(
-        `historical-source-reference-${index}`,
-        anchor.planID,
-        index % 3 === 0 ? "ses_retired_owner" : owners[index % 2]!,
-        `msg_historical_source_reference_${index}`,
-        payload,
-      )
-    }
-  })
-  const backlog = f.store.atomic((db) =>
-    db
-      .query<{ count: number; payloadBytes: number }, [string, string]>(
-        `SELECT count(*) AS count,sum(length(o.payload)) AS payloadBytes
-         FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
-         WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
-           AND json_extract(o.payload,'$.status')='architect-source-reference'`,
-      )
-      .get(f.projectDirectory, source.sourceSessionID)!,
-  )
-  expect(backlog.count).toBe(512)
-  expect(backlog.payloadBytes).toBeGreaterThan(6_000_000)
-
-  const pointers = f.store.architectCurrentSourceChangeNoticeRows(source.sourceSessionID)
-  expect(pointers.map((row) => row.session_id)).toEqual(owners)
-  expect(pointers.map((row) => row.id).sort()).toEqual(
-    ensured.notices.map((notice) => notice.id).sort(),
-  )
-  expect(pointers.reduce((bytes, row) => bytes + Buffer.byteLength(row.payload), 0)).toBeLessThan(
-    2_000,
-  )
-
-  const exact = f.store.architectSourceChangeNoticeRowsByIDs(
-    source.sourceSessionID,
-    ensured.notices,
-  )
-  expect(exact.map((row) => row.id).sort()).toEqual(
-    ensured.notices.map((notice) => notice.id).sort(),
-  )
-  expect(exact).toHaveLength(2)
-  expect(exact.reduce((bytes, row) => bytes + Buffer.byteLength(row.payload), 0)).toBeLessThan(
-    2_000,
-  )
-  expect(
-    f.store.architectSourceChangeNoticeRowsByIDs(source.sourceSessionID, [ensured.notices[0]!]),
-  ).toHaveLength(1)
-})
-
 afterEach(() => {
   for (const repository of repositories.splice(0)) repository.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
@@ -938,384 +811,6 @@ test("Architect source journal pages traverse large retained sources and invalid
   expect(() =>
     f.store.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!),
   ).toThrow("Journal changed since this page; restart the journal view")
-})
-
-test("804-input/3839-result and doubled journals keep handoff and current pointer bytes compact", () => {
-  const f = fixture("architect-compact-source-growth")
-  const anchor = f.store.submit(f.input, "owner")
-  const source = seedSourceJournal(f.store, anchor.planID, 804, 3_839)
-  f.store.atomic((db) =>
-    db
-      .query(
-        `UPDATE runner_plans SET owner=?,version=version+1
-         WHERE id IN (SELECT plan_id FROM runner_architect_renewal_plans WHERE renewal_id=?)`,
-      )
-      .run(source.successorSessionID, source.renewalID),
-  )
-  const currentPlan = f.store.plan(anchor.planID)!
-  const handoffPayload = {
-    status: "architect-handoff",
-    planID: anchor.planID,
-    planIDs: [anchor.planID, source.mappedPlanID],
-    version: 1,
-    label: "Continue the existing project work",
-    predecessorSessionID: source.sourceSessionID,
-    sourceCoverage: { complete: true, cursor: null },
-    continuity: { decisions: ["Preserve the current accepted work."], unresolvedQuestions: [] },
-  }
-  const handoffMetadata = {
-    lazersKind: "runner-outcome",
-    lazersProjectID: "project",
-    lazersProjectDirectory: f.projectDirectory,
-    lazersPlanID: anchor.planID,
-    lazersOutboxID: "handoff-fixture",
-    lazersMessageID: "msg_handoff_fixture",
-    lazersSessionID: source.successorSessionID,
-    lazersStatus: "architect-handoff",
-    lazersVersion: 1,
-  }
-  f.store.atomic((db) =>
-    db
-      .query(
-        `INSERT INTO runner_outbox(
-           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
-         ) VALUES(?,?,?,? ,?,'admitted',0,?,?)`,
-      )
-      .run(
-        "handoff-fixture",
-        anchor.planID,
-        source.successorSessionID,
-        "msg_handoff_fixture",
-        JSON.stringify(handoffPayload),
-        JSON.stringify(handoffMetadata),
-        JSON.stringify({ history: [{ kind: "native-admission" }] }),
-      ),
-  )
-
-  const measure = (expectedRecords: number) => {
-    const handoff = f.store
-      .outboxForDelivery(f.projectDirectory)
-      .find((row) => JSON.parse(row.payload).status === "architect-handoff")!
-    const activePointers = f.store
-      .architectSourceNoticeRows(source.sourceSessionID)
-      .filter((row) => JSON.parse(row.payload).status === "architect-source-change")
-      .filter((row) => !["consumed", "superseded"].includes(row.state))
-    expect(activePointers).toHaveLength(1)
-    const pointer = activePointers[0]!
-    const handoffText = outcomeText(handoff.payload)
-    const pointerText = outcomeText(pointer.payload)
-    const nativeInboxEntryBytes = (row: (typeof activePointers)[number], text: string) =>
-      Buffer.byteLength(
-        JSON.stringify({
-          id: row.message_id,
-          type: "synthetic",
-          delivery: "queue",
-          payload: { text, metadata: row.metadata ? JSON.parse(row.metadata) : null },
-        }),
-      )
-    const nativeSyntheticRequestBytes = (row: (typeof activePointers)[number], text: string) =>
-      Buffer.byteLength(
-        JSON.stringify({
-          sessionID: row.session_id,
-          id: row.message_id,
-          text,
-          ...(row.metadata ? { metadata: JSON.parse(row.metadata) } : {}),
-          resume: false,
-          delivery: "queue",
-          description: "LAZERS task outcome",
-        }),
-      )
-    let records: ReturnType<typeof f.store.architectSourceJournalPage>["records"] = []
-    let cursor: string | undefined
-    do {
-      const page = f.store.architectSourceJournalPage(anchor.planID, 100, cursor)
-      records = records.concat(page.records)
-      cursor = page.nextCursor ?? undefined
-    } while (cursor)
-    expect(records).toHaveLength(expectedRecords)
-    expect(
-      new Set(
-        records.filter((record) => record.kind !== "source").map((record) => record.messageID),
-      ).size,
-    ).toBe(expectedRecords - 1)
-    return {
-      handoffTextBytes: Buffer.byteLength(handoffText),
-      pointerTextBytes: Buffer.byteLength(pointerText),
-      combinedTextBytes: Buffer.byteLength(handoffText) + Buffer.byteLength(pointerText),
-      handoffInboxEntryBytes: nativeInboxEntryBytes(handoff, handoffText),
-      pointerInboxEntryBytes: nativeInboxEntryBytes(pointer, pointerText),
-      combinedInboxEntryBytes:
-        nativeInboxEntryBytes(handoff, handoffText) + nativeInboxEntryBytes(pointer, pointerText),
-      handoffSyntheticRequestBytes: nativeSyntheticRequestBytes(handoff, handoffText),
-      pointerSyntheticRequestBytes: nativeSyntheticRequestBytes(pointer, pointerText),
-      combinedSyntheticRequestBytes:
-        nativeSyntheticRequestBytes(handoff, handoffText) +
-        nativeSyntheticRequestBytes(pointer, pointerText),
-      nativeNoticeCount: 2,
-      sourcePointerCount: activePointers.length,
-      journalRecordCount: records.length,
-      inputDispositionCounts: {
-        pending: records.filter(
-          (record) => record.kind === "input" && record.disposition === "pending",
-        ).length,
-        steering: records.filter(
-          (record) => record.kind === "input" && record.disposition === "steering",
-        ).length,
-        unknown: records.filter(
-          (record) => record.kind === "input" && record.disposition === "unknown",
-        ).length,
-      },
-      text: pointerText,
-    }
-  }
-
-  const initial = f.store.ensureArchitectSourceChangeNotices({
-    planID: anchor.planID,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: currentPlan.owner,
-    expectedPlanVersion: currentPlan.version,
-    projectID: "project",
-  })
-  expect(initial.notices).toHaveLength(1)
-  const baseline = measure(4_644)
-  expect(baseline).toMatchObject({
-    handoffTextBytes: 880,
-    pointerTextBytes: 572,
-    combinedTextBytes: 1_452,
-    handoffInboxEntryBytes: 1_388,
-    pointerInboxEntryBytes: 1_164,
-    combinedInboxEntryBytes: 2_552,
-    handoffSyntheticRequestBytes: 1_450,
-    pointerSyntheticRequestBytes: 1_226,
-    combinedSyntheticRequestBytes: 2_676,
-    nativeNoticeCount: 2,
-    sourcePointerCount: 1,
-    journalRecordCount: 4_644,
-  })
-  expect(baseline.inputDispositionCounts).toEqual({ pending: 201, steering: 201, unknown: 201 })
-  expect(baseline.text).not.toContain("msg_input_")
-  expect(baseline.text).not.toContain("msg_result_")
-
-  f.store.atomic((db) => {
-    const inputInsert = db.query(
-      `INSERT INTO runner_architect_inputs(
-         session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
-         metadata_json,last_seen_sweep,referenced_revision,updated_at
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-    )
-    for (let index = 0; index < 804; index++) {
-      const id = `msg_double_input_${String(index).padStart(4, "0")}`
-      const disposition = ["pending", "steering", "delivered", "unknown"][index % 4]!
-      inputInsert.run(
-        source.sourceSessionID,
-        id,
-        2_000 + index,
-        source.renewalID,
-        "user",
-        disposition === "steering" ? "steer" : null,
-        disposition,
-        JSON.stringify({ privateBodyCanary: "SECOND_ORIGINAL_MESSAGE_BODY" }),
-        10,
-        1,
-        2_000 + index,
-      )
-    }
-    const resultInsert = db.query(
-      `INSERT INTO runner_architect_source_results(
-         session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
-         tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
-       ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,1,?)`,
-    )
-    for (let index = 0; index < 3_839; index++) {
-      const id = `msg_double_result_${String(index).padStart(4, "0")}`
-      resultInsert.run(
-        source.sourceSessionID,
-        source.renewalID,
-        id,
-        `double-fingerprint-${index}`,
-        3_000 + index,
-      )
-    }
-    db.query(
-      `UPDATE runner_architect_source_results
-       SET state='failed',finish='error',tool_completed=0,tool_failed=1,
-           result_fingerprint=?,result_revision=2,referenced_revision=0,updated_at=?
-       WHERE session_id=? AND message_id='msg_result_0000'`,
-    ).run("changed-result-fingerprint", 9_000, source.sourceSessionID)
-    db.query("UPDATE runner_architect_sources SET revision=13 WHERE session_id=?").run(
-      source.sourceSessionID,
-    )
-  })
-  f.store.ensureArchitectSourceChangeNotices({
-    planID: anchor.planID,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: currentPlan.owner,
-    expectedPlanVersion: currentPlan.version,
-    projectID: "project",
-  })
-  const doubled = measure(9_287)
-  expect(doubled).toMatchObject({
-    handoffTextBytes: 880,
-    pointerTextBytes: 572,
-    combinedTextBytes: 1_452,
-    handoffInboxEntryBytes: 1_388,
-    pointerInboxEntryBytes: 1_164,
-    combinedInboxEntryBytes: 2_552,
-    handoffSyntheticRequestBytes: 1_450,
-    pointerSyntheticRequestBytes: 1_226,
-    combinedSyntheticRequestBytes: 2_676,
-    nativeNoticeCount: 2,
-    sourcePointerCount: 1,
-    journalRecordCount: 9_287,
-  })
-  expect(doubled.inputDispositionCounts).toEqual({ pending: 402, steering: 402, unknown: 402 })
-  expect(doubled.nativeNoticeCount).toBe(baseline.nativeNoticeCount)
-  expect(doubled.sourcePointerCount).toBe(baseline.sourcePointerCount)
-  expect(doubled.handoffTextBytes).toBe(baseline.handoffTextBytes)
-  expect(doubled.pointerTextBytes).toBe(baseline.pointerTextBytes)
-  expect(doubled.combinedInboxEntryBytes).toBe(baseline.combinedInboxEntryBytes)
-  expect(doubled.text).not.toContain("msg_result_0000")
-  let cursor: string | undefined
-  let changedResult:
-    ReturnType<typeof f.store.architectSourceJournalPage>["records"][number] | undefined
-  do {
-    const journal = f.store.architectSourceJournalPage(anchor.planID, 100, cursor)
-    changedResult = journal.records.find(
-      (record) => record.kind === "result" && record.messageID === "msg_result_0000",
-    )
-    cursor = journal.nextCursor ?? undefined
-  } while (!changedResult && cursor)
-  expect(changedResult).toMatchObject({
-    kind: "result",
-    messageID: "msg_result_0000",
-    state: "failed",
-    resultRevision: 2,
-  })
-})
-
-test("an in-progress source-notice reconciliation claim survives store reopen without replacing receipts", () => {
-  const f = fixture("architect-source-notice-reopen")
-  const anchor = f.store.submit(f.input, "owner")
-  const source = seedSourceJournal(f.store, anchor.planID, 1, 1)
-  f.store.atomic((db) =>
-    db
-      .query(
-        `UPDATE runner_plans SET owner=?,version=version+1
-         WHERE id IN (SELECT plan_id FROM runner_architect_renewal_plans WHERE renewal_id=?)`,
-      )
-      .run(source.successorSessionID, source.renewalID),
-  )
-  const current = f.store.plan(anchor.planID)!
-  f.store.ensureArchitectSourceChangeNotices({
-    planID: anchor.planID,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: current.owner,
-    expectedPlanVersion: current.version,
-    projectID: "project",
-  })
-  const outboxID = "legacy-source-notice-reopen"
-  const messageID = "msg_legacy_source_notice_reopen"
-  const payload = {
-    status: "architect-source-reference",
-    version: 12,
-    sourceSessionID: source.sourceSessionID,
-    sourceRevision: 12,
-    inputIDs: [{ id: "msg_disjoint_old_input", type: "user", disposition: "pending" }],
-    results: [],
-    planID: anchor.planID,
-  }
-  const metadata = {
-    lazersKind: "runner-outcome",
-    lazersProjectID: "project",
-    lazersProjectDirectory: f.projectDirectory,
-    lazersPlanID: anchor.planID,
-    lazersOutboxID: outboxID,
-    lazersMessageID: messageID,
-    lazersSessionID: current.owner,
-    lazersStatus: payload.status,
-    lazersVersion: payload.version,
-  }
-  const originalReceipt = JSON.stringify({
-    history: [{ kind: "native-admission", messageID, sessionID: current.owner, retained: true }],
-  })
-  f.store.atomic((db) =>
-    db
-      .query(
-        `INSERT INTO runner_outbox(
-           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
-         ) VALUES(?,?,?,?,?,'admitted',0,?,?)`,
-      )
-      .run(
-        outboxID,
-        anchor.planID,
-        current.owner,
-        messageID,
-        JSON.stringify(payload),
-        JSON.stringify(metadata),
-        originalReceipt,
-      ),
-  )
-  const firstClaimID = "claim-before-reopen"
-  const first = f.store.beginArchitectSourceNoticeReconciliation({
-    planID: anchor.planID,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: current.owner,
-    expectedPlanVersion: current.version,
-    projectID: "project",
-    outboxID,
-    requestID: "request-before-reopen",
-    claimID: firstClaimID,
-  })
-  expect(first.status).toBe("claimed")
-  expect(f.store.architectSourceNoticeClaimCurrent(outboxID, firstClaimID)).toBe(true)
-
-  f.repository.close()
-  const reopenedRepository = new TaskRepository(f.databasePath, f.projectDirectory)
-  repositories.push(reopenedRepository)
-  const reopened = new RunnerStore(reopenedRepository)
-  const page = reopened.architectLegacySourceNoticePage(source.sourceSessionID)
-  expect(page).toMatchObject({
-    total: 1,
-    rows: [{ id: outboxID, state: "reconciling", payload: JSON.stringify(payload) }],
-  })
-  const retryClaimID = "claim-after-reopen"
-  const retry = reopened.beginArchitectSourceNoticeReconciliation({
-    planID: anchor.planID,
-    sourceSessionID: source.sourceSessionID,
-    expectedOwner: current.owner,
-    expectedPlanVersion: current.version,
-    projectID: "project",
-    outboxID,
-    requestID: "request-after-reopen",
-    claimID: retryClaimID,
-  })
-  expect(retry.status).toBe("claimed")
-  expect(reopened.architectSourceNoticeClaimCurrent(outboxID, firstClaimID)).toBe(false)
-  expect(reopened.architectSourceNoticeClaimCurrent(outboxID, retryClaimID)).toBe(true)
-  expect(
-    reopened.finishArchitectSourceNoticeReconciliation({
-      outboxID,
-      claimID: retryClaimID,
-      state: "superseded",
-      receipt: { kind: "source-notice-cancellation-confirmed-by-native-readback" },
-      event: "ARCHITECT_SOURCE_NOTICE_CANCELLED",
-    }),
-  ).toBe(true)
-  const final = reopened
-    .architectSourceNoticeRows(source.sourceSessionID)
-    .find((row) => row.id === outboxID)!
-  expect(final).toMatchObject({
-    state: "superseded",
-    message_id: messageID,
-    payload: JSON.stringify(payload),
-  })
-  const history = JSON.parse(final.receipt!).history as Array<Record<string, unknown>>
-  expect(history[0]).toEqual(JSON.parse(originalReceipt).history[0])
-  expect(history.map((entry) => entry.claimID)).toContain(firstClaimID)
-  expect(history.map((entry) => entry.claimID)).toContain(retryClaimID)
-  expect(history.map((entry) => entry.kind)).toContain(
-    "source-notice-cancellation-confirmed-by-native-readback",
-  )
 })
 
 test("journal revision triggers are replaced on a second connection without resetting counters", () => {
@@ -1594,14 +1089,14 @@ test("terminal cleanup discovery includes plans outside the display limit", () =
   expect(f.store.terminalCleanupPlanIDs()).toEqual([cleanupBlocked, cancelled])
 })
 
-test("delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown", () => {
+test("delivery lists only pending notices and leaves delivered and superseded history in place", () => {
   const f = fixture("bounded-outbox")
   const plan = f.store.submit(f.input, "owner")
   f.store.atomic((db) => {
     for (const [id, version, state] of [
-      ["old-unknown", 1, "unknown"],
-      ["old-admitted", 2, "admitted"],
-      ["latest-unknown", 3, "unknown"],
+      ["old-delivered", 1, "delivered"],
+      ["old-superseded", 2, "superseded"],
+      ["latest-pending", 3, "pending"],
     ] as const)
       db.query(
         "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,?,1)",
@@ -1614,14 +1109,11 @@ test("delivery excludes terminal historical unknown rows but retains admitted re
         state,
       )
   })
-  expect(f.store.outboxForDelivery().map((row) => row.id)).toEqual([
-    "old-admitted",
-    "latest-unknown",
-  ])
+  expect(f.store.outboxForDelivery().map((row) => row.id)).toEqual(["latest-pending"])
   expect(f.store.detail(plan.planID).delivery as unknown[]).toHaveLength(3)
 })
 
-test("delivery ranks numeric versions once while preserving latest terminal ties, active recovery and project order", () => {
+test("delivery reads pending notices in insertion order, scoped to the project, with numeric versions", () => {
   const f = fixture("ranked-outbox")
   const first = f.store.submit(f.input, "owner")
   const second = { planID: "second-plan" }
@@ -1638,19 +1130,13 @@ test("delivery ranks numeric versions once while preserving latest terminal ties
       foreign.planID,
     )
     const rows = [
-      ["first-null", first.planID, null, "unknown"],
-      ["first-tie-old", first.planID, "10", "unknown"],
-      ["second-null-old", second.planID, null, "superseded"],
+      ["first-null", first.planID, null, "delivered"],
       ["first-pending", first.planID, 1, "pending"],
-      ["second-null-latest", second.planID, null, "superseded"],
-      ["first-tie-latest", first.planID, 10.9, "superseded"],
-      ["first-sending", first.planID, 2, "sending"],
-      ["first-uncertain", first.planID, 3, "uncertain"],
-      ["first-admitted", first.planID, 4, "admitted"],
+      ["second-null", second.planID, null, "pending"],
       ["first-delivered", first.planID, 5, "delivered"],
-      ["first-low-newest", first.planID, 9, "unknown"],
+      ["first-fraction", first.planID, 10.9, "pending"],
+      ["first-superseded", first.planID, 9, "superseded"],
       ["foreign-pending", foreign.planID, 100, "pending"],
-      ["foreign-latest", foreign.planID, 101, "unknown"],
     ] as const
     for (const [id, planID, version, state] of rows)
       db.query(
@@ -1659,30 +1145,26 @@ test("delivery ranks numeric versions once while preserving latest terminal ties
   })
   // Foreign history must be scoped out before evaluating its JSON version.
   f.store.atomic((db) =>
-    db.query("UPDATE runner_outbox SET payload='not json' WHERE id='foreign-latest'").run(),
+    db.query("UPDATE runner_outbox SET payload='not json' WHERE id='foreign-pending'").run(),
   )
   const rows = f.store.outboxForDelivery()
   expect(rows.map((row) => [row.id, row.version as number | null])).toEqual([
     ["first-pending", 1],
-    ["second-null-latest", null],
-    ["first-tie-latest", 10],
-    ["first-sending", 2],
-    ["first-uncertain", 3],
-    ["first-admitted", 4],
-    ["first-delivered", 5],
+    ["second-null", null],
+    ["first-fraction", 10],
   ])
   expect(rows.map((row) => row.sequence)).toEqual(
     rows.map((row) => row.sequence).toSorted((a, b) => a - b),
   )
-  // Delivery does not erase historical terminal rows or their payloads.
-  expect(f.store.detail(first.planID).delivery as unknown[]).toHaveLength(9)
+  // Delivery does not erase historical rows or their payloads.
+  expect(f.store.detail(first.planID).delivery as unknown[]).toHaveLength(5)
   f.store.atomic((db) =>
-    db.query("UPDATE runner_outbox SET payload='not json' WHERE id='first-null'").run(),
+    db.query("UPDATE runner_outbox SET payload='not json' WHERE id='first-pending'").run(),
   )
   expect(() => f.store.outboxForDelivery()).toThrow("malformed JSON")
 })
 
-test("legacy delivered outbox schema migrates across an actual close and reopen with unknown consumption", () => {
+test("legacy delivered outbox schema migrates across an actual close and reopen as delivered", () => {
   const f = fixture("legacy-outbox")
   const plan = f.store.submit(f.input, "owner")
   f.store.atomic((db) => {
@@ -1717,8 +1199,7 @@ test("legacy delivered outbox schema migrates across an actual close and reopen 
   )!
   expect(row.id).toBe("legacy-outbox-id")
   expect(row.message_id).toBe("msg_legacy_outbox")
-  expect(row.state).toBe("admitted")
-  expect(JSON.parse(row.receipt)).toEqual({ kind: "legacy-host-admitted", consumption: "unknown" })
+  expect(row.state).toBe("delivered")
 })
 
 test("legacy continuation session uniqueness migrates so one renewal can own multiple plans", () => {

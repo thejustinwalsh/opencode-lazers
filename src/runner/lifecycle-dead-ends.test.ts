@@ -58,18 +58,9 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     terminal: ["completed", "failed"],
   },
   outbox: {
-    observable: [
-      "pending",
-      "sending",
-      "admitted",
-      "consumed",
-      "unknown",
-      "reconciling",
-      "uncertain",
-      "delivered",
-    ],
+    observable: ["pending", "delivered"],
     architect: ["superseded"],
-    terminal: ["consumed", "superseded"],
+    terminal: ["delivered", "superseded"],
   },
   renewal: {
     observable: [

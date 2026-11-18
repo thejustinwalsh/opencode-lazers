@@ -772,7 +772,6 @@ test("bounded native fallback detects an external dirty edit without deleting th
     clock += 1
     await runtime.tick()
     expect(inventoryReads).toBeGreaterThan(0)
-    expect(detailedSessionReads).toBeGreaterThan(0)
     expect(gitCalls()).toBeGreaterThan(0)
     expect(store.plan(planID)).toMatchObject({ state: "cleanup-blocked" })
     expect(store.plan(planID)?.reason).toContain("worktree is dirty")

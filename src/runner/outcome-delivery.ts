@@ -1,15 +1,40 @@
 import type { HostSession } from "./host.ts"
 import type { PlanRow, OutboxRow } from "./store.ts"
 import { appendOutboxReceipt } from "./store.ts"
-import { outcomeText } from "./outcome.ts"
+import { coalescedOutcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
 import type { OutcomeOwnership } from "./inbox.ts"
 import { retainedVerification } from "./retained-verification/store.ts"
+import { sameProject } from "../project-key.ts"
 
 import type { TaskRuntime } from "./runtime.ts"
-import { errorText } from "./runtime-helpers.ts"
 import { messageID } from "./runtime-helpers.ts"
 
+/** Handoffs, queue reviews and holds are decisions a later outcome does not answer. */
+function replaceable(row: OutboxRow) {
+  try {
+    const status = (JSON.parse(row.payload) as { status?: unknown }).status
+    return (
+      status !== "architect-handoff" &&
+      status !== "queue-review" &&
+      status !== "retained-verification-held"
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Outcome delivery keeps at most one pending LAZERS notice in an Architect's
+ * OpenCode inbox. OpenCode delivers one queued input per idle transition, so every
+ * extra notice is another model turn. All notices pending for a session are
+ * merged into one that states the latest outcome of each plan; the notices it
+ * replaces are cancelled.
+ *
+ * A notice is `pending` until it is in the session inbox, then `delivered`.
+ * It is `superseded` when a newer outcome for the same plan replaces it before it
+ * is sent. Consumption is not tracked.
+ */
 export class OutcomeDelivery {
   constructor(
     private readonly runtime: {
@@ -21,7 +46,6 @@ export class OutcomeDelivery {
       reconcilePlan: TaskRuntime["reconcilePlan"]
       store: TaskRuntime["store"]
       validArchitect: TaskRuntime["validArchitect"]
-      wakeRecoveredArchitect: TaskRuntime["wakeRecoveredArchitect"]
     },
   ) {}
 
@@ -53,40 +77,30 @@ export class OutcomeDelivery {
     }
   }
 
+  /** Move a pending notice to its next state; false when another writer already did. */
   outcomeState(
     message: OutboxRow,
-    expected: string[],
-    state: string,
+    state: "delivered" | "superseded",
     receipt: unknown,
     event: string,
     fence: number,
   ) {
     return this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
-      const placeholders = expected.map(() => "?").join(",")
       const current = db
-        .query<{ state: string; receipt: string | null; latestReceipt: string | null }, [string]>(
-          `SELECT state,receipt,
-                  COALESCE(json_extract(receipt,'$.history[#-1]'), json(receipt)) AS latestReceipt
-           FROM runner_outbox WHERE id=?`,
+        .query<{ state: string; receipt: string | null }, [string]>(
+          "SELECT state,receipt FROM runner_outbox WHERE id=?",
         )
         .get(message.id)
-      if (!current || !expected.includes(current.state)) return false
-      if (state === current.state && current.latestReceipt === JSON.stringify(receipt)) {
-        // An interrupted send may already hold the same durable receipt. The current lease
-        // can retry that send after native observation, without recording another transition.
-        return state === "sending" && message.state === "sending"
-      }
-      const nextReceipt = appendOutboxReceipt(current.receipt, receipt)
+      if (current?.state !== "pending") return false
       const changed = db
         .query(
-          `UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state=? AND state IN (${placeholders})`,
+          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state='pending'",
         )
-        .run(state, nextReceipt, message.id, current.state, ...expected).changes
+        .run(state, appendOutboxReceipt(current.receipt, receipt), message.id).changes
       if (changed) {
         this.runtime.store.record(message.plan_id, null, event, {
           outboxID: message.id,
           messageID: message.message_id,
-          from: current.state,
           to: state,
           receipt,
         })
@@ -96,6 +110,7 @@ export class OutcomeDelivery {
     })
   }
 
+  /** Where a notice stands in the native inbox or transcript. Read-only. */
   async outcomeObservation(
     message: OutboxRow,
     sessionID: string,
@@ -124,657 +139,306 @@ export class OutcomeDelivery {
     return transcript.type === "synthetic" ? "consumed" : "unowned"
   }
 
-  private async supersedeOutcome(
-    message: OutboxRow,
-    latest: OutboxRow,
-    plan: PlanRow,
-    fence: number,
-  ) {
-    if (message.state === "unknown") return true
-    if (message.state === "pending") {
-      this.outcomeState(
-        message,
-        ["pending"],
-        "superseded",
-        { kind: "superseded-before-native-admission", byOutboxID: latest.id },
-        "OUTCOME_SUPERSEDED",
-        fence,
-      )
-      return true
-    }
-    if (!["sending", "uncertain", "admitted", "unknown", "delivered"].includes(message.state))
-      return true
-
-    const ownership = this.ownership(message)
-    if (
-      !ownership ||
-      message.session_id !== latest.session_id ||
-      message.session_id !== plan.owner
-    ) {
-      this.outcomeState(
-        message,
-        [message.state],
-        "unknown",
-        { kind: "supersession-ownership-unavailable", byOutboxID: latest.id },
-        "OUTCOME_CONSUMPTION_UNKNOWN",
-        fence,
-      )
-      return true
-    }
-
-    const target = await this.runtime.host.session(message.session_id)
-    if (!this.runtime.validArchitect(target) || target.id !== plan.owner) return true
-    let observation: "queued" | "consumed" | "missing" | "unowned"
-    try {
-      observation = await this.outcomeObservation(message, target.id, ownership)
-    } catch (error) {
-      this.outcomeState(
-        message,
-        [message.state],
-        message.state,
-        {
-          kind: "supersession-observation-unavailable",
-          byOutboxID: latest.id,
-          error: errorText(error),
-        },
-        "OUTCOME_SUPERSESSION_UNCERTAIN",
-        fence,
-      )
-      return false
-    }
-    if (observation === "consumed") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "consumed",
-        { kind: "transcript-observed", byOutboxID: latest.id },
-        "OUTCOME_CONSUMED",
-        fence,
-      )
-      return true
-    }
-    if (observation === "unowned") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "unknown",
-        { kind: "supersession-input-identity-conflict", byOutboxID: latest.id },
-        "OUTCOME_CONSUMPTION_UNKNOWN",
-        fence,
-      )
-      return true
-    }
-    if (observation === "missing") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "unknown",
-        { kind: "unknown-consumption", byOutboxID: latest.id },
-        "OUTCOME_CONSUMPTION_UNKNOWN",
-        fence,
-      )
-      return true
-    }
-
-    if (!this.runtime.host.cancelOutcome) {
-      this.outcomeState(
-        message,
-        [message.state],
-        message.state,
-        { kind: "native-cancellation-unavailable", byOutboxID: latest.id },
-        "OUTCOME_CANCEL_UNCERTAIN",
-        fence,
-      )
-      return false
-    }
-
-    try {
-      await this.runtime.host.cancelOutcome({
-        sessionID: target.id,
-        inboxID: message.message_id,
-        ownership,
-      })
-    } catch (error) {
-      let afterFailure: "queued" | "consumed" | "missing" | "unowned"
+  /**
+   * The pending notices of one plan that still say something. A later outcome
+   * replaces an earlier one; handoffs, queue reviews and holds are decisions
+   * that a later outcome does not answer, so they stay.
+   */
+  private async currentRows(ordered: OutboxRow[], plan: PlanRow, fence: number) {
+    const current: OutboxRow[] = []
+    for (const [index, message] of ordered.entries()) {
+      let older: Record<string, unknown>
       try {
-        afterFailure = await this.outcomeObservation(message, target.id, ownership)
-      } catch (observationError) {
-        this.outcomeState(
-          message,
-          [message.state],
-          message.state,
-          {
-            kind: "cancellation-outcome-unobservable",
-            byOutboxID: latest.id,
-            error: errorText(error),
-            observationError: errorText(observationError),
-          },
-          "OUTCOME_CANCEL_UNCERTAIN",
-          fence,
-        )
-        return false
+        older = JSON.parse(message.payload) as Record<string, unknown>
+      } catch {
+        continue
       }
-      if (afterFailure === "consumed") {
-        this.outcomeState(
-          message,
-          [message.state],
-          "consumed",
-          { kind: "cancel-raced-with-consumption", byOutboxID: latest.id, error: errorText(error) },
-          "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
-          fence,
-        )
-        return true
-      }
-      if (afterFailure === "queued") {
-        this.outcomeState(
-          message,
-          [message.state],
-          message.state,
-          {
-            kind: "cancellation-failed-still-queued",
-            byOutboxID: latest.id,
-            error: errorText(error),
-          },
-          "OUTCOME_CANCEL_UNCERTAIN",
-          fence,
-        )
-        return false
-      }
-      if (afterFailure === "missing")
-        this.outcomeState(
-          message,
-          [message.state],
-          "unknown",
-          {
-            kind: "cancel-race-consumption-unknown",
-            byOutboxID: latest.id,
-            error: errorText(error),
-          },
-          "OUTCOME_CONSUMPTION_UNKNOWN",
-          fence,
-        )
-      if (afterFailure === "unowned") {
-        this.outcomeState(
-          message,
-          [message.state],
-          message.state,
-          { kind: "cancellation-not-confirmed-unowned-input", byOutboxID: latest.id },
-          "OUTCOME_CANCEL_UNCERTAIN",
-          fence,
-        )
-        return false
-      }
-      return true
-    }
-
-    let afterCancellation: "queued" | "consumed" | "missing" | "unowned"
-    try {
-      afterCancellation = await this.outcomeObservation(message, target.id, ownership)
-    } catch (error) {
-      this.outcomeState(
-        message,
-        [message.state],
-        message.state,
-        {
-          kind: "cancellation-confirmation-unavailable",
-          byOutboxID: latest.id,
-          error: errorText(error),
-        },
-        "OUTCOME_CANCEL_UNCERTAIN",
-        fence,
-      )
-      return false
-    }
-    if (afterCancellation === "consumed") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "consumed",
-        { kind: "consumption-observed-after-cancel", byOutboxID: latest.id },
-        "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
-        fence,
-      )
-      return true
-    }
-    if (afterCancellation === "queued") {
-      this.outcomeState(
-        message,
-        [message.state],
-        message.state,
-        { kind: "cancel-returned-but-outcome-still-queued", byOutboxID: latest.id },
-        "OUTCOME_CANCEL_UNCERTAIN",
-        fence,
-      )
-      return false
-    }
-    if (afterCancellation === "unowned") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "unknown",
-        { kind: "cancel-returned-with-identity-conflict", byOutboxID: latest.id },
-        "OUTCOME_CONSUMPTION_UNKNOWN",
-        fence,
-      )
-      return true
-    }
-
-    this.outcomeState(
-      message,
-      [message.state],
-      "superseded",
-      { kind: "native-cancellation-confirmed", inboxID: message.message_id, byOutboxID: latest.id },
-      "OUTCOME_SUPERSEDED",
-      fence,
-    )
-    return true
-  }
-
-  private async deliverCurrent(
-    message: OutboxRow,
-    fence: number,
-    admittedTargets: Map<string, HostSession>,
-  ) {
-    if (["consumed", "superseded", "unknown"].includes(message.state)) return
-    let plan = this.runtime.store.plan(message.plan_id)
-    if (!plan) return
-    let payload: Record<string, unknown>
-    try {
-      payload = JSON.parse(message.payload) as Record<string, unknown>
-    } catch {
-      return
-    }
-    if (payload.status === "retained-verification-held") {
-      const operationID = payload.operationID
-      const operation =
-        typeof operationID === "string"
-          ? this.runtime.store.atomic((db) => retainedVerification(db, operationID))
-          : undefined
+      // Once all task artifacts are accepted the next actionable outcome is
+      // the combined result. Async checks must not publish a redundant task
+      // handoff merely because that result requires another tick.
       if (
-        operation?.state !== "held" ||
-        operation.planID !== plan.id ||
-        ["cancelling", "cancelled", "integrated"].includes(plan.state)
-      ) {
-        if (message.state === "pending")
+        older.status === "task-accepted" &&
+        plan.state === "running" &&
+        this.runtime.store.nodes(plan.id).every((node) => node.state === "accepted")
+      )
+        continue
+      if (older.status === "retained-verification-held") {
+        const operationID = older.operationID
+        const operation =
+          typeof operationID === "string"
+            ? this.runtime.store.atomic((db) => retainedVerification(db, operationID))
+            : undefined
+        if (
+          operation?.state !== "held" ||
+          operation.planID !== plan.id ||
+          ["cancelling", "cancelled", "integrated"].includes(plan.state)
+        ) {
           this.outcomeState(
             message,
-            ["pending"],
             "superseded",
             { kind: "retained-verification-hold-cleared" },
             "OUTCOME_SUPERSEDED",
             fence,
           )
-        return
-      }
-    }
-    if (payload.status === "architect-source-change") {
-      const sourceSessionID = payload.sourceSessionID
-      if (typeof sourceSessionID !== "string") return
-      const context = this.runtime.store.architectSourceNoticeContext({
-        planID: plan.id,
-        sourceSessionID,
-        expectedOwner: plan.owner,
-        expectedPlanVersion: plan.version,
-      })
-      const currentTarget = context?.targets.find(
-        (target) => target.owner === message.session_id && target.planIDs.includes(message.plan_id),
-      )
-      if (!currentTarget) {
-        const replacementTarget = context?.targets[0]
-        const replacementPlan = replacementTarget
-          ? this.runtime.store.plan(replacementTarget.planID)
-          : undefined
-        if (replacementTarget && replacementPlan)
-          this.runtime.store.ensureArchitectSourceChangeNotices({
-            planID: replacementTarget.planID,
-            sourceSessionID,
-            expectedOwner: replacementTarget.owner,
-            expectedPlanVersion: replacementPlan.version,
-            projectID: this.runtime.projectID,
-          })
-        if (message.state === "pending") {
-          this.outcomeState(
-            message,
-            ["pending"],
-            "superseded",
-            { kind: "source-change-target-no-longer-current", sourceSessionID },
-            "ARCHITECT_SOURCE_CHANGE_SUPERSEDED",
-            fence,
-          )
-          return
+          continue
         }
       }
-    }
-    // Share only the no-op observation for already-admitted, same-owner rows in
-    // this delivery group. Never reuse it for admission, cancellation or retarget.
-    let target =
-      message.state === "admitted" && message.session_id === plan.owner
-        ? (admittedTargets.get(message.session_id) ??
-          (await this.runtime.host.session(message.session_id)))
-        : await this.runtime.host.session(message.session_id)
-    plan = this.runtime.store.plan(message.plan_id)
-    if (!plan) return
-    if (
-      message.state === "admitted" &&
-      this.runtime.validArchitect(target) &&
-      target.id === plan.owner
-    ) {
-      admittedTargets.set(target.id, target)
-      return
-    }
-    // Any path that can mutate native/durable delivery invalidates this group's
-    // observations; the next admitted row obtains a fresh host observation.
-    admittedTargets.clear()
-    if (!this.runtime.validArchitect(target) || target.id !== plan.owner) {
-      // Admitted is not consumed. Prove consumption in the original session
-      // before transferring an otherwise-current notice to its replacement.
-      const priorOwnership = this.ownership(message)
-      let priorObservation: string
-      try {
-        priorObservation = await this.outcomeObservation(
-          message,
-          message.session_id,
-          priorOwnership,
-        )
-      } catch (error) {
-        priorObservation = `unavailable: ${errorText(error)}`
-      }
-      if (priorObservation === "consumed") {
-        this.outcomeState(
-          message,
-          [message.state],
-          "consumed",
-          { kind: "transcript-observed-before-owner-transfer" },
-          "OUTCOME_CONSUMED",
-          fence,
-        )
-        this.runtime.wakeRecoveredArchitect(plan.id)
-        return
-      }
-      let safeToRetarget = message.state === "pending"
-      if (!safeToRetarget && priorObservation === "queued" && this.runtime.host.cancelOutcome) {
-        try {
-          const originalOwnership =
-            priorOwnership ?? this.createOwnership(message, message.session_id)
-          await this.runtime.host.cancelOutcome({
-            sessionID: message.session_id,
-            inboxID: message.message_id,
-            ownership: originalOwnership,
-          })
-          const afterCancellation = await this.outcomeObservation(
-            message,
-            message.session_id,
-            originalOwnership,
-          )
-          if (afterCancellation === "consumed") {
-            this.outcomeState(
-              message,
-              [message.state],
-              "consumed",
-              { kind: "cancellation-raced-with-consumption" },
-              "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
-              fence,
-            )
-            this.runtime.wakeRecoveredArchitect(plan.id)
-            return
-          }
-          safeToRetarget = afterCancellation === "missing"
-          if (safeToRetarget) priorObservation = "cancelled-confirmed-by-inbox-and-history-readback"
-        } catch (error) {
-          priorObservation = `cancellation-unconfirmed: ${errorText(error)}`
-        }
-      }
-      if (!safeToRetarget) {
-        this.outcomeState(
-          message,
-          [message.state],
-          priorObservation === "missing" || priorObservation === "unowned"
-            ? "unknown"
-            : message.state,
-          {
-            kind: "owner-changed-with-original-delivery-unresolved",
-            priorSessionID: message.session_id,
-            priorMessageID: message.message_id,
-            priorObservation,
-          },
-          "OUTCOME_OWNER_TRANSFER_UNCERTAIN",
-          fence,
-        )
-        this.runtime.wakeRecoveredArchitect(plan.id)
-        return
-      }
-      const owner = await this.runtime.ensureArchitectOwner(plan, target)
-      // Native message IDs are global. Never reuse an admitted/uncertain ID in
-      // another session; persist the replacement identity before host admission.
-      const replacementID = messageID()
-      const nextOwnership = {
-        ...(priorOwnership ?? this.createOwnership(message, message.session_id)),
-        lazersSessionID: owner.id,
-        lazersMessageID: replacementID,
-      }
-      if (
-        !this.runtime.store.retargetOutbox({
-          id: message.id,
-          expectedState: message.state,
-          sessionID: owner.id,
-          messageID: replacementID,
-          metadata: JSON.stringify(nextOwnership),
-          receipt: {
-            kind: "owner-retargeted-current-outcome",
-            fromSessionID: message.session_id,
-            toSessionID: owner.id,
-            previousMessageID: message.message_id,
-            replacementMessageID: replacementID,
-            priorOwnership: priorOwnership ?? null,
-            priorObservation,
-            priorDeliveryState: message.state,
-          },
-        })
-      )
-        return
-      message = {
-        ...message,
-        state: "pending",
-        session_id: owner.id,
-        message_id: replacementID,
-        metadata: JSON.stringify(nextOwnership),
-      }
-      target = owner
-    }
-    if (!this.runtime.validArchitect(target)) return
-    if (message.state === "admitted") return
-
-    if (payload.status === "architect-source-change") {
-      const sourceSessionID = payload.sourceSessionID
-      const current =
-        typeof sourceSessionID === "string"
-          ? this.runtime.store.architectSourceNoticeContext({
-              planID: message.plan_id,
-              sourceSessionID,
-              expectedOwner: plan.owner,
-              expectedPlanVersion: plan.version,
+      const replacement =
+        older.status === "architect-handoff" ||
+        older.status === "queue-review" ||
+        older.status === "retained-verification-held"
+          ? undefined
+          : ordered.slice(index + 1).findLast((candidate) => {
+              const next = JSON.parse(candidate.payload)
+              if (
+                next.status === "architect-handoff" ||
+                next.status === "queue-review" ||
+                next.status === "retained-verification-held"
+              )
+                return false
+              // Current outcomes include the whole accepted-artifact review set.
+              // Legacy partial notices cannot suppress a different actionable result.
+              if (older.status === "task-accepted")
+                return (
+                  (Array.isArray(next.reviewableTasks) &&
+                    next.reviewableTasks.some(
+                      (task: { taskID?: string; artifact?: string }) =>
+                        task.taskID === older.taskID && task.artifact === older.artifact,
+                    )) ||
+                  (next.status === "task-accepted" &&
+                    next.taskID === older.taskID &&
+                    next.artifact === older.artifact) ||
+                  (["accepted", "integrated"].includes(next.status) &&
+                    typeof next.artifact === "string")
+                )
+              return next.status !== "task-accepted" || Boolean(next.currentPlan)
             })
-          : null
-      if (
-        !current?.targets.some(
-          (entry) => entry.owner === message.session_id && entry.planIDs.includes(message.plan_id),
+      if (replacement)
+        this.outcomeState(
+          message,
+          "superseded",
+          { kind: "superseded-before-native-admission", byOutboxID: replacement.id },
+          "OUTCOME_SUPERSEDED",
+          fence,
         )
-      )
-        return
+      else current.push(message)
+    }
+    return current
+  }
+
+  /** The live Architect for a plan, replacing a lost one; undefined leaves the notices queued. */
+  private async architect(plan: PlanRow) {
+    const current = await this.runtime.host.session(plan.owner)
+    if (this.runtime.validArchitect(current)) return current
+    try {
+      return await this.runtime.ensureArchitectOwner(plan, current)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Point queued notices at the plan's current Architect; native message IDs are global. */
+  private retarget(rows: OutboxRow[], sessionID: string) {
+    return rows.flatMap((row) => {
+      if (row.session_id === sessionID) return [row]
+      const replacementID = messageID()
+      const prior = this.ownership(row) ?? this.createOwnership(row, row.session_id)
+      const next = { ...prior, lazersSessionID: sessionID, lazersMessageID: replacementID }
+      const metadata = JSON.stringify(next)
+      const moved = this.runtime.store.retargetOutbox({
+        id: row.id,
+        expectedState: "pending",
+        sessionID,
+        messageID: replacementID,
+        metadata,
+        receipt: {
+          kind: "owner-retargeted-queued-notice",
+          fromSessionID: row.session_id,
+          toSessionID: sessionID,
+          previousMessageID: row.message_id,
+        },
+      })
+      return moved ? [{ ...row, session_id: sessionID, message_id: replacementID, metadata }] : []
+    })
+  }
+
+  /** Rows a queued native notice already summarizes, itself included. */
+  private summarized(row: OutboxRow) {
+    const ids = new Set([row.id])
+    try {
+      const history = (
+        JSON.parse(row.receipt ?? "{}") as { history?: Array<Record<string, unknown>> }
+      ).history
+      for (const entry of history ?? [])
+        if (Array.isArray(entry.coalescedOutboxIDs))
+          for (const id of entry.coalescedOutboxIDs) if (typeof id === "string") ids.add(id)
+    } catch {
+      // A receipt that cannot be read summarizes only its own row.
+    }
+    return [...ids].flatMap((id) => this.runtime.store.outboxRowByID(id) ?? [])
+  }
+
+  /** Merge a session's pending notices into one inbox item and cancel the ones it replaces. */
+  private async deliverSession(sessionID: string, pendingRows: OutboxRow[], fence: number) {
+    const host = this.runtime.host
+    let rows = pendingRows
+    let carrier = rows.toSorted((a, b) => a.sequence - b.sequence).at(-1)!
+    let queued: Awaited<ReturnType<NonNullable<typeof host.outcomeInbox>>>
+    try {
+      queued = host.outcomeInbox ? await host.outcomeInbox(sessionID) : []
+    } catch {
+      return
+    }
+    // Only queued notices that this ledger sent are ours to replace; a lookalike
+    // without a durable row, or with different ownership, is left alone.
+    const stale = queued.flatMap((entry) => {
+      const row = this.runtime.store.outboxRowByMessage(sessionID, entry.id)
+      const ownership = row && this.ownership(row)
+      return row &&
+        ownership &&
+        sameProject(ownership.lazersProjectID, this.runtime.projectID) &&
+        ownership.lazersProjectDirectory === this.runtime.directory &&
+        isOwnedQueuedOutcome(entry, ownership)
+        ? [{ id: entry.id, ownership, row }]
+        : []
+    })
+
+    if (stale.some((entry) => entry.id === carrier.message_id)) {
+      // An earlier send landed before its result was recorded.
+      for (const row of rows)
+        this.outcomeState(
+          row,
+          "delivered",
+          { kind: "native-inbox-observed", sessionID },
+          "OUTCOME_HOST_DELIVERED",
+          fence,
+        )
+      return
     }
 
-    const ownership = this.ownership(message)
-    let observation: "queued" | "consumed" | "missing" | "unowned"
-    try {
-      observation = await this.outcomeObservation(message, target.id, ownership)
-    } catch (error) {
-      this.outcomeState(
-        message,
-        [message.state],
-        message.state,
-        { kind: "native-observation-unavailable", error: errorText(error) },
-        "OUTCOME_OBSERVATION_UNAVAILABLE",
-        fence,
+    // What a notice about to be replaced last told each plan.
+    const earlier = new Map<string, OutboxRow>()
+    for (const row of stale.flatMap((entry) => this.summarized(entry.row))) {
+      const best = earlier.get(row.plan_id)
+      if (
+        !best ||
+        row.version > best.version ||
+        (row.version === best.version && row.sequence > best.sequence)
       )
-      return
+        earlier.set(row.plan_id, row)
     }
-    if (observation === "queued") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "admitted",
-        { kind: "native-inbox-observed", consumption: "unknown" },
-        "OUTCOME_HOST_ADMITTED",
-        fence,
-      )
-      return
+    // A pending notice older than what the Architect was already told about its
+    // plan is a late arrival; it must not replace the newer outcome.
+    const pending: OutboxRow[] = []
+    for (const row of rows) {
+      const told = earlier.get(row.plan_id)
+      if (told && told.version > row.version && replaceable(row) && replaceable(told))
+        this.outcomeState(
+          row,
+          "superseded",
+          { kind: "older-than-queued-outcome", byOutboxID: told.id },
+          "OUTCOME_SUPERSEDED",
+          fence,
+        )
+      else pending.push(row)
     }
-    if (observation === "consumed") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "consumed",
-        { kind: "transcript-observed" },
-        "OUTCOME_CONSUMED",
-        fence,
-      )
-      return
-    }
-    if (observation === "unowned") {
-      this.outcomeState(
-        message,
-        [message.state],
-        "unknown",
-        { kind: "native-input-identity-conflict" },
-        "OUTCOME_CONSUMPTION_UNKNOWN",
-        fence,
-      )
-      return
-    }
+    if (!pending.length) return
+    rows = pending
+    carrier = rows.toSorted((a, b) => a.sequence - b.sequence).at(-1)!
+    const pendingPlans = new Set(rows.map((row) => row.plan_id))
+    // A plan with a pending notice supersedes what the replaced notices said about it.
+    const summary = [
+      ...[...earlier.values()].filter((row) => !pendingPlans.has(row.plan_id)),
+      ...rows,
+    ].toSorted((a, b) => a.sequence - b.sequence)
+    const carried = new Set([...summary.map((row) => row.id), ...rows.map((row) => row.id)])
+
     // The pause may be set while this tick is already delivering: check again at the send.
     if (this.runtime.store.architectContactPaused()) return
-    if (
-      !this.outcomeState(
-        message,
-        ["pending", "sending", "uncertain", "delivered"],
-        "sending",
-        { kind: "native-admission-in-progress" },
-        "OUTCOME_SEND_STARTED",
-        fence,
-      )
-    )
-      return
+    const ownership = this.ownership(carrier) ?? this.createOwnership(carrier, sessionID)
     try {
-      await this.runtime.host.notify({
-        sessionID: target.id,
-        id: message.message_id,
-        text: outcomeText(message.payload),
-        resume: Boolean(message.resume),
-        ...(ownership ? { metadata: ownership } : {}),
+      await host.notify({
+        sessionID,
+        id: carrier.message_id,
+        text: coalescedOutcomeText(
+          summary.map((row) => ({ planID: row.plan_id, payload: row.payload })),
+        ),
+        resume: rows.some((row) => Boolean(row.resume)),
+        metadata: ownership,
       })
+    } catch {
+      // A lost response may still have admitted the notice. If it is queued or already
+      // consumed it was delivered; otherwise it stays pending and the next tick retries.
+      try {
+        const seen = await this.outcomeObservation(carrier, sessionID, ownership)
+        if (seen !== "queued" && seen !== "consumed") return
+      } catch {
+        return
+      }
+    }
+    for (const row of rows)
       this.outcomeState(
-        message,
-        ["sending"],
-        "admitted",
-        { kind: "host-admitted", consumption: "unknown", sessionID: target.id },
-        "OUTCOME_HOST_ADMITTED",
+        row,
+        "delivered",
+        row.id === carrier.id
+          ? {
+              kind: "host-admitted",
+              sessionID,
+              coalescedOutboxIDs: [...carried],
+              replacedMessageIDs: stale.map((entry) => entry.id),
+            }
+          : { kind: "merged-into-notice", byOutboxID: carrier.id },
+        "OUTCOME_HOST_DELIVERED",
         fence,
       )
-    } catch (error) {
-      this.outcomeState(
-        message,
-        ["pending", "sending", "uncertain", "delivered"],
-        "uncertain",
-        { kind: "native-delivery-uncertain", error: errorText(error) },
-        "OUTCOME_DELIVERY_UNCERTAIN",
-        fence,
-      )
+    for (const entry of stale) {
+      if (!host.cancelOutcome) break
+      try {
+        await host.cancelOutcome({
+          sessionID,
+          inboxID: entry.id,
+          ownership: entry.ownership,
+        })
+      } catch {
+        // It was consumed or cancelled meanwhile; the next delivery lists the inbox again.
+      }
     }
   }
 
   async deliver(fence: number, closeoutOnly = false) {
     // A user-set pause keeps every notice queued; nothing prompts an Architect.
     if (this.runtime.store.architectContactPaused()) return
-    const messages = this.runtime.store.outboxForDelivery(this.runtime.directory)
     const groups = new Map<string, OutboxRow[]>()
-    for (const message of messages) {
+    for (const message of this.runtime.store.outboxForDelivery(this.runtime.directory)) {
       const group = groups.get(message.plan_id) ?? []
       group.push(message)
       groups.set(message.plan_id, group)
     }
+    // Notices for different plans meet here when they share an Architect.
+    const sessions = new Map<string, OutboxRow[]>()
     for (const group of groups.values()) {
       const ordered = group.toSorted((a, b) => a.version - b.version || a.sequence - b.sequence)
-      if (closeoutOnly) {
-        const latest = ordered.at(-1)!
-        if (
-          !["pending", "sending", "uncertain", "delivered"].includes(latest.state) ||
-          !["accepted", "task-accepted", "cleanup-blocked"].includes(
-            JSON.parse(latest.payload).status,
-          )
+      if (
+        closeoutOnly &&
+        !["accepted", "task-accepted", "cleanup-blocked"].includes(
+          JSON.parse(ordered.at(-1)!.payload).status,
         )
-          continue
-      }
+      )
+        continue
       if (this.runtime.store.architectRenewalBlocksDelivery(ordered[0]!.plan_id)) continue
-      const plan = this.runtime.store.plan(ordered[0]!.plan_id)
-      if (!plan) continue
-      await this.runtime.reconcilePlan(plan.id, fence, "delivery", async () => {
-        const ready = new Map<string, boolean>()
-        const current = new Map<string, OutboxRow>()
-        for (const [index, message] of ordered.entries()) {
-          const older = JSON.parse(message.payload)
-          // Once all task artifacts are accepted the next actionable outcome is
-          // the combined result. Async checks must not publish a redundant task
-          // handoff merely because that result requires another tick.
-          if (
-            older.status === "task-accepted" &&
-            plan.state === "running" &&
-            this.runtime.store.nodes(plan.id).every((node) => node.state === "accepted")
-          )
-            continue
-          const replacement =
-            older.status === "architect-handoff" ||
-            older.status === "architect-source-reference" ||
-            older.status === "architect-source-change" ||
-            older.status === "queue-review" ||
-            older.status === "retained-verification-held"
-              ? undefined
-              : ordered.slice(index + 1).findLast((candidate) => {
-                  const next = JSON.parse(candidate.payload)
-                  if (
-                    next.status === "architect-handoff" ||
-                    next.status === "architect-source-reference" ||
-                    next.status === "architect-source-change" ||
-                    next.status === "queue-review" ||
-                    next.status === "retained-verification-held"
-                  )
-                    return false
-                  // Current outcomes include the whole accepted-artifact review set.
-                  // Legacy partial notices cannot suppress a different actionable result.
-                  if (older.status === "task-accepted")
-                    return (
-                      (Array.isArray(next.reviewableTasks) &&
-                        next.reviewableTasks.some(
-                          (task: { taskID?: string; artifact?: string }) =>
-                            task.taskID === older.taskID && task.artifact === older.artifact,
-                        )) ||
-                      (next.status === "task-accepted" &&
-                        next.taskID === older.taskID &&
-                        next.artifact === older.artifact) ||
-                      (["accepted", "integrated"].includes(next.status) &&
-                        typeof next.artifact === "string")
-                    )
-                  return next.status !== "task-accepted" || Boolean(next.currentPlan)
-                })
-          if (replacement) {
-            const ok = await this.supersedeOutcome(message, replacement, plan, fence)
-            ready.set(replacement.id, (ready.get(replacement.id) ?? true) && ok)
-          } else current.set(message.id, message)
-        }
-        const admittedTargets = new Map<string, HostSession>()
-        for (const message of current.values())
-          if (ready.get(message.id) !== false)
-            await this.deliverCurrent(message, fence, admittedTargets)
+      const planID = ordered[0]!.plan_id
+      if (!this.runtime.store.plan(planID)) continue
+      await this.runtime.reconcilePlan(planID, fence, "delivery", async () => {
+        const plan = this.runtime.store.plan(planID)
+        if (!plan) return
+        const current = await this.currentRows(ordered, plan, fence)
+        if (!current.length) return
+        const target: HostSession | undefined = await this.architect(plan)
+        if (!target) return
+        const rows = this.retarget(current, target.id)
+        if (rows.length) sessions.set(target.id, [...(sessions.get(target.id) ?? []), ...rows])
       })
     }
+    for (const [sessionID, rows] of sessions) await this.deliverSession(sessionID, rows, fence)
   }
 }

@@ -32,6 +32,7 @@ import { DEFAULT_ARCHITECT_CACHE_WINDOW_MS } from "./architect-routing.ts"
 import { UNCERTAIN_EFFECT_RECEIPT_SCHEMA } from "./startup-recovery.ts"
 import { TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
 import { RunnerStore, type AttemptRow } from "./store.ts"
+import { retireOutboxLifecycle } from "./retire-gates.ts"
 import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
 import { PlanInput } from "./schema.ts"
 import type { WorkerPersona } from "./schema.ts"
@@ -2105,278 +2106,6 @@ test("Start rejects stale, foreign and ended work without changing runtime state
   expect(f.store.plans()).toHaveLength(1) // the fixture plan only
 })
 
-test("an admitted source backlog shares only same-pass no-op target observations", async () => {
-  const f = fixture()
-  const size = 234
-  f.store.atomic((db) => {
-    const insert = db.query(
-      "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,'admitted',0)",
-    )
-    for (let index = 0; index < size; index++)
-      insert.run(
-        `reference-${index}`,
-        f.receipt.planID,
-        "owner",
-        `msg_reference_${index}`,
-        JSON.stringify({
-          status: index === 0 ? "architect-handoff" : "architect-source-reference",
-          planID: f.receipt.planID,
-          version: index,
-          sourceSessionID: "previous",
-        }),
-      )
-  })
-  const before = f.store.detail(f.receipt.planID).delivery
-  const session = f.host.session
-  let ownerReads = 0
-  f.host.session = async (id, options) => {
-    if (id === "owner") ownerReads++
-    return session(id, options)
-  }
-  await f.runtime.tick()
-  expect(ownerReads).toBe(1)
-  expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
-  expect(f.inbox.get("owner") ?? []).toHaveLength(0)
-  await f.runtime.tick()
-  expect(ownerReads).toBe(2)
-  expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
-  f.host.session = async () => {
-    throw new Error("native owner observation unavailable")
-  }
-  await f.runtime.tick()
-  expect(f.store.latestTransition(f.receipt.planID, null, "PLAN_DELIVERY_FAILED")).toMatchObject({
-    error: "native owner observation unavailable",
-  })
-  expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
-
-  let sent = false
-  let readsAfterAdmission = 0
-  const notify = f.host.notify
-  f.host.notify = async (input) => {
-    await notify(input)
-    sent = true
-  }
-  f.host.session = async (id, options) => {
-    if (sent && id === "owner") readsAfterAdmission++
-    return session(id, options)
-  }
-  f.store.atomic((db) =>
-    db.query("UPDATE runner_outbox SET state='pending' WHERE id=?").run("reference-117"),
-  )
-  await f.runtime.tick()
-  expect(sent).toBe(true)
-  expect(readsAfterAdmission).toBe(1)
-  expect(f.inbox.get("owner")).toHaveLength(1)
-})
-
-test("admitted outcome rechecks durable owner after native observation awaits", async () => {
-  const f = fixture({
-    fail: true,
-    shared: true,
-    commit: true,
-    taskFiles: [{ name: "a", path: "a.txt" }],
-  })
-  await runPlan(f)
-  await drive(f.runtime)
-  const original = f.store.outboxForDelivery()[0]!
-  expect(original.state).toBe("admitted")
-  f.sessions.set("changed-owner", {
-    ...f.sessions.get("owner")!,
-    id: "changed-owner",
-    messages: [],
-  })
-  const session = f.host.session
-  let changed = false
-  f.host.session = async (id, options) => {
-    const result = await session(id, options)
-    if (!changed && id === "owner") {
-      changed = true
-      f.store.updatePlanOwner(f.receipt.planID, "owner", "changed-owner")
-    }
-    return result
-  }
-  await f.runtime.tick()
-  expect(changed).toBe(true)
-  const current = f.store.outboxForDelivery().find((row) => row.id === original.id)!
-  expect(current.session_id).toBe("changed-owner")
-  expect(current.message_id).not.toBe(original.message_id)
-  expect(current.state).toBe("admitted")
-  expect(f.inbox.get("owner") ?? []).toHaveLength(0)
-  expect(f.inbox.get("changed-owner")).toHaveLength(1)
-})
-
-test("host-admitted current outcomes follow an archived owner unless transcript consumption is proved", async () => {
-  for (const consumed of [false, true]) {
-    const f = fixture({
-      fail: true,
-      shared: true,
-      commit: true,
-      taskFiles: [{ name: "a", path: "a.txt" }],
-    })
-    await runPlan(f)
-    await drive(f.runtime)
-    const original = f.store.outboxForDelivery()[0]!
-    expect(original.state).toBe("admitted")
-    if (consumed) {
-      f.inbox.set("owner", [])
-      f.sessions.get("owner")!.messages.push({
-        id: original.message_id,
-        type: "synthetic",
-        text: "consumed",
-        metadata: JSON.parse(original.metadata!),
-      })
-    }
-    f.sessions.get("owner")!.archived = true
-    await f.runtime.stop()
-    f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-    const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
-      autoResumeInterrupted: false,
-    })
-    try {
-      await drive(reopened, 3)
-      const owner = f.store.plan(f.receipt.planID)!.owner
-      expect(owner).not.toBe("owner")
-      const row = (f.store.detail(f.receipt.planID).delivery as (typeof original)[])[0]!
-      if (consumed) {
-        expect(row.state).toBe("consumed")
-        // F-S4-3: retiring after reading a failure still leaves repair to the successor.
-        expect(f.inbox.get(owner) ?? []).toHaveLength(1)
-        const wake = f.inbox.get(owner)![0]!
-        expect(wake.id).not.toBe(original.message_id)
-        expect(f.notifications.find((notice) => notice.id === wake.id)?.resume).toBe(true)
-      } else {
-        expect(row.state).toBe("admitted")
-        expect(row.session_id).toBe(owner)
-        expect(row.message_id).not.toBe(original.message_id)
-        expect(f.inbox.get(owner)).toHaveLength(1)
-        expect(JSON.parse(row.receipt!).history).toContainEqual(
-          expect.objectContaining({
-            previousMessageID: original.message_id,
-            replacementMessageID: row.message_id,
-            priorDeliveryState: "admitted",
-          }),
-        )
-      }
-      expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
-    } finally {
-      await reopened.stop()
-    }
-  }
-})
-
-test("an uncertain current outcome follows an adopted owner across reopen without losing admission evidence", async () => {
-  const f = fixture({
-    fail: true,
-    shared: true,
-    commit: true,
-    taskFiles: [{ name: "a", path: "a.txt" }],
-  })
-  await runPlan(f)
-  const originalNotify = f.host.notify
-  let notifyCalls = 0
-  f.host.notify = async (input) => {
-    notifyCalls++
-    await originalNotify(input)
-    if (notifyCalls <= 2)
-      throw new Error(
-        notifyCalls === 1
-          ? "native delivery response lost after admission"
-          : "replacement delivery response lost after admission",
-      )
-  }
-  const outbox = (store: RunnerStore) =>
-    store.detail(f.receipt.planID).delivery as {
-      id: string
-      session_id: string
-      message_id: string
-      payload: string
-      state: string
-      receipt: string | null
-    }[]
-  for (
-    let index = 0;
-    index < 20 && !outbox(f.store).some((row) => row.state === "uncertain");
-    index++
-  )
-    await settleVerification(f.runtime)
-
-  const uncertain = outbox(f.store).find((row) => row.state === "uncertain")!
-  expect(JSON.parse(uncertain.payload).status).toBe("blocked")
-  expect(outbox(f.store)).toHaveLength(1) // no newer status can mask the current-outcome recovery
-  expect(f.inbox.get("owner")?.filter((entry) => entry.id === uncertain.message_id)).toHaveLength(1)
-  f.sessions.get("owner")!.archived = true
-
-  f.runtime.stop()
-  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const databasePath = f.repository.path
-  const projectDirectory = f.repository.projectDirectory
-  f.repository.close()
-  const reopenedRepository = new TaskRepository(databasePath, projectDirectory)
-  const reopenedStore = new RunnerStore(reopenedRepository)
-  reopenedStore.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
-    autoResumeInterrupted: false,
-  })
-  await reopened.tick()
-  const adoptedPlan = reopenedStore.plan(f.receipt.planID)!
-  let current = outbox(reopenedStore)[0]!
-  expect(adoptedPlan.owner).not.toBe("owner")
-  expect(f.sessions.get(adoptedPlan.owner)?.parentID).toBeUndefined()
-  expect(f.sessions.get(adoptedPlan.owner)?.metadata?.lazersSourceSessionID).toBe("owner")
-  expect(f.sessions.get(adoptedPlan.owner)?.agent).toBe("architect")
-  expect(current.id).toBe(uncertain.id)
-  expect(current.session_id).toBe(adoptedPlan.owner)
-  expect(current.message_id).not.toBe(uncertain.message_id)
-  const replacementMessageID = current.message_id
-  expect(current.state).toBe("uncertain")
-  let receiptHistory = JSON.parse(current.receipt!).history as Record<string, unknown>[]
-  expect(receiptHistory).toContainEqual(
-    expect.objectContaining({
-      kind: "native-delivery-uncertain",
-      error: "native delivery response lost after admission",
-    }),
-  )
-  expect(receiptHistory).toContainEqual(
-    expect.objectContaining({
-      kind: "owner-retargeted-current-outcome",
-      fromSessionID: "owner",
-      toSessionID: adoptedPlan.owner,
-      previousMessageID: uncertain.message_id,
-      replacementMessageID,
-    }),
-  )
-
-  await reopened.stop()
-  reopenedRepository.close()
-  const finalRepository = new TaskRepository(databasePath, projectDirectory)
-  const finalStore = new RunnerStore(finalRepository)
-  finalStore.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const finalRuntime = new TaskRuntime(finalStore, f.host, "project", undefined, {
-    autoResumeInterrupted: false,
-  })
-  for (let index = 0; index < 6; index++) await finalRuntime.tick()
-  current = outbox(finalStore)[0]!
-  expect(current.state).toBe("admitted")
-  receiptHistory = JSON.parse(current.receipt!).history as Record<string, unknown>[]
-  expect(receiptHistory).toContainEqual(
-    expect.objectContaining({
-      kind: "native-delivery-uncertain",
-      error: "replacement delivery response lost after admission",
-    }),
-  )
-  const successorOutcomes = f.inbox
-    .get(adoptedPlan.owner)
-    ?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID)
-  expect(successorOutcomes).toHaveLength(1)
-  expect(successorOutcomes?.[0]?.id).toBe(replacementMessageID)
-  expect(current.message_id).toBe(replacementMessageID)
-  expect(notifyCalls).toBe(2)
-  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
-  expect(finalStore.continuation(f.receipt.planID)?.session_id).toBe(adoptedPlan.owner)
-  expect(finalStore.attempts(f.receipt.planID)).toHaveLength(1)
-  await finalRuntime.stop()
-  finalRepository.close()
-})
 async function runPlan(
   f: ReturnType<typeof fixture>,
   planID = f.receipt.planID,
@@ -4467,7 +4196,7 @@ test("single-task acceptance coalesces its task handoff while another plan worke
     "superseded",
   )
   expect(delivery.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe(
-    "admitted",
+    "delivered",
   )
   expect(
     f.inbox
@@ -4508,10 +4237,10 @@ test("a late older retry cannot replace a newer queued plan outcome", async () =
   await settleVerification(f.runtime)
 
   const plan = f.store.plan(f.receipt.planID)!
-  const current = f.store
-    .outboxForDelivery()
-    .find((row) => row.plan_id === plan.id && JSON.parse(row.payload).status === "accepted")!
-  const oldVersion = current.version - 1
+  const current = (f.store.detail(plan.id).delivery as { payload: string }[]).find(
+    (row) => JSON.parse(row.payload).status === "accepted",
+  )!
+  const oldVersion = JSON.parse(current.payload).version - 1
   const oldPayload = {
     planID: plan.id,
     planRevision: plan.revision,
@@ -4553,7 +4282,7 @@ test("a late older retry cannot replace a newer queued plan outcome", async () =
     state: string
   }[]
   expect(rows.find((row) => row.id === "late-old-outbox")?.state).toBe("superseded")
-  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("admitted")
+  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("delivered")
   expect(notifications.some((notice) => notice.id === "msg_late_old_outcome")).toBe(false)
   expect(
     f.inbox
@@ -4604,13 +4333,18 @@ test("a newer partial result carries all prior reviewable artifacts while a thir
   }
   f.completeWorker(attempts[0]!.session_id)
   await settleVerification(f.runtime)
-  expect(f.store.outboxForDelivery()[0]!.state).toBe("uncertain")
+  // The lost response is read back from the inbox: it was admitted, so it is delivered.
+  expect(f.store.outboxForDelivery()).toEqual([])
+  expect((f.store.detail(f.receipt.planID).delivery as { state: string }[])[0]!.state).toBe(
+    "delivered",
+  )
   lost = false
   f.completeWorker(attempts[1]!.session_id)
   await settleVerification(f.runtime)
   const rows = f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]
-  expect(rows[0]!.state).toBe("superseded")
-  expect(rows[1]!.state).toBe("admitted")
+  // The first partial reached the inbox before its response was lost; the newer one replaced it there.
+  expect(rows[0]!.state).toBe("delivered")
+  expect(rows[1]!.state).toBe("delivered")
   const payload = JSON.parse(rows[1]!.payload)
   expect(payload.status).toBe("task-accepted")
   expect(payload.currentPlan.state).toBe("running")
@@ -4653,180 +4387,12 @@ test("legacy partial notices for distinct tasks cannot silently replace one anot
   await f.runtime.tick()
   expect(
     (f.store.detail(f.receipt.planID).delivery as { state: string }[]).map((row) => row.state),
-  ).toEqual(["admitted", "admitted"])
-  expect(f.inbox.get("owner")).toHaveLength(2)
-})
-
-test("failed cancellation keeps the newer outcome pending and retries after the queue race clears", async () => {
-  const f = fixture({ independent: true, delayed: true })
-  await runPlan(f)
-  await f.runtime.tick()
-  const attempts = f.store.attempts(f.receipt.planID)
-  f.sessions.get("owner")!.busy = true
-  f.completeWorker(attempts[0]!.session_id)
-  await settleVerification(f.runtime)
-  const prior = f.inbox
-    .get("owner")!
-    .find((entry) => entry.metadata?.lazersPlanID === f.receipt.planID)!
-  const cancel = f.host.cancelOutcome!
-  let fail = true
-  f.host.cancelOutcome = async (input) => {
-    if (fail) throw new Error("native lifecycle conflict")
-    await cancel(input)
-  }
-
-  f.completeWorker(attempts[1]!.session_id)
-  await settleVerification(f.runtime)
-  let rows = f.store.detail(f.receipt.planID).delivery as {
-    payload: string
-    state: string
-    receipt: string | null
-  }[]
-  expect(rows.find((row) => JSON.parse(row.payload).status === "task-accepted")?.state).toBe(
-    "admitted",
-  )
-  const current = rows.find((row) => JSON.parse(row.payload).status === "accepted")!
-  expect(current.state).toBe("pending")
-  expect(
-    JSON.parse(rows.find((row) => JSON.parse(row.payload).status === "task-accepted")!.receipt!)
-      .history,
-  ).toContainEqual(expect.objectContaining({ kind: "cancellation-failed-still-queued" }))
-  expect(f.inbox.get("owner")?.some((entry) => entry.id === prior.id)).toBe(true)
-
-  fail = false
-  await f.runtime.tick()
-  rows = f.store.detail(f.receipt.planID).delivery as typeof rows
-  expect(rows.find((row) => JSON.parse(row.payload).status === "task-accepted")?.state).toBe(
-    "superseded",
-  )
-  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("admitted")
-  expect(
-    f.inbox.get("owner")?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID),
-  ).toHaveLength(1)
-})
-
-test("an unavailable native inbox cannot be reported as successful supersession", async () => {
-  const f = fixture({ independent: true, delayed: true })
-  await runPlan(f)
-  await f.runtime.tick()
-  const attempts = f.store.attempts(f.receipt.planID)
-  f.sessions.get("owner")!.busy = true
-  f.completeWorker(attempts[0]!.session_id)
-  await settleVerification(f.runtime)
-  const listInbox = f.host.outcomeInbox
-  f.host.outcomeInbox = async () => {
-    throw new Error("native host unavailable")
-  }
-
-  f.completeWorker(attempts[1]!.session_id)
-  await settleVerification(f.runtime)
-  let rows = f.store.detail(f.receipt.planID).delivery as {
-    payload: string
-    state: string
-    receipt: string | null
-  }[]
-  const older = rows.find((row) => JSON.parse(row.payload).status === "task-accepted")!
-  expect(older.state).toBe("admitted")
-  expect(JSON.parse(older.receipt!).history).toContainEqual(
-    expect.objectContaining({ kind: "supersession-observation-unavailable" }),
-  )
-  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("pending")
-  expect(
-    f.inbox.get("owner")?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID),
-  ).toHaveLength(1)
-
-  await f.runtime.tick()
-  await f.runtime.tick()
-  const repeated = (f.store.detail(f.receipt.planID).delivery as typeof rows).find(
-    (row) => JSON.parse(row.payload).status === "task-accepted",
-  )!
-  expect(repeated.receipt).toBe(older.receipt)
-
-  f.host.outcomeInbox = listInbox
-  await f.runtime.tick()
-  rows = f.store.detail(f.receipt.planID).delivery as typeof rows
-  expect(rows.find((row) => JSON.parse(row.payload).status === "task-accepted")?.state).toBe(
-    "superseded",
-  )
-  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("admitted")
-})
-
-test("a cancellation that races with transcript consumption is recorded as consumed, not suppressed", async () => {
-  const f = fixture({ independent: true, delayed: true })
-  await runPlan(f)
-  await f.runtime.tick()
-  const attempts = f.store.attempts(f.receipt.planID)
-  f.sessions.get("owner")!.busy = true
-  f.completeWorker(attempts[0]!.session_id)
-  await settleVerification(f.runtime)
-  const cancel = f.host.cancelOutcome
-  f.host.cancelOutcome = async (input) => {
-    const entries = f.inbox.get(input.sessionID) ?? []
-    const index = entries.findIndex((entry) => entry.id === input.inboxID)
-    if (index >= 0) entries.splice(index, 1)
-    f.sessions.get(input.sessionID)!.messages.push({
-      id: input.inboxID,
-      text: "Consumed native outcome",
-      type: "synthetic",
-      metadata: input.ownership,
-    })
-    throw new Error("cancel lost a race with consumption")
-  }
-  f.completeWorker(attempts[1]!.session_id)
-  await settleVerification(f.runtime)
-  const rows = f.store.detail(f.receipt.planID).delivery as {
-    payload: string
-    state: string
-    receipt: string | null
-  }[]
-  const partial = rows.find((row) => JSON.parse(row.payload).status === "task-accepted")!
-  expect(partial.state).toBe("consumed")
-  expect(JSON.parse(partial.receipt!).history).toContainEqual(
-    expect.objectContaining({ kind: "cancel-raced-with-consumption" }),
-  )
-  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("admitted")
-  expect(
-    f.inbox.get("owner")?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID),
-  ).toHaveLength(1)
-  f.host.cancelOutcome = cancel
-})
-
-test("a successful native cancel response is rechecked before recording supersession", async () => {
-  const f = fixture({ independent: true, delayed: true })
-  await runPlan(f)
-  await f.runtime.tick()
-  const attempts = f.store.attempts(f.receipt.planID)
-  f.sessions.get("owner")!.busy = true
-  f.completeWorker(attempts[0]!.session_id)
-  await settleVerification(f.runtime)
-  f.host.cancelOutcome = async (input) => {
-    const entries = f.inbox.get(input.sessionID) ?? []
-    const index = entries.findIndex((entry) => entry.id === input.inboxID)
-    if (index >= 0) entries.splice(index, 1)
-    f.sessions.get(input.sessionID)!.messages.push({
-      id: input.inboxID,
-      text: "Consumed while cancellation completed",
-      type: "synthetic",
-      metadata: input.ownership,
-    })
-  }
-
-  f.completeWorker(attempts[1]!.session_id)
-  await settleVerification(f.runtime)
-  const rows = f.store.detail(f.receipt.planID).delivery as {
-    payload: string
-    state: string
-    receipt: string | null
-  }[]
-  const partial = rows.find((row) => JSON.parse(row.payload).status === "task-accepted")!
-  expect(partial.state).toBe("consumed")
-  expect(JSON.parse(partial.receipt!).history).toContainEqual(
-    expect.objectContaining({ kind: "consumption-observed-after-cancel" }),
-  )
-  expect(rows.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe("admitted")
-  expect(
-    f.inbox.get("owner")?.filter((entry) => entry.metadata?.lazersPlanID === f.receipt.planID),
-  ).toHaveLength(1)
+  ).toEqual(["delivered", "delivered"])
+  // Distinct tasks are both reported, in the one notice the Architect receives.
+  expect(f.inbox.get("owner")).toHaveLength(1)
+  expect(f.notifications).toHaveLength(1)
+  expect(f.notifications[0]!.text).toContain("artifact-0")
+  expect(f.notifications[0]!.text).toContain("artifact-1")
 })
 
 test("completed shared plan verifies its exact artifact without touching an advanced shared checkout", async () => {
@@ -5442,11 +5008,12 @@ test("reviewed combined merge removes only owned Git worktrees and preserves for
       state: string
       message_id: string
     }[]
+    // The accepted notice reached the inbox; the integrated one replaced it there.
     expect(outbox.find((row) => JSON.parse(row.payload).status === "accepted")?.state).toBe(
-      "superseded",
+      "delivered",
     )
     expect(outbox.find((row) => JSON.parse(row.payload).status === "integrated")?.state).toBe(
-      "admitted",
+      "delivered",
     )
     expect(f.inbox.get("owner")?.map((entry) => entry.id)).toEqual([
       "msg_user_keep",
@@ -11302,719 +10869,6 @@ async function prepareIdleArchitect(f: ReturnType<typeof fixture>, now: number, 
   return f.store.attempts(f.receipt.planID)[0]!
 }
 
-async function prepareSourceChangeFixture(now: number) {
-  const f = fixture({
-    delayed: true,
-    architectPromptHook: true,
-    architectIdleWindowMs: 1_000,
-    now: () => now,
-    taskFiles: [{ name: "a", path: "source-notice.txt" }],
-  })
-  await prepareIdleArchitect(f, now, 1_000)
-  await f.runtime.tick()
-  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
-  if (renewal.state !== "committed") throw new Error("Source fixture renewal did not commit")
-  const input = {
-    id: `msg_source_fixture_${now}`,
-    type: "user",
-    delivery: "queue",
-    metadata: { source: "test" },
-  }
-  f.inbox.set(renewal.previous_session_id, [input])
-  await f.runtime.tick()
-  const pointer = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .find(
-      (row) =>
-        row.session_id === renewal.successor_session_id &&
-        JSON.parse(row.payload).status === "architect-source-change",
-    )
-  if (!pointer) throw new Error("Source fixture compact pointer was not created")
-  return { f, renewal, input, pointer }
-}
-
-function seedLegacySourceNotice(
-  f: ReturnType<typeof fixture>,
-  sourceSessionID: string,
-  owner: string,
-  options: { state?: string; suffix?: string; foreign?: boolean; queue?: boolean } = {},
-) {
-  const planID = f.receipt.planID
-  const sourceRevision = f.store.architectSource(sourceSessionID)!.revision
-  const outboxID = `legacy-source-reference-${options.suffix ?? "one"}`
-  const messageID = `msg_legacy_source_reference_${options.suffix ?? "one"}`
-  const payload = {
-    status: "architect-source-reference",
-    version: sourceRevision,
-    sourceSessionID,
-    sourceRevision,
-    inputIDs: [{ id: `msg_old_${options.suffix ?? "one"}`, type: "user", disposition: "pending" }],
-    results: [],
-    planID,
-  }
-  const metadata = {
-    lazersKind: "runner-outcome",
-    lazersProjectID: options.foreign ? "another-project" : "project",
-    lazersProjectDirectory: f.repository.projectDirectory,
-    lazersPlanID: planID,
-    lazersOutboxID: outboxID,
-    lazersMessageID: messageID,
-    lazersSessionID: owner,
-    lazersStatus: payload.status,
-    lazersVersion: sourceRevision,
-  }
-  const receipt = JSON.stringify({
-    history: [{ kind: "native-admission", sessionID: owner, messageID, retained: true }],
-  })
-  f.store.atomic((db) =>
-    db
-      .query(
-        `INSERT INTO runner_outbox(
-           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
-         ) VALUES(?,?,?,?,?,?,0,?,?)`,
-      )
-      .run(
-        outboxID,
-        planID,
-        owner,
-        messageID,
-        JSON.stringify(payload),
-        options.state ?? "admitted",
-        JSON.stringify(metadata),
-        receipt,
-      ),
-  )
-  if (options.queue !== false) {
-    f.inbox.set(owner, [
-      ...(f.inbox.get(owner) ?? []),
-      {
-        id: messageID,
-        type: "synthetic",
-        delivery: "queue",
-        metadata,
-      },
-    ])
-  }
-  return { outboxID, messageID, payload: JSON.stringify(payload), metadata, receipt }
-}
-
-function seedLargeLegacySourceNoticeBacklog(
-  f: ReturnType<typeof fixture>,
-  sourceSessionID: string,
-  owner: string,
-  count: number,
-  options: {
-    queue?: boolean
-    payloadBytes?: number
-    ownerForIndex?: (index: number) => string
-  } = {},
-) {
-  const padding = "historical-source-notice-payload-"
-    .repeat(Math.ceil((options.payloadBytes ?? 12_000) / 33))
-    .slice(0, options.payloadBytes ?? 12_000)
-  return Array.from({ length: count }, (_, index) => {
-    const notice = seedLegacySourceNotice(
-      f,
-      sourceSessionID,
-      options.ownerForIndex?.(index) ?? owner,
-      {
-        suffix: `large-${String(index).padStart(4, "0")}`,
-        queue: options.queue,
-      },
-    )
-    const payload = JSON.stringify({ ...JSON.parse(notice.payload), historicalPadding: padding })
-    f.store.atomic((db) =>
-      db.query("UPDATE runner_outbox SET payload=? WHERE id=?").run(payload, notice.outboxID),
-    )
-    return { ...notice, payload }
-  })
-}
-
-function reconcileSourceNotice(
-  f: ReturnType<typeof fixture>,
-  owner: string,
-  sourceSessionID: string,
-  requestID: string,
-) {
-  const plan = f.store.plan(f.receipt.planID)!
-  return f.runtime.command(
-    {
-      requestID,
-      planID: plan.id,
-      expectedVersion: plan.version,
-      action: "reconcile-source-notices",
-      sourceSessionID,
-    },
-    owner,
-  )
-}
-
-test("normal source scans do not materialize historical notice payloads across a large multi-owner backlog", async () => {
-  const now = 2_000_000_239_000
-  const { f, renewal, input } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const backlog = seedLargeLegacySourceNoticeBacklog(f, renewal.previous_session_id, owner, 128, {
-    queue: false,
-    payloadBytes: 16_000,
-    ownerForIndex: (index) => (index % 2 ? owner : "ses_retired_notice_owner"),
-  })
-  expect(backlog).toHaveLength(128)
-  const backlogBytes = f.store.atomic(
-    (db) =>
-      db
-        .query<{ payloadBytes: number }, [string, string]>(
-          `SELECT sum(length(o.payload)) AS payloadBytes FROM runner_outbox o
-         JOIN runner_plans p ON p.id=o.plan_id
-         WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
-           AND json_extract(o.payload,'$.status')='architect-source-reference'`,
-        )
-        .get(f.repository.projectDirectory, renewal.previous_session_id)!.payloadBytes,
-  )
-  expect(backlogBytes).toBeGreaterThan(2_000_000)
-
-  const readAll = f.store.architectSourceNoticeRows.bind(f.store)
-  let historicalRowsRead = 0
-  f.store.architectSourceNoticeRows = (sourceSessionID) => {
-    historicalRowsRead++
-    return readAll(sourceSessionID)
-  }
-  const changedInput = {
-    id: "msg_normal_ensure_after_large_backlog",
-    type: "user",
-    delivery: "queue",
-    metadata: { source: "normal-ensure-regression" },
-  }
-  f.inbox.set(renewal.previous_session_id, [input, changedInput])
-  // F-S3-1: fake the native enqueue notification alongside the inbox mutation.
-  f.runtime.observeArchitectSourceEvent(renewal.previous_session_id)
-  f.runtime.flushSourceInvalidations()
-  await f.runtime.tick()
-
-  expect(historicalRowsRead).toBe(0)
-  expect(
-    f.store.architectSourceInputs(renewal.previous_session_id).map((row) => row.message_id),
-  ).toContain(changedInput.id)
-  expect(
-    f.store
-      .architectCurrentSourceChangeNoticeRows(renewal.previous_session_id)
-      .map((row) => row.session_id),
-  ).toContain(owner)
-})
-
-test("legacy reconciliation resolves exact replacement IDs without loading its large historical payload backlog", async () => {
-  const now = 2_000_000_239_500
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const backlog = seedLargeLegacySourceNoticeBacklog(f, renewal.previous_session_id, owner, 96, {
-    queue: true,
-    payloadBytes: 12_000,
-  })
-  expect(backlog).toHaveLength(96)
-  const backlogBytes = f.store.atomic(
-    (db) =>
-      db
-        .query<{ payloadBytes: number }, [string, string]>(
-          `SELECT sum(length(o.payload)) AS payloadBytes FROM runner_outbox o
-         JOIN runner_plans p ON p.id=o.plan_id
-         WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
-           AND json_extract(o.payload,'$.status')='architect-source-reference'`,
-        )
-        .get(f.repository.projectDirectory, renewal.previous_session_id)!.payloadBytes,
-  )
-  expect(backlogBytes).toBeGreaterThan(1_000_000)
-
-  const readAll = f.store.architectSourceNoticeRows.bind(f.store)
-  let historicalRowsRead = 0
-  f.store.architectSourceNoticeRows = (sourceSessionID) => {
-    historicalRowsRead++
-    return readAll(sourceSessionID)
-  }
-  const result = (await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-large-payload-backlog",
-  )) as { results: Array<unknown> }
-  expect(historicalRowsRead).toBe(0)
-  expect(result).toMatchObject({
-    status: "deferred",
-    legacyNoticeCount: 96,
-    processedLegacyNoticeCount: 20,
-    remainingLegacyNoticeCount: 76,
-  })
-  expect(result.results).toHaveLength(20)
-  expect(
-    f.events.filter((event) => event.startsWith("cancel:msg_legacy_source_reference_large-")),
-  ).toHaveLength(20)
-  const first = f.store.atomic((db) =>
-    db
-      .query<{ state: string; payload: string; receipt: string }, [string]>(
-        "SELECT state,payload,receipt FROM runner_outbox WHERE id=?",
-      )
-      .get(backlog[0]!.outboxID)!,
-  )
-  expect(first.state).toBe("superseded")
-  expect(first.payload).toBe(backlog[0]!.payload)
-  expect(JSON.parse(first.receipt).history[0]).toMatchObject({ kind: "native-admission" })
-})
-
-test("explicit reconciliation cancels disjoint equal-revision notices only after pointer coverage", async () => {
-  const now = 2_000_000_240_000
-  const { f, renewal, pointer } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
-  const secondLegacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
-    suffix: "disjoint",
-  })
-  f.inbox.set(owner, [
-    ...(f.inbox.get(owner) ?? []),
-    { id: "msg_unrelated_user_input", type: "user", delivery: "queue" },
-  ])
-  f.store.atomic((db) =>
-    db
-      .query(
-        `INSERT INTO runner_outbox(
-           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
-         ) VALUES(?,?,?,?,?,'admitted',0,NULL,?)`,
-      )
-      .run(
-        "independent-worker-outcome",
-        f.receipt.planID,
-        owner,
-        "msg_independent_worker_outcome",
-        JSON.stringify({ status: "task-accepted", taskID: "independent-task" }),
-        JSON.stringify({ history: [{ kind: "native-admission", retained: true }] }),
-      ),
-  )
-  const independentSnapshot = () =>
-    (
-      f.store.detail(f.receipt.planID).delivery as {
-        id: string
-        message_id: string
-        state: string
-        payload: string
-        receipt: string | null
-      }[]
-    )
-      .filter((row) => {
-        const status = JSON.parse(row.payload).status
-        return !["architect-source-reference", "architect-source-change"].includes(status)
-      })
-      .map(({ id, message_id, state, payload, receipt }) => ({
-        id,
-        message_id,
-        state,
-        payload,
-        receipt,
-      }))
-  const baselineIndependent = independentSnapshot()
-  const cancel = f.host.cancelOutcome!
-  let entered!: () => void
-  let release!: () => void
-  const cancellationRead = new Promise<void>((resolve) => (entered = resolve))
-  const gate = new Promise<void>((resolve) => (release = resolve))
-  const outcomeInbox = f.host.outcomeInbox!
-  f.host.outcomeInbox = async (sessionID) => {
-    const entries = await outcomeInbox(sessionID)
-    if (entries.some((entry) => [legacy.messageID, secondLegacy.messageID].includes(entry.id))) {
-      entered()
-      await gate
-    }
-    return entries
-  }
-  f.host.cancelOutcome = async (input) => {
-    expect([legacy.messageID, secondLegacy.messageID]).toContain(input.inboxID)
-    expect(f.inbox.get(owner)?.some((entry) => entry.id === pointer.message_id)).toBe(true)
-    await cancel(input)
-  }
-  const first = reconcileSourceNotice(f, owner, renewal.previous_session_id, "reconcile-legacy-one")
-  await cancellationRead
-  const concurrent = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-legacy-concurrent",
-  )
-  expect(concurrent).toMatchObject({ status: "deferred" })
-  release()
-  const result = await first
-
-  expect(result).toMatchObject({
-    status: "reconciled",
-    legacyNoticeCount: 2,
-    processedLegacyNoticeCount: 2,
-    remainingLegacyNoticeCount: 0,
-    results: [
-      {
-        outboxID: legacy.outboxID,
-        state: "superseded",
-        disposition: "cancelled-and-read-back-absent",
-      },
-      {
-        outboxID: secondLegacy.outboxID,
-        state: "superseded",
-        disposition: "cancelled-and-read-back-absent",
-      },
-    ],
-  })
-  for (const expected of [legacy, secondLegacy]) {
-    const row = f.store
-      .architectSourceNoticeRows(renewal.previous_session_id)
-      .find((candidate) => candidate.id === expected.outboxID)!
-    expect(row).toMatchObject({ message_id: expected.messageID, state: "superseded" })
-    expect(row.payload).toBe(expected.payload)
-    const receipt = JSON.parse(row.receipt!) as { history: Array<Record<string, unknown>> }
-    expect(receipt.history[0]).toMatchObject({
-      kind: "native-admission",
-      sessionID: owner,
-      messageID: expected.messageID,
-      retained: true,
-    })
-    expect(receipt.history.map((entry) => entry.kind)).toContain(
-      "source-notice-cancellation-confirmed-by-native-readback",
-    )
-    expect(f.inbox.get(owner)?.some((entry) => entry.id === expected.messageID)).toBe(false)
-  }
-  expect(independentSnapshot()).toEqual(baselineIndependent)
-  expect(f.inbox.get(owner)?.some((entry) => entry.id === "msg_unrelated_user_input")).toBe(true)
-  expect(
-    f.events.filter((event) => event.startsWith("cancel:msg_legacy_source_reference")),
-  ).toHaveLength(2)
-})
-
-test("foreign and ambiguously absent legacy notices remain visible and are never cancelled", async () => {
-  const now = 2_000_000_241_000
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const foreign = seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
-    suffix: "foreign",
-    foreign: true,
-  })
-  const foreignResult = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-foreign-source",
-  )
-  expect(foreignResult).toMatchObject({ status: "deferred" })
-  expect(foreignResult).toMatchObject({
-    results: [
-      {
-        outboxID: foreign.outboxID,
-        state: "ownership-unavailable",
-        disposition: "ownership-unavailable",
-      },
-    ],
-  })
-  expect(
-    f.store
-      .architectSourceNoticeRows(renewal.previous_session_id)
-      .find((row) => row.id === foreign.outboxID)?.payload,
-  ).toBe(foreign.payload)
-  expect(f.events).not.toContain(`cancel:${foreign.messageID}`)
-
-  const absent = seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
-    suffix: "ambiguous",
-    queue: false,
-  })
-  const absentResult = (await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-ambiguous-absence",
-  )) as { status: string; results: Array<{ outboxID: string; state: string; disposition: string }> }
-  expect(absentResult).toMatchObject({ status: "deferred" })
-  expect(absentResult.results).toContainEqual({
-    outboxID: absent.outboxID,
-    state: "unknown",
-    disposition: "missing",
-  })
-  const absentRow = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .find((row) => row.id === absent.outboxID)!
-  expect(absentRow.payload).toBe(absent.payload)
-  expect(
-    JSON.parse(absentRow.receipt!).history.map((entry: { kind: string }) => entry.kind),
-  ).toContain("source-notice-absence-ambiguous")
-  expect(f.events).not.toContain(`cancel:${absent.messageID}`)
-})
-
-test("source-notice cancellation API unavailability is recoverable without altering legacy receipts", async () => {
-  const now = 2_000_000_242_000
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
-  const cancel = f.host.cancelOutcome!
-  f.host.cancelOutcome = undefined
-  const deferred = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-without-cancel-api",
-  )
-  expect(deferred).toMatchObject({
-    status: "deferred",
-    results: [
-      { outboxID: legacy.outboxID, state: "reconciling", disposition: "cancellation-unavailable" },
-    ],
-  })
-  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(true)
-  f.host.cancelOutcome = cancel
-  const recovered = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "retry-with-cancel-api",
-  )
-  expect(recovered).toMatchObject({
-    status: "reconciled",
-    results: [{ outboxID: legacy.outboxID, state: "superseded" }],
-  })
-  const finalRow = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .find((row) => row.id === legacy.outboxID)!
-  expect(finalRow.payload).toBe(legacy.payload)
-  expect(JSON.parse(finalRow.receipt!).history[0]).toEqual(JSON.parse(legacy.receipt).history[0])
-  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(false)
-})
-
-test("source-notice reconciliation processes only a bounded batch and resumes remaining legacy notices", async () => {
-  const now = 2_000_000_242_500
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const legacy = Array.from({ length: 21 }, (_, index) =>
-    seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
-      suffix: `bounded-${String(index).padStart(2, "0")}`,
-    }),
-  )
-  const first = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-bounded-first-page",
-  )
-  expect(first).toMatchObject({
-    status: "deferred",
-    legacyNoticeCount: 21,
-    processedLegacyNoticeCount: 20,
-    remainingLegacyNoticeCount: 1,
-  })
-  const firstPageRows = f.store.architectLegacySourceNoticePage(renewal.previous_session_id, 20)
-  expect(firstPageRows.total).toBe(1)
-  expect(firstPageRows.rows).toHaveLength(1)
-  expect(firstPageRows.rows[0]?.id).toBe(legacy[20]?.outboxID)
-
-  const second = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-bounded-second-page",
-  )
-  expect(second).toMatchObject({
-    status: "reconciled",
-    legacyNoticeCount: 1,
-    processedLegacyNoticeCount: 1,
-    remainingLegacyNoticeCount: 0,
-  })
-  for (const expected of legacy) {
-    const row = f.store
-      .architectSourceNoticeRows(renewal.previous_session_id)
-      .find((candidate) => candidate.id === expected.outboxID)!
-    expect(row).toMatchObject({ message_id: expected.messageID, state: "superseded" })
-    expect(row.payload).toBe(expected.payload)
-    expect(JSON.parse(row.receipt!).history[0]).toMatchObject({
-      kind: "native-admission",
-      messageID: expected.messageID,
-    })
-  }
-  expect(
-    f.events.filter((event) => event.startsWith("cancel:msg_legacy_source_reference")),
-  ).toHaveLength(21)
-})
-
-test("reconciliation keeps separate current-owner pointers and receipts for multiple retained sources", async () => {
-  const now = 2_000_000_242_625
-  const { f, renewal: firstRenewal, pointer: firstPointer } = await prepareSourceChangeFixture(now)
-  const firstOwner = firstRenewal.successor_session_id
-  const firstOwnerSession = f.sessions.get(firstOwner)!
-  f.inbox.set(
-    firstOwner,
-    (f.inbox.get(firstOwner) ?? []).filter((entry) => entry.id !== firstPointer.message_id),
-  )
-  firstOwnerSession.messages.push({
-    id: firstPointer.message_id,
-    type: "synthetic",
-    text: "The first source pointer was read.",
-    metadata: JSON.parse(firstPointer.metadata!),
-  })
-  firstOwnerSession.busy = false
-  firstOwnerSession.idleAt = now - 1_000
-  firstOwnerSession.tokens = null
-  await f.runtime.tick()
-  const secondRenewal = f.store.architectRenewalForPlan(f.receipt.planID)!
-  expect(secondRenewal.state).toBe("committed")
-  expect(secondRenewal.previous_session_id).toBe(firstOwner)
-  const currentOwner = secondRenewal.successor_session_id
-
-  f.inbox.set(firstOwner, [{ id: "msg_second_source_input", type: "user", delivery: "queue" }])
-  f.runtime.observeArchitectSourceEvent(firstOwner)
-  f.runtime.flushSourceInvalidations()
-  await f.runtime.tick()
-  for (const sourceSessionID of [
-    firstRenewal.previous_session_id,
-    secondRenewal.previous_session_id,
-  ]) {
-    const pointers = f.store
-      .architectSourceNoticeRows(sourceSessionID)
-      .filter((row) => row.session_id === currentOwner)
-      .filter((row) => JSON.parse(row.payload).status === "architect-source-change")
-    expect(pointers).toHaveLength(1)
-    const legacy = seedLegacySourceNotice(f, sourceSessionID, currentOwner, {
-      suffix: `multi-${sourceSessionID}`,
-    })
-    const result = await reconcileSourceNotice(
-      f,
-      currentOwner,
-      sourceSessionID,
-      `reconcile-${sourceSessionID}`,
-    )
-    expect(result).toMatchObject({ status: "reconciled", legacyNoticeCount: 1 })
-    const row = f.store
-      .architectSourceNoticeRows(sourceSessionID)
-      .find((candidate) => candidate.id === legacy.outboxID)!
-    expect(row).toMatchObject({ state: "superseded", message_id: legacy.messageID })
-    expect(row.payload).toBe(legacy.payload)
-  }
-  expect(
-    f.inbox
-      .get(currentOwner)
-      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change"),
-  ).toHaveLength(2)
-})
-
-test("lost native cancellation response remains unknown and never becomes a false cancellation claim", async () => {
-  const now = 2_000_000_242_750
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
-  const cancel = f.host.cancelOutcome!
-  f.host.cancelOutcome = async (input) => {
-    await cancel(input)
-    throw new Error("native cancellation response was lost")
-  }
-  const result = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-lost-cancel-response",
-  )
-  expect(result).toMatchObject({
-    status: "deferred",
-    results: [
-      { outboxID: legacy.outboxID, state: "unknown", disposition: "cancel-failed-missing" },
-    ],
-  })
-  const row = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .find((candidate) => candidate.id === legacy.outboxID)!
-  expect(row).toMatchObject({
-    state: "unknown",
-    message_id: legacy.messageID,
-    payload: legacy.payload,
-  })
-  const history = JSON.parse(row.receipt!).history as Array<{ kind: string }>
-  expect(history[0]?.kind).toBe("native-admission")
-  expect(history.map((entry) => entry.kind)).toContain(
-    "source-notice-cancellation-absence-ambiguous",
-  )
-  expect(history.map((entry) => entry.kind)).not.toContain(
-    "source-notice-cancellation-confirmed-by-native-readback",
-  )
-  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(false)
-  expect(f.events.filter((event) => event === `cancel:${legacy.messageID}`)).toHaveLength(1)
-})
-
-test("ownership changes during native observation defer cancellation and establish a pointer for the new owner", async () => {
-  const now = 2_000_000_243_000
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
-  const nextOwner = "owner_after_source_notice_race"
-  f.sessions.set(nextOwner, {
-    ...structuredClone(f.sessions.get(owner)!),
-    id: nextOwner,
-  })
-  const outcomeInbox = f.host.outcomeInbox!
-  let transferred = false
-  let legacyReads = 0
-  f.host.outcomeInbox = async (sessionID) => {
-    const entries = await outcomeInbox(sessionID)
-    if (entries.some((entry) => entry.id === legacy.messageID)) legacyReads++
-    if (!transferred && legacyReads > 1) {
-      transferred = f.store.updatePlanOwner(f.receipt.planID, owner, nextOwner)
-    }
-    return entries
-  }
-  await expect(
-    reconcileSourceNotice(f, owner, renewal.previous_session_id, "owner-changes-during-read"),
-  ).rejects.toThrow("Stale plan version")
-  expect(transferred).toBe(true)
-  expect(f.store.plan(f.receipt.planID)?.owner).toBe(nextOwner)
-  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(true)
-  expect(f.events).not.toContain(`cancel:${legacy.messageID}`)
-  const legacyRow = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .find((row) => row.id === legacy.outboxID)!
-  expect(legacyRow).toMatchObject({ state: "reconciling", payload: legacy.payload })
-  const pointers = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .filter((row) => row.session_id === nextOwner)
-    .filter((row) => JSON.parse(row.payload).status === "architect-source-change")
-  expect(pointers).toHaveLength(1)
-})
-
-test("source-notice cancellation racing with consumption records consumption, not cancellation", async () => {
-  const now = 2_000_000_244_000
-  const { f, renewal } = await prepareSourceChangeFixture(now)
-  const owner = renewal.successor_session_id
-  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
-  f.host.cancelOutcome = async () => {
-    f.inbox.set(
-      owner,
-      (f.inbox.get(owner) ?? []).filter((entry) => entry.id !== legacy.messageID),
-    )
-    f.sessions.get(owner)!.messages.push({
-      id: legacy.messageID,
-      type: "synthetic",
-      metadata: legacy.metadata,
-      text: "The legacy source notice was consumed during cancellation.",
-    })
-    throw new Error("cancel response lost during native consumption")
-  }
-  const result = await reconcileSourceNotice(
-    f,
-    owner,
-    renewal.previous_session_id,
-    "reconcile-consumption-race",
-  )
-  expect(result).toMatchObject({
-    status: "reconciled",
-    results: [
-      { outboxID: legacy.outboxID, state: "consumed", disposition: "cancel-failed-consumed" },
-    ],
-  })
-  const row = f.store
-    .architectSourceNoticeRows(renewal.previous_session_id)
-    .find((candidate) => candidate.id === legacy.outboxID)!
-  expect(row).toMatchObject({ state: "consumed", payload: legacy.payload })
-  expect(JSON.parse(row.receipt!).history.map((entry: { kind: string }) => entry.kind)).toContain(
-    "source-notice-cancellation-raced-with-consumption",
-  )
-  expect(
-    JSON.parse(row.receipt!).history.map((entry: { kind: string }) => entry.kind),
-  ).not.toContain("source-notice-cancellation-confirmed-by-native-readback")
-})
-
 test("the registered scheduler reuses recent/busy Architects and renews at the default threshold", async () => {
   const now = 2_000_000_000_000
   const f = fixture({
@@ -12107,16 +10961,15 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(wake.text).toContain("Keep the existing approved implementation direction.")
   expect(wake.text).toContain("Confirm whether the follow-up needs additional scope.")
   expect(wake.text).not.toContain("SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY")
-  expect(f.inbox.get(successor.id)).toHaveLength(2)
+  // The handoff is the only notice: the retained source's journal is not announced.
+  expect(f.inbox.get(successor.id)).toHaveLength(1)
   expect(
-    f.notifications.find(
+    f.notifications.some(
       (notice) =>
         notice.sessionID === successor.id &&
         notice.text.includes("LAZERS Architect source changed"),
     ),
-  ).toMatchObject({
-    resume: false,
-  })
+  ).toBe(false)
   expect(f.store.architectSourceInputs("owner").map((input) => input.message_id)).toContain(
     "old-transcript",
   )
@@ -12261,7 +11114,7 @@ test("renewal requires an explicit checkpoint and retains queued native inputs b
     reconciledHost.notifications.some((notification) =>
       notification.text.includes("LAZERS Architect source changed"),
     ),
-  ).toBe(true)
+  ).toBe(false)
   expect(
     reconciledHost.notifications.some((notification) => notification.text.includes(foreign.id)),
   ).toBe(false)
@@ -12312,9 +11165,9 @@ test("one successor receives every live plan owned by the same Architect", async
     attempts.map((attempt) => attempt.session_id),
   )
   expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
-  const handoff = f.store
-    .outboxForDelivery()
-    .find((row) => JSON.parse(row.payload).status === "architect-handoff")!
+  const handoff = (f.store.detail(f.receipt.planID).delivery as { payload: string }[]).find(
+    (row) => JSON.parse(row.payload).status === "architect-handoff",
+  )!
   expect(JSON.parse(handoff.payload).planIDs).toEqual([f.receipt.planID, planB.planID].sort())
   expect(JSON.parse(handoff.payload).continuity).toEqual({
     revision: 1,
@@ -12447,12 +11300,12 @@ test("native queued synthetic input is retained and referenced across creation, 
       (f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]).find(
         (row) => JSON.parse(row.payload).status === "architect-handoff",
       )?.state,
-    ).toBe("admitted")
+    ).toBe("delivered")
     expect(
       f.notifications.some((notification) =>
         notification.text.includes("LAZERS Architect source changed"),
       ),
-    ).toBe(true)
+    ).toBe(false)
     expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(
       false,
     )
@@ -12494,24 +11347,19 @@ test("late input on an archived predecessor is reconciled to the current owner w
   expect(f.store.architectSourceInputs("owner")).toContainEqual(
     expect.objectContaining({ message_id: late.id, disposition: "pending" }),
   )
-  const sourceChange = f.notifications
-    .slice(before)
-    .find((notification) => notification.text.includes("LAZERS Architect source changed"))
-  if (sourceChange) expect(sourceChange).toMatchObject({ sessionID: currentOwner, resume: false })
+  // A journal change on the retained source is not an event the Architect must be told about.
+  const afterArchive = f.notifications.slice(before)
+  expect(afterArchive.some((notification) => notification.text.includes("source changed"))).toBe(
+    false,
+  )
+  expect(afterArchive.some((notification) => notification.text.includes(late.id))).toBe(false)
   expect(
     f.inbox
       .get(currentOwner)
-      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change"),
-  ).toHaveLength(1)
-  expect(
-    f.notifications.slice(before).some((notification) => notification.text.includes(late.id)),
-  ).toBe(false)
+      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change") ?? [],
+  ).toHaveLength(0)
   await f.runtime.tick()
-  expect(
-    f.inbox
-      .get(currentOwner)
-      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change"),
-  ).toHaveLength(1)
+  expect(f.notifications.slice(before)).toEqual(afterArchive)
 })
 
 test("predecessor reconciliation persists native message pagination across scheduler ticks", async () => {
@@ -12556,7 +11404,7 @@ test("predecessor reconciliation persists native message pagination across sched
         notification.sessionID === renewal.successor_session_id &&
         notification.text.includes("LAZERS Architect source changed"),
     ),
-  ).toBe(true)
+  ).toBe(false)
   expect(
     f.notifications.some((notification) => notification.text.includes("msg_page_two_input")),
   ).toBe(false)
@@ -12649,7 +11497,7 @@ test("selected source-message retrieval is current-owner authorized and journal-
   ).rejects.toThrow("current plan owner")
 })
 
-test("large predecessor histories coalesce to a compact progressive source-change pointer", async () => {
+test("large predecessor histories stay in the journal and produce no notice about it", async () => {
   const now = 2_000_000_281_000
   const f = fixture({
     delayed: true,
@@ -12670,32 +11518,20 @@ test("large predecessor histories coalesce to a compact progressive source-chang
   await prepareIdleArchitect(f, now, 1_000)
 
   await f.runtime.tick()
-  let rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
-  let notices = rows
-    .map((row) => JSON.parse(row.payload))
-    .filter((payload) => payload.status === "architect-source-change")
-  expect(notices).toHaveLength(1)
-  expect(JSON.stringify(notices)).not.toContain(ids[0]!)
-  expect(JSON.stringify(notices)).not.toContain("inputIDs")
-  expect(JSON.stringify(notices)).not.toContain("results")
-  expect(JSON.stringify(notices).length).toBeLessThan(600)
   await f.runtime.tick()
   await f.runtime.tick()
 
-  rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
-  notices = rows
-    .map((row) => JSON.parse(row.payload))
-    .filter((payload) => payload.status === "architect-source-change")
-  expect(notices).toHaveLength(1)
-  const handoff = rows
-    .map((row) => JSON.parse(row.payload))
-    .find((payload) => payload.status === "architect-handoff")
-  expect(handoff).not.toHaveProperty("inputSources")
-  expect(
-    f.notifications.filter((notification) =>
-      notification.text.includes("LAZERS Architect source changed"),
-    ),
-  ).toHaveLength(1)
+  const rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
+  const payloads = rows.map((row) => JSON.parse(row.payload))
+  expect(payloads.some((payload) => String(payload.status).startsWith("architect-source"))).toBe(
+    false,
+  )
+  expect(payloads.find((payload) => payload.status === "architect-handoff")).not.toHaveProperty(
+    "inputSources",
+  )
+  expect(f.notifications.some((notification) => notification.text.includes("source changed"))).toBe(
+    false,
+  )
   expect(f.notifications.some((notification) => notification.text.includes(ids[0]!))).toBe(false)
   const journal = f.store.architectSourceJournalPage(f.receipt.planID, 100)
   expect(journal.page.hasMore).toBe(false)
@@ -12741,9 +11577,8 @@ test("a previously seen pending input that disappears without history stays unkn
   expect(f.sessions.get("owner")?.archived).toBe(true)
   expect(f.notifications.some((notification) => notification.text.includes(late.id))).toBe(false)
   expect(f.notifications.some((notification) => notification.text.includes("source changed"))).toBe(
-    true,
+    false,
   )
-  expect(f.notifications.at(-1)?.resume).toBe(false)
 })
 
 test("generated renewal notifications are authenticated and do not form A-to-B-to-C input loops", async () => {
@@ -12769,7 +11604,8 @@ test("generated renewal notifications are authenticated and do not form A-to-B-t
   expect(second.state).toBe("committed")
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(second.successor_session_id)
   expect(f.store.architectSourceInputs(middle.id)).toHaveLength(0)
-  expect(f.inbox.get(middle.id)).toHaveLength(0)
+  // The middle Architect's own handoff stays queued there; no input notice follows it onward.
+  expect(f.inbox.get(middle.id)).toHaveLength(1)
   expect(
     f.notifications.filter((notification) =>
       notification.text.includes("retained Architect input update"),
@@ -12858,13 +11694,13 @@ test("input racing native archival remains on the retained source and is referen
     expect.objectContaining({ message_id: "input-during-archive", disposition: "delivered" }),
   )
   expect(handoff.find((row) => JSON.parse(row.payload).status === "architect-handoff")?.state).toBe(
-    "admitted",
+    "delivered",
   )
   expect(
     f.notifications.some((notification) =>
       notification.text.includes("LAZERS Architect source changed"),
     ),
-  ).toBe(true)
+  ).toBe(false)
   expect(
     f.notifications.some((notification) => notification.text.includes("input-during-archive")),
   ).toBe(false)
@@ -13040,7 +11876,17 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
 
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
   const successor = renewal.successor_session_id
-  let oldOutcome = f.store.outboxForDelivery().find((row) => row.id === oldOutcomeID)!
+  const outcomeRow = () =>
+    (
+      f.store.detail(f.receipt.planID).delivery as {
+        id: string
+        session_id: string
+        message_id: string
+        state: string
+        receipt: string | null
+      }[]
+    ).find((row) => row.id === oldOutcomeID)!
+  let oldOutcome = outcomeRow()
   expect(renewal.state).toBe("committed")
   expect(
     (f.store.detail(f.receipt.planID).delivery as { id: string; state: string }[]).find(
@@ -13050,14 +11896,16 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
   expect(oldOutcome.session_id).toBe(successor)
   expect(oldOutcome.message_id).not.toBe("old-task-outcome-message")
   expect(JSON.parse(oldOutcome.receipt!).history).toContainEqual(
-    expect.objectContaining({ kind: "owner-retargeted-current-outcome", toSessionID: successor }),
+    expect.objectContaining({ kind: "owner-retargeted-queued-notice", toSessionID: successor }),
   )
-  expect(f.notifications).toHaveLength(2)
+  // The handoff and the retargeted outcome reach the successor as one notice.
+  expect(f.notifications).toHaveLength(1)
+  expect(f.notifications[0]!.text).toContain("Architect continuity handoff")
   expect(f.notifications.every((notice) => notice.sessionID === successor)).toBe(true)
 
   await f.runtime.tick()
-  oldOutcome = f.store.outboxForDelivery().find((row) => row.id === oldOutcomeID)!
-  expect(oldOutcome.state).toBe("admitted")
+  oldOutcome = outcomeRow()
+  expect(oldOutcome.state).toBe("delivered")
   expect(f.notifications.some((notice) => notice.text.includes('"status":"task-accepted"'))).toBe(
     true,
   )
@@ -13423,7 +12271,7 @@ test("a reopened two-scheduler runtime archives only after durable transfer and 
     f.notifications.some((notification) =>
       notification.text.includes("LAZERS Architect source changed"),
     ),
-  ).toBe(true)
+  ).toBe(false)
   expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(false)
 })
 
@@ -13688,7 +12536,7 @@ test("F-S3-1 activity during a source read keeps it scheduled for a fresh pass",
   expect(f.store.architectSource("owner")!.state).toBe("retired")
 })
 
-test("late and mutable assistant tool results are signalled through the progressive source journal", async () => {
+test("late and mutable assistant tool results update the source journal without notifying the Architect", async () => {
   const now = 2_000_000_520_000
   const f = fixture({
     delayed: true,
@@ -13730,21 +12578,6 @@ test("late and mutable assistant tool results are signalled through the progress
   // F-S3-1: the native tool completion invalidates a retired source without polling it forever.
   f.runtime.observeArchitectSourceEvent(renewal.previous_session_id)
   f.runtime.flushSourceInvalidations()
-  const predecessor = renewal.previous_session_id
-  const successor = renewal.successor_session_id
-  const firstPointer = f.store
-    .architectSourceNoticeRows(predecessor)
-    .find((row) => JSON.parse(row.payload).status === "architect-source-change")!
-  f.inbox.set(
-    successor,
-    (f.inbox.get(successor) ?? []).filter((entry) => entry.id !== firstPointer.message_id),
-  )
-  f.sessions.get(successor)!.messages.push({
-    id: firstPointer.message_id,
-    type: "synthetic",
-    metadata: JSON.parse(firstPointer.metadata!),
-    text: "The preceding compact source-change pointer was read.",
-  })
   await f.runtime.tick()
 
   const stored = f.store.atomic((db) =>
@@ -13768,11 +12601,11 @@ test("late and mutable assistant tool results are signalled through the progress
     result_revision: 2,
     referenced_revision: expect.any(Number),
   })
-  expect(stored.referenced_revision).toEqual(2)
+  // The late result is a journal fact only; nothing tells the Architect that the journal changed.
   const notices = (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
     .map((row) => JSON.parse(row.payload))
-    .filter((payload) => payload.status === "architect-source-change")
-  expect(notices).toHaveLength(2)
+    .filter((payload) => String(payload.status).startsWith("architect-source"))
+  expect(notices).toHaveLength(0)
   const journal = f.store.architectSourceJournalPage(f.receipt.planID, 100)
   expect(journal.records).toContainEqual(
     expect.objectContaining({
@@ -13782,13 +12615,8 @@ test("late and mutable assistant tool results are signalled through the progress
       resultRevision: 2,
     }),
   )
-  const resultNotices = f.notifications.filter((notice) =>
-    notice.text.includes("LAZERS Architect source changed"),
-  )
-  expect(resultNotices).toHaveLength(2)
-  expect(resultNotices.every((notice) => notice.resume === false)).toBe(true)
+  expect(f.notifications.filter((notice) => notice.text.includes("source changed"))).toHaveLength(0)
   expect(JSON.stringify(notices)).not.toContain(privateCanary)
-  expect(JSON.stringify(resultNotices)).not.toContain(privateCanary)
   expect(f.store.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
 })
@@ -15283,6 +14111,217 @@ test("a pause set while a tick is delivering still stops the send to the Archite
   await drive(f.runtime, 4)
   expect(paused).toBe(true)
   expect(f.notifications).toEqual([])
+})
+
+/** Plans that share the fixture Architect, each with an outcome of its own to report. */
+function architectBacklog(f: ReturnType<typeof fixture>, size: number) {
+  const ids = Array.from({ length: size }, (_, index) => `backlog-${index}`)
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,'blocked',body,model,'held',artifact
+      FROM runner_plans WHERE id=?`)
+    for (const id of ids) clone.run(id, f.receipt.planID)
+  })
+  const emit = (planID: string, payload: Record<string, unknown>) =>
+    (
+      f.runtime as unknown as { outcome(id: string, payload: unknown, resume: boolean): void }
+    ).outcome(planID, payload, true)
+  const deliver = async () => {
+    const fence = f.store.claim(f.runtime.owner)!
+    await (
+      f.runtime as unknown as { outcomeDelivery: { deliver(fence: number): Promise<void> } }
+    ).outcomeDelivery.deliver(fence)
+  }
+  return { ids, emit, deliver }
+}
+
+const outboxStates = (f: ReturnType<typeof fixture>) =>
+  f.store.atomic((db) =>
+    db
+      .query<{ state: string; n: number }, []>(
+        "SELECT state,COUNT(*) AS n FROM runner_outbox GROUP BY state ORDER BY state",
+      )
+      .all(),
+  )
+
+test("repeated outcomes for one Architect yield one inbox item that states every plan's latest outcome", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 5)
+  for (const id of ids) emit(id, { status: "blocked", reason: `first-${id}` })
+  await deliver()
+  expect(f.inbox.get("owner")).toHaveLength(1)
+  expect(f.notifications).toHaveLength(1)
+  for (const id of ids) expect(f.notifications[0]!.text).toContain(id)
+
+  // A later outcome for one plan replaces the queued notice instead of joining it.
+  emit(ids[2]!, { status: "blocked", reason: "second-backlog-2" })
+  await deliver()
+  const queued = f.inbox.get("owner")!
+  expect(queued).toHaveLength(1)
+  expect(f.notifications).toHaveLength(2)
+  const text = f.notifications[1]!.text
+  for (const id of ids) expect(text).toContain(id)
+  expect(text).toContain("second-backlog-2")
+  expect(text).not.toContain("first-backlog-2")
+  expect(text).toContain("first-backlog-0")
+  expect(queued[0]!.id).toBe(f.notifications[1]!.id)
+  expect(f.events.filter((event) => event.startsWith("cancel:"))).toEqual([
+    `cancel:${f.notifications[0]!.id}`,
+  ])
+  expect(outboxStates(f).filter((row) => row.state === "pending")).toEqual([])
+})
+
+test("a notice consumed before the next outcome is not cancelled or repeated", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 2)
+  emit(ids[0]!, { status: "blocked", reason: "one" })
+  await deliver()
+  f.inbox.set("owner", [])
+  emit(ids[1]!, { status: "blocked", reason: "two" })
+  await deliver()
+  expect(f.events.filter((event) => event.startsWith("cancel:"))).toEqual([])
+  expect(f.inbox.get("owner")).toHaveLength(1)
+  expect(f.notifications[1]!.text).toContain("two")
+  expect(f.notifications[1]!.text).not.toContain("one")
+})
+
+test("unpausing a backlog of notices for one Architect delivers one", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 12)
+  f.store.setArchitectContact("paused", "Recovery mode")
+  for (const id of ids) emit(id, { status: "blocked", reason: `held-${id}` })
+  await deliver()
+  expect(f.notifications).toEqual([])
+  expect(outboxStates(f).find((row) => row.state === "pending")!.n).toBeGreaterThanOrEqual(12)
+  f.store.setArchitectContact("enabled", "")
+  await deliver()
+  expect(f.notifications).toHaveLength(1)
+  expect(f.inbox.get("owner")).toHaveLength(1)
+  for (const id of ids) expect(f.notifications[0]!.text).toContain(id)
+  expect(outboxStates(f).find((row) => row.state === "pending")).toBeUndefined()
+  // Nothing is left to deliver on the next pass.
+  await deliver()
+  expect(f.notifications).toHaveLength(1)
+})
+
+test("a failed send leaves the notices pending and the next pass sends one", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 3)
+  for (const id of ids) emit(id, { status: "blocked", reason: id })
+  const notify = f.host.notify
+  f.host.notify = async () => {
+    throw new Error("native inbox unavailable")
+  }
+  await deliver()
+  expect(f.inbox.get("owner") ?? []).toHaveLength(0)
+  f.host.notify = notify
+  await deliver()
+  expect(f.inbox.get("owner")).toHaveLength(1)
+  expect(outboxStates(f).find((row) => row.state === "pending")).toBeUndefined()
+})
+
+test("changes to the Architect inbox emit no notice about notices or the journal", async () => {
+  const f = fixture()
+  f.inbox.set("owner", [
+    { id: "msg_user_1", type: "user", delivery: "queue" },
+    {
+      id: "msg_notice",
+      type: "synthetic",
+      delivery: "queue",
+      metadata: { lazersKind: "runner-outcome", lazersOutboxID: "some-notice" },
+    },
+  ])
+  await f.runtime.tick()
+  await f.runtime.tick()
+  const notices = f.store.atomic((db) =>
+    db
+      .query<{ status: string }, []>(
+        "SELECT json_extract(payload,'$.status') AS status FROM runner_outbox",
+      )
+      .all(),
+  )
+  expect(notices.some((row) => String(row.status).startsWith("architect-source"))).toBe(false)
+})
+
+test("real outcomes still reach the Architect, once, with the action to take", async () => {
+  const f = fixture({ taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await drive(f.runtime, 8)
+  const notices = f.notifications.filter((notice) => notice.sessionID === "owner")
+  expect(notices.length).toBeGreaterThan(0)
+  expect(f.inbox.get("owner")!.length).toBeLessThanOrEqual(1)
+  expect(notices.at(-1)!.text).toContain("LAZERS outcome")
+  expect(notices.at(-1)!.text).toContain(f.receipt.planID)
+})
+
+test("migration retires source-change notices unsent and collapses the old outbox states", () => {
+  const f = fixture()
+  f.store.atomic((db) => {
+    const insert = db.query(
+      "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,?,0)",
+    )
+    for (const [index, state] of [
+      "pending",
+      "sending",
+      "uncertain",
+      "admitted",
+      "consumed",
+    ].entries())
+      insert.run(
+        `legacy-${index}`,
+        f.receipt.planID,
+        "owner",
+        `msg_legacy_${index}`,
+        JSON.stringify({ status: "architect-source-change", version: index }),
+        state,
+      )
+    for (const [index, state] of ["sending", "unknown", "reconciling"].entries())
+      insert.run(
+        `kept-${index}`,
+        f.receipt.planID,
+        "owner",
+        `msg_kept_${index}`,
+        JSON.stringify({ status: "blocked", version: index }),
+        state,
+      )
+    retireOutboxLifecycle(db)
+  })
+  const state = (id: string) =>
+    f.store.atomic(
+      (db) =>
+        db.query<{ state: string }, [string]>("SELECT state FROM runner_outbox WHERE id=?").get(id)!
+          .state,
+    )
+  expect(["legacy-0", "legacy-1", "legacy-2"].map(state)).toEqual([
+    "superseded",
+    "superseded",
+    "superseded",
+  ])
+  expect(["legacy-3", "legacy-4"].map(state)).toEqual(["delivered", "delivered"])
+  expect(["kept-0", "kept-1", "kept-2"].map(state)).toEqual(["pending", "delivered", "delivered"])
+})
+
+test("queued outcomes follow an archived Architect to its replacement as one notice", async () => {
+  const f = fixture({
+    fail: true,
+    shared: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  f.store.setArchitectContact("paused", "Recovery mode")
+  await runPlan(f)
+  await drive(f.runtime, 4)
+  expect(f.store.outboxForDelivery().length).toBeGreaterThan(0)
+  f.sessions.get("owner")!.archived = true
+  f.store.setArchitectContact("enabled", "")
+  await drive(f.runtime, 4)
+  const owner = f.store.plan(f.receipt.planID)!.owner
+  expect(owner).not.toBe("owner")
+  expect(f.inbox.get("owner") ?? []).toHaveLength(0)
+  expect(f.inbox.get(owner)).toHaveLength(1)
+  expect(f.store.outboxForDelivery()).toEqual([])
+  const rows = f.store.detail(f.receipt.planID).delivery as { session_id: string }[]
+  expect(rows.every((row) => row.session_id === owner)).toBe(true)
 })
 
 test("an interrupted worker resumes without an Architect command", async () => {

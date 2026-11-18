@@ -396,14 +396,13 @@ export class RetainedVerificationExecution {
       const plan = this.runtime.store.plan(operation.planID)
       if (!plan || ["cancelling", "cancelled", "integrated"].includes(plan.state)) return
       const alreadyNotified = db
-        .query<{ id: string }, [string, string, string]>(
+        .query<{ id: string }, [string, string]>(
           `SELECT id FROM runner_outbox WHERE plan_id=?
-           AND (session_id=? OR state IN ('pending','sending','uncertain','admitted','delivered'))
            AND json_extract(payload,'$.status')='retained-verification-held'
            AND json_extract(payload,'$.operationID')=?
-           AND state NOT IN ('unknown','superseded') LIMIT 1`,
+           AND state<>'superseded' LIMIT 1`,
         )
-        .get(plan.id, plan.owner, operation.id)
+        .get(plan.id, operation.id)
       if (alreadyNotified) return
       this.runtime.outcome(
         plan.id,
