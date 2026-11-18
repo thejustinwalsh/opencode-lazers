@@ -134,6 +134,7 @@ export class TaskReads {
       state: effectiveTaskStateFilter(query.state, query.includeCompleted),
       snapshot: cursor?.snapshot,
       before: cursor?.before,
+      stateCounts: !cursor,
     })
     const visible = page.rows.slice(0, query.limit)
     const last = visible.at(-1)
@@ -147,6 +148,7 @@ export class TaskReads {
       projectDirectory: this.repository.projectDirectory,
       snapshot: page.version,
       count: page.count,
+      ...("stateCounts" in page && page.stateCounts ? { stateCounts: page.stateCounts } : {}),
       tasks: visible.map(({ task, reference, classification }) => {
         const execution = this.effectiveExecution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
@@ -158,6 +160,9 @@ export class TaskReads {
           status: execution?.state ?? task.status,
           ...(execution
             ? { recordedState: this.recordedNodeState(task.id, execution.planID) }
+            : {}),
+          ...(execution && ["running", "verifying"].includes(execution.state)
+            ? this.startedAt(task.id, execution.planID)
             : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
@@ -310,6 +315,22 @@ export class TaskReads {
   recordedStateForTask(taskID: string): TaskState | undefined {
     const execution = this.effectiveExecution(taskID)
     return execution ? this.recordedNodeState(taskID, execution.planID) : undefined
+  }
+
+  /** Start of the latest attempt, as `{ startedAt }`, or nothing when none is recorded. */
+  protected startedAt(
+    taskID: string,
+    planID: string,
+  ): { startedAt: number } | Record<string, never> {
+    const started = this.repository.read(
+      (db) =>
+        db
+          .query<{ started_at: number }, [string, string]>(
+            "SELECT started_at FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC,started_at DESC LIMIT 1",
+          )
+          .get(planID, taskID)?.started_at,
+    )
+    return started === undefined ? {} : { startedAt: started }
   }
 
   protected recordedNodeState(taskID: string, planID: string): TaskState | undefined {
