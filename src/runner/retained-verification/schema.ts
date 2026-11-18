@@ -3,14 +3,12 @@ import { z } from "zod"
 export const RetainedVerificationPhase = z.enum(["task", "combined"])
 export type RetainedVerificationPhase = z.infer<typeof RetainedVerificationPhase>
 
+/** One call: pending, then task checks, then a recorded pass (accepted) or fail. */
 export const RetainedVerificationState = z.enum([
   "pending",
   "task-checks",
-  "combined-checks",
-  "task-accepted",
   "accepted",
   "failed",
-  "held",
   "cancelled",
 ])
 export type RetainedVerificationState = z.infer<typeof RetainedVerificationState>
@@ -21,15 +19,11 @@ export type RetainedVerificationCleanupState = z.infer<typeof RetainedVerificati
 export const RetainedVerificationSchema = z.strictObject({
   schemaVersion: z.literal(1),
   id: z.uuid(),
-  generation: z.int().positive(),
   projectID: z.string().min(1).max(200),
   projectDirectory: z.string().min(1).max(1_024),
   planID: z.uuid(),
   planRevision: z.int().positive(),
-  planVersion: z.int().positive(),
   owner: z.string().min(1).max(200),
-  /** Retired: older operations carry it; it no longer binds anything. */
-  ownerEpoch: z.int().nonnegative().optional(),
   taskID: z.uuid(),
   taskRevision: z.int().positive(),
   attemptID: z.uuid(),
@@ -37,28 +31,33 @@ export const RetainedVerificationSchema = z.strictObject({
   originalMessageID: z.string().min(1).max(200),
   originalWorkspace: z.string().min(1).max(1_024),
   artifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
-  /** Retired: older operations carry a quarantine binding; it binds nothing. */
-  sourceQuarantine: z.unknown().optional(),
   repair: z
     .strictObject({
       operationID: z.string().min(1),
       previousArtifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
     })
     .optional(),
+  taskWorkspace: z.string().min(1).max(1_024).nullable(),
+  taskWorkspaceState: z.enum(["reserved", "owned", "uncertain", "removed"]).nullable(),
+  /**
+   * Retired: older operations carry a second, combined checkout. Nothing creates
+   * one now; terminal cleanup still removes the ones that exist.
+   */
   combinedArtifact: z
     .string()
     .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
-    .nullable(),
-  combinedInputFingerprint: z.string().min(1).nullable().optional(),
-  taskWorkspace: z.string().min(1).max(1_024).nullable(),
-  taskWorkspaceState: z.enum(["reserved", "owned", "uncertain", "removed"]).nullable(),
-  combinedWorkspace: z.string().min(1).max(1_024).nullable(),
-  combinedWorkspaceState: z.enum(["reserved", "owned", "uncertain", "removed"]).nullable(),
-  inputFingerprint: z.string().min(1),
+    .nullable()
+    .optional(),
+  combinedWorkspace: z.string().min(1).max(1_024).nullable().optional(),
+  combinedWorkspaceState: z
+    .enum(["reserved", "owned", "uncertain", "removed"])
+    .nullable()
+    .optional(),
   environmentIdentity: z.string().min(1),
   reason: z.string().min(1).max(2_000),
   state: RetainedVerificationState,
-  holdReason: z.string().max(2_000).nullable(),
+  /** Why the call failed; null while it runs or after it passes. */
+  failureReason: z.string().max(2_000).nullable(),
   cleanupState: RetainedVerificationCleanupState,
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
@@ -75,7 +74,7 @@ export const RetainedVerificationCheckSchema = z.strictObject({
   inputFingerprint: z.string().min(1),
   environmentIdentity: z.string().min(1),
   receiptPath: z.string().min(1),
-  state: z.enum(["intended", "completed", "uncertain", "retry-authorized"]),
+  state: z.enum(["intended", "completed", "uncertain"]),
   receipt: z.string().nullable(),
   contextPath: z.string().min(1),
   cleanupState: RetainedVerificationCleanupState,

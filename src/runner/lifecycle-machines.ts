@@ -153,18 +153,16 @@ export const adoptionMachine = defineLifecycle("runner-adoption", "pending", {
   failed: [],
   cancelled: [],
 })
+/** One call: it passes (accepted), fails, or is cancelled with its plan. No hold, no resume. */
 export const retainedVerificationMachine = defineLifecycle(
   "runner-retained-verification",
   "pending",
   {
-    pending: ["task-checks", "held", "failed", "cancelled"],
-    "task-checks": ["task-accepted", "combined-checks", "held", "failed", "cancelled"],
-    "task-accepted": ["combined-checks", "held", "failed", "cancelled"],
-    "combined-checks": ["accepted", "held", "failed", "cancelled"],
-    held: ["task-checks", "combined-checks", "cancelled"],
+    pending: ["task-checks", "failed", "cancelled"],
+    "task-checks": ["accepted", "failed", "cancelled"],
     accepted: [],
     failed: [],
-    cancelled: ["task-checks", "combined-checks"],
+    cancelled: [],
   },
 )
 export const verificationResourceMachine = defineLifecycle(
@@ -180,8 +178,7 @@ export const verificationResourceMachine = defineLifecycle(
 export const verificationCheckMachine = defineLifecycle("runner-verification-check", "intended", {
   intended: ["completed", "uncertain"],
   uncertain: ["completed"],
-  completed: ["uncertain", "retry-authorized"],
-  "retry-authorized": ["intended", "completed"],
+  completed: ["uncertain"],
 })
 export const verificationCleanupMachine = defineLifecycle(
   "runner-verification-cleanup",

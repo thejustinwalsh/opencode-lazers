@@ -1,29 +1,12 @@
 import { lifecycleTransition, registerLifecycleTransitions } from "../lifecycle-machines.ts"
 import type { Database } from "bun:sqlite"
-import { Buffer } from "node:buffer"
-import { createHash } from "node:crypto"
 import { fingerprint } from "../../identity.ts"
 import { z } from "zod"
 import { RetainedVerificationSchema } from "./schema.ts"
 import type { RetainedVerification, RetainedVerificationCheck } from "./schema.ts"
 
-const RetainedVerificationCursorPosition = z.strictObject({
-  taskID: z.uuid(),
-  generation: z.int().positive().max(Number.MAX_SAFE_INTEGER),
-})
-const RetainedVerificationCursor = z.strictObject({
-  version: z.literal(2),
-  planID: z.uuid(),
-  scope: z.string().regex(/^[a-f0-9]{64}$/),
-  taskIDs: z.array(z.uuid()).min(1).max(100),
-  watermark: z.array(z.int().min(0).max(Number.MAX_SAFE_INTEGER)).min(1).max(100),
-  after: RetainedVerificationCursorPosition,
-  capture: z.string().regex(/^[a-f0-9]{64}$/),
-  checksum: z.string().regex(/^[a-f0-9]{64}$/),
-})
-
 type RetainedCheckProjection = {
-  phase: "task" | "combined" | null
+  phase: "task" | null
   binding: "matched" | "mismatched" | "unknown"
   checkID: string
   state: "intended" | "completed" | "uncertain" | "unknown"
@@ -84,18 +67,13 @@ export type RetainedVerificationProjection = {
   recordStatus: "recorded" | "unavailable"
   operationID: string | null
   planID: string
-  generation: number | null
   taskID: string | null
   taskRevision: number | null
   planRevision: number | null
-  planVersion: number | null
   attemptID: string | null
   candidateArtifact: string | null
-  combinedArtifact: string | null
   state: RetainedVerification["state"] | "unknown"
   reason: string
-  inputFingerprint: string | null
-  combinedInputFingerprint: string | null
   environmentFingerprint: string | null
   timestamps: { createdAt: number | null; updatedAt: number | null }
   checksAvailable: boolean
@@ -105,7 +83,6 @@ export type RetainedVerificationProjection = {
     state: RetainedVerification["cleanupState"] | "unknown"
     workspaceStates: {
       task: "reserved" | "owned" | "uncertain" | "removed" | "unknown" | null
-      combined: "reserved" | "owned" | "uncertain" | "removed" | "unknown" | null
     }
     resourcesAvailable: boolean
     resourcesByState: Record<"creating" | "active" | "uncertain" | "removed" | "unknown", number>
@@ -114,26 +91,17 @@ export type RetainedVerificationProjection = {
 }
 
 export type RetainedVerificationInspection = {
-  mode: "retained-verifications"
   status: "available" | "partial" | "unavailable"
   planID: string
   taskIDs: string[]
-  capturedGenerationWatermark: Array<{ taskID: string; generation: number }> | null
   availability: {
     operations: boolean
     checks: boolean
     receipts: boolean
     resources: boolean
   }
+  /** The latest verification call per selected task. */
   latest: RetainedVerificationProjection[]
-  history: {
-    limit: number
-    returned: number
-    hasMore: boolean
-    nextCursor: string | null
-    concurrentChanges: "selected-retained-history-changes-invalidate-cursor"
-    records: RetainedVerificationProjection[]
-  }
 }
 
 export function ensureRetainedVerificationTables(db: Database): void {
@@ -144,13 +112,11 @@ export function ensureRetainedVerificationTables(db: Database): void {
       project_directory TEXT NOT NULL,
       plan_id TEXT NOT NULL,
       task_id TEXT NOT NULL,
-      generation INTEGER NOT NULL,
       state TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      UNIQUE(project_directory,plan_id,task_id,generation)
+      payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS runner_retained_verifications_active
-      ON runner_retained_verifications(project_directory,plan_id,task_id,state,generation);
+      ON runner_retained_verifications(project_directory,plan_id,task_id,state);
     CREATE TABLE IF NOT EXISTS runner_retained_verification_checks (
       operation_id TEXT NOT NULL REFERENCES runner_retained_verifications(id),
       phase TEXT NOT NULL,
@@ -186,7 +152,6 @@ export function ensureRetainedVerificationTables(db: Database): void {
     CREATE TABLE IF NOT EXISTS runner_retained_verification_evidence (
       id TEXT PRIMARY KEY,
       operation_id TEXT NOT NULL REFERENCES runner_retained_verifications(id),
-      generation INTEGER NOT NULL,
       phase TEXT NOT NULL,
       task_id TEXT,
       assertion_id TEXT NOT NULL,
@@ -195,11 +160,10 @@ export function ensureRetainedVerificationTables(db: Database): void {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS runner_retained_verification_evidence_lookup
-      ON runner_retained_verification_evidence(operation_id,generation,phase,task_id,assertion_id,artifact);
+      ON runner_retained_verification_evidence(operation_id,phase,task_id,assertion_id,artifact);
     CREATE TABLE IF NOT EXISTS runner_retained_verification_resources (
       project_directory TEXT NOT NULL,
       operation_id TEXT NOT NULL REFERENCES runner_retained_verifications(id),
-      generation INTEGER NOT NULL,
       phase TEXT NOT NULL,
       check_id TEXT NOT NULL,
       resource_name TEXT NOT NULL,
@@ -246,7 +210,7 @@ export function retainedVerificationsForPlan(
   ensureRetainedVerificationTables(db)
   return db
     .query<{ payload: string }, [string, string]>(
-      "SELECT payload FROM runner_retained_verifications WHERE project_directory=? AND plan_id=? ORDER BY generation",
+      "SELECT payload FROM runner_retained_verifications WHERE project_directory=? AND plan_id=? ORDER BY rowid",
     )
     .all(projectDirectory, planID)
     .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
@@ -259,13 +223,13 @@ export function retainedVerificationsForProject(
   ensureRetainedVerificationTables(db)
   return db
     .query<{ payload: string }, [string]>(
-      "SELECT payload FROM runner_retained_verifications WHERE project_directory=? ORDER BY plan_id,task_id,generation",
+      "SELECT payload FROM runner_retained_verifications WHERE project_directory=? ORDER BY plan_id,task_id,rowid",
     )
     .all(projectDirectory)
     .map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
 }
 
-const liveStates = ["pending", "task-checks", "combined-checks", "task-accepted", "held"] as const
+const liveStates = ["pending", "task-checks"] as const
 
 export function activeRetainedVerifications(
   db: Database,
@@ -278,13 +242,13 @@ export function activeRetainedVerifications(
     ? db
         .query<{ payload: string }, [string, string, ...string[]]>(
           `SELECT payload FROM runner_retained_verifications
-           WHERE project_directory=? AND plan_id=? AND state IN (${placeholders}) ORDER BY generation`,
+           WHERE project_directory=? AND plan_id=? AND state IN (${placeholders}) ORDER BY rowid`,
         )
         .all(projectDirectory, planID, ...liveStates)
     : db
         .query<{ payload: string }, [string, ...string[]]>(
           `SELECT payload FROM runner_retained_verifications
-           WHERE project_directory=? AND state IN (${placeholders}) ORDER BY plan_id,task_id,generation`,
+           WHERE project_directory=? AND state IN (${placeholders}) ORDER BY plan_id,task_id,rowid`,
         )
         .all(projectDirectory, ...liveStates)
   return rows.map((row) => RetainedVerificationSchema.parse(JSON.parse(row.payload)))
@@ -305,23 +269,14 @@ export function createRetainedVerification(
     )
     .get(projectDirectory, operation.planID, operation.taskID, ...liveStates)
   if (active) throw new Error("A conflicting retained verification operation is active")
-  const latest = db
-    .query<{ generation: number }, [string, string, string]>(
-      `SELECT MAX(generation) AS generation FROM runner_retained_verifications
-       WHERE project_directory=? AND plan_id=? AND task_id=?`,
-    )
-    .get(projectDirectory, operation.planID, operation.taskID)
-  if (operation.generation !== (latest?.generation ?? 0) + 1)
-    throw new Error("Retained verification generation changed before reservation")
   db.query(
     `INSERT INTO runner_retained_verifications
-     (id,project_directory,plan_id,task_id,generation,state,payload) VALUES(?,?,?,?,?,?,?)`,
+     (id,project_directory,plan_id,task_id,state,payload) VALUES(?,?,?,?,?,?)`,
   ).run(
     operation.id,
     projectDirectory,
     operation.planID,
     operation.taskID,
-    operation.generation,
     operation.state,
     JSON.stringify(operation),
   )
@@ -341,22 +296,16 @@ export function updateRetainedVerification(
 ): boolean {
   ensureRetainedVerificationTables(db)
   const current = retainedVerification(db, operation.id)
-  if (!current || current.generation !== operation.generation) return false
+  if (!current) return false
   if (!expectedStates.includes(current.state)) return false
   validateRetainedLifecycles(current, operation)
   const states = expectedStates.map(() => "?").join(",")
   const changed = db
     .query(
       `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?
-       WHERE id=? AND generation=? AND state IN (${states})`,
+       WHERE id=? AND state IN (${states})`,
     )
-    .run(
-      operation.state,
-      JSON.stringify(operation),
-      operation.id,
-      operation.generation,
-      ...expectedStates,
-    ).changes
+    .run(operation.state, JSON.stringify(operation), operation.id, ...expectedStates).changes
   return changed === 1
 }
 
@@ -451,7 +400,6 @@ export function beginRetainedVerificationCheck(
   db: Database,
   input: {
     operationID: string
-    generation: number
     phase: "task" | "combined"
     checkID: string
     check: unknown
@@ -462,7 +410,6 @@ export function beginRetainedVerificationCheck(
     receiptPath: string
     contextPath: string
     createdAt: number
-    allowUnchangedCheck?: boolean
   },
 ): RetainedVerificationCheck {
   ensureRetainedVerificationTables(db)
@@ -475,65 +422,6 @@ export function beginRetainedVerificationCheck(
     )
     .get(input.operationID, input.phase, input.checkID)
   if (current) {
-    if (current.state === "retry-authorized") {
-      const operation = retainedVerification(db, input.operationID)
-      const eligibleOperationState = input.phase === "task" ? "task-checks" : "combined-checks"
-      if (
-        !operation ||
-        operation.generation !== input.generation ||
-        operation.state !== eligibleOperationState
-      )
-        throw new Error("Retained retry authorization operation is no longer eligible")
-      let priorCheck: unknown
-      try {
-        priorCheck = JSON.parse(current.checkJSON) as unknown
-      } catch {
-        throw new Error("Retained retry authorization has an unreadable prior check binding")
-      }
-      if (
-        current.cleanupState !== "complete" ||
-        current.workspace !== input.workspace ||
-        current.artifact !== input.artifact ||
-        current.receipt === null ||
-        (fingerprint(priorCheck) === fingerprint(input.check) && !input.allowUnchangedCheck) ||
-        !isRecord(priorCheck) ||
-        !isRecord(input.check) ||
-        priorCheck.id !== input.check.id ||
-        priorCheck.command !== input.check.command ||
-        current.receiptPath === input.receiptPath
-      )
-        throw new Error("Retained retry no longer matches its explicitly authorized check")
-      const changed = db
-        .query(
-          `UPDATE runner_retained_verification_checks
-           SET state=lz_runner_transition('check',state,'intended'),check_json=?,input_fingerprint=?,
-                environment_identity=?,receipt_path=?,receipt=NULL,context_path=?,
-                cleanup_state=lz_runner_transition('cleanup',cleanup_state,'pending'),created_at=?
-            WHERE operation_id=? AND phase=? AND check_id=? AND state='retry-authorized'
-              AND EXISTS (
-                SELECT 1 FROM runner_retained_verifications
-                WHERE id=? AND generation=? AND state=?
-              )`,
-        )
-        .run(
-          JSON.stringify(input.check),
-          input.inputFingerprint,
-          input.environmentIdentity,
-          input.receiptPath,
-          input.contextPath,
-          input.createdAt,
-          input.operationID,
-          input.phase,
-          input.checkID,
-          input.operationID,
-          input.generation,
-          eligibleOperationState,
-        ).changes
-      if (changed !== 1) throw new Error("Retained retry authorization changed before check setup")
-      return retainedVerificationChecks(db, input.operationID, input.phase).find(
-        (check) => check.checkID === input.checkID,
-      )!
-    }
     if (
       current.workspace !== input.workspace ||
       current.artifact !== input.artifact ||
@@ -565,79 +453,6 @@ export function beginRetainedVerificationCheck(
   return retainedVerificationChecks(db, input.operationID, input.phase).find(
     (check) => check.checkID === input.checkID,
   )!
-}
-
-export function authorizeRetainedVerificationCheckRetry(
-  db: Database,
-  input: {
-    operationID: string
-    phase: "task" | "combined"
-    checkID: string
-    receiptFingerprint: string
-  },
-): RetainedVerificationCheck {
-  const current = retainedVerificationChecks(db, input.operationID, input.phase).find(
-    (check) => check.checkID === input.checkID,
-  )
-  if (
-    !current ||
-    current.state !== "completed" ||
-    current.receipt === null ||
-    fingerprint(current.receipt) !== input.receiptFingerprint ||
-    current.cleanupState !== "complete"
-  )
-    throw new Error("Retained check changed before retry authorization")
-  const changed = db
-    .query(
-      `UPDATE runner_retained_verification_checks
-       SET state=lz_runner_transition('check',state,'retry-authorized')
-       WHERE operation_id=? AND phase=? AND check_id=? AND state='completed' AND receipt=?`,
-    )
-    .run(input.operationID, input.phase, input.checkID, current.receipt).changes
-  if (changed !== 1) throw new Error("Retained check retry authorization lost its receipt fence")
-  return retainedVerificationChecks(db, input.operationID, input.phase).find(
-    (check) => check.checkID === input.checkID,
-  )!
-}
-
-/** Revoke a check retry authorization only while its original completed receipt is still current. */
-export function cancelRetainedVerificationCheckRetry(
-  db: Database,
-  operationID: string,
-  phase: "task" | "combined",
-  checkID: string,
-  receiptFingerprint: string,
-): boolean {
-  ensureRetainedVerificationTables(db)
-  const current = retainedVerificationChecks(db, operationID, phase).find(
-    (check) => check.checkID === checkID,
-  )
-  if (
-    !current ||
-    current.state !== "retry-authorized" ||
-    !current.receipt ||
-    current.cleanupState !== "complete" ||
-    fingerprint(current.receipt) !== receiptFingerprint
-  )
-    return false
-  const unresolvedResources =
-    db
-      .query<{ count: number }, [string, string, string]>(
-        `SELECT COUNT(*) AS count FROM runner_retained_verification_resources
-         WHERE operation_id=? AND phase=? AND check_id=? AND state<>'removed'`,
-      )
-      .get(operationID, phase, checkID)?.count ?? 0
-  if (unresolvedResources !== 0) return false
-  return (
-    db
-      .query(
-        `UPDATE runner_retained_verification_checks
-         SET state=lz_runner_transition('check',state,'completed')
-         WHERE operation_id=? AND phase=? AND check_id=? AND state='retry-authorized'
-           AND receipt=? AND cleanup_state='complete'`,
-      )
-      .run(operationID, phase, checkID, current.receipt).changes === 1
-  )
 }
 
 export function completeRetainedVerificationCheck(
@@ -702,7 +517,6 @@ export function registerRetainedVerificationResources(
   projectDirectory: string,
   input: {
     operationID: string
-    generation: number
     phase: "task" | "combined"
     checkID: string
     resources: Array<{ name: string; realPath: string; device: number; inode: number }>
@@ -764,12 +578,11 @@ export function registerRetainedVerificationResources(
     }
     db.query(
       `INSERT INTO runner_retained_verification_resources
-       (project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,device,inode,state,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+       (project_directory,operation_id,phase,check_id,resource_name,canonical_path,device,inode,state,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       projectDirectory,
       input.operationID,
-      input.generation,
       input.phase,
       input.checkID,
       resource.name,
@@ -850,39 +663,20 @@ export function saveRetainedVerification(db: Database, operation: RetainedVerifi
   ensureRetainedVerificationTables(db)
   const parsed = RetainedVerificationSchema.parse(operation)
   const previous = retainedVerification(db, parsed.id)
-  if (!previous || previous.generation !== parsed.generation)
-    throw new Error("Retained verification generation is no longer current")
+  if (!previous) throw new Error("Retained verification no longer exists")
   validateRetainedLifecycles(previous, parsed)
   const changed = db
     .query(
       `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?
-       WHERE id=? AND generation=?`,
+       WHERE id=?`,
     )
-    .run(parsed.state, JSON.stringify(parsed), parsed.id, parsed.generation).changes
-  if (changed !== 1) throw new Error("Retained verification generation is no longer current")
-}
-
-export function latestRetainedVerificationGeneration(
-  db: Database,
-  projectDirectory: string,
-  planID: string,
-  taskID: string,
-): number {
-  ensureRetainedVerificationTables(db)
-  return (
-    db
-      .query<{ generation: number | null }, [string, string, string]>(
-        `SELECT MAX(generation) AS generation FROM runner_retained_verifications
-         WHERE project_directory=? AND plan_id=? AND task_id=?`,
-      )
-      .get(projectDirectory, planID, taskID)?.generation ?? 0
-  )
+    .run(parsed.state, JSON.stringify(parsed), parsed.id).changes
+  if (changed !== 1) throw new Error("Retained verification no longer exists")
 }
 
 type InspectionOperationRow = {
   id: string
   task_id: string
-  generation: number
   payload: string | null
   payload_too_large: number
 }
@@ -905,16 +699,7 @@ type InspectionResourceRow = {
   last_updated_at: number | null
 }
 
-const retainedStates = [
-  "pending",
-  "task-checks",
-  "combined-checks",
-  "task-accepted",
-  "accepted",
-  "failed",
-  "held",
-  "cancelled",
-] as const
+const retainedStates = ["pending", "task-checks", "accepted", "failed", "cancelled"] as const
 const retainedCleanupStates = ["pending", "complete", "failed"] as const
 const retainedWorkspaceStates = ["reserved", "owned", "uncertain", "removed"] as const
 const resourceStates = ["creating", "active", "uncertain", "removed"] as const
@@ -928,222 +713,6 @@ function tablePresent(db: Database, name: string): boolean {
       )
       .get(name),
   )
-}
-
-function retainedCursorScope(projectDirectory: string, planID: string, taskIDs: string[]) {
-  return fingerprint({ projectDirectory, planID, taskIDs })
-}
-
-const maxRetainedCaptureRows = 20_000
-
-function appendRetainedCaptureRows(
-  hash: ReturnType<typeof createHash>,
-  label: string,
-  rows: Iterable<unknown>,
-  count: { value: number },
-  validate?: (row: unknown) => void,
-): void {
-  hash.update(`${label}\n`)
-  let rowsRead = 0
-  for (const row of rows) {
-    rowsRead++
-    count.value++
-    if (count.value > maxRetainedCaptureRows)
-      throw new Error(
-        "Selected retained-verification history is too large to capture; narrow the task selection and restart without the cursor",
-      )
-    validate?.(row)
-    hash.update(JSON.stringify(row) ?? "undefined").update("\n")
-  }
-  hash.update(`rows:${rowsRead}\n`)
-}
-
-/** Hash only selected retained facts; unrelated runner telemetry is not a page fence. */
-function retainedHistoryCapture(
-  db: Database,
-  projectDirectory: string,
-  planID: string,
-  taskIDs: string[],
-  watermark: number[],
-  tables: { checks: boolean; receipts: boolean; resources: boolean },
-): string {
-  const hash = createHash("sha256")
-  const count = { value: 0 }
-  const currentWatermark = taskIDs.map((taskID) => {
-    const current = db
-      .query<{ generation: number | null }, [string, string, string]>(
-        `SELECT MAX(generation) AS generation FROM runner_retained_verifications
-         WHERE project_directory=? AND plan_id=? AND task_id=?`,
-      )
-      .get(projectDirectory, planID, taskID)
-    return current?.generation ?? 0
-  })
-  hash
-    .update(
-      JSON.stringify({
-        planID,
-        taskIDs,
-        watermark,
-        currentWatermark,
-        tables,
-      }),
-    )
-    .update("\n")
-
-  for (let index = 0; index < taskIDs.length; index++) {
-    const taskID = taskIDs[index]!
-    const generation = watermark[index]!
-    appendRetainedCaptureRows(
-      hash,
-      `operation:${taskID}`,
-      db
-        .query<Record<string, unknown>, [string, string, string, number]>(
-          `SELECT id,task_id,generation,
-             CASE WHEN length(state)<=32 THEN state ELSE NULL END AS state,
-             (length(state)>32) AS state_too_large,
-             CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
-             (length(payload)>65536) AS payload_too_large
-           FROM runner_retained_verifications
-           WHERE project_directory=? AND plan_id=? AND task_id=? AND generation<=?
-           ORDER BY generation`,
-        )
-        .iterate(projectDirectory, planID, taskID, generation),
-      count,
-      (row) => {
-        if (
-          typeof row === "object" &&
-          row !== null &&
-          "state_too_large" in row &&
-          row.state_too_large === 1
-        )
-          throw new Error(
-            "Selected retained-verification history contains an oversized operation state and cannot be captured safely",
-          )
-      },
-    )
-    if (tables.checks)
-      appendRetainedCaptureRows(
-        hash,
-        `checks:${taskID}`,
-        db
-          .query<Record<string, unknown>, [string, string, string, number]>(
-            `SELECT operations.generation,
-               CASE WHEN length(checks.phase)<=16 THEN checks.phase ELSE '' END AS phase,
-               CASE WHEN length(checks.check_id)<=64 THEN checks.check_id ELSE '' END AS check_id,
-               CASE WHEN length(checks.artifact)<=64 THEN checks.artifact ELSE '' END AS artifact,
-               CASE WHEN length(checks.input_fingerprint)<=128 THEN checks.input_fingerprint ELSE '' END AS input_fingerprint,
-               CASE WHEN length(checks.environment_identity)<=4096 THEN checks.environment_identity ELSE '' END AS environment_identity,
-               CASE WHEN length(checks.state)<=32 THEN checks.state ELSE '' END AS state,
-               CASE WHEN checks.receipt IS NULL OR length(checks.receipt)<=100000 THEN checks.receipt ELSE NULL END AS receipt,
-               (checks.receipt IS NOT NULL AND length(checks.receipt)>100000) AS receipt_too_large,
-               CASE WHEN length(checks.cleanup_state)<=32 THEN checks.cleanup_state ELSE '' END AS cleanup_state,
-               checks.created_at
-             FROM runner_retained_verification_checks AS checks
-             JOIN runner_retained_verifications AS operations ON operations.id=checks.operation_id
-             WHERE operations.project_directory=? AND operations.plan_id=?
-               AND operations.task_id=? AND operations.generation<=?
-             ORDER BY operations.generation,checks.created_at DESC,checks.phase,checks.check_id`,
-          )
-          .iterate(projectDirectory, planID, taskID, generation),
-        count,
-      )
-    if (tables.receipts)
-      appendRetainedCaptureRows(
-        hash,
-        `receipts:${taskID}`,
-        db
-          .query<Record<string, unknown>, [string, string, string, number]>(
-            `SELECT operations.generation,
-               CASE WHEN length(receipts.phase)<=16 THEN receipts.phase ELSE '' END AS phase,
-               CASE WHEN length(receipts.check_id)<=64 THEN receipts.check_id ELSE '' END AS check_id,
-               CASE WHEN length(receipts.receipt_path)<=4096 THEN receipts.receipt_path ELSE '' END AS receipt_path,
-               CASE WHEN length(receipts.state)<=32 THEN receipts.state ELSE '' END AS state,
-               CASE WHEN receipts.receipt IS NULL OR length(receipts.receipt)<=100000
-                 THEN receipts.receipt ELSE NULL END AS receipt,
-               (receipts.receipt IS NOT NULL AND length(receipts.receipt)>100000) AS receipt_too_large
-             FROM runner_retained_verification_check_receipts AS receipts
-             JOIN runner_retained_verifications AS operations ON operations.id=receipts.operation_id
-             WHERE operations.project_directory=? AND operations.plan_id=?
-               AND operations.task_id=? AND operations.generation<=?
-             ORDER BY operations.generation,receipts.phase,receipts.check_id,receipts.created_at,receipts.receipt_path`,
-          )
-          .iterate(projectDirectory, planID, taskID, generation),
-        count,
-      )
-    if (tables.resources)
-      appendRetainedCaptureRows(
-        hash,
-        `resources:${taskID}`,
-        db
-          .query<Record<string, unknown>, [string, string, string, number]>(
-            `SELECT operations.generation,
-               CASE WHEN resources.state IN ('creating','active','uncertain','removed')
-                 THEN resources.state ELSE 'unknown' END AS state,
-               resources.updated_at
-             FROM runner_retained_verification_resources AS resources
-             JOIN runner_retained_verifications AS operations
-               ON operations.id=resources.operation_id
-              AND operations.project_directory=resources.project_directory
-             WHERE resources.project_directory=? AND operations.plan_id=?
-               AND operations.task_id=? AND operations.generation<=?
-             ORDER BY operations.generation,state,resources.updated_at`,
-          )
-          .iterate(projectDirectory, planID, taskID, generation),
-        count,
-      )
-  }
-  return hash.digest("hex")
-}
-
-function decodeRetainedCursor(cursor: string) {
-  if (cursor.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(cursor))
-    throw new Error("Invalid retained-verification cursor")
-  let parsed: unknown
-  try {
-    const decoded = Buffer.from(cursor, "base64url")
-    if (decoded.toString("base64url") !== cursor) throw new Error("non-canonical cursor")
-    parsed = JSON.parse(decoded.toString("utf8"))
-  } catch {
-    throw new Error("Invalid retained-verification cursor")
-  }
-  const result = RetainedVerificationCursor.safeParse(parsed)
-  if (!result.success) throw new Error("Invalid retained-verification cursor")
-  const { checksum, ...body } = result.data
-  if (fingerprint(body) !== checksum) throw new Error("Invalid retained-verification cursor")
-  if (
-    new Set(result.data.taskIDs).size !== result.data.taskIDs.length ||
-    result.data.taskIDs.some(
-      (taskID, index) => index > 0 && taskID <= result.data.taskIDs[index - 1]!,
-    ) ||
-    result.data.watermark.length !== result.data.taskIDs.length ||
-    !result.data.taskIDs.includes(result.data.after.taskID)
-  )
-    throw new Error("Invalid retained-verification cursor")
-  return result.data
-}
-
-function encodeRetainedCursor(input: {
-  planID: string
-  projectDirectory: string
-  taskIDs: string[]
-  watermark: number[]
-  after: { taskID: string; generation: number }
-  capture: string
-}) {
-  const body = {
-    version: 2 as const,
-    planID: input.planID,
-    scope: retainedCursorScope(input.projectDirectory, input.planID, input.taskIDs),
-    taskIDs: input.taskIDs,
-    watermark: input.watermark,
-    after: input.after,
-    capture: input.capture,
-  }
-  const cursor = Buffer.from(JSON.stringify({ ...body, checksum: fingerprint(body) })).toString(
-    "base64url",
-  )
-  if (cursor.length > 8192) throw new Error("Retained-verification selection is too large to page")
-  return cursor
 }
 
 function safeTimestamp(value: unknown): number | null {
@@ -1181,16 +750,10 @@ function stateReason(state: RetainedVerificationProjection["state"]): string {
       return "Retained verification is reserved; runtime setup and progress are pending."
     case "task-checks":
       return "Task verification checks are in progress under runtime control."
-    case "combined-checks":
-      return "Combined verification checks are in progress under runtime control."
-    case "task-accepted":
-      return "Task checks and task acceptance passed; combined verification may remain."
     case "accepted":
       return "Retained verification was accepted; resource cleanup is reported separately."
     case "failed":
       return "Retained verification did not pass."
-    case "held":
-      return "Runtime retained a hold; the private hold reason is not included."
     case "cancelled":
       return "Retained verification was cancelled; resource cleanup is reported separately."
     default:
@@ -1214,8 +777,7 @@ function operationPayload(row: InspectionOperationRow, planID: string, projectDi
   return operation.id === row.id &&
     operation.planID === planID &&
     operation.projectDirectory === projectDirectory &&
-    operation.taskID === row.task_id &&
-    operation.generation === row.generation
+    operation.taskID === row.task_id
     ? operation
     : undefined
 }
@@ -1232,18 +794,13 @@ function emptyProjection(
     recordStatus: "unavailable",
     operationID: safeID.success ? safeID.data : null,
     planID,
-    generation: Number.isSafeInteger(row.generation) && row.generation > 0 ? row.generation : null,
     taskID: safeTask.success ? safeTask.data : null,
     taskRevision: null,
     planRevision: null,
-    planVersion: null,
     attemptID: null,
     candidateArtifact: null,
-    combinedArtifact: null,
     state: "unknown",
     reason: stateReason("unknown"),
-    inputFingerprint: null,
-    combinedInputFingerprint: null,
     environmentFingerprint: null,
     timestamps: { createdAt: null, updatedAt: null },
     checksAvailable,
@@ -1251,7 +808,7 @@ function emptyProjection(
     checksTruncated: false,
     cleanup: {
       state: "unknown",
-      workspaceStates: { task: "unknown", combined: "unknown" },
+      workspaceStates: { task: "unknown" },
       resourcesAvailable,
       resourcesByState: emptyResourceCounts(),
       completedAt: null,
@@ -1320,13 +877,8 @@ function operationProjection(
       : null
 
   const checks = checkRows.slice(0, 200).map((check): RetainedCheckProjection => {
-    const phase = check.phase === "task" || check.phase === "combined" ? check.phase : null
-    const expectedArtifact =
-      phase === "task"
-        ? operation.artifact
-        : phase === "combined"
-          ? operation.combinedArtifact
-          : null
+    const phase = check.phase === "task" ? check.phase : null
+    const expectedArtifact = phase === "task" ? operation.artifact : null
     const binding =
       phase === null
         ? "unknown"
@@ -1518,7 +1070,7 @@ function operationProjection(
         truncated: receiptHistoryCount > 100,
         entries: receiptHistoryEntries,
       },
-      evidenceReference: `retained-verification:${operation.id}:${operation.generation}:${phase ?? "unknown"}:${checkID}`,
+      evidenceReference: `retained-verification:${operation.id}:${phase ?? "unknown"}:${checkID}`,
       result: {
         status: resultStatus,
         exitCode,
@@ -1541,18 +1093,13 @@ function operationProjection(
     recordStatus: "recorded",
     operationID: operation.id,
     planID: operation.planID,
-    generation: operation.generation,
     taskID: operation.taskID,
     taskRevision: operation.taskRevision,
     planRevision: operation.planRevision,
-    planVersion: operation.planVersion,
     attemptID: operation.attemptID,
     candidateArtifact: operation.artifact,
-    combinedArtifact: operation.combinedArtifact,
     state,
     reason: stateReason(state),
-    inputFingerprint: safeHash(operation.inputFingerprint),
-    combinedInputFingerprint: safeHash(operation.combinedInputFingerprint),
     environmentFingerprint:
       typeof operation.environmentIdentity === "string" &&
       operation.environmentIdentity.length <= 4096
@@ -1572,10 +1119,6 @@ function operationProjection(
           operation.taskWorkspaceState === null
             ? null
             : knownState(operation.taskWorkspaceState, retainedWorkspaceStates),
-        combined:
-          operation.combinedWorkspaceState === null
-            ? null
-            : knownState(operation.combinedWorkspaceState, retainedWorkspaceStates),
       },
       resourcesAvailable: tables.resources,
       resourcesByState,
@@ -1585,20 +1128,16 @@ function operationProjection(
 }
 
 /**
- * Read the latest retained-verification generation per selected task and page
- * older generations. This path never creates optional tables or reads receipt,
- * command, workspace, resource-path, or environment contents into its output.
+ * Read the latest retained-verification call per selected task. This path never
+ * creates optional tables or reads receipt, command, workspace, resource-path,
+ * or environment contents into its output.
  */
 export function retainedVerificationsForInspection(
   db: Database,
   projectDirectory: string,
   planID: string,
-  requestedTaskIDs: string[] | undefined,
-  limit: number,
-  cursor?: string,
+  requestedTaskIDs?: string[],
 ): RetainedVerificationInspection {
-  if (!Number.isInteger(limit) || limit < 1 || limit > 20)
-    throw new Error("Use a retained-verification page limit from 1 to 20")
   const plan = db
     .query<{ id: string }, [string, string]>(
       "SELECT id FROM runner_plans WHERE id=? AND project_directory=?",
@@ -1611,10 +1150,7 @@ export function retainedVerificationsForInspection(
     )
     .all(planID)
     .map((row) => row.task_id)
-  const decodedCursor = cursor === undefined ? undefined : decodeRetainedCursor(cursor)
-  if (decodedCursor && decodedCursor.planID !== planID)
-    throw new Error("Retained-verification cursor does not match this plan")
-  const selected = requestedTaskIDs ?? decodedCursor?.taskIDs ?? planTaskIDs
+  const selected = requestedTaskIDs ?? planTaskIDs
   if (
     selected.length < 1 ||
     selected.length > 100 ||
@@ -1623,20 +1159,6 @@ export function retainedVerificationsForInspection(
   )
     throw new Error("Retained-verification task selection must belong to this plan")
   const taskIDs = [...selected].sort()
-  if (decodedCursor) {
-    if (
-      decodedCursor.scope !==
-        retainedCursorScope(projectDirectory, planID, decodedCursor.taskIDs) ||
-      (requestedTaskIDs !== undefined &&
-        (taskIDs.length !== decodedCursor.taskIDs.length ||
-          taskIDs.some((taskID, index) => taskID !== decodedCursor.taskIDs[index])))
-    )
-      throw new Error("Retained-verification cursor does not match this project and task selection")
-    const afterIndex = decodedCursor.taskIDs.indexOf(decodedCursor.after.taskID)
-    if (afterIndex < 0 || decodedCursor.after.generation >= decodedCursor.watermark[afterIndex]!)
-      throw new Error("Invalid retained-verification cursor position")
-  }
-
   const operationsAvailable = tablePresent(db, "runner_retained_verifications")
   const tables = {
     checks: tablePresent(db, "runner_retained_verification_checks"),
@@ -1650,118 +1172,24 @@ export function retainedVerificationsForInspection(
     resources: tables.resources,
   }
   if (!operationsAvailable)
-    return {
-      mode: "retained-verifications",
-      status: "unavailable",
-      planID,
-      taskIDs,
-      capturedGenerationWatermark: null,
-      availability,
-      latest: [],
-      history: {
-        limit,
-        returned: 0,
-        hasMore: false,
-        nextCursor: null,
-        concurrentChanges: "selected-retained-history-changes-invalidate-cursor",
-        records: [],
-      },
-    }
-
-  const watermark = decodedCursor
-    ? decodedCursor.watermark
-    : taskIDs.map((taskID) => {
-        const latest = db
-          .query<{ generation: number | null }, [string, string, string]>(
-            `SELECT MAX(generation) AS generation FROM runner_retained_verifications
-             WHERE project_directory=? AND plan_id=? AND task_id=?`,
-          )
-          .get(projectDirectory, planID, taskID)
-        return latest?.generation ?? 0
-      })
-  const latestRows = taskIDs.flatMap((taskID, index) => {
-    const generation = watermark[index]!
-    if (!generation) return []
+    return { status: "unavailable", planID, taskIDs, availability, latest: [] }
+  const latest = taskIDs.flatMap((taskID) => {
     const row = db
-      .query<InspectionOperationRow, [string, string, string, number]>(
-        `SELECT id,task_id,generation,
+      .query<InspectionOperationRow, [string, string, string]>(
+        `SELECT id,task_id,
            CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
            (length(payload)>65536) AS payload_too_large
          FROM runner_retained_verifications
-         WHERE project_directory=? AND plan_id=? AND task_id=? AND generation=? LIMIT 1`,
+         WHERE project_directory=? AND plan_id=? AND task_id=? ORDER BY rowid DESC LIMIT 1`,
       )
-      .get(projectDirectory, planID, taskID, generation)
-    return row ? [row] : []
+      .get(projectDirectory, planID, taskID)
+    return row ? [operationProjection(db, row, planID, projectDirectory, tables)] : []
   })
-
-  const after = decodedCursor?.after
-  const historyCandidates = taskIDs.flatMap((taskID, index) => {
-    const generationWatermark = watermark[index]!
-    if (!generationWatermark || (after && taskID < after.taskID)) return []
-    const upperBound =
-      after?.taskID === taskID
-        ? Math.min(generationWatermark, after.generation)
-        : generationWatermark
-    if (upperBound <= 1) return []
-    return db
-      .query<InspectionOperationRow, [string, string, string, number, number]>(
-        `SELECT id,task_id,generation,
-           CASE WHEN length(payload)<=65536 THEN payload ELSE NULL END AS payload,
-           (length(payload)>65536) AS payload_too_large
-         FROM runner_retained_verifications
-         WHERE project_directory=? AND plan_id=? AND task_id=? AND generation<?
-         ORDER BY generation DESC LIMIT ?`,
-      )
-      .all(projectDirectory, planID, taskID, upperBound, limit + 1)
-  })
-  historyCandidates.sort(
-    (left, right) =>
-      (left.task_id < right.task_id ? -1 : left.task_id > right.task_id ? 1 : 0) ||
-      right.generation - left.generation,
-  )
-  const historyHasMore = historyCandidates.length > limit
-  const historyRows = historyCandidates.slice(0, limit)
-  const capture =
-    decodedCursor || historyHasMore
-      ? retainedHistoryCapture(db, projectDirectory, planID, taskIDs, watermark, tables)
-      : null
-  if (decodedCursor && capture !== decodedCursor.capture)
-    throw new Error(
-      "Selected retained-verification history changed since this capture; restart without the cursor",
-    )
-  const project = (row: InspectionOperationRow) =>
-    operationProjection(db, row, planID, projectDirectory, tables)
-  const records = historyRows.map(project)
-  const last = historyRows.at(-1)
-  const nextCursor =
-    historyHasMore && last
-      ? encodeRetainedCursor({
-          planID,
-          projectDirectory,
-          taskIDs,
-          watermark,
-          after: { taskID: last.task_id, generation: last.generation },
-          capture: capture!,
-        })
-      : null
   return {
-    mode: "retained-verifications",
     status: tables.checks && tables.receipts && tables.resources ? "available" : "partial",
     planID,
     taskIDs,
-    capturedGenerationWatermark: taskIDs.map((taskID, index) => ({
-      taskID,
-      generation: watermark[index]!,
-    })),
     availability,
-    latest: latestRows.map(project),
-    history: {
-      limit,
-      returned: records.length,
-      hasMore: historyHasMore,
-      nextCursor,
-      concurrentChanges: "selected-retained-history-changes-invalidate-cursor",
-      records,
-    },
+    latest,
   }
 }

@@ -28,7 +28,7 @@ test("notifications carry a concise action and identity, not full check logs", (
 })
 
 test("unresolved blockers request human input when a decision is needed", () => {
-  for (const status of ["queue-review", "blocked", "retained-verification-held"]) {
+  for (const status of ["queue-review", "blocked", "retained-verification-failed"]) {
     const text = outcomeText(JSON.stringify({ status, planID: "plan" }))
     expect(text).toContain("use the native question tool to state the blocker and next action")
     expect(text).toContain("ask for the human input needed")

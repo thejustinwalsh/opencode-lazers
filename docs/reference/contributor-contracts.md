@@ -69,21 +69,9 @@ The runtime records check commands, outcomes, timestamps, and observed environme
 
 Architect decides whether later changes need another check. Metadata drift alone does not revoke a passing result. Cleanup failures stay visible and retryable; they do not erase accepted work or its evidence.
 
-Treat legacy `timeoutMs` as historical metadata, not an execution cutoff. An exact owner command can extend a settled check. Then resume the same attempt or candidate. Retained verification can continue only when its operation, generation, check, command, artifact, receipt, owner, and settled resources still match. A timing change does not start work or grant acceptance.
+Treat legacy `timeoutMs` as historical metadata, not an execution cutoff. A timed-out or interrupted check is a failed check: fix the cause, then re-run it. `resume` without a task re-runs a blocked plan's combined check on the current candidate; no earlier receipt, fingerprint or deadline has to match.
 
-For a conclusively settled, non-timeout subprocess interruption, the current owner
-can use `continue-retained-check` to continue one exact retained combined check
-under unchanged timing limits. The operation must remain held: this does not
-revive an intentionally cancelled operation or plan. Admission binds the current
-owner and plan/specification, accepted task, attempt, candidate, phase, check,
-command, environment, prior receipt and settled resources. It preserves the
-immutable interrupted receipt and prior passing evidence, and starts only the
-named isolated check.
-
-This control does not prompt or restart the implementation worker, certify that
-worker idle, settle its sealed source, or authorize original source/resource
-cleanup. Inspect the retained-verification projection for the exact supported
-next step; an absent process entry alone does not establish eligibility.
+`verify-retained` is one call: it verifies a given commit in a temporary worktree with the task's declared checks and records pass or fail. It does not prompt or restart the implementation worker, certify that worker idle, settle its source, or authorize cleanup. It binds the project, plan revision, task revision, latest attempt and exact commit, not a plan version, generation or authorization. A failure notifies the Architect, who runs the call again. Do not add a held state, a resume or continue command, or a per-operation binding; a retained call that cannot finish fails.
 
 Use the shared [runtime state machines](../../design/runtime-state-machines.md) for task, plan, attempt, and verification lifecycles.
 

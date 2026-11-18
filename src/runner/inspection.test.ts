@@ -96,22 +96,19 @@ function retainedOperation(
   projectDirectory: string,
   planID: string,
   taskID: string,
-  generation: number,
+  sequence: number,
   state: RetainedVerification["state"],
   overrides: Partial<RetainedVerification> = {},
 ): RetainedVerification {
-  const now = 1_700_000_000_000 + generation
+  const now = 1_700_000_000_000 + sequence
   return {
     schemaVersion: 1,
     id: crypto.randomUUID(),
-    generation,
     projectID: "project",
     projectDirectory,
     planID,
     planRevision: 1,
-    planVersion: 1,
     owner: "owner",
-    ownerEpoch: 0,
     taskID,
     taskRevision: 1,
     attemptID: crypto.randomUUID(),
@@ -119,17 +116,12 @@ function retainedOperation(
     originalMessageID: "msg_private_canary",
     originalWorkspace: "/private/retained-verification-workspace-canary",
     artifact: "a".repeat(40),
-    combinedArtifact: null,
-    combinedInputFingerprint: null,
     taskWorkspace: null,
     taskWorkspaceState: null,
-    combinedWorkspace: null,
-    combinedWorkspaceState: null,
-    inputFingerprint: fingerprint("opaque-input"),
     environmentIdentity: JSON.stringify({ PATH: "/private/ENVIRONMENT_CANARY" }),
     reason: "PRIVATE_REASON_CANARY",
     state,
-    holdReason: "PRIVATE_HOLD_REASON_CANARY",
+    failureReason: "PRIVATE_HOLD_REASON_CANARY",
     cleanupState: "complete",
     createdAt: now,
     updatedAt: now + 100,
@@ -343,11 +335,8 @@ test("journal is an explicitly selected bounded view and leaves compact/full inp
   const planID = crypto.randomUUID()
   const parsed = InspectPlanInput.parse({ planID, view: "journal" })
   expect(parsed).toEqual({ planID, view: "journal", limit: 50 })
-  expect(InspectPlanInput.parse({ planID, view: "retained-verifications" })).toEqual({
-    planID,
-    view: "retained-verifications",
-    limit: 10,
-  })
+  // The paged retained-history view went with retained generations.
+  expect(() => InspectPlanInput.parse({ planID, view: "retained-verifications" })).toThrow()
   expect(InspectPlanInput.parse({ planID, full: true })).toEqual({ planID, full: true })
   expect(InspectPlanInput.parse({ planID })).toEqual({ planID, full: false })
   expect(() => InspectPlanInput.parse({ view: "journal" })).toThrow()
@@ -374,7 +363,7 @@ test("journal is an explicitly selected bounded view and leaves compact/full inp
   expect(calls).toEqual([[planID, 50, undefined]])
 })
 
-test("selected full inspection projects latest retained generations and bounded history without private check data", () => {
+test("selected full inspection projects the latest retained call per task without private check data", () => {
   const f = fixture()
   const fourth = f.repository.insert({ ...f.first, id: crypto.randomUUID() })
   const plan = f.store.submit(
@@ -393,7 +382,7 @@ test("selected full inspection projects latest retained generations and bounded 
     "owner",
   )
   f.store.atomic(ensureRetainedVerificationTables)
-  const olderFailure = f.store.atomic((db) =>
+  f.store.atomic((db) =>
     createRetainedVerification(
       db,
       f.projectDirectory,
@@ -411,12 +400,12 @@ test("selected full inspection projects latest retained generations and bounded 
       }),
     ),
   )
-  const held = retainedOperation(f.projectDirectory, plan.planID, f.second.id, 1, "held")
+  const queued = retainedOperation(f.projectDirectory, plan.planID, f.second.id, 1, "pending")
   const failed = retainedOperation(f.projectDirectory, plan.planID, f.prerequisite.id, 1, "failed")
   const cancelled = retainedOperation(f.projectDirectory, plan.planID, fourth.id, 1, "cancelled")
-  for (const operation of [held, failed, cancelled])
+  for (const operation of [queued, failed, cancelled])
     f.store.atomic((db) => createRetainedVerification(db, f.projectDirectory, operation))
-  insertCheck(f, olderFailure, {
+  insertCheck(f, failed, {
     exitCode: 1,
     timedOut: true,
     stopCause: "hard-backstop",
@@ -441,13 +430,12 @@ test("selected full inspection projects latest retained generations and bounded 
   f.store.atomic((db) => {
     db.query(
       `INSERT INTO runner_retained_verification_resources(
-        project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,
+        project_directory,operation_id,phase,check_id,resource_name,canonical_path,
         device,inode,state,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,'uncertain',?,?)`,
+      ) VALUES(?,?,?,?,?,?,?,?,'uncertain',?,?)`,
     ).run(
       f.projectDirectory,
       accepted.id,
-      accepted.generation,
       "task",
       "tests",
       "PRIVATE_RESOURCE_NAME_CANARY",
@@ -463,7 +451,6 @@ test("selected full inspection projects latest retained generations and bounded 
     retainedVerifications: {
       latest: Array<{
         taskID: string
-        generation: number | null
         attemptID: string | null
         candidateArtifact: string | null
         state: string
@@ -485,39 +472,27 @@ test("selected full inspection projects latest retained generations and bounded 
           resourcesByState: { uncertain: number }
         }
       }>
-      history: {
-        records: Array<{ operationID: string | null; generation: number | null; state: string }>
-      }
     }
   }
   const latest = detail.retainedVerifications.latest
   expect(latest.map((operation) => operation.state).sort()).toEqual(
-    ["accepted", "cancelled", "failed", "held"].sort(),
+    ["accepted", "cancelled", "failed", "pending"].sort(),
   )
   expect(latest.find((operation) => operation.taskID === f.first.id)).toMatchObject({
-    generation: 2,
     attemptID: accepted.attemptID,
     candidateArtifact: accepted.artifact,
     state: "accepted",
     cleanup: {
       state: "failed",
-      workspaceStates: { task: "uncertain", combined: null },
+      workspaceStates: { task: "uncertain" },
       completedAt: null,
       resourcesByState: { uncertain: 1 },
     },
   })
   expect(latest.find((operation) => operation.taskID === f.second.id)?.checks).toEqual([])
-  expect(latest.find((operation) => operation.taskID === f.second.id)?.nextSteps).toContainEqual(
-    expect.objectContaining({
-      action: "cancel-retained-verification",
-      operationID: held.id,
-      generation: 1,
-    }),
-  )
-  const historical = detail.retainedVerifications.history.records.find(
-    (operation) => operation.operationID === olderFailure.id,
-  )
-  expect(historical).toMatchObject({ generation: 1, state: "failed" })
+  expect(latest.find((operation) => operation.taskID === f.second.id)?.nextSteps).toEqual([
+    expect.objectContaining({ action: "wait", owner: "runtime", operationID: queued.id }),
+  ])
   const serialized = JSON.stringify(detail.retainedVerifications)
   for (const canary of [
     "PRIVATE_REASON_CANARY",
@@ -534,9 +509,10 @@ test("selected full inspection projects latest retained generations and bounded 
     "retained-verification-workspace-canary",
   ])
     expect(serialized).not.toContain(canary)
-  expect(detail.retainedVerifications.history.records).toContainEqual(
+  expect(detail.retainedVerifications).not.toHaveProperty("history")
+  expect(latest.find((operation) => operation.taskID === f.prerequisite.id)).toEqual(
     expect.objectContaining({
-      operationID: olderFailure.id,
+      operationID: failed.id,
       checks: [
         expect.objectContaining({
           phase: "task",
@@ -569,80 +545,24 @@ test("selected full inspection projects latest retained generations and bounded 
   )
 })
 
-test("direct retained-history cursor capture pages without writing lifecycle or evidence facts", () => {
-  const f = fixture()
-  const plan = f.store.submit(
-    {
-      ...f.input,
-      requestID: "retained-read-only-pages",
-      nodes: [{ taskID: f.first.id, revision: 1 as const }],
-      dependencies: [],
-      integrationOrder: [f.first.id],
-    },
-    "owner",
-  )
-  f.store.atomic(ensureRetainedVerificationTables)
-  for (const generation of [1, 2, 3])
-    f.store.atomic((db) =>
-      createRetainedVerification(
-        db,
-        f.projectDirectory,
-        retainedOperation(f.projectDirectory, plan.planID, f.first.id, generation, "failed"),
-      ),
-    )
-  const facts = () =>
-    f.store.atomic((db) => ({
-      changes: db.query<{ changes: number }, []>("SELECT total_changes() AS changes").get()!
-        .changes,
-      operations: db.query("SELECT * FROM runner_retained_verifications").all(),
-      checks: db.query("SELECT * FROM runner_retained_verification_checks").all(),
-      resources: db.query("SELECT * FROM runner_retained_verification_resources").all(),
-      evidence: db.query("SELECT * FROM runner_retained_verification_evidence").all(),
-    }))
-  const before = facts()
-  const first = inspectPlan(f.store, {
-    planID: plan.planID,
-    view: "retained-verifications",
-    limit: 1,
-  }) as {
-    history: { records: Array<{ generation: number }>; nextCursor: string | null }
-  }
-  const second = inspectPlan(f.store, {
-    planID: plan.planID,
-    view: "retained-verifications",
-    limit: 1,
-    cursor: first.history.nextCursor!,
-  }) as { history: { records: Array<{ generation: number }> } }
-
-  expect(first.history.records).toMatchObject([{ generation: 2 }])
-  expect(second.history.records).toMatchObject([{ generation: 1 }])
-  expect(JSON.stringify(first)).not.toContain("PRIVATE_REASON_CANARY")
-  expect(JSON.stringify(first)).not.toContain("retained-verification-workspace-canary")
-  expect(facts()).toEqual(before)
-})
-
 test("in-progress retained checks keep progress runtime-owned", () => {
   const f = fixture()
   const plan = f.store.submit(f.input, "owner")
   const operation = retainedOperation(f.projectDirectory, plan.planID, f.first.id, 1, "task-checks")
   f.store.atomic((db) => createRetainedVerification(db, f.projectDirectory, operation))
-  const projection = inspectPlan(f.store, {
-    planID: plan.planID,
-    view: "retained-verifications",
-    limit: 10,
-  }) as { latest: Array<{ nextSteps: Array<Record<string, unknown>> }> }
-  expect(projection.latest[0]!.nextSteps.map((step) => step.action)).toEqual([
-    "cancel-retained-verification",
-    "wait",
-  ])
-  expect(projection.latest[0]!.nextSteps[1]).toMatchObject({
+  const projection = (
+    inspectPlan(f.store, { planID: plan.planID, full: true }) as {
+      retainedVerifications: { latest: Array<{ nextSteps: Array<Record<string, unknown>> }> }
+    }
+  ).retainedVerifications
+  expect(projection.latest[0]!.nextSteps.map((step) => step.action)).toEqual(["wait"])
+  expect(projection.latest[0]!.nextSteps[0]).toMatchObject({
     owner: "runtime",
     operationID: operation.id,
-    generation: 1,
   })
 })
 
-test("terminal operation hints require a fresh retained-verification generation", () => {
+test("terminal operation hints offer a new retained verification, never a retry", () => {
   const f = fixture()
   const plan = f.store.submit(f.input, "owner")
   const operation = retainedOperation(f.projectDirectory, plan.planID, f.first.id, 1, "accepted", {
@@ -655,23 +575,22 @@ test("terminal operation hints require a fresh retained-verification generation"
       "UPDATE runner_nodes SET state='accepted',artifact=? WHERE plan_id=? AND task_id=?",
     ).run(operation.artifact, plan.planID, f.first.id)
   })
-  const projection = inspectPlan(f.store, {
-    planID: plan.planID,
-    view: "retained-verifications",
-    limit: 10,
-  }) as {
-    latest: Array<{
-      state: string
-      cleanup: { state: string }
-      nextSteps: Array<Record<string, unknown>>
-    }>
-  }
+  const projection = (
+    inspectPlan(f.store, { planID: plan.planID, full: true }) as {
+      retainedVerifications: {
+        latest: Array<{
+          state: string
+          cleanup: { state: string }
+          nextSteps: Array<Record<string, unknown>>
+        }>
+      }
+    }
+  ).retainedVerifications
   expect(projection.latest[0]).toMatchObject({ state: "accepted", cleanup: { state: "failed" } })
   expect(projection.latest[0]!.nextSteps).toContainEqual(
     expect.objectContaining({
       action: "verify-retained",
-      basedOn: { operationID: operation.id, generation: 1 },
-      generation: "new",
+      basedOn: { operationID: operation.id },
       taskID: f.first.id,
       taskRevision: 1,
       attemptID: operation.attemptID,

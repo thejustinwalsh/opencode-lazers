@@ -19,25 +19,17 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { checkResourcesSettled, git } from "./artifacts.ts"
+import { git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import { checkSucceeded } from "./checks.ts"
 import {
   verificationActivitiesForDatabase,
   forgetVerificationActivity,
-  startVerificationActivity,
-  verificationActivityKey,
 } from "./verification-activities.ts"
-import { fingerprint } from "../identity.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import type { TaskRuntimeOptions } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
-import { inspectPlan } from "./inspection.ts"
 import { ProbeRepository } from "../verification/probe/store.ts"
-import { ResourceRepository } from "../verification/resources/store.ts"
-import { filesystemProbeLifecycle } from "../verification/resources/lifecycle.ts"
-import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
 import { RetainedVerificationSchema } from "./retained-verification/schema.ts"
 import {
   createRetainedCheckContext,
@@ -46,10 +38,8 @@ import {
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
 import {
   registerRetainedVerificationResources,
-  retainedVerification,
   retainedVerificationChecks,
   saveRetainedVerification,
-  settleRetainedVerificationResources,
   updateRetainedVerificationResourceIdentity,
 } from "./retained-verification/store.ts"
 import { retainedProcedurePlan } from "./retained-verification/procedure.ts"
@@ -320,7 +310,8 @@ function fixture(
             (typeof options.combinedCheckCommand === "function"
               ? options.combinedCheckCommand({ root, state })
               : options.combinedCheckCommand) ??
-            "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
+            // Retained verification runs no combined check; the ordinary one accepts the plan.
+            "true",
           timeoutMs: 10_000,
           ...(options.combinedCheckInactivityTimeoutMs === undefined
             ? {}
@@ -613,267 +604,6 @@ async function failedCandidateFixture(options: Parameters<typeof fixture>[0] = {
   }
 }
 
-async function reopenFailedCandidateFixture(
-  f: Awaited<ReturnType<typeof failedCandidateFixture>>,
-  options: Pick<TaskRuntimeOptions, "beforeRetainedCheckBegin"> = {},
-) {
-  await f.runtime.stop()
-  f.store.atomic((db) =>
-    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
-  )
-  f.store.repository.close()
-  const repository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
-  const store = new RunnerStore(repository)
-  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
-    requestTick: () => Promise.resolve(),
-    ...options,
-  })
-  cleanups.push(async () => {
-    await runtime.stop()
-    repository.close()
-  })
-  return {
-    ...f,
-    store,
-    runtime,
-    control: await registeredPlanCommand(runtime),
-  }
-}
-
-async function heldInterruptedCombinedFixture(
-  interruptedCheckID: string,
-  options: {
-    beforeRetainedCheckBegin?: TaskRuntimeOptions["beforeRetainedCheckBegin"]
-  } = {},
-) {
-  let f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckCommand: "true",
-    combinedCheckCommand: "true",
-    gatedVerificationTest: true,
-    candidateContentsCheck: false,
-    additionalCombinedChecks: [
-      { id: interruptedCheckID, command: "bun test src/runner/retained-check.test.ts" },
-    ],
-    ...(options.beforeRetainedCheckBegin === undefined
-      ? {}
-      : { beforeRetainedCheckBegin: options.beforeRetainedCheckBegin }),
-  })
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, `reserve-interrupted-retained-combined-check-${interruptedCheckID}`),
-  )
-  const operationID = String(requested.operationID)
-  await f.runtime.tick()
-  const originalContext = await waitForRetainedCheckStartFor(
-    f,
-    operationID,
-    "combined",
-    interruptedCheckID,
-    10_000,
-  )
-  const activeCheck = await waitForRetainedCheckActivity(f, operationID)
-  activeCheck.controller.abort()
-  await waitForRetainedOperationState(
-    f,
-    operationID,
-    ["held"],
-    "settled retained combined-check interruption",
-  )
-  await f.runtime.stop()
-  const interrupted = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (row) => row.checkID === interruptedCheckID,
-    ),
-  )
-  if (!interrupted?.receipt) throw new Error("Interrupted combined check has no durable receipt")
-  const originalReceipt = JSON.parse(interrupted.receipt) as CheckReceipt
-  f = await reopenFailedCandidateFixture(f, {
-    ...(options.beforeRetainedCheckBegin === undefined
-      ? {}
-      : { beforeRetainedCheckBegin: options.beforeRetainedCheckBegin }),
-  })
-  await f.runtime.tick()
-  const operation = f.store.atomic((db) => retainedVerification(db, operationID))
-  if (operation?.state !== "held")
-    throw new Error("Reopened interrupted combined check did not recover to a held operation")
-  return { ...f, operationID, originalContext, interrupted, originalReceipt, operation }
-}
-
-function retainedTimingContinuationInput(
-  f: Awaited<ReturnType<typeof failedCandidateFixture>>,
-  operation: NonNullable<ReturnType<typeof retainedVerification>>,
-  phase: "task" | "combined",
-  requestID: string,
-  timeouts = { inactivityTimeoutMs: 10_000, hardTimeoutMs: 30_000 },
-) {
-  const plan = f.store.plan(f.planID)
-  const check = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operation.id, phase).find(
-      (candidate) => candidate.state === "completed",
-    ),
-  )
-  if (!plan || !check) throw new Error("Retained continuation requires a held, recorded check")
-  return {
-    requestID,
-    planID: f.planID,
-    expectedVersion: plan.version,
-    action: "extend-verification-deadline" as const,
-    projectID: "project",
-    planRevision: plan.revision,
-    taskID: operation.taskID,
-    taskRevision: operation.taskRevision,
-    attemptID: operation.attemptID,
-    verificationPhase: phase,
-    checkID: check.checkID,
-    artifact: check.artifact,
-    retainedVerificationID: operation.id,
-    retainedGeneration: operation.generation,
-    ...timeouts,
-    reason: "Continue this exact settled retained timeout without changing its candidate",
-  }
-}
-
-function retainedInterruptedCheckContinuationInput(
-  f: Awaited<ReturnType<typeof failedCandidateFixture>>,
-  operation: NonNullable<ReturnType<typeof retainedVerification>>,
-  checkID: string,
-  requestID: string,
-) {
-  const plan = f.store.plan(f.planID)
-  if (!plan || !operation.combinedArtifact)
-    throw new Error("Interrupted retained-check continuation requires a combined candidate")
-  return {
-    requestID,
-    planID: f.planID,
-    expectedVersion: plan.version,
-    action: "continue-retained-check" as const,
-    projectID: "project",
-    planRevision: plan.revision,
-    taskID: operation.taskID,
-    taskRevision: operation.taskRevision,
-    attemptID: operation.attemptID,
-    retainedVerificationID: operation.id,
-    retainedGeneration: operation.generation,
-    verificationPhase: "combined" as const,
-    checkID,
-    artifact: operation.combinedArtifact,
-    reason: "Continue this exact conclusively settled interrupted combined check",
-  }
-}
-
-function legacyTimeoutAuthorization(
-  f: Awaited<ReturnType<typeof failedCandidateFixture>>,
-  operationID: string,
-  phase: "task" | "combined",
-  checkID: string,
-): Record<string, unknown> {
-  const current = f.store.latestTransition<Record<string, unknown>>(
-    f.planID,
-    f.task.id,
-    "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
-  )
-  if (!current) throw new Error("Retained timeout retry authorization is missing")
-  const legacyFields = [
-    "requestID",
-    "owner",
-    "ownerEpoch",
-    "priorOwner",
-    "priorOwnerEpoch",
-    "planRevision",
-    "operationID",
-    "generation",
-    "taskID",
-    "taskRevision",
-    "attemptID",
-    "phase",
-    "checkID",
-    "candidateArtifact",
-    "commandFingerprint",
-    "amendmentID",
-    "priorReceipt",
-    "priorReceiptFingerprint",
-    "priorCheckFingerprint",
-    "priorCheck",
-    "priorReceiptPath",
-    "reason",
-  ]
-  const legacy = Object.fromEntries(legacyFields.map((field) => [field, current[field]]))
-  const resources = f.store.atomic((db) =>
-    db
-      .query<
-        { resource_name: string; canonical_path: string; state: string },
-        [string, string, string]
-      >(
-        `SELECT resource_name,canonical_path,state FROM runner_retained_verification_resources
-         WHERE operation_id=? AND phase=? AND check_id=? ORDER BY resource_name`,
-      )
-      .all(operationID, phase, checkID),
-  )
-  if (!resources.length) throw new Error("Retained timeout retry resources are missing")
-  return { ...legacy, priorResources: resources }
-}
-
-function replaceLatestRetainedRetryAuthorization(
-  f: Awaited<ReturnType<typeof failedCandidateFixture>>,
-  authorization: Record<string, unknown>,
-): void {
-  const changed = f.store.atomic(
-    (db) =>
-      db
-        .query(
-          `UPDATE runner_transitions SET payload=? WHERE id=(
-             SELECT id FROM runner_transitions
-             WHERE plan_id=? AND task_id=? AND event='RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED'
-             ORDER BY id DESC LIMIT 1
-           )`,
-        )
-        .run(JSON.stringify(authorization), f.planID, f.task.id).changes,
-  )
-  if (changed !== 1) throw new Error("Could not update the persisted retained retry authorization")
-}
-
-async function waitForRetainedCheckStartFor(
-  f: ReturnType<typeof fixture>,
-  operationID: string,
-  phase: "task" | "combined",
-  checkID: string,
-  timeoutMs = 60_000,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    await f.runtime.tick()
-    const parentActivities = verificationActivitiesForDatabase(f.store.repository.path).filter(
-      (activity) =>
-        activity.metadata.kind === "retained-advance" &&
-        activity.metadata.operationID === operationID &&
-        activity.state === "running",
-    )
-    await Promise.all(parentActivities.map((activity) => activity.settled))
-    const row = f.store.atomic((db) =>
-      db
-        .query<{ context_path: string }, [string, string, string]>(
-          `SELECT context_path FROM runner_retained_verification_checks
-           WHERE operation_id=? AND phase=? AND check_id=? AND state='intended'`,
-        )
-        .get(operationID, phase, checkID),
-    )
-    if (row && existsSync(join(row.context_path, "home", "started"))) return row.context_path
-    if (!parentActivities.length) await new Promise<void>((resolve) => setImmediate(resolve))
-  }
-  const current = f.store.atomic((db) => retainedVerification(db, operationID))
-  const checks = f.store
-    .atomic((db) => retainedVerificationChecks(db, operationID))
-    .map((row) => ({
-      phase: row.phase,
-      id: row.checkID,
-      state: row.state,
-      cleanup: row.cleanupState,
-    }))
-  throw new Error(
-    `Retained ${phase}:${checkID} start was not observed: ${current?.state}:${current?.holdReason}; ${JSON.stringify(checks)}`,
-  )
-}
-
 function gatedRetainedCheckScript(): string {
   return [
     'import { appendFileSync, existsSync, mkdirSync } from "node:fs"',
@@ -1069,17 +799,14 @@ async function waitForRetainedTaskOutcome(
     const operationState = snapshot.operation?.state
     const operationID = snapshot.operation?.id
     const retainedAcceptance = snapshot.transitions.some((transition) => {
-      if (transition.event !== "RETAINED_TASK_CANDIDATE_ACCEPTED") return false
+      if (transition.event !== "RETAINED_CANDIDATE_ACCEPTED") return false
       try {
         return JSON.parse(transition.payload).operationID === operationID
       } catch {
         return false
       }
     })
-    if (
-      retainedAcceptance ||
-      ["accepted", "failed", "cancelled", "held"].includes(String(operationState))
-    )
+    if (retainedAcceptance || ["accepted", "failed", "cancelled"].includes(String(operationState)))
       return snapshot
     if (active.length === 0) await new Promise<void>((resolve) => setImmediate(resolve))
   }
@@ -1258,12 +985,6 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
-function gatedTimeoutRetryCommand(state: string): string {
-  const gate = shellQuote(join(state, "allow-timeout-retry"))
-  const starts = shellQuote(join(state, "timeout-retry-starts"))
-  return `printf 'retry\\n' >> ${starts}; if [ -f ${gate} ]; then exit 0; else sleep 30; fi`
-}
-
 function retainedVerifyCommand(f: Awaited<ReturnType<typeof failedFixture>>, requestID: string) {
   const plan = f.store.plan(f.planID)!
   return {
@@ -1304,12 +1025,7 @@ test("registered verify-retained checks a blocked verifying candidate without se
   const requested = await f.control.execute(request)
   expect(requested.status).toBe("retained-verification-requested")
   const operationID = String(requested.operationID)
-  await waitForRetainedOperationState(
-    f,
-    operationID,
-    ["accepted"],
-    "separately gated combined acceptance",
-  )
+  await waitForRetainedOperationState(f, operationID, ["accepted"], "retained task acceptance")
 
   const operationRow = f.store.atomic((db) =>
     db
@@ -1356,13 +1072,10 @@ test("registered verify-retained checks a blocked verifying candidate without se
       )
       .all(operationID),
   )
-  expect(checks.map((row) => row.phase)).toEqual(["combined", "task"])
-  if (typeof requested.combinedArtifact !== "string")
-    throw new Error(
-      "Source candidate verification did not produce its separately bound combined artifact",
-    )
+  expect(checks.map((row) => row.phase)).toEqual(["task"])
+  expect(requested).not.toHaveProperty("combinedArtifact")
   for (const row of checks) {
-    expect(row.artifact).toBe(row.phase === "task" ? f.artifact : requested.combinedArtifact)
+    expect(row.artifact).toBe(f.artifact)
     expect(row.state).toBe("completed")
     const receipt = JSON.parse(row.receipt!) as CheckReceipt
     expect(receipt.command).toBe(check)
@@ -1424,7 +1137,7 @@ test("registered verify-retained checks a blocked verifying candidate without se
       (db) =>
         db
           .query<{ n: number }, [string]>(
-            "SELECT COUNT(*) AS n FROM runner_transitions WHERE plan_id=? AND event='RETAINED_TASK_CANDIDATE_ACCEPTED'",
+            "SELECT COUNT(*) AS n FROM runner_transitions WHERE plan_id=? AND event='RETAINED_CANDIDATE_ACCEPTED'",
           )
           .get(f.planID)?.n,
     ),
@@ -1489,12 +1202,12 @@ test("registered verify-retained checks a blocked verifying candidate without se
     reopenedStore
       .activity(f.planID, f.task.id)
       .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED"),
-  ).toHaveLength(2)
+  ).toHaveLength(1)
   expect(reopenedStore.plan(f.planID)?.state).toBe("accepted")
   expect(reopenedStore.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
     f.originalAttempt,
   )
-  expect(retainedCheckStarts).toBe(2)
+  expect(retainedCheckStarts).toBe(1)
 }, 120_000)
 
 test("registered verify-retained accepts a reassigned owner after reopen under the current owner", async () => {
@@ -1549,7 +1262,7 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
       )
       .all(operationID),
   )
-  expect(checks.map((row) => row.phase)).toEqual(["combined", "task"])
+  expect(checks.map((row) => row.phase)).toEqual(["task"])
   for (const row of checks) {
     expect(row.state).toBe("completed")
     const receipt = JSON.parse(row.receipt!) as CheckReceipt
@@ -1570,7 +1283,7 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
   })
   expect(reopenedStore.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(
-    reopenedStore.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+    reopenedStore.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED"),
   ).toBeDefined()
   expect(reopenedStore.attempts(f.planID).find((attempt) => attempt.id === attemptID)).toEqual(
     f.originalAttempt,
@@ -1588,1535 +1301,6 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
 }, 60_000)
 
-test("the current owner continues an exact cancelled-held retained task timeout without replacing its candidate", async () => {
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckInactivityTimeoutMs: 1,
-    taskCheckHardTimeoutMs: 1,
-  })
-  const prompts = structuredClone(f.prompts)
-  const acceptance = structuredClone(f.task.proposal.acceptance)
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-timing-continuation-task-check"),
-  )
-  const operationID = String(requested.operationID)
-  await waitForFixtureCondition(f, "settled retained task timeout", () => {
-    const operation = f.store.atomic((db) => retainedVerification(db, operationID))
-    const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
-    if (
-      !operation ||
-      !check?.receipt ||
-      check.state !== "completed" ||
-      check.cleanupState !== "complete"
-    )
-      return false
-    const receipt = JSON.parse(check.receipt) as CheckReceipt
-    return operation.state === "held" && receipt.timedOut && checkResourcesSettled(receipt)
-  })
-  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const failedCheck = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operationID, "task")[0],
-  )!
-  const priorReceipt = JSON.parse(failedCheck.receipt!) as CheckReceipt
-  expect(priorReceipt.timedOut).toBe(true)
-  expect(priorReceipt.stopCause).toMatch(/^(?:inactivity|hard-backstop)$/)
-
-  await f.control.execute({
-    requestID: "cancel-held-timeout-before-continue",
-    planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
-    action: "cancel-retained-verification",
-    retainedVerificationID: operation.id,
-    reason: "Preserve the settled timeout while stopping the retained operation",
-  })
-  expect(f.store.atomic((db) => retainedVerification(db, operation.id))?.state).toBe("cancelled")
-  const continuation = retainedTimingContinuationInput(
-    f,
-    f.store.atomic((db) => retainedVerification(db, operation.id))!,
-    "task",
-    "continue-cancelled-held-task-check",
-  )
-
-  await expect(
-    f.control.execute({
-      ...continuation,
-      requestID: "reject-stale-retained-generation",
-      retainedGeneration: operation.generation + 1,
-    }),
-  ).rejects.toThrow("current owner and candidate")
-  await expect(
-    f.control.execute({
-      ...continuation,
-      requestID: "reject-retargeted-retained-candidate",
-      artifact: "f".repeat(40),
-    }),
-  ).rejects.toThrow("exact candidate workspace")
-  await expect(
-    f.runtime.command({ ...continuation, requestID: "reject-foreign-caller" }, "foreign-session"),
-  ).rejects.toThrow("A live Architect session of this project must command the plan")
-  await expect(
-    f.control.execute({
-      ...continuation,
-      requestID: "reject-changed-task",
-      taskID: crypto.randomUUID(),
-    }),
-  ).rejects.toThrow()
-  await expect(
-    f.control.execute({
-      ...continuation,
-      requestID: "reject-changed-attempt",
-      attemptID: crypto.randomUUID(),
-    }),
-  ).rejects.toThrow()
-  await expect(
-    f.control.execute({
-      ...continuation,
-      requestID: "reject-changed-operation",
-      retainedVerificationID: crypto.randomUUID(),
-    }),
-  ).rejects.toThrow()
-  await expect(
-    f.control.execute({
-      ...continuation,
-      requestID: "reject-changed-phase",
-      verificationPhase: "combined",
-    }),
-  ).rejects.toThrow()
-
-  f.store.atomic((db) =>
-    db
-      .query(
-        "UPDATE runner_retained_verification_checks SET check_json=? WHERE operation_id=? AND phase='task' AND check_id=?",
-      )
-      .run(
-        JSON.stringify({ ...JSON.parse(failedCheck.checkJSON), command: "false" }),
-        operation.id,
-        failedCheck.checkID,
-      ),
-  )
-  await expect(
-    f.control.execute({ ...continuation, requestID: "reject-changed-command" }),
-  ).rejects.toThrow("current declared command")
-  f.store.atomic((db) =>
-    db
-      .query(
-        "UPDATE runner_retained_verification_checks SET check_json=? WHERE operation_id=? AND phase='task' AND check_id=?",
-      )
-      .run(failedCheck.checkJSON, operation.id, failedCheck.checkID),
-  )
-
-  for (const [resourceName, state] of [
-    ["continuation-active-resource", "active"],
-    ["continuation-uncertain-resource", "uncertain"],
-  ] as const) {
-    f.store.atomic((db) => {
-      db.query(
-        `INSERT INTO runner_retained_verification_resources(
-        project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,
-        device,inode,state,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?, ?,?,?)`,
-      ).run(
-        f.root,
-        operation.id,
-        operation.generation,
-        "task",
-        failedCheck.checkID,
-        resourceName,
-        join(f.state, `${resourceName}-path`),
-        1,
-        1,
-        state,
-        Date.now(),
-        Date.now(),
-      )
-    })
-    await expect(
-      f.control.execute({ ...continuation, requestID: `reject-${resourceName}` }),
-    ).rejects.toThrow("resource obligations")
-    f.store.atomic((db) =>
-      db
-        .query(
-          "DELETE FROM runner_retained_verification_resources WHERE operation_id=? AND resource_name=?",
-        )
-        .run(operation.id, resourceName),
-    )
-  }
-
-  const result = await f.control.execute(continuation)
-  expect(result.status).toBe("retained-verification-check-continued")
-  expect(await f.control.execute(continuation)).toEqual(result)
-  await f.runtime.stop()
-  f.store.atomic((db) =>
-    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
-  )
-  f.store.repository.close()
-  const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
-  const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project")
-  cleanups.push(async () => {
-    await reopenedRuntime.stop()
-    reopenedRepository.close()
-  })
-  f.store = reopenedStore
-  f.runtime = reopenedRuntime
-  f.control = await registeredPlanCommand(reopenedRuntime)
-  expect(await f.control.execute(continuation)).toEqual(result)
-  await waitForFixtureCondition(f, "continued retained task candidate", () => {
-    const current = f.store.atomic((db) => retainedVerification(db, operation.id))
-    return current?.state === "task-accepted" || current?.state === "accepted"
-  })
-
-  const updatedOperation = f.store.atomic((db) => retainedVerification(db, operation.id))!
-  const updatedCheck = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operation.id, "task")[0],
-  )!
-  const actualReceipt = JSON.parse(updatedCheck.receipt!) as CheckReceipt
-  const retryAuthorization = f.store.latestTransition<{
-    priorReceipt?: CheckReceipt
-    priorReceiptFingerprint?: string
-    candidateArtifact?: string
-    commandFingerprint?: string
-  }>(f.planID, f.task.id, "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED")
-  expect(updatedOperation.artifact).toBe(operation.artifact)
-  expect(updatedOperation.state).toMatch(/^(?:task-accepted|accepted)$/)
-  expect(updatedCheck.cleanupState).toBe("complete")
-  expect(actualReceipt).toMatchObject({
-    id: failedCheck.checkID,
-    command: JSON.parse(failedCheck.checkJSON).command,
-    artifact: operation.artifact,
-    timedOut: false,
-    inactivityTimeoutMs: 10_000,
-    hardTimeoutMs: 30_000,
-    verificationDeadline: {
-      effectiveInactivityTimeoutMs: 10_000,
-      effectiveHardTimeoutMs: 30_000,
-      inactivityProvenance: "amendment",
-      hardTimeoutProvenance: "amendment",
-    },
-  })
-  expect(retryAuthorization).toMatchObject({
-    priorReceipt,
-    priorReceiptFingerprint: expect.any(String),
-    candidateArtifact: operation.artifact,
-    commandFingerprint: expect.any(String),
-  })
-  expect(f.task.proposal.acceptance).toEqual(acceptance)
-  expect(f.prompts).toEqual(prompts)
-  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)?.artifact).toBe(
-    f.artifact,
-  )
-}, 120_000)
-
-test("reopened pre-LZ210 timeout authorization accepts its historical resource rows once", async () => {
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckCommand: ({ state }) => gatedTimeoutRetryCommand(state),
-    taskCheckInactivityTimeoutMs: 1,
-    taskCheckHardTimeoutMs: 1,
-    combinedCheckCommand: "true",
-    candidateContentsCheck: false,
-  })
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-pre-lz210-timeout-authorization"),
-  )
-  const operationID = String(requested.operationID)
-  await waitForFixtureCondition(f, "settled timeout for legacy authorization", () => {
-    const operation = f.store.atomic((db) => retainedVerification(db, operationID))
-    const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
-    return Boolean(
-      operation?.state === "held" &&
-      check?.state === "completed" &&
-      check.cleanupState === "complete" &&
-      check.receipt &&
-      (JSON.parse(check.receipt) as CheckReceipt).timedOut,
-    )
-  })
-  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const failedCheck = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operationID, "task")[0],
-  )!
-  const priorReceipt = failedCheck.receipt!
-  const continuation = retainedTimingContinuationInput(
-    f,
-    operation,
-    "task",
-    "continue-pre-lz210-timeout-authorization",
-  )
-  const continuationResult = await f.control.execute(continuation)
-  expect(continuationResult.status).toBe("retained-verification-check-continued")
-  expect(
-    f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])?.state,
-  ).toBe("retry-authorized")
-
-  const legacy = legacyTimeoutAuthorization(f, operationID, "task", failedCheck.checkID)
-  expect(Object.keys(legacy).sort()).toEqual(
-    [
-      "requestID",
-      "owner",
-      "ownerEpoch",
-      "priorOwner",
-      "priorOwnerEpoch",
-      "planRevision",
-      "operationID",
-      "generation",
-      "taskID",
-      "taskRevision",
-      "attemptID",
-      "phase",
-      "checkID",
-      "candidateArtifact",
-      "commandFingerprint",
-      "amendmentID",
-      "priorReceipt",
-      "priorReceiptFingerprint",
-      "priorCheckFingerprint",
-      "priorCheck",
-      "priorReceiptPath",
-      "reason",
-      "priorResources",
-    ].sort(),
-  )
-  expect(legacy.priorResources).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        resource_name: expect.any(String),
-        canonical_path: expect.any(String),
-        state: "removed",
-      }),
-    ]),
-  )
-  replaceLatestRetainedRetryAuthorization(f, legacy)
-  const startsPath = join(f.state, "timeout-retry-starts")
-  rmSync(startsPath, { force: true })
-  const reopened = await reopenFailedCandidateFixture(f)
-  expect(
-    reopened.store.latestTransition(
-      f.planID,
-      f.task.id,
-      "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
-    ),
-  ).toEqual(legacy)
-  writeFileSync(join(f.state, "allow-timeout-retry"), "allow\n")
-  await waitForFixtureCondition(
-    reopened,
-    "legacy retained timeout retry accepted after reopen",
-    () => {
-      const current = reopened.store.atomic((db) => retainedVerification(db, operationID))
-      return current?.state === "task-accepted" || current?.state === "accepted"
-    },
-    120_000,
-  )
-  const retriedCheck = reopened.store.atomic(
-    (db) => retainedVerificationChecks(db, operationID, "task")[0],
-  )!
-  expect(retriedCheck.state).toBe("completed")
-  expect(checkSucceeded(JSON.parse(retriedCheck.receipt!) as CheckReceipt)).toBe(true)
-  expect(retriedCheck.receipt).not.toBe(priorReceipt)
-  const history = reopened.store.atomic((db) =>
-    db
-      .query<{ receipt: string | null }, [string, string]>(
-        `SELECT receipt FROM runner_retained_verification_check_receipts
-         WHERE operation_id=? AND phase='task' AND check_id=? ORDER BY created_at,receipt_path`,
-      )
-      .all(operationID, failedCheck.checkID),
-  )
-  expect(history).toHaveLength(2)
-  expect(history.map((entry) => entry.receipt)).toContain(priorReceipt)
-  expect(readFileSync(startsPath, "utf8")).toBe("retry\n")
-  expect(
-    reopened.store.latestTransition(
-      f.planID,
-      f.task.id,
-      "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
-    ),
-  ).toEqual(legacy)
-  expect(await reopened.control.execute(continuation)).toEqual(continuationResult)
-  expect(readFileSync(startsPath, "utf8")).toBe("retry\n")
-}, 180_000)
-
-test.each(["receipt", "resources"] as const)(
-  "reopened pre-LZ210 timeout authorization rejects a tampered %s binding",
-  async (binding) => {
-    const f = await failedCandidateFixture({
-      requestTick: () => Promise.resolve(),
-      taskCheckCommand: ({ state }) => gatedTimeoutRetryCommand(state),
-      taskCheckInactivityTimeoutMs: 1,
-      taskCheckHardTimeoutMs: 1,
-      combinedCheckCommand: "true",
-      candidateContentsCheck: false,
-    })
-    const requested = await f.control.execute(
-      retainedVerifyCommand(f, `reserve-tampered-legacy-timeout-${binding}`),
-    )
-    const operationID = String(requested.operationID)
-    await waitForFixtureCondition(f, "settled timeout for tampered legacy authorization", () => {
-      const operation = f.store.atomic((db) => retainedVerification(db, operationID))
-      const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
-      return Boolean(
-        operation?.state === "held" &&
-        check?.state === "completed" &&
-        check.cleanupState === "complete" &&
-        check.receipt &&
-        (JSON.parse(check.receipt) as CheckReceipt).timedOut,
-      )
-    })
-    const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-    const failedCheck = f.store.atomic(
-      (db) => retainedVerificationChecks(db, operationID, "task")[0],
-    )!
-    const priorReceipt = failedCheck.receipt!
-    const continuation = retainedTimingContinuationInput(
-      f,
-      operation,
-      "task",
-      `continue-tampered-legacy-timeout-${binding}`,
-    )
-    await f.control.execute(continuation)
-    const tampered = legacyTimeoutAuthorization(f, operationID, "task", failedCheck.checkID)
-    if (binding === "receipt") {
-      const receipt = tampered.priorReceipt as Record<string, unknown>
-      tampered.priorReceipt = { ...receipt, exitCode: 0 }
-    }
-    if (binding === "resources") {
-      const resources = tampered.priorResources as Array<Record<string, unknown>>
-      const first = resources[0]
-      if (!first || typeof first.canonical_path !== "string")
-        throw new Error("Legacy resource fixture has no canonical path")
-      resources[0] = { ...first, canonical_path: `${first.canonical_path}-altered` }
-    }
-    replaceLatestRetainedRetryAuthorization(f, tampered)
-    const startsPath = join(f.state, "timeout-retry-starts")
-    rmSync(startsPath, { force: true })
-    writeFileSync(join(f.state, "allow-timeout-retry"), "allow\n")
-    const reopened = await reopenFailedCandidateFixture(f)
-    expect(
-      reopened.store.latestTransition(
-        f.planID,
-        f.task.id,
-        "RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED",
-      ),
-    ).toEqual(tampered)
-    await waitForFixtureCondition(
-      reopened,
-      "legacy authorization rejection or an erroneously started check",
-      () =>
-        reopened.store.atomic((db) => retainedVerification(db, operationID))?.state === "held" ||
-        existsSync(startsPath),
-      30_000,
-    )
-    const startedActivities = verificationActivitiesForDatabase(
-      reopened.store.repository.path,
-    ).filter(
-      (activity) => activity.metadata.operationID === operationID && activity.state === "running",
-    )
-    for (const activity of startedActivities) activity.controller.abort()
-    await Promise.all(startedActivities.map((activity) => activity.settled))
-    expect(reopened.store.atomic((db) => retainedVerification(db, operationID))?.state).toBe("held")
-    expect(
-      reopened.store.atomic((db) =>
-        retainedVerificationChecks(db, operationID, "task").find(
-          (row) => row.checkID === failedCheck.checkID,
-        ),
-      ),
-    ).toMatchObject({ state: "retry-authorized", receipt: priorReceipt })
-    expect(existsSync(startsPath)).toBe(false)
-    expect(
-      reopened.store.atomic(
-        (db) =>
-          db
-            .query<{ count: number }, [string, string]>(
-              `SELECT COUNT(*) AS count FROM runner_retained_verification_check_receipts
-               WHERE operation_id=? AND phase='task' AND check_id=?`,
-            )
-            .get(operationID, failedCheck.checkID)?.count ?? 0,
-      ),
-    ).toBe(1)
-  },
-  120_000,
-)
-
-test.each(["active-cancel", "unrelated-hold", "cancelled-receipt"] as const)(
-  "cancelled retained continuation rejects stale timeout evidence after %s",
-  async (scenario) => {
-    const f = await failedCandidateFixture({
-      requestTick: () => Promise.resolve(),
-      taskCheckInactivityTimeoutMs: 1,
-      taskCheckHardTimeoutMs: 1,
-    })
-    const requested = await f.control.execute(
-      retainedVerifyCommand(f, `reserve-stale-timeout-${scenario}`),
-    )
-    const operationID = String(requested.operationID)
-    await waitForFixtureCondition(f, "settled retained task timeout", () => {
-      const operation = f.store.atomic((db) => retainedVerification(db, operationID))
-      const check = f.store.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])
-      if (!operation || !check?.receipt || operation.state !== "held") return false
-      const receipt = JSON.parse(check.receipt) as CheckReceipt
-      return receipt.timedOut && checkResourcesSettled(receipt)
-    })
-
-    const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-    if (scenario === "active-cancel") {
-      f.store.atomic((db) =>
-        saveRetainedVerification(db, { ...operation, state: "task-checks", holdReason: null }),
-      )
-    } else if (scenario === "unrelated-hold") {
-      const reason = "An unrelated retained verification hold"
-      f.store.atomic((db) =>
-        saveRetainedVerification(db, { ...operation, state: "held", holdReason: reason }),
-      )
-      f.store.record(f.planID, f.task.id, "RETAINED_VERIFICATION_HELD", {
-        operationID: operation.id,
-        generation: operation.generation,
-        reason,
-        originalAttemptPreserved: true,
-      })
-    }
-
-    await f.control.execute({
-      requestID: `cancel-stale-timeout-${scenario}`,
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "cancel-retained-verification",
-      retainedVerificationID: operation.id,
-      reason: "Stop this retained operation without authorizing a timeout retry",
-    })
-    const cancelled = f.store.atomic((db) => retainedVerification(db, operation.id))!
-    expect(cancelled.state).toBe("cancelled")
-
-    if (scenario === "cancelled-receipt") {
-      const check = f.store.atomic((db) => retainedVerificationChecks(db, operation.id, "task")[0])!
-      const prior = JSON.parse(check.receipt!) as CheckReceipt
-      f.store.atomic((db) =>
-        db
-          .query(
-            "UPDATE runner_retained_verification_checks SET receipt=? WHERE operation_id=? AND phase='task' AND check_id=?",
-          )
-          .run(
-            JSON.stringify({
-              ...prior,
-              exitCode: null,
-              timedOut: false,
-              aborted: true,
-              stopCause: "cancelled",
-            }),
-            operation.id,
-            check.checkID,
-          ),
-      )
-    }
-
-    const continuation = retainedTimingContinuationInput(
-      f,
-      cancelled,
-      "task",
-      `reject-stale-timeout-${scenario}`,
-    )
-    await expect(f.control.execute(continuation)).rejects.toThrow(
-      "exact settled timeout failure holding this operation",
-    )
-  },
-)
-
-test("combined retained continuation keeps the already accepted task evidence and source binding", async () => {
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckInactivityTimeoutMs: 10_000,
-    taskCheckHardTimeoutMs: 30_000,
-    combinedCheckInactivityTimeoutMs: 1,
-    combinedCheckHardTimeoutMs: 1,
-  })
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-timing-continuation-combined-check"),
-  )
-  const operationID = String(requested.operationID)
-  await waitForFixtureCondition(
-    f,
-    "settled retained combined timeout after task acceptance",
-    () => {
-      const operation = f.store.atomic((db) => retainedVerification(db, operationID))
-      const check = f.store.atomic(
-        (db) => retainedVerificationChecks(db, operationID, "combined")[0],
-      )
-      if (
-        !operation ||
-        !check?.receipt ||
-        check.state !== "completed" ||
-        check.cleanupState !== "complete"
-      )
-        return false
-      const receipt = JSON.parse(check.receipt) as CheckReceipt
-      return operation.state === "held" && receipt.timedOut && checkResourcesSettled(receipt)
-    },
-    120_000,
-  )
-  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const priorTaskCheck = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operation.id, "task")[0],
-  )!
-  const priorCombinedCheck = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operation.id, "combined")[0],
-  )!
-  const priorTaskReceipt = priorTaskCheck.receipt
-  const priorTimeout = JSON.parse(priorCombinedCheck.receipt!) as CheckReceipt
-  expect(operation.state).toBe("held")
-  expect(priorTimeout.timedOut).toBe(true)
-  expect(
-    f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
-  ).toBeDefined()
-
-  const continuation = retainedTimingContinuationInput(
-    f,
-    operation,
-    "combined",
-    "continue-held-combined-check",
-  )
-  const result = await f.control.execute(continuation)
-  expect(result.status).toBe("retained-verification-check-continued")
-  await waitForFixtureCondition(
-    f,
-    "continued retained combined candidate",
-    () => f.store.atomic((db) => retainedVerification(db, operation.id))?.state === "accepted",
-    120_000,
-  )
-
-  const updated = f.store.atomic((db) => retainedVerification(db, operation.id))!
-  const taskCheck = f.store.atomic((db) => retainedVerificationChecks(db, operation.id, "task")[0])!
-  const combinedCheck = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operation.id, "combined")[0],
-  )!
-  const combinedReceipt = JSON.parse(combinedCheck.receipt!) as CheckReceipt
-  expect(updated.artifact).toBe(operation.artifact)
-  expect(updated.combinedArtifact).toBe(operation.combinedArtifact)
-  expect(taskCheck.receipt).toBe(priorTaskReceipt)
-  expect(combinedReceipt).toMatchObject({
-    id: priorCombinedCheck.checkID,
-    artifact: operation.combinedArtifact,
-    timedOut: false,
-    inactivityTimeoutMs: 10_000,
-    hardTimeoutMs: 30_000,
-  })
-  expect(
-    f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
-  ).toBeDefined()
-  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)?.state).toBe(
-    f.originalAttempt.state,
-  )
-}, 180_000)
-
-test("current owner continues only the settled interrupted combined check after reopen", async () => {
-  const interruptedCheckID = "interrupted-combined-check"
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckCommand: "true",
-    combinedCheckCommand: "true",
-    gatedVerificationTest: true,
-    candidateContentsCheck: false,
-    additionalCombinedChecks: [
-      { id: interruptedCheckID, command: "bun test src/runner/retained-check.test.ts" },
-    ],
-  })
-  const prompts = structuredClone(f.prompts)
-  const created = [...f.created]
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-interrupted-retained-combined-check"),
-  )
-  const operationID = String(requested.operationID)
-  await f.runtime.tick()
-  const originalContext = await waitForRetainedCheckStartFor(
-    f,
-    operationID,
-    "combined",
-    interruptedCheckID,
-    10_000,
-  )
-  const initialOperation = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const initialCheck = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (row) => row.checkID === interruptedCheckID,
-    ),
-  )!
-  const originalReceiptPath = initialCheck.receiptPath
-  const taskReceipt = f.store.atomic(
-    (db) => retainedVerificationChecks(db, operationID, "task")[0],
-  )!.receipt
-  const passingCombinedReceipt = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (row) => row.checkID === "isolated-combined-check",
-    ),
-  )!.receipt
-  expect(f.store.plan(f.planID)?.state).toBe("accepted")
-
-  const activeCheck = await waitForRetainedCheckActivity(f, operationID)
-  activeCheck.controller.abort()
-  await waitForRetainedOperationState(
-    f,
-    operationID,
-    ["held"],
-    "settled retained combined-check interruption",
-  )
-  await f.runtime.stop()
-  const interrupted = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (row) => row.checkID === interruptedCheckID,
-    ),
-  )!
-  const originalReceipt = JSON.parse(interrupted.receipt!) as CheckReceipt
-  expect(interrupted.state).toBe("completed")
-  expect(interrupted.cleanupState).toBe("complete")
-  expect(originalReceipt).toMatchObject({
-    timedOut: false,
-    aborted: true,
-    stopCause: "cancelled",
-    phasesComplete: false,
-  })
-  expect(originalReceipt.exitCode).not.toBe(0)
-  expect(checkResourcesSettled(originalReceipt)).toBe(true)
-  expect(initialOperation.state).toBe("combined-checks")
-  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)?.state).toBe(
-    f.originalAttempt.state,
-  )
-
-  f.store.atomic((db) =>
-    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
-  )
-  f.store.repository.close()
-  const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
-  const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
-    requestTick: () => Promise.resolve(),
-  })
-  cleanups.push(async () => {
-    await reopenedRuntime.stop()
-    reopenedRepository.close()
-  })
-  const reopenedFixture = { ...f, store: reopenedStore, runtime: reopenedRuntime }
-  await reopenedRuntime.tick()
-  const held = reopenedStore.atomic((db) => retainedVerification(db, operationID))!
-  const heldCheck = reopenedStore.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (row) => row.checkID === interruptedCheckID,
-    ),
-  )!
-  expect(held.state).toBe("held")
-  expect(held.holdReason).toContain("interrupted before completion")
-  expect(heldCheck.receipt).toBe(interrupted.receipt)
-  expect(reopenedStore.plan(f.planID)?.state).toBe("accepted")
-  const heldInspection = inspectPlan(reopenedStore, { planID: f.planID, full: true }) as {
-    retainedVerifications: {
-      latest: Array<{
-        operationID: string | null
-        nextSteps: Array<Record<string, unknown>>
-      }>
-    }
-  }
-  expect(
-    heldInspection.retainedVerifications.latest.find((record) => record.operationID === operationID)
-      ?.nextSteps,
-  ).toContainEqual(
-    expect.objectContaining({
-      action: "continue-retained-check",
-      operationID,
-      generation: held.generation,
-      taskID: held.taskID,
-      taskRevision: held.taskRevision,
-      attemptID: held.attemptID,
-      verificationPhase: "combined",
-      checkID: interruptedCheckID,
-      artifact: held.combinedArtifact,
-      condition: expect.stringContaining("does not establish original-worker idleness"),
-    }),
-  )
-
-  const continuation = retainedInterruptedCheckContinuationInput(
-    reopenedFixture,
-    held,
-    interruptedCheckID,
-    "continue-interrupted-retained-combined-check",
-  )
-  const reopenedControl = await registeredPlanCommand(reopenedRuntime)
-  const staleBindings: Array<[string, Record<string, unknown>]> = [
-    ["project", { projectID: "another-project" }],
-    ["plan-revision", { planRevision: held.planRevision + 1 }],
-    ["plan-version", { expectedVersion: reopenedStore.plan(f.planID)!.version + 1 }],
-    ["task", { taskID: crypto.randomUUID() }],
-    ["task-revision", { taskRevision: held.taskRevision + 1 }],
-    ["attempt", { attemptID: crypto.randomUUID() }],
-    ["operation", { retainedVerificationID: crypto.randomUUID() }],
-    ["generation", { retainedGeneration: held.generation + 1 }],
-    ["phase", { verificationPhase: "task" }],
-    ["check", { checkID: "another-combined-check" }],
-    ["candidate", { artifact: "b".repeat(40) }],
-  ]
-  for (const [name, binding] of staleBindings)
-    await expect(
-      reopenedControl.execute({
-        ...continuation,
-        requestID: `reject-stale-retained-check-${name}`,
-        ...binding,
-      }),
-    ).rejects.toThrow()
-
-  const originalPlanBody = reopenedStore.plan(f.planID)!.body
-  try {
-    const changedPlan = JSON.parse(originalPlanBody) as {
-      verification: Array<{ command: string }>
-    }
-    changedPlan.verification[0]!.command += " && true"
-    reopenedStore.atomic((db) =>
-      db
-        .query("UPDATE runner_plans SET body=? WHERE id=?")
-        .run(JSON.stringify(changedPlan), f.planID),
-    )
-    await expect(
-      reopenedControl.execute({ ...continuation, requestID: "reject-changed-retained-check-spec" }),
-    ).rejects.toThrow()
-  } finally {
-    reopenedStore.atomic((db) =>
-      db.query("UPDATE runner_plans SET body=? WHERE id=?").run(originalPlanBody, f.planID),
-    )
-  }
-
-  const dirtyCandidateFile = join(held.combinedWorkspace!, "seed.txt")
-  const cleanCandidateContents = readFileSync(dirtyCandidateFile, "utf8")
-  try {
-    writeFileSync(dirtyCandidateFile, `${cleanCandidateContents}changed after acceptance\n`)
-    await expect(
-      reopenedControl.execute({
-        ...continuation,
-        requestID: "reject-dirty-retained-check-candidate",
-      }),
-    ).rejects.toThrow()
-  } finally {
-    writeFileSync(dirtyCandidateFile, cleanCandidateContents)
-  }
-
-  reopenedStore.atomic((db) => {
-    registerRetainedVerificationResources(db, f.root, {
-      operationID,
-      generation: held.generation,
-      phase: "combined",
-      checkID: interruptedCheckID,
-      resources: [
-        {
-          name: "unsettled-canary",
-          realPath: join(f.state, "unsettled-resource-canary"),
-          device: -1,
-          inode: -1,
-        },
-      ],
-      state: "creating",
-      now: Date.now(),
-    })
-    settleRetainedVerificationResources(
-      db,
-      operationID,
-      "combined",
-      interruptedCheckID,
-      "uncertain",
-      Date.now(),
-    )
-  })
-  await expect(
-    reopenedControl.execute({
-      ...continuation,
-      requestID: "reject-unsettled-retained-check-resource",
-    }),
-  ).rejects.toThrow()
-  reopenedStore.atomic((db) =>
-    settleRetainedVerificationResources(
-      db,
-      operationID,
-      "combined",
-      interruptedCheckID,
-      "removed",
-      Date.now(),
-    ),
-  )
-
-  const concurrent = await Promise.allSettled([
-    reopenedControl.execute(continuation),
-    reopenedControl.execute(continuation),
-  ])
-  const authorized = concurrent.filter(
-    (result): result is PromiseFulfilledResult<Record<string, unknown>> =>
-      result.status === "fulfilled",
-  )
-  expect(authorized.length).toBeGreaterThan(0)
-  expect(authorized.length).toBeLessThanOrEqual(2)
-  const authorizationResult = authorized[0]!.value
-  expect(authorizationResult).toMatchObject({
-    status: "retained-verification-check-continued",
-    operationID,
-    generation: held.generation,
-    phase: "combined",
-    checkID: interruptedCheckID,
-    artifact: held.combinedArtifact,
-    inactivityTimeoutMs: originalReceipt.inactivityTimeoutMs,
-    hardTimeoutMs: originalReceipt.hardTimeoutMs,
-  })
-  expect(await reopenedControl.execute(continuation)).toEqual(authorizationResult)
-  await expect(
-    reopenedControl.execute({
-      ...continuation,
-      requestID: "reject-distinct-retry-of-authorized-interrupted-check",
-      expectedVersion: reopenedStore.plan(f.planID)!.version,
-    }),
-  ).rejects.toThrow()
-  expect(
-    reopenedStore.atomic(
-      (db) =>
-        db
-          .query<{ count: number }, [string]>(
-            "SELECT COUNT(*) AS count FROM runner_transitions WHERE plan_id=? AND event='RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED'",
-          )
-          .get(f.planID)?.count,
-    ),
-  ).toBe(1)
-
-  await reopenedRuntime.tick()
-  const continuedContext = await waitForRetainedCheckStartFor(
-    reopenedFixture,
-    operationID,
-    "combined",
-    interruptedCheckID,
-  )
-  expect(continuedContext).toBe(originalContext)
-  writeFileSync(join(continuedContext, "home", "release"), "continue\n")
-  await waitForFixtureCondition(
-    reopenedFixture,
-    "continued isolated combined check receipt",
-    () => {
-      const row = reopenedStore.atomic((db) =>
-        retainedVerificationChecks(db, operationID, "combined").find(
-          (candidate) => candidate.checkID === interruptedCheckID,
-        ),
-      )
-      return row?.state === "completed" && row.cleanupState === "complete"
-    },
-    120_000,
-  )
-  await reopenedRuntime.tick()
-  await waitForRetainedOperationState(
-    reopenedFixture,
-    operationID,
-    ["accepted"],
-    "accepted retained candidate after exact interrupted-check continuation",
-  )
-
-  const continued = reopenedStore.atomic((db) => retainedVerification(db, operationID))!
-  const continuedCheck = reopenedStore.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (row) => row.checkID === interruptedCheckID,
-    ),
-  )!
-  const continuedReceipt = JSON.parse(continuedCheck.receipt!) as CheckReceipt
-  const archivedReceipts = reopenedStore.atomic((db) =>
-    db
-      .query<{ receipt_path: string; receipt: string }, [string, string]>(
-        `SELECT receipt_path,receipt FROM runner_retained_verification_check_receipts
-         WHERE operation_id=? AND phase='combined' AND check_id=? ORDER BY created_at,receipt_path`,
-      )
-      .all(operationID, interruptedCheckID),
-  )
-  const completedInspection = inspectPlan(reopenedStore, {
-    planID: f.planID,
-    full: true,
-  }) as {
-    retainedVerifications: {
-      latest: Array<{
-        operationID: string | null
-        checks: Array<{
-          phase: string | null
-          checkID: string
-          receiptHistory: {
-            available: boolean
-            count: number
-            truncated: boolean
-            entries: Array<{
-              current: boolean
-              status: string
-              exitCode: number | null
-              timedOut: boolean | null
-              aborted: boolean | null
-            }>
-          }
-        }>
-      }>
-    }
-  }
-  const inspectedCheck = completedInspection.retainedVerifications.latest
-    .find((record) => record.operationID === operationID)
-    ?.checks.find(
-      (candidate) => candidate.phase === "combined" && candidate.checkID === interruptedCheckID,
-    )
-  expect(inspectedCheck?.receiptHistory).toMatchObject({
-    available: true,
-    count: 2,
-    truncated: false,
-    entries: [
-      {
-        current: false,
-        status: "failed",
-        exitCode: originalReceipt.exitCode,
-        timedOut: false,
-        aborted: true,
-      },
-      {
-        current: true,
-        status: "passed",
-        exitCode: 0,
-        timedOut: false,
-        aborted: false,
-      },
-    ],
-  })
-  expect(continued.artifact).toBe(initialOperation.artifact)
-  expect(continued.combinedArtifact).toBe(initialOperation.combinedArtifact)
-  expect(continuedCheck.receiptPath).not.toBe(originalReceiptPath)
-  expect(continuedReceipt).toMatchObject({
-    id: interruptedCheckID,
-    artifact: initialOperation.combinedArtifact,
-    timedOut: false,
-    aborted: false,
-    phasesComplete: true,
-  })
-  const continuedContextIdentity = (
-    continuedReceipt.isolation as Record<string, unknown> | undefined
-  )?.contextIdentity
-  const originalContextIdentity = (originalReceipt.isolation as Record<string, unknown> | undefined)
-    ?.contextIdentity
-  expect(continuedContextIdentity).not.toBe(originalContextIdentity)
-  expect(archivedReceipts).toHaveLength(2)
-  expect(archivedReceipts.find((row) => row.receipt_path === originalReceiptPath)?.receipt).toBe(
-    interrupted.receipt!,
-  )
-  expect(JSON.parse(readFileSync(originalReceiptPath, "utf8"))).toEqual(originalReceipt)
-  expect(
-    reopenedStore.atomic((db) => retainedVerificationChecks(db, operationID, "task")[0])!.receipt,
-  ).toBe(taskReceipt)
-  expect(
-    reopenedStore.atomic((db) =>
-      retainedVerificationChecks(db, operationID, "combined").find(
-        (row) => row.checkID === "isolated-combined-check",
-      ),
-    )!.receipt,
-  ).toBe(passingCombinedReceipt)
-  expect(
-    reopenedStore.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
-  ).toBeDefined()
-  expect(reopenedStore.plan(f.planID)?.state).toBe("accepted")
-  expect(
-    reopenedStore.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)?.state,
-  ).toBe(f.originalAttempt.state)
-  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
-  expect(f.prompts).toEqual(prompts)
-  expect(f.created).toEqual(created)
-}, 240_000)
-
-test("cancelling an unstarted retained retry restores its original receipt across reopen", async () => {
-  const checkID = "cancel-before-start-interrupted-check"
-  const f = await heldInterruptedCombinedFixture(checkID)
-  const before = f.store.atomic((db) =>
-    retainedVerificationChecks(db, f.operationID, "combined").find(
-      (row) => row.checkID === checkID,
-    ),
-  )!
-  const originalReceipt = before.receipt
-  const receiptHistoryCount = (store: RunnerStore) =>
-    store.atomic(
-      (db) =>
-        db
-          .query<{ count: number }, [string, string]>(
-            `SELECT COUNT(*) AS count FROM runner_retained_verification_check_receipts
-             WHERE operation_id=? AND phase='combined' AND check_id=?`,
-          )
-          .get(f.operationID, checkID)?.count ?? 0,
-    )
-  const originalHistoryCount = receiptHistoryCount(f.store)
-  expect(before.state).toBe("completed")
-  expect(f.originalReceipt).toMatchObject({
-    aborted: true,
-    timedOut: false,
-    stopCause: "cancelled",
-  })
-  const continuation = retainedInterruptedCheckContinuationInput(
-    f,
-    f.operation,
-    checkID,
-    "authorize-then-cancel-before-start",
-  )
-  expect((await f.control.execute(continuation)).status).toBe(
-    "retained-verification-check-continued",
-  )
-  expect(
-    f.store.atomic(
-      (db) =>
-        retainedVerificationChecks(db, f.operationID, "combined").find(
-          (row) => row.checkID === checkID,
-        )?.state,
-    ),
-  ).toBe("retry-authorized")
-
-  const cancel = {
-    requestID: "cancel-authorized-interrupted-check-before-start",
-    planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
-    action: "cancel-retained-verification" as const,
-    retainedVerificationID: f.operationID,
-    reason: "Cancel the authorized retry before its check begins",
-  }
-  const cancelled = await f.control.execute(cancel)
-  expect(cancelled.status).toBe("retained-verification-cancelled")
-  expect(f.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe("cancelled")
-  expect(
-    f.store.atomic((db) =>
-      retainedVerificationChecks(db, f.operationID, "combined").find(
-        (row) => row.checkID === checkID,
-      ),
-    ),
-  ).toMatchObject({ state: "completed", receipt: originalReceipt })
-  expect(
-    f.store.latestTransition(f.planID, f.task.id, "RETAINED_VERIFICATION_CHECK_RETRY_CANCELLED"),
-  ).toMatchObject({
-    operationID: f.operationID,
-    generation: f.operation.generation,
-    phase: "combined",
-    checkID,
-    receiptFingerprint: fingerprint(originalReceipt),
-    executionStarted: false,
-  })
-  expect(receiptHistoryCount(f.store)).toBe(originalHistoryCount)
-  expect(await f.control.execute(cancel)).toEqual(cancelled)
-
-  const reopened = await reopenFailedCandidateFixture(f)
-  await reopened.runtime.tick()
-  expect(await reopened.control.execute(cancel)).toEqual(cancelled)
-  await reopened.runtime.tick()
-  expect(reopened.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe(
-    "cancelled",
-  )
-  expect(
-    reopened.store.atomic((db) =>
-      retainedVerificationChecks(db, f.operationID, "combined").find(
-        (row) => row.checkID === checkID,
-      ),
-    ),
-  ).toMatchObject({ state: "completed", receipt: originalReceipt })
-  expect(receiptHistoryCount(reopened.store)).toBe(originalHistoryCount)
-}, 180_000)
-
-test("cancellation after retry context creation cannot consume its receipt or start the check", async () => {
-  const checkID = "cancel-after-retry-context-creation"
-  const contextReady = deferred()
-  const releaseBegin = deferred()
-  const targetOperation: { id?: string; generation?: number } = {}
-  const f = await heldInterruptedCombinedFixture(checkID, {
-    beforeRetainedCheckBegin: async (input) => {
-      if (
-        input.operationID === targetOperation.id &&
-        input.generation === targetOperation.generation &&
-        input.phase === "combined" &&
-        input.checkID === checkID &&
-        input.retryAuthorized
-      ) {
-        contextReady.resolve()
-        await releaseBegin.promise
-      }
-    },
-  })
-  const prompts = structuredClone(f.prompts)
-  const created = structuredClone(f.created)
-  targetOperation.id = f.operationID
-  targetOperation.generation = f.operation.generation
-  const originalReceipt = f.interrupted.receipt
-  const originalReceiptPath = f.interrupted.receiptPath
-  if (!originalReceipt || !originalReceiptPath)
-    throw new Error("Interrupted retained check receipt binding is missing")
-  expect(f.originalReceipt).toMatchObject({
-    aborted: true,
-    timedOut: false,
-    stopCause: "cancelled",
-  })
-  let retryStarts = 0
-  const observeRetryStarts = (runtime: TaskRuntime) => {
-    const internals = runtime as unknown as {
-      startCheckActivity(input: { id: string }): unknown
-    }
-    const start = internals.startCheckActivity.bind(runtime)
-    internals.startCheckActivity = (input) => {
-      if (input.id === `retained:${f.operationID}:${f.operation.generation}:combined:${checkID}`)
-        retryStarts++
-      return start(input)
-    }
-  }
-  observeRetryStarts(f.runtime)
-  const receiptHistoryCount = (store: RunnerStore) =>
-    store.atomic(
-      (db) =>
-        db
-          .query<{ count: number }, [string, string]>(
-            `SELECT COUNT(*) AS count FROM runner_retained_verification_check_receipts
-             WHERE operation_id=? AND phase='combined' AND check_id=?`,
-          )
-          .get(f.operationID, checkID)?.count ?? 0,
-    )
-  const originalHistoryCount = receiptHistoryCount(f.store)
-
-  const continuation = retainedInterruptedCheckContinuationInput(
-    f,
-    f.operation,
-    checkID,
-    "continue-then-cancel-after-context-creation",
-  )
-  expect((await f.control.execute(continuation)).status).toBe(
-    "retained-verification-check-continued",
-  )
-  const advancing = f.runtime.tick()
-  try {
-    await contextReady.promise
-    expect(
-      f.store.atomic((db) =>
-        retainedVerificationChecks(db, f.operationID, "combined").find(
-          (row) => row.checkID === checkID,
-        ),
-      ),
-    ).toMatchObject({ state: "retry-authorized", receipt: originalReceipt })
-
-    const cancel = {
-      requestID: "cancel-retry-after-context-creation",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "cancel-retained-verification" as const,
-      retainedVerificationID: f.operationID,
-      reason: "Cancel after isolated context creation but before retry consumption",
-    }
-    const cancellation = f.control.execute(cancel)
-    await waitForFixtureObservation(
-      f,
-      "retained operation cancellation during post-context admission",
-      () => f.store.atomic((db) => retainedVerification(db, f.operationID))?.state === "cancelled",
-      15_000,
-      () => Promise.resolve(),
-    )
-    expect(
-      f.store.atomic((db) =>
-        retainedVerificationChecks(db, f.operationID, "combined").find(
-          (row) => row.checkID === checkID,
-        ),
-      ),
-    ).toMatchObject({ state: "retry-authorized", receipt: originalReceipt })
-    releaseBegin.resolve()
-    const cancelled = await cancellation
-    await advancing
-    expect(cancelled.status).toBe("retained-verification-cancelled")
-    expect(f.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe("cancelled")
-    expect(
-      f.store.atomic((db) =>
-        retainedVerificationChecks(db, f.operationID, "combined").find(
-          (row) => row.checkID === checkID,
-        ),
-      ),
-    ).toMatchObject({ state: "completed", receipt: originalReceipt, cleanupState: "complete" })
-    expect(readFileSync(originalReceiptPath, "utf8")).toBe(originalReceipt)
-    expect(receiptHistoryCount(f.store)).toBe(originalHistoryCount)
-    expect(retryStarts).toBe(0)
-    expect(await f.control.execute(cancel)).toEqual(cancelled)
-
-    const reopened = await reopenFailedCandidateFixture(f)
-    observeRetryStarts(reopened.runtime)
-    await reopened.runtime.tick()
-    expect(await reopened.control.execute(cancel)).toEqual(cancelled)
-    await reopened.runtime.tick()
-    expect(reopened.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe(
-      "cancelled",
-    )
-    expect(
-      reopened.store.atomic((db) =>
-        retainedVerificationChecks(db, f.operationID, "combined").find(
-          (row) => row.checkID === checkID,
-        ),
-      ),
-    ).toMatchObject({ state: "completed", receipt: originalReceipt, cleanupState: "complete" })
-    expect(readFileSync(originalReceiptPath, "utf8")).toBe(originalReceipt)
-    expect(receiptHistoryCount(reopened.store)).toBe(originalHistoryCount)
-    expect(retryStarts).toBe(0)
-    expect(reopened.store.attempts(f.planID)).toEqual([f.originalAttempt])
-    expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
-    expect(f.prompts).toEqual(prompts)
-    expect(f.created).toEqual(created)
-  } finally {
-    releaseBegin.resolve()
-    await advancing.catch(() => undefined)
-  }
-}, 180_000)
-
-test("retained-check admission rejects any check start without interrupting live work", async () => {
-  const checkID = "admission-race-interrupted-check"
-  const f = await heldInterruptedCombinedFixture(checkID)
-  const continuation = retainedInterruptedCheckContinuationInput(
-    f,
-    f.operation,
-    checkID,
-    "reject-live-check-start-during-admission",
-  )
-  const originalWorktrees = f.host.worktrees
-  let worktreeCalls = 0
-  let active: ReturnType<typeof startVerificationActivity> | undefined
-  let completed: ReturnType<typeof startVerificationActivity> | undefined
-  const startAdmissionActivity = (id: string, run: (signal: AbortSignal) => Promise<unknown>) =>
-    startVerificationActivity({
-      databasePath: f.store.repository.path,
-      key: verificationActivityKey(f.store.repository.path, id),
-      identity: fingerprint(id),
-      owner: "retained-check-admission-test",
-      metadata: {
-        kind: "retained",
-        projectDirectory: f.root,
-        planID: f.planID,
-        operationID: f.operationID,
-        generation: f.operation.generation,
-        phase: "combined",
-        checkID: id,
-      },
-      run,
-    })
-  f.host.worktrees = async () => {
-    worktreeCalls++
-    const workspaces = await originalWorktrees()
-    if (worktreeCalls === 2)
-      active = startAdmissionActivity(
-        `active-admission-check-${crypto.randomUUID()}`,
-        (signal) =>
-          new Promise((resolve) => {
-            const finish = () => resolve({ exitCode: 0 })
-            if (signal.aborted) finish()
-            else signal.addEventListener("abort", finish, { once: true })
-          }),
-      )
-    if (worktreeCalls === 4) {
-      completed = startAdmissionActivity(
-        `completed-admission-check-${crypto.randomUUID()}`,
-        async () => ({ exitCode: 0 }),
-      )
-      await completed.activity.settled
-    }
-    return workspaces
-  }
-  try {
-    await expect(f.control.execute(continuation)).rejects.toThrow(
-      "A verification check started during retained-check continuation admission",
-    )
-    expect(active?.activity.state).toBe("running")
-    expect(active?.activity.controller.signal.aborted).toBe(false)
-    active?.activity.controller.abort()
-    await active?.activity.settled
-
-    await expect(
-      f.control.execute({
-        ...continuation,
-        requestID: "reject-completed-check-start-during-admission",
-        expectedVersion: f.store.plan(f.planID)!.version,
-      }),
-    ).rejects.toThrow("A verification check started during retained-check continuation admission")
-    expect(completed?.activity.state).toBe("completed")
-    expect(completed?.activity.controller.signal.aborted).toBe(false)
-    expect(f.store.atomic((db) => retainedVerification(db, f.operationID))?.state).toBe("held")
-    expect(
-      f.store.atomic((db) =>
-        retainedVerificationChecks(db, f.operationID, "combined").find(
-          (row) => row.checkID === checkID,
-        ),
-      ),
-    ).toMatchObject({ state: "completed", receipt: f.interrupted.receipt })
-    expect(
-      f.store.atomic(
-        (db) =>
-          db
-            .query<{ count: number }, [string]>(
-              `SELECT COUNT(*) AS count FROM runner_transitions
-               WHERE plan_id=? AND event='RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED'`,
-            )
-            .get(f.planID)?.count ?? 0,
-      ),
-    ).toBe(0)
-    expect(worktreeCalls).toBe(4)
-  } finally {
-    if (active?.activity.state === "running") active.activity.controller.abort()
-    await active?.activity.settled
-    if (active) forgetVerificationActivity(active.activity.key, active.activity.identity)
-    if (completed) forgetVerificationActivity(completed.activity.key, completed.activity.identity)
-  }
-}, 180_000)
-
-test("intentional retained-operation cancellation cannot be revived by interrupted-check continuation", async () => {
-  const interruptedCheckID = "interrupted-combined-check"
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckCommand: "true",
-    combinedCheckCommand: "true",
-    gatedVerificationTest: true,
-    candidateContentsCheck: false,
-    additionalCombinedChecks: [
-      { id: interruptedCheckID, command: "bun test src/runner/retained-check.test.ts" },
-    ],
-  })
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-cancellable-interrupted-combined-check"),
-  )
-  const operationID = String(requested.operationID)
-  await f.runtime.tick()
-  await waitForRetainedCheckStartFor(f, operationID, "combined", interruptedCheckID)
-  const activity = await waitForRetainedCheckActivity(f, operationID)
-  activity.controller.abort()
-  await waitForRetainedOperationState(
-    f,
-    operationID,
-    ["held"],
-    "settled interruption before intentional cancellation",
-  )
-  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const continuation = retainedInterruptedCheckContinuationInput(
-    f,
-    operation,
-    interruptedCheckID,
-    "try-to-revive-intentionally-cancelled-check",
-  )
-  const control = await registeredPlanCommand(f.runtime)
-  await control.execute({
-    requestID: "cancel-settled-interrupted-retained-operation",
-    planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
-    action: "cancel-retained-verification",
-    retainedVerificationID: operationID,
-    reason: "Intentionally stop this held retained operation",
-  })
-  expect(f.store.atomic((db) => retainedVerification(db, operationID))?.state).toBe("cancelled")
-  await expect(
-    control.execute({
-      ...continuation,
-      expectedVersion: f.store.plan(f.planID)!.version,
-    }),
-  ).rejects.toThrow()
-  expect(
-    f.store.atomic(
-      (db) =>
-        db
-          .query<{ count: number }, [string]>(
-            `SELECT COUNT(*) AS count FROM runner_transitions
-           WHERE plan_id=? AND event='RETAINED_VERIFICATION_CHECK_RETRY_AUTHORIZED'`,
-          )
-          .get(f.planID)?.count,
-    ),
-  ).toBe(0)
-}, 180_000)
-
-test("cancellation after retained-check continuation starts cannot publish a late pass", async () => {
-  const interruptedCheckID = "interrupted-combined-check"
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckCommand: "true",
-    combinedCheckCommand: "true",
-    gatedVerificationTest: true,
-    candidateContentsCheck: false,
-    additionalCombinedChecks: [
-      { id: interruptedCheckID, command: "bun test src/runner/retained-check.test.ts" },
-    ],
-  })
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-cancellable-continuation-combined-check"),
-  )
-  const operationID = String(requested.operationID)
-  await f.runtime.tick()
-  await waitForRetainedCheckStartFor(f, operationID, "combined", interruptedCheckID)
-  const originalActivity = await waitForRetainedCheckActivity(f, operationID)
-  originalActivity.controller.abort()
-  await waitForRetainedOperationState(
-    f,
-    operationID,
-    ["held"],
-    "settled original combined-check interruption",
-  )
-  const held = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const control = await registeredPlanCommand(f.runtime)
-  const continuation = retainedInterruptedCheckContinuationInput(
-    f,
-    held,
-    interruptedCheckID,
-    "authorize-cancellable-interrupted-check",
-  )
-  await expect(control.execute(continuation)).resolves.toMatchObject({
-    status: "retained-verification-check-continued",
-  })
-  await f.runtime.tick()
-  await waitForRetainedCheckStartFor(f, operationID, "combined", interruptedCheckID)
-
-  await control.execute({
-    requestID: "cancel-running-retained-check-continuation",
-    planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
-    action: "cancel-retained-verification",
-    retainedVerificationID: operationID,
-    reason: "Cancel before the continued check can finish",
-  })
-  await waitForRetainedOperationState(
-    f,
-    operationID,
-    ["cancelled"],
-    "cancelled running retained-check continuation",
-  )
-  const cancelled = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const check = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (candidate) => candidate.checkID === interruptedCheckID,
-    ),
-  )!
-  expect(cancelled.state).toBe("cancelled")
-  expect(check.state).toBe("completed")
-  const receipt = JSON.parse(check.receipt!) as CheckReceipt
-  expect(receipt.aborted).toBe(true)
-  expect(checkSucceeded(receipt)).toBe(false)
-}, 180_000)
-
-test("a completed failing retained combined check is not eligible for interrupted-check continuation", async () => {
-  const f = await failedCandidateFixture({
-    requestTick: () => Promise.resolve(),
-    taskCheckCommand: "true",
-    combinedCheckCommand: "false",
-  })
-  const requested = await f.control.execute(
-    retainedVerifyCommand(f, "reserve-failing-combined-check-for-rejection"),
-  )
-  const operationID = String(requested.operationID)
-  await waitForRetainedOperationState(f, operationID, ["held"], "failed retained combined check")
-  const operation = f.store.atomic((db) => retainedVerification(db, operationID))!
-  const failingCheck = f.store.atomic((db) =>
-    retainedVerificationChecks(db, operationID, "combined").find(
-      (check) => check.checkID === "isolated-combined-check",
-    ),
-  )!
-  const receipt = JSON.parse(failingCheck.receipt!) as CheckReceipt
-  expect(receipt.exitCode).not.toBe(0)
-  expect(receipt.aborted).not.toBe(true)
-  expect(receipt.timedOut).toBe(false)
-  const control = await registeredPlanCommand(f.runtime)
-  const continuation = retainedInterruptedCheckContinuationInput(
-    f,
-    operation,
-    "isolated-combined-check",
-    "reject-completed-test-failure-as-interruption",
-  )
-  await expect(control.execute(continuation)).rejects.toThrow()
-  expect(f.store.atomic((db) => retainedVerification(db, operationID))?.state).toBe("held")
-  expect(failingCheck.receipt).toBe(
-    f.store.atomic((db) =>
-      retainedVerificationChecks(db, operationID, "combined").find(
-        (check) => check.checkID === "isolated-combined-check",
-      ),
-    )!.receipt,
-  )
-}, 180_000)
-
 test("stopped-plan verify-retained preserves failed sealed-source check receipts and holds", async () => {
   const f = await failedCandidateFixture({
     taskCheckCommand: "bun run verify",
@@ -3132,7 +1316,7 @@ test("stopped-plan verify-retained preserves failed sealed-source check receipts
     retainedVerifyCommand(f, "verify-failing-stopped-sealed-source-candidate"),
   )
   const operationID = String(requested.operationID)
-  await waitForRetainedOperationState(f, operationID, ["held"], "stopped-plan failed checks")
+  await waitForRetainedOperationState(f, operationID, ["failed"], "stopped-plan failed checks")
 
   const check = f.store.atomic((db) =>
     db
@@ -3160,63 +1344,12 @@ test("stopped-plan verify-retained preserves failed sealed-source check receipts
   }).toEqual(f.originalWorkspace)
   expect(f.prompts).toEqual(prompts)
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
-  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
+  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED")).toBe(
     undefined,
   )
 }, 60_000)
 
-test("stopped-plan verify-retained cancellation leaves the sealed source and original holds intact", async () => {
-  const f = await failedCandidateFixture({
-    taskCheckCommand: "bun run verify",
-    verificationScript: gatedRetainedCheckScript(),
-    candidateContentsCheck: false,
-    requestTick: async () => {},
-  })
-  const request = retainedVerifyCommand(f, "cancel-stopped-source-verification")
-  const requested = await f.control.execute(request)
-  const operationID = String(requested.operationID)
-  await waitForRetainedCheckStart(f, operationID)
-  const checkActivity = await waitForRetainedCheckActivity(f, operationID)
-  await f.control.execute({
-    requestID: "cancel-stopped-source-retained-verification",
-    planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
-    action: "cancel-retained-verification",
-    retainedVerificationID: operationID,
-    reason: "Cancel only the isolated source check",
-  })
-  await checkActivity.settled
-  await f.runtime.tick()
-
-  const operation = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(operationID),
-  )!
-  expect(JSON.parse(operation.payload)).toMatchObject({ state: "cancelled", artifact: f.artifact })
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
-    undefined,
-  )
-  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
-    f.originalAttempt,
-  )
-  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
-  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
-    f.originalEffects,
-  )
-  expect({
-    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
-    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
-  }).toEqual(f.originalWorkspace)
-  expect(f.prompts).toHaveLength(1)
-  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
-}, 60_000)
-
-test("an owner change after admission fences publication of retained check results", async () => {
+test("an owner change after admission does not fence or fail the retained call", async () => {
   const f = await failedCandidateFixture({
     taskCheckCommand: "bun run verify",
     verificationScript: gatedRetainedCheckScript(),
@@ -3227,48 +1360,25 @@ test("an owner change after admission fences publication of retained check resul
   const requested = await f.control.execute(request)
   const operationID = String(requested.operationID)
   const contextPath = await waitForRetainedCheckStart(f, operationID)
+  // Ownership is advisory: another live Architect adopting the plan changes nothing here.
   expect(f.store.updatePlanOwner(f.planID, "owner", "owner2")).toBe(true)
-
-  await waitForFixtureObservation(f, "retained verification owner race hold", () => {
-    const row = f.store.atomic((db) =>
-      db
-        .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_retained_verifications WHERE id=?",
-        )
-        .get(operationID),
-    )
-    return Boolean(row && JSON.parse(row.payload).state === "held")
-  })
   writeFileSync(join(contextPath, "home", "release"), "continue\n")
   const activity = await waitForRetainedCheckActivity(f, operationID)
   await activity.settled
-  await f.runtime.tick()
+  await waitForRetainedOperationState(f, operationID, ["accepted"], "owner change after admission")
 
-  const operation = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(operationID),
-  )!
-  expect(JSON.parse(operation.payload)).toMatchObject({ state: "held", artifact: f.artifact })
-  expect(f.store.plan(f.planID)).toMatchObject({ state: "blocked", owner: "owner2" })
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
-    undefined,
-  )
-  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
-    f.originalAttempt,
-  )
-  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
-  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
-    f.originalEffects,
-  )
+  expect(f.store.plan(f.planID)).toMatchObject({ owner: "owner2" })
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(
+    f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED"),
+  ).toMatchObject({
+    operationID,
+  })
   expect(f.prompts).toHaveLength(1)
-  expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
+  expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
 })
 
-test("competing and cancelled source verification cannot publish or settle the retained worker", async () => {
+test("a competing verification of the same source is rejected while one call runs, and that call still passes", async () => {
   const f = await failedCandidateFixture({
     taskCheckCommand: "bun run verify",
     verificationScript: gatedRetainedCheckScript(),
@@ -3299,46 +1409,15 @@ test("competing and cancelled source verification cannot publish or settle the r
     ),
   ).toBe(1)
 
-  await f.control.execute({
-    requestID: "cancel-source-retained-verification",
-    planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
-    action: "cancel-retained-verification",
-    retainedVerificationID: operationID,
-    reason: "Cancel the isolated check without changing the retained worker",
-  })
+  const contextPath = await waitForRetainedCheckStart(f, operationID)
+  writeFileSync(join(contextPath, "home", "release"), "continue\n")
   await checkActivity.settled
-  await f.runtime.tick()
-  const operation = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(operationID),
-  )!
-  expect(JSON.parse(operation.payload)).toMatchObject({ state: "cancelled", artifact: f.artifact })
-  expect(f.store.plan(f.planID)).toMatchObject({
-    state: "blocked",
-    reason: f.plan.reason,
-  })
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-  expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED")).toBe(
-    undefined,
-  )
-  expect(f.store.attempts(f.planID).find((attempt) => attempt.id === f.attempt.id)).toEqual(
-    f.originalAttempt,
-  )
+  await waitForRetainedOperationState(f, operationID, ["accepted"], "competing verification")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(f.sessions.get(f.attempt.session_id)).toEqual(f.originalWorker)
-  expect(f.store.effects(f.planID).filter((effect) => effect.attempt_id === f.attempt.id)).toEqual(
-    f.originalEffects,
-  )
-  expect({
-    head: git(f.attempt.workspace, ["rev-parse", "HEAD"]),
-    status: git(f.attempt.workspace, ["status", "--porcelain", "--untracked-files=all"]),
-  }).toEqual(f.originalWorkspace)
   expect(f.prompts).toHaveLength(1)
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
-}, 60_000)
+})
 
 async function acceptedFailedAttemptFixture() {
   const f = await failedFixture()
@@ -3348,6 +1427,13 @@ async function acceptedFailedAttemptFixture() {
   if (snapshot.node?.state !== "accepted")
     throw new Error(`Retained candidate did not reach task acceptance: ${JSON.stringify(snapshot)}`)
   await waitForFixtureEffectsSettled(f, "retained failed-attempt effects")
+  // The call only accepts the task; the ordinary combined check then accepts the plan.
+  await waitForFixtureCondition(
+    f,
+    "combined acceptance after the retained task acceptance",
+    () => f.store.plan(f.planID)?.state === "accepted",
+  )
+  await waitForFixtureEffectsSettled(f, "combined acceptance effects")
   expect(f.store.attempts(f.planID)[0]?.state).toBe("failed")
   const command = {
     requestID: "repair-retained-accepted-failed-attempt",
@@ -3400,8 +1486,8 @@ test("retained bun run verify may perform a no-op formatter and use its passing 
   expect(check.cleanup_state).toBe("complete")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(f.store.nodes(f.planID)[0]?.artifact).toBe(f.artifact)
-  if (operation.state === "held")
-    throw new Error(`No-op retained formatter was held: ${JSON.stringify(snapshot)}`)
+  if (operation.state === "failed")
+    throw new Error(`No-op retained formatter failed: ${JSON.stringify(snapshot)}`)
   expect(snapshot.operation).not.toBeNull()
 }, 60_000)
 
@@ -3436,16 +1522,16 @@ test("retained verification does not accept a verifier that actually changes its
   const receipt = JSON.parse(check.receipt!) as CheckReceipt
   expect(receipt.exitCode).toBe(0)
   expect(check.state).toBe("completed")
-  expect(operation.state).toBe("held")
-  expect((JSON.parse(operation.payload) as { holdReason: string }).holdReason).toContain(
-    "candidate changed after its task checks",
+  expect(operation.state).toBe("failed")
+  expect((JSON.parse(operation.payload) as { failureReason: string }).failureReason).toContain(
+    "candidate changed after its checks",
   )
-  expect(snapshot.operation).toMatchObject({ state: "held" })
+  expect(snapshot.operation).toMatchObject({ state: "failed" })
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
   expect(f.store.nodes(f.planID)[0]?.artifact).toBe(f.artifact)
   expect(f.prompts).toHaveLength(originalPromptCount)
   expect(
-    f.store.latestTransition(f.planID, f.task.id, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+    f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED"),
   ).toBeUndefined()
 }, 60_000)
 
@@ -3500,8 +1586,10 @@ for (const timing of ["before admission", "during native observation"]) {
     const removeAcceptance = () =>
       f.store.atomic((db) =>
         db
-          .query("DELETE FROM runner_transitions WHERE plan_id=? AND event=?")
-          .run(f.planID, "RETAINED_TASK_CANDIDATE_ACCEPTED"),
+          .query(
+            "UPDATE runner_retained_verifications SET state='failed',payload=json_set(payload,'$.state','failed') WHERE plan_id=? AND state='accepted'",
+          )
+          .run(f.planID),
       )
     if (timing === "before admission") removeAcceptance()
     else
@@ -3651,12 +1739,11 @@ test(
     const control = await registeredPlanCommand(f.runtime)
     const result = (await control.execute(verifyCommand)) as {
       operationID: string
-      generation: number
       status: string
     }
 
     expect(result.status).toBe("retained-verification-requested")
-    expect(result.generation).toBe(1)
+    expect(result).not.toHaveProperty("generation")
     expect(await control.execute(verifyCommand)).toEqual(result)
     expect(control.permissionChecks).toEqual(["lz-plan-command", "lz-plan-command"])
     await waitForRetainedOperationState(
@@ -3665,7 +1752,7 @@ test(
       ["accepted"],
       "exact failed-candidate retained verification",
     )
-    expect(f.worktreeCreations).toHaveLength(worktreeCount + 2)
+    expect(f.worktreeCreations).toHaveLength(worktreeCount + 1)
     const operation = f.store.atomic((db) =>
       db
         .query<{ payload: string }, [string]>(
@@ -3678,14 +1765,14 @@ test(
       state: string
       cleanupState: string
       artifact: string
-      combinedArtifact: string
       taskWorkspace: string | null
-      combinedWorkspace: string | null
     }
     expect(retained.state).toBe("accepted")
     expect(retained.cleanupState).toBe("complete")
     expect(retained.artifact).toBe(exactArtifact)
-    expect(f.store.plan(f.planID)?.state).toBe("accepted")
+    // The call accepts the task only. The old uncertain effect keeps the plan from the
+    // ordinary combined check's acceptance until it is reconciled; the call never touches it.
+    expect(f.store.plan(f.planID)?.state).not.toBe("accepted")
     expect(f.store.nodes(f.planID)[0]?.artifact).toBe(exactArtifact)
     expect(f.store.attempts(f.planID)).toHaveLength(1)
     expect(f.store.attempts(f.planID)[0]).toMatchObject({
@@ -3706,11 +1793,9 @@ test(
     ).toEqual(oldEffectBefore)
     expect(oldEffectBefore).toMatchObject({ state: "uncertain", payload: oldEffectPayload })
     expect(readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")).toBe(oldProfileBefore)
-    expect(retained.combinedArtifact).toMatch(/^[a-f0-9]{40}$/)
+    expect(retained).not.toHaveProperty("combinedArtifact")
     expect(retained.taskWorkspace).not.toBeNull()
-    expect(retained.combinedWorkspace).not.toBeNull()
     expect(existsSync(retained.taskWorkspace!)).toBe(false)
-    expect(existsSync(retained.combinedWorkspace!)).toBe(false)
     const checks = f.store.atomic((db) =>
       db
         .query<
@@ -3727,7 +1812,7 @@ test(
         )
         .all(result.operationID),
     )
-    expect(checks).toHaveLength(2)
+    expect(checks).toHaveLength(1)
     expect(
       checks.every((check) => check.state === "completed" && check.cleanup_state === "complete"),
     ).toBe(true)
@@ -3737,7 +1822,6 @@ test(
         cwd: string
         isolation: {
           operationID: string
-          generation: number
           phase: string
           resources: Array<{ name: string; realPath: string; device: number; inode: number }>
           sqlitePath: string
@@ -3746,7 +1830,7 @@ test(
       expect(receipt.exitCode).toBe(0)
       expect(receipt.cwd).not.toBe(attemptBefore.workspace)
       expect(receipt.isolation.operationID).toBe(result.operationID)
-      expect(receipt.isolation.generation).toBe(1)
+      expect(receipt.isolation).not.toHaveProperty("generation")
       expect(receipt.isolation.phase).toBe(check.phase)
       expect(receipt.isolation.resources.length).toBe(9)
       expect(
@@ -3770,7 +1854,7 @@ test("failed retained task evidence never accepts the target or releases depende
   await waitForRetainedOperationState(
     f,
     result.operationID,
-    ["held"],
+    ["failed"],
     "failed retained task evidence",
   )
   const operation = f.store.atomic((db) =>
@@ -3780,7 +1864,7 @@ test("failed retained task evidence never accepts the target or releases depende
       )
       .get(result.operationID),
   )!
-  expect(JSON.parse(operation.payload)).toMatchObject({ state: "held" })
+  expect(JSON.parse(operation.payload)).toMatchObject({ state: "failed" })
   expect(
     f.store.atomic((db) =>
       db
@@ -3906,7 +1990,7 @@ test("a service URL in an authorized check does not trigger a verification admis
       )
       .get(result.operationID),
   )!
-  expect(JSON.parse(retained.payload).holdReason ?? "").not.toContain("shared external service")
+  expect(JSON.parse(retained.payload).failureReason ?? "").not.toContain("shared external service")
   expect(f.worktreeCreations.length).toBeGreaterThan(before)
   expect(
     f.store.atomic(
@@ -3947,7 +2031,7 @@ test("a configured script executes and records its actual command failure", asyn
   await waitForRetainedOperationState(
     f,
     result.operationID,
-    ["held"],
+    ["failed"],
     "configured script retained failure",
   )
   const retained = f.store.atomic((db) =>
@@ -3958,8 +2042,8 @@ test("a configured script executes and records its actual command failure", asyn
       .get(result.operationID),
   )!
   expect(JSON.parse(retained.payload)).toMatchObject({
-    state: "held",
-    holdReason: expect.stringContaining("exited with code"),
+    state: "failed",
+    failureReason: expect.stringContaining("exited with code"),
   })
   expect(f.worktreeCreations.length).toBeGreaterThan(before)
   expect(
@@ -4012,7 +2096,7 @@ test("a current task probe definition cannot be bypassed by task-check receipts"
   await waitForRetainedOperationState(
     f,
     result.operationID,
-    ["held"],
+    ["failed"],
     "required retained task probe gate",
   )
   const retained = f.store.atomic((db) =>
@@ -4023,8 +2107,8 @@ test("a current task probe definition cannot be bypassed by task-check receipts"
       .get(result.operationID),
   )!
   expect(JSON.parse(retained.payload)).toMatchObject({
-    state: "held",
-    holdReason: expect.stringContaining("task-candidate:probe:retained-live-behavior"),
+    state: "failed",
+    failureReason: expect.stringContaining("task-candidate:probe:retained-live-behavior"),
   })
   expect(
     f.store.atomic(
@@ -4040,344 +2124,6 @@ test("a current task probe definition cannot be bypassed by task-check receipts"
 })
 
 // SKIPPED: probes cannot be recorded against a held operation (assertRetainedProbeBinding); a missing probe now goes straight to held.
-test.skip(
-  "a retained probe is generation-bound, owner-recorded, resource-isolated, and gates acceptance",
-  async () => {
-    const f = await failedFixture()
-    const probes = new ProbeRepository(f.store.repository)
-    const definitionResult = probes.define(
-      {
-        requestID: "required-retained-probe-definition-pass",
-        target: { kind: "task", taskID: f.task.id },
-        scenarios: [
-          {
-            id: "retained-live-behavior-pass",
-            summary: "Exercise the exact retained candidate",
-            acceptanceIDs: ["task-candidate"],
-            procedure: { recordID: "runbook:retained-probe-pass", revision: "1" },
-          },
-        ],
-        notApplicable: [],
-      },
-      { sessionID: "owner", agent: "architect" },
-    )
-    if (definitionResult.status === "conflict")
-      throw new Error("Probe definition unexpectedly conflicted")
-    const requested = (await f.runtime.command(
-      {
-        requestID: "verify-retained-with-live-probe",
-        planID: f.planID,
-        expectedVersion: f.plan.version,
-        action: "verify-retained",
-        projectID: "project",
-        planRevision: f.plan.revision,
-        taskID: f.task.id,
-        taskRevision: f.task.revision,
-        attemptID: f.attempt.id,
-        artifact: f.artifact,
-        reason: "Run ordinary isolated checks and preserve the required live behavior probe",
-      },
-      "owner",
-    )) as { operationID: string }
-    await waitForRetainedOperationState(
-      f,
-      requested.operationID,
-      ["held"],
-      "retained behavior probe gate",
-    )
-    const operationRow = f.store.atomic((db) =>
-      db
-        .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_retained_verifications WHERE id=?",
-        )
-        .get(requested.operationID),
-    )!
-    const operation = RetainedVerificationSchema.parse(JSON.parse(operationRow.payload))
-    const basis = retainedVerificationProbeBasis(operation, "task")
-    const probeInput = {
-      requestID: "retained-live-probe-run",
-      definitionID: definitionResult.definition.definitionID,
-      definitionRevision: definitionResult.definition.revision,
-      scenarioID: "retained-live-behavior-pass",
-      attemptID: f.attempt.id,
-      ...basis,
-      capabilities: ["isolated-filesystem-fixture"],
-      setupReferences: ["runbook:retained-probe-pass#setup"],
-      fixtureReferences: ["owned-resource:retained-probe-fixture"],
-      actions: [
-        {
-          kind: "navigate" as const,
-          summary: "Exercise the retained candidate in its owned context",
-        },
-      ],
-      observations: [
-        { source: "tool-observation" as const, fact: "The exact retained behavior was observed" },
-      ],
-      evidenceReferences: [
-        { kind: "interaction" as const, reference: "trace:retained-probe-pass" },
-      ],
-      timing: { startedAt: 100, finishedAt: null, elapsedMs: null },
-      usage: { tokens: 0, toolCalls: 1, costUsd: null },
-      cleanupState: "pending" as const,
-    }
-    const architect = { sessionID: "owner", agent: "architect" }
-    expect(
-      probes.startRun(
-        {
-          ...probeInput,
-          requestID: "described-retained-live-probe",
-          inputs: { ...basis.inputs, revision: "updated-context" },
-        },
-        architect,
-      ).status,
-    ).toBe("started")
-    expect(() =>
-      probes.startRun(
-        { ...probeInput, requestID: "foreign-retained-live-probe" },
-        { sessionID: "foreign", agent: "architect" },
-      ),
-    ).toThrow("current Architect owner")
-    expect(probes.runsForAttempt(f.attempt.id)).toHaveLength(1)
-    const started = probes.startRun(probeInput, architect)
-    if (started.status === "conflict") throw new Error(started.message)
-    expect(started.run).toMatchObject({
-      sessionID: f.attempt.session_id,
-      producer: architect,
-    })
-
-    const fixtureRoot = mkdtempSync(join(tmpdir(), "lazers-retained-live-probe-resource-"))
-    cleanups.push(() => rmSync(fixtureRoot, { recursive: true, force: true }))
-    const lifecycle = filesystemProbeLifecycle(
-      new ResourceRepository(f.store.repository),
-      probes,
-      fixtureRoot,
-    )
-    const executed = await lifecycle.withOwnedResources(
-      {
-        runID: started.run.runID,
-        actor: architect,
-        resources: [
-          {
-            requestID: "retained-probe-fixture-resource",
-            generation: 1,
-            name: "behavior-fixture",
-            contents: "candidate-owned fixture",
-          },
-        ],
-      },
-      (fixtures) => {
-        expect(existsSync(fixtures[0]!.path)).toBe(true)
-        return { verdict: "passed", value: "behavior observed" }
-      },
-    )
-    expect(executed.run).toMatchObject({
-      lifecycle: "completed",
-      verdict: "passed",
-      cleanupState: "complete",
-    })
-    await waitForFixtureCondition(
-      f,
-      "retained behavior probe acceptance",
-      () => f.store.plan(f.planID)?.state === "accepted",
-    )
-    expect(f.store.plan(f.planID)?.state).toBe("accepted")
-    expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-    expect(f.store.attempts(f.planID)).toHaveLength(1)
-    expect(f.prompts).toHaveLength(1)
-  },
-  { timeout: 30_000 },
-)
-
-// SKIPPED: see the retained probe test above.
-test.skip("owner reassignment and a newer generation reject late probe evidence", async () => {
-  const f = await failedFixture()
-  const notices: Parameters<typeof f.host.notify>[0][] = []
-  f.host.notify = async (notice) => {
-    notices.push(notice)
-  }
-  const probes = new ProbeRepository(f.store.repository)
-  const definitionResult = probes.define(
-    {
-      requestID: "retained-generation-probe-definition",
-      target: { kind: "task", taskID: f.task.id },
-      scenarios: [
-        {
-          id: "retained-generation-scenario",
-          summary: "Observe the exact candidate",
-          acceptanceIDs: ["task-candidate"],
-          procedure: { recordID: "runbook:retained-generation", revision: "1" },
-        },
-      ],
-      notApplicable: [],
-    },
-    { sessionID: "owner", agent: "architect" },
-  )
-  if (definitionResult.status === "conflict")
-    throw new Error("Probe definition unexpectedly conflicted")
-  const first = (await f.runtime.command(
-    {
-      requestID: "retained-generation-one",
-      planID: f.planID,
-      expectedVersion: f.plan.version,
-      action: "verify-retained",
-      projectID: "project",
-      planRevision: f.plan.revision,
-      taskID: f.task.id,
-      taskRevision: f.task.revision,
-      attemptID: f.attempt.id,
-      artifact: f.artifact,
-      reason: "Start an owner-bound retained evidence generation",
-    },
-    "owner",
-  )) as { operationID: string; generation: number }
-  expect(first.generation).toBe(1)
-  await waitForRetainedOperationState(
-    f,
-    first.operationID,
-    ["held"],
-    "retained generation one evidence gate",
-  )
-  const firstRow = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(first.operationID),
-  )!
-  const firstOperation = RetainedVerificationSchema.parse(JSON.parse(firstRow.payload))
-  expect(firstOperation.state).toBe("held")
-  const firstBasis = retainedVerificationProbeBasis(firstOperation, "task")
-  const firstProbeInput = {
-    requestID: "retained-generation-one-probe",
-    definitionID: definitionResult.definition.definitionID,
-    definitionRevision: definitionResult.definition.revision,
-    scenarioID: "retained-generation-scenario",
-    attemptID: f.attempt.id,
-    ...firstBasis,
-    capabilities: ["candidate-observation"],
-    setupReferences: [],
-    fixtureReferences: [],
-    actions: [{ kind: "inspect" as const, summary: "Observe the retained candidate" }],
-    observations: [
-      { source: "tool-observation" as const, fact: "The candidate was opened for inspection" },
-    ],
-    evidenceReferences: [
-      { kind: "interaction" as const, reference: "trace:retained-generation-one" },
-    ],
-    timing: { startedAt: 100, finishedAt: null, elapsedMs: null },
-    usage: { tokens: 0, toolCalls: 1, costUsd: null },
-    cleanupState: "pending" as const,
-  }
-  const firstProbe = probes.startRun(firstProbeInput, { sessionID: "owner", agent: "architect" })
-  if (firstProbe.status === "conflict") throw new Error(firstProbe.message)
-
-  await f.runtime.command(
-    {
-      requestID: "reassign-retained-generation-owner",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "reassign",
-      targetSessionID: "owner2",
-      reason: "Transfer the plan owner while preserving the active evidence generation",
-    },
-    "owner",
-  )
-  f.store.atomic((db) =>
-    db.exec(`CREATE TEMP TRIGGER fail_held_notice BEFORE INSERT ON runner_outbox
-      WHEN json_extract(NEW.payload,'$.status') = 'retained-verification-held'
-      BEGIN SELECT RAISE(ABORT,'held notice test failure'); END`),
-  )
-  await waitForRetainedOperationState(
-    f,
-    first.operationID,
-    ["held"],
-    "retained generation owner reassignment",
-  )
-  await f.runtime.tick()
-  expect(f.store.latestTransition(f.planID, null, "PLAN_DELIVERY_FAILED")).toMatchObject({
-    error: expect.stringContaining("held notice test failure"),
-  })
-  f.store.atomic((db) => db.exec("DROP TRIGGER fail_held_notice"))
-  await f.runtime.tick()
-  await f.runtime.tick()
-  const holdNotices = notices.filter((notice) =>
-    notice.text.includes('"status":"retained-verification-held"'),
-  )
-  expect(holdNotices).toHaveLength(1)
-  expect(holdNotices[0]).toMatchObject({ sessionID: "owner2", resume: true })
-  expect(holdNotices[0]?.text).toContain(first.operationID)
-  const heldRow = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(first.operationID),
-  )!
-  expect(JSON.parse(heldRow.payload)).toMatchObject({ state: "held", generation: 1 })
-  expect(() =>
-    probes.updateRun(
-      {
-        requestID: "late-probe-generation-one-result",
-        runID: firstProbe.run.runID,
-        expectedVersion: 1,
-        lifecycle: "completed",
-        verdict: "passed",
-        actions: firstProbe.run.actions,
-        observations: firstProbe.run.observations,
-        evidenceReferences: firstProbe.run.evidenceReferences,
-        timing: { startedAt: 100, finishedAt: 110, elapsedMs: 10 },
-        usage: firstProbe.run.usage,
-        cleanupState: "complete",
-      },
-      { sessionID: "owner", agent: "architect" },
-    ),
-  ).toThrow("current owned verification generation")
-  expect(
-    probes.eligibility(firstProbe.run.runID, {
-      ...firstBasis,
-      procedure: definitionResult.definition.scenarios[0]!.procedure,
-    }).eligible,
-  ).toBe(false)
-
-  await f.runtime.command(
-    {
-      requestID: "cancel-held-old-retained-generation",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "cancel-retained-verification",
-      retainedVerificationID: first.operationID,
-      reason: "Close the prior owner generation before opening a new one",
-    },
-    "owner2",
-  )
-  const second = (await f.runtime.command(
-    {
-      requestID: "retained-generation-two",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "verify-retained",
-      projectID: "project",
-      planRevision: f.store.plan(f.planID)!.revision,
-      taskID: f.task.id,
-      taskRevision: f.task.revision,
-      attemptID: f.attempt.id,
-      artifact: f.artifact,
-      reason: "Open a fresh retained evidence generation under the new current owner",
-    },
-    "owner2",
-  )) as { operationID: string; generation: number }
-  expect(second.generation).toBe(2)
-  expect(second.operationID).not.toBe(first.operationID)
-  expect(() =>
-    probes.startRun(
-      { ...firstProbeInput, requestID: "late-probe-after-new-generation" },
-      { sessionID: "owner", agent: "architect" },
-    ),
-  ).toThrow("current owned verification generation")
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
-  expect(f.prompts).toHaveLength(1)
-})
-
 test("failed retained-checkout cleanup does not revoke a product pass", async () => {
   const cleanupFixture = fixture({
     failRetainedCleanup: true,
@@ -4431,7 +2177,7 @@ test("failed retained-checkout cleanup does not revoke a product pass", async ()
   expect(cleanupFixture.store.nodes(cleanupFixture.planID)[0]?.state).toBe("accepted")
 })
 
-test.each(["cancel-retained-verification", "cancel"] as const)(
+test.each(["cancel"] as const)(
   "%s retains a completed passing receipt with unknown process settlement",
   async (action) => {
     const f = await failedFixture({
@@ -4470,25 +2216,13 @@ test.each(["cancel-retained-verification", "cancel"] as const)(
         planID: f.planID,
         expectedVersion: f.store.plan(f.planID)!.version,
         action,
-        ...(action === "cancel-retained-verification"
-          ? { retainedVerificationID: result.operationID }
-          : {}),
       }
-      const cancellation = control.execute(command)
-      if (action === "cancel-retained-verification") {
-        await expect(cancellation).rejects.toThrow("subprocess cleanup remains uncertain")
-        await expect(cancellation).rejects.toThrow("Command exited 0")
-        await expect(control.execute(command)).rejects.toThrow(
-          "subprocess cleanup remains uncertain",
-        )
-      } else {
-        await cancellation
-        await f.runtime.tick()
-        expect(f.store.plan(f.planID)?.state).toBe("cancelling")
-        await f.runtime.tick()
-        expect(f.store.plan(f.planID)?.state).toBe("cancelling")
-        expect(f.store.plan(f.planID)?.reason).toContain("settlement is uncertain")
-      }
+      await control.execute(command)
+      await f.runtime.tick()
+      expect(f.store.plan(f.planID)?.state).toBe("cancelling")
+      await f.runtime.tick()
+      expect(f.store.plan(f.planID)?.state).toBe("cancelling")
+      expect(f.store.plan(f.planID)?.reason).toContain("settlement is uncertain")
       const check = f.store.atomic((db) =>
         db
           .query<{ state: string; receipt: string; cleanup_state: string }, [string]>(
@@ -4528,8 +2262,8 @@ test.each(["cancel-retained-verification", "cancel"] as const)(
   30_000,
 )
 
-for (const action of ["cancel-retained-verification", "cancel"] as const)
-  test.each(["valid", "missing", "generation", "check", "candidate", "isolation"] as const)(
+for (const action of ["cancel"] as const)
+  test.each(["valid", "missing", "check", "candidate", "isolation"] as const)(
     `${action} recovers receipt-cut cancellation with %s disk evidence`,
     async (kind) => {
       const f = await failedFixture({ requestTick: async () => {} })
@@ -4558,10 +2292,9 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
       expect(row.state).toBe("intended")
       const original = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
       const changed = structuredClone(original)
-      const isolation = changed.isolation as { generation: number; resources: { inode: number }[] }
+      const isolation = changed.isolation as { resources: { inode: number }[] }
       if (kind === "missing") rmSync(row.receipt_path)
       else {
-        if (kind === "generation") isolation.generation++
         if (kind === "check") changed.id = "foreign-check"
         if (kind === "candidate") changed.artifact = f.attempt.base_commit
         if (kind === "isolation") isolation.resources[0]!.inode++
@@ -4585,18 +2318,11 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
         planID: f.planID,
         expectedVersion: store.plan(f.planID)!.version,
         action,
-        ...(action === "cancel-retained-verification"
-          ? { retainedVerificationID: requested.operationID }
-          : {}),
       }
       const worktreesBefore = [...f.worktreeCreations]
       const spawn = spyOn(Bun, "spawn")
       try {
-        if (action === "cancel-retained-verification" && kind !== "valid")
-          await expect(reopenedControl.execute(command)).rejects.toThrow(
-            "cancellation remains uncertain",
-          )
-        else await reopenedControl.execute(command)
+        await reopenedControl.execute(command)
         await runtime.tick()
         const events = () =>
           store
@@ -4616,7 +2342,6 @@ for (const action of ["cancel-retained-verification", "cancel"] as const)
           expect(saved.cleanup_state).toBe("complete")
           expect(JSON.parse(events()[0]!.payload)).toMatchObject({
             operationID: requested.operationID,
-            generation: 1,
             phase: "task",
             exitCode: 0,
             timedOut: false,
@@ -4743,7 +2468,7 @@ test.each([false, true])(
               )
               .get(result.operationID),
           )!
-          if (["accepted", "held"].includes(operation.state)) break
+          if (["accepted", "failed"].includes(operation.state)) break
           await Promise.all(
             verificationActivitiesForDatabase(store.repository.path).map((entry) => entry.settled),
           )
@@ -4753,11 +2478,10 @@ test.each([false, true])(
             .activity(f.planID, f.task.id)
             .filter((entry) => entry.event === "RETAINED_VERIFICATION_CHECK_COMPLETED")
             .map((entry) => JSON.parse(entry.payload))
-        expect(events()).toHaveLength(failRetainedCheck ? 1 : 2)
+        expect(events()).toHaveLength(1)
         for (const event of events())
           expect(event).toMatchObject({
             operationID: result.operationID,
-            generation: 1,
             cancelled: false,
             exitCode: failRetainedCheck ? 1 : 0,
             timedOut: false,
@@ -4781,7 +2505,7 @@ test.each([false, true])(
   60_000,
 )
 
-test.each(["cancel-retained-verification", "cancel"] as const)(
+test.each(["cancel"] as const)(
   "%s and database reopen cannot accept a late retained-check result",
   async (action) => {
     const delayedCheck = "bun run verify"
@@ -4859,9 +2583,6 @@ test.each(["cancel-retained-verification", "cancel"] as const)(
       planID: delayed.planID,
       expectedVersion: plan.version,
       action,
-      ...(action === "cancel-retained-verification"
-        ? { retainedVerificationID: operation.id }
-        : {}),
       reason: "Stop the isolated check and retain its actual result without acceptance",
     })
     await waitForRetainedOperationState(
@@ -5008,7 +2729,7 @@ test("a slow candidate dependency setup leaves unrelated plan RPCs responsive", 
       ["accepted"],
       "retained verification after dependency setup",
     )
-    expect(installCalls).toBe(2)
+    expect(installCalls).toBe(1)
     const operation = f.store.atomic((db) =>
       db
         .query<{ payload: string }, [string]>(
@@ -5134,13 +2855,27 @@ test("cancellation observes a real installer process group before removing parti
       requestID: "cancel-retained-dependency-setup",
       planID: f.planID,
       expectedVersion: f.store.plan(f.planID)!.version,
-      action: "cancel-retained-verification",
-      retainedVerificationID: operation.id,
+      action: "cancel",
       reason: "Cancel the isolated dependency setup before any check launches",
     },
     "owner",
   )
   await verification
+  // Plan cancellation aborts the call; the installer settles and its setup is removed on the runtime's own ticks.
+  await waitForFixtureCondition(
+    f,
+    "cancelled dependency setup settled",
+    () =>
+      descendantPID !== undefined &&
+      f.store.atomic((db) =>
+        db
+          .query<{ state: string }, [string]>(
+            "SELECT state FROM runner_retained_verification_resources WHERE operation_id=?",
+          )
+          .all(operation.id)
+          .every((row) => row.state === "removed"),
+      ),
+  )
 
   const cancelled = f.store.atomic((db) =>
     db
@@ -5220,7 +2955,6 @@ test.each([false, true])(
       f.store.atomic((db) =>
         registerRetainedVerificationResources(db, f.root, {
           operationID: retained.id,
-          generation: retained.generation,
           phase: "task",
           checkID: check.id,
           resources,
@@ -5252,7 +2986,6 @@ test.each([false, true])(
       createRetainedCheckContext({
         rootDirectory,
         operationID: retained.id,
-        generation: retained.generation,
         phase: "task",
         checkID: check.id,
         originalWorkspace: retained.originalWorkspace,
@@ -5321,16 +3054,11 @@ test.each([false, true])(
           requestID: "cancel-before-reopen-with-live-installer",
           planID: f.planID,
           expectedVersion: f.store.plan(f.planID)!.version,
-          action: "cancel-retained-verification" as const,
-          retainedVerificationID: retained.id,
+          action: "cancel" as const,
           reason: "Cancel before runtime restart with installer termination unknown",
         }
-        expect(await f.runtime.command(cancel, "owner")).toMatchObject({
-          status: "retained-verification-cancelled",
-        })
-        expect(await f.runtime.command(cancel, "owner")).toMatchObject({
-          status: "retained-verification-cancelled",
-        })
+        expect(await f.runtime.command(cancel, "owner")).toMatchObject({ status: "cancelling" })
+        expect(await f.runtime.command(cancel, "owner")).toMatchObject({ status: "cancelling" })
       }
       await f.runtime.stop()
       f.store.atomic((db) =>
@@ -5353,10 +3081,10 @@ test.each([false, true])(
           .get(retained.id),
       )!
       expect(JSON.parse(reconciled.payload)).toMatchObject({
-        state: cancelBeforeRestart ? "cancelled" : "held",
-        holdReason: expect.stringContaining(
+        state: cancelBeforeRestart ? "cancelled" : "failed",
+        failureReason: expect.stringContaining(
           cancelBeforeRestart
-            ? "Cancel before runtime restart"
+            ? "Plan cancellation requested"
             : "Interrupted retained verification setup",
         ),
       })
@@ -5437,7 +3165,7 @@ test("an injected dependency setup failure cleans registered partial resources b
   releaseFailure.resolve()
   await verification
   // F-S5-3: admission returns before the background setup has settled.
-  await waitForRetainedOperationState(f, operation.id, ["held"], "Injected setup cleanup")
+  await waitForRetainedOperationState(f, operation.id, ["failed"], "Injected setup cleanup")
 
   const held = f.store.atomic((db) =>
     db
@@ -5447,8 +3175,8 @@ test("an injected dependency setup failure cleans registered partial resources b
       .get(operation.id),
   )!
   expect(JSON.parse(held.payload)).toMatchObject({
-    state: "held",
-    holdReason: expect.stringContaining("injected dependency setup failure"),
+    state: "failed",
+    failureReason: expect.stringContaining("injected dependency setup failure"),
   })
   expect(existsSync(setupRoot.canonical_path)).toBe(false)
   expect(existsSync(join(candidateWorkspace, "node_modules"))).toBe(false)
@@ -5473,3 +3201,93 @@ test("an injected dependency setup failure cleans registered partial resources b
     ),
   ).toBe(0)
 })
+
+test("verify-retained runs on the current candidate however far the plan version has moved", async () => {
+  const f = await failedCandidateFixture({ requestTick: async () => {} })
+  const requested = await f.control.execute(
+    retainedVerifyCommand(f, "verify-before-the-version-moves"),
+  )
+  const operationID = String(requested.operationID)
+  const admitted = f.store.plan(f.planID)!.version
+  // Other work on the plan moves its version while the call is pending. A call once stranded
+  // on "retained operation binds plan version 43, while the plan is now version 59".
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET version=version+16 WHERE id=?").run(f.planID),
+  )
+  expect(f.store.plan(f.planID)!.version).toBe(admitted + 16)
+
+  await waitForRetainedOperationState(
+    f,
+    operationID,
+    ["accepted", "failed"],
+    "retained verification after the plan version moved",
+  )
+  const row = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(operationID),
+  )!
+  const payload = JSON.parse(row.payload) as Record<string, unknown>
+  expect(payload).toMatchObject({ state: "accepted", artifact: f.artifact })
+  for (const retired of ["generation", "planVersion", "inputFingerprint", "holdReason"])
+    expect(payload).not.toHaveProperty(retired)
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(
+    f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED"),
+  ).toMatchObject({ operationID })
+  expect(f.prompts).toHaveLength(1)
+}, 60_000)
+
+test("a failed verify-retained records the failure and the next call verifies the same commit afresh", async () => {
+  const f = await failedCandidateFixture({
+    requestTick: async () => {},
+    verificationScript: [
+      'import { existsSync } from "node:fs"',
+      'import { join } from "node:path"',
+      "if (!process.env.LAZERS_VERIFICATION_SQLITE) process.exit(1)",
+      `if (!existsSync(${JSON.stringify(join(tmpdir(), "retained-recheck-release"))})) process.exit(1)`,
+      "",
+    ].join("\n"),
+    taskCheckCommand: "bun run verify",
+    candidateContentsCheck: false,
+  })
+  const release = join(tmpdir(), "retained-recheck-release")
+  rmSync(release, { force: true })
+  cleanups.push(() => rmSync(release, { force: true }))
+  const first = await f.control.execute(retainedVerifyCommand(f, "verify-then-fail"))
+  const firstID = String(first.operationID)
+  await waitForRetainedOperationState(f, firstID, ["failed"], "first retained verification")
+  const failed = JSON.parse(
+    f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(firstID),
+    )!.payload,
+  ) as { state: string; failureReason: string }
+  expect(failed.state).toBe("failed")
+  expect(failed.failureReason).toBeString()
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+
+  // Nothing holds or waits: a new call on the same commit runs, and passes now.
+  writeFileSync(release, "ok\n")
+  const second = await f.control.execute(retainedVerifyCommand(f, "verify-again"))
+  const secondID = String(second.operationID)
+  expect(secondID).not.toBe(firstID)
+  await waitForRetainedOperationState(f, secondID, ["accepted"], "second retained verification")
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+          )
+          .get(f.planID)!.n,
+    ),
+  ).toBe(2)
+}, 60_000)

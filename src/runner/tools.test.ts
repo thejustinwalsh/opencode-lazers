@@ -139,8 +139,9 @@ test("authorized callers read native catalog advice; only orchestration requires
   const planCommandDescription = tools.get("lz-plan-command")!.description
   expect(planCommandDescription).toContain("expectedVersion and stable requestID")
   expect(planCommandDescription).toContain("without taskID")
-  expect(planCommandDescription).toContain("settled combined checks")
-  expect(planCommandDescription).toContain("extend-verification-deadline")
+  expect(planCommandDescription).toContain("re-runs the combined check")
+  expect(planCommandDescription).not.toContain("extend-verification-deadline")
+  expect(planCommandDescription).not.toContain("retained-check")
   expect(planCommandDescription).toContain("verify-retained")
   expect(planCommandDescription).toContain("without an implementation turn")
   expect(planCommandDescription).toContain("startup settlement")
@@ -644,14 +645,11 @@ test("registered selected full inspection reads retained verification without ru
     const operation = {
       schemaVersion: 1 as const,
       id: crypto.randomUUID(),
-      generation: 3,
       projectID: "project",
       projectDirectory,
       planID: plan.planID,
       planRevision: 1,
-      planVersion: 1,
       owner: "ses_test",
-      ownerEpoch: 0,
       taskID: task.id,
       taskRevision: 1,
       attemptID: crypto.randomUUID(),
@@ -659,27 +657,21 @@ test("registered selected full inspection reads retained verification without ru
       originalMessageID: "msg_private_canary",
       originalWorkspace: "/private/ORIGINAL_WORKSPACE_CANARY",
       artifact: "a".repeat(40),
-      combinedArtifact: null,
-      combinedInputFingerprint: null,
       taskWorkspace: null,
       taskWorkspaceState: null,
-      combinedWorkspace: null,
-      combinedWorkspaceState: null,
-      inputFingerprint: fingerprint("input"),
       environmentIdentity: JSON.stringify({ PATH: "/private/ENVIRONMENT_CONTENT_CANARY" }),
       reason: "PRIVATE_REASON_CANARY",
       state: "accepted" as const,
-      holdReason: "PRIVATE_HOLD_CANARY",
+      failureReason: "PRIVATE_HOLD_CANARY",
       cleanupState: "failed" as const,
       createdAt: 100,
       updatedAt: 200,
     }
-    for (const generation of [1, 2])
+    for (const _earlier of [1, 2])
       store.atomic((db) =>
         createRetainedVerification(db, projectDirectory, {
           ...operation,
           id: crypto.randomUUID(),
-          generation,
           state: "failed",
           cleanupState: "complete",
         }),
@@ -690,7 +682,6 @@ test("registered selected full inspection reads retained verification without ru
       id: crypto.randomUUID(),
       planID: foreignPlan.planID,
       taskID: foreignTask.id,
-      generation: 1,
       state: "accepted" as const,
     }
     store.atomic((db) => createRetainedVerification(db, projectDirectory, foreignOperation))
@@ -730,13 +721,12 @@ test("registered selected full inspection reads retained verification without ru
       )
       db.query(
         `INSERT INTO runner_retained_verification_resources(
-          project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,
+          project_directory,operation_id,phase,check_id,resource_name,canonical_path,
           device,inode,state,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,'uncertain',?,?)`,
+        ) VALUES(?,?,?,?,?,?,?,?,'uncertain',?,?)`,
       ).run(
         projectDirectory,
         operation.id,
-        operation.generation,
         "task",
         "tests",
         "PRIVATE_RESOURCE_CANARY",
@@ -793,9 +783,7 @@ test("registered selected full inspection reads retained verification without ru
     await Effect.runPromise(Effect.scoped(registerToolCallWrappers(ctx, progress, "project")))
     const inspect = tools.get("lz-inspect-plan")!
     const before = store.atomic((db) => ({
-      operations: db
-        .query("SELECT id,generation,state,payload FROM runner_retained_verifications")
-        .all(),
+      operations: db.query("SELECT id,state,payload FROM runner_retained_verifications").all(),
       checks: db
         .query(
           "SELECT operation_id,phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks",
@@ -824,7 +812,6 @@ test("registered selected full inspection reads retained verification without ru
       retainedVerifications: {
         latest: Array<{
           operationID: string
-          generation: number
           taskID: string
           attemptID: string
           candidateArtifact: string
@@ -832,20 +819,8 @@ test("registered selected full inspection reads retained verification without ru
           cleanup: { state: string; resourcesByState: { uncertain: number } }
           checks: Array<{ result: { status: string }; cleanupState: string }>
         }>
-        history: { records: Array<{ generation: number }>; nextCursor: string | null }
       }
     }
-    const firstPageResult = await Effect.runPromise(
-      inspect.execute(
-        { planID: plan.planID, view: "retained-verifications", limit: 1 },
-        callContext("architect"),
-      ),
-    )
-    const firstPage = JSON.parse(String(firstPageResult.content)) as {
-      latest: Array<{ generation: number; operationID: string }>
-      history: { records: Array<{ generation: number }>; nextCursor: string | null }
-    }
-    expect(firstPage.history.nextCursor).toBeString()
     store.atomic((db) =>
       db
         .query(
@@ -877,51 +852,8 @@ test("registered selected full inspection reads retained verification without ru
     ).toBeGreaterThan(0)
     expect(store.claim("unrelated-scheduler")).toBeGreaterThan(0)
     expect(store.move(foreignPlan.planID, foreignTask.id, "READY")).toBe("ready")
-    const secondPageResult = await Effect.runPromise(
-      inspect.execute(
-        {
-          planID: plan.planID,
-          view: "retained-verifications",
-          limit: 1,
-          cursor: firstPage.history.nextCursor,
-        },
-        callContext("architect"),
-      ),
-    )
-    const secondPage = JSON.parse(String(secondPageResult.content)) as {
-      history: { records: Array<{ generation: number }> }
-    }
-    await expect(
-      Effect.runPromise(
-        inspect.execute(
-          {
-            planID: foreignPlan.planID,
-            view: "retained-verifications",
-            limit: 1,
-            cursor: firstPage.history.nextCursor,
-          },
-          callContext("architect"),
-        ),
-      ),
-    ).rejects.toThrow("does not match this plan")
-    await expect(
-      Effect.runPromise(
-        inspect.execute(
-          {
-            planID: plan.planID,
-            view: "retained-verifications",
-            taskIDs: [foreignTask.id],
-            limit: 1,
-            cursor: firstPage.history.nextCursor,
-          },
-          callContext("architect"),
-        ),
-      ),
-    ).rejects.toThrow()
     const after = store.atomic((db) => ({
-      operations: db
-        .query("SELECT id,generation,state,payload FROM runner_retained_verifications")
-        .all(),
+      operations: db.query("SELECT id,state,payload FROM runner_retained_verifications").all(),
       checks: db
         .query(
           "SELECT operation_id,phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks",
@@ -946,7 +878,7 @@ test("registered selected full inspection reads retained verification without ru
     const latest = output.retainedVerifications.latest[0]!
     expect(latest.state).toBe("accepted")
     expect(latest).toMatchObject({
-      generation: 3,
+      operationID: operation.id,
       taskID: task.id,
       attemptID: operation.attemptID,
       candidateArtifact: operation.artifact,
@@ -957,9 +889,6 @@ test("registered selected full inspection reads retained verification without ru
       result: { status: "passed" },
       cleanupState: "failed",
     })
-    expect(firstPage.latest[0]).toMatchObject({ operationID: operation.id, generation: 3 })
-    expect(firstPage.history.records.map((record) => record.generation)).toEqual([2])
-    expect(secondPage.history.records.map((record) => record.generation)).toEqual([1])
     expect(JSON.stringify(output)).not.toContain(foreignOperation.id)
     expect(JSON.stringify(output)).not.toContain("PRIVATE_REASON_CANARY")
     expect(JSON.stringify(output)).not.toContain("PRIVATE_COMMAND_CANARY")
@@ -972,7 +901,7 @@ test("registered selected full inspection reads retained verification without ru
     expect(progress.toolCalls("ses_test").some((call) => call.tool === "lz-inspect-plan")).toBe(
       true,
     )
-    expect(permissionChecks).toBe(5)
+    expect(permissionChecks).toBe(1)
     expect(runtimeCalls).toBe(0)
     expect(nativeCalls).toBe(0)
     expect(inferenceCalls).toBe(0)

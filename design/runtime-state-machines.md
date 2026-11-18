@@ -16,9 +16,9 @@ with existing records. No task snapshots or attempt history are replaced.
 | Architect renewal     | `renewalMachine`              | `lz_runner_transition('renewal', state, event)`         | Continue creation/archive, recover input, roll back or defer; retry deferred creation                                                                                                                      |
 | Outcome delivery      | `outboxMachine`               | `lz_runner_transition('outbox', state, event)`          | Pending until in the Architect inbox, then delivered or superseded; one coalesced notice per session replaces queued ones via inbox cancel                                                                 |
 | Descendant adoption   | `adoptionMachine`             | `lz_runner_transition('adoption', state, event)`        | Revalidate checks, accept or cancel a held operation                                                                                                                                                       |
-| Retained verification | `retainedVerificationMachine` | `lz_runner_transition('retained', state, event)`        | Complete phase checks; explicitly continue an exact settled retained check; or cancel a held generation before a fresh generation                                                                          |
+| Retained verification | `retainedVerificationMachine` | `lz_runner_transition('retained', state, event)`        | Run the task checks on the given commit, then pass or fail; a plan cancellation cancels a live call. A failed call is re-run by a new `verify-retained`                                                    |
 | Verification resource | `verificationResourceMachine` | `lz_runner_transition('resource', state, event)`        | Confirm native creation/removal; re-observe uncertain resources                                                                                                                                            |
-| Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from its bound receipt; restore an unstarted authorized retry on cancellation                                                                                         |
+| Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from its bound receipt                                                                                                                                                |
 | Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                                                                                                                            |
 
 `lifecycleTransition()` resolves the persisted row state through XState and uses
@@ -40,9 +40,8 @@ Initial inserts use each machine's declared initial state. Native observations
 such as `ArchitectSourceResult.state` describe OpenCode results; they are not
 runner transition authority. `verificationCheckMachine` permits a previously
 completed command to become uncertain when subprocess settlement changes;
-command results and cleanup are retained separately. A `retry-authorized` check
-returns to `completed` only when cancellation proves its original receipt and
-resource settlement remain unchanged before execution begins.
+command results and cleanup are retained separately. There is no
+`retry-authorized` check state: a check is re-run by a new retained verification.
 
 ## Deleted-worker cancellation defect
 
@@ -69,31 +68,6 @@ attempts, followed by cancellation and retry with partial work preserved.
 `store.test.ts` exercises a reopened connection and an illegal persisted update.
 Graph reachability is distinct from satisfying native-resource or user-decision
 prerequisites; recorded unknowns are not converted into successful execution.
-
-## Explicit continuation of an interrupted retained combined check
-
-`continue-retained-check` is a current-owner control for one exact combined check
-in a held retained-verification generation. It qualifies only a completed
-non-timeout interruption receipt whose command phases and process group/tree are
-conclusively settled, whose isolated resources are removed, and whose exact
-accepted task, combined candidate, specification, command, environment and owner
-bindings still match. It uses the current unchanged timing
-policy. The operation must remain held; subprocess cancellation in a receipt is
-not the same as intentional cancellation of the operation or plan.
-
-Authorization is recorded before the check becomes runnable. Its receipt uses a
-new operation-bound path and is appended to immutable retained-check receipt
-history; it never overwrites the interrupted receipt or prior passing task and
-combined receipts. Recovery runs only the named isolated check and reuses the
-other matching passes. Reopen, exact request replay, concurrent authorization,
-lost replies, stale bindings or late cancellation cannot duplicate execution or
-publish success after the operation fence is lost. This control preserves task
-acceptance and the retained generation/candidate; it does not certify the
-original worker idle, or authorize cleanup.
-Inspection offers the action only when its recorded check set supports that exact
-next step. Full authorization rechecks ownership, plan/specification and
-candidate inputs, all relevant check receipts, resources, activities, adoptions
-and unresolved effects across the asynchronous admission boundary.
 
 ## Live idle check replaces the idle report
 
@@ -177,11 +151,8 @@ Validation: `runtime.test.ts` and `lifecycle-machines.test.ts`: 352 tests,
 
 ## Recovery from observed dispatch stalls
 
-- `settleSupersededRetainedVerification()` closes an older held verification
-  when an exact, authorized `ATTEMPT_RESUMED` replaces its input on the same
-  attempt, session and workspace. It requires settled checks, uses the existing
-  XState cancellation transition, and retains the operation and check history.
-  Accepted candidates and retained repairs keep their existing gates.
+- A retained verification no longer holds, so nothing needs to settle a held one
+  when a worker continues: the call fails when its plan, task or attempt changed.
 - `failMissingWorker()` settles an authoritatively absent worker as failed
   under the scheduler fence. It rechecks the current assignment and unsettled
   effects before releasing the reservation. Native lookup errors do not take
@@ -323,3 +294,38 @@ Holds raise only for real, directly observable loss, with an advertised unblock.
   interrupted-worker text, the scope-reservation hold) move through the plan
   machine, and verification effects that never produced a receipt are
   superseded so the check re-runs. A retired cleanup hold resumes `cleaning`.
+
+## Retained verification is one call; continuation fingerprints are deleted
+
+`verify-retained` verifies one commit in a temporary worktree with the task's
+declared checks and records pass or fail. Its operation machine is
+`pending -> task-checks -> accepted | failed | cancelled`; a plan cancellation
+cancels a live call and nothing else resumes it. A failure notifies the Architect
+(`retained-verification-failed`) and the Architect runs `verify-retained` again.
+On a pass the task accepts the commit (`RETAINED_ACCEPT`), a plan stopped on that
+task's failure runs again, and the ordinary combined check accepts the plan; the
+call never accepts the plan itself.
+
+Deleted: retained generations and their paged inspection view, check retry
+authorizations (`retry-authorized`), the `held`, `task-accepted` and
+`combined-checks` states and the combined phase, the `extend-verification-deadline`,
+`continue-retained-check` and `cancel-retained-verification` commands with their
+schema fields, the plan-version binding on an operation (a stranded operation read
+"retained operation binds plan version 43, while the plan is now version 59"),
+`settleSupersededRetainedVerification`, and the combined-check continuation binding
+and its fingerprint. `resume` without a task re-runs the combined check on the
+current candidate: a blocked, unaccepted plan runs again, and its combined check
+effects without a conclusive receipt are superseded. Stable change identity (tree
+OID, patch-id, `refs/notes/lazers`, containment proofs) is untouched.
+
+Runner schema generation 12 runs `retireRetainedVerificationGates`: an open
+operation closes as `accepted` when a task-acceptance event names it, otherwise
+`cancelled`, and its checkouts clean up through the terminal reconciler;
+payloads lose the generation, plan-version, authorization, quarantine and
+fingerprint bindings; the generation column leaves the operation, evidence and
+resource tables; `retry-authorized` checks become `completed`; a plan blocked on
+a retired binding moves through the plan machine; queued held-verification
+notices are superseded. Older operations that carry a combined checkout still
+parse that field so terminal cleanup can remove it; nothing creates one. Amendments
+recorded by earlier deadline extensions still resolve for the exact checks they
+named; nothing records a new one.

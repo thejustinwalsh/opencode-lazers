@@ -61,9 +61,9 @@ export function outcomeText(serialized: string) {
       action =
         "Unblock this plan now. Verify the cause with lz-inspect-plan, reconcile uncertain effects, and apply an allowed lz-plan-command. Confirm work can proceed. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
       break
-    case "retained-verification-held":
+    case "retained-verification-failed":
       action =
-        "Resolve the held verification. Inspect the operation and its receipts with lz-inspect-plan. Preserve the candidate and prior evidence. Reconcile unsettled checks, then use lz-plan-command to cancel or replace the held verification as appropriate. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
+        "The retained verification did not pass; its reason is in the notice. Inspect the operation and its receipts with lz-inspect-plan, fix the cause (retained-repair for a defect in the candidate, or a corrected check or environment), then run verify-retained again on the commit. Nothing is waiting on the failed call. If stuck, use the native question tool to state the blocker and next action and ask for the human input needed."
       break
     case "cleanup-blocked":
       action =

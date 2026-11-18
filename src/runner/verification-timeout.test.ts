@@ -70,15 +70,6 @@ function amendment(
     effectiveHardTimeoutMs: 90 * 60_000,
     reason: "Continue this exact settled check",
     createdAt: 1,
-    ...(identity.retainedVerificationID === undefined
-      ? {}
-      : {
-          retainedVerificationID: identity.retainedVerificationID,
-          retainedGeneration: identity.retainedGeneration,
-          retainedTaskID: identity.retainedTaskID,
-          retainedTaskRevision: identity.retainedTaskRevision,
-          retainedAttemptID: identity.retainedAttemptID,
-        }),
     ...overrides,
   })
 }
@@ -170,6 +161,7 @@ test("legacy amendments remain historical while versioned timing amendments reso
 })
 
 test("a prior exact candidate deadline extension carries into isolated retained checks", () => {
+  // Retained checks resolve their deadline from the same target as ordinary checks.
   const ordinaryTarget = target({
     authoredTimeoutMs: 1_000,
     authoredInactivityTimeoutMs: 1_000,
@@ -183,48 +175,17 @@ test("a prior exact candidate deadline extension carries into isolated retained 
     previousHardTimeoutMs: 1_000,
     effectiveHardTimeoutMs: 3_000,
   })
-  const retainedTarget = target({
-    ...ordinaryTarget,
-    retainedVerificationID: "66666666-6666-4666-8666-666666666666",
-    retainedGeneration: 1,
-    retainedTaskID: ordinaryTarget.taskID!,
-    retainedTaskRevision: ordinaryTarget.taskRevision!,
-    retainedAttemptID: ordinaryTarget.attemptID!,
-  })
-  const retainedAmendment = amendment(retainedTarget, {
-    amendmentID: "77777777-7777-4777-8777-777777777777",
-    policyRevision: 2,
-    previousTimeoutMs: 3_000,
-    effectiveTimeoutMs: 5_000,
-    previousInactivityTimeoutMs: 3_000,
-    effectiveInactivityTimeoutMs: 4_000,
-    previousHardTimeoutMs: 3_000,
-    effectiveHardTimeoutMs: 5_000,
-  })
-
-  expect(
-    verificationDeadline([ordinaryAmendment, retainedAmendment], retainedTarget),
-  ).toMatchObject({
-    effectiveInactivityTimeoutMs: 4_000,
-    effectiveHardTimeoutMs: 5_000,
-    amendmentID: retainedAmendment.amendmentID,
-    policyRevision: 2,
-    inactivityProvenance: "amendment",
-    hardTimeoutProvenance: "amendment",
-  })
-  expect(
-    verificationDeadline(
-      [ordinaryAmendment, retainedAmendment],
-      target({
-        ...retainedTarget,
-        retainedVerificationID: "88888888-8888-4888-8888-888888888888",
-        retainedGeneration: 2,
-      }),
-    ),
-  ).toMatchObject({
+  expect(verificationDeadline([ordinaryAmendment], ordinaryTarget)).toMatchObject({
     effectiveInactivityTimeoutMs: 3_000,
     effectiveHardTimeoutMs: 3_000,
     amendmentID: ordinaryAmendment.amendmentID,
-    policyRevision: 1,
+    inactivityProvenance: "amendment",
+    hardTimeoutProvenance: "amendment",
   })
+  // An amendment recorded for a retired retained operation applies to no check.
+  const retiredAmendment = amendment(ordinaryTarget, {
+    retainedVerificationID: "66666666-6666-4666-8666-666666666666",
+    retainedGeneration: 1,
+  })
+  expect(verificationDeadline([retiredAmendment], ordinaryTarget).amendmentID).toBeNull()
 })

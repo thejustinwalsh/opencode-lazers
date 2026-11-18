@@ -81,17 +81,9 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     terminal: ["accepted", "failed", "cancelled"],
   },
   retained: {
-    observable: [
-      "pending",
-      "task-checks",
-      "held",
-      "failed",
-      "task-accepted",
-      "combined-checks",
-      "accepted",
-    ],
-    architect: ["cancelled"],
-    terminal: ["accepted", "failed"],
+    observable: ["pending", "task-checks", "failed", "accepted", "cancelled"],
+    architect: [],
+    terminal: ["accepted", "failed", "cancelled"],
   },
   resource: {
     observable: ["creating", "active", "uncertain", "removed"],
@@ -100,7 +92,7 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
   },
   check: {
     observable: ["intended", "completed", "uncertain"],
-    architect: ["retry-authorized"],
+    architect: [],
     terminal: [],
   },
   cleanup: { observable: ["pending", "complete", "failed"], architect: [], terminal: [] },
