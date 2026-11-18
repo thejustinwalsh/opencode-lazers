@@ -130,16 +130,18 @@ test("benchmark frontier is a staircase of real coordinates", () => {
   }
 })
 
-test("a singleton frontier draws no line but keeps its diamond", () => {
+test("a singleton frontier draws no line but keeps its filled circle", () => {
   const option = options([point("only", 1, 30)])
   const line = option.series[1] as unknown as FrontierLine
   expect(line.id).toBe("benchmark-frontier")
   expect(line.data).toEqual([])
-  expect(line.endLabel.show).toBe(false)
-  expect((option.series[0]!.data[0] as { symbol: string }).symbol).toBe("diamond")
+  expect((option.series[0]!.data[0] as { symbol: string }).symbol).toBe("circle")
+  expect((option.series[0]!.data[0] as { itemStyle: { color: string } }).itemStyle.color).toBe(
+    "native-accent",
+  )
 })
 
-test("the frontier line holds exactly the member coordinates in a restrained dashed style", () => {
+test("the frontier line holds exactly the member coordinates as a thin solid polyline", () => {
   const points = [point("max", 4, 60), point("dominated", 5, 50), point("mini", 1, 30)]
   const option = options(points, "max")
   const line = option.series[1] as unknown as FrontierLine
@@ -153,16 +155,24 @@ test("the frontier line holds exactly the member coordinates in a restrained das
   expect(line.smooth).toBe(false)
   expect(line.connectNulls).toBe(false)
   expect(line.showSymbol).toBe(false)
-  expect(line.lineStyle).toEqual({ color: "native-accent", width: 2, type: "dashed" })
+  expect(line.lineStyle).toEqual({ color: "native-accent", width: 1.5, opacity: 0.75 })
   expect(line.emphasis).toEqual({ disabled: true })
-  expect(line.blur.lineStyle.opacity).toBe(1)
-  // The line carries no text; the legend names it "Best trade-off".
-  expect(line.endLabel.show).toBe(false)
-  const marks = option.series[0]!.data as Array<{ configurationID: string; symbol: string }>
+  expect(line.blur.lineStyle.opacity).toBe(0.75)
+  // Every mark is a circle, the selection last; the legend names the frontier "Best trade-off".
+  const marks = option.series[0]!.data as Array<{
+    configurationID: string
+    symbol: string
+    itemStyle: { color: string }
+  }>
   expect(marks.map((mark) => [mark.configurationID, mark.symbol])).toEqual([
-    ["max", "diamond"],
     ["dominated", "circle"],
-    ["mini", "diamond"],
+    ["mini", "circle"],
+    ["max", "circle"],
+  ])
+  expect(marks.map((mark) => mark.itemStyle.color)).toEqual([
+    "native-surface",
+    "native-accent",
+    "native-accent",
   ])
   expect(option.aria.description).toContain(
     "Benchmark frontier, lowest list price for each higher Coding Index: mini, max.",

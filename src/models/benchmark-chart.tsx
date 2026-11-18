@@ -6,8 +6,9 @@ import type { BenchmarkBaselineGap, BenchmarkBaselinePoint } from "./benchmark-b
 import {
   ComparisonChartAdapter,
   chartKeyStep,
-  frontierEndLabel,
-  visibleChartLabelIDs,
+  chartPlotFrame,
+  niceAxis,
+  placeChartLabels,
   resolveNativeComparisonChartTheme,
   visuallyHidden,
 } from "./comparison-chart.tsx"
@@ -101,57 +102,51 @@ export function benchmarkChartOptions(
 ) {
   const fontSize = layout.fontSize
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
-  const roomForAllLabels = plotWidth >= fontSize * 22
-  const labelLimit = Math.min(18, Math.max(8, Math.floor(plotWidth / (fontSize * 0.66))))
+  const plotHeight = Math.max(1, layout.height - layout.grid.top - layout.grid.bottom)
+  const labelLimit = Math.min(30, Math.max(12, Math.floor(plotWidth / (fontSize * 1.25))))
   const frontier = benchmarkFrontier(data.points)
   const frontierIDs = new Set(frontier.map((point) => point.id))
-  const largest = Math.max(0, ...data.points.map((point) => point.price.blended))
-  const visibleLabels = visibleChartLabelIDs(
+  const frame = chartPlotFrame(theme, layout)
+  const xAxis = niceAxis(
+    Math.max(0, ...data.points.map((point) => point.price.blended)) * 1.05,
+    layout.xSplitNumber,
+  )
+  const yAxis = niceAxis(
+    Math.max(0, ...data.points.map((point) => point.benchmark.codingIndex)) * 1.08,
+    layout.ySplitNumber,
+  )
+  const placed = placeChartLabels(
     data.points.map((point) => ({
       id: point.id,
       x: point.price.blended,
       y: point.benchmark.codingIndex,
       text: boundedModelLabel(point.label, labelLimit),
       side:
-        largest > 0 && point.price.blended >= largest * 0.68
-          ? ("left" as const)
-          : ("right" as const),
+        point.id === data.selectedID
+          ? ("top" as const)
+          : xAxis.max > 0 && point.price.blended >= xAxis.max * 0.68
+            ? ("left" as const)
+            : ("right" as const),
       priority: point.id === data.selectedID ? 0 : frontierIDs.has(point.id) ? 1 : 2,
-      model: `${point.route.providerID}/${point.route.modelID}`,
     })),
-    {
-      plotWidth,
-      plotHeight: Math.max(1, layout.height - layout.grid.top - layout.grid.bottom),
-      xMax: largest * 1.1,
-      yMax: Math.max(0, ...data.points.map((point) => point.benchmark.codingIndex)) * 1.1,
-      fontSize,
-    },
+    { plotWidth, plotHeight, xMax: xAxis.max, yMax: yAxis.max, fontSize },
   )
-  const narrowAxis = layout.width < 400 || layout.height < 240
-  const axisTitleFontSize = Math.min(fontSize, layout.width < 400 ? 12 : 16)
-  const axisText = {
-    color: theme.mutedText,
-    fontFamily: theme.fontFamily,
-    fontSize: axisTitleFontSize,
-  }
-  const axisLabel = (formatter: (value: number) => string) => ({
-    color: theme.mutedText,
-    fontFamily: theme.monoFontFamily,
-    fontSize,
-    margin: Math.max(4, Math.ceil(fontSize * 0.4)),
-    hideOverlap: true,
-    formatter,
-  })
+  const neutral = theme.neutral ?? theme.mutedText
+  const background = theme.background ?? theme.surface
+  const selected = data.points.find((point) => point.id === data.selectedID)
+  const drawn = data.points.toSorted(
+    (left, right) => Number(left.id === data.selectedID) - Number(right.id === data.selectedID),
+  )
   return {
     animation: false,
-    backgroundColor: theme.surface,
+    backgroundColor: frame.backgroundColor,
     textStyle: { fontFamily: theme.fontFamily, color: theme.text },
     aria: {
       enabled: true,
       description: benchmarkDescription(data.points),
       decal: { show: false },
     },
-    grid: layout.grid,
+    grid: frame.grid,
     tooltip: {
       trigger: "item",
       confine: true,
@@ -167,63 +162,69 @@ export function benchmarkChartOptions(
     },
     xAxis: {
       type: "value",
-      name: narrowAxis
-        ? "USD / 1M tokens"
-        : `USD / 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} in:out)`,
+      name:
+        layout.width < 400
+          ? "USD per 1M tokens"
+          : `USD per 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} in:out)`,
       nameLocation: "middle",
-      nameGap: Math.ceil(axisTitleFontSize * 2.1),
+      nameGap: frame.xNameGap,
       min: 0,
-      splitNumber: layout.xSplitNumber,
-      nameTextStyle: axisText,
-      axisLabel: axisLabel(formatMarketAmount),
-      axisLine: { lineStyle: { color: theme.grid } },
-      splitLine: { lineStyle: { color: theme.grid, opacity: 0.35 } },
+      max: xAxis.max,
+      interval: xAxis.interval,
+      nameTextStyle: frame.axisName,
+      axisLabel: frame.axisLabel(formatMarketAmount),
+      axisLine: frame.axisLine,
+      axisTick: frame.axisTick,
+      splitLine: frame.splitLine,
     },
     yAxis: {
       type: "value",
       name: "Coding Index",
       nameLocation: "middle",
-      nameGap: Math.max(4, Math.ceil(axisTitleFontSize * 0.65)),
+      nameGap: frame.yNameGap,
       min: 0,
-      splitNumber: layout.ySplitNumber,
-      nameTextStyle: axisText,
-      axisLabel: axisLabel((value: number) => index.format(value)),
-      axisLine: { lineStyle: { color: theme.grid } },
-      splitLine: { lineStyle: { color: theme.grid, opacity: 0.35 } },
+      max: yAxis.max,
+      interval: yAxis.interval,
+      nameTextStyle: frame.axisName,
+      axisLabel: frame.axisLabel((value: number) => index.format(value)),
+      axisLine: frame.axisLine,
+      axisTick: frame.axisTick,
+      splitLine: frame.splitLine,
     },
     series: [
       {
         id: "benchmark-baseline",
         name: "Public benchmark",
         type: "scatter",
-        data: data.points.map((point) => {
-          const selected = point.id === data.selectedID
+        data: drawn.map((point) => {
+          const isSelected = point.id === data.selectedID
+          const onFrontier = frontierIDs.has(point.id)
           return {
             name: point.label,
             value: [point.price.blended, point.benchmark.codingIndex],
             configurationID: point.id,
-            symbol: frontierIDs.has(point.id) ? "diamond" : "circle",
-            symbolSize: selected ? 14 : 10,
+            symbol: "circle",
+            symbolSize: isSelected ? 11 : 9,
+            // Filled blue: on the best trade-off frontier. Hollow neutral: any other.
             itemStyle: {
-              // Filled: observed for these filters. Hollow: benchmark only.
-              color: point.observed ? (selected ? theme.accent : theme.text) : theme.surface,
-              borderColor: selected ? theme.text : theme.accent,
-              borderWidth: selected ? 2.5 : 1.5,
-              ...(selected ? { shadowBlur: 12, shadowColor: theme.accent } : {}),
+              color: onFrontier ? theme.accent : background,
+              borderColor: isSelected ? theme.text : onFrontier ? theme.accent : neutral,
+              borderWidth: isSelected ? 2 : 1.5,
             },
             label: {
-              show: selected || (roomForAllLabels && visibleLabels.has(point.id)),
+              show: placed.has(point.id),
               formatter: boundedModelLabel(point.label, labelLimit),
-              position: largest > 0 && point.price.blended >= largest * 0.68 ? "left" : "right",
-              color: selected ? theme.text : theme.mutedText,
+              position: placed.get(point.id) ?? "right",
+              distance: 6,
+              color: isSelected ? theme.text : neutral,
               fontFamily: theme.fontFamily,
               fontSize,
-              fontWeight: selected ? 700 : 400,
+              fontWeight: isSelected ? 500 : 400,
             },
           }
         }),
         emphasis: { focus: "self" },
-        labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
+        z: 3,
       },
       {
         id: "benchmark-frontier",
@@ -238,10 +239,28 @@ export function benchmarkChartOptions(
         showSymbol: false,
         silent: true,
         z: 1,
-        lineStyle: { color: theme.accent, width: 2, type: "dashed" },
+        lineStyle: { color: theme.accent, width: 1.5, opacity: 0.75 },
         emphasis: { disabled: true },
-        blur: { lineStyle: { opacity: 1 }, endLabel: { opacity: 1 } },
-        endLabel: frontierEndLabel("Benchmark frontier", frontier.length > 1, theme, fontSize),
+        blur: { lineStyle: { opacity: 0.75 } },
+      },
+      {
+        id: "selected-halo",
+        name: "Selected model",
+        type: "scatter",
+        data: selected
+          ? [
+              {
+                value: [selected.price.blended, selected.benchmark.codingIndex],
+                configurationID: selected.id,
+                symbol: "circle",
+                symbolSize: 26,
+                itemStyle: { color: theme.accent, opacity: 0.16, borderWidth: 0 },
+              },
+            ]
+          : [],
+        silent: true,
+        tooltip: { show: false },
+        z: 2,
       },
     ],
   } satisfies EChartsCoreOption
@@ -253,6 +272,8 @@ export type BenchmarkChartProps = BenchmarkChartData & {
   /** Where the "Chart data as a table" disclosure renders; inline until the mount exists. */
   dataMount?: () => HTMLElement | undefined
   emptyText: string
+  /** Right of the legend, e.g. the benchmark source and price mix. */
+  caption?: string
   /** Extra Chart data content, e.g. coverage and a load-more control. */
   dataFooter?: JSX.Element
   theme?: ComparisonChartTheme
@@ -370,30 +391,31 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
       <p aria-live="polite" style={visuallyHidden}>
         {announcement()}
       </p>
-      <ul
-        class="lazers-models-comparison-chart-legend"
-        aria-label="Chart mark legend"
-        hidden={empty()}
-      >
-        <Show when={benchmarkFrontier(props.points).length > 0}>
-          <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-frontier"
-              aria-hidden="true"
-            />
-            Best trade-off
-          </li>
+      <div class="lazers-models-chart-foot" hidden={empty()}>
+        <ul class="lazers-models-comparison-chart-legend" aria-label="Chart mark legend">
+          <Show when={benchmarkFrontier(props.points).length > 0}>
+            <li>
+              <span
+                class="lazers-models-chart-key lazers-models-chart-key-frontier"
+                aria-hidden="true"
+              />
+              Best trade-off
+            </li>
+          </Show>
+          <Show when={!empty()}>
+            <li>
+              <span
+                class="lazers-models-chart-key lazers-models-chart-key-canonical"
+                aria-hidden="true"
+              />
+              Other
+            </li>
+          </Show>
+        </ul>
+        <Show when={props.caption}>
+          <p class="lazers-models-chart-caption">{props.caption}</p>
         </Show>
-        <Show when={!empty()}>
-          <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-hollow"
-              aria-hidden="true"
-            />
-            Other
-          </li>
-        </Show>
-      </ul>
+      </div>
       <div
         class="lazers-models-chart-data-slot"
         ref={(element) => {

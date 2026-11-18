@@ -21,11 +21,20 @@ type RenderedOption = {
   xAxis?: Array<{
     name?: string
     splitNumber?: number
-    axisLabel?: { fontFamily?: string; fontSize?: number; hideOverlap?: boolean }
+    interval?: number
+    max?: number
+    axisLabel?: {
+      fontFamily?: string
+      fontSize?: number
+      hideOverlap?: boolean
+      formatter?: (value: number) => string
+    }
   }>
   yAxis?: Array<{
     name?: string
     splitNumber?: number
+    interval?: number
+    max?: number
     axisLabel?: {
       fontFamily?: string
       fontSize?: number
@@ -35,6 +44,7 @@ type RenderedOption = {
   }>
   series?: Array<{
     id?: string
+    type?: string
     data?: Array<
       | {
           name?: string
@@ -265,63 +275,6 @@ function size(element: object, width: number, height: number) {
   sizes.set(element, { width, height })
 }
 
-function renderedBadgeBounds(host: unknown, modelLine: string) {
-  type SvgElement = {
-    tagName: string
-    hasAttribute: (name: string) => boolean
-    getAttribute: (name: string) => string | null
-  }
-  type LabelText = SvgElement & {
-    textContent: string | null
-    parentElement: { children: ArrayLike<SvgElement> } | null
-  }
-  const svgHost = host as {
-    querySelectorAll: (selector: string) => ArrayLike<LabelText>
-  }
-  const label = Array.from(svgHost.querySelectorAll("svg text")).find(
-    (text) => text.textContent?.trim() === modelLine,
-  )
-  const background = Array.from(label?.parentElement?.children ?? []).find(
-    (shape) => shape.tagName === "path" && shape.hasAttribute("paint-order"),
-  )
-  // The selected label is plain text now, with no badge to measure; it must still render once.
-  if (!background) return undefined
-  const transform = /translate\(\s*([-+\d.]+)[ ,]+([-+\d.]+)/.exec(
-    background.getAttribute("transform") ?? "",
-  )
-  const x = transform?.[1]
-  const y = transform?.[2]
-  const points = [
-    ...(background.getAttribute("d") ?? "").matchAll(
-      /[ML]\s*([-+\d.]+)[ ,]+([-+\d.]+)|A\s*[-+\d.]+\s+[-+\d.]+\s+[-+\d.]+\s+[-+\d.]+\s+[-+\d.]+\s+([-+\d.]+)\s+([-+\d.]+)/g,
-    ),
-  ].map((match) => [Number(match[1] ?? match[3]), Number(match[2] ?? match[4])])
-  if (!x || !y || points.length < 2)
-    throw new Error(`Unable to read rendered selected badge geometry for ${modelLine}`)
-  return {
-    left: Number(x) + Math.min(...points.map((point) => point[0]!)),
-    right: Number(x) + Math.max(...points.map((point) => point[0]!)),
-    bottom: Number(y) + Math.max(...points.map((point) => point[1]!)),
-  }
-}
-
-function expectSelectedBadgeInsidePlot(
-  host: unknown,
-  chart: RenderedOption,
-  viewport: { width: number; height: number },
-  modelLine: string,
-) {
-  const bounds = renderedBadgeBounds(host, modelLine)
-  if (!bounds) return
-  const grid = chart.grid?.[0]
-  const plotLeft = Number(grid?.left ?? 0)
-  const plotRight = viewport.width - Number(grid?.right ?? 0)
-  const plotBottom = viewport.height - Number(grid?.bottom ?? 0)
-  expect(bounds.left).toBeGreaterThanOrEqual(plotLeft - 1)
-  expect(bounds.right).toBeLessThanOrEqual(plotRight + 1)
-  expect(bounds.bottom).toBeLessThan(plotBottom)
-}
-
 async function until(predicate: () => boolean) {
   for (let attempt = 0; attempt < 100 && !predicate(); attempt++)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -341,6 +294,8 @@ function renderedMarker(host: HTMLElement, chart: EChartsType, point: Comparison
       .map(Number)
     return (
       values?.length === 6 &&
+      // The selection halo (a 26 px symbol) sits under its mark at the same pixel; skip it.
+      values[0] !== 13 &&
       Math.abs(values[4]! - pixel[0]!) < 0.001 &&
       Math.abs(values[5]! - pixel[1]!) < 0.001
     )
@@ -357,16 +312,29 @@ function requiredMarkerTransform(
   return marker!.getAttribute("transform")!
 }
 
+/** The frontier polyline: a thin, solid, unfilled stroke that is not a mark. */
+function isFrontierStroke(path: {
+  getAttribute: (name: string) => string | null
+  hasAttribute: (name: string) => boolean
+}) {
+  return (
+    path.getAttribute("stroke-width") === "1.5" &&
+    path.getAttribute("fill") === "none" &&
+    !path.hasAttribute("transform") &&
+    !path.getAttribute("stroke-dasharray")
+  )
+}
+
 function markerScale(transform: string) {
   return Number(/^matrix\(([^,]+)/.exec(transform)?.[1])
 }
 
 function renderedFrontierEndpoints(host: HTMLElement) {
-  const path = Array.from(host.querySelectorAll("svg path[stroke-dasharray]")).find((candidate) =>
-    candidate.getAttribute("d")?.startsWith("M"),
+  const path = Array.from(host.querySelectorAll("svg path")).find(
+    (candidate) => isFrontierStroke(candidate) && candidate.getAttribute("d")?.startsWith("M"),
   )
   const commands = Array.from(
-    path?.getAttribute("d")?.matchAll(/([ML])\s*([+-]?[\d.]+)\s+([+-]?[\d.]+)/g) ?? [],
+    path?.getAttribute("d")?.matchAll(/([ML])\s*([+-]?[\d.]+)[\s,]+([+-]?[\d.]+)/g) ?? [],
   )
   if (commands.length < 2) return undefined
   const first = commands[0]!
@@ -596,7 +564,8 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   buttonFor(exact)?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
   expect(selections).toEqual([exact])
 
-  chart.dispatchAction({ type: "showTip", seriesIndex: 0, dataIndex: 0 })
+  // The selected point (the first one given) is drawn last, so it is the last datum.
+  chart.dispatchAction({ type: "showTip", seriesIndex: 0, dataIndex: 2 })
   const pointTooltip = () =>
     Array.from(chartHost.children).find((child) => {
       if (child.tagName !== "DIV") return false
@@ -618,14 +587,14 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   const originalQwen = points[1]!
   const originalQwenTransform = requiredMarkerTransform(chartHost, chart, originalQwen)
   const originalSelectedTransform = requiredMarkerTransform(chartHost, chart, points[0]!)
-  expect(markerScale(originalQwenTransform)).toBe(5)
-  expect(markerScale(originalSelectedTransform)).toBe(7)
+  expect(markerScale(originalQwenTransform)).toBe(4.5)
+  expect(markerScale(originalSelectedTransform)).toBe(5.5)
   expectFrontierEndpoints(chartHost, chart, [points[0]!, originalQwen])
   expect(chartHost.textContent).not.toContain("Observed frontier")
-  const dashed = Array.from(chartHost.querySelectorAll("svg path[stroke-dasharray]")).find(
-    (candidate) => candidate.getAttribute("d")?.startsWith("M"),
+  const frontierStroke = Array.from(chartHost.querySelectorAll("svg path")).find(
+    (candidate) => isFrontierStroke(candidate) && candidate.getAttribute("d")?.startsWith("M"),
   )
-  expect(dashed?.getAttribute("stroke-width")).toBe("2")
+  expect(frontierStroke?.getAttribute("stroke-width")).toBe("1.5")
 
   const changedQwen = { ...points[1]!, tokensPerAcceptedTask: 26_000 }
   const changedPoints = [points[0]!, changedQwen, points[2]!]
@@ -636,7 +605,7 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   })
   const changedQwenTransform = requiredMarkerTransform(chartHost, chart, changedQwen)
   expect(changedQwenTransform).not.toBe(originalQwenTransform)
-  expect(markerScale(changedQwenTransform)).toBe(5)
+  expect(markerScale(changedQwenTransform)).toBe(4.5)
   expect(requiredMarkerTransform(chartHost, chart, points[0]!)).toBe(originalSelectedTransform)
   expectFrontierEndpoints(chartHost, chart, [points[0]!, changedQwen])
 
@@ -651,23 +620,23 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expectFrontierEndpoints(chartHost, chart, [changedQwen, points[2]!])
 
   const originalThirdTransform = requiredMarkerTransform(chartHost, chart, points[2]!)
-  expect(markerScale(originalSelectedTransform)).toBe(7)
-  expect(markerScale(originalThirdTransform)).toBe(5)
+  expect(markerScale(originalSelectedTransform)).toBe(5.5)
+  expect(markerScale(originalThirdTransform)).toBe(4.5)
   setData({ ...data(), selectedConfigurationID: points[2]!.configurationID })
   await until(() => {
     const selected = renderedMarker(chartHost, chart, points[2]!)
     const deselected = renderedMarker(chartHost, chart, points[0]!)
     return (
-      markerScale(selected?.getAttribute("transform") ?? "") === 7 &&
-      markerScale(deselected?.getAttribute("transform") ?? "") === 5
+      markerScale(selected?.getAttribute("transform") ?? "") === 5.5 &&
+      markerScale(deselected?.getAttribute("transform") ?? "") === 4.5
     )
   })
   const deselectedTransform = requiredMarkerTransform(chartHost, chart, points[0]!)
   const selectedTransform = requiredMarkerTransform(chartHost, chart, points[2]!)
   expect(deselectedTransform).not.toBe(originalSelectedTransform)
   expect(selectedTransform).not.toBe(originalThirdTransform)
-  expect(markerScale(deselectedTransform)).toBe(5)
-  expect(markerScale(selectedTransform)).toBe(7)
+  expect(markerScale(deselectedTransform)).toBe(4.5)
+  expect(markerScale(selectedTransform)).toBe(5.5)
   expect(buttonFor(points[0]!.configurationID)?.getAttribute("aria-pressed")).toBe("false")
   expect(buttonFor(points[2]!.configurationID)?.getAttribute("aria-pressed")).toBe("true")
 
@@ -719,30 +688,30 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   const chart = browser.getComparisonChartInstance(host)!
   const rendered = chart.getOption() as unknown as RenderedOption
   const series = (id: string) => rendered.series?.find((entry) => entry.id === id)
-  expect(series("observations")?.data).toEqual([])
+  // Every reference is a circle in the one observations series: a range plots at its midpoint
+  // and a priced subtotal at its lower bound. Nothing is drawn as whiskers.
   expect(series("authoritative-frontier")?.data).toEqual([])
-  expect(series("openrouter-reference-scalars")?.data).toMatchObject([
+  expect(rendered.series?.map((entry) => entry.type)).not.toContain("custom")
+  expect(series("observations")?.data).toMatchObject([
     {
       value: [12_000, 0.0000000000123],
       configurationID: scalar.configurationID,
+      symbol: "circle",
     },
-  ])
-  expect(series("openrouter-conditional-ranges")?.data).toMatchObject([
     {
-      value: [18_000, 0.00000004, 0.00000012],
+      value: [18_000, 0.00000008],
       configurationID: conditional.configurationID,
+      symbol: "circle",
     },
-  ])
-  expect(series("openrouter-reference-subtotals")?.data).toMatchObject([
     {
       value: [24_000, 0.00000005],
       configurationID: subtotal.configurationID,
+      symbol: "circle",
     },
-  ])
-  expect(series("openrouter-subtotal-ranges")?.data).toMatchObject([
     {
-      value: [30_000, 0.00002, 0.00005],
+      value: [30_000, 0.00002],
       configurationID: subtotalRange.configurationID,
+      symbol: "circle",
     },
   ])
   expect(
@@ -801,7 +770,7 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(selectedRangeLabels()).toBe(true)
   expect(
     (chart.getOption() as unknown as RenderedOption).series
-      ?.find((entry) => entry.id === "selected-identities")
+      ?.find((entry) => entry.id === "selected-halo")
       ?.data?.some(
         (datum) => !Array.isArray(datum) && datum.configurationID === conditional.configurationID,
       ),
@@ -824,37 +793,27 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
         child.textContent?.includes(text) === true
       )
     })
-  const scalarSeries = rendered.series?.findIndex(
-    (entry) => entry.id === "openrouter-reference-scalars",
-  )
-  chart.dispatchAction({ type: "showTip", seriesIndex: scalarSeries, dataIndex: 0 })
+  // All marks share the observations series; the selected range was drawn last (index 3).
+  const observationSeries = rendered.series?.findIndex((entry) => entry.id === "observations")
+  chart.dispatchAction({ type: "showTip", seriesIndex: observationSeries, dataIndex: 0 })
   await until(() => visibleTooltip("≈$1.23e-11 / task") !== undefined)
   expect(visibleTooltip("≈$1.23e-11 / task")?.textContent).not.toContain("accepted task")
   expect(visibleTooltip("≈$1.23e-11 / task")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
-  const rangeSeries = rendered.series?.findIndex(
-    (entry) => entry.id === "openrouter-conditional-ranges",
-  )
-  chart.dispatchAction({ type: "showTip", seriesIndex: rangeSeries, dataIndex: 0 })
+  chart.dispatchAction({ type: "showTip", seriesIndex: observationSeries, dataIndex: 3 })
   await until(() => visibleTooltip("≈$4e-8–$1.2e-7 / task") !== undefined)
   expect(visibleTooltip("≈$4e-8–$1.2e-7 / task")?.textContent).toBe(
     "GPT-6 Luna · high · ≈$4e-8–$1.2e-7 / task",
   )
-  const subtotalSeries = rendered.series?.findIndex(
-    (entry) => entry.id === "openrouter-reference-subtotals",
-  )
-  chart.dispatchAction({ type: "showTip", seriesIndex: subtotalSeries, dataIndex: 0 })
+  chart.dispatchAction({ type: "showTip", seriesIndex: observationSeries, dataIndex: 1 })
   // A priced subtotal is a lower bound, never presented as the total.
   await until(() => visibleTooltip("≥$") !== undefined)
   expect(visibleTooltip("≥$")?.textContent).toMatch(/ · ≥\$[^ ]+ \/ task$/)
-  const subtotalRangeSeries = rendered.series?.findIndex(
-    (entry) => entry.id === "openrouter-subtotal-ranges",
-  )
-  chart.dispatchAction({ type: "showTip", seriesIndex: subtotalRangeSeries, dataIndex: 0 })
+  chart.dispatchAction({ type: "showTip", seriesIndex: observationSeries, dataIndex: 2 })
   await until(() => visibleTooltip("≥$0.00002 / task") !== undefined)
   expect(visibleTooltip("≥$0.00002 / task")?.textContent).not.toContain("–")
 })
 
-test("selected Luna ranges use readable model-effort labels and retain exact route and mark identity", async () => {
+test("a selected catalog range is one circle with a readable single-line label and keeps its exact route", async () => {
   const host = dom.document.createElement("div")
   host.style.fontSize = "20px"
   dom.document.body.append(host)
@@ -876,10 +835,10 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
     { width: 450, height: 230 },
     { width: 960, height: 320 },
   ]
-  const svgLabelTexts = () =>
-    Array.from(host.querySelectorAll("svg text")).map((label) => label.textContent?.trim() ?? "")
   const normalizedSvgLabelTexts = () =>
-    svgLabelTexts().map((label) => label.replace(/\s+/g, " ").trim())
+    Array.from(host.querySelectorAll("svg text")).map((label) =>
+      (label.textContent ?? "").replace(/\s+/g, " ").trim(),
+    )
   const option = () => adapter.chart.getOption() as unknown as RenderedOption
   const visibleTooltip = (routeLabel: string) =>
     Array.from(host.children).find((child) => {
@@ -910,64 +869,52 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
           },
           theme,
         )
-        const selectedName = () =>
-          option()
-            .series?.find((series) => series.id === "selected-identities")
-            ?.data?.find(
-              (datum) =>
-                !Array.isArray(datum) && datum.configurationID === reference.configurationID,
-            )
-        const expectedAlignment = index === 0 ? "left" : "right"
+        const observations = () =>
+          option().series?.find((series) => series.id === "observations")?.data ?? []
+        const selectedMark = () =>
+          observations().find(
+            (datum) => !Array.isArray(datum) && datum.configurationID === reference.configurationID,
+          )
         await until(() => {
-          const datum = selectedName()
+          const datum = selectedMark()
           return (
             !Array.isArray(datum) &&
-            typeof datum?.name === "string" &&
-            normalizedSvgLabelTexts().some((label) => label.includes("GPT-6 Luna")) &&
-            normalizedSvgLabelTexts().includes(datum.label?.formatter?.split("\n")[1] ?? "") &&
-            datum.configurationID === reference.configurationID
+            datum?.label?.show === true &&
+            normalizedSvgLabelTexts().includes(datum.label.formatter ?? "")
           )
         })
-        const datum = selectedName()
-        if (!datum || Array.isArray(datum)) throw new Error("Expected a selected model label")
-        const visibleLabel = datum.name!
-        expect(visibleLabel).toBe("GPT-6 Luna · max")
-        expect(visibleLabel).not.toMatch(/[pme]:/)
-        expect(normalizedSvgLabelTexts().some((label) => label.includes("GPT-6 Luna"))).toBe(true)
-        const [visibleModelLine, visibleEffortLine] = datum.label?.formatter?.split("\n") ?? []
-        expect(visibleModelLine).toContain("GPT-6 Luna")
-        expect(visibleEffortLine).toBeTruthy()
-        expect(visibleEffortLine?.length).toBeLessThanOrEqual(18)
-        expect(normalizedSvgLabelTexts()).toContain(visibleEffortLine!)
-        expect(datum).toMatchObject({
-          configurationID: reference.configurationID,
-          markKind: "selected-identity",
-          value: [index === 0 ? 0 : 20_000, 0.00000008],
-        })
-        expect(datum.label?.position).toBe("top")
-        expect(datum.label?.align).toBe(expectedAlignment)
-        expectSelectedBadgeInsidePlot(host, option(), viewport, visibleModelLine!)
-
-        const rangeData = option()
-          .series?.find((series) => series.id === "openrouter-conditional-ranges")
-          ?.data?.find(
-            (entry) => !Array.isArray(entry) && entry.configurationID === reference.configurationID,
-          )
-        expect(rangeData).toMatchObject({
-          configurationID: reference.configurationID,
-          value: [index === 0 ? 0 : 20_000, 0.00000004, 0.00000012],
-          markKind: "reference",
-        })
+        const datum = selectedMark()
+        if (!datum || Array.isArray(datum)) throw new Error("Expected a selected model mark")
+        // One circle at the midpoint of the range, named on a single line; no whiskers.
+        // Whole at 450 px and wider; cut to fit, never to two lines, in the narrowest plot.
+        expect(datum.label?.formatter).not.toContain("\n")
+        expect(datum.label?.formatter).toMatch(/^GPT.* · max$/)
+        if (viewport.width >= 450) expect(datum.label?.formatter).toBe("GPT-6 Luna · max")
+        expect(datum.symbolSize).toBe(11)
+        expect(datum.markKind).toBe("reference")
+        expect(datum.value?.[0]).toBe(index === 0 ? 0 : 20_000)
+        expect(datum.value?.[1]).toBeCloseTo(0.00000008, 12)
+        // The selection is the last mark drawn and carries the halo.
+        expect((observations().at(-1) as { configurationID?: string }).configurationID).toBe(
+          reference.configurationID,
+        )
+        expect(
+          option()
+            .series?.find((series) => series.id === "selected-halo")
+            ?.data?.some(
+              (entry) =>
+                !Array.isArray(entry) && entry.configurationID === reference.configurationID,
+            ),
+        ).toBe(true)
+        expect(option().series?.map((series) => series.type)).not.toContain("custom")
 
         const route = routes[index]!
         const exactRoute = `${route.providerID} / ${route.modelID} · ${route.variant}`
-        const rangeSeriesIndex = option().series?.findIndex(
-          (series) => series.id === "openrouter-conditional-ranges",
-        )
         adapter.chart.dispatchAction({
           type: "showTip",
-          seriesIndex: rangeSeriesIndex,
-          dataIndex: index,
+          seriesIndex: option().series?.findIndex((series) => series.id === "observations"),
+          // The selected mark is last.
+          dataIndex: observations().length - 1,
         })
         await until(() => visibleTooltip("GPT-6 Luna · max") !== undefined)
         expect(visibleTooltip("GPT-6 Luna · max")?.textContent).toBe(
@@ -1064,97 +1011,62 @@ test("rendered ECharts resize recomputes axis spacing for 330–450px and wide h
     const option = () => adapter.chart.getOption() as unknown as RenderedOption
     const tickLabels = () =>
       Array.from(host.querySelectorAll("svg text")).map((label) => label.textContent?.trim() ?? "")
+    const ticks = (axis: "xAxis" | "yAxis") => {
+      const value = option()[axis]?.[0]
+      return Math.round((value?.max ?? 0) / (value?.interval || 1))
+    }
     expect(svg()?.getAttribute("width")).toBe("330")
     expect(svg()?.getAttribute("height")).toBe("190")
-    expect(svg()?.textContent).toContain("Tokens / accepted task")
-    expect(svg()?.textContent).toContain("USD / task")
-    const renderedLabels = () =>
-      Array.from(host.querySelectorAll("svg text")).map(
-        (label) => label.textContent?.replace(/\s+/g, " ").trim() ?? "",
-      )
-    const renderedLabelText = renderedLabels().join(" ")
-    expect(renderedLabelText).toContain("Kimi K2.5")
-    expect(renderedLabelText).toContain("thinking")
-    expect(renderedLabelText).toContain("Qwen 7")
-    expect(renderedLabelText).toContain("preview")
+    expect(svg()?.textContent).toContain("Tokens per accepted task")
+    expect(svg()?.textContent).toContain("Cost per task")
     const narrow = option()
-    expect(narrow.xAxis?.[0]?.splitNumber).toBe(2)
-    expect(narrow.yAxis?.[0]?.splitNumber).toBe(2)
-    expect(narrow.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
-    expect(narrow.yAxis?.[0]?.axisLabel?.fontSize).toBe(20)
-    expect(narrow.grid?.[0]?.left).toBeGreaterThan(72)
+    // A large host font scales the chart text; ticks stay few and the labels never collide.
+    expect(narrow.xAxis?.[0]?.axisLabel?.fontSize).toBeCloseTo(16.4)
+    expect(narrow.yAxis?.[0]?.axisLabel?.fontSize).toBeCloseTo(16.4)
+    expect(narrow.grid?.[0]?.left).toBeGreaterThan(56)
     expect(narrow.yAxis?.[0]?.axisLabel?.hideOverlap).toBe(true)
-    expect(narrow.yAxis?.[0]?.axisLabel?.formatter?.(0.0000000000123)).toBe("$1.23e-11")
-    expect(narrow.yAxis?.[0]?.name).toBe("USD / task")
+    expect(narrow.yAxis?.[0]?.axisLabel?.formatter?.(3)).toBe("$3")
+    expect(narrow.yAxis?.[0]?.name).toBe("Cost per task")
+    expect(ticks("xAxis")).toBeLessThanOrEqual(2)
+    expect(ticks("yAxis")).toBeLessThanOrEqual(2)
     expect(tickLabels().filter((label) => label.startsWith("$")).length).toBeGreaterThanOrEqual(2)
 
+    // The selection keeps one bounded, single-line label that names its effort.
     const qwenID = crowdedPoints[1]!.configurationID
     const selectedQwen = () =>
       option()
-        .series?.find((series) => series.id === "selected-identities")
+        .series?.find((series) => series.id === "observations")
         ?.data?.find((datum) => !Array.isArray(datum) && datum.configurationID === qwenID)
     const selectedQwenLabel = selectedQwen()
     if (!selectedQwenLabel || Array.isArray(selectedQwenLabel))
-      throw new Error("Expected the selected Qwen identity mark")
-    expect(selectedQwenLabel.name).toContain(longEffort)
-    expect(selectedQwenLabel.label?.position).toBe("top")
+      throw new Error("Expected the selected Qwen mark")
+    expect(selectedQwenLabel.label?.show).toBe(true)
     expect(selectedQwenLabel.label?.distance).toBe(6)
-    const badgeText = selectedQwenLabel.label?.formatter ?? ""
-    const [badgeModel, badgeEffort] = badgeText.split("\n")
-    expect(badgeText.length).toBeLessThanOrEqual(37)
-    expect(badgeModel).toContain("Qwen 7")
-    expect(badgeEffort).toMatch(/^preview/)
-    expect(badgeEffort?.length).toBeLessThanOrEqual(18)
-    const svgText = Array.from(host.querySelectorAll("svg text"))
-    expect(svgText.some((text) => text.textContent?.includes(badgeModel ?? ""))).toBe(true)
-    expect(svgText.some((text) => text.textContent?.includes(badgeEffort ?? ""))).toBe(true)
-    const textBaseline = (text: (typeof svgText)[number]) => {
-      const translatedY = text
-        .getAttribute("transform")
-        ?.match(/translate\(\s*[-+\d.]+[ ,]+([-+\d.]+)/)?.[1]
-      return Number(translatedY ?? 0) + Number(text.getAttribute("y") ?? 0)
-    }
-    const assertSelectedBadgeClearsXAxis = () => {
-      const currentText = Array.from(host.querySelectorAll("svg text"))
-      const selected = selectedQwen()
-      const formatter =
-        selected && !Array.isArray(selected) ? (selected.label?.formatter ?? "") : ""
-      const [currentModel, currentEffort] = formatter.split("\n")
-      expect(currentModel).toContain("Qwen 7")
-      expect(currentEffort).toMatch(/^preview/)
-      expect(currentEffort?.length).toBeLessThanOrEqual(18)
-      const badgeBaselines = currentText
-        .filter((text) => [currentModel, currentEffort].includes(text.textContent?.trim()))
-        .map(textBaseline)
-      const xAxisTickBaselines = currentText
-        .filter((text) => /^(?:0|\d+(?:\.\d+)?K)$/.test(text.textContent?.trim() ?? ""))
-        .map(textBaseline)
-      expect(badgeBaselines.length).toBeGreaterThanOrEqual(2)
-      expect(xAxisTickBaselines.length).toBeGreaterThanOrEqual(2)
-      expect(Math.min(...xAxisTickBaselines) - Math.max(...badgeBaselines)).toBeGreaterThan(20)
-    }
-    assertSelectedBadgeClearsXAxis()
+    const text = selectedQwenLabel.label?.formatter ?? ""
+    expect(text).not.toContain("\n")
+    expect(Array.from(text).length).toBeLessThanOrEqual(30)
+    expect(text).toContain("Qwen 7")
+    expect(text).toContain("preview")
+    expect(tickLabels().some((label) => label.includes("Qwen 7"))).toBe(true)
 
     size(host, 450, 230)
     observer.trigger()
     await until(() => svg()?.getAttribute("width") === "450")
     const medium = option()
-    expect(medium.xAxis?.[0]?.splitNumber).toBeGreaterThan(narrow.xAxis?.[0]?.splitNumber ?? 0)
-    expect(svg()?.textContent).toContain("Tokens / accepted task")
-    assertSelectedBadgeClearsXAxis()
-    expectSelectedBadgeInsidePlot(host, medium, { width: 450, height: 230 }, badgeModel!)
+    expect(ticks("xAxis")).toBeGreaterThanOrEqual(2)
+    expect(svg()?.textContent).toContain("Tokens per accepted task")
+    expect(medium.grid?.[0]?.left).toBe(narrow.grid?.[0]?.left)
 
     size(host, 960, 320)
     observer.trigger()
     await until(() => svg()?.getAttribute("width") === "960")
     const wide = option()
-    expect(wide.xAxis?.[0]?.splitNumber).toBeGreaterThan(medium.xAxis?.[0]?.splitNumber ?? 0)
-    expect(wide.yAxis?.[0]?.splitNumber).toBeGreaterThan(narrow.yAxis?.[0]?.splitNumber ?? 0)
-    expect(wide.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
-    expect(wide.yAxis?.[0]?.name).toBe("USD / accepted task")
+    expect(ticks("xAxis")).toBeGreaterThan(2)
+    expect(ticks("yAxis")).toBeGreaterThan(2)
+    expect(ticks("xAxis")).toBeLessThanOrEqual(4)
+    expect(wide.yAxis?.[0]?.name).toBe("Cost per accepted task")
     expect(svg()?.getAttribute("height")).toBe("320")
     expect(tickLabels().filter((label) => label.startsWith("$")).length).toBeGreaterThanOrEqual(2)
-    assertSelectedBadgeClearsXAxis()
 
     const chartEvents = adapter.chart as unknown as {
       trigger: (event: string, payload: unknown) => void
@@ -1212,7 +1124,7 @@ test("real ECharts SVG uses literal observations and only straight segments betw
     ])
     expect(frontier?.smooth).toBe(false)
     const frontierPath = Array.from(host.querySelectorAll("[d]")).find((path) =>
-      Boolean(path.getAttribute("stroke-dasharray")),
+      isFrontierStroke(path),
     )
     expect(frontierPath).toBeDefined()
     expect(frontierPath?.getAttribute("d")).toMatch(/^M[^CQSA]+L/i)
@@ -1227,7 +1139,7 @@ test("real ECharts SVG uses literal observations and only straight segments betw
     )
     await until(() =>
       Array.from(host.querySelectorAll("[d]"))
-        .filter((path) => Boolean(path.getAttribute("stroke-dasharray")))
+        .filter((path) => isFrontierStroke(path))
         .every((path) => !path.getAttribute("d")),
     )
     const singleton = adapter.chart.getOption() as unknown as RenderedOption
@@ -1458,9 +1370,8 @@ test("a chart with nothing plottable says what is missing on screen instead of d
   expect(message.textContent).toContain("1 model has no token measurements")
   expect(message.textContent).not.toContain("$0")
   expect(container.querySelector("[role='group']")?.getAttribute("tabindex")).toBe("-1")
-  expect(container.querySelector("[aria-label='Chart mark legend']")?.hasAttribute("hidden")).toBe(
-    true,
-  )
+  // The legend row (legend and caption) is hidden with the plot.
+  expect(container.querySelector(".lazers-models-chart-foot")?.hasAttribute("hidden")).toBe(true)
   const choice = container.querySelector(`[data-configuration-id="${unpriced.configurationID}"]`)
   expect(choice?.textContent).toContain("not plotted, no token measurement")
 })
@@ -1542,12 +1453,13 @@ test("benchmark baseline renders its own units, labels the source and travels by
     series: Array<{ id?: string; data?: Array<{ value?: number[]; configurationID?: string }> }>
   }
   expect(option.yAxis?.[0]?.name).toBe("Coding Index")
-  expect(option.xAxis?.[0]?.name).toContain("USD / 1M tokens")
+  expect(option.xAxis?.[0]?.name).toContain("USD per 1M tokens")
   // The benchmark frontier is its own Pareto line over the plotted benchmark points only;
   // it never shares membership with the observed frontier.
   expect(option.series.map((series) => series.id)).toEqual([
     "benchmark-baseline",
     "benchmark-frontier",
+    "selected-halo",
   ])
   const values = option.series[0]!.data!.map((datum) => (datum as { value: number[] }).value)
   expect(values.map(([price]) => price)).toEqual([
@@ -1557,12 +1469,12 @@ test("benchmark baseline renders its own units, labels the source and travels by
   ])
   expect(values.map(([, codingIndex]) => codingIndex)).toEqual([30, 50, 61.25])
 
-  const frontierPath = Array.from(host.querySelectorAll("svg path[stroke-dasharray]")).find(
-    (candidate) => candidate.getAttribute("d")?.startsWith("M"),
+  const frontierPath = Array.from(host.querySelectorAll("svg path")).find(
+    (candidate) => isFrontierStroke(candidate) && candidate.getAttribute("d")?.startsWith("M"),
   )
   expect(frontierPath).toBeDefined()
   const commands = Array.from(
-    frontierPath!.getAttribute("d")!.matchAll(/([ML])\s*([+-]?[\d.]+)\s+([+-]?[\d.]+)/g),
+    frontierPath!.getAttribute("d")!.matchAll(/([ML])\s*([+-]?[\d.]+)[\s,]+([+-]?[\d.]+)/g),
   ).map((command) => [Number(command[2]), Number(command[3])])
   const pixel = (price: number, codingIndex: number) =>
     chart.convertToPixel({ seriesId: "benchmark-baseline" }, [price, codingIndex]) as number[]
@@ -1581,7 +1493,7 @@ test("benchmark baseline renders its own units, labels the source and travels by
       ([x, y]) => Math.abs(x! - slowPixel[0]!) < 0.5 && Math.abs(y! - slowPixel[1]!) < 0.5,
     ),
   ).toBe(false)
-  expect(frontierPath!.getAttribute("stroke-width")).toBe("2")
+  expect(frontierPath!.getAttribute("stroke-width")).toBe("1.5")
   expect(host.textContent).not.toContain("Benchmark frontier")
 
   const legend = container.querySelector("[aria-label='Chart mark legend']")!
