@@ -22,10 +22,6 @@ import { basename, dirname, resolve } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
-import { SourceFence } from "./source-fence-rpc.ts"
-import { sourceGuardMatches, sourceReviewBinding } from "./source-quarantine.ts"
-import { reviewMetadata } from "./review-input.ts"
-import { ModelPolicy } from "./schema.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { sameProject } from "../project-key.ts"
@@ -320,7 +316,6 @@ export function nativeHost(
   repository: TaskRepository,
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost & {
-  ownsCurrentWorkspace(directory: string): Promise<boolean>
   retainedInputID(sessionID: string): Promise<string | undefined>
 } {
   let connected: NativeInboxClient | undefined
@@ -366,26 +361,9 @@ export function nativeHost(
     return runNative(client, () => retainedNativeInputID(client, sessionID))
   }
   const host: RunnerHost & {
-    ownsCurrentWorkspace(directory: string): Promise<boolean>
     retainedInputID(sessionID: string): Promise<string | undefined>
   } = {
     retainedInputID,
-    async ownsCurrentWorkspace(directory) {
-      const client = await connectedClient()
-      const location = client.location
-      if (!location) return false
-      return runNative(client, async () => {
-        await assertNativeProcess(ctx, client, dependencies)
-        const current = await location.get({
-          location: { directory: AbsolutePath.make(directory) },
-        })
-        return (
-          current.directory === directory &&
-          current.project.id === ctx.location.project.id &&
-          current.project.canonical === repository.projectDirectory
-        )
-      })
-    },
     async workerModel(agentID = "lazers-implementor") {
       const agent = await Effect.runPromise(ctx.agent.get({ agentID: Agent.ID.make(agentID) }))
       return agent.data.model
@@ -945,138 +923,6 @@ export function nativeHost(
           },
         }),
       )
-    },
-    async ensureSourceGuard(input) {
-      const client = await connectedClient()
-      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-      const receipt = await runNative(client, () =>
-        client.rpc(SourceFence).status(
-          {},
-          {
-            location: { directory: input.directory },
-            signal: AbortSignal.timeout(10_000),
-          },
-        ),
-      )
-      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-      if (
-        receipt.pid !== dependencies.processID() ||
-        input.projectID !== ctx.location.project.id ||
-        receipt.projectID !== input.projectID ||
-        receipt.directory !== input.directory ||
-        resolve(receipt.databasePath) !== resolve(repository.path) ||
-        !sourceGuardMatches({ repository }, input.directory, receipt.registrationID)
-      )
-        throw new Error("Native source guard is not the exact current location registration")
-    },
-    async archiveRetainedWorker(input) {
-      const client = await connectedClient()
-      const validate = async () => {
-        await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-        const target = await runNative(client, () =>
-          client.session.get({ sessionID: input.sessionID }),
-        )
-        if (
-          input.projectID !== ctx.location.project.id ||
-          target.id !== input.sessionID ||
-          target.projectID !== input.projectID ||
-          !isWorkerAgent(target.agent) ||
-          target.metadata?.lazersAttemptID !== input.attemptID ||
-          target.location.directory !== input.directory
-        )
-          throw new Error("Native retained archive target is not the authorized worker assignment")
-        const observed = await observeWorker(client, input.sessionID, input.directory)
-        if (
-          observed.active ||
-          observed.pendingInput ||
-          observed.pendingPermissions ||
-          observed.pendingForms
-        )
-          throw new Error("Native retained archive worker has active input or approval work")
-        const authorized = repository.atomic((db) =>
-          db
-            .query<
-              { state: string; task_id: string; policy: string; review_input_json: string | null },
-              string[]
-            >(
-              `SELECT a.state,a.task_id,a.policy,q.review_input_json FROM runner_source_quarantines q
-            JOIN runner_attempts a ON a.id=q.attempt_id
-            JOIN runner_plans p ON p.id=q.plan_id
-            WHERE q.phase='pending' AND q.request_id=? AND q.plan_id=?
-              AND q.attempt_id=? AND q.session_id=? AND q.assigned_message_id=?
-              AND q.workspace=? AND q.requested_owner=p.owner
-              AND p.project_directory=? AND a.plan_id=p.id AND a.state IN ('running','verifying')
-              AND a.session_id=q.session_id AND a.message_id=q.assigned_message_id
-              AND a.workspace=q.workspace`,
-            )
-            .get(
-              input.requestID,
-              input.planID,
-              input.attemptID,
-              input.sessionID,
-              input.assignedMessageID,
-              input.directory,
-              repository.projectDirectory,
-            ),
-        )
-        if (!authorized) throw new Error("Native retained archive request authority changed")
-        const review = sourceReviewBinding(authorized)
-        if (
-          review?.inputID !== input.reviewInput?.inputID ||
-          review?.requestID !== input.reviewInput?.requestID
-        )
-          throw new Error("Native retained archive review binding changed")
-        if (
-          authorized.state === "running" &&
-          (await retainedNativeInputID(client, input.sessionID)) !==
-            (review?.inputID ?? input.assignedMessageID)
-        )
-          throw new Error("Native retained archive current input changed")
-        if (review) {
-          const foreground = await host.session(input.sessionID, { messages: true })
-          if (
-            !foreground ||
-            foreground.id !== input.sessionID ||
-            foreground.projectID !== input.projectID ||
-            foreground.directory !== input.directory ||
-            !isWorkerAgent(foreground.agent) ||
-            foreground.metadata?.lazersAttemptID !== input.attemptID ||
-            foreground.busy ||
-            foreground.observationUnstable ||
-            foreground.pendingInput !== false ||
-            foreground.pendingPermissions !== 0 ||
-            foreground.pendingForms !== 0 ||
-            foreground.outcome !== "succeeded" ||
-            foreground.turn?.state !== "completed" ||
-            foreground.turn.inputID !== review.inputID
-          )
-            throw new Error("Native retained review foreground is no longer completed and clear")
-          const messages = foreground.messages.filter((message) => message.id === review.inputID)
-          const metadata =
-            messages.length === 1
-              ? reviewMetadata(messages[0]!, {
-                  taskID: authorized.task_id,
-                  attemptID: input.attemptID,
-                })
-              : undefined
-          const model = ModelPolicy.parse(JSON.parse(authorized.policy).model)
-          if (metadata?.requestID !== review.requestID || !sameNativeModel(foreground.model, model))
-            throw new Error("Native retained archive review metadata or route changed")
-        }
-        return target
-      }
-      if ((await validate()).time.archived !== undefined) return
-      let updateError: unknown
-      try {
-        await client.session.update({ sessionID: input.sessionID, archived: true })
-      } catch (error) {
-        updateError = error
-      }
-      const readback = await validate()
-      if (readback.time.archived === undefined)
-        throw new Error(
-          `Native retained worker archive lacks public readback${updateError ? `: ${String(updateError)}` : ""}`,
-        )
     },
     async updateSession(input) {
       const client = await connectedClient()

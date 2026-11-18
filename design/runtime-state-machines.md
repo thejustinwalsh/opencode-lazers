@@ -76,8 +76,8 @@ prerequisites; recorded unknowns are not converted into successful execution.
 in a held retained-verification generation. It qualifies only a completed
 non-timeout interruption receipt whose command phases and process group/tree are
 conclusively settled, whose isolated resources are removed, and whose exact
-accepted task, combined candidate, specification, command, environment, owner and
-source-quarantine bindings still match. It uses the current unchanged timing
+accepted task, combined candidate, specification, command, environment and owner
+bindings still match. It uses the current unchanged timing
 policy. The operation must remain held; subprocess cancellation in a receipt is
 not the same as intentional cancellation of the operation or plan.
 
@@ -89,7 +89,7 @@ other matching passes. Reopen, exact request replay, concurrent authorization,
 lost replies, stale bindings or late cancellation cannot duplicate execution or
 publish success after the operation fence is lost. This control preserves task
 acceptance and the retained generation/candidate; it does not certify the
-original worker idle, unseal its source, settle quarantine, or authorize cleanup.
+original worker idle, or authorize cleanup.
 Inspection offers the action only when its recorded check set supports that exact
 next step. Full authorization rechecks ownership, plan/specification and
 candidate inputs, all relevant check receipts, resources, activities, adoptions
@@ -182,11 +182,6 @@ Validation: `runtime.test.ts` and `lifecycle-machines.test.ts`: 352 tests,
   attempt, session and workspace. It requires settled checks, uses the existing
   XState cancellation transition, and retains the operation and check history.
   Accepted candidates and retained repairs keep their existing gates.
-- `isolateStoppedWorkerSource()` invokes the existing source quarantine for a
-  stopped worker with a completed, bound input and no running shell or child
-  session when its isolated checkout blocks eligible isolated work. Native archive and
-  source guard checks must succeed before the reservation is excluded. The
-  checkout and unresolved resources stay owned; no completion is recorded.
 - `failMissingWorker()` settles an authoritatively absent worker as failed
   under the scheduler fence. It rechecks the current assignment and unsettled
   effects before releasing the reservation. Native lookup errors do not take
@@ -201,21 +196,6 @@ On 2026-11-11, LZ-154's held operation
 same worker. The native Tasks RPC subsequently reported LZ-154 running,
 LZ-203 waiting on LZ-154's write scope, and LZ-88 waiting on blocked prerequisite
 LZ-72. The native active-session inventory included the LZ-154 worker.
-
-The resumed LZ-154 worker reached verification. Its runner check timeout then
-exposed a second reservation hold: a settled timeout kept the stopped worker's
-source reserved. `hasSettledVerificationTimeout()` now admits that exact
-blocked artifact to the same guarded source quarantine. The timeout remains a
-failed check; resource settlement and native source isolation are distinct from
-task acceptance. A real subprocess-timeout regression confirms the queued
-overlapping task starts and the original checkout remains intact.
-
-After Desktop Relaunch, native transitions recorded LZ-154's
-`SOURCE_QUARANTINE_SEALED` at 08:18:25 and LZ-203's `WORKER_STARTED` at
-08:18:31 America/Detroit. The native session inventory and Desktop Tasks
-confirmed LZ-203 running without a Start action. `advanceAttempt()` now leaves
-quarantined attempts to the retained verification workflow instead of trying
-mechanical edits on their protected source and replacing the original hold.
 
 On November 11, the LZ-203 Architect received
 `Permission.DeclinedError` at 10:37:26 EST while OpenCode was reloading
@@ -301,3 +281,25 @@ plan (`afterPlans`, `resumeAfterPlans`) or task (`dependencies`) through a plan
 revision recorded as `DEPENDENCY_EDGE_DROPPED`, and notifies the Architect with
 status `dependency-dropped`. Dependents continue; they are not held. A hold left
 by an earlier version is released through the existing task and plan machines.
+
+## Source quarantine is deleted
+
+The source-quarantine ceremony is gone: the `quarantine-source` command, the
+`runner_source_quarantines` table and its pending/sealed phases, the
+`quarantine` lifecycle machine, the source-guard registry, the `lz.source-fence`
+RPC, `host.ensureSourceGuard` and `host.archiveRetainedWorker`, and the worker
+tool guard that denied quarantined sessions. Each `ensureSourceGuard` call
+against an unloaded worktree booted a full OpenCode location; 55 of them (13
+sealed rows re-guarded every pass) froze the service.
+
+A stopped worker's checkout now simply stays reserved until it is cleaned up,
+which removal handles after the live idle check. `verify-retained` needs a
+blocked, accepted or cleanup-blocked plan. Runner schema generation 9 drops the
+table and moves any plan blocked on a quarantine through the plan machine
+(`retireSourceQuarantines`, `PLAN_GATE_RETIRED`). Legacy retained operations
+that carry a `sourceQuarantine` field still parse; it binds nothing.
+
+Observation never boots a location. `workerObservation` reads location-scoped
+inventories only when the location is already loaded, and the trajectory host
+checks a recorded attempt workspace by path (`ownsRecordedWorkspace`), not by
+asking the host to open the worktree.

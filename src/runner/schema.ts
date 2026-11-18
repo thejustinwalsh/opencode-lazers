@@ -203,7 +203,6 @@ export const CommandInput = z
         "schedule",
         "amend-scope",
         "adopt-descendant",
-        "quarantine-source",
         "settle-startup",
         "retained-repair",
         "verify-retained",
@@ -212,7 +211,7 @@ export const CommandInput = z
         "continue-retained-check",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption and startup-settlement bindings.",
       ),
     reason: z
       .string()
@@ -260,9 +259,7 @@ export const CommandInput = z
       .min(1)
       .max(200)
       .optional()
-      .describe(
-        "Exact tagged native review input for reconcile or quarantine-source. Supply taskID and attemptID. Quarantine pins the current completed review for source-only archival; it does not establish task completion or background-idle proof.",
-      ),
+      .describe("Exact tagged native review input for reconcile. Supply taskID and attemptID."),
     scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
     scopeRemovals: TaskProposalSchema.shape.writeScope
       .min(1)
@@ -364,14 +361,12 @@ export const CommandInput = z
     }
     if (
       input.reviewInputID !== undefined &&
-      (!["reconcile", "quarantine-source"].includes(input.action) ||
-        !input.taskID ||
-        !input.attemptID)
+      (input.action !== "reconcile" || !input.taskID || !input.attemptID)
     )
       context.addIssue({
         code: "custom",
         path: ["reviewInputID"],
-        message: "Review input requires reconcile or quarantine-source, taskID and attemptID",
+        message: "Review input requires reconcile, taskID and attemptID",
       })
   })
   .superRefine((input, context) => {

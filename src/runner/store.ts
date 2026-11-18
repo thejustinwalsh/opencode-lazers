@@ -1,4 +1,3 @@
-import { sourceReservationExcluded } from "./source-quarantine.ts"
 import {
   type PlanLifecycleState,
   type AttemptLifecycleState,
@@ -14,7 +13,7 @@ import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
-import { retireHumanEvidenceGate } from "./retire-gates.ts"
+import { retireHumanEvidenceGate, retireSourceQuarantines } from "./retire-gates.ts"
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
@@ -477,13 +476,6 @@ export type SchedulingNodeFact = NodeRow & {
 export type SchedulingReservationFact = AttemptRow & {
   task_body: string
   scope_payload: string | null
-  quarantine_phase: string | null
-  quarantine_plan_id: string | null
-  quarantine_session_id: string | null
-  quarantine_message_id: string | null
-  quarantine_workspace: string | null
-  quarantine_hold_reason: string | null
-  quarantine_review_input_json: string | null
 }
 
 export type SchedulingFactSnapshot = {
@@ -872,16 +864,6 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_effects_plan ON runner_effects(plan_id);
       CREATE INDEX IF NOT EXISTS runner_attempts_plan ON runner_attempts(plan_id);
-      CREATE TABLE IF NOT EXISTS runner_source_quarantines (
-        attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
-        plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
-        assigned_message_id TEXT NOT NULL, requested_owner TEXT NOT NULL,
-        workspace TEXT NOT NULL, request_id TEXT NOT NULL, reason TEXT NOT NULL,
-        phase TEXT NOT NULL CHECK(phase IN ('pending','sealed')), hold_reason TEXT, review_input_json TEXT,
-        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS runner_source_quarantines_pending
-        ON runner_source_quarantines(plan_id,created_at) WHERE phase='pending';
       CREATE TABLE IF NOT EXISTS runner_adoptions (
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id),
         task_id TEXT NOT NULL, request_id TEXT NOT NULL, owner TEXT NOT NULL,
@@ -1042,11 +1024,6 @@ export class RunnerStore {
           db.exec("ALTER TABLE native_tool_calls ADD COLUMN local_invocation_id TEXT")
         db.exec(`CREATE INDEX IF NOT EXISTS native_tool_calls_local
         ON native_tool_calls(project_directory,session_id,local_invocation_id)`)
-        const quarantineColumns = db
-          .query<{ name: string }, []>("PRAGMA table_info(runner_source_quarantines)")
-          .all()
-        if (!quarantineColumns.some((column) => column.name === "review_input_json"))
-          db.exec("ALTER TABLE runner_source_quarantines ADD COLUMN review_input_json TEXT")
         const progressColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
@@ -1253,6 +1230,7 @@ export class RunnerStore {
         ensureArchitectSourceJournalRevisions(db)
         // Generation 6: the human-evidence gate is retired; move its blocked plans on.
         retireHumanEvidenceGate(db)
+        retireSourceQuarantines(db)
       },
     )
     installPrioritySchema(repository)
@@ -3534,15 +3512,13 @@ export class RunnerStore {
       ...new Set([...task.proposal.writeScope, ...(amendment?.writeScope ?? [])]),
     ])
   }
-  dispatchReservations(mode: "shared" | "isolated") {
+  dispatchReservations() {
     return [
-      ...this.activeProjectAttempts()
-        .filter((attempt) => !sourceReservationExcluded(this, attempt, { mode }))
-        .map((attempt) => ({
-          taskID: attempt.task_id,
-          shared: attempt.workspace === this.repository.projectDirectory,
-          scopes: this.effectiveWriteScope(attempt.task_id),
-        })),
+      ...this.activeProjectAttempts().map((attempt) => ({
+        taskID: attempt.task_id,
+        shared: attempt.workspace === this.repository.projectDirectory,
+        scopes: this.effectiveWriteScope(attempt.task_id),
+      })),
       ...this.activeAdoptions().map((adoption) => ({
         taskID: adoption.task_id,
         shared: false,
@@ -4124,14 +4100,9 @@ export class RunnerStore {
           `SELECT a.*,t.body AS task_body,
              (SELECT tr.payload FROM runner_transitions tr
               WHERE tr.plan_id=a.plan_id AND tr.task_id=a.task_id AND tr.event='SCOPE_AMENDED'
-              ORDER BY tr.id DESC LIMIT 1) AS scope_payload,
-             q.phase AS quarantine_phase,q.plan_id AS quarantine_plan_id,
-             q.session_id AS quarantine_session_id,q.assigned_message_id AS quarantine_message_id,
-             q.workspace AS quarantine_workspace,q.hold_reason AS quarantine_hold_reason,
-             q.review_input_json AS quarantine_review_input_json
+              ORDER BY tr.id DESC LIMIT 1) AS scope_payload
            FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=a.task_id
-           LEFT JOIN runner_source_quarantines q ON q.attempt_id=a.id
            WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')
            ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number LIMIT ?`,
         )

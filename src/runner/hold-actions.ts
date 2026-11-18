@@ -12,11 +12,6 @@ export type HoldFamily = {
 
 export const HOLD_FAMILIES: readonly HoldFamily[] = [
   {
-    name: "quarantined-verification",
-    match: /checkout is quarantined|source quarantine/i,
-    actions: ["verify-retained", "reconcile", "cancel"],
-  },
-  {
     name: "retained-repair",
     match: /^Retained (repair|worker)/,
     actions: ["retained-repair", "reconcile", "cancel"],

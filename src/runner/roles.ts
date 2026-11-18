@@ -9,34 +9,13 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
-import {
-  quarantinedSession,
-  beginSourceGuard,
-  sourceQuarantineToolError,
-  type SourceGuardRegistration,
-} from "./source-quarantine.ts"
 
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
   ["lz-research", "lz-submit-plan", "lz-plan-command", "lz-submit-task"].includes(tool)
 
-export function registerWorker(
-  ctx: Plugin.Context,
-  store: RunnerStore,
-  reserved?: SourceGuardRegistration,
-) {
+export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
   return Effect.gen(function* () {
-    const guard =
-      reserved ??
-      (yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          beginSourceGuard({
-            directory: ctx.location.directory,
-            projectDirectory: store.repository.projectDirectory,
-          }),
-        ),
-        (registration) => Effect.sync(() => registration.dispose()),
-      ))
     yield* ctx.agent.transform((editor) =>
       ["lazers-implementor", "auditor"].forEach((id) =>
         editor.update(Agent.ID.make(id), (agent) => {
@@ -101,11 +80,9 @@ export function registerWorker(
     )
     yield* timedHooks(ctx.tool, "tool").hook("execute.before", (call) =>
       Effect.suspend(() => {
-        const quarantineError = sourceQuarantineToolError(store, call.sessionID, call.tool)
-        if (quarantineError) return Effect.fail(new Tool.Error({ message: quarantineError }))
         const owned = attempt(call.sessionID)
         if (!owned) {
-          if (isWorkerAgent(call.agent) && !quarantinedSession(store, call.sessionID))
+          if (isWorkerAgent(call.agent))
             return Effect.fail(
               new Tool.Error({ message: "Implementor requires an admitted runtime assignment" }),
             )
@@ -121,15 +98,6 @@ export function registerWorker(
         return Effect.void
       }),
     )
-    yield* timedHooks(ctx.permission, "permission").hook("evaluate", (request) =>
-      Effect.sync(() => {
-        // Code Mode fetch is an extension, so it does not enter the tool hook.
-        if (request.action === "webfetch" && quarantinedSession(store, request.sessionID)) {
-          request.effect = "deny"
-          request.message = "Retained source is quarantined; use task and handoff tools."
-        }
-      }),
-    )
     yield* timedHooks(ctx.session, "session").hook("retry", (retry) =>
       Effect.sync(() => {
         const owned = attempt(retry.sessionID)
@@ -139,14 +107,5 @@ export function registerWorker(
         )
       }),
     )
-    // The installed capability releases before the hook registrations above.
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        guard.install(store)
-        return guard
-      }),
-      (registration) => Effect.sync(() => registration.dispose()),
-    )
-    return guard
   })
 }

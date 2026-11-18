@@ -180,7 +180,7 @@ revision, attempt, phase, check and artifact) and is an explicit continuation of
 that isolated check. It may continue a held or cancelled-held operation only when
 its original candidate, command, owner, prior receipt and all resource obligations
 still match and are conclusively settled. It preserves prior receipts, task
-acceptance and source quarantine; it does not reset acceptance or prompt/replay a
+acceptance; it does not reset acceptance or prompt/replay a
 worker. A timing amendment by itself never starts work or grants acceptance.
 For a held retained **combined** check interrupted without timing out, use the
 separate `continue-retained-check` action shown by exact retained-verification
@@ -194,7 +194,7 @@ the prior interrupted receipt and passing evidence, then runs only that check in
 isolation. A subprocess receipt with `aborted: true` does not itself mean the
 retained operation was cancelled: the operation must still be held. This action
 never revives an intentionally cancelled operation or plan, certifies the
-original worker idle, settles its source quarantine, or permits cleanup. Never
+original worker idle, or permits cleanup. Never
 replay the worker to recover a check.
 For substantive corrections, ensure an idle worker resumes execution. Once work
 is running and no decision remains, end the turn; runtime notifications resume

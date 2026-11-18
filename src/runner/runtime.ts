@@ -141,26 +141,15 @@ import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { SourceMessagesInspectPlanSchema } from "./inspection.ts"
 import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
-import { canonicalProjectWorktreePath } from "./workspace-location.ts"
+import { canonicalProjectWorktreePath, samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
 import {
   matchesReviewInputAlias,
   observeReviewInput,
   parseReviewInputAlias,
-  reviewMetadata,
 } from "./review-input.ts"
 import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
-import {
-  sourceGuardInstalled,
-  samePhysicalWorkspace,
-  sourceQuarantine,
-  sourceQuarantineVerificationBinding,
-  sourceQuarantineVerificationBindingMatches,
-  sourceReservationExcluded,
-  sourceReviewBinding,
-} from "./source-quarantine.ts"
-import type { SourceQuarantine, SourceReviewBinding } from "./source-quarantine.ts"
 import {
   isStartupWorktreeCandidate,
   nativeWorktreeFailureEvidence,
@@ -1673,8 +1662,7 @@ export class TaskRuntime {
       !repair ||
       repair.operationID !== binding.operationID ||
       repair.sessionID !== attempt.session_id ||
-      repair.workspace !== attempt.workspace ||
-      sourceQuarantine(this.store, attempt.id)
+      repair.workspace !== attempt.workspace
     )
       return false
     try {
@@ -1831,27 +1819,7 @@ export class TaskRuntime {
         "Retained verification must name the current task revision and latest original attempt",
       )
     const stoppedPlan = ["blocked", "accepted", "cleanup-blocked"].includes(plan.state)
-    const quarantine = sourceQuarantine(this.store, attempt.id)
-    const sourceQuarantineBinding = quarantine
-      ? sourceQuarantineVerificationBinding(this.store, {
-          planID: plan.id,
-          owner: caller,
-          attempt,
-          artifact: command.artifact,
-        })
-      : undefined
-    if (quarantine && !sourceQuarantineBinding)
-      throw new Error(
-        "Retained verification requires the exact sealed source-quarantined verifying candidate",
-      )
-    if (!stoppedPlan && plan.state !== "running")
-      throw new Error("Retained verification requires a stopped or accepted plan")
-    if (plan.state === "running" && !sourceQuarantineBinding)
-      throw new Error(
-        "Running-plan retained verification requires the exact sealed source-quarantined verifying candidate",
-      )
-    if (sourceQuarantineBinding && node.state !== "verifying")
-      throw new Error("Sealed source-quarantined verification requires the exact verifying task")
+    if (!stoppedPlan) throw new Error("Retained verification requires a stopped or accepted plan")
     const repairingCandidate = attempt.artifact !== null && attempt.artifact !== command.artifact
     const repair = repairingCandidate ? this.retainedRepairForAttempt(attempt) : undefined
     const repairBinding =
@@ -2002,7 +1970,6 @@ export class TaskRuntime {
       effectiveWriteScope: this.store.effectiveWriteScope(task.id),
       verification: { task: task.proposal.verification, combined: input.verification },
       acceptance: { task: task.proposal.acceptance, combined: input.acceptance },
-      sourceQuarantine: sourceQuarantineBinding ?? null,
       environmentIdentity,
       reason: command.reason,
     })}`
@@ -2023,7 +1990,6 @@ export class TaskRuntime {
       originalMessageID: attempt.message_id,
       originalWorkspace: originalWorkspace,
       artifact: command.artifact,
-      ...(sourceQuarantineBinding ? { sourceQuarantine: sourceQuarantineBinding } : {}),
       ...(repairBinding ? { repair: repairBinding } : {}),
       combinedArtifact,
       combinedInputFingerprint: combinedArtifact ? inputFingerprint : null,
@@ -2043,27 +2009,6 @@ export class TaskRuntime {
       updatedAt: this.now(),
     }
     return seed
-  }
-
-  private hasSettledVerificationTimeout(plan: PlanRow, attempt: AttemptRow) {
-    if (plan.state !== "blocked" || !attempt.artifact) return false
-    return this.store.effects(plan.id).some((effect) => {
-      if (
-        effect.attempt_id !== attempt.id ||
-        !effect.kind.startsWith("verify:") ||
-        effect.state !== "completed" ||
-        !effect.receipt
-      )
-        return false
-      const { check } = JSON.parse(effect.receipt) as { check?: CheckReceipt }
-      return Boolean(
-        check?.timedOut &&
-        check.cwd === attempt.workspace &&
-        this.store.sameArtifact(check.artifact, attempt.artifact) &&
-        interruptedCheckResourcesSettled(check) &&
-        plan.reason === checkFailureReason(check),
-      )
-    })
   }
 
   private cancelledRetainedTimeoutMatchesHold(
@@ -2109,37 +2054,10 @@ export class TaskRuntime {
     return laterStateChanges.length === 0
   }
 
-  private retainedContinuationHasUnrelatedEffects(
-    planID: string,
-    operation: RetainedVerification,
-    task: TaskProposal,
-  ): boolean {
-    return this.store.effects(planID).some((effect) => {
-      if (!["intended", "uncertain"].includes(effect.state)) return false
-      if (
-        !operation.sourceQuarantine ||
-        effect.task_id !== operation.taskID ||
-        effect.attempt_id !== operation.attemptID ||
-        !effect.kind.startsWith("verify:")
-      )
-        return true
-      const checkID = effect.kind.slice("verify:".length)
-      const authored = task.verification.find((candidate) => candidate.id === checkID)
-      if (!authored) return true
-      try {
-        const payload: unknown = JSON.parse(effect.payload)
-        return !(
-          isRecord(payload) &&
-          payload.artifact === operation.artifact &&
-          payload.workspace === operation.originalWorkspace &&
-          isRecord(payload.check) &&
-          payload.check.id === authored.id &&
-          payload.check.command === authored.command
-        )
-      } catch {
-        return true
-      }
-    })
+  private retainedContinuationHasUnrelatedEffects(planID: string): boolean {
+    return this.store
+      .effects(planID)
+      .some((effect) => ["intended", "uncertain"].includes(effect.state))
   }
 
   private async prepareRetainedVerificationCheckContinuation(
@@ -2204,9 +2122,7 @@ export class TaskRuntime {
       attempt.message_id !== operation.originalMessageID ||
       realpathSync(attempt.workspace) !== operation.originalWorkspace ||
       !["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
-      (operation.sourceQuarantine
-        ? !this.retainedVerificationExecution.sourceQuarantinePlanVersionCurrent(operation, plan)
-        : operation.planVersion !== plan.version)
+      operation.planVersion !== plan.version
     )
       throw new Error(
         "Retained check timing continuation no longer matches the current owner and candidate",
@@ -2222,23 +2138,6 @@ export class TaskRuntime {
     const phase = command.verificationPhase
     if (continuation === "interrupted" && phase !== "combined")
       throw new Error("Interrupted retained-check continuation is limited to a combined check")
-    if (
-      operation.sourceQuarantine &&
-      (attempt.state !== "verifying" ||
-        (phase === "task"
-          ? node.state !== "verifying"
-          : node.state !== "accepted" ||
-            !this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)) ||
-        !sourceQuarantineVerificationBindingMatches(this.store, {
-          planID: plan.id,
-          owner: caller,
-          attempt,
-          artifact: operation.artifact,
-          expected: operation.sourceQuarantine,
-        }))
-    )
-      throw new Error("Retained source-quarantine binding changed before continuation")
-
     const phaseArtifact = phase === "task" ? operation.artifact : operation.combinedArtifact
     const phaseWorkspace = this.retainedVerificationExecution.retainedVerificationIsolatedWorkspace(
       operation,
@@ -2504,7 +2403,7 @@ export class TaskRuntime {
     if (continuation === "interrupted") {
       if (this.store.activeAdoptions(plan.id).length)
         throw new Error("An active descendant adoption prevents retained-check continuation")
-      if (this.retainedContinuationHasUnrelatedEffects(plan.id, operation, task.proposal))
+      if (this.retainedContinuationHasUnrelatedEffects(plan.id))
         throw new Error("Unrelated unresolved effects prevent retained-check continuation")
     }
 
@@ -2954,7 +2853,7 @@ export class TaskRuntime {
       command.retainedVerificationID !== operation.id ||
       command.retainedGeneration !== operation.generation ||
       operation.state !== "held" ||
-      (!operation.sourceQuarantine && operation.planVersion !== plan.version) ||
+      operation.planVersion !== plan.version ||
       fingerprint(plan.body) !== prepared.planBodyFingerprint
     )
       throw new Error("Retained-check continuation owner, version or exact binding changed")
@@ -2997,17 +2896,8 @@ export class TaskRuntime {
       attempt.session_id !== operation.originalSessionID ||
       attempt.message_id !== operation.originalMessageID ||
       realpathSync(attempt.workspace) !== operation.originalWorkspace ||
-      (operation.sourceQuarantine
-        ? attempt.state !== "verifying" ||
-          !this.retainedVerificationExecution.sourceQuarantinePlanVersionCurrent(operation, plan) ||
-          !sourceQuarantineVerificationBindingMatches(this.store, {
-            planID: plan.id,
-            owner: caller,
-            attempt,
-            artifact: operation.artifact,
-            expected: operation.sourceQuarantine,
-          })
-        : attempt.state !== "accepted" || operation.planVersion !== plan.version) ||
+      attempt.state !== "accepted" ||
+      operation.planVersion !== plan.version ||
       !this.retainedVerificationExecution.retainedTaskCandidateAccepted(operation)
     )
       throw new Error("Retained task acceptance or original source binding changed")
@@ -3083,7 +2973,7 @@ export class TaskRuntime {
       this.store
         .atomic((db) => activeRetainedVerifications(db, this.directory, plan.id))
         .some((candidate) => candidate.id !== operation.id) ||
-      this.retainedContinuationHasUnrelatedEffects(plan.id, operation, task.proposal)
+      this.retainedContinuationHasUnrelatedEffects(plan.id)
     )
       throw new Error("Unrelated retained work or unresolved effects prevent continuation")
     const deadline = this.verificationDeadline(prepared.target)
@@ -3250,39 +3140,6 @@ export class TaskRuntime {
     return matches
   }
 
-  /** Transaction-safe admission check for source quarantine. */
-  private quarantineTargetCurrent(plan: PlanRow, command: PlanCommand) {
-    if (!command.attemptID || !command.reason)
-      throw new Error("Source quarantine requires attemptID and reason")
-    const attempt = this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
-    if (
-      !attempt ||
-      !["running", "verifying"].includes(attempt.state) ||
-      !["running", "blocked"].includes(plan.state) ||
-      attempt.workspace === this.directory ||
-      JSON.parse(plan.body).workspaceMode === "shared"
-    )
-      throw new Error(
-        "Source quarantine requires an isolated retained running or verifying attempt",
-      )
-    if (
-      attempt.state === "verifying" &&
-      !this.hasSettledVerificationTimeout(plan, attempt) &&
-      !this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.state === "uncertain" &&
-            effect.kind.startsWith("verify:"),
-        )
-    )
-      throw new Error("Source quarantine requires a retained uncertain check or settled timeout")
-    if (!this.host.archiveRetainedWorker || !this.host.ensureSourceGuard)
-      throw new Error("The native worker source guard and archive control must be installed")
-    return attempt
-  }
-
   private sourceWorkerWait(
     attempt: Pick<
       AttemptRow,
@@ -3290,7 +3147,6 @@ export class TaskRuntime {
     >,
     session: HostSession | null | undefined,
     requireCompletedForeground = true,
-    review?: SourceReviewBinding,
   ) {
     if (
       !session ||
@@ -3314,19 +3170,9 @@ export class TaskRuntime {
       requireCompletedForeground &&
       (session.outcome !== "succeeded" ||
         session.turn?.state !== "completed" ||
-        session.turn.inputID !== (review?.inputID ?? attempt.message_id))
+        session.turn.inputID !== attempt.message_id)
     )
       return "Retained running attempt requires its current input's completed foreground execution"
-    if (review && requireCompletedForeground) {
-      const inputs = session.messages.filter((message) => message.id === review.inputID)
-      const metadata =
-        inputs.length === 1
-          ? reviewMetadata(inputs[0]!, { taskID: attempt.task_id, attemptID: attempt.id })
-          : undefined
-      const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
-      if (metadata?.requestID !== review.requestID || !sameNativeModel(session.model, model))
-        return "Retained review input metadata or admitted route changed"
-    }
     return undefined
   }
 
@@ -3506,8 +3352,7 @@ export class TaskRuntime {
       policy?.workspaceMode !== "isolated" ||
       !this.sameModel(attemptRoute.data, planRoute.data) ||
       !this.sameModel(attemptRoute.data, repairRoute.data) ||
-      this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
-      sourceQuarantine(this.store, attempt.id)
+      this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED")
     )
       throw new Error("Retained repair recovery authority, artifact, route or task lineage changed")
 
@@ -3819,7 +3664,6 @@ export class TaskRuntime {
       !this.store
         .effects(plan.id)
         .some((effect) => ["intended", "uncertain"].includes(effect.state)) &&
-      !sourceQuarantine(this.store, attempt.id) &&
       this.preparationAllowed(attempt),
     )
   }
@@ -3965,11 +3809,7 @@ export class TaskRuntime {
           }
         })(),
     )
-    if (
-      sessionEffect?.state !== "completed" ||
-      originalPrompt?.state !== "completed" ||
-      sourceQuarantine(this.store, attempt.id)
-    )
+    if (sessionEffect?.state !== "completed" || originalPrompt?.state !== "completed")
       throw new Error("Retained session or assigned prompt is not conclusively owned")
     if (this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED"))
       throw new Error("Source-landed task work cannot be repaired in its retained workspace")
@@ -4074,8 +3914,7 @@ export class TaskRuntime {
     caller: string,
     ownerSession: HostSession | null | undefined,
   ): Promise<{ binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined> {
-    if (command.reviewInputID === undefined || command.action === "quarantine-source")
-      return undefined
+    if (command.reviewInputID === undefined) return undefined
     if (command.action !== "reconcile" || !command.taskID || !command.attemptID)
       throw new Error("Review input reconciliation requires reconcile, taskID and attemptID")
     if (!this.validArchitect(ownerSession))
@@ -5011,7 +4850,7 @@ export class TaskRuntime {
         retained.artifact === node?.artifact &&
         this.retainedVerificationExecution.retainedTaskCandidateAccepted(retained) &&
         attempt?.artifact === retained.artifact &&
-        attempt.state === (retained.sourceQuarantine ? "verifying" : "accepted"),
+        attempt.state === "accepted",
       )
       if (
         !specification ||
@@ -5304,7 +5143,6 @@ export class TaskRuntime {
         "resume",
         "retry",
         "adopt-descendant",
-        "quarantine-source",
         "settle-startup",
         "retained-repair",
         "verify-retained",
@@ -5473,59 +5311,6 @@ export class TaskRuntime {
       )
       retainedCheckNativeWorkspaces = nativeWorkspaces
       ownerSession = confirmedOwner
-    }
-    let quarantineAttempt: AttemptRow | undefined
-    let quarantineReview: SourceReviewBinding | undefined
-    if (command.action === "quarantine-source") {
-      if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
-      quarantineAttempt = this.quarantineTargetCurrent(old, command)
-      const worker = await this.host.session(
-        quarantineAttempt.session_id,
-        quarantineAttempt.state === "running" ? { messages: true } : undefined,
-      )
-      if (command.reviewInputID !== undefined) {
-        if (command.taskID !== quarantineAttempt.task_id || quarantineAttempt.state !== "running")
-          throw new Error("Source review must name the exact retained running task attempt")
-        const inputs =
-          worker?.messages.filter((message) => message.id === command.reviewInputID) ?? []
-        const metadata =
-          inputs.length === 1
-            ? reviewMetadata(inputs[0]!, {
-                taskID: quarantineAttempt.task_id,
-                attemptID: quarantineAttempt.id,
-              })
-            : undefined
-        if (!metadata) throw new Error("Exact tagged retained review input is unavailable")
-        quarantineReview = { inputID: command.reviewInputID, requestID: metadata.requestID }
-      }
-      const wait = this.sourceWorkerWait(quarantineAttempt, worker, true, quarantineReview)
-      if (wait) throw new Error(wait)
-      const worktrees = await this.host.worktrees()
-      if (
-        !worktrees.includes(quarantineAttempt.workspace) ||
-        realpathSync(quarantineAttempt.workspace) === realpathSync(this.directory)
-      )
-        throw new Error("Retained source must be a separate native-owned worktree")
-      await this.host.ensureSourceGuard!({
-        directory: quarantineAttempt.workspace,
-        projectID: this.projectID,
-      })
-      const [currentOwner, currentWorker] = await Promise.all([
-        this.host.session(caller),
-        this.host.session(
-          quarantineAttempt.session_id,
-          quarantineAttempt.state === "running" ? { messages: true } : undefined,
-        ),
-      ])
-      if (!this.validArchitect(currentOwner) || currentOwner.id !== old.owner)
-        throw new Error("Source quarantine owner session changed during admission")
-      const currentWait = this.sourceWorkerWait(
-        quarantineAttempt,
-        currentWorker,
-        true,
-        quarantineReview,
-      )
-      if (currentWait) throw new Error(currentWait)
     }
     const retainedRepair =
       command.action === "retained-repair"
@@ -5714,65 +5499,6 @@ export class TaskRuntime {
             throw new Error(
               "A descendant adoption is pending; only its adoption or cancellation is allowed",
             )
-          if (command.action === "quarantine-source") {
-            const attempt = this.quarantineTargetCurrent(plan, command)
-            if (!sourceGuardInstalled(this.store, attempt.workspace))
-              throw new Error("Native worker source guard is not installed")
-            if (
-              !quarantineAttempt ||
-              attempt.message_id !== quarantineAttempt.message_id ||
-              attempt.session_id !== quarantineAttempt.session_id ||
-              attempt.workspace !== quarantineAttempt.workspace
-            )
-              throw new Error("Retained worker changed during source quarantine admission")
-            const existing = sourceQuarantine(this.store, attempt.id)
-            if (
-              existing &&
-              (existing.session_id !== attempt.session_id ||
-                existing.assigned_message_id !== attempt.message_id ||
-                existing.workspace !== attempt.workspace)
-            )
-              throw new Error("Existing source quarantine belongs to a different worker assignment")
-            if (existing?.phase === "sealed")
-              return { status: "source-quarantined", attemptID: attempt.id, version: plan.version }
-            const at = Date.now()
-            db.query(
-              `INSERT INTO runner_source_quarantines
-          (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,phase,hold_reason,review_input_json,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,'pending',NULL,?,?,?)
-          ON CONFLICT(attempt_id) DO UPDATE SET requested_owner=excluded.requested_owner,
-            request_id=excluded.request_id,reason=excluded.reason,hold_reason=NULL,
-            review_input_json=excluded.review_input_json,updated_at=excluded.updated_at`,
-            ).run(
-              attempt.id,
-              plan.id,
-              attempt.session_id,
-              attempt.message_id,
-              plan.owner,
-              attempt.workspace,
-              command.requestID,
-              command.reason!,
-              quarantineReview ? JSON.stringify(quarantineReview) : null,
-              at,
-              at,
-            )
-            db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-            this.store.record(plan.id, attempt.task_id, "SOURCE_QUARANTINE_REQUESTED", {
-              attemptID: attempt.id,
-              sessionID: attempt.session_id,
-              workspace: attempt.workspace,
-              requestID: command.requestID,
-              reason: command.reason,
-              ...(quarantineReview ? { reviewInput: quarantineReview } : {}),
-              ...(existing ? { supersedesRequestID: existing.request_id } : {}),
-              resourceHoldsRetained: true,
-            })
-            return {
-              status: "quarantining-source",
-              attemptID: attempt.id,
-              version: this.store.plan(plan.id)!.version,
-            }
-          }
           if (command.action === "retained-repair") {
             if (!retainedRepair || !ownerSession || !this.validArchitect(ownerSession))
               throw new Error("Retained repair requires the current same-project Architect owner")
@@ -5843,10 +5569,9 @@ export class TaskRuntime {
             if (
               this.store
                 .effects(plan.id)
-                .some((effect) => ["intended", "uncertain"].includes(effect.state)) ||
-              sourceQuarantine(this.store, attempt.id)
+                .some((effect) => ["intended", "uncertain"].includes(effect.state))
             )
-              throw new Error("Uncertain effects or source quarantine prevent retained repair")
+              throw new Error("Uncertain effects prevent retained repair")
             this.assertNoDispatchedDependents(plan, task.id, input)
             if (
               !existsSync(attempt.workspace) ||
@@ -5994,7 +5719,6 @@ export class TaskRuntime {
                 planBodyFingerprint: prepared.planBodyFingerprint,
                 combinedInputFingerprint: operation.combinedInputFingerprint,
                 acceptedArtifacts: prepared.acceptedArtifacts,
-                sourceQuarantineFingerprint: fingerprint(operation.sourceQuarantine ?? null),
                 priorReceipt: receipt,
                 priorReceiptFingerprint: fingerprint(check.receipt),
                 priorCheckFingerprint: fingerprint(check.checkJSON),
@@ -6258,12 +5982,6 @@ export class TaskRuntime {
                 if (
                   other.task_id !== node.task_id &&
                   active.includes(other.state) &&
-                  !writers.every((writer) =>
-                    sourceReservationExcluded(this.store, other, {
-                      mode: writer.workspace === this.directory ? "shared" : "isolated",
-                      workspace: writer.workspace,
-                    }),
-                  ) &&
                   scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
                 )
                   throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
@@ -6405,10 +6123,6 @@ export class TaskRuntime {
               )
               .get(this.directory, seed.taskID)
             const reservedTask = taskRow ? this.store.repository.get(seed.taskID) : undefined
-            const latestAttempt = this.store
-              .attempts(plan.id)
-              .filter((attempt) => attempt.task_id === seed.taskID)
-              .at(-1)
             const attemptRow = db
               .query<
                 {
@@ -6428,24 +6142,8 @@ export class TaskRuntime {
                 "SELECT state,artifact FROM runner_nodes WHERE plan_id=? AND task_id=?",
               )
               .get(plan.id, seed.taskID)
-            const sourceQuarantineCurrent = Boolean(
-              seed.sourceQuarantine &&
-              ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) &&
-              latestAttempt &&
-              latestAttempt.state === "verifying" &&
-              nodeRow?.state === "verifying" &&
-              sourceQuarantineVerificationBindingMatches(this.store, {
-                planID: plan.id,
-                owner: seed.owner,
-                attempt: latestAttempt,
-                artifact: seed.artifact,
-                expected: seed.sourceQuarantine,
-              }),
-            )
             if (
-              (seed.sourceQuarantine
-                ? !sourceQuarantineCurrent
-                : !["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) ||
+              !["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
               !taskRow ||
               taskRow.project_directory !== this.directory ||
               reservedTask?.revision !== seed.taskRevision ||
@@ -7296,10 +6994,6 @@ export class TaskRuntime {
           }
           if (command.action === "reconcile") {
             if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-            if (!reviewInput) {
-              const quarantined = this.quarantinedVerification(plan)
-              if (quarantined) return quarantined
-            }
             let existingReviewInput = false
             if (reviewInput) {
               const { binding, evidence } = reviewInput
@@ -7529,8 +7223,7 @@ export class TaskRuntime {
         result?.status === "scope-amended" &&
         "instructionUpdates" in result &&
         (result.instructionUpdates?.length ?? 0) > 0) ||
-      (command.action === "retained-repair" && result?.status === "retained-repair-requested") ||
-      (command.action === "quarantine-source" && result?.status === "quarantining-source")
+      (command.action === "retained-repair" && result?.status === "retained-repair-requested")
     )
       this.wakeScheduler?.()
     if (command.action === "cancel-retained-verification" && command.retainedVerificationID)
@@ -9637,159 +9330,6 @@ export class TaskRuntime {
     }
   }
 
-  private async advanceSourceQuarantines(fence: number) {
-    const quarantines = this.store.atomic((db) =>
-      db
-        .query<SourceQuarantine, [string]>(
-          `SELECT q.* FROM runner_source_quarantines q
-         JOIN runner_plans p ON p.id=q.plan_id
-         JOIN runner_attempts a ON a.id=q.attempt_id
-         WHERE p.project_directory=? AND a.state IN ('running','verifying')
-         ORDER BY q.created_at`,
-        )
-        .all(this.directory),
-    )
-    for (const quarantine of quarantines) {
-      if (
-        quarantine.phase === "sealed" &&
-        quarantine.hold_reason === null &&
-        sourceGuardInstalled(this.store, quarantine.workspace)
-      ) {
-        try {
-          sourceReviewBinding(quarantine)
-          continue
-        } catch {
-          // Invalid stored bindings remain held even with a healthy source guard.
-        }
-      }
-      const wait = (reason: string) =>
-        this.store.fenced(this.owner, fence, (db) => {
-          const changed = db
-            .query(
-              `UPDATE runner_source_quarantines SET hold_reason=?,updated_at=?
-             WHERE attempt_id=? AND request_id=? AND phase=? AND hold_reason IS NOT ?`,
-            )
-            .run(
-              reason,
-              Date.now(),
-              quarantine.attempt_id,
-              quarantine.request_id,
-              quarantine.phase,
-              reason,
-            ).changes
-          if (changed)
-            this.store.record(quarantine.plan_id, null, "SOURCE_QUARANTINE_WAIT", {
-              attemptID: quarantine.attempt_id,
-              reason,
-              resourceHoldsRetained: true,
-            })
-        })
-      const current = () => {
-        const row = sourceQuarantine(this.store, quarantine.attempt_id)
-        const plan = this.store.plan(quarantine.plan_id)
-        const attempt = this.store
-          .attempts(quarantine.plan_id)
-          .find((item) => item.id === quarantine.attempt_id)
-        if (
-          !row ||
-          row.phase !== quarantine.phase ||
-          row.request_id !== quarantine.request_id ||
-          row.review_input_json !== quarantine.review_input_json ||
-          !plan ||
-          (row.phase === "pending" && plan.owner !== quarantine.requested_owner) ||
-          !attempt ||
-          !["running", "verifying"].includes(attempt.state) ||
-          attempt.session_id !== quarantine.session_id ||
-          attempt.message_id !== quarantine.assigned_message_id ||
-          attempt.workspace !== quarantine.workspace
-        )
-          throw new Error("Retained source quarantine authority or assignment changed")
-        return attempt
-      }
-      const guarded = () => {
-        const attempt = current()
-        if (!sourceGuardInstalled(this.store, quarantine.workspace))
-          throw new Error("Native worker source guard is not installed")
-        return attempt
-      }
-      try {
-        const attempt = this.store.fenced(this.owner, fence, current)
-        const review = sourceReviewBinding(quarantine)
-        const pending = quarantine.phase === "pending"
-        const readOptions = pending && attempt.state === "running" ? { messages: true } : undefined
-        let worker = await this.host.session(quarantine.session_id, readOptions)
-        let reason = this.sourceWorkerWait(attempt, worker, pending, review)
-        if (reason) {
-          wait(reason)
-          continue
-        }
-        if (!this.host.ensureSourceGuard)
-          throw new Error("Native source guard activation is unavailable")
-        await this.host.ensureSourceGuard({
-          directory: quarantine.workspace,
-          projectID: this.projectID,
-        })
-        this.store.fenced(this.owner, fence, guarded)
-        if (quarantine.phase === "pending" && !worker!.archived) {
-          if (!this.host.archiveRetainedWorker)
-            throw new Error("Native archive control is unavailable")
-          await this.host.archiveRetainedWorker({
-            sessionID: quarantine.session_id,
-            attemptID: attempt.id,
-            planID: attempt.plan_id,
-            requestID: quarantine.request_id,
-            projectID: this.projectID,
-            directory: quarantine.workspace,
-            assignedMessageID: quarantine.assigned_message_id,
-            ...(review ? { reviewInput: review } : {}),
-          })
-        }
-        worker = await this.host.session(quarantine.session_id, readOptions)
-        reason = this.sourceWorkerWait(attempt, worker, pending, review)
-        if (reason || (quarantine.phase === "pending" && !worker?.archived)) {
-          wait(reason ?? "Native archive has not been observed")
-          continue
-        }
-        this.store.fenced(this.owner, fence, (db) => {
-          guarded()
-          db.query(
-            `UPDATE runner_source_quarantines SET phase=lz_runner_transition('quarantine',phase,'sealed'),hold_reason=NULL,updated_at=?
-             WHERE attempt_id=? AND request_id=? AND phase=?`,
-          ).run(Date.now(), quarantine.attempt_id, quarantine.request_id, quarantine.phase)
-          this.store.record(
-            quarantine.plan_id,
-            attempt.task_id,
-            quarantine.phase === "pending"
-              ? "SOURCE_QUARANTINE_SEALED"
-              : "SOURCE_QUARANTINE_GUARD_RESTORED",
-            {
-              attemptID: attempt.id,
-              sessionID: attempt.session_id,
-              workspace: attempt.workspace,
-              requestID: quarantine.request_id,
-              resourceHoldsRetained: true,
-            },
-          )
-          if (quarantine.phase === "pending" && attempt.state === "verifying")
-            this.outcome(
-              quarantine.plan_id,
-              {
-                status: "blocked",
-                taskID: attempt.task_id,
-                attemptID: attempt.id,
-                reason:
-                  "The worker checkout is sealed. Verify the retained candidate in isolation.",
-                allowedActions: ["verify-retained", "audit", "cancel"],
-              },
-              true,
-            )
-        })
-      } catch (error) {
-        wait(errorText(error))
-      }
-    }
-  }
-
   async tick() {
     if (this.stopped) return
     if (this.tickPromise) {
@@ -9924,7 +9464,6 @@ export class TaskRuntime {
     if (checking()) return
     const active = this.store.activeProjectAttempts()
     for (const attempt of active) {
-      if (sourceReservationExcluded(this.store, attempt, { mode: "isolated" })) continue
       const session = await this.host.session(attempt.session_id)
       if (
         session?.busy ||
@@ -10041,9 +9580,6 @@ export class TaskRuntime {
       if (heartbeatFailed) throw heartbeatError
       await sectionAsync("tick:reconcileArchitectSources", () =>
         this.reconcileArchitectSources(fence),
-      )
-      await sectionAsync("tick:advanceSourceQuarantines", () =>
-        this.advanceSourceQuarantines(fence),
       )
       const retainedOperations = section("tick:activeRetained", () =>
         this.store.atomic((db) => activeRetainedVerifications(db, this.directory)),
@@ -10527,7 +10063,7 @@ export class TaskRuntime {
         input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
     }
     const nodes = this.store.nodes(plan.id)
-    const occupied = this.store.dispatchReservations(input.workspaceMode)
+    const occupied = this.store.dispatchReservations()
     let pause = this.store.dispatchPause(plan.id)
     if (pause?.untilPlans.length && (await this.integratedPrerequisiteBaseline(pause.untilPlans))) {
       this.store.fenced(this.owner, fence, () =>
@@ -11625,7 +11161,6 @@ export class TaskRuntime {
   }
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
   private preparationAllowed(attempt: AttemptRow) {
-    if (sourceQuarantine(this.store, attempt.id)) return false
     const scope = this.store.effectiveWriteScope(attempt.task_id)
     if (
       this.store
@@ -11639,19 +11174,6 @@ export class TaskRuntime {
       return false
     for (const other of this.store.activeProjectAttempts()) {
       if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
-        continue
-      // Physical ownership is stronger than logical scope disjointness.
-      if (
-        sourceQuarantine(this.store, other.id) &&
-        samePhysicalWorkspace(attempt.workspace, other.workspace)
-      )
-        return false
-      if (
-        sourceReservationExcluded(this.store, other, {
-          mode: attempt.workspace === this.directory ? "shared" : "isolated",
-          workspace: attempt.workspace,
-        })
-      )
         continue
       const promptIntended = this.store
         .effects(other.plan_id)
@@ -12368,81 +11890,6 @@ export class TaskRuntime {
     this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
   }
 
-  private async isolateStoppedWorkerSource(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    worker: HostSession,
-  ) {
-    // A completed foreground worker's source can be retained; a running shell or
-    // child session keeps it.
-    if (
-      plan.state !== "blocked" ||
-      (attempt.state !== "running" &&
-        !(attempt.state === "verifying" && this.hasSettledVerificationTimeout(plan, attempt))) ||
-      attempt.workspace === this.directory ||
-      !this.host.ensureSourceGuard ||
-      !this.host.archiveRetainedWorker ||
-      sourceQuarantine(this.store, attempt.id) ||
-      worker.busy ||
-      worker.pendingInput !== false ||
-      worker.observationUnstable ||
-      worker.pendingPermissions !== 0 ||
-      worker.pendingForms !== 0 ||
-      this.backgroundBlockReason(worker) !== undefined ||
-      worker.outcome !== "succeeded"
-    )
-      return
-    const scope = this.store.effectiveWriteScope(attempt.task_id)
-    let hasContender = false
-    for (const candidate of this.store.runnablePlans(terminal)) {
-      if (
-        candidate.id === plan.id ||
-        candidate.state !== "running" ||
-        this.store.dispatchPause(candidate.id)
-      )
-        continue
-      const input = PlanInput.parse(JSON.parse(candidate.body))
-      if (
-        input.workspaceMode === "isolated" &&
-        this.store
-          .nodes(candidate.id)
-          .some(
-            (node) =>
-              ["queued", "ready"].includes(node.state) &&
-              this.store.execution(node.task_id)?.waitingOn.length === 0 &&
-              scopePatternsConflict(scope, this.store.effectiveWriteScope(node.task_id)),
-          ) &&
-        (!input.afterPlans?.length ||
-          !!(await this.integratedPrerequisiteBaseline(input.afterPlans)))
-      ) {
-        hasContender = true
-        break
-      }
-    }
-    if (!hasContender && attempt.state !== "verifying") return
-    const detailed = worker.turn
-      ? worker
-      : await this.host.session(attempt.session_id, { messages: true })
-    const inputID = detailed?.turn?.inputID
-    if (!inputID || !this.matchesWorkerInput(attempt, inputID)) return
-    const reviewInput = inputID === attempt.message_id ? undefined : inputID
-    if (!reviewInput && this.sourceWorkerWait(attempt, detailed)) return
-    await this.command(
-      {
-        requestID: `isolate-stopped-source:${attempt.id}:${attempt.message_id}`,
-        action: "quarantine-source",
-        planID: plan.id,
-        expectedVersion: plan.version,
-        taskID: attempt.task_id,
-        attemptID: attempt.id,
-        ...(reviewInput && attempt.state === "running" ? { reviewInputID: reviewInput } : {}),
-        reason:
-          "Completed foreground; preserve the isolated checkout for review and release its source reservation",
-      },
-      plan.owner,
-    )
-  }
-
   private failMissingWorker(
     plan: PlanRow,
     attempt: AttemptRow,
@@ -12484,48 +11931,7 @@ export class TaskRuntime {
     })
   }
 
-  private quarantinedVerification(plan: PlanRow) {
-    const attempt = this.store
-      .attempts(plan.id)
-      .find(
-        (candidate) =>
-          candidate.state === "verifying" &&
-          sourceQuarantine(this.store, candidate.id)?.phase === "sealed",
-      )
-    if (!attempt) return
-    const node = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)
-    if (node?.state !== "verifying") return
-    const retained = this.store.atomic((db) =>
-      activeRetainedVerifications(db, this.directory, plan.id).find(
-        (operation) =>
-          operation.attemptID === attempt.id &&
-          operation.artifact === attempt.artifact &&
-          operation.sourceQuarantine !== undefined &&
-          operation.state !== "held",
-      ),
-    )
-    if (
-      retained &&
-      this.retainedVerificationExecution.retainedVerificationLive(retained.id, retained.generation)
-    )
-      return
-    return this.hold(
-      plan,
-      "The verifying worker's checkout is quarantined. Run verify-retained on its candidate in an isolated checkout.",
-      ["verify-retained", "audit", "cancel"],
-    )
-  }
-
   private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    // Quarantined source is retained for isolated verification, not ordinary
-    // worker execution or mechanical edits in its original checkout.
-    if (sourceQuarantine(this.store, attempt.id)) {
-      if (plan.state === "running" && attempt.state === "verifying")
-        this.quarantinedVerification(plan)
-      return
-    }
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
       return
@@ -12745,10 +12151,6 @@ export class TaskRuntime {
       )
     }
     await this.verify(plan, attempt, task.proposal, fence)
-    const current = this.store.plan(plan.id)
-    const retained = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
-    if (current?.state === "blocked" && retained?.state === "verifying")
-      await this.isolateStoppedWorkerSource(current, retained, session)
   }
 
   private async prepareVerificationCandidate(
@@ -12799,7 +12201,7 @@ export class TaskRuntime {
     if (!this.preparationAllowed(attempt)) {
       this.hold(
         plan,
-        "Mechanical candidate preparation is blocked by an active scope reservation or source quarantine; no files were changed",
+        "Mechanical candidate preparation is blocked by an active scope reservation; no files were changed",
       )
       return "held"
     }

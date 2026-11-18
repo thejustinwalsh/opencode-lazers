@@ -13,7 +13,6 @@ import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { git } from "../runner/artifacts.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 import type { HostSession } from "../runner/host.ts"
-import { registerSourceGuard } from "../runner/source-quarantine.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { Tasks } from "./contract.ts"
@@ -770,7 +769,7 @@ test("scheduling RPC authorizes exact live project scope before facts and observ
   }
 })
 
-test("registered scheduling RPC tracks live source guards and bounds large plan waits", async () => {
+test("registered scheduling RPC bounds large plan waits and coalesces proof refreshes", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-scheduling-guard-rpc-"))
   git(directory, ["init", "--initial-branch=main"])
   git(directory, [
@@ -833,7 +832,6 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     return { task, plan }
   }
 
-  let unregisterGuard: (() => void) | undefined
   let releaseProof = () => {}
   const pendingReads: Promise<unknown>[] = []
   try {
@@ -869,55 +867,8 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
       )
       repository.changed()
     })
-    const reserved = create("source-reservation", -300, [], ["shared.ts"])
-    const winner = create("guarded-next", 50, [], ["shared.ts"])
-    const fallback = create("fallback-next", 40, [], ["fallback.ts"])
-    const workspace = join(directory, ".source-quarantine-worktree")
-    const attemptID = crypto.randomUUID()
-    const attemptSession = "ses_sealed_source_attempt"
-    const messageID = "message-sealed-source-attempt"
-    repository.atomic((db) => {
-      db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?").run(
-        reserved.plan.planID,
-        reserved.task.id,
-      )
-      db.query(
-        `INSERT INTO runner_attempts
-         (id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,'running',?)`,
-      ).run(
-        attemptID,
-        reserved.plan.planID,
-        directory,
-        reserved.task.id,
-        1,
-        attemptSession,
-        messageID,
-        workspace,
-        baseCommit,
-        JSON.stringify({ workspaceMode: "isolated" }),
-        1,
-      )
-      db.query(
-        `INSERT INTO runner_source_quarantines
-         (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,
-          phase,hold_reason,review_input_json,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?, 'sealed',NULL,NULL,?,?)`,
-      ).run(
-        attemptID,
-        reserved.plan.planID,
-        attemptSession,
-        messageID,
-        "owner",
-        workspace,
-        "request-sealed-source",
-        "Review retained source",
-        1,
-        1,
-      )
-      repository.changed()
-    })
-    unregisterGuard = registerSourceGuard(store, workspace)
+    const winner = create("next-candidate", 50, [], ["shared.ts"])
+    create("fallback-next", 40, [], ["fallback.ts"])
 
     let proofStartedResolve!: () => void
     const proofStarted = new Promise<void>((resolve) => {
@@ -926,11 +877,6 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     let deferred = false
     const proofGate = new Promise<void>((resolve) => {
       releaseProof = resolve
-    })
-    let branchReads = 0
-    let secondBranchResolver!: () => void
-    const secondBranchRead = new Promise<void>((resolve) => {
-      secondBranchResolver = resolve
     })
 
     let activeRead = new TaskSchedulingRead(store, () => 100)
@@ -1000,10 +946,6 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
       () => 101,
       {},
       async (path, args) => {
-        if (args[0] === "branch") {
-          branchReads++
-          if (branchReads === 2) secondBranchResolver()
-        }
         if (args[0] === "merge-base" && !deferred) {
           deferred = true
           proofStartedResolve()
@@ -1017,17 +959,15 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     await proofStarted
     const unchangedVersion = repository.version()
     const unchangedHead = git(directory, ["rev-parse", "HEAD"])
-    unregisterGuard()
-    unregisterGuard = undefined
     expect(repository.version()).toBe(unchangedVersion)
     expect(git(directory, ["rev-parse", "HEAD"])).toBe(unchangedHead)
 
     const secondPending = Effect.runPromise(read!(input))
     pendingReads.push(secondPending)
-    await secondBranchRead
-    for (let attempt = 0; attempt < 20 && activeRead.workCounts.projectionBuilds < 2; attempt++)
+    for (let attempt = 0; attempt < 20; attempt++)
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    expect(activeRead.workCounts.projectionBuilds).toBe(2)
+    // The concurrent reader joins the in-flight projection instead of rebuilding it.
+    expect(activeRead.workCounts.projectionBuilds).toBe(1)
 
     releaseProof()
     const [firstPage, secondPage] = await Promise.all([firstPending, secondPending])
@@ -1035,7 +975,7 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     const secondRefreshed = SchedulingOutput.parse(secondPage)
     expect(firstRefreshed.next).toMatchObject({
       status: "known",
-      candidate: { taskID: fallback.task.id },
+      candidate: { taskID: winner.task.id },
     })
     expect(secondRefreshed.next).toEqual(firstRefreshed.next)
     const repeated = SchedulingOutput.parse(await Effect.runPromise(read!(input)))
@@ -1172,7 +1112,6 @@ test("registered scheduling RPC tracks live source guards and bounds large plan 
     })
   } finally {
     releaseProof()
-    unregisterGuard?.()
     await Promise.allSettled(pendingReads)
     repository.close()
     rmSync(directory, { recursive: true, force: true })

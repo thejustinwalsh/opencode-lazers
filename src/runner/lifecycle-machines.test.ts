@@ -53,7 +53,6 @@ test("runner lifecycle graphs have no accidental sink states", () => {
       check: ["completed"],
       cleanup: ["complete"],
       workspace: ["removed"],
-      quarantine: ["sealed"],
     }
     for (const start of Object.keys(machine.config.states ?? {})) {
       const seen = new Set<string>()

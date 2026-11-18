@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs"
-import { resolve } from "node:path"
+import { lstatSync, realpathSync } from "node:fs"
+import { basename, dirname, resolve } from "node:path"
 
 /** The native worktree parent shared by every checkout of one canonical project. */
 export function canonicalProjectWorktreeParent(projectDirectory: string): string {
@@ -9,4 +9,49 @@ export function canonicalProjectWorktreeParent(projectDirectory: string): string
 /** Propose a stable leaf under the canonical project's durable sibling parent. */
 export function canonicalProjectWorktreePath(projectDirectory: string, leaf: string): string {
   return resolve(canonicalProjectWorktreeParent(projectDirectory), leaf)
+}
+
+function physicalWorkspace(path: string): string {
+  let ancestor = resolve(path)
+  const missing: string[] = []
+  for (;;) {
+    try {
+      return resolve(realpathSync(ancestor), ...missing)
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "ENOENT") ||
+        lstatSync(ancestor, { throwIfNoEntry: false }) !== undefined
+      )
+        throw error
+      const parent = dirname(ancestor)
+      if (parent === ancestor) throw error
+      missing.unshift(basename(ancestor))
+      ancestor = parent
+    }
+  }
+}
+
+export const samePhysicalWorkspace = (left: string, right: string) => {
+  try {
+    return physicalWorkspace(left) === physicalWorkspace(right)
+  } catch {
+    return true
+  }
+}
+
+/**
+ * A recorded attempt workspace belongs to the project when it is the project
+ * checkout or lies under its canonical `.worktrees` parent. Pure path identity:
+ * it never asks the host, so it cannot boot a worktree location.
+ */
+export function ownsRecordedWorkspace(directory: string, projectDirectory: string): boolean {
+  try {
+    const target = resolve(directory)
+    const parent = canonicalProjectWorktreeParent(projectDirectory)
+    return (
+      target === resolve(projectDirectory) || target === parent || target.startsWith(`${parent}/`)
+    )
+  } catch {
+    return false
+  }
 }

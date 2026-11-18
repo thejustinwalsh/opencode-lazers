@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { retireHumanEvidenceGate } from "./retire-gates.ts"
+import { retireHumanEvidenceGate, retireSourceQuarantines } from "./retire-gates.ts"
 import { RunnerStore } from "./store.ts"
 
 const directories: string[] = []
@@ -102,4 +102,41 @@ test("retired waiting-human adoption states resume their check phase", () => {
   })
   f.store.atomic((db) => retireHumanEvidenceGate(db))
   expect(f.store.adoption("a1")?.state).toBe("task-checks")
+})
+
+test("a plan blocked by a source quarantine resumes through the plan machine and the table is dropped", () => {
+  const f = fixture()
+  const quarantined = f.submit("quarantined").planID
+  const failing = f.submit("quarantine-unrelated").planID
+  block(
+    f.store,
+    quarantined,
+    "The verifying worker's checkout is quarantined. Run verify-retained on its candidate in an isolated checkout.",
+  )
+  block(f.store, failing, "Combined artifact verification failed")
+  f.store.atomic((db) => {
+    db.exec("CREATE TABLE runner_source_quarantines(attempt_id TEXT PRIMARY KEY, phase TEXT)")
+    db.exec("CREATE INDEX runner_source_quarantines_pending ON runner_source_quarantines(phase)")
+  })
+  const tableExists = () =>
+    f.store.atomic(
+      (db) =>
+        db
+          .query("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+          .get("runner_source_quarantines") !== null,
+    )
+  expect(tableExists()).toBe(true)
+
+  const moves = f.store.atomic((db) => retireSourceQuarantines(db))
+  expect(moves.map((move) => move.planID)).toEqual([quarantined])
+  expect(f.store.plan(quarantined)).toMatchObject({ state: "running", reason: null })
+  expect(f.store.plan(failing)!.state).toBe("blocked")
+  expect(f.store.latestTransition(quarantined, null, "PLAN_GATE_RETIRED")).toMatchObject({
+    gate: "source-quarantine",
+  })
+  expect(tableExists()).toBe(false)
+
+  expect(f.store.atomic((db) => retireSourceQuarantines(db))).toEqual([])
+  expect(f.store.plan(quarantined)!.state).toBe("running")
+  expect(tableExists()).toBe(false)
 })

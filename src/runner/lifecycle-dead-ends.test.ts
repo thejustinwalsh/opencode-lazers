@@ -118,7 +118,6 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     architect: [],
     terminal: [],
   },
-  quarantine: { observable: ["pending", "sealed"], architect: [], terminal: ["sealed"] },
 }
 
 type StateConfig = { on?: Record<string, unknown>; type?: string }

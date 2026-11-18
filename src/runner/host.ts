@@ -93,16 +93,6 @@ export type WorkerInstruction = {
   key: string
   text: string
 }
-export type RetainedWorkerArchive = {
-  sessionID: string
-  attemptID: string
-  planID: string
-  requestID: string
-  projectID: string
-  directory: string
-  assignedMessageID: string
-  reviewInput?: { inputID: string; requestID: string }
-}
 export type WorktreeLocationRetirement =
   "evicted" | "not-loaded" | "active-session" | "current-location" | "unavailable"
 /** All host uncertainty is an error. null means authoritative not-found only. */
@@ -158,10 +148,6 @@ export interface RunnerHost {
   }): Promise<void>
   /** Exact native session archive control; renewal requires this and input observation. */
   updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
-  /** Archive only the stopped worker bound to a durable pending source quarantine. */
-  archiveRetainedWorker?(input: RetainedWorkerArchive): Promise<void>
-  /** Demand-load and confirm the exact location's current before-tool registration. */
-  ensureSourceGuard?(input: { directory: string; projectID: string }): Promise<void>
   /** Waits for foreground completion only; callers must still inspect active/inbox controls. */
   waitForSession?(sessionID: string): Promise<void>
   /** Retire an already integrated worker after observing its current native inventory. */

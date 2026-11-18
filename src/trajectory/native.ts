@@ -50,7 +50,8 @@ const notFound = (error: unknown) =>
 export function nativeTrajectoryHost(
   ctx: Pick<Plugin.Context, "session">,
   projectID: string,
-  ownsCurrentWorkspace?: (directory: string) => Promise<boolean>,
+  /** Recorded attempt workspace belongs to this project; never boots the worktree's location. */
+  ownsRecordedWorkspace?: (directory: string) => boolean,
 ): TrajectoryHost {
   async function loadSession(id: string, includeContext: boolean, attempt?: OwnedAttempt) {
     const session = await Effect.runPromise(
@@ -68,7 +69,7 @@ export function nativeTrajectoryHost(
         !isWorkerAgent(session.agent) ||
         session.metadata?.lazersAttemptID !== attempt.id ||
         session.location.directory !== attempt.workspace ||
-        !(await ownsCurrentWorkspace?.(attempt.workspace)))
+        !ownsRecordedWorkspace?.(attempt.workspace))
     )
       throw new TrajectoryIdentityError()
 

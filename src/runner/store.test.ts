@@ -367,7 +367,7 @@ test("S2-4 runner module upgrade installs the shared lookup indexes and skips cu
     ).toBe(true)
   }
   // S2-4: the two session lookups already use UNIQUE autoindexes; do not duplicate them.
-  for (const table of ["runner_attempts", "runner_source_quarantines"]) {
+  for (const table of ["runner_attempts"]) {
     const plan = f.repository.read((db) =>
       db
         .query<{ detail: string }, [string]>(

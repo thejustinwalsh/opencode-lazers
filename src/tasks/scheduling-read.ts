@@ -8,7 +8,6 @@ import {
 } from "../runner/prerequisite-proof.ts"
 import type { IntegrationDecision } from "../runner/prerequisite-proof.ts"
 import type { RunnerStore, SchedulingFactSnapshot, SchedulingNodeFact } from "../runner/store.ts"
-import { sourceReservationExcluded } from "../runner/source-quarantine.ts"
 import { selectSchedulingCandidates } from "../runner/scheduling-selection.ts"
 import type { SchedulingReservation } from "../runner/scheduling-selection.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
@@ -142,7 +141,6 @@ type PlanSourceResult = {
   reason: string | null
 }
 type BuiltProjection = { snapshot: SchedulingSnapshot; cacheable: boolean }
-type ReservationExclusions = ReadonlyMap<string, boolean>
 
 const safeReason = (value: unknown): string | null => {
   if (typeof value !== "string") return null
@@ -252,7 +250,6 @@ async function buildSnapshot(input: {
   scope: SchedulingScope
   observedAt: number
   branch: SchedulingBranch
-  reservationExclusions: ReservationExclusions
   provePlan: (
     prerequisites: readonly string[],
     rows: SchedulingFactSnapshot["planIntegrations"],
@@ -265,8 +262,7 @@ async function buildSnapshot(input: {
     head: string,
   ) => Promise<ProofResult<IntegrationDecision>>
 }): Promise<BuiltProjection> {
-  const { store, facts, scope, observedAt, branch, reservationExclusions, provePlan, proveTask } =
-    input
+  const { store, facts, scope, observedAt, branch, provePlan, proveTask } = input
   const directory = store.repository.projectDirectory
   const sessionPlanIDs =
     scope.kind === "session" ? new Set(facts.sessionAssociations?.planIDs ?? []) : undefined
@@ -515,15 +511,11 @@ async function buildSnapshot(input: {
       candidateNodes.push(view)
     }
 
-    const activeReservations = facts.reservations
-      .filter(
-        (attempt) => plan.workspaceMode !== "isolated" || !reservationExclusions.get(attempt.id),
-      )
-      .map((attempt) => ({
-        shared: attempt.workspace === directory,
-        scopes: store.effectiveWriteScope(attempt.task_id),
-        taskID: attempt.task_id,
-      }))
+    const activeReservations = facts.reservations.map((attempt) => ({
+      shared: attempt.workspace === directory,
+      scopes: store.effectiveWriteScope(attempt.task_id),
+      taskID: attempt.task_id,
+    }))
     const knownReservationTaskIDs = new Set([
       ...activeReservations.map((reservation) => reservation.taskID),
       ...adoptionReservations.map((reservation) => reservation.taskID),
@@ -940,7 +932,6 @@ export class TaskSchedulingRead {
     facts: SchedulingFactSnapshot,
     scope: SchedulingScope,
     branch: SchedulingBranch,
-    reservationExclusions: ReservationExclusions,
   ): Promise<BuiltProjection> {
     this.work.projectionBuilds++
     return buildSnapshot({
@@ -949,7 +940,6 @@ export class TaskSchedulingRead {
       scope,
       observedAt: this.now(),
       branch,
-      reservationExclusions,
       provePlan: (prerequisites, rows, head) => this.planProof(prerequisites, rows, head),
       proveTask: (currentBranch, prerequisites, rows, head) =>
         this.taskProof(currentBranch, prerequisites, rows, head),
@@ -964,19 +954,7 @@ export class TaskSchedulingRead {
     let branch = initialBranch
     const semanticBasis = schedulingBasis(facts)
     for (let attempt = 0; attempt < 2; attempt++) {
-      const reservationExclusions = new Map(
-        facts.reservations.map((reservation) => [
-          reservation.id,
-          sourceReservationExcluded(this.store, reservation, { mode: "isolated" }),
-        ]),
-      )
-      const reservationAuthority = JSON.stringify(
-        facts.reservations.map((reservation) => [
-          reservation.id,
-          reservationExclusions.get(reservation.id) ?? false,
-        ]),
-      )
-      const key = JSON.stringify([scopeKey(scope), semanticBasis, branch, reservationAuthority])
+      const key = JSON.stringify([scopeKey(scope), semanticBasis, branch])
       const cached = this.projections.get(key)
       if (cached) {
         this.work.projectionCacheHits++
@@ -988,17 +966,10 @@ export class TaskSchedulingRead {
       if (pending) {
         this.work.projectionCoalesced++
         const result = await pending
-        const currentAuthority = JSON.stringify(
-          facts.reservations.map((reservation) => [
-            reservation.id,
-            sourceReservationExcluded(this.store, reservation, { mode: "isolated" }),
-          ]),
-        )
-        if (currentAuthority !== reservationAuthority) continue
         return result.snapshot
       }
       const proofEvaluations = this.work.proofEvaluations
-      const building = this.buildProjection(facts, scope, branch, reservationExclusions)
+      const building = this.buildProjection(facts, scope, branch)
       this.projectionInFlight.set(key, building)
       try {
         const built = await building
@@ -1009,13 +980,6 @@ export class TaskSchedulingRead {
             continue
           }
         }
-        const currentAuthority = JSON.stringify(
-          facts.reservations.map((reservation) => [
-            reservation.id,
-            sourceReservationExcluded(this.store, reservation, { mode: "isolated" }),
-          ]),
-        )
-        if (currentAuthority !== reservationAuthority) continue
         if (built.cacheable) {
           this.projections.set(key, built.snapshot)
           while (this.projections.size > MAX_CACHED_PROJECTIONS) {

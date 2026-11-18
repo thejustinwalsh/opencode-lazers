@@ -1,6 +1,5 @@
 import { sameProject } from "../project-key.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
-import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fingerprint } from "../identity.ts"
@@ -24,11 +23,7 @@ import type { CheckReceipt } from "./artifacts.ts"
 import { checkSucceeded, checkFailureReason, isConclusiveNonTimeoutInterruption } from "./checks.ts"
 import type { HostSession } from "./host.ts"
 import { PlanInput } from "./schema.ts"
-import type { PlanRow } from "./store.ts"
-import {
-  samePhysicalWorkspace,
-  sourceQuarantineVerificationBindingMatches,
-} from "./source-quarantine.ts"
+import { samePhysicalWorkspace } from "./workspace-location.ts"
 import { startupWorktreeCandidates } from "./startup-recovery.ts"
 import {
   activateRetainedVerificationResources,
@@ -148,51 +143,6 @@ export class RetainedVerificationExecution {
     },
   ) {}
 
-  sourceQuarantinePlanVersionCurrent(
-    operation: RetainedVerification,
-    plan: PlanRow,
-    database?: Database,
-  ): boolean {
-    if (!operation.sourceQuarantine) return false
-    if (plan.version === operation.planVersion)
-      return ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state)
-    if (plan.state !== "blocked" || plan.version !== operation.planVersion + 1) return false
-
-    const supportedBlock = (db: Database) => {
-      const requests = db
-        .query<{ id: number; payload: string }, [string, string]>(
-          `SELECT id,payload FROM runner_transitions
-           WHERE plan_id=? AND task_id=? AND event='RETAINED_VERIFICATION_REQUESTED'
-           ORDER BY id DESC`,
-        )
-        .all(plan.id, operation.taskID)
-      const request = requests.find((row) => {
-        try {
-          const payload = JSON.parse(row.payload) as { operationID?: unknown; generation?: unknown }
-          return payload.operationID === operation.id && payload.generation === operation.generation
-        } catch {
-          return false
-        }
-      })
-      if (!request) return false
-
-      const blocked = db
-        .query<{ id: number; version: number; payload: string }, [string]>(
-          `SELECT id,version,payload FROM runner_transitions
-           WHERE plan_id=? AND task_id IS NULL AND event='BLOCKED' ORDER BY id DESC LIMIT 1`,
-        )
-        .get(plan.id)
-      if (!blocked || blocked.id <= request.id || blocked.version !== plan.version) return false
-      try {
-        return (JSON.parse(blocked.payload) as { reason?: unknown }).reason === plan.reason
-      } catch {
-        return false
-      }
-    }
-
-    return database ? supportedBlock(database) : this.runtime.store.atomic(supportedBlock)
-  }
-
   retainedVerificationLive(operationID: string, generation: number): boolean {
     try {
       const current = this.runtime.store.atomic((db) => retainedVerification(db, operationID))
@@ -210,36 +160,13 @@ export class RetainedVerificationExecution {
         .at(-1)
       const combinedPhase = current.state === "combined-checks"
       const deferredTaskPhase = current.state === "task-accepted"
-      const sourceQuarantineCurrent = Boolean(
-        current.sourceQuarantine &&
-        ["running", "blocked", "accepted", "cleanup-blocked"].includes(plan?.state ?? "") &&
-        latestAttempt?.state === "verifying" &&
-        latestAttempt.artifact === current.artifact &&
-        sourceQuarantineVerificationBindingMatches(this.runtime.store, {
-          planID: current.planID,
-          owner: current.owner,
-          attempt: latestAttempt,
-          artifact: current.artifact,
-          expected: current.sourceQuarantine,
-        }),
+      const planIsCurrent = Boolean(
+        ["blocked", "accepted", "cleanup-blocked"].includes(plan?.state ?? "") ||
+        ((combinedPhase || deferredTaskPhase) && plan?.state === "running") ||
+        (deferredTaskPhase && plan?.state === "blocked"),
       )
-      const planIsCurrent = current.sourceQuarantine
-        ? Boolean(
-            sourceQuarantineCurrent &&
-            plan &&
-            (deferredTaskPhase || this.sourceQuarantinePlanVersionCurrent(current, plan)),
-          )
-        : Boolean(
-            ["blocked", "accepted", "cleanup-blocked"].includes(plan?.state ?? "") ||
-            ((combinedPhase || deferredTaskPhase) && plan?.state === "running") ||
-            (deferredTaskPhase && plan?.state === "blocked"),
-          )
       const planVersionCurrent = Boolean(
-        plan &&
-        (deferredTaskPhase ||
-          (current.sourceQuarantine
-            ? this.sourceQuarantinePlanVersionCurrent(current, plan)
-            : plan.version === current.planVersion)),
+        plan && (deferredTaskPhase || plan.version === current.planVersion),
       )
       return Boolean(
         plan &&
@@ -891,7 +818,6 @@ export class RetainedVerificationExecution {
             planBodyFingerprint?: unknown
             combinedInputFingerprint?: unknown
             acceptedArtifacts?: unknown
-            sourceQuarantineFingerprint?: unknown
             priorReceipt?: unknown
             priorReceiptFingerprint?: unknown
             priorCheckFingerprint?: unknown
@@ -963,20 +889,11 @@ export class RetainedVerificationExecution {
           const planNode = planNodes.find((candidate) => candidate.task_id === taskID)
           const task = this.runtime.store.repository.get(taskID)
           const attempt = planAttempts.filter((candidate) => candidate.task_id === taskID).at(-1)
-          const retainedCandidate = Boolean(
-            initial.sourceQuarantine &&
-            taskID === initial.taskID &&
-            task?.revision === initial.taskRevision &&
-            attempt?.id === initial.attemptID &&
-            attempt.state === "verifying" &&
-            attempt.artifact === initial.artifact &&
-            this.retainedTaskCandidateAccepted(initial),
-          )
           const artifact = planNode?.artifact ?? null
           if (
             !authored ||
             !planNode ||
-            (!retainedCandidate && !["accepted", "incorporated"].includes(planNode.state)) ||
+            !["accepted", "incorporated"].includes(planNode.state) ||
             !artifact ||
             !task ||
             task.revision !== authored.revision ||
@@ -984,39 +901,15 @@ export class RetainedVerificationExecution {
             task.provenance.projectDirectory !== this.runtime.directory ||
             this.runtime.store.repository.taskDisposition(taskID) !== undefined ||
             !attempt ||
-            (!retainedCandidate && (attempt.state !== "accepted" || attempt.artifact !== artifact))
+            attempt.state !== "accepted" ||
+            attempt.artifact !== artifact
           )
             acceptedArtifactsCurrent = false
           return { taskID, taskRevision: task?.revision ?? null, artifact }
         })
-        const unresolvedEffects = this.runtime.store.effects(initial.planID).filter((effect) => {
-          if (!["intended", "uncertain"].includes(effect.state)) return false
-          if (
-            !initial.sourceQuarantine ||
-            effect.task_id !== initial.taskID ||
-            effect.attempt_id !== initial.attemptID ||
-            !effect.kind.startsWith("verify:")
-          )
-            return true
-          const sourceCheckID = effect.kind.slice("verify:".length)
-          const sourceCheck = this.runtime.store.repository
-            .get(initial.taskID)
-            ?.proposal.verification.find((candidate) => candidate.id === sourceCheckID)
-          if (!sourceCheck) return true
-          try {
-            const payload: unknown = JSON.parse(effect.payload)
-            return !(
-              isRecord(payload) &&
-              payload.artifact === initial.artifact &&
-              payload.workspace === initial.originalWorkspace &&
-              isRecord(payload.check) &&
-              payload.check.id === sourceCheck.id &&
-              payload.check.command === sourceCheck.command
-            )
-          } catch {
-            return true
-          }
-        })
+        const unresolvedEffects = this.runtime.store
+          .effects(initial.planID)
+          .filter((effect) => ["intended", "uncertain"].includes(effect.state))
         const unrelatedActivity = verificationActivitiesForDatabase(
           this.runtime.store.repository.path,
         ).some(
@@ -1059,8 +952,6 @@ export class RetainedVerificationExecution {
             authorization.planBodyFingerprint === fingerprint(plan.body) &&
             authorization.combinedInputFingerprint === initial.combinedInputFingerprint &&
             this.acceptedArtifactsMatch(authorization.acceptedArtifacts, acceptedArtifacts) &&
-            authorization.sourceQuarantineFingerprint ===
-              fingerprint(initial.sourceQuarantine ?? null) &&
             fingerprint(previousCheck) === fingerprint(effectiveCheck)
           : Boolean(
               deadline.amendmentID &&
@@ -2594,32 +2485,14 @@ export class RetainedVerificationExecution {
       const currentNode = this.runtime.store
         .nodes(initial.planID)
         .find((candidate) => candidate.task_id === initial.taskID)
-      const sourceQuarantineCurrent = Boolean(
-        current?.sourceQuarantine &&
-        ["running", "blocked", "accepted", "cleanup-blocked"].includes(currentPlan?.state ?? "") &&
-        latestAttempt?.state === "verifying" &&
-        latestAttempt.artifact === initial.artifact &&
-        currentNode?.state === "verifying" &&
-        sourceQuarantineVerificationBindingMatches(this.runtime.store, {
-          planID: initial.planID,
-          owner: initial.owner,
-          attempt: latestAttempt,
-          artifact: initial.artifact,
-          expected: current.sourceQuarantine,
-        }),
-      )
       if (
         !current ||
         current.generation !== initial.generation ||
         current.state !== "task-checks" ||
         !currentPlan ||
-        (current.sourceQuarantine
-          ? !this.sourceQuarantinePlanVersionCurrent(current, currentPlan, db)
-          : currentPlan.version !== initial.planVersion) ||
+        currentPlan.version !== initial.planVersion ||
         currentPlan.revision !== initial.planRevision ||
-        (current.sourceQuarantine
-          ? !sourceQuarantineCurrent
-          : !["blocked", "accepted", "cleanup-blocked"].includes(currentPlan.state)) ||
+        !["blocked", "accepted", "cleanup-blocked"].includes(currentPlan.state) ||
         !currentTask ||
         currentTask.revision !== initial.taskRevision ||
         !sameProject(currentTask.provenance.projectID, this.runtime.projectID) ||
@@ -2645,11 +2518,9 @@ export class RetainedVerificationExecution {
         return undefined
 
       let expectedPlanVersion = currentPlan.version
-      // Quarantined source has no idle or cleanup proof; accept only its task node.
-      if (!current.sourceQuarantine)
-        db.query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'accepted'),artifact=? WHERE id=? AND state IN ('running','verifying')",
-        ).run(initial.artifact, initial.attemptID)
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'accepted'),artifact=? WHERE id=? AND state IN ('running','verifying')",
+      ).run(initial.artifact, initial.attemptID)
       if (currentNode.state !== "accepted") {
         db.query(
           "UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=? AND state=?",
@@ -2777,14 +2648,10 @@ export class RetainedVerificationExecution {
       if (
         !this.runtime.validArchitect(owner) ||
         operation.planRevision !== plan.revision ||
-        (!deferredTaskPhase &&
-          (operation.sourceQuarantine
-            ? !this.sourceQuarantinePlanVersionCurrent(operation, plan)
-            : operation.planVersion !== plan.version)) ||
+        (!deferredTaskPhase && operation.planVersion !== plan.version) ||
         !(
           ["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
-          ((combinedPhase || deferredTaskPhase || operation.sourceQuarantine !== undefined) &&
-            plan.state === "running")
+          ((combinedPhase || deferredTaskPhase) && plan.state === "running")
         )
       )
         throw new Error("Retained verification owner, plan version or execution authority changed")
@@ -2952,22 +2819,6 @@ export class RetainedVerificationExecution {
         const currentPlan = this.runtime.store.plan(deferredOperation.planID)
         const currentNodes = this.runtime.store.nodes(deferredOperation.planID)
         const currentByTask = new Map(currentNodes.map((node) => [node.task_id, node]))
-        const currentAttempt = this.runtime.store
-          .attempts(deferredOperation.planID)
-          .find((attempt) => attempt.id === deferredOperation.attemptID)
-        const sourceAuthorityCurrent = Boolean(
-          !current?.sourceQuarantine ||
-          (currentPlan?.state === "running" &&
-            currentAttempt?.state === "verifying" &&
-            currentAttempt.artifact === deferredOperation.artifact &&
-            sourceQuarantineVerificationBindingMatches(this.runtime.store, {
-              planID: deferredOperation.planID,
-              owner: deferredOperation.owner,
-              attempt: currentAttempt,
-              artifact: deferredOperation.artifact,
-              expected: current.sourceQuarantine,
-            })),
-        )
         if (
           !current ||
           current.generation !== deferredOperation.generation ||
@@ -2976,7 +2827,6 @@ export class RetainedVerificationExecution {
           currentPlan.state !== "running" ||
           currentPlan.version !== plan.version ||
           currentPlan.revision !== deferredOperation.planRevision ||
-          !sourceAuthorityCurrent ||
           !input.integrationOrder.every((taskID) => {
             const before = byTask.get(taskID)
             const after = currentByTask.get(taskID)
@@ -3130,32 +2980,13 @@ export class RetainedVerificationExecution {
       const currentNode = this.runtime.store
         .nodes(operation.planID)
         .find((node) => node.task_id === operation.taskID)
-      const sourceAuthorityCurrent = Boolean(
-        !current?.sourceQuarantine ||
-        (["running", "blocked", "accepted", "cleanup-blocked"].includes(currentPlan?.state ?? "") &&
-          latestAttempt?.state === "verifying" &&
-          latestAttempt.artifact === operation.artifact &&
-          latestAttempt.session_id === operation.originalSessionID &&
-          latestAttempt.message_id === operation.originalMessageID &&
-          realpathSync(latestAttempt.workspace) === operation.originalWorkspace &&
-          sourceQuarantineVerificationBindingMatches(this.runtime.store, {
-            planID: operation.planID,
-            owner: operation.owner,
-            attempt: latestAttempt,
-            artifact: operation.artifact,
-            expected: current.sourceQuarantine,
-          })),
-      )
       if (
         !current ||
         current.generation !== operation.generation ||
         !["pending", "task-checks", "combined-checks"].includes(current.state) ||
         !currentPlan ||
-        (current.sourceQuarantine
-          ? !this.sourceQuarantinePlanVersionCurrent(current, currentPlan, db)
-          : currentPlan.version !== operation.planVersion) ||
+        currentPlan.version !== operation.planVersion ||
         currentPlan.revision !== operation.planRevision ||
-        !sourceAuthorityCurrent ||
         !currentTask ||
         currentTask.revision !== operation.taskRevision ||
         latestAttempt?.id !== operation.attemptID ||

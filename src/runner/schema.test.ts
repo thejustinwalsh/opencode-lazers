@@ -182,11 +182,12 @@ test("CommandInput scopes exact review-input aliases to owner reconciliation", (
   }
   expect(CommandInput.parse(command)).toEqual(command)
   expect(
-    CommandInput.parse({ ...command, action: "quarantine-source", reason: "Release only source" }),
-  ).toMatchObject({
-    reviewInputID: command.reviewInputID,
-    action: "quarantine-source",
-  })
+    CommandInput.safeParse({
+      ...command,
+      action: "quarantine-source",
+      reason: "Release only source",
+    }).success,
+  ).toBe(false)
   expect(CommandInput.safeParse({ ...command, action: "resume" }).success).toBe(false)
   expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(false)
   expect(
@@ -248,7 +249,7 @@ test("retained repair commands bind the exact task attempt artifact and concrete
 })
 
 test("retained verification requests bind current revisions and cancellation names its operation", () => {
-  expect(CommandInput.shape.action.description).toContain("sealed, guarded source quarantine")
+  expect(CommandInput.shape.action.description).not.toContain("quarantine")
   const command = {
     requestID: "verify-exact-retained-candidate",
     planID: crypto.randomUUID(),

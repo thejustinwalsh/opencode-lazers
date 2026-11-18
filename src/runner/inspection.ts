@@ -7,7 +7,6 @@ import type {
   RetainedVerificationProjection,
 } from "./retained-verification/store.ts"
 import type { RunnerStore } from "./store.ts"
-import type { SourceQuarantine } from "./source-quarantine.ts"
 import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
 
 const CompactInspectPlanInput = z.strictObject({
@@ -106,13 +105,6 @@ export type CompactPlanDetail = {
   latestOutcomes: Record<string, unknown>[]
   checks: Record<string, unknown>[]
   verificationDeadlines: VerificationTimeoutAmendment[]
-  sourceQuarantines?: Array<{
-    attemptID: string
-    phase: string
-    reason: string | null
-    createdAt: number
-    updatedAt: number
-  }>
 }
 export type CompactInspectionSummary = {
   mode: "compact"
@@ -342,13 +334,6 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
     return outcome
   })
 
-  const quarantines = store.atomic((db) =>
-    db
-      .query<SourceQuarantine, [string]>(
-        "SELECT * FROM runner_source_quarantines WHERE plan_id=? ORDER BY created_at",
-      )
-      .all(plan.id),
-  )
   const planDetail = {
     id: plan.id,
     owner: plan.owner,
@@ -416,17 +401,6 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
     latestOutcomes,
     checks: [...checks.values()],
     verificationDeadlines: store.verificationTimeoutAmendments(plan.id),
-    ...(quarantines.length
-      ? {
-          sourceQuarantines: quarantines.map((row) => ({
-            attemptID: row.attempt_id,
-            phase: row.phase,
-            reason: row.hold_reason,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-          })),
-        }
-      : {}),
   }
 }
 

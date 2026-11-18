@@ -9,8 +9,6 @@ import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
-import { beginSourceGuard } from "./runner/source-quarantine.ts"
-import { registerSourceFence } from "./runner/source-fence-rpc.ts"
 import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
@@ -36,17 +34,6 @@ export default Plugin.define({
   id: "lazers",
   effect: (ctx) =>
     Effect.gen(function* () {
-      const sourceGuard = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          section("setup:beginSourceGuard", () =>
-            beginSourceGuard({
-              directory: ctx.location.directory,
-              projectDirectory: ctx.location.project.canonical,
-            }),
-          ),
-        ),
-        (guard) => Effect.sync(() => guard.dispose()),
-      )
       const dataDirectory = ctx.options.dataDirectory
       if (dataDirectory !== undefined && typeof dataDirectory !== "string") {
         return yield* Effect.die(new Error("LAZERS dataDirectory must be an absolute path string"))
@@ -105,10 +92,7 @@ export default Plugin.define({
       yield* sectionEffect("setup:TaskReads", () =>
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, sourceGuard))
-      yield* sectionEffect("setup:SourceFence", () =>
-        registerSourceFence(ctx, runtime.store, sourceGuard).pipe(Effect.orDie),
-      )
+      yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store))
       yield* sectionEffect("setup:ArchitectContact", () =>
         registerArchitectContact(ctx, runtime.store, () => core.wake()).pipe(Effect.orDie),
       )

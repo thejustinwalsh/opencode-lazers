@@ -290,7 +290,7 @@ export class TaskReads {
     const blockers = [
       ...new Set(
         this.runner
-          .dispatchReservations(mode)
+          .dispatchReservations()
           .filter(
             (entry) =>
               mode === "shared" || entry.shared || scopePatternsConflict(entry.scopes, scope),

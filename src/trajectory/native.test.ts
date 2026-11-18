@@ -97,7 +97,7 @@ test("a retained worker can be inspected after its recorded workspace changes pr
       },
     } as unknown as Plugin.Context,
     "project",
-    async (directory) => {
+    (directory) => {
       locationReads++
       return currentWorkspace && directory === attempt.workspace
     },

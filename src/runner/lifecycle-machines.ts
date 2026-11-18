@@ -209,11 +209,6 @@ export const workspaceMachine = defineLifecycle("runner-verification-workspace",
   uncertain: ["owned", "removed"],
   removed: ["uncertain"],
 })
-export const quarantineMachine = defineLifecycle("runner-source-quarantine", "pending", {
-  pending: ["sealed"],
-  sealed: [],
-})
-
 export const lifecycleMachines = {
   task: taskMachine,
   dispatch: dispatchControlMachine,
@@ -230,7 +225,6 @@ export const lifecycleMachines = {
   check: verificationCheckMachine,
   cleanup: verificationCleanupMachine,
   workspace: workspaceMachine,
-  quarantine: quarantineMachine,
 } as const
 
 /** SQL invokes the same XState transition against the row's current persisted value. */

@@ -25,6 +25,7 @@ import { RunnerStore } from "../runner/store.ts"
 import { verificationTimeoutDefaults } from "../runner/verification-timeout.ts"
 import { TaskRepository, taskDatabasePath } from "../storage.ts"
 import { nativeTrajectoryHost } from "../trajectory/native.ts"
+import { ownsRecordedWorkspace } from "../runner/workspace-location.ts"
 import { InferenceBroker } from "../webgpu/broker.ts"
 import type { CapabilityHub } from "./capabilities.ts"
 import { moduleGeneration } from "./generation.ts"
@@ -199,10 +200,8 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   built("runtime")
   // Lazy, offline-safe backfill of stable change identity; never blocks startup.
   void runtime.stampIdentity(true)
-  const trajectoryHost = nativeTrajectoryHost(
-    host,
-    projectID,
-    nativeRunnerHost.ownsCurrentWorkspace,
+  const trajectoryHost = nativeTrajectoryHost(host, projectID, (directory) =>
+    ownsRecordedWorkspace(directory, repository.projectDirectory),
   )
   const radarSessionHost = nativeRadarSessionHost(host)
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)

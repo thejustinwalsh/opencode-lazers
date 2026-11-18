@@ -5,7 +5,7 @@ export type RetiredGateMove = {
   from: string
   to: string
   reason: string | null
-  retired: "human-evidence"
+  retired: "human-evidence" | "source-quarantine"
 }
 
 /** `Combined artifact evidence missing: a:human` or `Required evidence missing: a:human, b:human`. */
@@ -72,5 +72,50 @@ export function retireHumanEvidenceGate(db: Database): RetiredGateMove[] {
       retired: "human-evidence",
     })
   }
+  return moves
+}
+
+const QUARANTINE_REASON = /checkout is quarantined|source quarantine/i
+
+/**
+ * Offline, idempotent retirement of the source-quarantine ceremony. A plan held
+ * because of a quarantine leaves `blocked` through the plan machine, so the
+ * scheduler re-observes it with live facts; then the retired table is dropped.
+ */
+export function retireSourceQuarantines(db: Database): RetiredGateMove[] {
+  const moves: RetiredGateMove[] = []
+  if (tableExists(db, "runner_plans")) {
+    const blocked = db
+      .query<{ id: string; reason: string | null; version: number }, []>(
+        "SELECT id,reason,version FROM runner_plans WHERE state='blocked' AND reason IS NOT NULL",
+      )
+      .all()
+    for (const plan of blocked) {
+      if (!plan.reason || !QUARANTINE_REASON.test(plan.reason)) continue
+      const changed = db
+        .query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+        )
+        .run(plan.id, plan.reason).changes
+      if (changed !== 1) continue
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,'PLAN_GATE_RETIRED',?,?)",
+      ).run(
+        plan.id,
+        plan.version + 1,
+        JSON.stringify({ gate: "source-quarantine", previousReason: plan.reason }),
+        Date.now(),
+      )
+      moves.push({
+        planID: plan.id,
+        from: "blocked",
+        to: "running",
+        reason: plan.reason,
+        retired: "source-quarantine",
+      })
+    }
+  }
+  db.exec("DROP INDEX IF EXISTS runner_source_quarantines_pending")
+  db.exec("DROP TABLE IF EXISTS runner_source_quarantines")
   return moves
 }
