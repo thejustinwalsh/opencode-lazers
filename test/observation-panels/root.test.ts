@@ -1818,9 +1818,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA
-          .querySelector(".lazers-models-task-select")
-          ?.getAttribute("title")
-          ?.includes("Objective A initial") === true,
+          .querySelector(".lazers-models-inspector")
+          ?.textContent?.includes("Objective A initial") === true,
     )
     await until(
       () =>
@@ -1957,31 +1956,33 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const chartOptions = () =>
       chart.getOption() as unknown as {
         grid?: Array<{ left?: number }>
-        xAxis?: Array<{ splitNumber?: number; axisLabel?: { fontSize?: number } }>
+        xAxis?: Array<{ max?: number; interval?: number; axisLabel?: { fontSize?: number } }>
         yAxis?: Array<{
           name?: string
-          splitNumber?: number
+          max?: number
+          interval?: number
           axisLabel?: { fontSize?: number }
         }>
       }
+    // Round ticks: about five, fewer on a narrow plot. Text scales with a large host font.
+    const ticks = (axis?: { max?: number; interval?: number }) =>
+      Math.round((axis?.max ?? 0) / (axis?.interval || 1))
     const narrowOptions = chartOptions()
-    expect(narrowOptions.xAxis?.[0]?.splitNumber).toBe(2)
-    expect(narrowOptions.yAxis?.[0]?.splitNumber).toBe(2)
-    expect(narrowOptions.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
-    expect(narrowOptions.grid?.[0]?.left).toBeGreaterThan(72)
-    expect(narrowOptions.yAxis?.[0]?.name).toBe("USD / task")
+    expect(ticks(narrowOptions.xAxis?.[0])).toBeLessThanOrEqual(2)
+    expect(ticks(narrowOptions.yAxis?.[0])).toBeLessThanOrEqual(2)
+    expect(narrowOptions.xAxis?.[0]?.axisLabel?.fontSize).toBeCloseTo(16.4)
+    expect(narrowOptions.grid?.[0]?.left).toBeGreaterThan(56)
+    expect(narrowOptions.yAxis?.[0]?.name).toBe("Cost per task")
     const initialSVGGeometry = await settleChart()
-    expect(initialSVGGeometry).toContain("Tokens / accepted task")
-    expect(initialSVGGeometry).toContain("USD / task")
-    // Narrow plots label only frontier points; others stay reachable by tooltip and keyboard.
-    expect(initialSVGGeometry).not.toContain("preview-effo")
+    expect(initialSVGGeometry).toContain("Tokens per accepted task")
+    expect(initialSVGGeometry).toContain("Cost per task")
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
       draft.font = "Test Mono"
     })
     await until(() => chartSVGMarkup().includes("Test Mono"))
     const themedSVGGeometry = await settleChart()
     expect(themedSVGGeometry).not.toBe(initialSVGGeometry)
-    chartHost.style.setProperty("--surface-base", "rgb(1, 2, 3)")
+    chartHost.style.setProperty("--background-base", "rgb(1, 2, 3)")
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
       draft.mode = "light"
     })
@@ -1992,26 +1993,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
     expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(450)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
-    expect(chartOptions().xAxis?.[0]?.splitNumber).toBeGreaterThan(
-      narrowOptions.xAxis?.[0]?.splitNumber ?? 0,
-    )
+    expect(ticks(chartOptions().xAxis?.[0])).toBeGreaterThanOrEqual(2)
     chartWidth = 960
     chartHeight = 320
     dom.window.dispatchEvent(new dom.Event("resize"))
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
     expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(960)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
-    expect(chartOptions().xAxis?.[0]?.splitNumber).toBeGreaterThan(
-      narrowOptions.xAxis?.[0]?.splitNumber ?? 0,
-    )
-    expect(chartOptions().yAxis?.[0]?.splitNumber).toBeGreaterThan(
-      narrowOptions.yAxis?.[0]?.splitNumber ?? 0,
-    )
-    expect(chartOptions().yAxis?.[0]?.name).toBe("USD / accepted task")
+    expect(ticks(chartOptions().xAxis?.[0])).toBeGreaterThan(2)
+    expect(ticks(chartOptions().yAxis?.[0])).toBeGreaterThan(2)
+    expect(chartOptions().yAxis?.[0]?.name).toBe("Cost per accepted task")
     const wideSVGGeometry = await settleChart()
-    expect(wideSVGGeometry).toContain("Tokens / accepted task")
-    expect(wideSVGGeometry).toContain("USD / accepted task")
-    expect(wideSVGGeometry).toContain("preview-effo")
+    expect(wideSVGGeometry).toContain("Tokens per accepted task")
+    expect(wideSVGGeometry).toContain("Cost per accepted task")
     const initialAlternative = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-comparison-chart-data",
     )!
@@ -2096,22 +2090,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(selectedInspector.scrollTop).toBe(0)
     expect(topPaneA.scrollTop).toBe(0)
     expect(comparePanel.querySelector(".lazers-models-decision-tools")).toBeNull()
-    const selectionTools = containerA.querySelector<HTMLElement>(".lazers-models-selection-tools")!
-    expect(selectionTools.closest(".lazers-models-inspector")).not.toBeNull()
-    expect(selectionTools.querySelectorAll("button")).toHaveLength(1)
-    expect(selectionTools.textContent).toBe("high")
-    expect(selectionTools.getAttribute("role")).toBe("group")
+    // Variants are separate chart points: no model or effort select, and no task chip, because
+    // the first task opens by default for the detail below and is not a filter.
+    expect(containerA.querySelector(".lazers-models-selection-tools")).toBeNull()
     expect(containerA.querySelector(".lazers-models-inspector-route")).toBeNull()
     expect(topPaneA.textContent).not.toContain("Refreshing sources")
-    const taskMenu = topPaneA.querySelector<HTMLButtonElement>(".lazers-models-task-select button")!
-    expect(taskMenu.textContent).toBe("LZ-17")
-    expect(taskMenu.textContent).not.toContain(TASK_A)
-    expect(taskMenu.closest(".lazers-models-task-select")?.getAttribute("aria-label")).toContain(
-      TASK_A,
-    )
-    expect(taskMenu.closest(".lazers-models-task-select")?.getAttribute("title")).toContain(
-      "Objective A initial",
-    )
+    expect(topPaneA.querySelector(".lazers-models-task-select")).toBeNull()
 
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "execution accepted",
@@ -2198,9 +2182,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         series: Array<{ id?: string; data?: Array<{ configurationID?: string }> }>
       }
     ).series
-    const referenceSeriesIndex = chartSeries.findIndex(
-      (series) => series.id === "openrouter-reference-scalars",
-    )
+    const referenceSeriesIndex = chartSeries.findIndex((series) => series.id === "observations")
     const referenceDataIndex = chartSeries[referenceSeriesIndex]!.data!.findIndex(
       (datum) => datum.configurationID === longReferenceConfigurationID,
     )
@@ -2469,20 +2451,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
       ),
     ).not.toBeNull()
-    const routePagesDisclosure = containerA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-route-pages",
-    )!
-    expect(routePagesDisclosure.open).toBe(false)
-    routePagesDisclosure.open = true
-    const moreRows = buttonWithText(containerA, "Load more model groups")
-    if (!moreRows)
-      throw new Error(
-        `Missing row pager: ${containerA.textContent}; row inputs: ${JSON.stringify(calls.filter((call) => call.method === "rows").map((call) => call.input))}`,
-      )
-    moreRows.click()
-    await until(() =>
-      calls.some((call) => call.method === "rows" && (call.input as { cursor?: string }).cursor),
-    )
+    // Model rows and exact configurations are not paged by hand any more: no pager is offered.
+    expect(containerA.querySelector(".lazers-models-route-pages")).toBeNull()
+    expect(buttonWithText(containerA, "Load more model groups")).toBeUndefined()
+    expect(buttonWithText(containerA, "Load more exact configurations")).toBeUndefined()
     await settleChart()
     expect(chartDescription()).toBe(globalGraphDescription)
     expect(chartDescription()).toContain("priced subtotal only")
@@ -2499,29 +2471,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toContain("Actual cohort token coordinate unknown")
     const loadedReferenceSVG = chartSVGMarkup()
     const loadedReferenceGraphDescription = chartDescription()
-    expect(loadedReferenceSVG).toBe(selectedQwenGraphSVG)
-    const rowPageInput = calls
-      .filter((call) => call.method === "rows" && (call.input as { cursor?: string }).cursor)
-      .at(-1)?.input
-    expect(rowPageInput).toMatchObject({ snapshotID: currentSnapshotID })
-    const moreConfigurations = buttonWithText(containerA, "Load more exact configurations")
-    if (!moreConfigurations) throw new Error("Missing exact-configuration pager")
-    moreConfigurations.click()
-    await until(() =>
-      calls.some(
-        (call) =>
-          call.method === "configurations" && Boolean((call.input as { cursor?: string }).cursor),
-      ),
-    )
-    expect(chartDescription()).toBe(loadedReferenceGraphDescription)
-    expect(chartSVGMarkup()).toBe(loadedReferenceSVG)
-    const configurationPageInput = calls
-      .filter(
-        (call) =>
-          call.method === "configurations" && Boolean((call.input as { cursor?: string }).cursor),
-      )
-      .at(-1)?.input
-    expect(configurationPageInput).toMatchObject({ snapshotID: currentSnapshotID })
 
     const firstContributorPage = containerA.querySelector(".lazers-models-contributors")!
     const evidenceDisclosure = firstContributorPage.closest<HTMLDetailsElement>(
@@ -2684,13 +2633,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       )?.open,
     ).toBe(true)
     suspendedInspection = undefined
-    const effortTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
-    ].at(-1)
-    effortTrigger?.click()
-    const lowOption = menuItemWithText(containerA, "low")
-    if (!lowOption) throw new Error(`No low effort option: ${containerA.textContent}`)
-    lowOption.click()
+    // Efforts and models are separate chart points: choose by the point or its data row.
+    const choose = (configurationID: string) => {
+      const row = containerA.querySelector<HTMLButtonElement>(
+        `.lazers-models-comparison-chart-data [data-configuration-id="${configurationID}"]`,
+      )
+      if (!row) throw new Error(`No chart row for ${configurationID}`)
+      row.click()
+    }
+    choose(lowConfiguration.configurationID)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     if (
       modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID !==
@@ -2727,11 +2678,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       selectedTaskID: TASK_A,
     })
 
-    const providerTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
-    ].at(0)!
-    providerTrigger.click()
-    menuItemWithText(containerA, "qwen / qwen-7")?.click()
+    choose(CONFIG_SINGLE)
     await until(
       () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_SINGLE,
     )
@@ -2750,33 +2697,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toContain("OpenRouter")
     expect(containerA.querySelector(".lazers-models-inspector")?.scrollTop).toBe(0)
 
-    const zeroProviderTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
-    ].at(0)!
-    zeroProviderTrigger.click()
-    menuItemWithText(containerA, "anthropic / sonnet")?.click()
-    await until(
-      () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_ZERO,
-    )
+    // A configuration with no accepted task has no price and is not a chart point.
     expect(
-      containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
-    ).toContain("No accepted tasks")
-    expect(containerA.querySelector(".lazers-models-price")).toBeNull()
-    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).not.toContain(
-      "Cost unavailable",
-    )
-    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).not.toContain(
-      "Empirical observed spread · n=7",
-    )
+      containerA.querySelector(
+        `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ZERO}"]`,
+      ),
+    ).toBeNull()
     expect(chartDescription()).toBe(loadedReferenceGraphDescription)
 
-    const crossRouteProviderTrigger = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
-    ].at(0)!
-    crossRouteProviderTrigger.click()
-    const crossRouteOption = menuItemWithText(containerA, "provider-b / model-b")
-    if (!crossRouteOption) throw new Error("Missing the B50 exact route option")
-    crossRouteOption.click()
+    choose(CONFIG_CROSS_ROUTE)
     await until(
       () =>
         modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_CROSS_ROUTE,
@@ -3255,7 +3184,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       '[role="tab"][aria-controls="lazers-models-compare-panel"]',
     )!
     compareTab.click()
-    await until(() => containerA.querySelector(".lazers-models-selection-tools") !== null)
+    await until(() => containerA.querySelector(".lazers-models-selected-heading") !== null)
     const catalogGraphDescription = chartDescription()
     expect(catalogGraphDescription).toContain("An unusually long catalog-backed model display name")
     expect(catalogGraphDescription).toContain("Qwen 7")
@@ -3303,12 +3232,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       renderedCatalogSeries?.data?.find((datum) => datum.configurationID === CONFIG_CROSS_ROUTE)
         ?.label?.formatter,
-    ).toBe("GPT-6\n50")
+    ).toBe("GPT-6 · 50")
     const renderedReferenceSeries = (
       catalogChart.getOption() as unknown as {
         series: Array<{ id?: string; data?: Array<{ configurationID?: string; name?: string }> }>
       }
-    ).series.find((series) => series.id === "openrouter-reference-scalars")
+    ).series.find((series) => series.id === "observations")
     expect(
       renderedReferenceSeries?.data?.find((datum) => datum.configurationID === CONFIG_ONE)?.name,
     ).toBe("GPT-6 · openai / gpt-6 · high")
@@ -3361,7 +3290,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       }
     ).series
     const catalogReferenceSeriesIndex = catalogChartSeries.findIndex(
-      (series) => series.id === "openrouter-reference-scalars",
+      (series) => series.id === "observations",
     )
     const catalogReferenceDataIndex = catalogChartSeries[
       catalogReferenceSeriesIndex
@@ -3430,32 +3359,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       await until(() => visibleCatalogTooltip(label) !== undefined)
       expect(visibleCatalogTooltip(label)?.textContent).toBe(label)
     }
-    containerA.querySelector<HTMLDetailsElement>(".lazers-models-route-pages")!.open = true
-    buttonWithText(containerA, "Load more model groups")?.click()
-    await until(() =>
-      calls.some(
-        (call) =>
-          call.method === "rows" &&
-          Boolean((call.input as { cursor?: string }).cursor) &&
-          (call.input as { filters?: ModelDecisionFilters }).filters?.persona === "systems",
-      ),
-    )
-    buttonWithText(containerA, "Load more exact configurations")?.click()
-    await until(() =>
-      calls.some(
-        (call) =>
-          call.method === "configurations" &&
-          Boolean((call.input as { cursor?: string }).cursor) &&
-          (call.input as { filters?: ModelDecisionFilters }).filters?.persona === "systems",
-      ),
-    )
-    const cachedNameProvider = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-selection-tools button"),
-    ].at(0)!
-    cachedNameProvider.click()
-    const qwenOption = menuItemWithText(containerA, "qwen / qwen-7")
-    if (!qwenOption) throw new Error("Missing exact qwen route in the provider selector")
-    qwenOption.click()
+    containerA
+      .querySelector<HTMLButtonElement>(
+        `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+      )!
+      .click()
     await until(() => selectedName(containerA) === "Qwen 7 · preview-effort")
     expect(
       containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
@@ -3931,8 +3839,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       .querySelector<HTMLButtonElement>('[role="tab"][aria-controls="lazers-models-compare-panel"]')
       ?.click()
     await until(() => containerA.querySelector(".lazers-models-inspector-compare") !== null)
+    // Persona and kind only: the task chip shows for a chosen task filter, not by default.
     expect(containerA.querySelectorAll(".lazers-models-filters .lazers-models-chip")).toHaveLength(
-      3,
+      2,
     )
     expect(containerA.querySelector(".lazers-models-assignment-editor")).toBeNull()
     const effortDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
@@ -3972,7 +3881,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
       rpcsBeforeLocationReopen,
     )
-    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
+    // The cached comparison for this same project shows at once; no read starts until the
+    // location is confirmed.
+    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).not.toBeNull()
     mountA.setVisible(false)
     await until(() => locationSignals.get(DIRECTORY_A)?.[1]?.aborted === true)
     mountA.setVisible(true)
@@ -3981,7 +3892,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
       rpcsBeforeLocationReopen,
     )
-    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
+    // The cached comparison for this same project shows at once; no read starts until the
+    // location is confirmed.
+    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).not.toBeNull()
     deferredLocationA2.resolve(locationResult(DIRECTORY_A))
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
@@ -4012,6 +3925,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
       rpcsBeforeSessionSwitch,
     )
+    // A different project has no cached comparison: it starts empty, never showing project A's.
     expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
     sessionScope.update((draft: { id: string; directory: string }) => {
       draft.id = "ses-models-panel"
