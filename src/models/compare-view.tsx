@@ -23,7 +23,7 @@ import {
 } from "./comparison-presentation.ts"
 import { KnownUsageMarketScenarioCard } from "./known-usage-card.tsx"
 import { formatMoney, formatNumber, hasCompareLowerPane, statusText } from "./panel-shared.ts"
-import { Disclosure, SplitPane } from "./panel-layout.tsx"
+import { Disclosure, SplitPane, revealDetails } from "./panel-layout.tsx"
 import {
   benchmarkLabel,
   contributorMembership,
@@ -164,7 +164,10 @@ export function CompareTop(props: { ctl: ModelsController }) {
                 <ModelChart
                   points={observedPoints()}
                   selectedID={visible()?.selectedConfigurationID ?? null}
-                  onSelect={(configurationID) => state.selectConfiguration(configurationID)}
+                  onSelect={(configurationID) => {
+                    revealDetails(ctl)
+                    state.selectConfiguration(configurationID)
+                  }}
                   xTitle="Tokens per accepted task"
                   yTitle="Cost per accepted task"
                   formatX={formatAxisTokens}
@@ -194,7 +197,10 @@ export function CompareTop(props: { ctl: ModelsController }) {
               <ModelChart
                 points={projectedPoints()}
                 selectedID={visible()?.selectedCandidateID ?? null}
-                onSelect={(candidateID) => state.selectCandidate(candidateID)}
+                onSelect={(candidateID) => {
+                  revealDetails(ctl)
+                  state.selectCandidate(candidateID)
+                }}
                 xTitle="Public coding index"
                 yTitle="Projected cost per accepted task"
                 formatX={(value) => String(Math.round(value))}
@@ -219,7 +225,10 @@ export function CompareTop(props: { ctl: ModelsController }) {
                 <ModelChart
                   points={benchmarkPoints()}
                   selectedID={selectedBenchmark()?.id ?? null}
-                  onSelect={(candidateID) => state.selectCandidate(candidateID)}
+                  onSelect={(candidateID) => {
+                    revealDetails(ctl)
+                    state.selectCandidate(candidateID)
+                  }}
                   xTitle={`List price per 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} in:out)`}
                   yTitle="Coding index"
                   formatX={formatAxisMoney}
@@ -1049,7 +1058,10 @@ function CompareInspector(props: { ctl: ModelsController }) {
         <AllModelsTable
           entries={catalogEntries()}
           selectedID={allModelsSelectedID()}
-          onSelect={selectEntry}
+          onSelect={(entry) => {
+            revealDetails(ctl)
+            selectEntry(entry)
+          }}
         />
       </Show>
     </section>

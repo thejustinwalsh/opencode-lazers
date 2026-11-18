@@ -167,3 +167,37 @@ test("dragging the top edge up opens; dragging below 72 px of body collapses", (
   expect(pane.open()).toBe(false)
   pane.dispose()
 })
+
+test("size is the last expanded height: collapsing never overwrites it, opening restores it", () => {
+  const { pane, q } = mount({ open: true, size: 0.6 })
+  const root = q<HTMLElement>(".lazers-details")!
+  root.getBoundingClientRect = () => ({ top: 0, height: 600 }) as DOMRect
+  q<HTMLElement>(".lazers-details-bar")!.getBoundingClientRect = () => ({ top: 300 }) as DOMRect
+  const handle = q<HTMLElement>(".lazers-details-resize")!
+  const pointer = (type: string, clientY: number) =>
+    handle.dispatchEvent(
+      new dom.window.MouseEvent(type, { clientY, bubbles: true }) as unknown as Event,
+    )
+  // Drag far below the snap threshold: collapsed, with the 0.6 height kept, not the drag value.
+  pointer("pointerdown", 300)
+  pointer("pointermove", 590)
+  pointer("pointerup", 590)
+  expect(pane.open()).toBe(false)
+  expect(pane.size()).toBe(0.6)
+  // Chevron, keyboard and double-click collapse keep it and every open restores it.
+  const chevron = q<HTMLButtonElement>(".lazers-details-chevron")!
+  chevron.click()
+  expect([pane.open(), pane.size()]).toEqual([true, 0.6])
+  chevron.click()
+  expect([pane.open(), pane.size()]).toEqual([false, 0.6])
+  handle.dispatchEvent(
+    new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }) as unknown as Event,
+  )
+  expect([pane.open(), pane.size()]).toEqual([true, 0.6])
+  q(".lazers-details-bar")!.dispatchEvent(
+    new dom.window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event,
+  )
+  expect([pane.open(), pane.size()]).toEqual([false, 0.6])
+  expect(q(".lazers-details")!.style.getPropertyValue("--details-size")).toBe("0.6")
+  pane.dispose()
+})
