@@ -120,11 +120,16 @@ async function workerObservation(
   // Location-scoped reads boot an unloaded location (plugin instantiation,
   // watchers) and it is evicted right after. A location that is not loaded has no
   // permission requests, forms or shells, so read them only when it is loaded.
+  // A host that cannot list loaded locations cannot prove the location is idle:
+  // inspect it, never report a false idle.
+  const loadedLocations =
+    directory !== undefined && typeof client.debug?.location?.list === "function"
+      ? await client.debug.location.list()
+      : undefined
   const inspectLocation =
     directory !== undefined &&
-    (await client.debug.location.list()).some(
-      (location) => resolve(location.directory) === resolve(directory),
-    )
+    (loadedLocations === undefined ||
+      loadedLocations.some((location) => resolve(location.directory) === resolve(directory)))
   if (inspectLocation && requireLocationShells && typeof client.shell?.list !== "function")
     throw new Error("Native worker location shell inventory is unavailable")
   const [active, inbox, permissions, forms, shells] = await Promise.all([
