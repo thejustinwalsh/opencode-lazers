@@ -3,6 +3,7 @@ import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { routeLabel } from "./comparison-presentation.ts"
 import { modelPersonaLabels } from "./panel-shared.ts"
+import { PanelStatus, createPanelStatus } from "../panel-status.tsx"
 import { Segmented, SplitPane } from "./panel-layout.tsx"
 
 const personaIcons = {
@@ -32,6 +33,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     assignmentVariantLabel,
     assignmentWrite,
     catalogOptions,
+    disconnected,
     modelSelectionCaption,
     openAssignmentModelPicker,
     personas,
@@ -46,6 +48,14 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     visible,
   } = ctl
 
+  const assignStatus = createPanelStatus(() => ({
+    subject: "assignments",
+    hasContent: Boolean(visible()?.settings),
+    loading: !visible() || Boolean(visible()?.settingsLoading && !visible()?.settings),
+    disconnected: disconnected(),
+    error: visible()?.settingsError ?? "",
+  }))
+
   const PersonaRows = () => (
     <section
       class="lazers-models-assignments"
@@ -53,43 +63,51 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
       id="lazers-models-assignments-panel"
       aria-labelledby="lazers-models-assignments-tab"
     >
-      <Show when={visible()?.settingsError}>
-        <p class="lazers-models-error" role="alert">
-          Saved assignments unavailable: {visible()?.settingsError}
-        </p>
-      </Show>
-      <div class="lazers-models-assignment-rows" role="group" aria-label="Persona routes">
-        <For each={personas()}>
-          {(persona) => (
-            <button
-              type="button"
-              class="lazers-models-assignment-row"
-              aria-pressed={assignmentPersona() === persona.persona}
-              disabled={assignmentBlocked()}
-              onClick={() => selectAssignmentPersona(persona.persona)}
-            >
-              <Ui.Icon name={personaIcons[persona.persona]} size="small" />
-              <strong>{persona.personaLabel}</strong>
-              <Show
-                when={persona.resolution.status === "assigned" ? persona.resolution : undefined}
-                fallback={
-                  <span class="lazers-models-assignment-route">Uses the session model</span>
-                }
+      <PanelStatus
+        ui={Ui}
+        status={assignStatus}
+        onRetry={() => void state.refreshSettings()}
+        skeleton="rows"
+      />
+      <Show when={assignStatus.showContent()}>
+        <div
+          class="lazers-models-assignment-rows"
+          role="group"
+          aria-label="Persona routes"
+          data-panel-dimmed={assignStatus.dimmed()}
+        >
+          <For each={personas()}>
+            {(persona) => (
+              <button
+                type="button"
+                class="lazers-models-assignment-row"
+                aria-pressed={assignmentPersona() === persona.persona}
+                disabled={assignmentBlocked()}
+                onClick={() => selectAssignmentPersona(persona.persona)}
               >
-                {(resolution) => (
-                  <>
-                    <code class="lazers-models-assignment-route">
-                      {resolution().route.id}
-                      {resolution().route.variant ? ` · ${resolution().route.variant}` : ""}
-                    </code>
-                    <small>{resolution().provenance.target.scope}</small>
-                  </>
-                )}
-              </Show>
-            </button>
-          )}
-        </For>
-      </div>
+                <Ui.Icon name={personaIcons[persona.persona]} size="small" />
+                <strong>{persona.personaLabel}</strong>
+                <Show
+                  when={persona.resolution.status === "assigned" ? persona.resolution : undefined}
+                  fallback={
+                    <span class="lazers-models-assignment-route">Uses the session model</span>
+                  }
+                >
+                  {(resolution) => (
+                    <>
+                      <code class="lazers-models-assignment-route">
+                        {resolution().route.id}
+                        {resolution().route.variant ? ` · ${resolution().route.variant}` : ""}
+                      </code>
+                      <small>{resolution().provenance.target.scope}</small>
+                    </>
+                  )}
+                </Show>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
     </section>
   )
 

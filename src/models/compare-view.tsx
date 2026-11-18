@@ -2,6 +2,7 @@ import { Show, For, onCleanup, onMount } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import type { ModelDecisionRow } from "./decision-contract.ts"
+import { PanelStatus } from "../panel-status.tsx"
 import { ComparisonChart, comparisonChartHasPlottablePoints } from "./comparison-chart.tsx"
 import { BenchmarkChart, benchmarkSourceName } from "./benchmark-chart.tsx"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
@@ -213,8 +214,10 @@ export function CompareTop(props: { ctl: ModelsController }) {
     ctx,
     decisionChartPoints,
     decisionChartReferences,
-    decisionStatusDetail,
     observedScopeLabel,
+    refreshAll,
+    sourceWarning,
+    status,
     selectCompareMode,
     selectedBenchmark,
     setChartHeight,
@@ -266,117 +269,87 @@ export function CompareTop(props: { ctl: ModelsController }) {
         ctl.refs.comparison = element
       }}
     >
-      <div class="lazers-models-overview">
-        <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
-          <h3 id="lazers-models-chart-title" class="lazers-models-visually-hidden">
-            {(() => {
-              if (compareMode() === "benchmark") return "Public benchmark"
-              const points = visible()?.decisionOverview?.graph.points ?? []
-              const references = decisionChartReferences()
-              if (comparisonChartHasPlottablePoints(points)) return "Task outcomes"
-              if (comparisonChartHasPlottablePoints([], references)) return "Catalog estimates"
-              return "No comparison yet"
-            })()}
-          </h3>
-          <Show when={compareMode() === "observed"}>
-            <Show when={decisionStatusDetail()}>
-              {(detail) => (
-                <details class="lazers-models-warning-details lazers-models-status-details">
-                  <summary>Status details</summary>
-                  <p>{detail()}</p>
-                </details>
-              )}
+      <PanelStatus ui={Ui} status={status} onRetry={refreshAll} skeleton="chart" />
+      <Show when={status.showContent()}>
+        <div class="lazers-models-overview" data-panel-dimmed={status.dimmed()}>
+          <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
+            <h3 id="lazers-models-chart-title" class="lazers-models-visually-hidden">
+              {(() => {
+                if (compareMode() === "benchmark") return "Public benchmark"
+                const points = visible()?.decisionOverview?.graph.points ?? []
+                const references = decisionChartReferences()
+                if (comparisonChartHasPlottablePoints(points)) return "Task outcomes"
+                if (comparisonChartHasPlottablePoints([], references)) return "Catalog estimates"
+                return "Comparison"
+              })()}
+            </h3>
+            <Show when={compareMode() === "observed"}>
+              <Show when={visible()?.decisionOverview}>
+                {(overview) => (
+                  <ComparisonChart
+                    points={decisionChartPoints()}
+                    references={decisionChartReferences()}
+                    frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
+                    selectedConfigurationID={visible()?.selectedConfigurationID}
+                    onSelect={(configurationID) => state.selectConfiguration(configurationID)}
+                    appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
+                    monoFontFamily={ctx.appearance.font("mono")}
+                    emptyAction={
+                      <Show when={(baseline()?.points.length ?? 0) > 0}>
+                        <Ui.Button
+                          size="small"
+                          variant="ghost-muted"
+                          onClick={() => selectCompareMode("benchmark")}
+                        >
+                          Show public benchmark
+                        </Ui.Button>
+                      </Show>
+                    }
+                  />
+                )}
+              </Show>
             </Show>
-            <Show
-              when={
-                visible()?.decisionStatus === "backend-not-ready"
-                  ? undefined
-                  : visible()?.decisionOverview
-              }
-              fallback={
-                <p
-                  class="lazers-models-chart-empty"
-                  role={
-                    visible()?.decisionStatus === "error" ||
-                    visible()?.decisionStatus === "missing-rpc"
-                      ? "alert"
-                      : "status"
-                  }
-                >
-                  {visible()?.decisionStatus === "backend-not-ready"
-                    ? "Comparison data isn't ready yet. Refresh to check again."
-                    : visible()?.decisionStatus === "missing-rpc"
-                      ? "Model comparison isn't available on this OpenCode server."
-                      : visible()?.decisionStatus === "error"
-                        ? "Comparison data couldn't be loaded. Refresh to retry."
-                        : "Loading comparison…"}
-                </p>
-              }
-            >
-              {(overview) => (
-                <ComparisonChart
-                  points={decisionChartPoints()}
-                  references={decisionChartReferences()}
-                  frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
-                  selectedConfigurationID={visible()?.selectedConfigurationID}
-                  onSelect={(configurationID) => state.selectConfiguration(configurationID)}
-                  appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-                  monoFontFamily={ctx.appearance.font("mono")}
-                  emptyAction={
-                    <Show when={(baseline()?.points.length ?? 0) > 0}>
+            <Show when={compareMode() === "benchmark"}>
+              <BenchmarkChart
+                points={baseline()?.points ?? []}
+                gaps={baseline()?.gaps ?? []}
+                selectedID={selectedBenchmark()?.id ?? null}
+                onSelect={(candidateID) => state.selectCandidate(candidateID)}
+                observedLabel={observedScopeLabel()}
+                emptyText={benchmarkEmptyText()}
+                appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
+                monoFontFamily={ctx.appearance.font("mono")}
+                dataFooter={
+                  <div class="lazers-models-benchmark-coverage">
+                    <p>
+                      {baseline()?.points.length ?? 0} plotted · {baseline()?.unmatchedRoutes ?? 0}{" "}
+                      loaded catalog models without a benchmark match
+                      {baseline()?.ambiguousRoutes
+                        ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
+                        : ""}
+                    </p>
+                    <Show when={visible()?.comparison?.nextCursor}>
                       <Ui.Button
                         size="small"
-                        variant="ghost-muted"
-                        onClick={() => selectCompareMode("benchmark")}
+                        variant="ghost"
+                        busy={visible()?.comparisonLoading}
+                        onClick={() => void state.moreCandidates()}
                       >
-                        Show public benchmark
+                        Load more catalog models
                       </Ui.Button>
                     </Show>
-                  }
-                />
-              )}
+                  </div>
+                }
+              />
             </Show>
-          </Show>
-          <Show when={compareMode() === "benchmark"}>
-            <BenchmarkChart
-              points={baseline()?.points ?? []}
-              gaps={baseline()?.gaps ?? []}
-              selectedID={selectedBenchmark()?.id ?? null}
-              onSelect={(candidateID) => state.selectCandidate(candidateID)}
-              observedLabel={observedScopeLabel()}
-              emptyText={benchmarkEmptyText()}
-              appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-              monoFontFamily={ctx.appearance.font("mono")}
-              dataFooter={
-                <div class="lazers-models-benchmark-coverage">
-                  <p>
-                    {baseline()?.points.length ?? 0} plotted · {baseline()?.unmatchedRoutes ?? 0}{" "}
-                    loaded catalog models without a benchmark match
-                    {baseline()?.ambiguousRoutes
-                      ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
-                      : ""}
-                  </p>
-                  <Show when={visible()?.comparison?.nextCursor}>
-                    <Ui.Button
-                      size="small"
-                      variant="ghost"
-                      busy={visible()?.comparisonLoading}
-                      onClick={() => void state.moreCandidates()}
-                    >
-                      Load more catalog models
-                    </Ui.Button>
-                  </Show>
-                </div>
-              }
-            />
-          </Show>
-          <p class="lazers-models-chart-caption">
-            {compareMode() === "benchmark"
-              ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
-              : "Your task runs · market cost and tokens per accepted task"}
-          </p>
-        </section>
-      </div>
+            <p class="lazers-models-chart-caption">
+              {compareMode() === "benchmark"
+                ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
+                : "Your task runs · market cost and tokens per accepted task"}
+            </p>
+          </section>
+        </div>
+      </Show>
       <details class="lazers-models-sources-details">
         <summary>Sources</summary>
         <div class="lazers-models-sources" aria-label="Source snapshot coverage">
@@ -404,6 +377,12 @@ export function CompareTop(props: { ctl: ModelsController }) {
               </div>
             )}
           </For>
+          <Show when={sourceWarning()}>
+            {(warning) => <p class="lazers-models-source-meta">{warning().message}</p>}
+          </Show>
+          <Show when={visible()?.tasksError}>
+            <p class="lazers-models-source-meta">Task list unavailable: {visible()?.tasksError}</p>
+          </Show>
           <Show when={visible()?.sourceRefreshError}>
             <p class="lazers-models-source-meta">
               Source refresh error: {visible()?.sourceRefreshError}
@@ -429,6 +408,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
     assignMenuItems,
     assignSelectedRoute,
     assignmentBlocked,
+    status,
     categoryRows,
     compareMode,
     configurationsForGroup,
@@ -608,13 +588,9 @@ function CompareInspector(props: { ctl: ModelsController }) {
         <Show
           when={selectedDecisionConfiguration()}
           fallback={
-            <p class="lazers-models-note" role="status">
-              {visible()?.decisionStatus === "missing-rpc"
-                ? "Models are unavailable. Refresh to retry."
-                : visible()?.decisionInspectLoading
-                  ? "Loading model…"
-                  : "Select a model to compare."}
-            </p>
+            <Show when={status.view().kind === "ready" && visible()?.decisionOverview}>
+              <p class="lazers-models-note">Select a model on the chart.</p>
+            </Show>
           }
         >
           {(configuration) => (
@@ -738,11 +714,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
                     </Show>
                   </div>
                 </details>
-              </Show>
-              <Show when={visible()?.decisionInspectLoading}>
-                <p class="lazers-models-note" role="status">
-                  <Ui.Loader size="small" /> Loading model details…
-                </p>
               </Show>
               <Show when={visible()?.decisionInspectError}>
                 <div class="lazers-models-error" role="alert">
@@ -1030,11 +1001,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
               </p>
             }
           >
-            <Show when={visible()?.taskLoading || visible()?.effortLoading}>
-              <p class="lazers-models-note">
-                <Ui.Loader size="small" /> Loading selected task evidence…
-              </p>
-            </Show>
             <Show when={visible()?.taskError}>
               <p class="lazers-models-error" role="alert">
                 Task detail unavailable: {visible()?.taskError}

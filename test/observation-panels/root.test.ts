@@ -1798,7 +1798,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           call.directory === DIRECTORY_A,
       ),
     ).toBe(false)
-    expect(containerA.textContent).toContain("Refreshing sources")
+    expect(containerA.textContent).toContain("Loading comparison")
     deferredA1.resolve(sourceEvidence())
     await until(
       () =>
@@ -2641,11 +2641,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           )
         }),
     )
-    await until(
-      () =>
-        containerA
-          .querySelector(".lazers-models-inspector")
-          ?.textContent?.includes("Loading model details") === true,
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).not.toContain(
+      "Loading model details",
     )
     const highSelectionSVG = await settleChart()
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
@@ -3983,7 +3980,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "GPT-6",
     )
     expect(containerA.querySelector(".lazers-models-decision-rows")).toBeNull()
-    expect(containerA.textContent).toContain("Refreshing sources")
     expect(
       containerA.querySelector(".lazers-models-task-effort-details")?.closest("details")?.open,
     ).toBe(true)
@@ -4081,39 +4077,26 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     retainedEffort.open = true
     retainedSources.open = true
-    expect(
-      [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
-        warning.textContent?.includes("Comparison is out of date"),
-      ),
-    ).toBe(false)
+    expect(containerA.querySelector(".lazers-panel-banner")).toBeNull()
     const sourceCountBeforeComparisonFailure = sourceSignals.get(DIRECTORY_A)?.length ?? 0
     const comparisonCountBeforeComparisonFailure = comparisonCounts.get(DIRECTORY_A) ?? 0
     failNextComparison = true
     buttonWithText(containerA, "Refresh")?.click()
     await until(
       () =>
-        [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
-          warning.textContent?.includes("Comparison is out of date"),
-        ) ||
+        containerA.querySelector(".lazers-panel-banner") !== null ||
         ((sourceSignals.get(DIRECTORY_A)?.length ?? 0) > sourceCountBeforeComparisonFailure &&
           (comparisonCounts.get(DIRECTORY_A) ?? 0) > comparisonCountBeforeComparisonFailure &&
           !buttonWithText(containerA, "Refresh")?.disabled),
     )
-    if (
-      ![...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
-        warning.textContent?.includes("Comparison is out of date"),
-      )
-    )
+    if (containerA.querySelector(".lazers-panel-banner") === null)
       throw new Error(
         `Expected comparison failure was not shown (comparison ${comparisonCountBeforeComparisonFailure}→${comparisonCounts.get(DIRECTORY_A)}, source ${sourceCountBeforeComparisonFailure}→${sourceSignals.get(DIRECTORY_A)?.length}): ${containerA.textContent}`,
       )
-    const staleWarning = [
-      ...containerA.querySelectorAll<HTMLElement>(".lazers-models-refresh-note"),
-    ].find((warning) => warning.textContent?.includes("Comparison is out of date"))!
+    const staleWarning = containerA.querySelector<HTMLElement>(".lazers-panel-banner")!
+    expect(staleWarning.textContent).toContain("Couldn't update comparison")
     expect(staleWarning.closest("details")).toBeNull()
-    expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).toContain(
-      "out of date",
-    )
+    expect(containerA.querySelector("[data-panel-dimmed='true']")).not.toBeNull()
     expect(retainedEffort.open).toBe(true)
     expect(retainedSources.open).toBe(true)
     expect(retainedSources.textContent).toContain(
@@ -4129,12 +4112,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === sourceSignalsBeforeFailedRefresh + 1,
     )
     await until(
-      () =>
-        containerA
-          .querySelector(".lazers-models-error")
-          ?.textContent?.includes("Source refresh failed") === true,
+      () => retainedSources.textContent?.includes("Source refresh error: source request") === true,
     )
-    const failedRefreshWarning = containerA.querySelector<HTMLElement>(".lazers-models-error")!
+    const failedRefreshWarning = containerA.querySelector<HTMLElement>(".lazers-panel-banner")!
     expect(failedRefreshWarning.closest("details")).toBeNull()
     expect(containerA.querySelector(".lazers-models-task-effort-details")).toBe(retainedEffort)
     expect(containerA.querySelector(".lazers-models-sources-details")).toBe(retainedSources)

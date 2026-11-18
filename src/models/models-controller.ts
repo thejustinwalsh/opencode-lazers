@@ -1,4 +1,5 @@
 import { createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
+import { createPanelStatus } from "../panel-status.tsx"
 import type { PanelProps } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
@@ -32,6 +33,7 @@ import {
   selectedModelFacts,
 } from "./comparison-presentation.ts"
 import { benchmarkSourceName } from "./benchmark-chart.tsx"
+import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
   clampSplit,
@@ -181,29 +183,43 @@ export function createModelsController(props: ModelsProps) {
       const observations = value.client.rpc(Observability)
       const location = { location: { directory: value.directory } }
       const transport: ModelComparisonTransport = {
-        comparison: (cursor, signal) =>
-          models.comparison(
-            {
-              sessionID: value.session,
-              limit: 100,
-              ...(cursor ? { cursor } : {}),
-            },
-            { ...location, signal },
+        comparison: (cursor, parent) =>
+          withReadDeadline(parent, (signal) =>
+            models.comparison(
+              {
+                sessionID: value.session,
+                limit: 100,
+                ...(cursor ? { cursor } : {}),
+              },
+              { ...location, signal },
+            ),
           ),
-        refreshSources: (signal) =>
-          models.refreshSources({ sessionID: value.session }, { ...location, signal }),
-        settings: (taskID, signal) =>
-          models.settings(
-            { sessionID: value.session, ...(taskID ? { taskID } : {}) },
-            { ...location, signal },
+        refreshSources: (parent) =>
+          withReadDeadline(
+            parent,
+            (signal) =>
+              models.refreshSources({ sessionID: value.session }, { ...location, signal }),
+            2 * READ_DEADLINE_MS,
           ),
-        catalog: (signal) => models.catalog({ sessionID: value.session }, { ...location, signal }),
+        settings: (taskID, parent) =>
+          withReadDeadline(parent, (signal) =>
+            models.settings(
+              { sessionID: value.session, ...(taskID ? { taskID } : {}) },
+              { ...location, signal },
+            ),
+          ),
+        catalog: (parent) =>
+          withReadDeadline(parent, (signal) =>
+            models.catalog({ sessionID: value.session }, { ...location, signal }),
+          ),
         configure: (update, signal) =>
           models.configure({ sessionID: value.session, ...update }, { ...location, signal }),
-        queryTasks: (signal) =>
-          tasks.query(
-            { state: "all", includeCompleted: true, includeRetired: true, limit: 100 },
-            { ...location, signal },
+        queryTasks: (parent) =>
+          withReadDeadline(parent, (signal) =>
+            tasks.query(
+              { state: "all", includeCompleted: true, includeRetired: true, limit: 100 },
+              { ...location, signal },
+            ),
           ),
         getTask: (taskID, signal) => tasks.get({ taskID }, { ...location, signal }),
         trajectoryStatus: (taskID, signal) =>
@@ -211,10 +227,12 @@ export function createModelsController(props: ModelsProps) {
             { scope: { kind: "project", sessionID: value.session }, taskID },
             { ...location, signal },
           ),
-        decisionOverview: (filters, signal) =>
-          decisions.overview(
-            { sessionID: value.session, scope: { projectDirectory: value.project }, filters },
-            { ...location, signal },
+        decisionOverview: (filters, parent) =>
+          withReadDeadline(parent, (signal) =>
+            decisions.overview(
+              { sessionID: value.session, scope: { projectDirectory: value.project }, filters },
+              { ...location, signal },
+            ),
           ),
         decisionRows: (filters, cursor, snapshotID, signal) =>
           decisions.rows(
@@ -585,14 +603,57 @@ export function createModelsController(props: ModelsProps) {
       ? "benchmark"
       : "observed"
   }
-  /** Local time of the newest price snapshot; absent until one exists. */
-  const pricesAsOf = () => {
+  /** Epoch ms of the newest price snapshot; absent until one exists. */
+  const pricesAsOfTime = () => {
     const times = (visible()?.comparison?.sources ?? [])
       .filter((entry) => entry.source !== "openrouter-benchmarks")
       .flatMap((entry) => (entry.snapshot ? [Date.parse(entry.snapshot.retrievedAt)] : []))
       .filter((time) => Number.isFinite(time))
-    return times.length ? panelClock(Math.max(...times)) : undefined
+    return times.length ? Math.max(...times) : undefined
   }
+  const pricesAsOf = () => {
+    const time = pricesAsOfTime()
+    return time === undefined ? undefined : panelClock(time)
+  }
+  const disconnected = () => !props.session.server.connected
+  const refreshAll = () => {
+    setPriceSourceRevision((revision) => revision + 1)
+    void state.refresh()
+  }
+  /**
+   * The one loading surface: skeleton on a first load, one banner over kept content on a
+   * refresh or reconnect, one sentence with Retry on failure.
+   */
+  const status = createPanelStatus(() => {
+    const panel = visible()
+    const benchmark = compareMode() === "benchmark"
+    const hasContent = benchmark ? Boolean(panel?.comparison) : Boolean(panel?.decisionOverview)
+    const decisionError =
+      panel && ["error", "missing-rpc", "stale"].includes(panel.decisionStatus)
+        ? panel.decisionError || panel.decisionStatus
+        : ""
+    const error = benchmark
+      ? (panel?.comparisonError ?? "")
+      : decisionError || panel?.comparisonError || panel?.sourceRefreshError || ""
+    const loading =
+      !panel ||
+      (!error &&
+        !hasContent &&
+        (benchmark
+          ? panel.comparisonLoading
+          : panel.decisionStatus === "loading" || panel.decisionStatus === "backend-not-ready"))
+    const tasks = panel?.tasks.length ?? 0
+    const asOf = pricesAsOfTime()
+    return {
+      subject: "comparison",
+      hasContent,
+      loading,
+      disconnected: disconnected(),
+      error,
+      ...(asOf === undefined ? {} : { asOf }),
+      ...(tasks ? { progress: `${tasks} task${tasks === 1 ? "" : "s"} so far` } : {}),
+    }
+  })
   const selectCompareMode = (mode: "observed" | "benchmark") => save({ compareMode: mode })
   const observedScopeLabel = () => {
     const filters = visible()?.decisionFilters
@@ -1074,6 +1135,9 @@ export function createModelsController(props: ModelsProps) {
     clearConfirmedAssignmentWrite,
     compareMode,
     pricesAsOf,
+    disconnected,
+    refreshAll,
+    status,
     comparisonSource,
     configurationsForGroup,
     ctx,

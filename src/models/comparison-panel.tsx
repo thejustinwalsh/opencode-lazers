@@ -10,7 +10,6 @@ import { AssignmentsView } from "./assignments-view.tsx"
 import { Segmented } from "./panel-layout.tsx"
 import { modelPersonaLabels, modelTaskKindLabels, modelTaskKinds } from "./panel-shared.ts"
 import type { ModelsContext, ModelsPreference } from "./panel-shared.ts"
-import type { ModelComparisonPanelData } from "./comparison-state.ts"
 import css from "./comparison-panel.css?inline"
 
 export { modelsStores } from "./panel-shared.ts"
@@ -18,12 +17,6 @@ export { modelsStores } from "./panel-shared.ts"
 function personaFilterLabel(persona: ModelsPreference["persona"]) {
   if (!persona) return "All"
   return persona === "small-refactoring" ? "Refactor" : modelPersonaLabels[persona]
-}
-function sourceRefreshLabel(data: ModelComparisonPanelData) {
-  if (data.sourceRefresh === "refreshing") return "Refreshing sources…"
-  if (data.sourceRefresh === "failed") return "Source refresh failed; showing saved data."
-  if (data.sourceRefresh === "succeeded") return "Sources refreshed."
-  return "Showing saved data."
 }
 
 function PanelHeader(props: { ctl: ModelsController }) {
@@ -39,9 +32,7 @@ function PanelHeader(props: { ctl: ModelsController }) {
     selectTab,
     selectTask,
     selectedTask,
-    setPriceSourceRevision,
-    sourceWarning,
-    state,
+    refreshAll,
     tabKey,
     taskDescription,
     visible,
@@ -93,10 +84,7 @@ function PanelHeader(props: { ctl: ModelsController }) {
           size="small"
           disabled={!visible() || visible()?.sourceRefresh === "refreshing"}
           busy={visible()?.sourceRefresh === "refreshing"}
-          onClick={() => {
-            setPriceSourceRevision((revision) => revision + 1)
-            void state.refresh()
-          }}
+          onClick={refreshAll}
         />
       </div>
       <Show when={compare()}>
@@ -171,58 +159,6 @@ function PanelHeader(props: { ctl: ModelsController }) {
             ]}
           />
         </div>
-        <Show when={visible()?.sourceRefresh === "refreshing"}>
-          <p class="lazers-models-refresh-note" role="status">
-            Refreshing sources…
-          </p>
-        </Show>
-        <Show when={visible()?.sourceRefresh === "failed"}>
-          <p class="lazers-models-error" role="alert">
-            {sourceRefreshLabel(visible()!)}
-          </p>
-        </Show>
-        <Show when={sourceWarning()}>
-          {(warning) => (
-            <p
-              class={
-                warning().role === "alert" ? "lazers-models-error" : "lazers-models-refresh-note"
-              }
-              role={warning().role}
-            >
-              {warning().message}
-            </p>
-          )}
-        </Show>
-        <Show when={visible()?.comparisonStale}>
-          <p class="lazers-models-refresh-note" role="status">
-            Comparison is out of date; showing the last saved data.
-          </p>
-        </Show>
-        <Show
-          when={
-            visible()?.stale && !visible()?.comparisonStale && visible()?.sourceRefresh !== "failed"
-          }
-        >
-          <p class="lazers-models-refresh-note" role="status">
-            Showing saved data; the latest couldn't be confirmed.
-          </p>
-        </Show>
-        <Show when={!visible()?.comparison && visible()?.comparisonError}>
-          <p class="lazers-models-error" role="alert">
-            Comparison unavailable; refresh to retry.
-          </p>
-        </Show>
-        <Show when={visible()?.tasksError}>
-          <>
-            <p class="lazers-models-error" role="alert">
-              Task list unavailable.
-            </p>
-            <details class="lazers-models-warning-details">
-              <summary>Task-list error details</summary>
-              <p>{visible()?.tasksError}</p>
-            </details>
-          </>
-        </Show>
       </Show>
     </header>
   )
