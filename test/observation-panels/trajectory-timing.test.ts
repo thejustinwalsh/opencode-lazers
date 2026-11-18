@@ -643,7 +643,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
     expect(attemptQualityMarker.getAttribute("tabindex")).toBe("0")
     expect(command()).toBe("bun test quality")
-    expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain(
+    expect(container.querySelector(".lazers-trajectory-line1")?.textContent).not.toContain(
       taskID.slice(0, 8),
     )
     expect(container.querySelector(".lazers-trajectory-kind")?.textContent).toBe(

@@ -206,7 +206,16 @@ type LaneMark =
   | { kind: "tool"; id: string; left: number; width: number; at: number; mark: ToolMark }
   | { kind: "gap"; id: string; left: number; width: number; at: number; mark: GapMark }
 
-function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
+export type TrajectoryOpeners = {
+  openTask(
+    session: PanelProps["session"],
+    target: { projectDirectory: string; taskID: string },
+  ): void
+}
+
+function PanelView(
+  props: PanelProps & { ctx: TrajectoryContext; openers?: TrajectoryOpeners | undefined },
+) {
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
@@ -490,20 +499,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   })
   const place = (elapsedMs: number) =>
     timeline()?.axis?.place(elapsedMs) ?? (elapsedMs / (timeline()?.durationMs || 1)) * 100
-  /** Ruler labels, thinned for width and kept clear of the idle-break labels. */
-  const rulerTicks = createMemo(() => {
-    const line = timeline()
-    const width = axisWidth()
-    const breaks = line?.breaks ?? []
-    return visibleTicks(ticks(), line?.durationMs ?? 0, width, place).filter(
-      (tick) =>
-        !breaks.some(
-          (span) =>
-            Math.abs(((place(tick.elapsedMs) - (span.left + span.width / 2)) / 100) * width) <
-            span.label.length * 3.5 + 28,
-        ),
-    )
-  })
   const tickStepFor = (durationMs: number, width: number) => {
     const maximum = Math.max(2, Math.floor((width || 240) / 64))
     const candidates = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1_800, 3_600, 7_200, 21_600]
@@ -512,6 +507,35 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
       durationMs
     )
   }
+  /** Ruler labels, thinned for width. */
+  const rulerTicks = createMemo(() =>
+    visibleTicks(ticks(), timeline()?.durationMs ?? 0, axisWidth(), place),
+  )
+  /**
+   * Break labels that fit: longest break first, each only if clear of the labels already
+   * placed and of every ruler tick label. A dropped label keeps its break and tooltip.
+   */
+  const breakLabels = createMemo(() => {
+    const width = axisWidth()
+    const taken: Array<[number, number]> = rulerTicks().map((tick) => {
+      const center = (place(tick.elapsedMs) / 100) * width
+      const half = tick.label.length * 3.5 + 4
+      return [center - half, center + half]
+    })
+    const shown = new Set<unknown>()
+    const byLength = [...(timeline()?.breaks ?? [])].sort(
+      (x, y) => y.endMs - y.startMs - (x.endMs - x.startMs),
+    )
+    for (const span of byLength) {
+      const center = ((span.left + span.width / 2) / 100) * width
+      const half = span.label.length * 3.5 + 8
+      const range: [number, number] = [center - half, center + half]
+      if (taken.some(([from, to]) => range[0] < to && range[1] > from)) continue
+      taken.push(range)
+      shown.add(span)
+    }
+    return (timeline()?.breaks ?? []).filter((span) => shown.has(span))
+  })
   const selectedTool = createMemo(() => {
     const value = selection()
     if (value?.kind !== "event") return undefined
@@ -805,8 +829,9 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     return duration ? { text: durationText(duration.ms), open: duration.open } : null
   }
   const taskStatus = () => report()?.task.status ?? ""
+  /** The task reference from Tasks or Radar; never a raw id. */
   const reference = () =>
-    currentData()?.taskReference ?? report()?.task.id.slice(0, 8) ?? currentData()?.taskID ?? ""
+    prefs().selectedReference ?? prefs().target?.reference ?? currentData()?.taskReference ?? ""
   const status = createPanelStatus(() => ({
     subject: "this trajectory",
     hasContent: Boolean(report()),
@@ -904,22 +929,24 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 <span>{capitalize(taskStatus())}</span>
               </span>
             </Show>
-            <span
-              class="lazers-trajectory-task-menu"
-              style={{ "font-family": ctx.appearance.font("mono") }}
-            >
-              <Ui.Menu
-                label={reference() || "Choose task"}
-                trigger="button"
-                placement="bottom-start"
-                disabled={!currentData()?.tasks.length}
-                items={(currentData()?.tasks ?? []).map((task) => ({
-                  label: `${task.title ? displayTitle(task.title) : task.taskID.slice(0, 8)} · ${task.status}`,
-                  onSelect: () => selectTask(task.taskID),
-                }))}
-              />
-            </span>
-            <Show when={report()}>
+            <Show when={reference() || !report() || (currentData()?.tasks.length ?? 0) > 1}>
+              <span
+                class="lazers-trajectory-task-menu"
+                style={{ "font-family": reference() ? ctx.appearance.font("mono") : undefined }}
+              >
+                <Ui.Menu
+                  label={reference() || (report() ? "Change task" : "Choose task")}
+                  trigger="button"
+                  placement="bottom-start"
+                  disabled={!currentData()?.tasks.length}
+                  items={(currentData()?.tasks ?? []).map((task) => ({
+                    label: `${task.title ? displayTitle(task.title) : "Task"} · ${task.status}`,
+                    onSelect: () => selectTask(task.taskID),
+                  }))}
+                />
+              </span>
+            </Show>
+            <Show when={report() && reference()}>
               <button
                 type="button"
                 class="lazers-trajectory-icon-button lazers-trajectory-copy"
@@ -932,6 +959,21 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
               >
                 <Ui.Icon name="outline-copy" size="small" />
               </button>
+            </Show>
+            <Show when={props.openers && report() && currentData()?.taskID && current()}>
+              <Ui.Button
+                variant="ghost"
+                size="small"
+                class="lazers-trajectory-open-task"
+                onClick={() =>
+                  props.openers!.openTask(props.session, {
+                    projectDirectory: current()!.project,
+                    taskID: currentData()!.taskID!,
+                  })
+                }
+              >
+                Open task
+              </Ui.Button>
             </Show>
             <span class="lazers-trajectory-scope">
               <Ui.Menu
@@ -1117,7 +1159,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           </span>
                         )}
                       </For>
-                      <For each={timeline()?.breaks ?? []}>
+                      <For each={breakLabels()}>
                         {(span) => (
                           <span
                             class="lazers-trajectory-idle-label"
@@ -2341,12 +2383,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   )
 }
 
-export function setupTrajectoryPanel(ctx: TrajectoryContext) {
+export function setupTrajectoryPanel(ctx: TrajectoryContext, openers?: TrajectoryOpeners) {
   const Ui = ctx.ui
   registerTrajectoryPanel(
     ctx,
     css,
-    bindPlugin((props: PanelProps) => <PanelView {...props} ctx={ctx} />),
+    bindPlugin((props: PanelProps) => <PanelView {...props} ctx={ctx} openers={openers} />),
     () => (
       <div class="flex min-w-0 items-center gap-1.5">
         <Ui.Icon name="branch" size="small" class="shrink-0" />
