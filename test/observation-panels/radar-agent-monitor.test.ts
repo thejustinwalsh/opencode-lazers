@@ -407,7 +407,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       includeUnmanagedSessions: false,
     })
     expect(text()).not.toContain("No model or tool events in this read")
-    expect(text()).toContain("Busy · no current call observed")
+    expect(text()).toContain("Busy · no call in progress")
     expect(["Live", "Reconnecting", "Offline"]).toContain(
       container.querySelector(".lazers-radar-connection")?.textContent ?? "",
     )

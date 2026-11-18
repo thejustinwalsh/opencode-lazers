@@ -594,10 +594,10 @@ export function RadarMonitorView(props: Props) {
                     onToggle={(event) => setShowUnavailable(event.currentTarget.open)}
                   >
                     <summary>
-                      {groups().unavailable.length} unavailable{" "}
-                      {groups().unavailable.length === 1 ? "session" : "sessions"}
+                      Data gaps · {groups().unavailable.length}{" "}
+                      {groups().unavailable.length === 1 ? "session" : "sessions"} without live data
                     </summary>
-                    <ul class="lazers-radar-sessions" aria-label="Unavailable sessions">
+                    <ul class="lazers-radar-sessions" aria-label="Sessions without live data">
                       <For each={groups().unavailable}>{(id) => <SessionRow id={id} />}</For>
                     </ul>
                   </details>

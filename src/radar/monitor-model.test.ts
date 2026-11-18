@@ -260,7 +260,7 @@ test("failures stay visible and busy sessions without a current call say so", ()
   const lines = sessionActivity(failed, failed.sessions[0]!).lines
   expect(lines.map((line) => lineView(line).label)).toEqual([
     "patch failed",
-    "Busy · no current call observed",
+    "Busy · no call in progress",
   ])
   expect(lineView(lines[0]!)).toMatchObject({
     icon: "warning",
@@ -329,7 +329,7 @@ test("summary segments, coverage gaps and the three connection words", () => {
     ),
   ).toEqual([
     { count: 1, word: "running" },
-    { count: 1, word: "coverage gap" },
+    { count: 1, word: "data gap" },
   ])
   expect(
     monitorSegments(

@@ -316,7 +316,7 @@ export function sessionActivity(live: Live, session: LiveSession): SessionActivi
       kind: "note",
       id: `note:${sessionID}`,
       sessionID,
-      label: "Busy · no current call observed",
+      label: "Busy · no call in progress",
     })
 
   const times = [
@@ -384,7 +384,7 @@ export function monitorSegments(live: Live): SummarySegment[] {
   return [
     { count: running, word: "running" },
     ...(verifying > 0 ? [{ count: verifying, word: "verifying" }] : []),
-    ...(gaps > 0 ? [{ count: gaps, word: gaps === 1 ? "coverage gap" : "coverage gaps" }] : []),
+    ...(gaps > 0 ? [{ count: gaps, word: gaps === 1 ? "data gap" : "data gaps" }] : []),
   ]
 }
 
