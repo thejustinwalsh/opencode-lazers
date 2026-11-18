@@ -391,6 +391,9 @@ export function createModelsController(props: ModelsProps) {
       referenceEstimate: inspection.referenceEstimate,
       efficiency: inspection.efficiency,
       cohort: inspection.cohort,
+      ...(inspection.medianAcceptedDurationMs === undefined
+        ? {}
+        : { medianDurationMs: inspection.medianAcceptedDurationMs }),
     })
   }
   const [dataMount, setDataMount] = createSignal<HTMLElement>()

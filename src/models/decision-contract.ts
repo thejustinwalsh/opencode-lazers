@@ -654,6 +654,8 @@ export const ModelDecisionInspectOutputSchema = z
       contributorPage: ModelDecisionContributorPageSchema,
       /** Optional additive v1 known-usage endpoint-scenario surface; v2 values stay unchanged. */
       knownUsageMarket: KnownUsageMarketSchema.optional(),
+      /** Additive: median first-attempt-to-acceptance time of the accepted tasks; absent when unrecorded. */
+      medianAcceptedDurationMs: Nonnegative.optional(),
     }),
     z.strictObject({
       status: z.literal("not-found"),

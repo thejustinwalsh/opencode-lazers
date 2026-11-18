@@ -6,7 +6,7 @@ import {
   defaultModelPriceSourcePolicy,
   ModelPriceSourceSettingsSchema,
 } from "./price-source-settings.ts"
-import { createModelDecisionReader } from "./decision-read.ts"
+import { acceptedDurationMs, createModelDecisionReader, median } from "./decision-read.ts"
 import type { ModelDecisionRoute } from "./decision-contract.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
@@ -730,6 +730,8 @@ test("production decision projection preserves exact route effort, adopted accep
         routeScope: "cross-route",
       },
     })
+    // First attempt start (100) to recorded acceptance (400), taken from the rows already read.
+    expect(inspected.medianAcceptedDurationMs).toBe(300)
     expect(inspected.contributorPage.contributors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2171,4 +2173,19 @@ test("F-S10-2 decision rows propagate unmetered subscription diagnostics without
     source.close()
     fixture.close()
   }
+})
+
+test("accepted duration needs a recorded acceptance and a recorded attempt start", () => {
+  const task = (acceptedAt: number | null, startedAt: number[], accepted = true) =>
+    ({
+      acceptance: { accepted, acceptedAt },
+      attempts: startedAt.map((value) => ({ startedAt: value })),
+    }) as never
+  expect(acceptedDurationMs(task(400, [250, 100]))).toBe(300)
+  expect(acceptedDurationMs(task(null, [100]))).toBeNull()
+  expect(acceptedDurationMs(task(400, []))).toBeNull()
+  expect(acceptedDurationMs(task(400, [100], false))).toBeNull()
+  expect(acceptedDurationMs(task(50, [100]))).toBeNull()
+  expect(median([30, 10, 20])).toBe(20)
+  expect(median([10, 20, 30, 40])).toBe(25)
 })
