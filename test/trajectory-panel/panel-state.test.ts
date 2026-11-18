@@ -132,6 +132,9 @@ function makeLiveFixture() {
   return fixture
 }
 
+/** Existing paging tests drive continuation by hand; background draining has its own tests. */
+const manualPaging = { autoContinue: false }
+
 async function waitFor(state: TrajectoryPanelState, predicate: () => boolean) {
   for (let attempt = 0; attempt < 100; attempt++) {
     if (predicate()) return
@@ -147,7 +150,12 @@ test("plan checks and unassociated events never inherit the latest worker attemp
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport } = transportFor(fixture, tracker)
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "view",
@@ -191,7 +199,12 @@ test("panel history keeps captured market valuation through status-only refreshe
     return unavailableTaskValuation(input)
   }
   const { transport } = transportFor(fixture, tracker, () => true, provider)
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "market-valuation",
@@ -227,7 +240,12 @@ test("projection-backed panel retains failed-attempt selection and all-attempt u
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport, publish } = transportFor(fixture, tracker)
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "project-view",
@@ -316,7 +334,12 @@ test("scope reconnect keeps an in-scope task/attempt and rejects late responses 
     }
     return originalSnapshot(scope, signal)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "old-project-scope",
@@ -359,7 +382,12 @@ test("an external historical target bypasses snapshot choices and loads its refe
     const snapshot = await originalSnapshot(scope, signal)
     return { ...snapshot, plans: [], unplannedTasks: [] }
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   const reference = fixture.repository.referenceFor(taskID)!
   try {
     state.connect(
@@ -457,7 +485,12 @@ test("a historical target loads over the broad snapshot cap through the real tra
       })(),
   }
   const transport = createTrajectoryTransport(rpc, fixture.directory, () => true, events, "project")
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   const reference = fixture.repository.referenceFor(taskID)!
   try {
     fixture.store.atomic((db) =>
@@ -516,7 +549,12 @@ test("a historical target loads over the broad snapshot cap through the real tra
       failedHistoryCalls++
       throw new Error("target history read failed")
     }
-    const failedTarget = new TrajectoryPanelState(() => {})
+    const failedTarget = new TrajectoryPanelState(
+      () => {},
+      () => {},
+      undefined,
+      manualPaging,
+    )
     try {
       failedTarget.connect(
         "failed-large-history-target",
@@ -574,7 +612,12 @@ for (const duringCapture of [false, true])
       statusCalls++
       return status(...args)
     }
-    const state = new TrajectoryPanelState(() => {})
+    const state = new TrajectoryPanelState(
+      () => {},
+      () => {},
+      undefined,
+      manualPaging,
+    )
     try {
       state.connect(
         "covered-target",
@@ -644,7 +687,12 @@ test("a newer event after target capture causes one scoped status refresh", asyn
     statusCalls++
     return status(...args)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "newer-target-event-after-capture",
@@ -700,7 +748,12 @@ test("a settled target skips change-driven status reads; resnapshot and explicit
     statusCalls++
     return status(...args)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   const change = (sequence: number, resnapshotRequired: boolean) =>
     publish({
       projectID: "project",
@@ -772,7 +825,12 @@ test("a settled snapshot-scoped task reads status again only when its recorded f
     statusCalls++
     return status(...args)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   const change = (sequence: number) =>
     publish({
       projectID: "project",
@@ -849,7 +907,12 @@ test("a newer event during target capture triggers one status follow-up and pres
     }
     return response
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "newer-target-event",
@@ -936,7 +999,12 @@ test("a target resnapshot request is honored even when its event sequence is cov
     statusCalls++
     return status(...args)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "target-resnapshot",
@@ -992,7 +1060,12 @@ test("deferred task A cannot replace unavailable target B or fall back to A", as
     if (id === taskID) return pendingA.promise
     throw new Error("Task history is unavailable")
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   const targetA = targetFor(fixture, taskID, "LZ-1", "request-a")
   const taskB = "00000000-0000-4000-8000-000000000002"
   const targetB = targetFor(fixture, taskB, "LZ-2", "request-b")
@@ -1035,7 +1108,12 @@ test("a historical project target is rejected after switching to a different sco
     historyCalls++
     return original(...args)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "session-scope",
@@ -1065,7 +1143,12 @@ test("disconnected transport retains scoped data and a reconnect refreshes it", 
   tracker.initialize()
   let online = true
   const { transport } = transportFor(fixture, tracker, () => online)
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "session-view",
@@ -1108,7 +1191,12 @@ test("expired history continuations retain old pages and require an explicit rec
       }
     return originalHistory(scope, id, signal, cursor, 2)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "expired-history",
@@ -1190,7 +1278,12 @@ test("a transient continuation failure keeps Load more retryable", async () => {
     }
     return originalHistory(scope, id, signal, cursor, 2)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "transient-history",
@@ -1236,7 +1329,12 @@ test("a recapture and paging resume from the new capture; a failed recapture kee
     if (!cursor && failRecapture) throw new Error("network down")
     return originalHistory(scope, id, signal, cursor, 2)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "recapture-paging",
@@ -1289,7 +1387,12 @@ test("history recovery remains available after a healthy snapshot before the fir
       }
     return originalHistory(scope, id, signal, cursor, limit)
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "initial-history-recovery",
@@ -1333,7 +1436,12 @@ test("failed explicit recapture keeps the old capture and page union after healt
   const initialHistory = transport.history
   transport.history = (scope, id, signal, cursor) => initialHistory(scope, id, signal, cursor, 2)
   const pageHistory = transport.history
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "recapture-preserves-old-history",
@@ -1408,7 +1516,12 @@ test("recapture rejects an empty nonadvancing continuation without replacing old
   const initialHistory = transport.history
   transport.history = (scope, id, signal, cursor) => initialHistory(scope, id, signal, cursor, 2)
   const pageHistory = transport.history
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "nonadvancing-recapture",
@@ -1498,7 +1611,12 @@ test("replayed or reordered history pages retain the old union and cursor for ex
       },
     }
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "replayed-page",
@@ -1528,7 +1646,12 @@ test("explicit projection gaps resnapshot even when their sequence is not newer"
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport, publish, snapshotCount } = transportFor(fixture, tracker)
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "session-view",
@@ -1579,7 +1702,12 @@ test("live status and progress do not cancel page-size-two history or rewrite it
     }
     return result
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   const scope = { kind: "project" as const, sessionID: "ses-owner" }
   try {
     state.connect("stable-pages", "project", fixture.directory, scope, transport, {
@@ -1867,7 +1995,12 @@ test("reconnect arriving during a snapshot forces one catch-up even at the same 
     if (++calls === 1) await waiting.promise
     return result
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "inflight",
@@ -1912,7 +2045,12 @@ for (const newerThanSnapshot of [false, true]) {
       if (++calls === 1) await waiting.promise
       return { ...result, boundary: { ...result.boundary, eventSequence: calls === 1 ? 10 : 11 } }
     }
-    const state = new TrajectoryPanelState(() => {})
+    const state = new TrajectoryPanelState(
+      () => {},
+      () => {},
+      undefined,
+      manualPaging,
+    )
     try {
       state.connect(
         "sequence",
@@ -1997,7 +2135,12 @@ test("a reset stream sequence during reconnect catches up without replacing capt
       boundary: { ...result.boundary, eventSequence: call === 1 ? 100 : call === 2 ? 1 : 2 },
     }
   }
-  const state = new TrajectoryPanelState(() => {})
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    manualPaging,
+  )
   try {
     state.connect(
       "reset",
@@ -2036,6 +2179,72 @@ test("a reset stream sequence during reconnect catches up without replacing capt
     expect(state.data.historyCapturedAt).toBe(captured)
     expect(state.data.capturedEventIDs).toEqual(ids)
     expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("pages continue in the background until the cursor is exhausted and loaded/total reach equal", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const historyPage = transport.history
+  transport.history = (scope, id, signal, cursor) => historyPage(scope, id, signal, cursor, 2)
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "drain",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await waitFor(state, () => state.data.eventCursor === null)
+    expect(state.data.totalEvents).toBeGreaterThan(2)
+    expect(state.data.events).toHaveLength(state.data.totalEvents)
+    expect(state.data.asOf).not.toBeNull()
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a first read that never answers becomes a failure with a retry path, not a spinner", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const answer = transport.history
+  let hang = true
+  transport.history = (scope, id, signal, cursor, limit) =>
+    hang ? new Promise(() => {}) : answer(scope, id, signal, cursor, limit)
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    undefined,
+    { firstReadTimeoutMs: 20 },
+  )
+  try {
+    state.connect(
+      "hang",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.historyError !== "")
+    expect(state.data.loading).toBe(false)
+    expect(state.data.report).toBeUndefined()
+    expect(state.data.historyError).toMatch(/timed out/i)
+    hang = false
+    await state.recaptureActivity()
+    await waitFor(state, () => state.data.report !== undefined)
+    expect(state.data.historyError).toBe("")
   } finally {
     state.close()
     fixture.close()

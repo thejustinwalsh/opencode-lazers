@@ -4,11 +4,15 @@
   --trajectory-mark: var(--icon-base);
   --trajectory-failed: var(--icon-critical-base);
   --trajectory-row: 28px;
-  /* One token per row hue; none may resolve to red (failure) or amber (gaps). */
+  /*
+   * One token per track. Green belongs to success and red to recorded failure, so no track may
+   * resolve to either; failures turn red on any track.
+   */
   --trajectory-hue-attempts: var(--text-interactive-base, var(--text-base));
-  --trajectory-hue-tools: var(--syntax-string, var(--text-base));
-  --trajectory-hue-files: var(--icon-agent-plan-base, var(--text-base));
-  --trajectory-hue-checks: var(--syntax-type, var(--text-strong));
+  --trajectory-hue-tools: var(--syntax-keyword, var(--icon-agent-build-base, var(--text-base)));
+  --trajectory-hue-files: var(--icon-warning-base, var(--text-base));
+  --trajectory-hue-checks: var(--text-strong);
+  --trajectory-gap: var(--text-weak);
   display: grid;
   grid-template-rows:
     minmax(0, var(--trajectory-visual-fr, 56fr))
@@ -43,27 +47,38 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Header */
-.lazers-trajectory-controls,
-.lazers-trajectory-heading-row,
+/* Header: three lines, then the timeline. */
+.lazers-trajectory-line1,
 .lazers-trajectory-inspector-heading,
 .lazers-trajectory-section-heading,
 .lazers-trajectory-check-row,
 .lazers-trajectory-timeline-bar,
 .lazers-trajectory-zoom,
 .lazers-trajectory-outcome,
-.lazers-trajectory-loading {
+.lazers-trajectory-state {
   display: flex;
   align-items: center;
   min-width: 0;
   gap: 8px;
 }
-.lazers-trajectory-controls {
+.lazers-trajectory-line1 {
   gap: 4px;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
+}
+.lazers-trajectory-state {
+  flex: none;
+  gap: 4px;
+  font-size: 0.86em;
+}
+.lazers-trajectory-state[data-outcome="failed"] {
+  color: var(--text-critical-base);
+}
+.lazers-trajectory-state[data-outcome="running"] {
+  color: var(--text-interactive-base, var(--text-base));
 }
 .lazers-trajectory-scope button,
-.lazers-trajectory-task-menu button {
+.lazers-trajectory-task-menu button,
+.lazers-trajectory-attempt-menu button {
   flex-direction: row-reverse;
   height: 24px;
   padding: 0 6px;
@@ -75,16 +90,18 @@
   font-size: 0.9em;
 }
 .lazers-trajectory-scope button:hover,
-.lazers-trajectory-task-menu button:hover {
+.lazers-trajectory-task-menu button:hover,
+.lazers-trajectory-attempt-menu button:hover {
   background: var(--surface-base-hover);
   color: var(--text-strong);
 }
+.lazers-trajectory-scope {
+  margin-left: auto;
+}
 .lazers-trajectory-task-menu {
-  flex: 1 1 8rem;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: min(100%, 24rem);
-  margin-right: auto;
-  margin-left: -6px;
+  max-width: 100%;
 }
 .lazers-trajectory-task-menu button {
   min-width: 0;
@@ -93,18 +110,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lazers-trajectory-connection {
-  flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 4px;
-  color: var(--text-weak);
-  font-size: 0.8em;
-  line-height: 18px;
-}
-.lazers-trajectory-connection[data-state="disconnected"] {
-  color: var(--text-critical-base);
-}
 .lazers-trajectory-heading {
   display: -webkit-box;
   min-width: 0;
@@ -112,22 +117,11 @@
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-size: 1.08em;
   line-height: 1.35;
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-.lazers-trajectory-heading-row {
-  gap: 4px;
-  margin-top: 2px;
-}
-.lazers-trajectory-id {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-weak);
-  font-size: 0.82em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .lazers-trajectory-icon-button,
 .lazers-trajectory-zoom-level {
@@ -158,42 +152,22 @@
   font-size: 0.8em;
   font-variant-numeric: tabular-nums;
 }
-.lazers-trajectory-task-meta {
+.lazers-trajectory-line3 {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-  margin-top: 4px;
-  color: var(--text-weak);
-  font-size: 0.9em;
-  overflow-wrap: anywhere;
-}
-.lazers-trajectory-model {
-  display: contents;
-}
-.lazers-trajectory-model-name {
-  color: var(--text-base);
-}
-.lazers-trajectory-model-scope,
-.lazers-trajectory-run-total {
-  font-variant-numeric: tabular-nums;
-}
-.lazers-trajectory-run-total {
-  margin-top: 2px;
-}
-.lazers-trajectory-objective {
-  margin-top: 4px;
+  align-items: center;
+  gap: 2px 10px;
+  margin-top: 6px;
   color: var(--text-weak);
   font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
 }
-.lazers-trajectory-objective summary {
-  padding: 2px 0;
-  cursor: pointer;
+.lazers-trajectory-line3 b {
+  color: var(--text-base);
+  font-weight: 500;
 }
-.lazers-trajectory-objective p {
-  margin: 4px 0 0;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
+.lazers-trajectory-attempt-menu {
+  margin-left: -6px;
 }
 .lazers-trajectory-error,
 .lazers-trajectory-note {
@@ -206,6 +180,11 @@
   font-size: 0.9em;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.lazers-trajectory-note > b {
+  flex: 1 1 100%;
+  color: var(--text-strong);
+  font-weight: 500;
 }
 .lazers-trajectory-error {
   color: var(--text-critical-base);
@@ -226,17 +205,6 @@
   font-size: 0.82em;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.lazers-trajectory-capture-stamp {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 8px;
-  min-height: 24px;
-  margin: -4px 0 4px;
-  color: var(--text-weak);
-  font-size: 0.8em;
-  font-variant-numeric: tabular-nums;
 }
 .lazers-trajectory-zoom {
   flex: none;
@@ -317,117 +285,29 @@
   width: 1px;
   background: var(--border-weak-base);
 }
+/* Not yet loaded: a plain dashed edge and a faint wash. Hatching is reserved for recording gaps. */
 .lazers-trajectory-gridlines > .lazers-trajectory-unloaded {
   right: 0;
   width: auto;
   border-left: 1px dashed var(--border-base);
-  background: repeating-linear-gradient(
-    135deg,
-    transparent 0 4px,
-    color-mix(in srgb, var(--text-weak) 10%, transparent) 4px 5px
-  );
+  background: color-mix(in srgb, var(--text-weak) 6%, transparent);
 }
-.lazers-trajectory-attempts {
-  border-top: 1px solid var(--border-weak-base);
+/* Compressed idle: a narrow break with a dotted edge, never hatched. The label sits on the ruler. */
+.lazers-trajectory-gridlines > .lazers-trajectory-idle {
+  width: auto;
+  border-right: 1px dotted var(--border-base);
+  border-left: 1px dotted var(--border-base);
+  background: color-mix(in srgb, var(--background-base) 70%, var(--surface-base-hover));
 }
-.lazers-trajectory-attempt {
-  --trajectory-hue: var(--trajectory-hue-attempts);
-  box-sizing: border-box;
-  height: var(--trajectory-row);
-  border-bottom: 1px solid var(--border-weak-base);
-  color: var(--text-base);
-  cursor: pointer;
-}
-.lazers-trajectory-attempt:hover,
-.lazers-trajectory-attempt[data-selected="true"] {
-  background: var(--surface-base-hover);
-}
-.lazers-trajectory-attempt:hover .lazers-trajectory-label-cell,
-.lazers-trajectory-attempt[data-selected="true"] .lazers-trajectory-label-cell {
-  background: var(--surface-base-hover);
-}
-.lazers-trajectory-attempt[data-selected="true"] .lazers-trajectory-label-cell {
-  box-shadow: inset 2px 0 0 var(--border-selected);
-}
-.lazers-trajectory-attempt-number {
-  min-width: 1.2em;
-  color: var(--text-strong);
-  font-variant-numeric: tabular-nums;
-}
-.lazers-trajectory-tool-count,
-.lazers-trajectory-lane-count {
-  margin-left: auto;
-  color: var(--text-weak);
-  font-variant-numeric: tabular-nums;
-}
-.lazers-trajectory-lane {
-  display: grid;
-  grid-template-columns: var(--trajectory-label) minmax(0, 1fr);
-  align-items: stretch;
-  min-width: 0;
-}
-.lazers-trajectory-label-cell {
-  position: sticky;
-  left: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 0 8px 0 var(--trajectory-inset);
-  overflow: hidden;
-  background: var(--background-base);
-  color: var(--text-weak);
-  font-size: 0.84em;
-  white-space: nowrap;
-}
-.lazers-trajectory-axis {
-  height: 22px;
-  color: var(--text-weak);
-  font-size: 0.76em;
-  font-variant-numeric: tabular-nums;
-}
-.lazers-trajectory-axis-track,
-.lazers-trajectory-track {
-  position: relative;
-  min-width: 0;
-}
-.lazers-trajectory-tick {
+.lazers-trajectory-idle-label {
   position: absolute;
   top: 3px;
   transform: translateX(-50%);
+  padding: 0 4px;
+  background: var(--background-base);
+  color: var(--text-weak);
+  font-style: italic;
   white-space: nowrap;
-}
-.lazers-trajectory-tick:first-child {
-  transform: none;
-}
-.lazers-trajectory-tick:last-child:not(:first-child) {
-  transform: translateX(-100%);
-}
-.lazers-trajectory-gridlines {
-  position: absolute;
-  top: 22px;
-  right: 0;
-  bottom: 0;
-  left: var(--trajectory-label);
-  pointer-events: none;
-}
-.lazers-trajectory-gridlines > span {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--border-weak-base);
-}
-.lazers-trajectory-gridlines > .lazers-trajectory-unloaded {
-  right: 0;
-  width: auto;
-  border-left: 1px dashed var(--border-base);
-  background: repeating-linear-gradient(
-    135deg,
-    transparent 0 4px,
-    color-mix(in srgb, var(--text-weak) 10%, transparent) 4px 5px
-  );
 }
 .lazers-trajectory-attempts {
   border-top: 1px solid var(--border-weak-base);
@@ -456,7 +336,7 @@
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
-.lazers-trajectory-tool-count,
+
 .lazers-trajectory-lane-count {
   margin-left: auto;
   color: var(--text-weak);
@@ -577,18 +457,28 @@
 .lazers-trajectory-check-marker:hover {
   background: color-mix(in srgb, var(--trajectory-hue) 14%, transparent);
 }
-/* Gaps and compactions are context, not events: warning-hue full-height line. */
-.lazers-trajectory-mark[data-kind="gap"]::before {
+/* Hatching means one thing: the recorder lost this stretch. */
+.lazers-trajectory-mark[data-gap] {
+  width: 10px;
+  margin-left: -5px;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 3px,
+    color-mix(in srgb, var(--trajectory-gap) 55%, transparent) 3px 4px
+  );
+  box-shadow:
+    inset 1px 0 0 var(--trajectory-gap),
+    inset -1px 0 0 var(--trajectory-gap);
+}
+/* Compaction is context, not loss: a single dotted line. */
+.lazers-trajectory-mark[data-kind="gap"]:not([data-gap])::before {
   content: "";
   position: absolute;
   top: 2px;
   bottom: 2px;
   left: 5px;
   width: 0;
-  border-left: 2px dashed var(--icon-warning-base);
-}
-.lazers-trajectory-mark[data-kind="gap"][data-outcome="compaction"]::before {
-  border-left-style: dotted;
+  border-left: 2px dotted var(--trajectory-gap);
 }
 .lazers-trajectory-mark[aria-selected="true"] {
   z-index: 2;
@@ -608,7 +498,7 @@
   height: 12px;
   transform: translateX(-50%);
   border-radius: 1px;
-  background: var(--icon-warning-base);
+  background: var(--trajectory-gap);
   pointer-events: none;
 }
 .lazers-trajectory-check-marker {
@@ -639,10 +529,39 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
 }
+.lazers-trajectory-coverage-end {
+  margin-left: auto;
+}
 .lazers-trajectory-coverage-line .lazers-trajectory-error {
   flex: 1 1 100%;
   padding: 2px 0;
   font-size: 1em;
+}
+.lazers-trajectory-progress {
+  height: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--border-weak-base);
+}
+.lazers-trajectory-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--text-interactive-base, var(--text-base));
+  transition: width 200ms ease;
+}
+.lazers-trajectory-gaps {
+  margin-top: 6px;
+  color: var(--text-weak);
+  font-size: 0.8em;
+}
+.lazers-trajectory-gaps summary {
+  cursor: pointer;
+}
+.lazers-trajectory-gaps ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  line-height: 1.5;
 }
 
 .lazers-trajectory-separator {
@@ -676,46 +595,81 @@
   padding: 12px var(--trajectory-inset) 16px;
 }
 .lazers-trajectory-inspector-heading {
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
   margin-bottom: 8px;
 }
-.lazers-trajectory-inspector-heading h3 {
+.lazers-trajectory-kind {
   min-width: 0;
-  margin: 0;
-  font-size: 1em;
-  font-weight: 500;
+  color: var(--text-weak);
+  font-size: 0.9em;
   overflow-wrap: anywhere;
 }
-.lazers-trajectory-result {
+.lazers-trajectory-duration {
   margin-left: auto;
   color: var(--text-weak);
-  font-size: 0.88em;
-  overflow-wrap: anywhere;
+  font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
 }
 .lazers-trajectory-outcome {
   flex: none;
   gap: 4px;
+  font-weight: 500;
 }
 .lazers-trajectory-outcome[data-outcome="failed"] {
   color: var(--text-critical-base);
 }
-.lazers-trajectory-details,
-.lazers-trajectory-metadata,
+.lazers-trajectory-outcome[data-outcome="running"] {
+  color: var(--text-interactive-base, var(--text-base));
+}
+.lazers-trajectory-command {
+  max-height: 7.5rem;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--surface-base);
+  color: var(--text-strong);
+  font-size: 0.84em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lazers-trajectory-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 0 0 8px;
+  font-size: 0.86em;
+  line-height: 1.5;
+}
+.lazers-trajectory-facts dt {
+  color: var(--text-weak);
+}
+.lazers-trajectory-facts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.lazers-trajectory-disclosure-note {
+  margin-left: 8px;
+  color: var(--text-weak);
+  font-size: 0.86em;
+}
+.lazers-trajectory-disclosure-body,
+.lazers-trajectory-objective-text {
+  margin: 0 0 6px;
+  color: var(--text-weak);
+  font-size: 0.86em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .lazers-trajectory-token-row,
 .lazers-trajectory-source-links {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.lazers-trajectory-details,
-.lazers-trajectory-metadata {
-  color: var(--text-weak);
-  font-size: 0.86em;
-  line-height: 1.5;
-}
-.lazers-trajectory-details p,
-.lazers-trajectory-metadata p {
-  margin: 2px 0 4px;
 }
 .lazers-trajectory-files {
   margin: 8px 0;

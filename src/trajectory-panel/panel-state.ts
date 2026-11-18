@@ -61,6 +61,8 @@ export type PanelData = {
   loadingActivity: boolean
   stale: boolean
   error: string
+  /** Epoch ms of the last successful read. It survives later failures with the content. */
+  asOf: number | null
 }
 
 export function selectedAttemptFor(data: PanelData | undefined) {
@@ -99,6 +101,7 @@ const blank = (key = ""): PanelData => ({
   loadingActivity: false,
   stale: false,
   error: "",
+  asOf: null,
 })
 
 export function selectedEventFor(data: PanelData | undefined) {
@@ -109,6 +112,25 @@ export function selectedEventFor(data: PanelData | undefined) {
     data.liveEvents.find((event) => event.id === selection.id) ??
     (data.selectionEventSnapshot?.id === selection.id ? data.selectionEventSnapshot : undefined)
   )
+}
+
+/** A first read that has not answered by now becomes a failure with Retry, not a spinner. */
+export const FIRST_READ_TIMEOUT_MS = 30_000
+
+function withDeadline<T>(read: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${what}`)), ms)
+    read.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
 }
 
 const delay = (signal: AbortSignal) =>
@@ -205,6 +227,7 @@ export class TrajectoryPanelState {
   private pendingRefresh = false
   private pendingResnapshot = false
   private pendingForce = false
+  private drainToken = 0
   /** Task snapshot facts when status or history was last read for the selected task. */
   private readFingerprint: string | null = null
 
@@ -218,6 +241,7 @@ export class TrajectoryPanelState {
       const timer = setTimeout(callback, delayMs)
       return () => clearTimeout(timer)
     },
+    private readonly options: { autoContinue?: boolean; firstReadTimeoutMs?: number } = {},
   ) {}
 
   private update(change: Partial<PanelData>) {
@@ -338,7 +362,14 @@ export class TrajectoryPanelState {
         return
       }
 
-      const response = await transport.snapshot(scope, signal)
+      const read = transport.snapshot(scope, signal)
+      const response = await (this.data.snapshot
+        ? read
+        : withDeadline(
+            read,
+            this.options.firstReadTimeoutMs ?? FIRST_READ_TIMEOUT_MS,
+            "the LAZERS service",
+          ))
       if (generation !== this.generation || request !== this.snapshotRequest || signal.aborted)
         return
       if (response.projectID !== this.projectID)
@@ -363,6 +394,7 @@ export class TrajectoryPanelState {
         taskID,
         taskReference: null,
         error: "",
+        asOf: Date.now(),
       })
 
       if (!taskID) {
@@ -469,6 +501,7 @@ export class TrajectoryPanelState {
       loading: taskID !== null,
       loadingActivity: false,
       error: "",
+      asOf: null,
     })
   }
 
@@ -561,6 +594,7 @@ export class TrajectoryPanelState {
         tasks,
         liveEvents,
         statusReadAt: Date.now(),
+        asOf: Date.now(),
         eventSequence: this.observeEventSequence(response.boundary.eventSequence),
         loading: false,
         stale: Boolean(this.data.historyError),
@@ -624,7 +658,14 @@ export class TrajectoryPanelState {
       ...(explicitRecapture ? { recapturingHistory: true } : {}),
     })
     try {
-      const response = await transport.history(scope, taskID, signal)
+      const read = transport.history(scope, taskID, signal)
+      const response = await (this.data.report
+        ? read
+        : withDeadline(
+            read,
+            this.options.firstReadTimeoutMs ?? FIRST_READ_TIMEOUT_MS,
+            "the LAZERS service",
+          ))
       if (
         generation !== this.generation ||
         taskRequest !== this.taskRequest ||
@@ -747,8 +788,10 @@ export class TrajectoryPanelState {
         loading: false,
         loadingActivity: false,
         stale: Boolean(this.data.error),
+        asOf: Date.now(),
       })
       this.selected({ taskID, selection })
+      void this.drainActivity()
     } catch (error) {
       if (
         generation === this.generation &&
@@ -891,6 +934,38 @@ export class TrajectoryPanelState {
     }
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
     await this.captureHistory(taskID, signal, true, true)
+  }
+
+  /**
+   * Reads the remaining captured pages in the background until the cursor is exhausted. Stops on
+   * the first page that does not advance (error, recapture needed) and on any new capture, task
+   * or close; `resumeActivity` starts it again.
+   */
+  private async drainActivity() {
+    if (this.options.autoContinue === false) return
+    const token = ++this.drainToken
+    const generation = this.generation
+    const taskRequest = this.taskRequest
+    while (
+      token === this.drainToken &&
+      generation === this.generation &&
+      taskRequest === this.taskRequest &&
+      this.data.eventCursor &&
+      !this.data.pageRecaptureRequired &&
+      !this.data.recapturingHistory &&
+      !this.data.historyError
+    ) {
+      const before = this.data.events.length
+      await this.loadMoreActivity()
+      if (this.data.events.length === before) return
+    }
+  }
+
+  /** Retry after a failed background page. */
+  async resumeActivity() {
+    if (this.data.historyError && !this.data.pageRecaptureRequired)
+      this.update({ historyError: "" })
+    await this.drainActivity()
   }
 
   async loadMoreActivity() {
@@ -1041,6 +1116,7 @@ export class TrajectoryPanelState {
   }
 
   close() {
+    this.drainToken++
     this.statusCursor = undefined
     this.generation++
     this.snapshotRequest++

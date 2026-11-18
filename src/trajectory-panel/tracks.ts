@@ -1,3 +1,4 @@
+import { linearAxis } from "./axis.ts"
 import { isActiveAttemptState } from "./projection.ts"
 import type { Timeline, TrajectoryEvent } from "./projection.ts"
 
@@ -52,7 +53,7 @@ export type Tracks = {
   tools: ToolMark[]
   files: FileMark[]
   gaps: GapMark[]
-  /** Distinct recorded calls whose placement time is unknown. */
+  /** Distinct recorded calls that carry no time and so are not placed. */
   untimedTools: number
   /** File-target records whose paths were omitted by the recorder. */
   omittedFileTargets: number
@@ -92,7 +93,8 @@ export const outcomeText: Record<Outcome, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
   running: "Running",
-  unknown: "No result recorded",
+  /** No recorded outcome: nothing is said about it. */
+  unknown: "",
 }
 
 function endpoint(event: TrajectoryEvent, key: string) {
@@ -152,17 +154,15 @@ function mergedOutcome(events: TrajectoryEvent[], attemptActive: boolean): Outco
  * events and LAZERS progress facts for the same `sessionID + callID` become one mark.
  */
 export function buildTracks(
-  timeline: Pick<Timeline, "origin" | "durationMs">,
+  timeline: Pick<Timeline, "origin" | "durationMs" | "axis">,
   events: readonly TrajectoryEvent[],
   attemptStates: ReadonlyMap<string, string>,
   pendingAfter: number | null = null,
 ): Tracks {
   const origin = timeline.origin
   const duration = timeline.durationMs
-  const left = (at: number) =>
-    origin === null || duration <= 0
-      ? 0
-      : Math.max(0, Math.min(100, ((at - origin) / duration) * 100))
+  const axis = timeline.axis ?? linearAxis(duration)
+  const left = (at: number) => (origin === null || duration <= 0 ? 0 : axis.place(at - origin))
 
   const calls = new Map<string, Call>()
   const gaps: GapMark[] = []
@@ -222,7 +222,7 @@ export function buildTracks(
       attemptID,
       sessionID: ordered.find((event) => event.sessionID)?.sessionID ?? null,
       callID: primary.kind === "worker-tool" ? (primary.callID ?? null) : nativeCallID(primary),
-      tool: ordered.find((event) => event.tool)?.tool ?? "Unknown tool",
+      tool: ordered.find((event) => event.tool)?.tool ?? "Tool",
       outcome: mergedOutcome(ordered, active),
       start: start?.at ?? null,
       end: end?.at ?? null,
