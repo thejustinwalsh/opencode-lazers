@@ -6,7 +6,10 @@ import type {
   SnapshotResponse,
 } from "../observability/contract.ts"
 import { ObservationSyncState } from "../observability/state.ts"
+import { createKept } from "./kept.ts"
 import type { RadarTransport } from "./transport.ts"
+
+const kept = createKept<{ radar?: RadarResponse; snapshot?: SnapshotResponse }>()
 
 export type RadarPanelData = {
   key: string
@@ -73,6 +76,11 @@ export class RadarPanelState {
 
   private update(change: Partial<RadarPanelData>) {
     this.data = { ...this.data, ...change }
+    if (this.data.radar || this.data.snapshot)
+      kept.set(this.data.key, {
+        ...(this.data.radar ? { radar: this.data.radar } : {}),
+        ...(this.data.snapshot ? { snapshot: this.data.snapshot } : {}),
+      })
     this.changed(this.data)
   }
 
@@ -95,7 +103,9 @@ export class RadarPanelState {
     const epoch = this.epoch
     const generation = this.sync.connect(projectID, scope)
     const signal = this.controller.signal
-    this.data = blank(key)
+    const previous = kept.get(key)
+    // Content shown before stays; the refresh below replaces it in place.
+    this.data = previous ? { ...blank(key), ...previous, loading: false } : blank(key)
     this.update({})
     void this.watch(epoch, generation, projectID, transport, signal)
     void this.refresh(epoch, generation, transport, signal)

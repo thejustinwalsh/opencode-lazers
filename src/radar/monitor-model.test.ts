@@ -3,17 +3,16 @@ import type { LiveRadarResponse } from "../observability/contract.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import {
   connectionStatus,
-  coverageGaps,
   formatAge,
   formatDuration,
-  lineView,
+  callRow,
+  formatTimer,
   monitorSegments,
   idleSentence,
   nothingRunning,
   connectionChip,
   clockTime,
   callStatusWord,
-  recentFlow,
   sessionActivity,
   sessionGroups,
   sessionModel,
@@ -180,11 +179,11 @@ test("session identity uses role, short task, assignment state and the observed 
   })
   expect(sessionTask(labelled)).toBe("LZ-99 · Resume a worker")
   expect(sessionTaskTitle(labelled)).toBe("Resume a worker")
-  expect(sessionState(value)).toBe("Running")
+  expect(sessionState(value)).toBe("running")
   expect(sessionState(session({ assignment: null, state: "idle", freshness: "stale" }))).toBe(
-    "Idle · stale",
+    "idle · stale",
   )
-  expect(sessionState(session({ availability: "archived" }))).toBe("Archived")
+  expect(sessionState(session({ availability: "archived" }))).toBe("archived")
   expect(sessionModel(live(), value)).toMatchObject({
     label: "gpt-6-luna · high",
     basis: "observed",
@@ -236,24 +235,18 @@ test("concurrent calls stay distinct with the latest finished call and observed 
   })
   const activity = sessionActivity(response, response.sessions[0]!)
   expect(activity.lines.map((line) => line.id)).toEqual(["call:read", "call:patch", "call:bash"])
-  const [read, patch, bash] = activity.lines.map(lineView)
+  const [read, patch, bash] = activity.lines.map(callRow)
   expect(read).toMatchObject({
-    label: "read completed",
+    tool: "read",
     current: false,
-    target: "src/a.ts",
-    extraTargets: 1,
+    argument: "src/a.ts +1",
   })
-  expect(patch).toMatchObject({
-    label: "patch running",
-    current: true,
-    target: null,
-    targetNote: "File targets partly recorded",
-  })
-  expect(bash).toMatchObject({ label: "bash starting", current: true, icon: "console" })
+  expect(patch).toMatchObject({ tool: "patch", current: true, argument: null })
+  expect(bash).toMatchObject({ tool: "bash", current: true, icon: "console" })
   expect(activity.lastActivityAt).toBe(5_000)
 })
 
-test("failures stay visible and busy sessions without a current call say so", () => {
+test("failures stay visible in the argument column; nothing is added under a busy session", () => {
   const failed = live({
     calls: [
       call({
@@ -264,15 +257,14 @@ test("failures stay visible and busy sessions without a current call say so", ()
     ],
   })
   const lines = sessionActivity(failed, failed.sessions[0]!).lines
-  expect(lines.map((line) => lineView(line).label)).toEqual([
-    "patch failed",
-    "Busy · no call in progress",
-  ])
-  expect(lineView(lines[0]!)).toMatchObject({
-    icon: "warning",
-    error: "Patch failed after the request; change is unknown.",
+  expect(lines.map((line) => line.id)).toEqual(["call:1"])
+  expect(callRow(lines[0]!)).toMatchObject({
+    tool: "patch",
+    failed: true,
+    argument: "Patch failed after the request; change is unknown.",
   })
-  expect(lineView(lines[1]!).selectable).toBe(false)
+  const quiet = live({ calls: [] })
+  expect(sessionActivity(quiet, quiet.sessions[0]!).lines).toEqual([])
 
   const idle = live({ sessions: [session({ state: "idle" })], calls: [call({})] })
   expect(sessionActivity(idle, idle.sessions[0]!).lines.map((line) => line.kind)).toEqual(["call"])
@@ -312,12 +304,10 @@ test("model phases and native-only tool phases describe sessions without runner 
     ],
   })
   const lines = sessionActivity(response, architect).lines
-  expect(lines.map((line) => [line.id, lineView(line).label])).toEqual([
-    ["flow-call:call-a", "Read completed"],
-    ["flow:step", "Model request"],
+  expect(lines.map((line) => [line.id, line.tool, line.status])).toEqual([
+    ["flow-call:call-a", "Read", "completed"],
   ])
   expect(lines[0]).toMatchObject({ startedAt: 5_000, endedAt: 5_500, target: null })
-  expect(recentFlow(response, 2).map((item) => item.id)).toEqual(["flow:step", "flow:tool-done"])
 })
 
 test("summary segments, coverage gaps and the three connection words", () => {
@@ -333,10 +323,7 @@ test("summary segments, coverage gaps and the three connection words", () => {
     monitorSegments(
       live({ ...response, coverage: { ...response.coverage, journalTruncated: true } }),
     ),
-  ).toEqual([
-    { count: 1, word: "running" },
-    { count: 1, word: "data gap" },
-  ])
+  ).toEqual([{ count: 1, word: "running" }])
   expect(
     monitorSegments(live({ ...response, workload: { queued: 6, needsYou: 1, failed: 1 } })),
   ).toEqual([
@@ -362,10 +349,6 @@ test("summary segments, coverage gaps and the three connection words", () => {
   ).toEqual([
     { count: 1, word: "running" },
     { count: 1, word: "verifying" },
-  ])
-  expect(coverageGaps(response)).toEqual([])
-  expect(coverageGaps(live({ coverage: { ...response.coverage, callsTruncated: true } }))).toEqual([
-    "calls",
   ])
 
   const data = (change: Partial<RadarMonitorData>): RadarMonitorData => ({
@@ -436,7 +419,7 @@ test("missing facts are omitted, never rendered as unknown", () => {
   )
   const toolless = live({ calls: [call({ tool: null })], sessions: [session()] })
   const lines = sessionActivity(toolless, session()).lines
-  expect(JSON.stringify(lines.map((line) => lineView(line)))).not.toMatch(/nknown|navailable/)
+  expect(JSON.stringify(lines.map((line) => callRow(line)))).not.toMatch(/nknown|navailable/)
 })
 
 test("durations and ages are compact and labelled", () => {
@@ -450,7 +433,7 @@ test("durations and ages are compact and labelled", () => {
   expect(formatAge(7_200_000)).toBe("2h ago")
 })
 
-test("active and assigned sessions lead; unavailable historical sessions are grouped apart", () => {
+test("active and assigned sessions lead; sessions without live data are not rows", () => {
   const response = live({
     sessions: [
       session({ sessionID: "ses-gone-1", state: "unknown", availability: "missing" }),
@@ -463,7 +446,6 @@ test("active and assigned sessions lead; unavailable historical sessions are gro
   })
   const groups = sessionGroups(response)
   expect(groups.leading).toEqual(["ses-assigned", "ses-busy", "ses-idle", "ses-unknown"])
-  expect(groups.unavailable).toEqual(["ses-gone-1", "ses-gone-2"])
   expect(groups.children.size).toBe(0)
   expect(monitorSegments(response)).toEqual([{ count: 2, word: "running" }])
 })
@@ -493,7 +475,7 @@ test("workers nest under their recorded parent; the Architect is only the fallba
     ],
   })
   const groups = sessionGroups(response)
-  expect(groups.leading).toEqual(["ses-orphan", "ses-arch"])
+  expect(groups.leading).toEqual(["ses-arch", "ses-orphan"])
   expect(groups.children.get("ses-arch")).toEqual(["ses-lead", "ses-legacy"])
   expect(groups.children.get("ses-lead")).toEqual(["ses-sub"])
   const loop = sessionGroups(
@@ -505,4 +487,22 @@ test("workers nest under their recorded parent; the Architect is only the fallba
     }),
   )
   expect(loop.leading.length).toBe(2)
+})
+
+test("the Architect leads even when idle, with busy workers nested beneath it", () => {
+  const response = live({
+    sessions: [
+      session({ sessionID: "ses-w1" }),
+      session({ sessionID: "ses-arch", isCurrentArchitect: true, state: "idle", assignment: null }),
+    ],
+  })
+  const groups = sessionGroups(response)
+  expect(groups.leading).toEqual(["ses-arch"])
+  expect(groups.children.get("ses-arch")).toEqual(["ses-w1"])
+})
+
+test("running calls count up as m:ss", () => {
+  expect(formatTimer(42_000)).toBe("0:42")
+  expect(formatTimer(125_400)).toBe("2:05")
+  expect(formatTimer(3_725_000)).toBe("1:02:05")
 })

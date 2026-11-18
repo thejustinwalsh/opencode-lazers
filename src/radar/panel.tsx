@@ -22,9 +22,6 @@ import { statechartLayout } from "./statechart.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
 import { radarLocationGuard, resolveRadarProject } from "./project.ts"
-import { RadarLayout } from "./layout-ipc.ts"
-import { RadarMapInspector, RadarMapView } from "./map-view.tsx"
-import { createRadarMapModel } from "./map-model.ts"
 import { RadarMonitorState } from "./monitor-state.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import { createRadarMonitorTransport } from "./monitor-transport.ts"
@@ -145,7 +142,6 @@ function RadarDiagnosticsPanel(
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
-  const radarLayout = ctx.main(RadarLayout)
   const [data, setData] = createSignal<RadarPanelData>({
     key: "",
     loading: true,
@@ -262,9 +258,6 @@ function RadarDiagnosticsPanel(
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const snapshot = () => visible()?.snapshot
   const radar = () => visible()?.radar
-  const mapModel = createMemo(() =>
-    radar() ? createRadarMapModel(radar()!, snapshot()) : undefined,
-  )
   const plan = () => {
     const currentSnapshot = snapshot()
     return currentSnapshot ? selectedPlan(currentSnapshot, prefs().planID) : undefined
@@ -398,10 +391,7 @@ function RadarDiagnosticsPanel(
       asOf(),
     )
   /** The inspector and its separator exist only while something is selected. */
-  const hasDetail = () =>
-    prefs().view === "map"
-      ? Boolean(mapModel() && prefs().selectedMapID)
-      : Boolean(chosenTransition() || chosenState() || missingSelection())
+  const hasDetail = () => Boolean(chosenTransition() || chosenState() || missingSelection())
   const currentPlanTransitions = () => transitions()
   const flowNode = () => node()
   const flowActiveState = () => {
@@ -467,7 +457,7 @@ function RadarDiagnosticsPanel(
     >
       <RadarHeader
         ui={Ui}
-        view={prefs().view === "flow" ? "flow" : "map"}
+        view="flow"
         onView={(view) => (view === "monitor" ? props.onBack() : save({ view }))}
         scope={scopeChoice()}
         onScope={changeScope}
@@ -539,104 +529,6 @@ function RadarDiagnosticsPanel(
               </div>
             </Show>
           )}
-        </Show>
-        <Show when={prefs().view === "map"}>
-          <Show
-            when={radar()}
-            fallback={
-              <Show when={status.view().kind === "ready"}>
-                <div class="lazers-radar-note">No operational Radar data is available.</div>
-              </Show>
-            }
-          >
-            {(operational) => (
-              <>
-                <details class="lazers-radar-map-freshness">
-                  <summary>
-                    {stale() ? "Last observed" : "Live"} ·{" "}
-                    {new Date(operational().observedAt).toLocaleTimeString([], {
-                      hour: "numeric",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })}{" "}
-                    · {operational().coverage.managedSessionCount} sessions
-                  </summary>
-                  <dl>
-                    <dt>Observed</dt>
-                    <dd>{operational().observedAt}</dd>
-                    <dt>Sources</dt>
-                    <dd>
-                      Runner {operational().freshness.runner} · inventory{" "}
-                      {operational().freshness.nativeInventory} · events{" "}
-                      {operational().freshness.nativeEvents}
-                    </dd>
-                    <dt>Sessions</dt>
-                    <dd>
-                      {operational().coverage.managedSessionCount} managed of{" "}
-                      {operational().coverage.sessionCount} scoped · unmanaged included{" "}
-                      {operational().coverage.includeUnmanagedSessions ? "yes" : "no"}
-                    </dd>
-                    <dt>Truncation</dt>
-                    <dd>
-                      {[
-                        operational().coverage.inventoryTruncated ? "sessions" : "",
-                        operational().coverage.workTruncated ? "work" : "",
-                        operational().coverage.progressTruncated ? "progress" : "",
-                        operational().coverage.routeTruncated ? "routes" : "",
-                        operational().coverage.toolTruncated ? "tools" : "",
-                        operational().coverage.edgeTruncated ? "relationships" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(", ") || "No projection truncation reported"}
-                    </dd>
-                    <dt>Boundary</dt>
-                    <dd>
-                      {operational().boundary.repositoryVersion} repository ·{" "}
-                      {operational().boundary.sourceRevision} source ·{" "}
-                      {operational().boundary.nativeRevision} native
-                    </dd>
-                  </dl>
-                </details>
-                <Show when={visible()?.snapshotError}>
-                  <div class="lazers-radar-note" role="status">
-                    Couldn't load flow detail.
-                  </div>
-                </Show>
-                <Show
-                  when={mapModel()}
-                  fallback={<div class="lazers-radar-note">No map records are available.</div>}
-                >
-                  {(model) => (
-                    <RadarMapView
-                      model={model()}
-                      scopeKey={expectedKey()}
-                      resynchronizing={Boolean(
-                        visible()?.resynchronizing || !props.session.server.connected,
-                      )}
-                      selectedID={prefs().selectedMapID}
-                      currentSessionID={props.session.id}
-                      onLayoutReady={setLayoutReadyKey}
-                      onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
-                      layout={radarLayout}
-                      monoFont={ctx.appearance.font("mono")}
-                    />
-                  )}
-                </Show>
-                <div class="lazers-radar-map-key" aria-label="Relationship type key">
-                  <span data-kind="architecture">Architecture</span>
-                  <span data-kind="dependency">Dependency</span>
-                  <span data-kind="assignment">Dispatch</span>
-                  <span data-kind="prompt">Prompt / delivery</span>
-                  <span data-kind="outcome">Outcome</span>
-                  <span data-kind="model-request">Model request</span>
-                  <span data-kind="model-response">Model response</span>
-                  <span data-kind="tool-call">Tool call</span>
-                  <span data-kind="tool-result">Tool result</span>
-                  <span data-kind="observation">Read</span>
-                </div>
-              </>
-            )}
-          </Show>
         </Show>
         <Show when={prefs().view !== "map"}>
           <Show
@@ -913,21 +805,6 @@ function RadarDiagnosticsPanel(
               })
           }}
         >
-          <Show when={prefs().view === "map"}>
-            <Show
-              when={mapModel()}
-              fallback={<div class="lazers-radar-note">Operational details are unavailable.</div>}
-            >
-              {(model) => (
-                <RadarMapInspector
-                  model={model()}
-                  selectedID={prefs().selectedMapID}
-                  onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
-                  monoFont={ctx.appearance.font("mono")}
-                />
-              )}
-            </Show>
-          </Show>
           <Show when={prefs().view !== "map"}>
             <Show
               when={chosenTransition() || chosenState()}
@@ -1066,7 +943,8 @@ function RadarLiveMonitorPanel(
     ctx: RadarContext
     radarLocation: RadarLocation
     navigation: RadarNavigation
-    onOpenDiagnostics: () => void
+    view: "monitor" | "map"
+    onView: (view: RadarViewChoice) => void
   },
 ) {
   const ctx = props.ctx
@@ -1187,10 +1065,8 @@ function RadarLiveMonitorPanel(
         <div class="lazers-radar lazers-radar-monitor" data-inspector="false">
           <RadarHeader
             ui={ctx.ui}
-            view="monitor"
-            onView={(view) => {
-              if (view !== "monitor") props.onOpenDiagnostics()
-            }}
+            view={props.view}
+            onView={props.onView}
             scope={prefs().scope === "session" ? "session" : "project"}
             onScope={changeScope}
             connection={connectionChip(location.error ? "offline" : "reconnecting")}
@@ -1205,6 +1081,7 @@ function RadarLiveMonitorPanel(
       <RadarMonitorView
         ui={ctx.ui}
         data={visibleData}
+        view={props.view}
         scope={scope()}
         anchorSessionID={props.session.id}
         includeUnmanagedSessions={prefs().includeUnmanagedSessions}
@@ -1221,11 +1098,7 @@ function RadarLiveMonitorPanel(
         }}
         onRefresh={() => state.refreshNow()}
         onLoadMoreHistory={() => state.loadMoreHistory()}
-        onView={(view: RadarViewChoice) => {
-          if (view === "monitor") return
-          save({ view })
-          props.onOpenDiagnostics()
-        }}
+        onView={props.onView}
         onOpenTasks={openTasks}
         onOpenWorker={(sessionID) =>
           ctx.tabs.open({ server: props.session.server.id, id: sessionID }, { focus: true })
@@ -1258,26 +1131,47 @@ function RadarLiveMonitorPanel(
 function RadarPanel(props: PanelProps & { ctx: RadarContext; navigation: RadarNavigation }) {
   const store = () => props.ctx.stores.radarView(props.session)
   const radarLocation = createRadarLocation(props)
-  const setDiagnostics = (open: boolean) =>
+  const projectKey = () => {
+    const value = radarLocation.current()
+    return value ? JSON.stringify([value.server, value.project]) : ""
+  }
+  const savedView = () => {
+    const key = projectKey()
+    const value = (key ? store().value?.projects[key] : undefined) ?? initialProject
+    return value[value.scope].view
+  }
+  /** Monitor, Map and Flow: one switch. Monitor and Map share the live panel; Flow keeps its own. */
+  const view = (): RadarViewChoice =>
+    store().value?.diagnostics === true ? (savedView() === "flow" ? "flow" : "map") : "monitor"
+  const changeView = (next: RadarViewChoice) => {
+    const key = projectKey()
     store().update((draft) => {
-      draft.diagnostics = open
+      draft.diagnostics = next !== "monitor"
+      if (next === "monitor" || !key) return
+      const value = draft.projects[key] ?? initialProject
+      const scope = value.scope
+      const changed = { ...value[scope], view: next }
+      draft.projects[key] =
+        scope === "session" ? { ...value, session: changed } : { ...value, project: changed }
     })
+  }
   return (
     <Show
-      when={store().value?.diagnostics === true}
+      when={view() === "flow"}
       fallback={
         <RadarLiveMonitorPanel
           {...props}
           radarLocation={radarLocation}
           navigation={props.navigation}
-          onOpenDiagnostics={() => setDiagnostics(true)}
+          view={view() === "map" ? "map" : "monitor"}
+          onView={changeView}
         />
       }
     >
       <RadarDiagnosticsPanel
         {...props}
         radarLocation={radarLocation}
-        onBack={() => setDiagnostics(false)}
+        onBack={() => changeView("monitor")}
       />
     </Show>
   )
