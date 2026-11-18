@@ -1552,3 +1552,33 @@ span.lazers-models-assignment-route {
   color: var(--text-weak);
   font-size: 12px;
 }
+
+.lazers-models-free {
+  margin-top: 6px;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+
+.lazers-models-free summary {
+  cursor: pointer;
+}
+
+.lazers-models-free-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-base);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lazers-models-free-row:hover,
+.lazers-models-free-row[aria-pressed="true"] {
+  background: var(--surface-base-hover);
+}

@@ -4,7 +4,13 @@ import type { ModelsController } from "./models-controller.ts"
 import { PanelStatus } from "../panel-status.tsx"
 import { ModelChart, RankingChart } from "./model-chart.tsx"
 import { AllModelsTable } from "./all-models-table.tsx"
-import { benchmarkSourceName, comparisonChartEmptyText, projectedRankRows } from "./chart-data.ts"
+import {
+  benchmarkSourceName,
+  comparisonChartEmptyText,
+  freeEntries,
+  projectedRankRows,
+  shortModelLabel,
+} from "./chart-data.ts"
 import {
   RANK_LOG_RATIO,
   SMALL_SAMPLE_TERMINAL_TASKS,
@@ -145,6 +151,8 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
   const [view, setView] = createSignal<"ranking" | "scatter">("ranking")
   const rows = createMemo(() => projectedRankRows(catalogEntries()))
   const scored = () => projectedPoints().length
+  // Models their source lists as free sit below the ranking, collapsed.
+  const freeModels = createMemo(() => freeEntries(catalogEntries()))
   // The scatter is a secondary view, offered only when enough models have a public score.
   const scatter = () => view() === "scatter" && scored() >= 5
   const selectedID = () => ctl.selectedEntryID()
@@ -237,6 +245,28 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
           backedLegend="From your runs"
           caption="List prices × your median tokens"
         />
+      </Show>
+      <Show when={freeModels().length > 0}>
+        <details class="lazers-models-free">
+          <summary>Free · {freeModels().length}</summary>
+          <For each={freeModels()}>
+            {(entry) => (
+              <button
+                type="button"
+                class="lazers-models-free-row"
+                aria-pressed={selectedID() === entry.id}
+                title={entry.label}
+                onClick={() => {
+                  revealDetails(ctl)
+                  ctl.pickEntryID(entry.id)
+                }}
+              >
+                <span>{shortModelLabel(entry.label)}</span>
+                <small>free</small>
+              </button>
+            )}
+          </For>
+        </details>
       </Show>
     </Show>
   )
@@ -457,6 +487,11 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
             <Show when={basis()}>
               {(text) => (
                 <p class="lazers-models-basis-line">Your median accepted task: {text()}</p>
+              )}
+            </Show>
+            <Show when={item().providers}>
+              {(providers) => (
+                <p class="lazers-models-source-meta">Available via {providers().join(", ")}</p>
               )}
             </Show>
             <Disclosure

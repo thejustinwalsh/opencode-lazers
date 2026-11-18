@@ -316,8 +316,9 @@ export type ChartMark = {
  * The best trade-off (`frontier`) is the Pareto set over cost per accepted task (lower),
  * tokens per accepted task (lower) and acceptance rate (higher), among observed points with at
  * least one accepted task (a partial cohort or a sample under
- * `SMALL_SAMPLE_TERMINAL_TASKS` is flagged "small sample", not excluded). Catalog references
- * are a different measure and never join it. The server's own frontier list is not used.
+ * `SMALL_SAMPLE_TERMINAL_TASKS` is flagged "small sample", not excluded) and the catalog
+ * references plotted beside them, whose acceptance rate is unknown and so does not separate
+ * them. The server's own frontier list is not used.
  */
 export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
   const marks = new Map<string, ChartMark>()
@@ -347,7 +348,12 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
       aria: comparisonChartReferenceText(reference),
     })
   }
-  const eligible: ChartMark[] = []
+  // A mark on a "per accepted task" plot is eligible for the best trade-off by having finite
+  // cost and token coordinates: a catalog reference (cost priced from observed tokens, often a
+  // range or a known subtotal) competes like an observed point, with acceptance unknown.
+  const eligible: ChartMark[] = [...marks.values()].filter(
+    (mark) => mark.accepted === undefined || mark.accepted > 0,
+  )
   for (const point of data.points) {
     if (!plottable(point)) continue
     const previous = marks.get(point.configurationID)
@@ -366,8 +372,11 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
       aria: comparisonChartPointText(point),
     }
     marks.set(point.configurationID, mark)
-    // Any point with an accepted task counts. A small sample is flagged, and a partial cohort
-    // or missing acceptance data is compared on the measures that exist, not excluded.
+    // An observed point replaces its reference of the same configuration. Any point with an
+    // accepted task counts: a small sample is flagged, and a partial cohort or missing acceptance
+    // data is compared on the measures that exist, not excluded.
+    const at = eligible.findIndex((item) => item.configurationID === mark.configurationID)
+    if (at >= 0) eligible.splice(at, 1)
     if (point.acceptedTaskCount > 0) eligible.push(mark)
   }
   const rate = (mark: ChartMark) =>
@@ -570,15 +579,41 @@ export function projectedChartPoints(entries: readonly CatalogEntry[]): ModelCha
  * The Projected ranking: every priced model with a projection, cheapest first. It needs no
  * second measure, so it exists whenever any source prices anything.
  */
+/**
+ * A model its price source lists as free: both rates published as zero (OpenRouter's `:free`
+ * variants). A published zero is real, so it is shown as "free", never as "$0", and kept out of
+ * the cost ranking where it would top every list.
+ */
+export const isFreeEntry = (entry: CatalogEntry) =>
+  entry.price !== null && entry.price.input === 0 && entry.price.output === 0
+
+/** The free models, listed apart from the ranking, by name. */
+export const freeEntries = (entries: readonly CatalogEntry[]) =>
+  entries.filter(isFreeEntry).toSorted((a, b) => a.label.localeCompare(b.label))
+
+/**
+ * The model name as a ranking row says it: no `Vendor: ` prefix (OpenRouter titles repeat the
+ * vendor the row's context already gives) and no routing suffix such as `(CLI)` or `(free)`.
+ * The tooltip keeps the full label.
+ */
+export function shortModelLabel(label: string) {
+  const unprefixed = label.replace(/^[^:()]{2,40}:\s+(?=\S)/, "")
+  const unsuffixed = unprefixed.replace(
+    /\s*\((?:CLI|API|free|batch|nitro|extended|online|latest)\)\s*$/i,
+    "",
+  )
+  return unsuffixed.trim() || label
+}
+
 export function projectedRankRows(entries: readonly CatalogEntry[]): RankingChartRow[] {
   return entries
-    .filter((entry) => entry.projection)
+    .filter((entry) => entry.projection && !isFreeEntry(entry))
     .toSorted((a, b) => a.projection!.usd - b.projection!.usd || a.label.localeCompare(b.label))
     .map((entry) => {
       const lines = projectedLines(entry)
       return {
         id: entry.id,
-        label: entry.label,
+        label: shortModelLabel(entry.label),
         value: entry.projection!.usd,
         backed: entry.observed !== null,
         score: entry.score,

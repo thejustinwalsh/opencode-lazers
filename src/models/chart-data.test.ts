@@ -111,7 +111,7 @@ test("without a terminal count the acceptance dimension is ignored, as before", 
   expect(ids(marks)).toEqual(["a"])
 })
 
-test("catalog references plot once, as a circle at the range midpoint, and never join the frontier", () => {
+test("catalog references plot once, at the range midpoint, and compete for the frontier on cost and tokens", () => {
   const range = reference("range", 18_000, {
     status: "conditional",
     rangeUSDPerAcceptedTask: { minimum: 0.35, maximum: 0.67 },
@@ -138,6 +138,42 @@ test("catalog references plot once, as a circle at the range midpoint, and never
   // The observed point wins over a reference for the same configuration.
   expect(byID.scalar).toMatchObject({ kind: "canonical", tokens: 9_000, amount: 0.4 })
   expect(byID.subtotal!.amount).toBe(0.1)
+  // The range reference is dominated by the observed scalar point (cheaper and leaner); the
+  // known-subtotal reference is the cheapest of all, so it is on the best trade-off.
+  expect(byID.subtotal!.frontier).toBe(true)
+})
+
+test("live Bug repair: the two plotted points are catalog references with no observed point, and both are on the frontier", () => {
+  // Real overview payload, kind = Bug repair: `points` is empty; `referenceEstimates` holds
+  // GPT-6 Luna (partial, known-subtotal range, 37 accepted tasks elsewhere) and GPT-6.1 Sol
+  // (conditional range, 1 accepted task).
+  const luna = reference("luna", 42_223_042.13513514, {
+    status: "partial",
+    acceptedTaskCount: 37,
+    knownSubtotalRangeUSDPerAcceptedTask: {
+      minimum: 0.6094882264864865,
+      maximum: 1.1685475475675675,
+    },
+  })
+  const sol = reference("sol", 19_075_619, {
+    status: "conditional",
+    acceptedTaskCount: 1,
+    rangeUSDPerAcceptedTask: { minimum: 2.7694044, maximum: 5.3262388 },
+  })
+  const marks = comparisonChartMarks({
+    points: [],
+    references: [luna, sol],
+    frontierConfigurationIDs: [],
+  })
+  expect(marks.map((mark) => [mark.configurationID, mark.frontier])).toEqual([
+    ["luna", true],
+    ["sol", true],
+  ])
+  const drawn = observedChartPoints(
+    { points: [], references: [luna, sol], frontierConfigurationIDs: [] },
+    "OpenRouter",
+  )
+  expect(drawn.every((entry) => entry.frontier)).toBe(true)
 })
 
 test("an observed point's tooltip names model, cost, tokens, accepted n of m and source", () => {
