@@ -12,8 +12,8 @@ const vite = await createServer({
 })
 afterAll(() => vite.close())
 const { KnownUsageMarketScenarioCard } = (await vite.ssrLoadModule(
-  "/src/models/comparison-panel.tsx",
-)) as typeof import("../../src/models/comparison-panel.tsx")
+  "/src/models/known-usage-card.tsx",
+)) as typeof import("../../src/models/known-usage-card.tsx")
 
 const renderedText = (html: string) => html.replace(/<[^>]*>/g, "")
 
