@@ -1033,7 +1033,7 @@ test("price-source settings persist an ordered whole-model policy without changi
       status: "conflict",
       expectedRevision: 0,
       currentRevision: 2,
-      current: { sources: ["opencode"] },
+      current: { sources: ["opencode", "models-dev"] },
     })
     expect(harness.storageCalls.set).toBe(2)
     expect(
@@ -1052,7 +1052,7 @@ test("price-source settings persist an ordered whole-model policy without changi
     reopenedRepository.close()
     expect(
       await Effect.runPromise(reopened.methods().priceSources({ sessionID: "ses-native" })),
-    ).toMatchObject({ policy: { revision: 2, sources: ["opencode"] } })
+    ).toMatchObject({ policy: { revision: 2, sources: ["opencode", "models-dev"] } })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

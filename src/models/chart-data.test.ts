@@ -85,12 +85,12 @@ test("a small sample still counts toward the frontier and is flagged, not exclud
   expect(thin!.tooltip).toContain("small sample · 1 of 1")
   expect(steady!.tooltip.join(" ")).not.toContain("small sample")
   expect(thin!.frontier).toBe(true)
-  // A partial cohort is not eligible either.
+  // A partial cohort is compared like any other: it is flagged elsewhere, not excluded here.
   const partial = comparisonChartMarks({
     points: [point("partial", 1e6, 0.1, 3, 3, { partial: true }), point("whole", 2e6, 0.2, 3, 3)],
     frontierConfigurationIDs: [],
   })
-  expect(ids(partial)).toEqual(["whole"])
+  expect(ids(partial)).toEqual(["partial"])
   // The server's own frontier list is not used.
   expect(
     ids(
@@ -254,4 +254,37 @@ test("the projected ranking lists every priced model cheapest first, scored or n
   expect(rows.map((row) => row.backed)).toEqual([false, true, false])
   expect(rows[0]!.tooltip).toContain("Projected ≈$0.4 per accepted task")
   expect(projectedRankRows([])).toEqual([])
+})
+
+test("live Bug repair points: partial cohorts with no terminal count are both on the frontier", () => {
+  // The real overview payload for kind = Bug repair: neither point carries `terminalTaskCount`
+  // and both cohorts are partial. Sol is leaner in tokens, Luna is cheaper: neither dominates.
+  const marks = comparisonChartMarks({
+    points: [
+      point("gpt-6.1-sol default", 19e6, 4.05, 1, undefined, { partial: true }),
+      point("gpt-6-luna max", 42e6, 0.6, 1, undefined, { partial: true }),
+    ],
+    frontierConfigurationIDs: [],
+  })
+  expect(ids(marks)).toEqual(["gpt-6.1-sol default", "gpt-6-luna max"])
+  const drawn = observedChartPoints(
+    {
+      points: [
+        point("gpt-6.1-sol default", 19e6, 4.05, 1, undefined, { partial: true }),
+        point("gpt-6-luna max", 42e6, 0.6, 1, undefined, { partial: true }),
+      ],
+      frontierConfigurationIDs: [],
+    },
+    "OpenRouter",
+  )
+  expect(drawn.every((entry) => entry.frontier)).toBe(true)
+  // A point with no accepted task is still not eligible.
+  expect(
+    ids(
+      comparisonChartMarks({
+        points: [point("none", 1, 1, 0, undefined)],
+        frontierConfigurationIDs: [],
+      }),
+    ),
+  ).toEqual([])
 })

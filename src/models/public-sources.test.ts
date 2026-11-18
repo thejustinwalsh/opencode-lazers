@@ -451,3 +451,33 @@ test("SWE-bench Verified leads while it covers most of what the best covered ben
   // 5 of 10: another benchmark clearly covers more, so it ranks the set.
   expect(chooseScoreBasis(set(5, 10)).basis).toMatchObject({ benchmarkID: "deepswe" })
 })
+
+test("a dated snapshot and its latest alias are one catalog entry; versions keep their own price", () => {
+  const set = [
+    candidateWith("anthropic", "claude-opus-4-5-20251101", { dev: { input: 5, output: 25 } }),
+    candidateWith("anthropic", "claude-opus-4-5", { dev: { input: 5, output: 25 } }),
+    candidateWith("anthropic", "claude-opus-4-1", { dev: { input: 15, output: 75 } }),
+    candidateWith("anthropic", "claude-opus-4-6", { dev: { input: 5, output: 25 } }),
+  ]
+  const { entries } = buildCatalog({
+    candidates: set,
+    priceSources: ["models-dev"],
+    sourceDates: dates,
+    profile,
+    observed: new Map(),
+    routed: [{ providerID: "anthropic", modelID: "claude-opus-4-5-20251101" }],
+    label: (route) => route.modelID,
+  })
+  expect(entries.map((entry) => entry.route.modelID).sort()).toEqual([
+    "claude-opus-4-1",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+  ])
+  // The routed dated id joined the undated alias's entry.
+  expect(entries.find((entry) => entry.route.modelID === "claude-opus-4-5")!.tags).toContain(
+    "routed",
+  )
+  // 4.1 lists at three times 4.5's rate: no version borrows a sibling's price.
+  const usd = (id: string) => entries.find((entry) => entry.route.modelID === id)!.projection!.usd
+  expect(usd("claude-opus-4-1")).toBeCloseTo(usd("claude-opus-4-5") * 3, 6)
+})

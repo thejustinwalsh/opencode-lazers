@@ -314,8 +314,8 @@ export type ChartMark = {
  * the tooltip and the selection summary, never drawn as whiskers.
  *
  * The best trade-off (`frontier`) is the Pareto set over cost per accepted task (lower),
- * tokens per accepted task (lower) and acceptance rate (higher), among observed points with a
- * complete cohort and at least one accepted task (a sample under
+ * tokens per accepted task (lower) and acceptance rate (higher), among observed points with at
+ * least one accepted task (a partial cohort or a sample under
  * `SMALL_SAMPLE_TERMINAL_TASKS` is flagged "small sample", not excluded). Catalog references
  * are a different measure and never join it. The server's own frontier list is not used.
  */
@@ -366,8 +366,9 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
       aria: comparisonChartPointText(point),
     }
     marks.set(point.configurationID, mark)
-    // Any complete cohort with an accepted task counts; a small sample is flagged, not excluded.
-    if (!point.partial) eligible.push(mark)
+    // Any point with an accepted task counts. A small sample is flagged, and a partial cohort
+    // or missing acceptance data is compared on the measures that exist, not excluded.
+    if (point.acceptedTaskCount > 0) eligible.push(mark)
   }
   const rate = (mark: ChartMark) =>
     mark.terminal && mark.accepted !== undefined ? mark.accepted / mark.terminal : null

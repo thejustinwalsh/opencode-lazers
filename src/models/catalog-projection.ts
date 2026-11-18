@@ -3,7 +3,7 @@ import type { BenchmarkPrice, BenchmarkRoute, BenchmarkSourceDates } from "./ben
 import { paretoFrontier } from "./chart-layout.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
-import { createModelIndex, vendorSlug } from "./name-identity.ts"
+import { createModelIndex, parseModelName, vendorSlug } from "./name-identity.ts"
 import { chooseScoreBasis, scoreOn } from "./public-score.ts"
 import type { ScoreBasis } from "./public-score.ts"
 
@@ -239,10 +239,33 @@ export function buildCatalog(input: CatalogInput): {
   entries: CatalogEntry[]
   summary: CatalogSummary
 } {
-  const groups = new Map<string, ModelCandidate[]>()
+  const routeGroups = new Map<string, ModelCandidate[]>()
   for (const candidate of input.candidates) {
     const key = routeKey(candidate.identity)
-    groups.set(key, [...(groups.get(key) ?? []), candidate])
+    routeGroups.set(key, [...(routeGroups.get(key) ?? []), candidate])
+  }
+  // A dated snapshot and its `latest` alias (`claude-opus-4-5-20251101`, `claude-opus-4-5`) are
+  // one model under one provider: one entry, spoken for by the undated alias, else the newest.
+  const sameModel = new Map<string, Array<{ key: string; id: string }>>()
+  for (const [key, group] of routeGroups) {
+    const { providerID, modelID } = group[0]!.identity
+    const identity = parseModelName(modelID, {
+      vendor: vendorSlug(providerID) ? providerID : null,
+    })
+    const alias = `${providerID}\u0000${identity.key}`
+    sameModel.set(alias, [...(sameModel.get(alias) ?? []), { key, id: modelID }])
+  }
+  const aliasOf = new Map<string, string>()
+  const groups = new Map<string, ModelCandidate[]>()
+  for (const members of sameModel.values()) {
+    const chosen = members.toSorted((a, b) => {
+      const left = parseModelName(a.id).date
+      const right = parseModelName(b.id).date
+      if ((left === null) !== (right === null)) return left === null ? -1 : 1
+      return (right ?? "").localeCompare(left ?? "") || a.id.length - b.id.length
+    })[0]!
+    groups.set(chosen.key, routeGroups.get(chosen.key)!)
+    for (const member of members) aliasOf.set(member.key, chosen.key)
   }
   type Base = {
     key: string
@@ -339,7 +362,8 @@ export function buildCatalog(input: CatalogInput): {
     }),
   )
   const joinedKey = (route: BenchmarkRoute) => {
-    const key = routeKey(route)
+    const own = routeKey(route)
+    const key = aliasOf.get(own) ?? own
     if (bases.has(key)) return key
     const result = catalogIndex.resolve(route.modelID, {
       vendor: vendorSlug(route.providerID) ? route.providerID : null,
