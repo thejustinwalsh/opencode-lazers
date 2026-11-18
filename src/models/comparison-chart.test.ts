@@ -418,6 +418,29 @@ test("responsive layout budgets axis ticks and margins for width, height, and in
   expect(wideAxisOptions.yAxis.name).toBe("USD / accepted task")
 })
 
+test("narrow plots keep at most three y ticks and wide plots keep more", () => {
+  const narrow = comparisonChartResponsiveLayout(360, 420, 12)
+  const wide = comparisonChartResponsiveLayout(800, 420, 12)
+  expect(narrow.ySplitNumber).toBeLessThanOrEqual(3)
+  expect(wide.ySplitNumber).toBeGreaterThan(3)
+})
+
+test("the selected point gets a halo and the others do not", () => {
+  const option = comparisonChartOptions(
+    {
+      points,
+      frontierConfigurationIDs: [],
+      selectedConfigurationID: points[0]!.configurationID,
+    },
+    theme,
+  )
+  const data = option.series[0]!.data.filter((datum) => !Array.isArray(datum)) as Array<{
+    itemStyle: { shadowBlur?: number }
+  }>
+  expect(data[0]?.itemStyle.shadowBlur).toBeGreaterThan(0)
+  expect(data[1]?.itemStyle.shadowBlur).toBeUndefined()
+})
+
 test("selected point and every reference amount kind receive readable identity labels", () => {
   const selectedPoint = {
     ...points[0]!,

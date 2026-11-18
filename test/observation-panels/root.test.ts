@@ -2245,17 +2245,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         .find((button) => button.dataset.configurationId === CONFIG_SINGLE)
         ?.getAttribute("aria-label"),
     ).toContain("Not plotted")
-    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Observed",
-    )
-    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Catalog",
-    )
-    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Range",
-    )
-    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Lower bound",
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toBe(
+      "Best trade-offOther",
     )
     expect(
       initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
@@ -2945,9 +2936,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ) !== null,
     )
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
-    expect(
-      containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent,
-    ).toContain("Lower bound")
+    expect(containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent).toBe(
+      "Other",
+    )
     const unknownPriceName = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
     )!

@@ -767,25 +767,8 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(host.getAttribute("aria-label")).toContain("OpenRouter model catalog scalar reference")
   expect(host.getAttribute("aria-label")).toContain("conditional range")
   expect(host.getAttribute("aria-label")).toContain("remainder unknown")
-  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Catalog",
-  )
-  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Range",
-  )
-  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Lower bound",
-  )
-  expect(
-    container
-      .querySelector("[aria-label='Chart mark legend']")
-      ?.querySelector("[aria-label='Estimate from catalog prices']"),
-  ).not.toBeNull()
-  expect(
-    container
-      .querySelector("[aria-label='Chart mark legend']")
-      ?.querySelector("[aria-label='Lower bound; some usage has no price']"),
-  ).not.toBeNull()
+  // The legend names two kinds of mark; catalog, range and lower-bound detail lives in the table.
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toBe("Other")
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).not.toContain(
     "Canonical actual-cohort",
   )
@@ -1014,45 +997,29 @@ test("selected Luna ranges use readable model-effort labels and retain exact rou
   }
 })
 
-test("rendered lower-bound legend uses only the supplied scalar and range keys", async () => {
+test("the legend names only Best trade-off and Other", async () => {
+  const container = dom.document.createElement("main")
+  dom.document.body.append(container)
   const scalar = reference("legend-scalar", "partial", 12_000)
-  const range = pricedRangeReference("legend-range", 24_000)
-  const cases = [
-    { references: [scalar], scalarKey: 1, rangeKey: 0 },
-    { references: [range], scalarKey: 0, rangeKey: 1 },
-    { references: [scalar, range], scalarKey: 1, rangeKey: 1 },
-  ]
-
-  for (const entry of cases) {
-    const container = dom.document.createElement("main")
-    dom.document.body.append(container)
-    const dispose = browser.render(
-      () =>
-        browser.createComponent(browser.ComparisonChart, {
-          points: [],
-          references: entry.references,
-          frontierConfigurationIDs: [],
-          selectedConfigurationID: null,
-          theme,
-          onSelect: () => {},
-        }),
-      container as unknown as HTMLElement,
-    )
-    cleanups.push(dispose)
-    await until(() => container.querySelector("[aria-label='Chart mark legend']") !== null)
-    const legend = container.querySelector("[aria-label='Chart mark legend']")!
-    expect(legend.textContent).toContain("Lower bound")
-    expect(
-      legend.querySelector("[aria-label='Lower bound; some usage has no price']"),
-    ).not.toBeNull()
-    expect(legend.querySelectorAll(".lazers-models-chart-key-subtotal")).toHaveLength(
-      entry.scalarKey,
-    )
-    expect(legend.querySelectorAll(".lazers-models-chart-key-subtotal-range")).toHaveLength(
-      entry.rangeKey,
-    )
-    expect(legend.querySelectorAll("li")).toHaveLength(1)
-  }
+  const dispose = browser.render(
+    () =>
+      browser.createComponent(browser.ComparisonChart, {
+        points: [],
+        references: [scalar],
+        frontierConfigurationIDs: [],
+        selectedConfigurationID: null,
+        theme,
+        onSelect: () => {},
+      }),
+    container as unknown as HTMLElement,
+  )
+  cleanups.push(dispose)
+  await until(() => container.querySelector("[aria-label='Chart mark legend']") !== null)
+  const legend = container.querySelector("[aria-label='Chart mark legend']")!
+  expect([...legend.querySelectorAll("li")].map((item) => item.textContent?.trim())).toEqual([
+    "Other",
+  ])
+  expect(legend.textContent).not.toContain("Lower bound")
 })
 
 test("rendered ECharts resize recomputes axis spacing for 330–450px and wide hosts at larger fonts", async () => {
@@ -1568,7 +1535,6 @@ test("benchmark baseline renders its own units, labels the source and travels by
         get selectedID() {
           return selected()
         },
-        observedLabel: "Observed for UI",
         emptyText: "No benchmark",
         theme,
         onSelect: (id: string) => {
@@ -1629,9 +1595,8 @@ test("benchmark baseline renders its own units, labels the source and travels by
   expect(host.textContent).toContain("Benchmark frontier")
 
   const legend = container.querySelector("[aria-label='Chart mark legend']")!
-  expect(legend.textContent).toContain("Observed for UI")
-  expect(legend.textContent).toContain("Benchmark only")
-  expect(legend.textContent).toContain("Frontier")
+  expect(legend.textContent).toContain("Best trade-off")
+  expect(legend.textContent).toContain("Other")
   expect(container.textContent).toContain(
     "Benchmark frontier, lowest list price for each higher Coding Index: Mini, Max.",
   )

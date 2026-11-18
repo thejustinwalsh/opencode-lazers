@@ -6,6 +6,7 @@ import type { EChartsCoreOption, EChartsType } from "echarts/core"
 import { LabelLayout } from "echarts/features"
 import { SVGRenderer } from "echarts/renderers"
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount } from "solid-js"
+import { Portal } from "solid-js/web"
 import type { JSX } from "solid-js"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
@@ -77,6 +78,8 @@ export interface ComparisonChartProps extends ComparisonChartData {
   appearanceVersion?: unknown
   /** Shown under the empty-state text, e.g. a switch to another comparison. */
   emptyAction?: JSX.Element
+  /** Where the "Chart data as a table" disclosure renders; inline until the mount exists. */
+  dataMount?: () => HTMLElement | undefined
 }
 
 const money = new Intl.NumberFormat("en-US", {
@@ -218,7 +221,8 @@ export function comparisonChartResponsiveLayout(
     fontSize,
     grid,
     xSplitNumber: clamp(Math.floor(plotWidth / (fontSize * 4.4)), 2, 8),
-    ySplitNumber: clamp(Math.floor(plotHeight / (fontSize * 2.5)), 2, 6),
+    // Below ~420 px the y labels would collide, so keep at most three.
+    ySplitNumber: clamp(Math.floor(plotHeight / (fontSize * 2.5)), 2, safeWidth < 420 ? 3 : 6),
   }
 }
 
@@ -679,6 +683,7 @@ export function comparisonChartOptions(
               color: selected ? theme.accent : theme.text,
               borderColor: selected ? theme.text : theme.accent,
               borderWidth: selected ? 2 : 1,
+              ...(selected ? { shadowBlur: 12, shadowColor: theme.accent } : {}),
             },
             label: {
               // Narrow plots keep only frontier labels; the rest stay on tooltip and keyboard.
@@ -1018,17 +1023,11 @@ export function ComparisonChart(props: ComparisonChartProps) {
   }
   const hasFrontierPoint = () =>
     props.points.some((point) => props.frontierConfigurationIDs.includes(point.configurationID))
-  const hasSubtotal = () =>
-    (props.references ?? []).some(
-      (reference) =>
-        referenceIsPlottable(reference) && referenceAmount(reference.estimate)?.kind === "subtotal",
-    )
-  const hasSubtotalRange = () =>
-    (props.references ?? []).some(
-      (reference) =>
-        referenceIsPlottable(reference) &&
-        referenceAmount(reference.estimate)?.kind === "subtotal-range",
-    )
+  const hasOtherMark = () =>
+    props.points.some(
+      (point) =>
+        plottable(point) && !props.frontierConfigurationIDs.includes(point.configurationID),
+    ) || (props.references ?? []).some(referenceIsPlottable)
 
   createEffect(() => {
     // Subscribe before onMount supplies the non-reactive adapter. Reading props only
@@ -1137,106 +1136,71 @@ export function ComparisonChart(props: ComparisonChartProps) {
         aria-label="Chart mark legend"
         hidden={empty()}
       >
-        <Show when={props.points.some(plottable)}>
-          <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-canonical"
-              aria-hidden="true"
-            />
-            Observed
-          </li>
-        </Show>
         <Show when={hasFrontierPoint()}>
           <li>
             <span
               class="lazers-models-chart-key lazers-models-chart-key-frontier"
               aria-hidden="true"
             />
-            Frontier
+            Best trade-off
           </li>
         </Show>
-        <Show
-          when={(props.references ?? []).some(
-            (reference) => reference.estimate.status === "exact" && referenceIsPlottable(reference),
-          )}
-        >
-          <li aria-label="Estimate from catalog prices" title="Estimate from catalog prices">
+        <Show when={hasOtherMark()}>
+          <li>
             <span
-              class="lazers-models-chart-key lazers-models-chart-key-reference"
+              class="lazers-models-chart-key lazers-models-chart-key-canonical"
               aria-hidden="true"
             />
-            Catalog
-          </li>
-        </Show>
-        <Show
-          when={(props.references ?? []).some(
-            (reference) =>
-              reference.estimate.status === "conditional" && referenceIsPlottable(reference),
-          )}
-        >
-          <li aria-label="Conditional range" title="Conditional range">
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-range"
-              aria-hidden="true"
-            />
-            Range
-          </li>
-        </Show>
-        <Show when={hasSubtotal() || hasSubtotalRange()}>
-          <li
-            aria-label="Lower bound; some usage has no price"
-            title="Lower bound; some usage has no price"
-          >
-            <Show when={hasSubtotal()}>
-              <span
-                class="lazers-models-chart-key lazers-models-chart-key-subtotal"
-                aria-hidden="true"
-              />
-            </Show>
-            <Show when={hasSubtotalRange()}>
-              <span
-                class="lazers-models-chart-key lazers-models-chart-key-subtotal-range"
-                aria-hidden="true"
-              />
-            </Show>
-            Lower bound
+            Other
           </li>
         </Show>
       </ul>
-      <details class="lazers-models-comparison-chart-data">
-        <summary>Chart data</summary>
-        <ul>
-          <For each={chartChoices()}>
-            {([configurationID, choice]) => {
-              const descriptions = [
-                ...(choice.point ? [comparisonChartPointText(choice.point)] : []),
-                ...(choice.reference ? [comparisonChartReferenceText(choice.reference)] : []),
-                ...(choice.reference && !referenceIsPlottable(choice.reference)
-                  ? [
-                      "Not plotted: a numeric actual token coordinate or per-task amount is missing.",
-                    ]
-                  : []),
-              ]
-              const text = descriptions.join(" ")
-              const visible = comparisonChartChoiceSummary(choice)
-              return (
-                <li>
-                  <button
-                    type="button"
-                    data-configuration-id={configurationID}
-                    aria-pressed={props.selectedConfigurationID === configurationID}
-                    aria-label={`Select ${text}`}
-                    title={text}
-                    onClick={() => props.onSelect(configurationID)}
-                  >
-                    {visible}
-                  </button>
-                </li>
-              )
-            }}
-          </For>
-        </ul>
-      </details>
+      {(() => {
+        const data = (
+          <details class="lazers-models-disclosure lazers-models-comparison-chart-data">
+            <summary>
+              <span>Chart data as a table</span>
+              <span class="lazers-models-disclosure-hint">{chartChoices().length} models</span>
+            </summary>
+            <ul>
+              <For each={chartChoices()}>
+                {([configurationID, choice]) => {
+                  const descriptions = [
+                    ...(choice.point ? [comparisonChartPointText(choice.point)] : []),
+                    ...(choice.reference ? [comparisonChartReferenceText(choice.reference)] : []),
+                    ...(choice.reference && !referenceIsPlottable(choice.reference)
+                      ? [
+                          "Not plotted: a numeric actual token coordinate or per-task amount is missing.",
+                        ]
+                      : []),
+                  ]
+                  const text = descriptions.join(" ")
+                  const visible = comparisonChartChoiceSummary(choice)
+                  return (
+                    <li>
+                      <button
+                        type="button"
+                        data-configuration-id={configurationID}
+                        aria-pressed={props.selectedConfigurationID === configurationID}
+                        aria-label={`Select ${text}`}
+                        title={text}
+                        onClick={() => props.onSelect(configurationID)}
+                      >
+                        {visible}
+                      </button>
+                    </li>
+                  )
+                }}
+              </For>
+            </ul>
+          </details>
+        )
+        return (
+          <Show when={props.dataMount?.()} fallback={data}>
+            {(mount) => <Portal mount={mount()}>{data}</Portal>}
+          </Show>
+        )
+      })()}
     </div>
   )
 }

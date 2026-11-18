@@ -214,7 +214,6 @@ export function CompareTop(props: { ctl: ModelsController }) {
     ctx,
     decisionChartPoints,
     decisionChartReferences,
-    observedScopeLabel,
     refreshAll,
     sourceWarning,
     status,
@@ -315,7 +314,6 @@ export function CompareTop(props: { ctl: ModelsController }) {
                 gaps={baseline()?.gaps ?? []}
                 selectedID={selectedBenchmark()?.id ?? null}
                 onSelect={(candidateID) => state.selectCandidate(candidateID)}
-                observedLabel={observedScopeLabel()}
                 emptyText={benchmarkEmptyText()}
                 appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
                 monoFontFamily={ctx.appearance.font("mono")}
