@@ -1185,6 +1185,11 @@ export async function inspectTrajectory(
         : {}),
       revision: task.revision,
       status: safeText(task.status, stats, 80),
+      // The task's current recorded lifecycle state (its node in the latest plan), which is what
+      // Tasks shows. `status` above is the proposal's own and stays "submitted" after acceptance.
+      ...(rawPlans.at(-1)
+        ? { recordedState: safeText(rawPlans.at(-1)!.node.state, stats, 80) }
+        : {}),
       createdAt: safeText(task.createdAt, stats, 128),
       projectID: safeText(task.provenance.projectID, stats, 128),
       sourceCommit:

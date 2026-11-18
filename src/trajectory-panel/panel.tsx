@@ -15,7 +15,7 @@ import {
 } from "solid-js"
 import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
-import { rulerLabels, slowSeconds } from "./panel-layout.ts"
+import { endPadding, rulerLabels, slowSeconds } from "./panel-layout.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { PanelIcon } from "./icons.tsx"
@@ -45,6 +45,7 @@ import {
   isActiveAttemptState,
   settledHistory,
   compactCount,
+  currentTaskState,
   sourceName,
   sourceReferences,
 } from "./projection.ts"
@@ -881,7 +882,7 @@ function PanelView(
     const duration = attempt ? attemptDuration(attempt, capturedAt()) : null
     return duration ? { text: durationText(duration.ms), open: duration.open } : null
   }
-  const taskStatus = () => report()?.task.status ?? ""
+  const taskStatus = () => (report() ? currentTaskState(report()!) : "")
   /** The task reference from Tasks or Radar; never a raw id. */
   const reference = () =>
     report()?.task.reference ??
@@ -1476,7 +1477,12 @@ function PanelView(
                       timelineScroll = element
                     }}
                   >
-                    <div class="lazers-trajectory-plot">
+                    <div
+                      class="lazers-trajectory-plot"
+                      style={{
+                        "--trajectory-end": `${endPadding((timeline()?.ticks ?? []).map((tick) => tick.label))}px`,
+                      }}
+                    >
                       <div class="lazers-trajectory-axis" aria-hidden="true">
                         <span class="lazers-trajectory-label-cell" />
                         <div
