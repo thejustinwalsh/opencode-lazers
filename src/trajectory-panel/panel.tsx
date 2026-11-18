@@ -688,7 +688,10 @@ function PanelView(
   })
   const chooseCheck = (item: { check: CheckTimeline }) => {
     const detailed = selectionForTimelineCheck(item.check)
-    if (detailed) state.selectCheck(checkKey(detailed))
+    if (detailed) {
+      revealDetails()
+      state.selectCheck(checkKey(detailed))
+    }
   }
   const plotPx = () => axisWidth() || 240
   const toolGlyphs = createMemo(() =>
@@ -967,6 +970,18 @@ function PanelView(
   const presentation = () => taskStatePresentation(taskStatus())
   const hasTask = () =>
     Boolean(currentData()?.taskID || prefs().target?.taskID || prefs().selectedTaskID)
+  /** A person picked something on the timeline: open the details pane (it keeps its size). */
+  const revealDetails = () => {
+    if (!storedState({ open: prefs().open }).open) save({ open: true })
+  }
+  const chooseEvent = (id: string) => {
+    revealDetails()
+    state.selectEvent(id)
+  }
+  const chooseAttempt = (id: string) => {
+    revealDetails()
+    state.selectAttempt(id)
+  }
   const details = createMemo(() => {
     const view = prefs()
     return storedState({ open: view.open, size: view.size ?? sizeFromLegacySplit(view.split) })
@@ -1570,7 +1585,7 @@ function PanelView(
                           () =>
                             (timeline()?.attempts ?? []).map((lane) => ({ id: lane.attempt.id })),
                           activeAttempt,
-                          (mark) => state.selectAttempt(mark.id),
+                          (mark) => chooseAttempt(mark.id),
                         )}
                       >
                         <For each={attemptIDs()}>
@@ -1597,7 +1612,7 @@ function PanelView(
                                 tabIndex={activeAttempt() === lane().attempt.id ? 0 : -1}
                                 aria-label={`Attempt ${lane().attempt.number}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
                                 title={basisText(lane().attempt.timingBasis)}
-                                onClick={() => state.selectAttempt(lane().attempt.id)}
+                                onClick={() => chooseAttempt(lane().attempt.id)}
                               >
                                 <span class="lazers-trajectory-label-cell lazers-trajectory-attempt-label">
                                   <span class="lazers-trajectory-lane-name">Attempt</span>
@@ -1652,9 +1667,9 @@ function PanelView(
                           aria-label={`Tool calls, ${tracks()?.tools.length ?? 0} placed${tracks()?.gaps.length ? `, ${tracks()!.gaps.length} gaps` : ""}`}
                           aria-orientation="horizontal"
                           onKeyDown={laneKeyDown(laneMarks, activeTool, (mark) =>
-                            state.selectEvent(mark.id),
+                            chooseEvent(mark.id),
                           )}
-                          onClick={laneClick(laneMarks, (mark) => state.selectEvent(mark.id))}
+                          onClick={laneClick(laneMarks, (mark) => chooseEvent(mark.id))}
                         >
                           <Glyphs glyphs={toolGlyphs()} />
                           <Index each={laneMarks()}>
@@ -1713,7 +1728,7 @@ function PanelView(
                                       ? `${item().width}%`
                                       : undefined,
                                   }}
-                                  onClick={() => state.selectEvent(item().id)}
+                                  onClick={() => chooseEvent(item().id)}
                                 />
                               )
                             }}
@@ -1735,11 +1750,11 @@ function PanelView(
                           onKeyDown={laneKeyDown(
                             () => tracks()?.files ?? [],
                             activeFile,
-                            (mark: FileMark) => state.selectEvent(mark.id),
+                            (mark: FileMark) => chooseEvent(mark.id),
                           )}
                           onClick={laneClick(
                             () => tracks()?.files ?? [],
-                            (mark) => state.selectEvent(mark.id),
+                            (mark) => chooseEvent(mark.id),
                           )}
                         >
                           <Glyphs glyphs={fileGlyphs()} />
@@ -1769,7 +1784,7 @@ function PanelView(
                                   .filter(Boolean)
                                   .join(" · ")}
                                 style={{ left: `${mark().left}%` }}
-                                onClick={() => state.selectEvent(mark().id)}
+                                onClick={() => chooseEvent(mark().id)}
                               />
                             )}
                           </Index>
@@ -2508,7 +2523,7 @@ function PanelView(
                               currentData()?.selection?.kind === "event" &&
                               currentData()?.selection?.id === event.id
                             }
-                            onClick={() => state.selectEvent(event.id)}
+                            onClick={() => chooseEvent(event.id)}
                           >
                             <span class="lazers-trajectory-event-title">{eventTitle(event)}</span>
                             <time>{eventTime(event)}</time>
@@ -2535,7 +2550,7 @@ function PanelView(
                                 currentData()?.selection?.kind === "event" &&
                                 currentData()?.selection?.id === event.id
                               }
-                              onClick={() => state.selectEvent(event.id)}
+                              onClick={() => chooseEvent(event.id)}
                             >
                               <span class="lazers-trajectory-event-title">{eventTitle(event)}</span>
                               <time>{eventTime(event)}</time>

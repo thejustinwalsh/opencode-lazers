@@ -4,6 +4,11 @@ import type { ModelsController } from "./models-controller.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 
+/** A person picked a model or persona: open the details pane (it keeps its stored size). */
+export function revealDetails(ctl: Pick<ModelsController, "prefs" | "save">) {
+  if (!storedState({ open: ctl.prefs().open }).open) ctl.save({ open: true })
+}
+
 /**
  * The scrolling top pane above the shared details pane. While loading or empty there is nothing
  * to inspect, so the pane stays one disabled, collapsed bar.

@@ -38,8 +38,12 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
   it; there is no divider row: the bar's top 5 px is the resize handle (a focusable
   `role="separator"`, Up/Down move 5 %), a pip appears there only on hover or focus,
   dragging below a 72 px body snaps it collapsed. Open, the bar stays pinned and only
-  the body scrolls; the list above keeps at least 120 px. Selecting never opens it,
-  and callers persist `open` and `size`.
+  the body scrolls; the list above keeps at least 120 px. A user selection (click, Enter
+  or Space on an item, a link to it) opens a collapsed pane; refreshes, automatic default
+  selection and re-mounts never do, and a person who collapses it stays collapsed until
+  their next selection. `size` is the last expanded height: collapsing by any path keeps
+  it and every open restores it. Panels persist `open` and `size` and open the pane from
+  their own user-selection handlers (no prop on the component).
 - Make the primary identity and current state clear. Put payloads, technical
   provenance and secondary history behind disclosures. Long meaningful text wraps;
   short display labels may truncate only with full content accessible.

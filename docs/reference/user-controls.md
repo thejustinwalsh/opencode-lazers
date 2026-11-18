@@ -32,7 +32,7 @@ Open **Models** from the session panel menu, or run `/lz-models`.
 
 ## Details pane
 
-Tasks, Trajectory, Models and Radar show the selected item in a pane at the bottom of the panel: it starts collapsed to one header line with the item and its actions, and the chevron, a double-click on that line, or dragging its top edge opens it; the header stays pinned while only the body scrolls.
+Tasks, Trajectory, Models and Radar show the selected item in a pane at the bottom of the panel: it starts collapsed to one header line with the item and its actions. Choosing an item, the chevron, a double-click on that line, or dragging its top edge opens it at the height you last expanded it to; the header stays pinned while only the body scrolls.
 
 ## Loading and connection
 

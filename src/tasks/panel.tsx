@@ -507,7 +507,7 @@ function TaskPanel(
     planID ? schedulingPlans().find((plan) => plan.planID === planID) : undefined
   const openPrerequisitePlan = (planID: string) => {
     const firstTask = schedulingPlan(planID)?.nodes.toSorted((a, b) => a.ordinal - b.ordinal)[0]
-    if (firstTask) selectTask(firstTask.taskID)
+    if (firstTask) chooseTask(firstTask.taskID)
   }
   const revealTask = (taskID: string) => {
     setRevealedTaskIDs((current) => new Set([...current, taskID]))
@@ -516,6 +516,11 @@ function TaskPanel(
   const selectTask = (taskID: string) => {
     revealTask(taskID)
     void state.select(taskID)
+  }
+  /** A person chose this task (click, Enter, a link): select it and open the details pane. */
+  const chooseTask = (taskID: string) => {
+    if (!storedState({ open: prefs().open }).open) save({ open: true })
+    selectTask(taskID)
   }
   const setExpanded = (key: string, expanded: boolean) =>
     setExpandedKeys((current) => {
@@ -534,7 +539,7 @@ function TaskPanel(
     }
     if (!value || value.loading || handledReveal === taskID) return
     handledReveal = taskID
-    save({ revealTaskID: "" })
+    save({ revealTaskID: "", open: true })
     if (value.selectedID === taskID) {
       revealTask(taskID)
       focusTaskRow(taskID)
@@ -679,7 +684,7 @@ function TaskPanel(
             type="button"
             class="lazers-tasks-dependency-ref"
             aria-label={`Open related task ${reference()}`}
-            onClick={() => selectTask(taskID)}
+            onClick={() => chooseTask(taskID)}
           >
             {reference()}
           </button>
@@ -890,7 +895,7 @@ function TaskPanel(
         onKeyDown={(event) => rowKey(event, item(), toggle)}
         onClick={(event) => {
           event.stopPropagation()
-          selectTask(taskRow().taskID)
+          chooseTask(taskRow().taskID)
         }}
       >
         <div class="lazers-tasks-row" data-tone={presentation().tone}>
@@ -982,7 +987,7 @@ function TaskPanel(
           onClick={(event) => {
             event.stopPropagation()
             if (blocker.kind === "plan") openPrerequisitePlan(blocker.id)
-            else selectTask(blocker.id)
+            else chooseTask(blocker.id)
           }}
         >
           <Ui.Icon name="link" size="small" />
@@ -1186,7 +1191,7 @@ function TaskPanel(
       aria-label={`Open scheduling prerequisite ${relationLabel(taskID)}`}
       title={taskID}
       style={{ "font-family": ctx.appearance.font("mono") }}
-      onClick={() => selectTask(taskID)}
+      onClick={() => chooseTask(taskID)}
     >
       {relationLabel(taskID)}
     </button>
@@ -1335,7 +1340,7 @@ function TaskPanel(
       case "Enter":
       case " ":
         event.preventDefault()
-        selectTask(taskID)
+        chooseTask(taskID)
     }
   }
   const stateLabel = (state: NonNullable<typeof initial.state>) => {

@@ -1441,27 +1441,30 @@ test("a pinned selected row near the end does not page; the viewport reaching th
   )
 })
 
-test("the details pane starts collapsed; selecting fills the header and does not open it", async () => {
+test("the details pane starts collapsed, an automatic selection leaves it so, and a click opens it", async () => {
   await withPanel(
     async (h) => {
       await until(() => Boolean(h.row(h.beta.join)))
       const chevron = () => h.container.querySelector<HTMLButtonElement>(".lazers-details-chevron")!
       const header = () => h.container.querySelector(".lazers-details-header")!
+      // The first task is selected automatically; that alone never opens the pane.
+      await until(() => header().textContent !== "No task selected")
       expect(chevron().getAttribute("aria-expanded")).toBe("false")
       expect(h.container.querySelector(".lazers-tasks-detail")).toBeNull()
       h.row(h.beta.join)!.click()
       await until(() => h.detailCalls.includes(h.beta.join))
-      await until(() => header().textContent !== "No task selected")
-      expect(header().textContent).toMatch(/^[A-Z]+-\d+/u)
-      expect(chevron().getAttribute("aria-expanded")).toBe("false")
-      expect(h.container.querySelector(".lazers-tasks-detail")).toBeNull()
-      chevron().click()
       await until(() => Boolean(h.container.querySelector(".lazers-tasks-detail")))
       expect(chevron().getAttribute("aria-expanded")).toBe("true")
+      expect(header().textContent).toMatch(/^[A-Z]+-\d+/u)
       // The title stays the first body element; the pane header carries the single line.
       expect(h.container.querySelector(".lazers-tasks-detail > .lazers-tasks-title")).not.toBeNull()
       // The reference, state and title never scroll with the body.
       expect(h.container.querySelector(".lazers-tasks-detail")!.contains(header())).toBe(false)
+      // Collapsed by the person, it stays collapsed until the next selection, then reopens.
+      chevron().click()
+      await until(() => !h.container.querySelector(".lazers-tasks-detail"))
+      h.row(h.beta.join)!.click()
+      await until(() => Boolean(h.container.querySelector(".lazers-tasks-detail")))
     },
     {},
     { prioritized: true, closedDetails: true },
