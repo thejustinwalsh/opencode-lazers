@@ -411,7 +411,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(["Live", "Reconnecting", "Offline"]).toContain(
       container.querySelector(".lazers-radar-connection")?.textContent ?? "",
     )
-    // One header; nothing is selected, so there is no inspector and no separator.
+    // One header; the details pane is always there, collapsed to its bar, saying nothing is selected.
     expect(container.querySelectorAll(".lazers-radar-header").length).toBe(1)
     expect(
       [...container.querySelectorAll<HTMLButtonElement>('.lazers-radar-views [role="tab"]')].map(
@@ -419,10 +419,14 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       ),
     ).toEqual(["Monitor", "Map", "Flow"])
     expect(container.querySelector(".lazers-radar-monitor-inspector")).toBeNull()
-    expect(container.querySelector('[role="separator"]')).toBeNull()
-    expect(container.querySelector(".lazers-radar-monitor")?.getAttribute("data-inspector")).toBe(
-      "false",
+    expect(container.querySelector(".lazers-details")?.getAttribute("data-open")).toBe("false")
+    expect(container.querySelector(".lazers-details-header")?.textContent).toBe(
+      "No session selected",
     )
+    const openPane = () => {
+      const chevron = container.querySelector<HTMLButtonElement>(".lazers-details-chevron")!
+      if (chevron.getAttribute("aria-expanded") !== "true") chevron.click()
+    }
     expect(text()).not.toContain("Select a session to see its details")
     const headerShape = () =>
       [...container.querySelector(".lazers-radar-header")!.children].map(
@@ -490,6 +494,16 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(text()).not.toContain("completed")
     expect(sessionButton("ses-view-architect")?.textContent).toContain("gpt-6-luna · high")
     sessionButton("ses-view-architect")!.click()
+    // Picking a session updates the pane header and opens the pane; mounting did not.
+    await until(
+      () =>
+        container.querySelector(".lazers-details-header")?.textContent?.includes("Architect") ===
+        true,
+    )
+    await until(
+      () => container.querySelector(".lazers-details")?.getAttribute("data-open") === "true",
+    )
+    openPane()
     await until(() => container.querySelector(".lazers-radar-monitor-inspector") !== null)
     const inspectorText = () =>
       container.querySelector(".lazers-radar-monitor-inspector")?.textContent ?? ""
@@ -551,6 +565,9 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       "Project · all sessions",
     )
     await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
+    // The pane state is stored per scope: this scope starts collapsed.
+    openPane()
+    await until(() => container.querySelector(".lazers-radar-inspector-tabs") !== null)
     container
       .querySelector<HTMLButtonElement>('.lazers-radar-inspector-tabs [role="tab"]:nth-child(1)')!
       .click()
@@ -568,7 +585,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       ),
     ).toEqual(["Calls", "Files", "Messages"])
     expect(historyRequests).toContain("ses-failed")
-    const inspectorHead = container.querySelector(".lazers-radar-inspector-head")!
+    const inspectorHead = container.querySelector(".lazers-details-bar")!
     expect(inspectorHead.querySelector(".lazers-radar-inspector-glyph")).not.toBeNull()
     expect(inspectorHead.querySelector(".lazers-radar-session-icon")).toBeNull()
     // Idle sessions are hidden by default; the summary says how many and shows them on request.
@@ -635,23 +652,37 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
 
     const separator = container.querySelector<HTMLDivElement>('[role="separator"]')!
     expect(separator.getAttribute("aria-orientation")).toBe("horizontal")
-    expect(separator.getAttribute("aria-valuetext")).toContain("Activity")
     const before = Number(separator.getAttribute("aria-valuenow"))
     separator.focus()
     separator.dispatchEvent(
       new dom.window.KeyboardEvent("keydown", {
-        key: "PageDown",
+        key: "ArrowUp",
         bubbles: true,
       }) as unknown as KeyboardEvent,
     )
     await until(() => Number(separator.getAttribute("aria-valuenow")) > before)
-    const savedProject = Object.values(
-      viewStore.value.projects as Record<
-        string,
-        { project: { monitorSplit?: number; monitorSessionID?: string } }
-      >,
-    )[0]!.project
-    expect(savedProject.monitorSplit).toBe(Number(separator.getAttribute("aria-valuenow")))
+    type Saved = {
+      monitorSessionID?: string
+      showIdle?: boolean
+      details?: Record<string, { open?: boolean; size?: number }>
+    }
+    const saved = () =>
+      Object.values(viewStore.value.projects as Record<string, { project: Saved }>)[0]!.project
+    const grown = saved().details!.monitor!.size!
+    expect(grown).toBeGreaterThan(0.45)
+    // Collapsing keeps the last size; picking a call again reopens at that size.
+    container.querySelector<HTMLButtonElement>(".lazers-details-chevron")!.click()
+    await until(
+      () => container.querySelector(".lazers-details")?.getAttribute("data-open") === "false",
+    )
+    expect(saved().details!.monitor).toEqual({ open: false, size: grown })
+    readLine.click()
+    await until(
+      () => container.querySelector(".lazers-details")?.getAttribute("data-open") === "true",
+    )
+    expect(saved().details!.monitor!.size).toBe(grown)
+    readLine.click() // select it again for the checks below
+    const savedProject = saved()
     expect(savedProject.monitorSessionID).toBe("ses-failed")
     expect((savedProject as { showIdle?: boolean }).showIdle).toBe(true)
 
@@ -698,6 +729,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(nodeTitles()).toContain("Architect")
     expect(container.querySelectorAll(".lazers-radar-session").length).toBe(0)
     expect(text()).not.toMatch(/nknown|navailable|Operational overview|Task runtime/)
+    // Map's pane starts collapsed (its own stored state) with the empty text; picking a node opens it.
+    const paneOpen = () => container.querySelector(".lazers-details")?.getAttribute("data-open")
+    expect(paneOpen()).toBe("false")
+    expect(container.querySelector(".lazers-details-header")?.textContent).toBe(
+      "No session selected",
+    )
     const architectNode = [...container.querySelectorAll<SVGGElement>(".lazers-radar-node")].find(
       (node) => node.dataset.kind === "architect",
     )!
@@ -705,6 +742,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       new dom.window.MouseEvent("click", { bubbles: true }) as unknown as MouseEvent,
     )
     await until(() => container.querySelector(".lazers-radar-node[data-selected='true']") !== null)
+    await until(() => paneOpen() === "true")
+    expect(container.querySelector(".lazers-details-header")?.textContent).toContain("Architect")
     // Flow shares the panel, header and snapshot: no reload, and the lifecycle chart sits in ⋯.
     tab("Flow").click()
     await until(() => tab("Flow")?.getAttribute("aria-selected") === "true")
@@ -717,7 +756,19 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     expect(text()).not.toMatch(/Unavailable|not observed/)
     const flowCanvas = container.querySelector(".lazers-radar-flowcanvas svg")
+    // Flow's pane is collapsed to its tab bar; a tab click opens it on that tab.
+    expect(paneOpen()).toBe("false")
     if (flowCanvas) {
+      const flowTabs = () => [
+        ...container.querySelectorAll<HTMLButtonElement>('.lazers-radar-flow-tabs [role="tab"]'),
+      ]
+      expect(
+        container.querySelector(".lazers-details-header .lazers-radar-flow-tabs"),
+      ).not.toBeNull()
+      flowTabs()[1]!.click()
+      await until(() => paneOpen() === "true")
+      expect(flowTabs()[1]!.getAttribute("aria-selected")).toBe("true")
+      expect(container.querySelector(".lazers-radar-models")).not.toBeNull()
       expect(
         [...container.querySelectorAll('.lazers-radar-flow-tabs [role="tab"]')].map((item) =>
           item.textContent?.replace(/\d+$/, "").trim(),
@@ -735,6 +786,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         (button) => button.textContent === "Back to Flow",
       ),
     )
+    expect(container.querySelector(".lazers-details-header")?.textContent).toBe("No state selected")
     expect(headerShape()).toEqual(monitorHeaderShape)
     ;[...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Back to Flow")!

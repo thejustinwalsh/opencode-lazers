@@ -46,7 +46,6 @@ import {
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
-  clampSplit,
   marketSummarySource,
   modelPersonaLabels,
   modelTaskKindLabels,
@@ -102,7 +101,6 @@ export function createModelsController(props: ModelsProps) {
   const [data, setData] = createSignal<ModelComparisonPanelData>(
     new ModelComparisonPanelState(() => {}).data,
   )
-  const [split, setSplit] = createSignal(initial.split)
   const [assignmentPersona, setAssignmentPersona] = createSignal<WorkerPersona | null>(null)
   const [assignmentScope, setAssignmentScope] =
     createSignal<ModelMappingTargetInput["scope"]>("project")
@@ -129,7 +127,6 @@ export function createModelsController(props: ModelsProps) {
     comparison?: HTMLElement
     inspector?: HTMLDivElement
   } = {}
-  let endDrag: (() => void) | undefined
 
   const locationRequest = createMemo(
     () => {
@@ -246,7 +243,6 @@ export function createModelsController(props: ModelsProps) {
   onCleanup(() => {
     assignmentPickerRequest++
     state.close()
-    endDrag?.()
   })
 
   createKeyed(
@@ -259,7 +255,6 @@ export function createModelsController(props: ModelsProps) {
       // A new connection starts paging afresh.
       pagedFor = undefined
       const view = prefs()
-      setSplit(clampSplit(view.split))
       const filters: ModelDecisionFilters = {
         persona: view.persona,
         taskKind: view.taskKind ?? null,
@@ -1363,29 +1358,6 @@ export function createModelsController(props: ModelsProps) {
     })
   }
 
-  const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
-    endDrag?.()
-    const key = expectedKey()
-    const element = event.currentTarget
-    element.setPointerCapture(event.pointerId)
-    const move = (moveEvent: PointerEvent) => {
-      const bounds = refs.root?.getBoundingClientRect()
-      if (!bounds) return
-      setSplit(clampSplit(((moveEvent.clientY - bounds.top) / bounds.height) * 100))
-    }
-    const end = () => {
-      element.removeEventListener("pointermove", move)
-      element.removeEventListener("pointerup", end)
-      element.removeEventListener("pointercancel", end)
-      if (expectedKey() === key) save({ split: split() })
-      endDrag = undefined
-    }
-    element.addEventListener("pointermove", move)
-    element.addEventListener("pointerup", end, { once: true })
-    element.addEventListener("pointercancel", end, { once: true })
-    endDrag = end
-  }
-
   const categoryRows = [
     ["Uncached input", "uncachedInput"],
     ["Output", "output"],
@@ -1457,7 +1429,6 @@ export function createModelsController(props: ModelsProps) {
     decisionModelFullName,
     decisionModelLabel,
     decisionStatusDetail,
-    drag,
     effortDetailsSummary,
     expectedKey,
     modelPickerButtonLabel,
@@ -1501,10 +1472,8 @@ export function createModelsController(props: ModelsProps) {
     setAssignmentRoute,
     setAssignmentScope,
     setPriceSourceRevision,
-    setSplit,
     showObservedFor,
     sourceWarning,
-    split,
     state,
     tabKey,
     taskDescription,

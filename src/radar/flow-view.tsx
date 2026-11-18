@@ -368,46 +368,69 @@ function ModelCardView(props: { card: ModelCard; now: number; monoFont: string }
   )
 }
 
-/** Below the split: Feed and Models, filtered by the selection. */
-export function RadarFlowPanes(props: {
-  model: FlowModel
+/**
+ * The details pane header while Flow is shown: Feed and Models tabs. They stay usable while the
+ * pane is collapsed; choosing one is the caller's cue to open the pane on it.
+ */
+export function RadarFlowTabs(props: {
+  feedCount: number
+  modelsCount: number
+  tab: "feed" | "models"
+  onTab: (tab: "feed" | "models") => void
+}) {
+  return (
+    <div class="lazers-radar-flow-tabs" role="tablist" aria-label="Flow detail">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={props.tab === "feed"}
+        onClick={() => props.onTab("feed")}
+      >
+        Feed <span>{props.feedCount}</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={props.tab === "models"}
+        onClick={() => props.onTab("models")}
+      >
+        Models <span>{props.modelsCount}</span>
+      </button>
+    </div>
+  )
+}
+
+/** The right side of the pane header: the selection chip with Clear, or the window. */
+export function RadarFlowActions(props: {
   selection: FlowSelection
   selectionLabel: string
+  onClear: () => void
+}) {
+  return (
+    <Show
+      when={props.selection}
+      fallback={<span class="lazers-radar-flow-window">last 2 min</span>}
+    >
+      <span class="lazers-radar-flow-selected">{props.selectionLabel}</span>
+      <button type="button" class="lazers-radar-text-button" onClick={props.onClear}>
+        Clear
+      </button>
+    </Show>
+  )
+}
+
+/** The pane body: the feed rows or the model cards, filtered by the selection. */
+export function RadarFlowBody(props: {
+  model: FlowModel
+  selection: FlowSelection
   now: number
   monoFont: string
   tab: "feed" | "models"
-  onTab: (tab: "feed" | "models") => void
-  onClear: () => void
   narrow: boolean
 }) {
   const feed = createMemo(() => filterFeed(props.model, props.selection))
   return (
     <>
-      <div class="lazers-radar-flow-tabs" role="tablist" aria-label="Flow detail">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={props.tab === "feed"}
-          onClick={() => props.onTab("feed")}
-        >
-          Feed <span>{feed().length}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={props.tab === "models"}
-          onClick={() => props.onTab("models")}
-        >
-          Models <span>{props.model.models.length}</span>
-        </button>
-        <span class="lazers-radar-flow-spacer" />
-        <Show when={props.selection} fallback={<span>last 2 min</span>}>
-          <span class="lazers-radar-flow-selected">{props.selectionLabel}</span>
-          <button type="button" class="lazers-radar-text-button" onClick={props.onClear}>
-            Clear
-          </button>
-        </Show>
-      </div>
       <Show when={props.tab === "feed"}>
         <ol class="lazers-radar-feed" aria-label="Flow feed">
           <For each={feed()}>

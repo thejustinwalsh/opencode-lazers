@@ -69,3 +69,25 @@ export function slowSeconds(line: string): number | null {
   const match = /(\d+)\s*s\b/.exec(line)
   return match ? Number(match[1]) : null
 }
+
+/** Estimated width of one mono ruler character, in px. */
+export const LABEL_CHAR_PX = 6.5
+/** The widest mark hit target, centred on its time. */
+export const MARK_HIT_PX = 14
+
+/**
+ * Room kept at the right end of the fitted timeline: half the widest tick label plus 8 px, so the
+ * last label and the last mark stay fully inside the panel (the scrollbar gutter is separate).
+ */
+export function endPadding(labels: readonly string[]) {
+  const widest = Math.max(0, ...labels.map((label) => label.length))
+  return Math.ceil((widest * LABEL_CHAR_PX) / 2) + 8
+}
+
+/** Right edge, in px from the track's left, of a ruler label centred at `centerPercent`. */
+export const labelRightEdge = (centerPercent: number, label: string, trackPx: number) =>
+  (centerPercent / 100) * trackPx + (label.length * LABEL_CHAR_PX) / 2
+
+/** Right edge, in px from the track's left, of a mark whose time is at `percent`. */
+export const markRightEdge = (percent: number, trackPx: number, widthPercent = 0) =>
+  ((percent + widthPercent) / 100) * trackPx + MARK_HIT_PX / 2

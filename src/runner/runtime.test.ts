@@ -14034,3 +14034,42 @@ test("an unreadable old inbox is recorded once and never blocks the new owner", 
   expect(transitions(f, ids[0]!, "OUTCOME_OLD_INBOX_UNREADABLE")).toHaveLength(1)
   expect(f.inbox.get("owner-2")).toHaveLength(1)
 })
+
+test("a persistent Architect source scan failure records once per distinct cause, not per tick", async () => {
+  const now = 2_000_000_519_700
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "source-scan-failure.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  let cause = "Native outcome inbox target is not a same-project Architect session"
+  let reads = 0
+  f.host.architectInputPage = async () => {
+    reads++
+    throw new Error(cause)
+  }
+  const failures = () =>
+    f.repository.read((db) =>
+      db
+        .query<{ payload: string }, []>(
+          "SELECT payload FROM runner_transitions WHERE event='ARCHITECT_SOURCE_SCAN_FAILED' ORDER BY id",
+        )
+        .all()
+        .map((row) => JSON.parse(row.payload) as { error: string }),
+    )
+  const baseline = failures().length
+  f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
+  for (let tick = 0; tick < 5; tick++) await f.runtime.tick()
+  expect(reads).toBeGreaterThanOrEqual(2)
+  expect(failures().length).toBe(baseline + 1)
+  cause = "a different cause"
+  for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
+  expect(failures().length).toBe(baseline + 2)
+  expect(failures().at(-1)?.error).toBe("a different cause")
+})

@@ -630,6 +630,14 @@ function migrateConflictScanHistory(db: Database) {
   }
 }
 
+export const DETAIL_PAGE_LIMIT = 200
+export type DetailPage = {
+  limit?: number
+  activityBefore?: number
+  evidenceBefore?: number
+  deliveryBefore?: number
+}
+
 export class RunnerStore {
   constructor(readonly repository: TaskRepository) {
     repository.atomic(registerLifecycleTransitions)
@@ -685,6 +693,9 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_transitions_lookup
         ON runner_transitions(plan_id,task_id,event,id);
+      CREATE INDEX IF NOT EXISTS runner_transitions_plan_id ON runner_transitions(plan_id,id);
+      CREATE INDEX IF NOT EXISTS runner_transitions_plan_event ON runner_transitions(plan_id,event);
+      CREATE INDEX IF NOT EXISTS runner_transitions_task_latest ON runner_transitions(plan_id,task_id,id);
       CREATE TABLE IF NOT EXISTS runner_leases (
         project_directory TEXT PRIMARY KEY, owner TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
@@ -4064,39 +4075,64 @@ export class RunnerStore {
       return changed
     })
   }
-  detail(planID: string) {
+  /**
+   * Plan detail with bounded history. `activity`, `evidence` and `delivery` hold the
+   * newest `limit` rows in ascending order; `paging.<name>.next` is the cursor to pass as
+   * `<name>Before` for the next older page (null when exhausted).
+   */
+  detail(planID: string, page: DetailPage = {}) {
+    const limit = Math.max(1, Math.min(page.limit ?? DETAIL_PAGE_LIMIT, 1000))
     const plan = this.plan(planID)
     if (!plan) throw new Error("Plan not found")
-    return this.read((db) => ({
-      plan,
-      nodes: this.nodes(planID),
-      attempts: this.attempts(planID),
-      effects: this.effects(planID),
-      adoptions: this.adoptions(planID),
-      adoptionChecks: this.read((db) =>
-        db
+    return this.read((db) => {
+      const newest = (table: string, key: string, before: number | undefined) => {
+        const rows = db
           .query(
-            `SELECT c.* FROM runner_adoption_checks c JOIN runner_adoptions a ON a.id=c.adoption_id
+            `SELECT *,${key} AS __k FROM ${table} WHERE plan_id=? AND ${key}<? ORDER BY ${key} DESC LIMIT ?`,
+          )
+          .all(planID, before ?? Number.MAX_SAFE_INTEGER, limit + 1) as any[] // eslint-disable-line @typescript-eslint/no-explicit-any
+        const more = rows.length > limit
+        const kept = (more ? rows.slice(0, limit) : rows).reverse()
+        const next = more ? (kept[0]!.__k as number) : null
+        for (const row of kept) delete (row as { __k?: number }).__k
+        return { rows: kept, paging: { next, returned: kept.length } }
+      }
+      const activity = newest("runner_transitions", "id", page.activityBefore)
+      const evidence = newest("runner_evidence", "rowid", page.evidenceBefore)
+      const delivery = newest("runner_outbox", "rowid", page.deliveryBefore)
+      return {
+        plan,
+        nodes: this.nodes(planID),
+        attempts: this.attempts(planID),
+        effects: this.effects(planID),
+        adoptions: this.adoptions(planID),
+        adoptionChecks: this.read((db) =>
+          db
+            .query(
+              `SELECT c.* FROM runner_adoption_checks c JOIN runner_adoptions a ON a.id=c.adoption_id
              WHERE a.plan_id=? ORDER BY c.created_at,c.phase,c.check_id`,
-          )
-          .all(planID),
-      ),
-      adoptionEvidence: this.read((db) =>
-        db
-          .query(
-            `SELECT e.* FROM runner_adoption_evidence e JOIN runner_adoptions a ON a.id=e.adoption_id
+            )
+            .all(planID),
+        ),
+        adoptionEvidence: this.read((db) =>
+          db
+            .query(
+              `SELECT e.* FROM runner_adoption_evidence e JOIN runner_adoptions a ON a.id=e.adoption_id
              WHERE a.plan_id=? ORDER BY e.created_at,e.id`,
-          )
-          .all(planID),
-      ),
-      evidence: db
-        .query("SELECT * FROM runner_evidence WHERE plan_id=? ORDER BY created_at")
-        .all(planID),
-      activity: db
-        .query("SELECT * FROM runner_transitions WHERE plan_id=? ORDER BY id")
-        .all(planID),
-      verificationTimeoutAmendments: this.verificationTimeoutAmendments(planID),
-      delivery: db.query("SELECT * FROM runner_outbox WHERE plan_id=? ORDER BY rowid").all(planID),
-    }))
+            )
+            .all(planID),
+        ),
+        evidence: evidence.rows,
+        activity: activity.rows,
+        verificationTimeoutAmendments: this.verificationTimeoutAmendments(planID),
+        delivery: delivery.rows,
+        paging: {
+          limit,
+          activity: activity.paging,
+          evidence: evidence.paging,
+          delivery: delivery.paging,
+        },
+      }
+    })
   }
 }

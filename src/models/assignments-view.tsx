@@ -4,7 +4,7 @@ import type { ModelsController } from "./models-controller.ts"
 import { routeLabel } from "./comparison-presentation.ts"
 import { modelPersonaLabels } from "./panel-shared.ts"
 import { PanelStatus, createPanelStatus } from "../panel-status.tsx"
-import { Segmented, SplitPane } from "./panel-layout.tsx"
+import { Segmented, SplitPane, revealDetails } from "./panel-layout.tsx"
 
 const personaIcons = {
   ui: "window-cursor",
@@ -93,7 +93,10 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 class="lazers-models-assignment-row"
                 aria-pressed={assignmentPersona() === persona.persona}
                 disabled={assignmentBlocked()}
-                onClick={() => selectAssignmentPersona(persona.persona)}
+                onClick={() => {
+                  revealDetails(ctl)
+                  selectAssignmentPersona(persona.persona)
+                }}
               >
                 <Ui.Icon name={personaIcons[persona.persona]} size="small" />
                 <strong>{persona.personaLabel}</strong>

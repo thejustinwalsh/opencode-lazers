@@ -194,6 +194,8 @@ const Report = z
       reference: z.string().optional(),
       revision: z.number().int().positive().optional(),
       status: z.string(),
+      /** The current recorded lifecycle state; absent from older servers. */
+      recordedState: z.string().optional(),
       specification: z.object({ objective: z.string() }).strip(),
     }),
     plans: z.array(
@@ -946,4 +948,9 @@ export function compactCount(value: number) {
   for (const [size, unit] of units)
     if (Math.abs(value) >= size) return `${Number((value / size).toFixed(1))}${unit}`
   return String(Math.round(value))
+}
+
+/** The state Tasks shows for the task: its recorded lifecycle state, else the proposal's status. */
+export function currentTaskState(report: Pick<TrajectoryReport, "task">) {
+  return report.task.recordedState ?? report.task.status
 }

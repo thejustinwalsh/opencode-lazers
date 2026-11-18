@@ -24,7 +24,7 @@ const Preference = Schema.Struct({
   selectedCandidateID: Schema.NullOr(Schema.String),
   selectedConfigurationID: Schema.optional(Schema.NullOr(Schema.String)),
   /** Retired list/inspector split; read once to size the details pane. */
-  split: Schema.Number,
+  split: Schema.optionalKey(Schema.Number),
   /** Details pane: closed by default; size is the body's fraction of the panel. */
   open: Schema.optional(Schema.Boolean),
   size: Schema.optional(Schema.Number),
@@ -43,7 +43,6 @@ const initial: typeof Preference.Type = {
   selectedTaskID: null,
   selectedCandidateID: null,
   selectedConfigurationID: null,
-  split: 64,
   evidenceOpen: false,
   topScroll: 0,
   inspectorScroll: 0,
@@ -73,8 +72,6 @@ export const modelTaskKindLabels: Record<ModelDecisionTaskKind, string> = {
   maintenance: "Maintenance",
 }
 export const modelTaskKinds = Object.keys(modelTaskKindLabels) as ModelDecisionTaskKind[]
-
-export const clampSplit = (value: number) => Math.min(76, Math.max(24, value))
 
 export function formatNumber(value: number) {
   return value.toLocaleString()
