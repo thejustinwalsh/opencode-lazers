@@ -316,8 +316,9 @@ export type ChartMark = {
  * The best trade-off (`frontier`) is the Pareto set over cost per accepted task (lower),
  * tokens per accepted task (lower) and acceptance rate (higher), among observed points with at
  * least one accepted task (a partial cohort or a sample under
- * `SMALL_SAMPLE_TERMINAL_TASKS` is flagged "small sample", not excluded). Catalog references
- * are a different measure and never join it. The server's own frontier list is not used.
+ * `SMALL_SAMPLE_TERMINAL_TASKS` is flagged "small sample", not excluded) and the catalog
+ * references plotted beside them, whose acceptance rate is unknown and so does not separate
+ * them. The server's own frontier list is not used.
  */
 export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
   const marks = new Map<string, ChartMark>()
@@ -347,7 +348,12 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
       aria: comparisonChartReferenceText(reference),
     })
   }
-  const eligible: ChartMark[] = []
+  // A mark on a "per accepted task" plot is eligible for the best trade-off by having finite
+  // cost and token coordinates: a catalog reference (cost priced from observed tokens, often a
+  // range or a known subtotal) competes like an observed point, with acceptance unknown.
+  const eligible: ChartMark[] = [...marks.values()].filter(
+    (mark) => mark.accepted === undefined || mark.accepted > 0,
+  )
   for (const point of data.points) {
     if (!plottable(point)) continue
     const previous = marks.get(point.configurationID)
@@ -366,8 +372,11 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
       aria: comparisonChartPointText(point),
     }
     marks.set(point.configurationID, mark)
-    // Any point with an accepted task counts. A small sample is flagged, and a partial cohort
-    // or missing acceptance data is compared on the measures that exist, not excluded.
+    // An observed point replaces its reference of the same configuration. Any point with an
+    // accepted task counts: a small sample is flagged, and a partial cohort or missing acceptance
+    // data is compared on the measures that exist, not excluded.
+    const at = eligible.findIndex((item) => item.configurationID === mark.configurationID)
+    if (at >= 0) eligible.splice(at, 1)
     if (point.acceptedTaskCount > 0) eligible.push(mark)
   }
   const rate = (mark: ChartMark) =>
