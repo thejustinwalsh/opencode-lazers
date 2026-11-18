@@ -1,4 +1,4 @@
-import { createEffect } from "solid-js"
+import { For, createEffect } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { clampSplit } from "./panel-shared.ts"
@@ -66,5 +66,47 @@ export function SplitPane(props: {
         {props.bottom}
       </div>
     </>
+  )
+}
+
+/** A radio-style choice between a few options, as in the Tasks filters. */
+export function Segmented<T extends string>(props: {
+  label: string
+  value: T
+  options: readonly { value: T; label: string }[]
+  onChange: (value: T) => void
+  disabled?: boolean
+}) {
+  const key: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return
+    event.preventDefault()
+    const index = props.options.findIndex((option) => option.value === props.value)
+    const step = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1
+    const next = props.options[(index + step + props.options.length) % props.options.length]
+    if (!next) return
+    props.onChange(next.value)
+    event.currentTarget.parentElement
+      ?.querySelector<HTMLButtonElement>(`[data-segment="${next.value}"]`)
+      ?.focus()
+  }
+  return (
+    <div class="lazers-models-segmented" role="radiogroup" aria-label={props.label}>
+      <For each={props.options}>
+        {(option) => (
+          <button
+            type="button"
+            role="radio"
+            data-segment={option.value}
+            aria-checked={props.value === option.value}
+            tabIndex={props.value === option.value ? 0 : -1}
+            disabled={props.disabled}
+            onClick={() => props.onChange(option.value)}
+            onKeyDown={key}
+          >
+            {option.label}
+          </button>
+        )}
+      </For>
+    </div>
   )
 }

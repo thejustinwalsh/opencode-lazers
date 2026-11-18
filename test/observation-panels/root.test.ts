@@ -3180,7 +3180,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(draftInput("Provider ID")).toBe("openai")
     expect(draftInput("Variant / effort (optional)")).toBe("high")
     expect(containerA.querySelector(".lazers-models-assignment-editor h3")?.textContent).toBe(
-      "Edit Systems",
+      "Systems",
+    )
+    expect(containerA.querySelector(".lazers-models-assignment-editor")?.textContent).toContain(
+      "New workers use this route. Running workers keep theirs.",
     )
     expect(
       calls.filter((call) => call.service === "lazers.models" && call.method === "configure"),
@@ -3189,8 +3192,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       '[role="tab"][aria-controls="lazers-models-assignments-panel"]',
     )!
     assignmentTab.click()
-    await until(() => containerA.textContent?.includes("openai / route-1") === true)
-    expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
+    await until(() => containerA.textContent?.includes("route-1") === true)
+    // Assignments is its own view: no Compare filters, sources, chart or selected-model pane.
+    expect(containerA.querySelector(".lazers-models-comparison-chart")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-filters")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-sources-details")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-inspector-compare")).toBeNull()
     expect(
       containerA
         .querySelector(".lazers-models-assignment-editor")
@@ -3244,29 +3251,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       containerA.querySelector(".lazers-models-assignment-rows")?.contains(assignmentEditor),
     ).toBe(false)
-    expect(
-      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Persona ·"),
-      ),
-    ).toBe(true)
-    expect(
-      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Kind ·"),
-      ),
-    ).toBe(true)
-    expect(containerA.querySelector(".lazers-models-filter-status")).toBeNull()
-    expect(containerA.querySelector("[data-decision-status]")).not.toBeNull()
-    expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
+    expect(containerA.querySelector("[data-decision-status]")).toBeNull()
     expect(containerA.textContent).not.toContain("Select a model to compare.")
-    const taskSelectButton = containerA.querySelector<HTMLButtonElement>(
-      ".lazers-models-task-select button",
-    )
-    expect(taskSelectButton).toBeDefined()
-    expect(taskSelectButton?.disabled).toBe(false)
-    taskSelectButton?.click()
-    const taskOption = menuItemWithText(containerA, "LZ-17")
-    expect(taskOption).toBeDefined()
-    taskOption?.click()
     expect(assignmentEditor.getAttribute("aria-labelledby")).toBe(
       assignmentEditor.querySelector("h3")!.id,
     )
@@ -3284,7 +3270,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         (input) => !input.disabled,
       ),
     ).toBe(true)
-    expect(buttonWithText(assignmentEditor, "Save route")?.disabled).toBe(false)
+    expect(buttonWithText(assignmentEditor, "Save")?.disabled).toBe(false)
     expect(
       assignmentEditor.querySelector<HTMLButtonElement>(".lazers-models-assignment-choice > button")
         ?.disabled,
@@ -3528,18 +3514,18 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector<HTMLDetailsElement>(".lazers-models-assignment-layers")!
     expect(assignmentLayers().open).toBe(false)
 
-    const scopeMenu = () =>
-      [
-        ...containerA.querySelectorAll<HTMLButtonElement>(
-          ".lazers-models-assignment-editor button",
-        ),
-      ].find((button) => button.textContent?.includes("Target · "))
+    const chooseScope = (scope: "shared" | "project" | "task") =>
+      containerA
+        .querySelector<HTMLButtonElement>(
+          `.lazers-models-assignment-editor [data-segment="${scope}"]`,
+        )
+        ?.click()
     const catalogSelection = JSON.stringify(["openai", "gpt-6"])
     const currentAssignmentEditor = () =>
       containerA.querySelector<HTMLElement>(".lazers-models-assignment-editor")!
     const modelPicker = () =>
-      [...currentAssignmentEditor().querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-        ["Custom route", "Choose model", "GPT-6 · openai"].includes(button.textContent ?? ""),
+      currentAssignmentEditor().querySelector<HTMLButtonElement>(
+        ".lazers-models-assignment-choice > button",
       )
     const pickerCallCount = () => nativePickerCalls.length
     const chooseCatalogModel = async () => {
@@ -3547,11 +3533,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       nextNativePickerSelection = catalogSelection
       modelPicker()?.click()
       await until(() => pickerCallCount() === before + 1)
-      await until(() => buttonWithText(currentAssignmentEditor(), "GPT-6 · openai") !== undefined)
+      await until(() => buttonWithText(currentAssignmentEditor(), "openai/gpt-6") !== undefined)
     }
     const chooseVariant = (variant: string) => {
       const editor = currentAssignmentEditor()
-      const trigger = buttonWithText(editor, "Effort ·")
+      const trigger = editor.querySelectorAll<HTMLButtonElement>(
+        ".lazers-models-assignment-choice button",
+      )[1]
       if (!trigger) throw new Error(`Missing effort trigger: ${editor.innerHTML}`)
       trigger.click()
       const item = menuItemWithText(containerA, variant)
@@ -3624,15 +3612,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       },
     ])
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    expect(modelPicker()?.textContent).toBe("Custom route")
+    expect(modelPicker()?.textContent).toBe("openai/project-ui-route")
 
     const lateCatalogSelection = deferred<string | undefined>()
     pendingNativePickerSelection = lateCatalogSelection
     const beforeLatePicker = pickerCallCount()
     modelPicker()?.click()
     await until(() => pickerCallCount() === beforeLatePicker + 1)
-    scopeMenu()?.click()
-    menuItemWithText(containerA, "Project override")?.click()
+    chooseScope("project")
     await until(
       () =>
         containerA
@@ -3641,10 +3628,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     lateCatalogSelection.resolve(catalogSelection)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
-    expect(modelPicker()?.textContent).toBe("Custom route")
+    expect(modelPicker()?.textContent).toBe("openai/project-ui-route")
 
-    scopeMenu()?.click()
-    menuItemWithText(containerA, "Project override")?.click()
+    chooseScope("project")
     await until(
       () =>
         containerA
@@ -3653,7 +3639,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await chooseCatalogModel()
     chooseVariant("high")
-    buttonWithText(currentAssignmentEditor(), "Save route")?.click()
+    buttonWithText(currentAssignmentEditor(), "Save")?.click()
     await until(
       () =>
         containerA
@@ -3692,10 +3678,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
     rowForPersona("Systems").click()
     rowForPersona("UI").click()
-    await until(() => buttonWithText(currentAssignmentEditor(), "Effort · high") !== undefined)
-    scopeMenu()?.click()
-    expect(menuItemWithText(containerA, "Task override")).toBeDefined()
-    menuItemWithText(containerA, "Task override")?.click()
+    await until(() => buttonWithText(currentAssignmentEditor(), "high") !== undefined)
+    chooseScope("task")
     await until(
       () =>
         containerA
@@ -3704,8 +3688,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await chooseCatalogModel()
     chooseVariant("xhigh")
-    await until(() => buttonWithText(currentAssignmentEditor(), "Effort · xhigh") !== undefined)
-    buttonWithText(currentAssignmentEditor(), "Save route")?.click()
+    await until(() => buttonWithText(currentAssignmentEditor(), "xhigh") !== undefined)
+    buttonWithText(currentAssignmentEditor(), "Save")?.click()
     await until(
       () =>
         containerA
@@ -3760,7 +3744,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     })
     expect(
       containerA.querySelector(".lazers-models-assignment-row[aria-pressed='true']")?.textContent,
-    ).toContain("openai / gpt-6 · xhigh")
+    ).toContain("gpt-6 · xhigh")
     expect(
       calls.some(
         (call) =>
@@ -3876,7 +3860,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         containerA
           .querySelector(".lazers-models-assignment-current")
           ?.textContent?.includes("Removed") === true &&
-        rowForPersona("UI").textContent?.includes("openai / gpt-6 · high") === true,
+        rowForPersona("UI").textContent?.includes("gpt-6 · high") === true,
     )
     const removedUIReadback = await Effect.runPromise(
       modelSettingsTool.execute({ taskID: TASK_A }, modelToolContext()),
@@ -3919,8 +3903,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ).toBe(true)
 
     rowForPersona("Systems").click()
-    scopeMenu()?.click()
-    menuItemWithText(containerA, "Shared default")?.click()
+    chooseScope("shared")
     await until(
       () =>
         containerA
@@ -3939,15 +3922,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     fillTextInput(containerA, "Provider ID", sharedRoute.providerID)
     fillTextInput(containerA, "Model ID", sharedRoute.id)
     fillTextInput(containerA, "Variant / effort (optional)", sharedRoute.variant)
-    buttonWithText(containerA, "Save route")?.click()
+    buttonWithText(containerA, "Save")?.click()
     await until(
       () =>
         containerA
           .querySelector(".lazers-models-assignment-feedback")
           ?.textContent?.includes("Saved") === true &&
-        rowForPersona("Systems").textContent?.includes(
-          "provider-not-in-catalog / manual/model-id · native/xhigh",
-        ) === true,
+        rowForPersona("Systems").textContent?.includes("manual/model-id · native/xhigh") === true,
     )
     const systemsToolReadback = await Effect.runPromise(
       modelSettingsTool.execute({ taskID: TASK_A }, modelToolContext()),

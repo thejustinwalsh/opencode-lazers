@@ -3,7 +3,11 @@ import type {
   ModelComparisonCandidateSchema,
   ModelComparisonSourceSchema,
 } from "./comparison-schema.ts"
-import type { ModelDecisionEstimate } from "./decision-contract.ts"
+import type {
+  ModelDecisionCohortCounts,
+  ModelDecisionEfficiency,
+  ModelDecisionEstimate,
+} from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 
 const NullableNumber = z.number().finite().nullable()
@@ -489,4 +493,67 @@ export function recordReferenceLabel(reference: {
   recordID: string
 }) {
   return `${reference.source} · generation ${reference.generation} · record ${reference.recordIndex + 1} (${reference.recordID}) · snapshot ${reference.snapshotID}`
+}
+
+/** `$0.35 – 0.67`: one currency sign, the rounded range, no caveats. */
+export function formatPriceRange(range: { minimum: number; maximum: number }) {
+  return range.minimum === range.maximum
+    ? formatMarketAmount(range.minimum)
+    : `${formatMarketAmount(range.minimum)} – ${formatMarketAmount(range.maximum).replace(/^\$/, "")}`
+}
+
+/** `6.2M`, `840k`, `930`. */
+export function compactCount(value: number) {
+  if (Math.abs(value) >= 1_000_000) return `${trimCount(value / 1_000_000)}M`
+  if (Math.abs(value) >= 1_000) return `${trimCount(value / 1_000)}k`
+  return String(Math.round(value))
+}
+
+function trimCount(value: number) {
+  return (value >= 100 ? Math.round(value) : Math.round(value * 10) / 10).toString()
+}
+
+export type SelectedModelFacts = {
+  /** Rounded price range per accepted task; absent when no complete price exists. */
+  price?: string
+  accepted?: number
+  terminal?: number
+  tokens?: string
+  attempts?: string
+}
+
+/** The facts the first view of a selected model shows; a missing fact is absent, never labelled. */
+export function selectedModelFacts(input: {
+  estimate: ModelDecisionEstimate
+  referenceEstimate?: ModelDecisionReferenceEstimate
+  efficiency: ModelDecisionEfficiency
+  cohort: ModelDecisionCohortCounts
+}): SelectedModelFacts {
+  const { estimate, referenceEstimate, efficiency, cohort } = input
+  const facts: SelectedModelFacts = {}
+  if (cohort.acceptedTaskCount < 1) return facts
+
+  let range: { minimum: number; maximum: number } | undefined
+  if (estimate.status === "available" || estimate.status === "single-observation")
+    range = estimate.range.currentMarketUSD
+  else if (
+    referenceEstimate?.status === "exact" &&
+    referenceEstimate.valueUSDPerAcceptedTask !== null
+  )
+    range = {
+      minimum: referenceEstimate.valueUSDPerAcceptedTask,
+      maximum: referenceEstimate.valueUSDPerAcceptedTask,
+    }
+  else if (referenceEstimate?.status === "conditional" && referenceEstimate.rangeUSDPerAcceptedTask)
+    range = referenceEstimate.rangeUSDPerAcceptedTask
+  if (range) facts.price = formatPriceRange(range)
+
+  facts.accepted = cohort.acceptedTaskCount
+  facts.terminal = cohort.terminalTaskCount
+  if (efficiency.tokensPerAcceptedTask !== null)
+    facts.tokens = compactCount(efficiency.tokensPerAcceptedTask)
+  facts.attempts = (
+    Math.round((cohort.attemptCount / cohort.acceptedTaskCount) * 10) / 10
+  ).toString()
+  return facts
 }

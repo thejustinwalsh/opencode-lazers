@@ -29,6 +29,7 @@ import {
   formatDate,
   modelDisplayLabel,
   routeLabel,
+  selectedModelFacts,
 } from "./comparison-presentation.ts"
 import { benchmarkSourceName } from "./benchmark-chart.tsx"
 import {
@@ -54,7 +55,7 @@ export function createModelsController(props: ModelsProps) {
   const [chartHeight, setChartHeight] = createSignal<number>()
   const [assignmentPersona, setAssignmentPersona] = createSignal<WorkerPersona | null>(null)
   const [assignmentScope, setAssignmentScope] =
-    createSignal<ModelMappingTargetInput["scope"]>("task")
+    createSignal<ModelMappingTargetInput["scope"]>("project")
   const [assignmentRoute, setAssignmentRoute] = createSignal({
     providerID: "",
     id: "",
@@ -65,6 +66,8 @@ export function createModelsController(props: ModelsProps) {
     persona: WorkerPersona
     route: { providerID: string; id: string; variant: string }
     version: number
+    /** What Compare showed for this model, e.g. "$0.35 – 0.67 per accepted task, 9 of 11 accepted". */
+    summary?: string
   }>()
   let assignmentPickerRequest = 0
   const refs: {
@@ -366,6 +369,28 @@ export function createModelsController(props: ModelsProps) {
       text: `${summary.amount} · ${tasks} · ${marketSummarySource(summary.context)}`,
       title: summary.title,
     }
+  }
+  const selectedFacts = () => {
+    const inspection = visible()?.decisionInspection
+    if (!inspection || inspection.status !== "found") return undefined
+    return selectedModelFacts({
+      estimate: inspection.estimate,
+      referenceEstimate: inspection.referenceEstimate,
+      efficiency: inspection.efficiency,
+      cohort: inspection.cohort,
+    })
+  }
+  /** "$0.35 – 0.67 per accepted task, 9 of 11 accepted"; each part is dropped when absent. */
+  const selectedFactsSummary = () => {
+    const facts = selectedFacts()
+    if (!facts) return undefined
+    const parts = [
+      facts.price ? `${facts.price} per accepted task` : undefined,
+      facts.accepted !== undefined && facts.terminal !== undefined
+        ? `${facts.accepted} of ${facts.terminal} accepted`
+        : undefined,
+    ].filter((part): part is string => part !== undefined)
+    return parts.length ? parts.join(", ") : undefined
   }
   const selectedContributors = () => {
     const inspection = visible()?.decisionInspection
@@ -672,11 +697,9 @@ export function createModelsController(props: ModelsProps) {
   ) => JSON.stringify([option.providerID, option.id])
   const modelSelectionCaption = () => {
     const model = selectedCatalogModel()
-    if (model) return `${model.providerID} / ${model.id}`
+    if (model) return `${model.providerID}/${model.id}`
     const route = assignmentRoute()
-    return route.providerID && route.id
-      ? `Not in catalog · ${route.providerID} / ${route.id}`
-      : "Choose a model from the native catalog"
+    return route.providerID && route.id ? `${route.providerID}/${route.id}` : "Choose a model"
   }
   const modelPickerButtonLabel = () => {
     const model = selectedCatalogModel()
@@ -757,6 +780,32 @@ export function createModelsController(props: ModelsProps) {
         variant: layer?.route?.variant ?? "",
       },
     )
+  })
+  const assignmentDirty = () => {
+    const draft = assignmentRoute()
+    const route = assignmentLayer()?.route
+    return (
+      draft.providerID !== (route?.providerID ?? "") ||
+      draft.id !== (route?.id ?? "") ||
+      draft.variant !== (route?.variant ?? "")
+    )
+  }
+  const revertAssignmentRoute = () => {
+    assignmentPickerRequest++
+    clearConfirmedAssignmentWrite()
+    setAssignmentPrefill(undefined)
+    const route = assignmentLayer()?.route
+    setAssignmentRoute({
+      providerID: route?.providerID ?? "",
+      id: route?.id ?? "",
+      variant: route?.variant ?? "",
+    })
+  }
+  // The editor always has a persona once assignments are known.
+  createEffect(() => {
+    if (prefs().tab !== "assignments" || assignmentPersona()) return
+    const first = personas()[0]
+    if (first) setAssignmentPersona(first.persona)
   })
   const saveAssignmentRoute = () => {
     const persona = assignmentPersona()
@@ -889,6 +938,7 @@ export function createModelsController(props: ModelsProps) {
   const assignRoute = (
     persona: WorkerPersona,
     route: { providerID: string; modelID: string; variant: string | null },
+    summary?: string,
   ) => {
     if (assignmentBlocked()) return
     assignmentPickerRequest++
@@ -897,13 +947,14 @@ export function createModelsController(props: ModelsProps) {
       persona,
       route: { providerID: route.providerID, id: route.modelID, variant: route.variant ?? "" },
       version: (previous?.version ?? 0) + 1,
+      ...(summary ? { summary } : {}),
     }))
     setAssignmentPersona(persona)
     selectTab("assignments")
   }
   const assignSelectedRoute = (persona: WorkerPersona) => {
     const configuration = selectedDecisionConfiguration()
-    if (configuration) assignRoute(persona, configuration.route)
+    if (configuration) assignRoute(persona, configuration.route, selectedFactsSummary())
   }
   const assignMenuItems = (route: () => BenchmarkRoute & { variant: string | null }) =>
     personas().map((persona) => ({
@@ -1055,6 +1106,10 @@ export function createModelsController(props: ModelsProps) {
     removeAssignmentRoute,
     save,
     saveAssignmentRoute,
+    assignmentDirty,
+    revertAssignmentRoute,
+    selectedFacts,
+    selectedFactsSummary,
     selectAssignmentPersona,
     selectAssignmentScope,
     selectCompareMode,

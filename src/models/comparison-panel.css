@@ -1083,7 +1083,7 @@
   display: grid;
   gap: 8px;
   min-width: 0;
-  padding: 8px 0 12px;
+  padding: 8px 0;
 }
 
 .lazers-models-assignment-rows {
@@ -1093,16 +1093,16 @@
 }
 
 .lazers-models-assignment-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1.4fr) 52px;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px 12px;
+  gap: 8px;
   width: 100%;
   min-width: 0;
   min-height: 40px;
   padding: 6px 8px;
   border: 0;
-  border-bottom: 1px solid var(--border-weak-base);
+  border-radius: 6px;
   color: var(--text-base);
   background: transparent;
   font: inherit;
@@ -1115,52 +1115,45 @@
   background: var(--surface-base-hover);
 }
 
-.lazers-models-assignment-row[aria-pressed="true"] {
-  box-shadow: inset 2px 0 0 var(--border-selected);
-}
-
-.lazers-models-assignment-identity {
-  display: grid;
-  gap: 2px;
+.lazers-models-assignment-row strong {
   min-width: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
-.lazers-models-assignment-identity strong {
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.lazers-models-assignment-identity span {
+.lazers-models-assignment-route {
   min-width: 0;
   color: var(--text-base);
-  font-size: 11px;
-  line-height: 1.35;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+span.lazers-models-assignment-route {
+  grid-column: 3 / -1;
+  font-family: inherit;
+  color: var(--text-weak);
 }
 
 .lazers-models-assignment-row small {
-  flex: 0 0 auto;
-  max-width: 45%;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 12px;
   text-align: right;
-  overflow-wrap: anywhere;
 }
 
 .lazers-models-assignment-editor {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   margin: 0;
 }
 
 .lazers-models-assignment-editor-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -1168,55 +1161,87 @@
 .lazers-models-assignment-editor-heading h3 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 12px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.lazers-models-assignment-editor-heading p {
-  margin: 3px 0 0;
+.lazers-models-assignment-editor-heading span {
   color: var(--text-weak);
-  font-size: 11px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-assignment-editor-heading > * {
-  min-width: 0;
-  max-width: 100%;
+  font-size: 12px;
 }
 
 .lazers-models-assignment-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
 }
 
-.lazers-models-assignment-fields > * {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.lazers-models-assignment-choice {
+.lazers-models-form-row {
   display: grid;
-  justify-items: start;
-  align-content: start;
-  gap: 4px;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   color: var(--text-weak);
-  font-size: 10px;
-  line-height: 1.3;
+  font-size: 13px;
 }
 
-.lazers-models-assignment-choice > * {
+.lazers-models-form-row > :not(span:first-child) {
   min-width: 0;
   max-width: 100%;
 }
 
-.lazers-models-assignment-choice small {
+.lazers-models-form-control,
+.lazers-models-form-row button {
+  font-family: var(--font-family-mono);
+}
+
+.lazers-models-form-row .lazers-models-segmented button {
+  font-family: inherit;
+}
+
+.lazers-models-segmented {
+  display: inline-flex;
+  justify-self: start;
+  padding: 2px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 8px;
+  background: var(--background-base);
+}
+
+.lazers-models-segmented button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
   color: var(--text-weak);
-  font-size: 10px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lazers-models-segmented button:hover {
+  color: var(--text-base);
+}
+
+.lazers-models-segmented button[aria-checked="true"] {
+  color: var(--text-strong);
+  background: var(--surface-base-active, var(--surface-base-hover));
+}
+
+.lazers-models-from-compare {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--text-base);
+  background: var(--surface-base);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .lazers-models-catalog-status {
@@ -1227,49 +1252,49 @@
   min-width: 0;
   margin: 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .lazers-models-catalog-error,
-.lazers-models-assignment-manual-route {
+.lazers-models-assignment-manual-route,
+.lazers-models-assignment-layers,
+.lazers-models-assignment-write-details {
   min-width: 0;
   color: var(--text-weak);
 }
 
+.lazers-models-assignment-manual-route,
+.lazers-models-assignment-layers {
+  border-top: 1px solid var(--border-weak-base);
+}
+
 .lazers-models-catalog-error summary,
-.lazers-models-assignment-manual-route summary {
-  min-height: 30px;
+.lazers-models-assignment-manual-route summary,
+.lazers-models-assignment-layers summary,
+.lazers-models-assignment-write-details summary {
+  min-height: 32px;
   color: var(--text-base);
-  font-size: 10px;
+  font-size: 13px;
   cursor: pointer;
 }
 
 .lazers-models-catalog-error p,
-.lazers-models-assignment-manual-route p {
+.lazers-models-assignment-manual-route p,
+.lazers-models-assignment-layers p,
+.lazers-models-assignment-write-details p {
   margin: 4px 0 8px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
-.lazers-models-assignment-manual-route {
-  padding-top: 2px;
-  border-top: 1px solid var(--border-weak-base);
-}
-
 .lazers-models-assignment-manual-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
   padding-bottom: 8px;
-}
-
-.lazers-models-assignment-manual-fields > * {
-  min-width: 0;
-  max-width: 100%;
 }
 
 .lazers-models-assignment-field {
@@ -1277,22 +1302,7 @@
   gap: 4px;
   min-width: 0;
   color: var(--text-weak);
-  font-size: 10px;
-  line-height: 1.3;
-}
-
-.lazers-models-assignment-field > * {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.lazers-models-assignment-current {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-weak);
-  font-size: 10px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+  font-size: 12px;
 }
 
 .lazers-models-assignment-current strong {
@@ -1311,9 +1321,9 @@
   justify-items: start;
   gap: 4px;
   min-width: 0;
-  padding: 8px;
+  padding: 8px 10px;
   border-left: 2px solid var(--border-selected);
-  background: var(--background-base);
+  background: var(--surface-base);
 }
 
 .lazers-models-assignment-feedback[data-status="uncertain"],
@@ -1326,47 +1336,9 @@
   min-width: 0;
   margin: 0;
   color: var(--text-base);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
   overflow-wrap: anywhere;
-}
-
-.lazers-models-assignment-feedback small {
-  color: var(--text-weak);
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-assignment-layers {
-  min-width: 0;
-  color: var(--text-weak);
-}
-
-.lazers-models-assignment-layers summary {
-  min-height: 32px;
-  color: var(--text-base);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.lazers-models-assignment-layers p,
-.lazers-models-assignment-write-details p {
-  margin: 4px 0;
-  font-size: 10px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-assignment-write-details {
-  min-width: 0;
-  color: var(--text-weak);
-}
-
-.lazers-models-assignment-write-details summary {
-  min-height: 28px;
-  color: var(--text-weak);
-  font-size: 10px;
-  cursor: pointer;
 }
 
 .lazers-models-note {
@@ -1392,14 +1364,6 @@
   .lazers-models-inspector-columns {
     grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
   }
-
-  .lazers-models-assignment-fields {
-    grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr);
-  }
-
-  .lazers-models-assignment-manual-fields {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 @container models-panel (max-width: 500px) {
@@ -1413,18 +1377,6 @@
 
   .lazers-models-sources {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .lazers-models-assignment-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .lazers-models-assignment-row small {
-    max-width: 100%;
-    padding-left: 8px;
-    text-align: left;
   }
 }
 
