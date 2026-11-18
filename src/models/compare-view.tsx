@@ -1,12 +1,12 @@
-import { Show, For } from "solid-js"
+import { Show, For, createMemo, createSignal } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { PanelStatus } from "../panel-status.tsx"
-import { ModelChart } from "./model-chart.tsx"
+import { ModelChart, RankingChart } from "./model-chart.tsx"
 import { AllModelsTable } from "./all-models-table.tsx"
-import { benchmarkSourceName, comparisonChartEmptyText } from "./chart-data.ts"
-import { formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
-import { sourceTagLabel } from "./catalog-projection.ts"
+import { benchmarkSourceName, comparisonChartEmptyText, projectedRankRows } from "./chart-data.ts"
+import { SMALL_SAMPLE_TERMINAL_TASKS, formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
+import { catalogSummaryText, sourceTagLabel } from "./catalog-projection.ts"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import {
   boundedModelLabel,
@@ -15,6 +15,7 @@ import {
   retrievedLabel,
   formatMarketAmount,
   formatMarketRange,
+  compactCount,
   numericValue,
   recordReferenceLabel,
   routeLabel,
@@ -23,7 +24,7 @@ import {
 } from "./comparison-presentation.ts"
 import { KnownUsageMarketScenarioCard } from "./known-usage-card.tsx"
 import { formatMoney, formatNumber, hasCompareLowerPane, statusText } from "./panel-shared.ts"
-import { Disclosure, SplitPane, revealDetails } from "./panel-layout.tsx"
+import { Disclosure, Segmented, SplitPane, revealDetails } from "./panel-layout.tsx"
 import {
   benchmarkLabel,
   contributorMembership,
@@ -45,6 +46,9 @@ function SourcesDetails(props: { ctl: ModelsController }) {
   return (
     <details class="lazers-models-sources-details">
       <summary>Sources</summary>
+      <For each={props.ctl.catalogNotes()}>
+        {(note) => <p class="lazers-models-source-meta">{note}.</p>}
+      </For>
       <div class="lazers-models-sources" aria-label="Source snapshot coverage">
         <For each={visible()?.comparison?.sources ?? []}>
           {(source) => (
@@ -111,6 +115,100 @@ export function BenchmarkEmptyState(props: {
         </Ui.Button>
       </div>
     </div>
+  )
+}
+
+/** The Projected plot: a ranking that needs no second measure, and a cost-vs-score scatter. */
+function ProjectedPlot(props: { ctl: ModelsController }) {
+  const ctl = props.ctl
+  const {
+    Ui,
+    catalogEntries,
+    catalogNotes,
+    openProviderSettings,
+    profile,
+    projectedPoints,
+    refreshAll,
+    state,
+    visible,
+  } = ctl
+  const [view, setView] = createSignal<"ranking" | "scatter">("ranking")
+  const rows = createMemo(() => projectedRankRows(catalogEntries()))
+  const scored = () => projectedPoints().length
+  // The scatter is a secondary view, offered only when enough models have a public score.
+  const scatter = () => view() === "scatter" && scored() >= 5
+  const selectedID = () => visible()?.selectedCandidateID ?? null
+  return (
+    <Show
+      when={rows().length > 0}
+      fallback={
+        <div class="lazers-models-empty-state">
+          <h3>Nothing to project yet</h3>
+          <p>
+            {profile()
+              ? `No source prices any model. ${catalogNotes().join(" · ")}`.trim()
+              : "There are no accepted tasks to project from yet."}
+          </p>
+          <div>
+            <Ui.Button size="small" onClick={openProviderSettings}>
+              Open provider settings
+            </Ui.Button>
+            <Ui.Button size="small" variant="ghost-muted" onClick={refreshAll}>
+              Retry
+            </Ui.Button>
+          </div>
+        </div>
+      }
+    >
+      <Show when={scored() >= 5}>
+        <div class="lazers-chart-modes">
+          <Segmented
+            label="Projected plot"
+            value={view()}
+            onChange={setView}
+            options={[
+              { value: "ranking", label: "Ranking" },
+              { value: "scatter", label: "Cost vs score" },
+            ]}
+          />
+        </div>
+      </Show>
+      <Show
+        when={scatter()}
+        fallback={
+          <RankingChart
+            rows={rows()}
+            selectedID={selectedID()}
+            onSelect={(id) => {
+              revealDetails(ctl)
+              state.selectCandidate(id)
+            }}
+            formatValue={formatMarketAmount}
+            title="Projected cost per accepted task"
+            label="Projected cost ranking. Arrow keys move between models; Enter selects."
+            backedLegend="From your runs"
+            showScore={rows().some((row) => row.score != null)}
+            caption="List prices × your median tokens"
+          />
+        }
+      >
+        <ModelChart
+          points={projectedPoints()}
+          selectedID={selectedID()}
+          onSelect={(candidateID) => {
+            revealDetails(ctl)
+            state.selectCandidate(candidateID)
+          }}
+          xTitle="Public coding index"
+          yTitle="Projected cost per accepted task"
+          formatX={(value) => String(Math.round(value))}
+          formatY={formatAxisMoney}
+          label="Projected cost against score. Arrow keys move between models; Enter selects."
+          backedLegend="From your runs"
+          caption="List prices × your median tokens"
+        />
+      </Show>
+    </Show>
   )
 }
 
@@ -194,22 +292,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
               </Show>
             </Show>
             <Show when={compareMode() === "projected"}>
-              <ModelChart
-                points={projectedPoints()}
-                selectedID={visible()?.selectedCandidateID ?? null}
-                onSelect={(candidateID) => {
-                  revealDetails(ctl)
-                  state.selectCandidate(candidateID)
-                }}
-                xTitle="Public coding index"
-                yTitle="Projected cost per accepted task"
-                formatX={(value) => String(Math.round(value))}
-                formatY={formatAxisMoney}
-                label="Projected cost chart. Arrow keys move between models; Enter selects."
-                backedLegend="From your runs"
-                caption="List prices × your median tokens"
-                emptyText="No model has both a list price and a public coding index yet, or there are no accepted tasks to project from."
-              />
+              <ProjectedPlot ctl={ctl} />
             </Show>
             <Show when={compareMode() === "benchmark"}>
               <Show
@@ -260,10 +343,24 @@ export function CompareTop(props: { ctl: ModelsController }) {
   )
 }
 
-/** Projected mode: the selected catalog model, its projected cost and where it came from. */
+/** Projected mode: the selected catalog model's source, rates, basis and where its set came from. */
 function ProjectedSummary(props: { ctl: ModelsController }) {
-  const { catalogEntries, profile, visible } = props.ctl
+  const { catalogEntries, catalogNotes, catalogSummary, profile, visible } = props.ctl
   const entry = () => catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
+  const day = (value: string | null | undefined) =>
+    value ? new Date(value).toLocaleDateString([], { day: "numeric", month: "short" }) : ""
+  const perMillion = (value: number | null) =>
+    value === null ? undefined : `${formatMarketAmount(value)}`
+  const basis = () => {
+    const median = profile()
+    if (!median) return undefined
+    const input = median.uncachedInput + median.cacheRead + median.cacheWrite
+    return joinSegments([
+      `${compactCount(input)} in`,
+      median.cacheRead > 0 && `${compactCount(median.cacheRead)} cached`,
+      `${compactCount(median.output + median.reasoning)} out`,
+    ])
+  }
   return (
     <Show
       when={entry()}
@@ -273,75 +370,80 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
         </p>
       }
     >
-      {(item) => (
-        <>
-          <dl class="lazers-models-stats" aria-label="Selected model facts">
-            <Show when={item().score !== null}>
-              <div>
-                <dt>coding index</dt>
-                <dd>{item().score}</dd>
-              </div>
-            </Show>
-            <Show when={item().observed}>
-              {(observed) => (
-                <>
-                  <div>
-                    <dt>measured</dt>
-                    <dd>
-                      {observed().range
-                        ? formatMarketRange(observed().range!)
-                        : formatMarketAmount(observed().usd)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>accepted</dt>
-                    <dd>
-                      {observed().terminal
-                        ? `${observed().accepted} of ${observed().terminal}`
-                        : observed().accepted}
-                    </dd>
-                  </div>
-                </>
-              )}
-            </Show>
-            <div>
-              <dt>from</dt>
-              <dd>
-                {item()
+      {(item) => {
+        const stats = () =>
+          [
+            ["input / 1M", perMillion(item().price?.input ?? null)],
+            ["output / 1M", perMillion(item().price?.output ?? null)],
+            ["cached input / 1M", perMillion(item().price?.cacheRead ?? null)],
+            ["context", item().contextTokens ? compactCount(item().contextTokens!) : undefined],
+            ["coding index", item().score === null ? undefined : String(item().score)],
+            [
+              "measured",
+              item().observed
+                ? item().observed!.range
+                  ? formatMarketRange(item().observed!.range!)
+                  : formatMarketAmount(item().observed!.usd)
+                : undefined,
+            ],
+            [
+              "accepted",
+              item().observed
+                ? item().observed!.terminal
+                  ? `${item().observed!.accepted} of ${item().observed!.terminal}`
+                  : String(item().observed!.accepted)
+                : undefined,
+            ],
+          ].filter((row): row is [string, string] => row[1] !== undefined)
+        return (
+          <>
+            <p class="lazers-models-source-line">
+              {joinSegments([
+                item()
                   .tags.map((tag) => sourceTagLabel[tag])
-                  .join(" · ")}
-              </dd>
-            </div>
-          </dl>
-          <Disclosure
-            title="Estimate basis and prices"
-            hint={item().price ? benchmarkSourceName[item().price!.source] : undefined}
-          >
-            <p>
-              List prices times the median tokens per accepted task across our{" "}
-              {profile()?.configurations ?? 0} observed configurations (
-              {profile()?.acceptedTasks ?? 0} accepted tasks):{" "}
-              {formatNumber(Math.round(profile()?.uncachedInput ?? 0))} input,{" "}
-              {formatNumber(Math.round(profile()?.cacheRead ?? 0))} cached input,{" "}
-              {formatNumber(Math.round(profile()?.output ?? 0))} output and{" "}
-              {formatNumber(Math.round(profile()?.reasoning ?? 0))} reasoning tokens.
-              {item().projection?.cacheAtInputRate
-                ? " This model lists no cache rate, so cached tokens are priced at its input rate."
-                : ""}
+                  .join(" · "),
+                item().price ? benchmarkSourceName[item().price!.source] : undefined,
+                day(item().price?.retrievedAt),
+              ])}
             </p>
-            <Show when={item().price}>
-              {(price) => (
-                <p>
-                  {benchmarkSourceName[price().source]} list price per 1M tokens · input{" "}
-                  {formatMarketAmount(price().input)} · output {formatMarketAmount(price().output)}
-                  {price().retrievedAt ? ` · ${retrievedLabel(price().retrievedAt)}` : ""}
-                </p>
+            <Show when={stats().length > 0}>
+              <dl class="lazers-models-stats" aria-label="Selected model facts">
+                <For each={stats()}>
+                  {([label, value]) => (
+                    <div>
+                      <dt>{label}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  )}
+                </For>
+              </dl>
+            </Show>
+            <Show when={basis()}>
+              {(text) => (
+                <p class="lazers-models-basis-line">Your median accepted task: {text()}</p>
               )}
             </Show>
-            <SourcesDetails ctl={props.ctl} />
-          </Disclosure>
-        </>
-      )}
+            <Disclosure
+              title="Estimate basis and prices"
+              hint={item().price ? benchmarkSourceName[item().price!.source] : undefined}
+            >
+              <Show when={catalogSummary()}>
+                {(summary) => <p>Model set: {catalogSummaryText(summary())}.</p>}
+              </Show>
+              <p>
+                List prices times the median tokens per accepted task across our{" "}
+                {profile()?.configurations ?? 0} observed configurations (
+                {profile()?.acceptedTasks ?? 0} accepted tasks).
+                {item().projection?.cacheAtInputRate
+                  ? " This model lists no cache rate, so cached tokens are priced at its input rate."
+                  : ""}
+              </p>
+              <For each={catalogNotes()}>{(note) => <p>{note}.</p>}</For>
+              <SourcesDetails ctl={props.ctl} />
+            </Disclosure>
+          </>
+        )
+      }}
     </Show>
   )
 }
@@ -570,6 +672,16 @@ function CompareInspector(props: { ctl: ModelsController }) {
                     </Show>
                   </dl>
                 )}
+              </Show>
+              <Show
+                when={
+                  selectedFacts()?.terminal !== undefined &&
+                  selectedFacts()!.terminal! < SMALL_SAMPLE_TERMINAL_TASKS
+                }
+              >
+                <p class="lazers-models-note">
+                  small sample · {selectedFacts()?.accepted} of {selectedFacts()?.terminal}
+                </p>
               </Show>
               <Show when={visible()?.decisionInspectError}>
                 <div class="lazers-models-error" role="alert">

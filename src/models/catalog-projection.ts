@@ -18,6 +18,8 @@ import type { ModelPriceSource } from "./price-source-settings.ts"
  * the token profile of our accepted tasks.
  */
 export const CATALOG_TOP = 30
+/** Without public scores, how many priced models are taken in the source's own order. */
+export const CATALOG_SOURCE_TOP = 40
 /** BYOK providers whose lineups are always included, newest by coding index first. */
 export const BYOK_PROVIDERS = ["anthropic", "openai"] as const
 export const BYOK_PER_PROVIDER = 12
@@ -134,6 +136,8 @@ export type CatalogEntry = {
   projection: Projection | null
   /** Public coding index, when a benchmark row matches. */
   score: number | null
+  /** Context window in tokens, when the catalog lists one. */
+  contextTokens: number | null
   observed: ObservedFacts | null
   /** On the projected best trade-off: cost lower, score higher. */
   frontier: boolean
@@ -165,6 +169,56 @@ const byokProvider = (route: BenchmarkRoute, candidate: ModelCandidate) => {
  * available in the configured source order, with its source and date kept.
  */
 export function buildCatalogSet(input: CatalogInput): CatalogEntry[] {
+  return buildCatalog(input).entries
+}
+
+/** How the set was chosen, for the "Estimate basis and prices" disclosure. */
+export type CatalogSummary = {
+  /** Models taken by the primary ordering. */
+  primary: number
+  /** What the primary ordering was: the public coding index, or a source's own listing order. */
+  ordering: string
+  anthropic: number
+  openai: number
+  routed: number
+  /** Where the ordering came from, when it was a source's listing. */
+  orderSource: ModelPriceSource | null
+}
+
+/** Text and tools: a model is excluded only when its source says it lacks one of them. */
+function textAndTools(candidate: ModelCandidate) {
+  const external = candidate.externalModel
+  const native = candidate.native.capabilities
+  const tools = external?.supportedParameters
+    ? external.supportedParameters.includes("tools")
+    : (native?.tools ?? null)
+  const outputs = external?.architecture?.outputModalities ?? native?.output ?? null
+  const inputs = external?.architecture?.inputModalities ?? native?.input ?? null
+  return (
+    tools !== false &&
+    (!outputs || outputs.includes("text")) &&
+    (!inputs || inputs.includes("text"))
+  )
+}
+
+/** Position in the first configured source that lists the model; later is larger. */
+function listingOrder(candidate: ModelCandidate, sources: readonly ModelPriceSource[]) {
+  for (const source of sources) {
+    const references =
+      source === "openrouter"
+        ? candidate.externalModelEvidence.records
+        : candidate.native.evidence.records
+    const wanted = source === "openrouter" ? "openrouter-models" : "native-catalog"
+    const found = references.find((reference) => reference.source === wanted)
+    if (found) return found.recordIndex
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+export function buildCatalog(input: CatalogInput): {
+  entries: CatalogEntry[]
+  summary: CatalogSummary
+} {
   const groups = new Map<string, ModelCandidate[]>()
   for (const candidate of input.candidates) {
     const key = routeKey(candidate.identity)
@@ -176,6 +230,7 @@ export function buildCatalogSet(input: CatalogInput): CatalogEntry[] {
     representative: ModelCandidate | undefined
     price: BenchmarkPrice | null
     score: number | null
+    order: number
   }
   const bases = new Map<string, Base>()
   for (const [key, group] of groups) {
@@ -193,21 +248,45 @@ export function buildCatalogSet(input: CatalogInput): CatalogEntry[] {
       representative,
       price: benchmarkPrice(representative, input.priceSources, input.sourceDates),
       score: exactScore,
+      order: listingOrder(representative, input.priceSources),
     })
   }
-  const catalogKeys = new Set<string>()
-  const priced = [...bases.values()].filter((base) => base.price)
-  for (const base of priced
-    .filter((entry) => entry.score !== null)
+  const priced = [...bases.values()].filter(
+    (base) => base.price && textAndTools(base.representative!),
+  )
+  // Primary: the top models by public coding index; when scores cover fewer than that (a
+  // install without benchmark access has none), the first priced models in the configured
+  // source's own listing order, up to CATALOG_SOURCE_TOP.
+  const scored = priced
+    .filter((base) => base.score !== null)
     .toSorted((a, b) => b.score! - a.score!)
-    .slice(0, CATALOG_TOP))
-    catalogKeys.add(base.key)
+  const primary = new Set<string>()
+  let ordering = "public coding index"
+  let orderSource: ModelPriceSource | null = null
+  if (scored.length >= CATALOG_TOP)
+    for (const base of scored.slice(0, CATALOG_TOP)) primary.add(base.key)
+  else {
+    for (const base of scored) primary.add(base.key)
+    orderSource = input.priceSources[0] ?? null
+    ordering = scored.length
+      ? "public coding index, then listing order"
+      : `${orderSource ? sourceKeyLabel[orderSource] : "source"} listing order`
+    for (const base of priced
+      .filter((entry) => !primary.has(entry.key))
+      .toSorted((a, b) => a.order - b.order)
+      .slice(0, Math.max(0, CATALOG_SOURCE_TOP - primary.size)))
+      primary.add(base.key)
+  }
+  const catalogKeys = new Set(primary)
+  const byok = { anthropic: 0, openai: 0 }
   for (const provider of BYOK_PROVIDERS)
     for (const base of priced
       .filter((entry) => byokProvider(entry.route, entry.representative!) === provider)
       .toSorted((a, b) => (b.score ?? -1) - (a.score ?? -1))
-      .slice(0, BYOK_PER_PROVIDER))
+      .slice(0, BYOK_PER_PROVIDER)) {
+      if (!catalogKeys.has(base.key)) byok[provider]++
       catalogKeys.add(base.key)
+    }
 
   const tags = new Map<string, Set<SourceTag>>()
   const add = (key: string, tag: SourceTag) => tags.set(key, (tags.get(key) ?? new Set()).add(tag))
@@ -220,25 +299,52 @@ export function buildCatalogSet(input: CatalogInput): CatalogEntry[] {
     const [providerID, modelID] = key.split("\u0000") as [string, string]
     const route = base?.route ?? { providerID, modelID }
     const observed = input.observed.get(key) ?? null
+    const representative = base?.representative
     return {
-      id: base?.representative?.candidateID ?? key,
+      id: representative?.candidateID ?? key,
       route,
-      label: input.label(route, base?.representative),
+      label: input.label(route, representative),
       tags: (["observed", "routed", "catalog"] as const).filter((tag) => set.has(tag)),
       price: base?.price ?? null,
       projection: base?.price && input.profile ? projectCost(input.profile, base.price) : null,
       score: base?.score ?? null,
+      contextTokens:
+        representative?.native.contextTokens ??
+        representative?.externalModel?.contextLength ??
+        null,
       observed,
       frontier: false,
     }
   })
-  const scored = entries.filter((entry) => entry.projection && entry.score !== null)
-  for (const entry of paretoFrontier(scored, [
+  const withScores = entries.filter((entry) => entry.projection && entry.score !== null)
+  for (const entry of paretoFrontier(withScores, [
     (item) => item.projection!.usd,
     (item) => -item.score!,
   ]))
     entry.frontier = true
-  return rankCatalog(entries)
+  return {
+    entries: rankCatalog(entries),
+    summary: {
+      primary: primary.size,
+      ordering,
+      anthropic: byok.anthropic,
+      openai: byok.openai,
+      routed: entries.filter((entry) => entry.tags.includes("routed")).length,
+      orderSource,
+    },
+  }
+}
+
+/** One line for the basis disclosure, e.g. "40 from OpenRouter by listing order · 12 Anthropic…". */
+export function catalogSummaryText(summary: CatalogSummary) {
+  return [
+    `${summary.primary} by ${summary.ordering}`,
+    summary.anthropic ? `${summary.anthropic} Anthropic` : "",
+    summary.openai ? `${summary.openai} OpenAI` : "",
+    summary.routed ? `${summary.routed} routed` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
 }
 
 /** The cost shown for an entry: measured when observed, otherwise projected. */

@@ -1221,7 +1221,7 @@ test("registered price reads use the recorded native catalog outcome and preserv
     expect(harness.modelListCalls.count).toBe(0)
 
     const refreshed = (await Effect.runPromise(
-      methods.refreshSources({ sessionID: "ses-native" }),
+      methods.refreshSources({ sessionID: "ses-native", force: true }),
     )) as {
       sources: Array<{
         source: string
@@ -1306,7 +1306,7 @@ test("registered price reads use the recorded native catalog outcome and preserv
     nativeReadFails = true
     delete sourceConnections.openrouter
     const failedRefresh = (await Effect.runPromise(
-      methods.refreshSources({ sessionID: "ses-native" }),
+      methods.refreshSources({ sessionID: "ses-native", force: true }),
     )) as { sources: Array<{ source: string; state: string; latestSnapshotID: string | null }> }
     expect(failedRefresh.sources.find(({ source }) => source === "native-catalog")).toMatchObject({
       state: "failed",
@@ -1407,7 +1407,7 @@ test("never-read, pending, cancelled, failed and empty native catalogs stay unkn
     })
 
     const refreshed = (await Effect.runPromise(
-      methods.refreshSources({ sessionID: "ses-native" }),
+      methods.refreshSources({ sessionID: "ses-native", force: true }),
     )) as { sources: Array<{ source: string; state: string; latestRecordCount: number | null }> }
     expect(refreshed.sources.find(({ source }) => source === "native-catalog")).toMatchObject({
       state: "succeeded",
@@ -1656,7 +1656,7 @@ test("Models evidence RPC reads cached state without credentials and refreshes o
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
 
     const refreshed = (await Effect.runPromise(
-      methods.refreshSources({ sessionID: "ses-native" }),
+      methods.refreshSources({ sessionID: "ses-native", force: true }),
     )) as {
       sources: Array<{
         source: string
@@ -1731,16 +1731,18 @@ test("Models evidence denial, foreign and archived sessions do not initialize or
       { id: "ses-native", projectID, agent: "desktop-settings-user", time: { archived: 10 } },
     ]) {
       harness.setActor(actor)
-      expect(await rejects(methods.refreshSources({ sessionID: "ses-native" }))).toBeInstanceOf(
-        Error,
-      )
+      expect(
+        await rejects(methods.refreshSources({ sessionID: "ses-native", force: true })),
+      ).toBeInstanceOf(Error)
       expect(await rejects(methods.sourceEvidence({ sessionID: "ses-native" }))).toBeInstanceOf(
         Error,
       )
     }
     harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
     denied = true
-    expect(await rejects(methods.refreshSources({ sessionID: "ses-native" }))).toMatchObject({
+    expect(
+      await rejects(methods.refreshSources({ sessionID: "ses-native", force: true })),
+    ).toMatchObject({
       message: "native permission denied",
     })
     expect(await rejects(methods.sourceEvidence({ sessionID: "ses-native" }))).toMatchObject({
@@ -3409,7 +3411,7 @@ test("cancelled Models source refresh stops after late permission and writes no 
   repository.close()
   const controller = new AbortController()
   const pending = Effect.runPromiseExit(
-    harness.methods().refreshSources({ sessionID: "ses-native" }),
+    harness.methods().refreshSources({ sessionID: "ses-native", force: true }),
     { signal: controller.signal },
   )
   try {

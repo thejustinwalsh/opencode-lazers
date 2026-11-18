@@ -8,11 +8,13 @@ import {
 import type { EndpointPricingProductID, EndpointPricingSnapshot } from "./endpoint-pricing.ts"
 import {
   MODEL_EVIDENCE_QUERIES,
+  MODEL_EVIDENCE_SOURCES,
   MODEL_EVIDENCE_SOURCE_URLS,
   ModelEvidenceSnapshotSchema,
 } from "./source-schema.ts"
 import type {
   ModelEvidenceErrorCode,
+  ModelEvidenceRefreshStatus,
   ModelEvidenceSnapshot,
   ModelEvidenceSource,
 } from "./source-schema.ts"
@@ -389,6 +391,130 @@ function httpFailure(status: number): SourceFailure {
   return new SourceFailure("http-error", status)
 }
 
+/**
+ * What is cached, and for how long. Model info (identity, names, context windows, tool support
+ * and the public benchmark rows) changes slowly and is kept for a week. Prices move faster and
+ * are refreshed hourly. A source's list response carries both, so one fetch serves a price
+ * refresh: it replaces the rates on the cached records, adds models it newly lists, and keeps
+ * the rest, leaving the info time (`asOf`) alone. Only an info refresh replaces the records and
+ * so drops models a source no longer lists.
+ */
+export const PRICE_TTL_MS = 60 * 60 * 1000
+export const INFO_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** After a failed refresh, wait this long before trying that source again on its own. */
+export const FAILED_RETRY_MS = 5 * 60 * 1000
+/** A refresh row still "refreshing" after this long belongs to a crashed process. */
+const STALE_REFRESHING_MS = 2 * 60 * 1000
+
+export type RefreshKind = "info" | "prices"
+
+/**
+ * The sources to fetch now and why. `infoAt` is each source's info time (a model list's `asOf`).
+ * A source already refreshing is not due; one that failed recently waits out `FAILED_RETRY_MS`;
+ * `force` makes every source an info refresh. Reading never needs this: the stored snapshot is
+ * always served first.
+ */
+export function dueSources(
+  statuses: readonly ModelEvidenceRefreshStatus[],
+  infoAt: Partial<Record<ModelEvidenceSource, string | null>>,
+  now: number,
+  force = false,
+): Map<ModelEvidenceSource, RefreshKind> {
+  const due = new Map<ModelEvidenceSource, RefreshKind>()
+  for (const status of statuses) {
+    const started = status.startedAt ? Date.parse(status.startedAt) : Number.NaN
+    if (
+      status.state === "refreshing" &&
+      Number.isFinite(started) &&
+      now - started < STALE_REFRESHING_MS
+    )
+      continue
+    if (force) {
+      due.set(status.source, "info")
+      continue
+    }
+    const completed = status.completedAt ? Date.parse(status.completedAt) : Number.NaN
+    if (
+      status.state === "failed" &&
+      Number.isFinite(completed) &&
+      now - completed < FAILED_RETRY_MS
+    )
+      continue
+    const retrieved = status.latestRetrievedAt ? Date.parse(status.latestRetrievedAt) : Number.NaN
+    const info = Date.parse(infoAt[status.source] ?? status.latestRetrievedAt ?? "")
+    if (!Number.isFinite(retrieved) || !Number.isFinite(info) || now - info >= INFO_TTL_MS)
+      due.set(status.source, "info")
+    // Benchmark rows are info only; the model lists also carry prices.
+    else if (status.source !== "openrouter-benchmarks" && now - retrieved >= PRICE_TTL_MS)
+      due.set(status.source, "prices")
+  }
+  return due
+}
+
+type PriceBearing = { prices: unknown }
+const recordKey = (record: ModelEvidenceSnapshot["records"][number]) =>
+  record.kind === "native-model"
+    ? `${record.providerID}\u0000${record.id}`
+    : record.kind === "openrouter-model"
+      ? record.id
+      : ""
+
+/**
+ * A price refresh: the stored records keep their info and take the new rates; a model the
+ * response lists for the first time is added; one it no longer lists is kept until the next
+ * info refresh. The snapshot keeps its previous info time.
+ */
+export function mergePriceRefresh(
+  previous: ModelEvidenceSnapshot,
+  fresh: ModelEvidenceSnapshot,
+): ModelEvidenceSnapshot {
+  const incoming = new Map(fresh.records.map((record) => [recordKey(record), record] as const))
+  const seen = new Set<string>()
+  const records = previous.records.map((record) => {
+    const key = recordKey(record)
+    seen.add(key)
+    const update = incoming.get(key)
+    return update
+      ? ({ ...record, prices: (update as PriceBearing).prices } as typeof record)
+      : record
+  })
+  for (const record of fresh.records) if (!seen.has(recordKey(record))) records.push(record)
+  return ModelEvidenceSnapshotSchema.parse({
+    ...fresh,
+    asOf: previous.asOf ?? previous.retrievedAt,
+    records: records.slice(0, 2_000),
+  })
+}
+
+/**
+ * One source refresh at a time per project, shared by every panel and request: a second caller
+ * gets the running refresh instead of starting another fetch.
+ */
+export function createRefreshGate() {
+  let inFlight: Promise<void> | undefined
+  return {
+    get busy() {
+      return inFlight !== undefined
+    },
+    /** Resolves when the refresh now running, if any, has finished. */
+    wait: () => inFlight ?? Promise.resolve(),
+    /** Run `task` unless a refresh is already running; either way, the running promise. */
+    start(task: () => Promise<unknown>): Promise<void> {
+      if (inFlight) return inFlight
+      const run = task()
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          inFlight = undefined
+        })
+      inFlight = run
+      return run
+    },
+  }
+}
+
 export class ModelEvidenceRefresher {
   constructor(
     private readonly context: SourceContext,
@@ -396,33 +522,73 @@ export class ModelEvidenceRefresher {
     private readonly fetcher: ModelEvidenceFetcher = fetch,
   ) {}
 
-  async refresh(signal: AbortSignal) {
+  /** The sources due now and why, from the stored snapshots and refresh state. */
+  due(force = false, now = Date.now()) {
+    const infoAt: Partial<Record<ModelEvidenceSource, string | null>> = {}
+    for (const source of MODEL_EVIDENCE_SOURCES) {
+      const snapshot = this.store.latestSnapshot(source)
+      // A model list's `asOf` is its info time; a benchmark's is the publisher's data date, so
+      // its info time is when we fetched it.
+      infoAt[source] = snapshot
+        ? source === "openrouter-benchmarks"
+          ? snapshot.retrievedAt
+          : (snapshot.asOf ?? snapshot.retrievedAt)
+        : null
+    }
+    return dueSources(this.store.read().sources, infoAt, now, force)
+  }
+
+  /**
+   * Refresh the given sources (all by default). A source not listed is left alone: its stored
+   * snapshot stays what readers are served.
+   */
+  async refresh(
+    signal: AbortSignal,
+    plan: ReadonlyMap<ModelEvidenceSource, RefreshKind> = new Map(
+      MODEL_EVIDENCE_SOURCES.map((source) => [source, "info" as const]),
+    ),
+  ) {
     signal.throwIfAborted()
-    const generations = this.store.beginRefresh()
-    const endpointGenerations = this.store.beginEndpointPricingRefresh()
+    this.plan = plan
+    const wanted = new Set(plan.keys())
+    if (wanted.size === 0) return this.store.read()
+    const generations = this.store.beginRefresh([...wanted])
+    // Endpoint prices belong to the OpenRouter model list: they refresh with it.
+    const endpointGenerations = wanted.has("openrouter-models")
+      ? this.store.beginEndpointPricingRefresh()
+      : undefined
+    const openRouterWanted = wanted.has("openrouter-models") || wanted.has("openrouter-benchmarks")
+    const skipped: Outcome = { state: "cancelled" }
     if (signal.aborted) {
-      this.cancelAll(generations, endpointGenerations)
+      this.cancelAll(wanted, generations, endpointGenerations)
       return this.store.read()
     }
 
     const [native, credential] = await Promise.all([
-      this.nativeOutcome(generations["native-catalog"], signal),
-      this.openRouterCredential(signal),
+      wanted.has("native-catalog")
+        ? this.nativeOutcome(generations["native-catalog"], signal)
+        : Promise.resolve(skipped),
+      openRouterWanted
+        ? this.openRouterCredential(signal)
+        : Promise.resolve<CredentialResult>({ errorCode: "missing-credentials" }),
     ])
     if (signal.aborted) {
-      this.cancelAll(generations, endpointGenerations)
+      this.cancelAll(wanted, generations, endpointGenerations)
       return this.store.read()
     }
 
-    const models = this.openRouterOutcome(
-      "openrouter-models",
-      generations["openrouter-models"],
-      OPENROUTER_MODELS_URL,
-      "key" in credential ? credential.key : null,
-      signal,
-    )
-    const benchmarks =
-      "key" in credential
+    const models = wanted.has("openrouter-models")
+      ? this.openRouterOutcome(
+          "openrouter-models",
+          generations["openrouter-models"],
+          OPENROUTER_MODELS_URL,
+          "key" in credential ? credential.key : null,
+          signal,
+        )
+      : Promise.resolve(skipped)
+    const benchmarks = !wanted.has("openrouter-benchmarks")
+      ? Promise.resolve(skipped)
+      : "key" in credential
         ? this.openRouterOutcome(
             "openrouter-benchmarks",
             generations["openrouter-benchmarks"],
@@ -435,17 +601,19 @@ export class ModelEvidenceRefresher {
             errorCode: credential.errorCode,
             httpStatus: null,
           })
-    const endpointPricing = Promise.all(
-      ENDPOINT_PRICING_PRODUCTS.map(({ productID }) =>
-        this.endpointPricingOutcome(
-          productID,
-          endpointGenerations[productID],
-          "key" in credential ? credential.key : null,
-          "key" in credential ? null : credential.errorCode,
-          signal,
-        ),
-      ),
-    )
+    const endpointPricing = endpointGenerations
+      ? Promise.all(
+          ENDPOINT_PRICING_PRODUCTS.map(({ productID }) =>
+            this.endpointPricingOutcome(
+              productID,
+              endpointGenerations[productID],
+              "key" in credential ? credential.key : null,
+              "key" in credential ? null : credential.errorCode,
+              signal,
+            ),
+          ),
+        )
+      : Promise.resolve<EndpointPricingOutcome[]>([])
     const [modelsOutcome, benchmarkOutcome, endpointOutcomes] = await Promise.all([
       models,
       benchmarks,
@@ -453,7 +621,7 @@ export class ModelEvidenceRefresher {
     ])
 
     if (signal.aborted) {
-      this.cancelAll(generations, endpointGenerations, endpointOutcomes)
+      this.cancelAll(wanted, generations, endpointGenerations, endpointOutcomes)
       return this.store.read()
     }
     const outcomes = [
@@ -462,23 +630,25 @@ export class ModelEvidenceRefresher {
       ["openrouter-benchmarks", benchmarkOutcome],
     ] as const
     for (const [source, outcome] of outcomes) {
+      if (!wanted.has(source)) continue
       if (signal.aborted) {
-        this.cancelAll(generations, endpointGenerations, endpointOutcomes)
+        this.cancelAll(wanted, generations, endpointGenerations, endpointOutcomes)
         return this.store.read()
       }
       this.commit(source, generations[source], outcome)
     }
-    for (const [index, { productID }] of ENDPOINT_PRICING_PRODUCTS.entries()) {
-      if (signal.aborted) {
-        this.cancelAll(generations, endpointGenerations, endpointOutcomes)
-        return this.store.read()
+    if (endpointGenerations)
+      for (const [index, { productID }] of ENDPOINT_PRICING_PRODUCTS.entries()) {
+        if (signal.aborted) {
+          this.cancelAll(wanted, generations, endpointGenerations, endpointOutcomes)
+          return this.store.read()
+        }
+        this.commitEndpointPricing(
+          productID,
+          endpointGenerations[productID],
+          endpointOutcomes[index]!,
+        )
       }
-      this.commitEndpointPricing(
-        productID,
-        endpointGenerations[productID],
-        endpointOutcomes[index]!,
-      )
-    }
     return this.store.read()
   }
 
@@ -647,9 +817,18 @@ export class ModelEvidenceRefresher {
     }
   }
 
+  private plan: ReadonlyMap<ModelEvidenceSource, RefreshKind> = new Map()
+
   private commit(source: ModelEvidenceSource, generation: number, outcome: Outcome): void {
     if (outcome.state === "success") {
-      this.store.saveSnapshot(outcome.snapshot)
+      let snapshot = outcome.snapshot
+      // An info refresh stores the response as it is (info time = retrieved time); a price
+      // refresh merges it into the stored records and keeps the earlier info time in `asOf`.
+      if (source !== "openrouter-benchmarks" && this.plan.get(source) === "prices") {
+        const previous = this.store.latestSnapshot(source)
+        if (previous) snapshot = mergePriceRefresh(previous, snapshot)
+      }
+      this.store.saveSnapshot(snapshot)
     } else if (outcome.state === "cancelled") {
       this.store.cancelRefresh(source, generation)
     } else {
@@ -677,12 +856,14 @@ export class ModelEvidenceRefresher {
   }
 
   private cancelAll(
+    wanted: ReadonlySet<ModelEvidenceSource>,
     generations: Record<ModelEvidenceSource, number>,
-    endpointGenerations: Record<EndpointPricingProductID, number>,
+    endpointGenerations: Record<EndpointPricingProductID, number> | undefined,
     endpointOutcomes?: readonly EndpointPricingOutcome[],
   ): void {
-    for (const source of ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const)
-      this.store.cancelRefresh(source, generations[source])
+    for (const source of MODEL_EVIDENCE_SOURCES)
+      if (wanted.has(source)) this.store.cancelRefresh(source, generations[source])
+    if (!endpointGenerations) return
     for (const [index, { productID }] of ENDPOINT_PRICING_PRODUCTS.entries()) {
       const outcome = endpointOutcomes?.[index]
       const httpStatus =

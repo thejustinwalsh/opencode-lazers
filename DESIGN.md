@@ -290,7 +290,8 @@ fan out while one is hovered or focused.
 
 **Best trade-off** has one definition. It is the Pareto set over cost per accepted
 task (lower), tokens per accepted task (lower) and acceptance rate (higher), among
-observed models with a complete cohort and at least two terminal tasks. A model is on
+observed models with a complete cohort and at least one accepted task; a model with fewer
+than three terminal tasks is flagged "small sample · n of m" but still counts. A model is on
 it when no other eligible model is at least as good on all three and strictly better
 on one. The polyline joins the frontier points ordered by tokens; a frontier of one
 point draws no line. Catalog references and projections are a different measure and
@@ -307,6 +308,24 @@ models are projected: list prices times the median tokens per accepted task of o
 own accepted tasks, with the basis stated. The segmented control is
 `Your runs · Projected · Benchmark`. "All models" lists every entry ranked best
 trade-off first, then by cost per task.
+
+Projected is a ranking, not a scatter: one row per priced model, cheapest projected cost
+first, cost on a `$` axis (log when the spread exceeds 50x), the model name at the left,
+the value at the bar end, Observed-backed models with a ring, and public scores as a
+muted right-hand column when any exist. Rows scroll inside the chart under a fixed axis
+(22 px rows, 12 visible). A cost-vs-score scatter is a secondary toggle, offered only when
+at least five models have a score. With no score at all the catalog is the first 40 priced
+text- and tool-capable models in the configured price source's own listing order (OpenRouter
+models-list order, or OpenCode catalog order; OpenRouter documents a `sort=most-popular`
+query on the models endpoint, which the stored snapshots do not use yet), then the
+Anthropic and OpenAI lineups and every routed model; the disclosure states the split.
+
+The catalog is cached server-side in the plugin database (`model_evidence_snapshots` and
+`model_evidence_refreshes`, per project directory). Readers always get the stored snapshot
+first. Prices refresh in the background after one hour, model info (names, context windows,
+tool support, benchmark rows) after seven days; a price refresh keeps the stored info,
+replaces rates, adds newly listed models and keeps vanished ones until the next info
+refresh. One refresh runs at a time per project; the header refresh button forces all.
 
 The researched default plot compares mean tokens and comparable cost per
 completed logical task, with acceptance quality alongside. Cost per accepted

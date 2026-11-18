@@ -17,7 +17,7 @@ import {
   projectedChartPoints,
   referenceAmount,
 } from "./chart-data.ts"
-import { buildCatalogSet, tokenProfile } from "./catalog-projection.ts"
+import { buildCatalog, tokenProfile } from "./catalog-projection.ts"
 import type { CatalogEntry, ObservedFacts } from "./catalog-projection.ts"
 import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
@@ -118,6 +118,8 @@ export function createModelsController(props: ModelsProps) {
     summary?: string
   }>()
   let assignmentPickerRequest = 0
+  /** The comparison page already followed by the background catalog paging. */
+  let pagedFor: string | undefined
   const refs: {
     root?: HTMLDivElement
     topPane?: HTMLDivElement
@@ -250,6 +252,8 @@ export function createModelsController(props: ModelsProps) {
       return { value, key: expectedKey() }
     },
     ({ value, key }) => {
+      // A new connection starts paging afresh.
+      pagedFor = undefined
       const view = prefs()
       const filters: ModelDecisionFilters = {
         persona: view.persona,
@@ -275,11 +279,14 @@ export function createModelsController(props: ModelsProps) {
               { ...location, signal },
             ),
           ),
-        refreshSources: (parent) =>
+        refreshSources: (parent, force) =>
           withReadDeadline(
             parent,
             (signal) =>
-              models.refreshSources({ sessionID: value.session }, { ...location, signal }),
+              models.refreshSources(
+                { sessionID: value.session, ...(force ? { force: true } : {}) },
+                { ...location, signal },
+              ),
             2 * READ_DEADLINE_MS,
           ),
         settings: (taskID, parent) =>
@@ -753,13 +760,13 @@ export function createModelsController(props: ModelsProps) {
       }),
     ),
   )
-  const catalogEntries = createMemo(() => {
+  const catalog = createMemo(() => {
     const panel = visible()
-    if (!panel) return []
+    if (!panel) return { entries: [], summary: undefined }
     const candidates = panel.candidates
     const routes = candidates.map((candidate) => ({ ...candidate.identity, variant: null }))
-    const catalog = panel.catalog?.options ?? []
-    return buildCatalogSet({
+    const catalogOptions = panel.catalog?.options ?? []
+    return buildCatalog({
       candidates,
       priceSources: priceSourceOrder().sources,
       sourceDates: {
@@ -769,9 +776,12 @@ export function createModelsController(props: ModelsProps) {
       profile: profile(),
       observed: observedFactsByRoute(),
       routed: routedRoutes(),
-      label: (route) => modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalog),
+      label: (route) =>
+        modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalogOptions),
     })
   })
+  const catalogEntries = () => catalog().entries
+  const catalogSummary = () => catalog().summary
   const observedPriceSourceName = () =>
     ({ openrouter: "OpenRouter", opencode: "OpenCode", mixed: "Configured" })[
       (visible()?.decisionOverview?.context.priceIndex.source ?? "") as
@@ -789,19 +799,38 @@ export function createModelsController(props: ModelsProps) {
   })
   const projectedPoints = createMemo(() => projectedChartPoints(catalogEntries()))
   const benchmarkPoints = createMemo(() => benchmarkChartPoints(baseline()?.points ?? []))
-  /** The one catalog line while source data is still arriving, else nothing. */
+  /**
+   * The one catalog line, only on a first-ever run with nothing stored to show. When a snapshot
+   * exists the full set paints at once from it and refreshes in the background, silently.
+   */
   const catalogLoadingLine = () => {
     const panel = visible()
-    if (compareMode() === "observed" || !panel) return undefined
-    if (!panel.comparisonLoading && !panel.comparison?.nextCursor) return undefined
+    if (compareMode() === "observed" || !panel || panel.candidates.length > 0) return undefined
+    if (!panel.comparisonLoading && panel.sourceRefresh !== "refreshing") return undefined
     const names = priceSourceOrder().sources.map((source) => benchmarkSourceName[source])
     return `Loading catalog · ${names.join(", ")}`
+  }
+  /** One sentence per source that has nothing stored, for "Estimate basis and prices". */
+  const catalogNotes = () => {
+    const names = {
+      "native-catalog": "OpenCode catalog",
+      "openrouter-models": "OpenRouter catalog",
+      "openrouter-benchmarks": "OpenRouter benchmarks",
+    } as const
+    return (visible()?.comparison?.sources ?? [])
+      .filter((source) => !source.snapshot && source.refresh?.state !== "refreshing")
+      .map((source) => `${names[source.source]} unavailable`)
   }
   // The catalog is read a page at a time in the background once the first paint is done.
   createEffect(() => {
     const panel = visible()
-    if (panel?.decisionOverview && panel.comparison?.nextCursor && !panel.comparisonLoading)
-      void state.moreCandidates()
+    const cursor = panel?.comparison?.nextCursor
+    if (!panel?.decisionOverview || !cursor || panel.comparisonLoading) return
+    // Each (page, loaded count) is followed once, so a page that does not advance cannot loop.
+    const key = `${cursor}:${panel.candidates.length}`
+    if (key === pagedFor) return
+    pagedFor = key
+    void state.moreCandidates()
   })
   /** Benchmark leads only when observations are sparse and the baseline has data. */
   const compareMode = (): "observed" | "projected" | "benchmark" => {
@@ -814,12 +843,18 @@ export function createModelsController(props: ModelsProps) {
       : "observed"
   }
   /** Epoch ms of the newest price snapshot; absent until one exists. */
+  /** The oldest price snapshot among the sources prices are taken from. */
   const pricesAsOfTime = () => {
+    const used = new Set(
+      priceSourceOrder().sources.map((source) =>
+        source === "openrouter" ? "openrouter-models" : "native-catalog",
+      ),
+    )
     const times = (visible()?.comparison?.sources ?? [])
-      .filter((entry) => entry.source !== "openrouter-benchmarks")
+      .filter((entry) => used.has(entry.source as never))
       .flatMap((entry) => (entry.snapshot ? [Date.parse(entry.snapshot.retrievedAt)] : []))
       .filter((time) => Number.isFinite(time))
-    return times.length ? Math.max(...times) : undefined
+    return times.length ? Math.min(...times) : undefined
   }
   const pricesAsOf = () => {
     const time = pricesAsOfTime()
@@ -1368,6 +1403,8 @@ export function createModelsController(props: ModelsProps) {
     allModelsSelectedID,
     selectEntry,
     catalogEntries,
+    catalogNotes,
+    catalogSummary,
     catalogLoadingLine,
     observedPoints,
     profile,

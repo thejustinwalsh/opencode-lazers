@@ -7,6 +7,10 @@ import {
   formatAxisMoney,
   formatAxisTokens,
   layoutChart,
+  layoutRanking,
+  RANK_ROW_HEIGHT,
+  RANK_VISIBLE_ROWS,
+  truncateText,
   LOG_RATIO,
   nextPointID,
   niceAxis,
@@ -225,4 +229,46 @@ test("arrow keys travel through points left to right; Home and End jump", () => 
   expect(nextPointID(points, "middle", "Home")).toBe("left")
   expect(nextPointID(points, "middle", "x")).toBeUndefined()
   expect(nextPointID([], null, "ArrowRight")).toBeUndefined()
+})
+
+test("the ranking keeps the order given, spreads cost along x and scrolls past twelve rows", () => {
+  const rows = Array.from({ length: 30 }, (_, index) => ({
+    id: `m${index}`,
+    label: index === 0 ? "A very long model name · medium effort" : `Model ${index}`,
+    value: 0.5 + index * 0.5,
+    score: index % 2 ? 61 : null,
+  }))
+  const layout = layoutRanking({
+    width: 474,
+    rows,
+    formatValue: (value) => `$${value}`,
+    showScore: true,
+  })
+  expect(layout.rows.map((row) => row.id)).toEqual(rows.map((row) => row.id))
+  // 22 px rows; all thirty are laid out and the area scrolls.
+  expect(layout.height).toBe(30 * RANK_ROW_HEIGHT)
+  expect(RANK_VISIBLE_ROWS).toBe(12)
+  expect(layout.rows[1]!.cy - layout.rows[0]!.cy).toBe(22)
+  // Cost grows to the right, with `$` ticks that end at a round number above the maximum.
+  expect(layout.rows[29]!.cx).toBeGreaterThan(layout.rows[0]!.cx)
+  expect(layout.xScale.ticks[0]!.label).toBe("$0")
+  expect(layout.xScale.max).toBeGreaterThanOrEqual(15)
+  // A long label is cut to the left column.
+  expect(layout.rows[0]!.text.endsWith("…")).toBe(true)
+  expect(layout.rows[1]!.text).toBe("Model 1")
+  // The score column makes room on the right; without scores the plot takes it.
+  expect(layout.scoreWidth).toBeGreaterThan(0)
+  const without = layoutRanking({ width: 474, rows, formatValue: String, showScore: false })
+  expect(without.plotRight).toBeGreaterThan(layout.plotRight)
+  // The most expensive bar puts its value label inside; the cheapest keeps it to the right.
+  expect(layout.rows[29]!.valueInside).toBe(false)
+  expect(
+    layoutRanking({
+      width: 474,
+      rows: [{ id: "a", label: "a", value: 5 }],
+      formatValue: String,
+      showScore: false,
+    }).rows[0]!.valueInside,
+  ).toBe(false)
+  expect(truncateText("abcdef", 4)).toBe("abc…")
 })

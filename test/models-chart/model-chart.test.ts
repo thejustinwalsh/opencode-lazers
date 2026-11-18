@@ -121,3 +121,44 @@ test("an empty plot says what is missing and offers the next step", () => {
   expect(html).toContain("Show projected cost")
   expect(html).not.toContain("<svg")
 })
+
+test("the ranking draws one focusable row per model, with rings, a halo and a score column", async () => {
+  const { RankingChart } = (await vite.ssrLoadModule(
+    "/src/models/model-chart.tsx",
+  )) as typeof import("../../src/models/model-chart.tsx")
+  const rows = [
+    { id: "a", label: "Cheap", value: 0.4, score: 42, backed: false },
+    { id: "b", label: "Backed", value: 2, score: 61, backed: true },
+    { id: "c", label: "Dear", value: 14.4, score: null, backed: false },
+  ].map((row) => ({
+    ...row,
+    tooltip: [row.label],
+    description: `${row.label}, exact route p / ${row.id}`,
+  }))
+  const html = renderToString(() =>
+    createComponent(RankingChart, {
+      rows,
+      selectedID: "b",
+      onSelect: () => {},
+      formatValue: (value: number) => `$${value}`,
+      label: "Projected cost ranking",
+      title: "Projected cost per accepted task",
+      backedLegend: "From your runs",
+      showScore: true,
+      caption: "List prices × your median tokens",
+    }),
+  )
+  expect(html.match(/role="button"/g)).toHaveLength(3)
+  expect(html.match(/tabindex="0"/g)).toHaveLength(1)
+  expect(html).toContain('aria-pressed="true"')
+  expect(html.match(/lazers-chart-ring/g)).toHaveLength(1)
+  expect(html.match(/lazers-chart-halo/g)).toHaveLength(1)
+  // Value labels at the bar ends; the score column only where a score exists.
+  for (const value of ["$0.4", "$2", "$14.4"]) expect(html).toContain(`>${value}</text>`)
+  expect(html.match(/score \d+/g)).toEqual(["score 42", "score 61"])
+  // A fixed `$` axis, rows that scroll, and the legend naming the ring.
+  expect(html).toContain("lazers-rank-axis")
+  expect(html).toContain("max-height:264px")
+  expect(html).toContain("From your runs")
+  expect(html).toContain("Projected cost per accepted task")
+})

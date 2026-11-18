@@ -1,7 +1,7 @@
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
-import type { ModelChartPoint } from "./model-chart.tsx"
+import type { ModelChartPoint, RankingChartRow } from "./model-chart.tsx"
 import type { CatalogEntry } from "./catalog-projection.ts"
-import { FRONTIER_MIN_TERMINAL_TASKS, paretoFrontier } from "./chart-layout.ts"
+import { SMALL_SAMPLE_TERMINAL_TASKS, paretoFrontier } from "./chart-layout.ts"
 import type { BenchmarkBaselineGap, BenchmarkBaselinePoint } from "./benchmark-baseline.ts"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
@@ -315,7 +315,8 @@ export type ChartMark = {
  *
  * The best trade-off (`frontier`) is the Pareto set over cost per accepted task (lower),
  * tokens per accepted task (lower) and acceptance rate (higher), among observed points with a
- * complete cohort and at least `FRONTIER_MIN_TERMINAL_TASKS` terminal tasks. Catalog references
+ * complete cohort and at least one accepted task (a sample under
+ * `SMALL_SAMPLE_TERMINAL_TASKS` is flagged "small sample", not excluded). Catalog references
  * are a different measure and never join it. The server's own frontier list is not used.
  */
 export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
@@ -365,8 +366,8 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
       aria: comparisonChartPointText(point),
     }
     marks.set(point.configurationID, mark)
-    if (!point.partial && (mark.terminal ?? Infinity) >= FRONTIER_MIN_TERMINAL_TASKS)
-      eligible.push(mark)
+    // Any complete cohort with an accepted task counts; a small sample is flagged, not excluded.
+    if (!point.partial) eligible.push(mark)
   }
   const rate = (mark: ChartMark) =>
     mark.terminal && mark.accepted !== undefined ? mark.accepted / mark.terminal : null
@@ -499,6 +500,9 @@ export function observedChartPoints(
               ? `${mark.accepted} of ${mark.terminal} accepted`
               : `${mark.accepted} accepted`,
           ]),
+      ...(mark.terminal !== undefined && mark.terminal < SMALL_SAMPLE_TERMINAL_TASKS
+        ? [`small sample · ${mark.accepted} of ${mark.terminal}`]
+        : []),
       ...(priceSource ? [`${priceSource} prices`] : []),
     ]
     return {
@@ -513,30 +517,37 @@ export function observedChartPoints(
   })
 }
 
-/** Projections: list-price cost per task against the public coding index. */
+/** Tooltip lines of a projected model: name, projected cost, score, measured facts, source. */
+function projectedLines(entry: CatalogEntry) {
+  const measured = entry.observed
+  return [
+    entry.label,
+    ...(entry.projection
+      ? [`Projected ≈${formatMarketAmount(entry.projection.usd)} per accepted task`]
+      : []),
+    ...(entry.score !== null ? [`Coding index ${entry.score}`] : []),
+    ...(measured
+      ? [
+          `Measured ${measured.range ? formatMarketRange(measured.range) : formatMarketAmount(measured.usd)} · ${
+            measured.terminal
+              ? `${measured.accepted} of ${measured.terminal} accepted`
+              : `${measured.accepted} accepted`
+          }`,
+        ]
+      : []),
+    ...(entry.price
+      ? [
+          `${benchmarkSourceName[entry.price.source]} prices${entry.price.retrievedAt ? ` · ${entry.price.retrievedAt.slice(0, 10)}` : ""}`,
+        ]
+      : []),
+  ]
+}
+
+/** Projections with a public score: cost per task against the coding index (the secondary plot). */
 export function projectedChartPoints(entries: readonly CatalogEntry[]): ModelChartPoint[] {
   return entries.flatMap((entry) => {
     if (!entry.projection || entry.score === null) return []
-    const measured = entry.observed
-    const lines = [
-      entry.label,
-      `Projected ≈${formatMarketAmount(entry.projection.usd)} per accepted task`,
-      `Coding index ${entry.score}`,
-      ...(measured
-        ? [
-            `Measured ${measured.range ? formatMarketRange(measured.range) : formatMarketAmount(measured.usd)} · ${
-              measured.terminal
-                ? `${measured.accepted} of ${measured.terminal} accepted`
-                : `${measured.accepted} accepted`
-            }`,
-          ]
-        : []),
-      ...(entry.price
-        ? [
-            `${benchmarkSourceName[entry.price.source]} prices${entry.price.retrievedAt ? ` · ${entry.price.retrievedAt.slice(0, 10)}` : ""}`,
-          ]
-        : []),
-    ]
+    const lines = projectedLines(entry)
     return [
       {
         id: entry.id,
@@ -544,12 +555,34 @@ export function projectedChartPoints(entries: readonly CatalogEntry[]): ModelCha
         y: entry.projection.usd,
         label: boundedModelLabel(entry.label, pointLabelLimit),
         frontier: entry.frontier,
-        backed: measured !== null,
+        backed: entry.observed !== null,
         tooltip: lines,
         description: lines.join(". "),
       },
     ]
   })
+}
+
+/**
+ * The Projected ranking: every priced model with a projection, cheapest first. It needs no
+ * second measure, so it exists whenever any source prices anything.
+ */
+export function projectedRankRows(entries: readonly CatalogEntry[]): RankingChartRow[] {
+  return entries
+    .filter((entry) => entry.projection)
+    .toSorted((a, b) => a.projection!.usd - b.projection!.usd || a.label.localeCompare(b.label))
+    .map((entry) => {
+      const lines = projectedLines(entry)
+      return {
+        id: entry.id,
+        label: entry.label,
+        value: entry.projection!.usd,
+        backed: entry.observed !== null,
+        score: entry.score,
+        tooltip: lines,
+        description: lines.join(". "),
+      }
+    })
 }
 
 /** The Benchmark view: coding index against list price per 1M tokens. */

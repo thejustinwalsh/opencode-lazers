@@ -8,8 +8,8 @@ export const CHART_FONT = 11.5
 export const MARK_RADIUS = 4.5
 const LABEL_GAP = 3
 
-/** The smallest sample for a model to count when deciding the best trade-off. */
-export const FRONTIER_MIN_TERMINAL_TASKS = 2
+/** Below this many terminal tasks a model is marked "small sample"; it still counts. */
+export const SMALL_SAMPLE_TERMINAL_TASKS = 3
 
 /**
  * "Best trade-off" is the Pareto set: a model is on it when no other eligible model is at least
@@ -105,7 +105,7 @@ export function buildScale(options: ScaleOptions): Scale {
       all.at(-1) === undefined || all.at(-1)! < target;
       exponent++
     )
-      all.push(10 ** exponent, 3 * 10 ** exponent)
+      all.push(10 ** exponent, Number((3 * 10 ** exponent).toPrecision(10)))
     const covered = all.slice(0, all.findIndex((value) => value >= target) + 1)
     const values =
       covered.length > 7
@@ -418,4 +418,96 @@ export function nextPointID(
     return order[index < 0 ? 0 : Math.min(order.length - 1, index + 1)]!.id
   if (key === "ArrowLeft" || key === "ArrowUp") return order[Math.max(0, index - 1)]!.id
   return undefined
+}
+
+// -- Ranking: one row per model, cost on the x axis -------------------------------------------------
+
+export const RANK_ROW_HEIGHT = 22
+/** Rows visible before the ranking scrolls inside its area. */
+export const RANK_VISIBLE_ROWS = 12
+
+export type RankRow = {
+  id: string
+  label: string
+  value: number
+  /** Backed by the user's own runs: drawn with a ring. */
+  backed?: boolean
+  /** Public score shown in a muted right-hand column when scores exist. */
+  score?: number | null
+}
+
+export type PlacedRankRow = RankRow & {
+  /** Row centre. */
+  cy: number
+  /** Where the lollipop ends. */
+  cx: number
+  /** The label, cut to fit the left column. */
+  text: string
+  valueText: string
+  /** Value text sits left of the end when there is no room on the right. */
+  valueInside: boolean
+}
+
+export type RankLayout = {
+  width: number
+  /** Height of the scrolling rows. */
+  height: number
+  labelWidth: number
+  plotLeft: number
+  plotRight: number
+  scoreWidth: number
+  xScale: Scale
+  rows: PlacedRankRow[]
+}
+
+export function truncateText(value: string, characters: number) {
+  const chars = Array.from(value)
+  return chars.length <= characters
+    ? value
+    : `${chars.slice(0, Math.max(1, characters - 1)).join("")}…`
+}
+
+/** Rows keep the order given (cheapest first); cost runs along x with `$` ticks. */
+export function layoutRanking(input: {
+  width: number
+  rows: readonly RankRow[]
+  formatValue: (value: number) => string
+  showScore: boolean
+}): RankLayout {
+  const { width } = input
+  const labelWidth = Math.round(clamp(width * 0.38, 110, 190))
+  const scoreWidth = input.showScore ? 62 : 0
+  const plotLeft = labelWidth + 8
+  const plotRight = width - 12 - scoreWidth
+  const xScale = buildScale({
+    values: input.rows.map((row) => row.value),
+    // One very dear model must not squash the rest into the first tick.
+    scale: "auto-log",
+    intervals: width < 420 ? 3 : 4,
+    format: formatAxisMoney,
+    // Room for the value label to the right of the longest bar.
+    headroom: 0.18,
+  })
+  const characters = Math.floor(labelWidth / (CHART_FONT * 0.54))
+  return {
+    width,
+    height: input.rows.length * RANK_ROW_HEIGHT,
+    labelWidth,
+    plotLeft,
+    plotRight,
+    scoreWidth,
+    xScale,
+    rows: input.rows.map((row, index) => {
+      const cx = plotLeft + xScale.at(row.value) * (plotRight - plotLeft)
+      const valueText = input.formatValue(row.value)
+      return {
+        ...row,
+        cy: index * RANK_ROW_HEIGHT + RANK_ROW_HEIGHT / 2,
+        cx,
+        text: truncateText(row.label, characters),
+        valueText,
+        valueInside: cx + 10 + valueText.length * CHART_FONT * 0.56 > plotRight + scoreWidth + 8,
+      }
+    }),
+  }
 }
