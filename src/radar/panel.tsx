@@ -941,44 +941,44 @@ function RadarDiagnosticsPanel(
                 {(transition) => (
                   <>
                     <h3>{transition().event}</h3>
-                    <dl>
-                      <dt>Sequence</dt>
-                      <dd>{transition().sequence}</dd>
+                    <p class="lazers-radar-facts-line">
+                      <Show when={transition().from || transition().to}>
+                        <span>
+                          {transition().from ?? ""} → {transition().to ?? ""}
+                        </span>
+                      </Show>
                       <Show when={timeLabel(transition().recordedAt)}>
-                        <dt>Recorded</dt>
-                        <dd>
+                        <span>
+                          <em>recorded</em>{" "}
                           <time dateTime={timeValue(transition().recordedAt)}>
                             {timeLabel(transition().recordedAt)}
                           </time>
-                        </dd>
+                        </span>
                       </Show>
-                      <Show when={transition().from}>
-                        <dt>From</dt>
-                        <dd>{transition().from}</dd>
-                      </Show>
-                      <Show when={transition().to}>
-                        <dt>To</dt>
-                        <dd>{transition().to}</dd>
-                      </Show>
-                      <dt>Record</dt>
-                      <dd>{transition().kind}</dd>
-                      <Show when={transition().taskID}>
-                        <dt>Task</dt>
-                        <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                          {transition().taskID}
-                        </dd>
-                      </Show>
-                      <Show when={transition().attemptID}>
-                        <dt>Attempt</dt>
-                        <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                          {transition().attemptID}
-                        </dd>
-                      </Show>
-                      <Show when={transition().reason}>
-                        <dt>Reason</dt>
-                        <dd>{transition().reason}</dd>
-                      </Show>
-                    </dl>
+                      <span>{transition().kind}</span>
+                    </p>
+                    <Show when={transition().reason}>
+                      <p>{transition().reason}</p>
+                    </Show>
+                    <details class="lazers-radar-disclosure lazers-radar-identifiers">
+                      <summary>Identifiers</summary>
+                      <dl>
+                        <dt>Sequence</dt>
+                        <dd>{transition().sequence}</dd>
+                        <Show when={transition().taskID}>
+                          <dt>Task</dt>
+                          <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                            {transition().taskID}
+                          </dd>
+                        </Show>
+                        <Show when={transition().attemptID}>
+                          <dt>Attempt</dt>
+                          <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                            {transition().attemptID}
+                          </dd>
+                        </Show>
+                      </dl>
+                    </details>
                   </>
                 )}
               </Show>
@@ -988,30 +988,41 @@ function RadarDiagnosticsPanel(
                   return (
                     <>
                       <h3>{machineState().id}</h3>
-                      <dl>
-                        <dt>Type</dt>
-                        <dd>{machineState().type}</dd>
-                        <dt>Initial</dt>
-                        <dd>{inspector().initial}</dd>
-                        <Show when={inspector().current}>
-                          <dt>Current</dt>
-                          <dd>{inspector().current}</dd>
+                      <p class="lazers-radar-facts-line">
+                        <span>{machineState().type}</span>
+                        <Show when={inspector().initial === "Yes"}>
+                          <span>initial</span>
                         </Show>
-                        <Show when={inspector().matchesRecordedState && inspector().reason}>
-                          <dt>Recorded reason</dt>
-                          <dd>{inspector().reason}</dd>
+                        <Show when={inspector().current === "Yes"}>
+                          <span>current</span>
+                        </Show>
+                        <Show
+                          when={
+                            inspector().current &&
+                            inspector().current !== "Yes" &&
+                            inspector().current !== "No"
+                          }
+                        >
+                          <span>{inspector().current}</span>
                         </Show>
                         <Show when={inspector().machine}>
-                          <dt>Machine</dt>
-                          <dd>{inspector().machine}</dd>
+                          <span>{inspector().machine}</span>
                         </Show>
-                        <Show when={inspector().taskID}>
-                          <dt>Task</dt>
-                          <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                            {inspector().taskID}
-                          </dd>
-                        </Show>
-                      </dl>
+                      </p>
+                      <Show when={inspector().matchesRecordedState && inspector().reason}>
+                        <p>{inspector().reason}</p>
+                      </Show>
+                      <Show when={inspector().taskID}>
+                        <details class="lazers-radar-disclosure lazers-radar-identifiers">
+                          <summary>Identifiers</summary>
+                          <dl>
+                            <dt>Task</dt>
+                            <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                              {inspector().taskID}
+                            </dd>
+                          </dl>
+                        </details>
+                      </Show>
                     </>
                   )
                 }}

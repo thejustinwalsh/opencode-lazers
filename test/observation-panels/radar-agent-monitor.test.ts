@@ -524,7 +524,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         lines().some((line) => line.textContent?.includes("src/worker.ts")) &&
         lines().some((line) => line.textContent?.includes("patch failed")),
     )
-    expect(sessionButton("ses-failed")?.textContent).toContain("Worker · Task")
+    expect(sessionButton("ses-failed")?.textContent).toContain("Task")
     expect(sessionButton("ses-failed")?.textContent).toContain("Running")
     expect(
       lines().find((line) => line.textContent?.includes("patch failed"))?.textContent,
@@ -544,9 +544,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
     expect(inspectorText()).toContain("ses-failed")
-    expect(container.querySelector(".lazers-radar-inspector-title")?.textContent).toContain(
-      "Worker · Task",
-    )
+    expect(container.querySelector(".lazers-radar-inspector-title")?.textContent).toContain("Task")
     expect(
       [...container.querySelectorAll(".lazers-radar-inspector-tabs button")].map((tab) =>
         tab.textContent?.replace(/\d+$/, "").trim(),
