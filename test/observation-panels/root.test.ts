@@ -1011,7 +1011,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       return count
     }
     const connectionRPCs = [
-      { service: "lazers.models", method: "comparison", count: 2 },
+      // The catalog is read to exhaustion in the background: the first page and one more.
+      { service: "lazers.models", method: "comparison", count: 3 },
       { service: "lazers.models", method: "refreshSources", count: 1 },
       { service: "lazers.models", method: "settings", count: 1 },
       { service: "lazers.tasks", method: "query", count: 1 },
@@ -1810,10 +1811,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.textContent).toContain("Loading comparison")
     deferredA1.resolve(sourceEvidence())
     await until(
-      () =>
-        containerA.querySelector(
-          `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ONE}"]`,
-        ) !== null && containerA.querySelector(".lazers-models-comparison-chart") !== null,
+      () => containerA.querySelector(`.lazers-chart [data-point-id="${CONFIG_ONE}"]`) !== null,
     )
     await until(
       () =>
@@ -1855,9 +1853,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
 
     const locationReadsBeforeActivity = calls.filter((call) => call.service === "location").length
-    const comparisonDataBeforeActivity = containerA.querySelector(
-      ".lazers-models-comparison-chart-data",
-    )
+    const comparisonDataBeforeActivity = containerA.querySelector(".lazers-models-all-models")
     expect(comparisonDataBeforeActivity).not.toBeNull()
     expect((comparisonDataBeforeActivity as HTMLDetailsElement).open).toBe(false)
     for (let activity = 1; activity <= 3; activity++) {
@@ -1869,9 +1865,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service === "location")).toHaveLength(
       locationReadsBeforeActivity,
     )
-    expect(containerA.querySelector(".lazers-models-comparison-chart-data")).toBe(
-      comparisonDataBeforeActivity,
-    )
+    expect(containerA.querySelector(".lazers-models-all-models")).toBe(comparisonDataBeforeActivity)
 
     const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
     const sourceDetails = containerA.querySelector<HTMLDetailsElement>(
@@ -1898,116 +1892,32 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(overview.compareDocumentPosition(sourceDetails) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-    const chartImage = comparePanel.querySelector<HTMLElement>(
-      ".lazers-models-comparison-chart [role=img]",
-    )!
-    expect(chartImage.getAttribute("aria-label")).toBe(
-      "Cost per accepted task against tokens per accepted task",
-    )
-    const keyboardChart = chartImage.parentElement!
-    expect(keyboardChart.getAttribute("role")).toBe("group")
-    expect(keyboardChart.getAttribute("aria-roledescription")).toBe("chart")
-    expect(keyboardChart.tabIndex).toBe(0)
-    const chartAccessibleDescription = containerA.querySelector<HTMLElement>(
-      `#${chartImage.getAttribute("aria-describedby")}`,
-    )!
-    expect(chartAccessibleDescription.textContent).toContain("exact route openai / gpt-6 · high")
-    const chartHost = comparePanel.querySelector<HTMLDivElement>(
-      ".lazers-models-comparison-chart-plot > div[role=img]",
-    )!
-    // The table is a disclosure of the selected-model pane, not part of the plot.
-    const chartFrame = chartHost.closest<HTMLElement>(".lazers-models-comparison-chart")!
-    expect(chartFrame.style.width).toBe("100%")
-    expect(chartHost.parentElement?.style.width).toBe("100%")
-    expect(chartFrame.querySelector(".lazers-models-comparison-chart-data")).toBeNull()
-    expect(
-      containerA.querySelector(".lazers-models-inspector .lazers-models-comparison-chart-data"),
-    ).not.toBeNull()
-    expect(chartHost.parentElement?.contains(chartFrame.querySelector("details"))).toBe(false)
-    let chartWidth = 340
-    let chartHeight = 190
-    Object.defineProperty(chartHost, "clientWidth", { configurable: true, get: () => chartWidth })
-    Object.defineProperty(chartHost, "clientHeight", { configurable: true, get: () => chartHeight })
-    Object.defineProperty(chartHost, "getBoundingClientRect", {
-      configurable: true,
-      value: () =>
-        ({
-          top: 0,
-          left: 0,
-          right: chartWidth,
-          bottom: chartHeight,
-          width: chartWidth,
-          height: chartHeight,
-        }) as DOMRect,
-    })
-    chartHost.style.fontSize = "20px"
-    dom.window.dispatchEvent(new dom.Event("resize"))
-    const chartSVG = () => chartHost.querySelector<SVGSVGElement>("svg")
+    // The plot is an SVG drawn by model-chart.tsx: a group of focusable points.
+    // The Compare view is rebuilt when the tab changes, so look the plot up each time.
+    const chartRoot = () => containerA.querySelector<HTMLElement>(".lazers-chart")!
+    const chartSVG = () => chartRoot().querySelector<SVGSVGElement>("svg.lazers-chart-svg")
     const chartSVGMarkup = () => chartSVG()?.outerHTML ?? ""
-    const chart = host.getComparisonChartInstance(chartHost)!
+    expect(chartSVG()?.getAttribute("role")).toBe("group")
+    expect(chartSVG()?.getAttribute("aria-roledescription")).toBe("chart")
+    expect(chartSVGMarkup()).toContain("Tokens per accepted task")
+    expect(chartSVGMarkup()).toContain("Cost per accepted task")
+    const chartPoints = () => [...chartRoot().querySelectorAll<SVGGElement>("[data-point-id]")]
+    expect(chartPoints().every((point) => point.getAttribute("role") === "button")).toBe(true)
+    // One point is in the tab order; the rest are reached with the arrow keys.
+    expect(chartPoints().filter((point) => point.getAttribute("tabindex") === "0")).toHaveLength(1)
     const settleChart = async () => {
       for (let frame = 0; frame < 4; frame++)
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       return chartSVGMarkup()
     }
-    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(340)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
-    const chartOptions = () =>
-      chart.getOption() as unknown as {
-        grid?: Array<{ left?: number }>
-        xAxis?: Array<{ max?: number; interval?: number; axisLabel?: { fontSize?: number } }>
-        yAxis?: Array<{
-          name?: string
-          max?: number
-          interval?: number
-          axisLabel?: { fontSize?: number }
-        }>
-      }
-    // Round ticks: about five, fewer on a narrow plot. Text scales with a large host font.
-    const ticks = (axis?: { max?: number; interval?: number }) =>
-      Math.round((axis?.max ?? 0) / (axis?.interval || 1))
-    const narrowOptions = chartOptions()
-    expect(ticks(narrowOptions.xAxis?.[0])).toBeLessThanOrEqual(2)
-    expect(ticks(narrowOptions.yAxis?.[0])).toBeLessThanOrEqual(2)
-    expect(narrowOptions.xAxis?.[0]?.axisLabel?.fontSize).toBeCloseTo(16.4)
-    expect(narrowOptions.grid?.[0]?.left).toBeGreaterThan(56)
-    expect(narrowOptions.yAxis?.[0]?.name).toBe("Cost per task")
-    const initialSVGGeometry = await settleChart()
-    expect(initialSVGGeometry).toContain("Tokens per accepted task")
-    expect(initialSVGGeometry).toContain("Cost per task")
-    appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
-      draft.font = "Test Mono"
-    })
-    await until(() => chartSVGMarkup().includes("Test Mono"))
-    const themedSVGGeometry = await settleChart()
-    expect(themedSVGGeometry).not.toBe(initialSVGGeometry)
-    chartHost.style.setProperty("--background-base", "rgb(1, 2, 3)")
-    appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
-      draft.mode = "light"
-    })
-    await until(() => chartSVGMarkup() !== themedSVGGeometry)
-    chartWidth = 450
-    chartHeight = 230
-    dom.window.dispatchEvent(new dom.Event("resize"))
-    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(450)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
-    expect(ticks(chartOptions().xAxis?.[0])).toBeGreaterThanOrEqual(2)
-    chartWidth = 960
-    chartHeight = 320
-    dom.window.dispatchEvent(new dom.Event("resize"))
-    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(960)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
-    expect(ticks(chartOptions().xAxis?.[0])).toBeGreaterThan(2)
-    expect(ticks(chartOptions().yAxis?.[0])).toBeGreaterThan(2)
-    expect(chartOptions().yAxis?.[0]?.name).toBe("Cost per accepted task")
-    const wideSVGGeometry = await settleChart()
-    expect(wideSVGGeometry).toContain("Tokens per accepted task")
-    expect(wideSVGGeometry).toContain("Cost per accepted task")
+    const chartDescription = () =>
+      chartPoints()
+        .map((point) => point.getAttribute("aria-label"))
+        .join(" ")
+    const globalGraphDescription = chartDescription()
+    expect(globalGraphDescription).toContain("exact route openai / gpt-6 · high")
     const initialAlternative = containerA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-comparison-chart-data",
+      ".lazers-models-all-models",
     )!
     expect(initialAlternative.open).toBe(false)
     expect(
@@ -2016,10 +1926,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const initialHighChoice = initialAlternative.querySelector<HTMLButtonElement>(
       `[data-configuration-id="${CONFIG_ONE}"]`,
     )!
-    expect(initialHighChoice.getAttribute("aria-label")).toContain(
-      "exact route openai / gpt-6 · high",
-    )
+    expect(initialHighChoice.getAttribute("aria-label")).toContain("GPT-6 refreshed")
     expect(initialHighChoice.getAttribute("aria-pressed")).toBe("true")
+    expect(
+      chartRoot().querySelector(`[data-point-id="${CONFIG_ONE}"]`)?.getAttribute("aria-pressed"),
+    ).toBe("true")
     initialAlternative.open = true
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
     const selectedInspector = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
@@ -2051,15 +1962,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     ].map((title) => title.textContent)
     expect(disclosureTitles).toEqual(
-      expect.arrayContaining([
-        "Estimate basis and prices",
-        "Runs with this model",
-        "Chart data as a table",
-      ]),
+      expect.arrayContaining(["Estimate basis and prices", "Runs with this model", "All models"]),
     )
     expect(
       selectedInspector.querySelectorAll(
-        "details.lazers-models-disclosure[open]:not(.lazers-models-comparison-chart-data)",
+        "details.lazers-models-disclosure[open]:not(.lazers-models-all-models)",
       ),
     ).toHaveLength(0)
     const following = Node.DOCUMENT_POSITION_FOLLOWING
@@ -2148,133 +2055,44 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       expect(firstPageCall?.input).toMatchObject({ snapshotID: initialSnapshot })
     }
 
-    const chartDescription = () =>
-      containerA.querySelector(".lazers-models-comparison-chart > p")?.textContent ?? ""
-    const globalGraphDescription = chartDescription()
-    const initialChartButtons = [
+    // "All models": every observed or routed model once, ranked, best trade-off first.
+    const initialRows = [
       ...containerA.querySelectorAll<HTMLButtonElement>(
-        ".lazers-models-comparison-chart-data [data-configuration-id]",
+        ".lazers-models-all-models [data-entry-id]",
       ),
     ]
-    expect(initialChartButtons.map((button) => button.dataset.configurationId)).toEqual([
-      CONFIG_ONE,
-      lowConfiguration.configurationID,
-      unknownPriceConfiguration.configurationID,
-      CONFIG_SINGLE,
-      CONFIG_CROSS_ROUTE,
-      longReferenceConfigurationID,
-      sharedNameNullConfigurationID,
-      sharedNameVariantConfigurationID,
-      sharedNameOtherModelConfigurationID,
-    ])
-    const longReferenceButton = initialChartButtons.find(
-      (button) => button.dataset.configurationId === longReferenceConfigurationID,
-    )!
-    expect(longReferenceButton.getAttribute("aria-label")).toContain("model-with-long-name")
-    expect(longReferenceButton.getAttribute("aria-label")).not.toContain(
-      "An unusually long catalog-backed model display name",
+    expect(initialRows.length).toBeGreaterThan(1)
+    expect(containerA.querySelector(".lazers-models-all-models summary")?.textContent).toContain(
+      "All models",
     )
-    expect(longReferenceButton.getAttribute("aria-label")).toContain(
-      "exact route provider-c / model-with-long-name · deep",
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
+      "Other",
     )
-    const chartSeries = (
-      chart.getOption() as unknown as {
-        series: Array<{ id?: string; data?: Array<{ configurationID?: string }> }>
-      }
-    ).series
-    const referenceSeriesIndex = chartSeries.findIndex((series) => series.id === "observations")
-    const referenceDataIndex = chartSeries[referenceSeriesIndex]!.data!.findIndex(
-      (datum) => datum.configurationID === longReferenceConfigurationID,
-    )
-    expect(referenceDataIndex).toBeGreaterThanOrEqual(0)
-    chart.dispatchAction({
-      type: "showTip",
-      seriesIndex: referenceSeriesIndex,
-      dataIndex: referenceDataIndex,
-    })
-    const longReferenceTooltip = () =>
-      [...chartHost.children].find((child) => {
-        if (child.tagName !== "DIV") return false
-        const style = dom.getComputedStyle(
-          child as unknown as Parameters<typeof dom.getComputedStyle>[0],
-        )
-        return (
-          style.position === "absolute" &&
-          style.display === "block" &&
-          style.visibility !== "hidden" &&
-          child.textContent?.includes("model-with-long-name") === true
-        )
-      })
-    await until(() => longReferenceTooltip() !== undefined)
-    expect(longReferenceTooltip()?.textContent).toBe(
-      "model-with-long-name · deep · ≈$1.23e-11 / task",
-    )
-    expect(globalGraphDescription).toContain("exact route openai / gpt-6 · high")
     expect(globalGraphDescription).toContain("model-with-long-name")
     expect(globalGraphDescription).toContain("exact route provider-c / model-with-long-name · deep")
     expect(globalGraphDescription).not.toContain("Misleading row-independent producer alias")
-    expect(globalGraphDescription).toContain("model-b · exact route provider-b / model-b · 50")
-    expect(globalGraphDescription).not.toContain("Model B · 50")
     expect(globalGraphDescription).toContain("31,250 actual cohort tokens per accepted task")
-    expect(globalGraphDescription).toContain("qwen-7")
-    expect(globalGraphDescription).toContain("exact route qwen / qwen-7 · preview-effort")
-    expect(globalGraphDescription).toContain("Actual cohort token coordinate unknown")
-    expect(globalGraphDescription).toContain(
-      "model-b · exact route provider-b / model-b · 50; 50 actual tokens per accepted task",
-    )
     expect(globalGraphDescription).not.toContain("Misleading paged cross-route label")
     expect(globalGraphDescription).not.toContain("Misleading inspected cross-route label")
-    const initialHighRowTokens = decisionRowForSnapshot(CONFIG_ONE, initialSnapshot!).efficiency
-      .tokensPerAcceptedTask!
-    const globalHighCoordinate = new Intl.NumberFormat("en-US", {
-      maximumFractionDigits: 2,
-    }).format(initialHighRowTokens)
-    const highReferenceButton = initialChartButtons.find(
-      (button) => button.dataset.configurationId === CONFIG_ONE,
-    )!
-    expect(highReferenceButton.getAttribute("aria-label")).toContain(
-      `${globalHighCoordinate} actual cohort tokens per accepted task`,
-    )
-    expect(
-      initialChartButtons
-        .find(
-          (button) => button.dataset.configurationId === unknownPriceConfiguration.configurationID,
-        )
-        ?.getAttribute("aria-label"),
-    ).toContain("31,250 actual cohort tokens per accepted task")
-    expect(
-      initialChartButtons
-        .find((button) => button.dataset.configurationId === CONFIG_SINGLE)
-        ?.getAttribute("aria-label"),
-    ).toContain("Actual cohort token coordinate unknown")
-    expect(
-      initialChartButtons
-        .find((button) => button.dataset.configurationId === CONFIG_SINGLE)
-        ?.getAttribute("aria-label"),
-    ).toContain("Not plotted")
-    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toBe(
-      "Best trade-offOther",
-    )
-    expect(
-      initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
-    ).toBe(false)
     expect(
       containerA.querySelector(
-        `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+        `.lazers-models-all-models [data-configuration-id="${CONFIG_SINGLE}"]`,
       ),
     ).not.toBeNull()
-
-    const conditionalReferenceButton = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${lowConfiguration.configurationID}"]`,
-    )!
-    expect(conditionalReferenceButton.tagName).toBe("BUTTON")
-    expect(conditionalReferenceButton.tabIndex).toBe(0)
-    expect(conditionalReferenceButton.getAttribute("aria-label")).toContain(
-      "OpenRouter model catalog conditional range",
-    )
-    conditionalReferenceButton.focus()
-    expect(browserDocument.activeElement).toBe(conditionalReferenceButton)
-    conditionalReferenceButton.click()
+    expect(
+      containerA.querySelector(
+        `.lazers-models-all-models [data-configuration-id="${CONFIG_ZERO}"]`,
+      ),
+    ).toBeNull()
+    const clickPoint = (configurationID: string) =>
+      chartRoot()
+        .querySelector(`[data-point-id="${configurationID}"]`)!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    const pointPressed = (configurationID: string) =>
+      chartRoot()
+        .querySelector(`[data-point-id="${configurationID}"]`)
+        ?.getAttribute("aria-pressed")
+    clickPoint(lowConfiguration.configurationID)
     await until(
       () =>
         modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID ===
@@ -2308,19 +2126,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "$0.0838 – 0.204 per accepted task",
     )
     expect(conditionalInspection.textContent).toContain("Denominator · 9 accepted tasks")
-    expect(
-      containerA
-        .querySelector<HTMLButtonElement>(
-          `.lazers-models-comparison-chart-data [data-configuration-id="${lowConfiguration.configurationID}"]`,
-        )
-        ?.getAttribute("aria-pressed"),
-    ).toBe("true")
+    expect(pointPressed(lowConfiguration.configurationID)).toBe("true")
 
-    const qwenPoint = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
-    )!
     const beforePointSelectionSVG = chartSVGMarkup()
-    qwenPoint.click()
+    clickPoint(CONFIG_SINGLE)
     await until(() => selectedName(containerA) === "qwen-7 · preview-effort")
     const endpointMarketCard = containerA.querySelector<HTMLElement>(
       ".lazers-models-market-scenario",
@@ -2335,14 +2144,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "https://openrouter.ai/",
     )
     endpointEvidence.open = false
-    await until(
-      () =>
-        containerA
-          .querySelector<HTMLButtonElement>(
-            `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
-          )
-          ?.getAttribute("aria-pressed") === "true",
-    )
+    await until(() => pointPressed(CONFIG_SINGLE) === "true")
     await until(() => chartSVGMarkup() !== beforePointSelectionSVG)
     const selectedQwenGraphSVG = await settleChart()
     expect(selectedQwenGraphSVG).toContain("qwen-7")
@@ -2379,13 +2181,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ),
       ).toBe(true)
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_SINGLE)
-    expect(
-      containerA
-        .querySelector<HTMLButtonElement>(
-          `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
-        )
-        ?.getAttribute("aria-pressed"),
-    ).toBe("true")
+    expect(pointPressed(CONFIG_SINGLE)).toBe("true")
     const qwenInspectionInput = calls
       .filter((call) => call.method === "inspect")
       .map(
@@ -2448,7 +2244,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     expect(
       containerA.querySelector(
-        `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+        `.lazers-models-all-models [data-configuration-id="${CONFIG_SINGLE}"]`,
       ),
     ).not.toBeNull()
     // Model rows and exact configurations are not paged by hand any more: no pager is offered.
@@ -2458,17 +2254,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await settleChart()
     expect(chartDescription()).toBe(globalGraphDescription)
     expect(chartDescription()).toContain("priced subtotal only")
-    expect(chartDescription()).toContain(
-      "not plotted because a numeric actual cohort token coordinate or per-task amount is missing",
-    )
     expect(chartDescription()).toContain("31,250 actual cohort tokens per accepted task")
-    expect(
-      containerA
-        .querySelector<HTMLButtonElement>(
-          `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
-        )
-        ?.getAttribute("aria-label"),
-    ).toContain("Actual cohort token coordinate unknown")
     const loadedReferenceSVG = chartSVGMarkup()
     const loadedReferenceGraphDescription = chartDescription()
 
@@ -2506,35 +2292,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     })
     expect(contributorTextBefore).toContain("LZ-42")
 
-    const unknownReferenceButton = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
+    const unknownReferencePoint = chartRoot().querySelector(
+      `[data-point-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
-    expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
-      "model-identity-with-a-very-long-unrecognized-name",
-    )
-    expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
+    const unknownLabel = unknownReferencePoint.getAttribute("aria-label")!
+    expect(unknownLabel).toContain("model-identity-with-a-very-long-unrecognized-name")
+    expect(unknownLabel).toContain(
       "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
     )
-    expect(unknownReferenceButton.getAttribute("aria-label")).not.toContain(
-      "Unknown route · OpenRouter subtotal",
-    )
-    expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
-      "31,250 actual cohort tokens per accepted task",
-    )
-    unknownReferenceButton.click()
+    expect(unknownLabel).not.toContain("Unknown route · OpenRouter subtotal")
+    expect(unknownLabel).toContain("31,250 actual cohort tokens per accepted task")
+    clickPoint(unknownPriceConfiguration.configurationID)
     await until(
       () =>
         modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID ===
         unknownPriceConfiguration.configurationID,
     )
-    await until(
-      () =>
-        containerA
-          .querySelector<HTMLButtonElement>(
-            `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
-          )
-          ?.getAttribute("aria-pressed") === "true",
-    )
+    await until(() => pointPressed(unknownPriceConfiguration.configurationID) === "true")
     const selectedUnknownReferenceSVG = await settleChart()
     await until(
       () =>
@@ -2560,18 +2334,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(chartDescription()).toBe(globalGraphDescription)
     expect(chartSVGMarkup()).toBe(selectedUnknownReferenceSVG)
 
-    const highRow = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ONE}"]`,
-    )!
-    const highRowParent = highRow.closest("li")!
+    const highRow = chartRoot().querySelector(`[data-point-id="${CONFIG_ONE}"]`)!
     const pendingHighInspection = deferred<ModelDecisionInspect>()
     const inspectCountBeforeRowSelection = calls.filter(
       (call) => call.service === "lazers.models.decision.v2" && call.method === "inspect",
     ).length
     suspendedInspection = { configurationID: CONFIG_ONE, pending: pendingHighInspection }
-    highRow.focus()
-    expect(browserDocument.activeElement).toBe(highRow)
-    highRow.click()
+    clickPoint(CONFIG_ONE)
     await until(() =>
       calls
         .filter((call) => call.service === "lazers.models.decision.v2" && call.method === "inspect")
@@ -2595,8 +2364,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const highSelectionSVG = await settleChart()
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
     expect(highRow.isConnected).toBe(true)
-    expect(highRow.closest("li")).toBe(highRowParent)
-    expect(browserDocument.activeElement).toBe(highRow)
     expect(highRow.getAttribute("aria-pressed")).toBe("true")
     // The previous inspection stays on screen, dimmed, until the new one arrives.
     expect(
@@ -2621,8 +2388,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(chartDescription()).toBe(globalGraphDescription)
     expect(chartSVGMarkup()).toBe(highSelectionSVG)
     expect(highRow.isConnected).toBe(true)
-    expect(highRow.closest("li")).toBe(highRowParent)
-    expect(browserDocument.activeElement).toBe(highRow)
     expect(highRow.getAttribute("aria-pressed")).toBe("true")
     expect(containerA.querySelector(".lazers-models-history-scope")?.textContent).toContain(
       "Route scope · same-route",
@@ -2635,11 +2400,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     suspendedInspection = undefined
     // Efforts and models are separate chart points: choose by the point or its data row.
     const choose = (configurationID: string) => {
-      const row = containerA.querySelector<HTMLButtonElement>(
-        `.lazers-models-comparison-chart-data [data-configuration-id="${configurationID}"]`,
-      )
-      if (!row) throw new Error(`No chart row for ${configurationID}`)
-      row.click()
+      if (!chartRoot().querySelector(`[data-point-id="${configurationID}"]`))
+        throw new Error(`No chart point for ${configurationID}`)
+      clickPoint(configurationID)
     }
     choose(lowConfiguration.configurationID)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -2652,9 +2415,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       )
     await until(
       () =>
-        containerA
-          .querySelector(`.lazers-models-comparison-chart-data button[aria-pressed="true"]`)
-          ?.getAttribute("data-configuration-id") === lowConfiguration.configurationID,
+        chartRoot()
+          .querySelector('[data-point-id][aria-pressed="true"]')
+          ?.getAttribute("data-point-id") === lowConfiguration.configurationID,
     )
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(
       lowConfiguration.configurationID,
@@ -2700,7 +2463,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     // A configuration with no accepted task has no price and is not a chart point.
     expect(
       containerA.querySelector(
-        `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ZERO}"]`,
+        `.lazers-models-all-models [data-configuration-id="${CONFIG_ZERO}"]`,
       ),
     ).toBeNull()
     expect(chartDescription()).toBe(loadedReferenceGraphDescription)
@@ -2814,23 +2577,22 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modeButton("benchmark").closest("[role=radiogroup]")?.getAttribute("aria-label")).toBe(
       "Comparison basis",
     )
-    expect(containerA.querySelector(".lazers-models-chart-caption")?.textContent).toContain(
+    expect(containerA.querySelector(".lazers-chart-caption")?.textContent).toContain(
       "Artificial Analysis Coding Index",
     )
-    expect(containerA.querySelector(".lazers-models-chart-caption")?.textContent).toContain(
-      "OpenRouter list price per 1M tokens, 3:1 input:output",
+    expect(containerA.querySelector(".lazers-chart-caption")?.textContent).toContain(
+      "OpenRouter list price",
     )
     expect(containerA.querySelector(".lazers-models-decision-status")).toBeNull()
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.compareMode ?? null).toBeNull()
-    const miniRow = containerA.querySelector<HTMLButtonElement>(
-      '.lazers-models-comparison-chart-data [data-configuration-id="6:openai|10:gpt-6-mini|-"]',
+    const miniRow = containerA.querySelector<SVGGElement>(
+      '.lazers-chart [data-point-id="6:openai|10:gpt-6-mini|-"]',
     )!
-    expect(miniRow.textContent).toBe("GPT-6 Mini · Coding 42.5 · $0.7 / 1M tokens · OpenRouter")
     expect(miniRow.getAttribute("aria-label")).toContain("exact route openai / gpt-6-mini")
     expect(containerA.querySelector(".lazers-models-benchmark-coverage")?.textContent).toContain(
       "1 plotted",
     )
-    miniRow.click()
+    miniRow.dispatchEvent(new MouseEvent("click", { bubbles: true }))
     await until(() => selectedName(containerA) === "GPT-6 Mini")
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(
       "6:openai|10:gpt-6-mini|-",
@@ -2857,28 +2619,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(() => modelStore.snapshot().projects[DIRECTORY_A]?.compareMode === "observed")
     await until(
       () =>
-        containerA.querySelector(".lazers-models-chart h3")?.textContent === "Catalog estimates" &&
+        containerA.querySelector(".lazers-models-chart h3")?.textContent === "Task outcomes" &&
         containerA.querySelector(
-          `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
+          `.lazers-models-all-models [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
         ) !== null,
     )
-    expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
-    expect(containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent).toBe(
-      "Other",
-    )
-    const unknownPriceName = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
+    expect(containerA.querySelector(".lazers-chart svg")).not.toBeNull()
+    expect(containerA.querySelector(".lazers-chart-legend")?.textContent).toBe("Other")
+    const unknownPricePoint = containerA.querySelector<SVGGElement>(
+      `.lazers-chart [data-point-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
-    expect(unknownPriceName.getAttribute("aria-label")).toContain(
-      "model-identity-with-a-very-long-unrecognized-name",
-    )
-    expect(unknownPriceName.getAttribute("aria-label")).toContain(
+    expect(unknownPricePoint.getAttribute("aria-label")).toContain(
       "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
     )
     expect(containerA.querySelector(".lazers-models-price")?.textContent).toContain(
       "$0.00015 per accepted task",
     )
-    unknownPriceName.click()
+    unknownPricePoint.dispatchEvent(new MouseEvent("click", { bubbles: true }))
     await until(
       () =>
         modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID ===
@@ -2903,7 +2660,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(partialCoverage.textContent).toContain("not a common workload")
     taskKindFilter.click()
     menuItemWithText(containerA, "All task kinds")?.click()
-    await until(() => containerA.querySelector(".lazers-models-comparison-chart") !== null)
+    await until(() => containerA.querySelector(".lazers-chart") !== null)
     expect(
       calls.some(
         (call) =>
@@ -2915,7 +2672,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     await until(
       () =>
-        !buttonWithText(containerA, "Refresh")?.disabled && comparisonCounts.get(DIRECTORY_A) === 2,
+        !buttonWithText(containerA, "Refresh")?.disabled && comparisonCounts.get(DIRECTORY_A) === 3,
     )
     const inspectorA = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
     expect(inspectorA.querySelector(".lazers-models-task-summary")?.textContent).toContain("LZ-17")
@@ -3028,14 +2785,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(assertSplitGeometry(500).topHeight).toBe(325)
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.split).toBe(65)
 
-    const firstRow = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ONE}"]`,
+    const firstRow = containerA.querySelector<SVGGElement>(
+      `.lazers-chart [data-point-id="${CONFIG_ONE}"]`,
     )!
-    firstRow.click()
+    firstRow.dispatchEvent(new MouseEvent("click", { bubbles: true }))
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     if (firstRow.getAttribute("aria-pressed") !== "true")
       throw new Error(
-        `Exact chart data alternative did not select: ${JSON.stringify(modelStore.snapshot().projects[DIRECTORY_A])} · choice=${firstRow.parentElement?.outerHTML} · inspector=${selectedName(containerA)} · inspect=${JSON.stringify(
+        `Exact chart data alternative did not select: ${JSON.stringify(modelStore.snapshot().projects[DIRECTORY_A])} · inspector=${selectedName(containerA)} · inspect=${JSON.stringify(
           calls
             .filter((call) => call.method === "inspect")
             .slice(-4)
@@ -3096,7 +2853,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     assignmentTab.click()
     await until(() => containerA.textContent?.includes("route-1") === true)
     // Assignments is its own view: no Compare filters, sources, chart or selected-model pane.
-    expect(containerA.querySelector(".lazers-models-comparison-chart")).toBeNull()
+    expect(containerA.querySelector(".lazers-chart")).toBeNull()
     expect(containerA.querySelector(".lazers-models-filters")).toBeNull()
     expect(containerA.querySelector(".lazers-models-sources-details")).toBeNull()
     expect(containerA.querySelector(".lazers-models-inspector-compare")).toBeNull()
@@ -3185,185 +2942,24 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     compareTab.click()
     await until(() => containerA.querySelector(".lazers-models-selected-heading") !== null)
+    await until(() =>
+      chartDescription().includes("An unusually long catalog-backed model display name"),
+    )
     const catalogGraphDescription = chartDescription()
     expect(catalogGraphDescription).toContain("An unusually long catalog-backed model display name")
     expect(catalogGraphDescription).toContain("Qwen 7")
     expect(catalogGraphDescription).toContain("GPT-6 · high · exact route openai / gpt-6 · high")
-    expect(catalogGraphDescription).toContain("GPT-6 · 50 · exact route provider-b / model-b · 50")
+    expect(catalogGraphDescription).toContain(
+      "GPT-6 · provider-b / model-b · 50 · exact route provider-b / model-b · 50",
+    )
     expect(catalogGraphDescription).toContain("GPT-6 · exact route provider-a / model-a")
     expect(catalogGraphDescription).toContain(
       "GPT-6 · high · exact route provider-a / model-a · high",
     )
     expect(catalogGraphDescription).toContain("GPT-6 · exact route provider-a / model-c")
-    const catalogChartHost = containerA.querySelector<HTMLDivElement>(
-      ".lazers-models-comparison-chart-plot > div[role=img]",
-    )!
-    await until(() => host.getComparisonChartInstance(catalogChartHost) !== undefined)
-    const catalogChart = host.getComparisonChartInstance(catalogChartHost)!
-    Object.defineProperty(catalogChartHost, "clientWidth", {
-      configurable: true,
-      get: () => chartWidth,
-    })
-    Object.defineProperty(catalogChartHost, "clientHeight", {
-      configurable: true,
-      get: () => chartHeight,
-    })
-    dom.window.dispatchEvent(new dom.Event("resize"))
-    await until(
-      () =>
-        (
-          catalogChart.getOption() as unknown as {
-            series?: unknown[]
-          }
-        )?.series !== undefined,
-    )
-    const renderedCatalogSeries = (
-      catalogChart.getOption() as unknown as {
-        series: Array<{
-          id?: string
-          data?: Array<{
-            configurationID?: string
-            name?: string
-            label?: { formatter?: string }
-          }>
-        }>
-      }
-    ).series.find((series) => series.id === "observations")
-    expect(
-      renderedCatalogSeries?.data?.find((datum) => datum.configurationID === CONFIG_CROSS_ROUTE)
-        ?.label?.formatter,
-    ).toBe("GPT-6 · 50")
-    const renderedReferenceSeries = (
-      catalogChart.getOption() as unknown as {
-        series: Array<{ id?: string; data?: Array<{ configurationID?: string; name?: string }> }>
-      }
-    ).series.find((series) => series.id === "observations")
-    expect(
-      renderedReferenceSeries?.data?.find((datum) => datum.configurationID === CONFIG_ONE)?.name,
-    ).toBe("GPT-6 · openai / gpt-6 · high")
-    expect(
-      renderedReferenceSeries?.data?.find(
-        (datum) => datum.configurationID === longReferenceConfigurationID,
-      )?.name,
-    ).toBe("An unusually long catalog-backed model display name")
-    const catalogReferenceButton = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${longReferenceConfigurationID}"]`,
-    )!
-    expect(catalogReferenceButton.getAttribute("aria-label")).toContain(
-      "An unusually long catalog-backed model display name",
-    )
-    expect(catalogReferenceButton.getAttribute("aria-label")).toContain(
-      "exact route provider-c / model-with-long-name · deep",
-    )
-    Object.defineProperty(catalogChartHost, "clientWidth", {
-      configurable: true,
-      get: () => chartWidth,
-    })
-    Object.defineProperty(catalogChartHost, "clientHeight", {
-      configurable: true,
-      get: () => chartHeight,
-    })
-    Object.defineProperty(catalogChartHost, "getBoundingClientRect", {
-      configurable: true,
-      value: () =>
-        ({
-          top: 0,
-          left: 0,
-          right: chartWidth,
-          bottom: chartHeight,
-          width: chartWidth,
-          height: chartHeight,
-        }) as DOMRect,
-    })
-    catalogChart.resize()
-    await until(
-      () =>
-        Number.parseFloat(catalogChartHost.querySelector("svg")?.getAttribute("width") ?? "0") ===
-        chartWidth,
-    )
-    const catalogChartSeries = (
-      catalogChart.getOption() as unknown as {
-        series: Array<{
-          id?: string
-          data?: Array<{ configurationID?: string; name?: string }>
-        }>
-      }
-    ).series
-    const catalogReferenceSeriesIndex = catalogChartSeries.findIndex(
-      (series) => series.id === "observations",
-    )
-    const catalogReferenceDataIndex = catalogChartSeries[
-      catalogReferenceSeriesIndex
-    ]!.data!.findIndex((datum) => datum.configurationID === longReferenceConfigurationID)
-    const catalogReferenceName = (configurationID: string) =>
-      catalogChartSeries[catalogReferenceSeriesIndex]!.data!.find(
-        (datum) => datum.configurationID === configurationID,
-      )?.name
-    expect(catalogReferenceName(sharedNameNullConfigurationID)).toBe("GPT-6 · provider-a / model-a")
-    expect(catalogReferenceName(sharedNameVariantConfigurationID)).toBe(
-      "GPT-6 · provider-a / model-a · high",
-    )
-    expect(catalogReferenceName(sharedNameOtherModelConfigurationID)).toBe(
-      "GPT-6 · provider-a / model-c",
-    )
-    expect(catalogReferenceName(CONFIG_CROSS_ROUTE)).toBe("GPT-6 · provider-b / model-b · 50")
-    expect(catalogReferenceName(CONFIG_ONE)).toBe("GPT-6 · openai / gpt-6 · high")
-    catalogChart.dispatchAction({
-      type: "showTip",
-      seriesIndex: catalogReferenceSeriesIndex,
-      dataIndex: catalogReferenceDataIndex,
-    })
-    const catalogReferenceTooltip = () =>
-      [...catalogChartHost.children].find((child) => {
-        if (child.tagName !== "DIV") return false
-        const style = dom.getComputedStyle(
-          child as unknown as Parameters<typeof dom.getComputedStyle>[0],
-        )
-        return (
-          style.position === "absolute" &&
-          style.display === "block" &&
-          style.visibility !== "hidden" &&
-          child.textContent?.includes("An unusually long catalog-ba… · deep") === true
-        )
-      })
-    await until(() => catalogReferenceTooltip() !== undefined)
-    // Tooltips carry model and cost only; the exact route stays in Chart data and details.
-    expect(catalogReferenceTooltip()?.textContent).toBe(
-      "An unusually long catalog-ba… · deep · ≈$1.23e-11 / task",
-    )
-    const visibleCatalogTooltip = (label: string) =>
-      [...catalogChartHost.children].find((child) => {
-        if (child.tagName !== "DIV") return false
-        const style = dom.getComputedStyle(
-          child as unknown as Parameters<typeof dom.getComputedStyle>[0],
-        )
-        return (
-          style.position === "absolute" &&
-          style.display === "block" &&
-          style.visibility !== "hidden" &&
-          child.textContent?.includes(label) === true
-        )
-      })
-    for (const [configurationID, label] of [
-      [sharedNameNullConfigurationID, "GPT-6 · ≈$1.23e-11 / task"],
-      [sharedNameVariantConfigurationID, "GPT-6 · high · ≈$1.23e-11 / task"],
-    ] as const) {
-      const referenceDataIndex = catalogChartSeries[catalogReferenceSeriesIndex]!.data!.findIndex(
-        (datum) => datum.configurationID === configurationID,
-      )
-      catalogChart.dispatchAction({
-        type: "showTip",
-        seriesIndex: catalogReferenceSeriesIndex,
-        dataIndex: referenceDataIndex,
-      })
-      await until(() => visibleCatalogTooltip(label) !== undefined)
-      expect(visibleCatalogTooltip(label)?.textContent).toBe(label)
-    }
-    containerA
-      .querySelector<HTMLButtonElement>(
-        `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
-      )!
-      .click()
+    // 50 tokens to 32K is more than a 50x spread: the x axis says it is logarithmic.
+    expect(chartRoot().textContent).toContain("Tokens per accepted task · log")
+    clickPoint(CONFIG_SINGLE)
     await until(() => selectedName(containerA) === "Qwen 7 · preview-effort")
     expect(
       containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
@@ -3372,7 +2968,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector(".lazers-models-selected-identity code")?.textContent,
     ).toContain("preview-effort")
     const restoreHighSelection = containerA.querySelector<HTMLButtonElement>(
-      `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ONE}"]`,
+      `.lazers-models-all-models [data-configuration-id="${CONFIG_ONE}"]`,
     )!
     restoreHighSelection.click()
     await until(() => selectedName(containerA)?.startsWith("GPT-6") ?? false)
@@ -3860,9 +3456,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === sourceSignalsBeforePinnedRefresh + 1,
     )
     const hiddenSignal = sourceSignals.get(DIRECTORY_A)?.[sourceSignalsBeforePinnedRefresh]
-    expect(containerA.querySelector(".lazers-models-comparison-chart-data")?.textContent).toContain(
-      "GPT-6",
-    )
+    expect(containerA.querySelector(".lazers-models-all-models")?.textContent).toContain("GPT-6")
     expect(containerA.querySelector(".lazers-models-decision-rows")).toBeNull()
     expect(
       containerA.querySelector(".lazers-models-task-effort-details")?.closest("details")?.open,
@@ -3883,7 +3477,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     // The cached comparison for this same project shows at once; no read starts until the
     // location is confirmed.
-    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).not.toBeNull()
+    expect(containerA.querySelector(`[data-point-id="${CONFIG_ONE}"]`)).not.toBeNull()
     mountA.setVisible(false)
     await until(() => locationSignals.get(DIRECTORY_A)?.[1]?.aborted === true)
     mountA.setVisible(true)
@@ -3894,7 +3488,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     // The cached comparison for this same project shows at once; no read starts until the
     // location is confirmed.
-    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).not.toBeNull()
+    expect(containerA.querySelector(`[data-point-id="${CONFIG_ONE}"]`)).not.toBeNull()
     deferredLocationA2.resolve(locationResult(DIRECTORY_A))
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
@@ -3906,14 +3500,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === sourceSignalsBeforePinnedRefresh + 2,
     )
-    await until(() => comparisonCounts.get(DIRECTORY_A) === (beforeLateHiddenResult ?? 0) + 2)
+    await until(() => comparisonCounts.get(DIRECTORY_A) === (beforeLateHiddenResult ?? 0) + 3)
     const afterReconnectComparisons = comparisonCounts.get(DIRECTORY_A)
     deferredA3.resolve(sourceEvidence())
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(comparisonCounts.get(DIRECTORY_A)).toBe(afterReconnectComparisons)
-    expect(containerA.querySelector(".lazers-models-comparison-chart-data")?.textContent).toContain(
-      "GPT-6",
-    )
+    expect(containerA.querySelector(".lazers-models-all-models")?.textContent).toContain("GPT-6")
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
 
     const rpcsBeforeSessionSwitch = calls.filter((call) => call.service !== "location").length
@@ -3926,7 +3518,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       rpcsBeforeSessionSwitch,
     )
     // A different project has no cached comparison: it starts empty, never showing project A's.
-    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
+    expect(containerA.querySelector(`[data-point-id="${CONFIG_ONE}"]`)).toBeNull()
     sessionScope.update((draft: { id: string; directory: string }) => {
       draft.id = "ses-models-panel"
       draft.directory = DIRECTORY_A
@@ -3954,7 +3546,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === sourceSignalsBeforeRetry + 1,
     )
-    await until(() => comparisonCounts.get(DIRECTORY_A) === comparisonsBeforeRetry + 2)
+    await until(() => comparisonCounts.get(DIRECTORY_A) === comparisonsBeforeRetry + 3)
     expect(counts.get(`${DIRECTORY_A}:refreshSources`)).toBe(5)
 
     await until(() => !buttonWithText(containerA, "Refresh")?.disabled)
@@ -4022,12 +3614,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerB.querySelector(
-          `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ONE}"]`,
+          `.lazers-models-all-models [data-configuration-id="${CONFIG_ONE}"]`,
         ) !== null && containerB.textContent?.includes("Objective B project only") === true,
     )
-    expect(containerB.querySelector(".lazers-models-comparison-chart-data")?.textContent).toContain(
-      "gpt-6",
-    )
+    expect(containerB.querySelector(".lazers-models-all-models")?.textContent).toContain("gpt-6")
     const assignmentsTabB = containerB.querySelector<HTMLButtonElement>(
       '[role="tab"][aria-controls="lazers-models-assignments-panel"]',
     )

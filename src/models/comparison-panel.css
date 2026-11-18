@@ -286,19 +286,6 @@
   padding: 0;
 }
 
-.lazers-models-chart-caption {
-  margin: 0;
-  color: var(--text-weak);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-chart-key-hollow {
-  background: transparent;
-}
-
 .lazers-models-benchmark-coverage {
   display: grid;
   justify-items: start;
@@ -325,134 +312,7 @@
   border: 0 !important;
 }
 
-.lazers-models-chart-empty {
-  margin: 0;
-  padding: 16px 0;
-  color: var(--text-base);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
 /* The plot owns its height; legend and Chart data stack below and never squeeze it. */
-.lazers-models-comparison-chart {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
-  min-width: 0;
-}
-
-.lazers-models-comparison-chart-plot {
-  height: var(--models-chart-height, 236px);
-  min-height: 0;
-  border-radius: 4px;
-}
-
-.lazers-models-comparison-chart[data-empty="true"] > .lazers-models-comparison-chart-plot {
-  display: none;
-}
-
-.lazers-models-comparison-chart-plot:focus-visible {
-  outline: 2px solid var(--border-selected);
-  outline-offset: 2px;
-}
-
-.lazers-models-comparison-chart-data summary {
-  min-height: 24px;
-  color: var(--text-weak);
-  font-size: 12px;
-  line-height: 24px;
-  cursor: pointer;
-}
-
-.lazers-models-comparison-chart-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 14px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  color: var(--text-weak);
-  font-size: 12px;
-  line-height: 1.3;
-  list-style: none;
-}
-
-.lazers-models-chart-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 2px 12px;
-  min-width: 0;
-  padding: 0 0 8px;
-}
-
-.lazers-models-chart-foot[hidden] {
-  display: none;
-}
-
-.lazers-models-chart-foot > .lazers-models-chart-caption {
-  margin-left: auto;
-}
-
-.lazers-models-comparison-chart-legend li {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.lazers-models-chart-key {
-  display: inline-block;
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid var(--text-base);
-  border-radius: 50%;
-}
-
-.lazers-models-chart-key-canonical {
-  background: transparent;
-}
-
-.lazers-models-chart-key-frontier {
-  border-color: var(--text-interactive-base, var(--border-selected));
-  background: var(--text-interactive-base, var(--border-selected));
-}
-
-.lazers-models-comparison-chart-data ul {
-  display: grid;
-  gap: 2px;
-  max-height: 160px;
-  overflow: auto;
-  margin: 0;
-  padding: 0 0 0 14px;
-}
-
-.lazers-models-comparison-chart-data button {
-  max-width: 100%;
-  min-height: 24px;
-  padding: 3px 2px;
-  border: 0;
-  color: var(--text-weak);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-
-.lazers-models-comparison-chart-data button[aria-pressed="true"] {
-  color: var(--text-strong);
-  text-decoration: underline;
-  text-decoration-color: var(--border-selected);
-  text-underline-offset: 2px;
-}
-
 .lazers-models-separator {
   position: relative;
   z-index: 1;
@@ -1249,10 +1109,6 @@ span.lazers-models-assignment-route {
   font-size: 12px;
 }
 
-.lazers-models-selection-tools {
-  margin: 10px 0 0;
-}
-
 .lazers-models-disclosure {
   min-width: 0;
   border-top: 1px solid var(--border-weak-base);
@@ -1336,10 +1192,6 @@ span.lazers-models-assignment-route {
   margin-top: 8px;
 }
 
-.lazers-models-chart-data-slot {
-  min-width: 0;
-}
-
 .lazers-models-note {
   margin: 6px 0;
   color: var(--text-weak);
@@ -1392,9 +1244,6 @@ span.lazers-models-assignment-route {
 }
 
 @container models-panel (min-width: 720px) {
-  .lazers-models-comparison-chart-plot {
-    height: var(--models-chart-height, 260px);
-  }
 }
 
 @container models-panel (max-width: 500px) {
@@ -1427,4 +1276,244 @@ span.lazers-models-assignment-route {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* The scatter plot (model-chart.tsx): hairline frame, weak grid, host tokens only. */
+.lazers-chart {
+  position: relative;
+  min-width: 0;
+}
+
+.lazers-chart-svg {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.lazers-chart-frame {
+  fill: none;
+  stroke: var(--border-base);
+  stroke-width: 1;
+}
+
+.lazers-chart-grid {
+  stroke: var(--border-weak-base);
+  stroke-width: 1;
+}
+
+.lazers-chart-tick {
+  fill: var(--text-weak);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11.5px;
+}
+
+.lazers-chart-title {
+  fill: var(--text-weak);
+  font-size: 11.5px;
+}
+
+.lazers-chart-frontier {
+  fill: none;
+  stroke: var(--text-interactive-base, var(--border-selected));
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+
+.lazers-chart-halo {
+  fill: var(--text-interactive-base, var(--border-selected));
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+.lazers-chart-point {
+  cursor: pointer;
+  outline: none;
+}
+
+.lazers-chart-hit {
+  fill: transparent;
+}
+
+.lazers-chart-mark {
+  fill: var(--background-base);
+  stroke: var(--text-base);
+  stroke-width: 1.5;
+}
+
+.lazers-chart-point[data-frontier] .lazers-chart-mark {
+  fill: var(--text-interactive-base, var(--border-selected));
+  stroke: var(--text-interactive-base, var(--border-selected));
+}
+
+.lazers-chart-point[data-selected] .lazers-chart-mark,
+.lazers-chart-point:focus-visible .lazers-chart-mark {
+  stroke: var(--text-strong);
+  stroke-width: 2;
+}
+
+.lazers-chart-ring {
+  fill: none;
+  stroke: var(--text-base);
+  stroke-width: 1;
+}
+
+.lazers-chart-label {
+  fill: var(--text-base);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+
+.lazers-chart-label[data-selected] {
+  fill: var(--text-strong);
+  font-weight: 500;
+}
+
+.lazers-chart-leader {
+  stroke: var(--text-strong);
+  stroke-width: 1;
+}
+
+.lazers-chart-tip {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 1px;
+  max-width: 260px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  color: var(--text-base);
+  background: var(--surface-base);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  transform: translate(10px, 10px);
+}
+
+.lazers-chart-tip[data-flip] {
+  transform: translate(calc(-100% - 10px), 10px);
+}
+
+.lazers-chart-tip > :first-child {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.lazers-chart-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  padding: 4px 0 8px;
+  font-size: 12px;
+}
+
+.lazers-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-weak);
+  list-style: none;
+}
+
+.lazers-chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lazers-chart-key {
+  box-sizing: border-box;
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--text-base);
+  border-radius: 50%;
+}
+
+.lazers-chart-key[data-kind="frontier"] {
+  border-color: var(--text-interactive-base, var(--border-selected));
+  background: var(--text-interactive-base, var(--border-selected));
+}
+
+.lazers-chart-key[data-kind="backed"] {
+  width: 12px;
+  height: 12px;
+  border-width: 1px;
+}
+
+.lazers-chart-caption {
+  margin: 0 0 0 auto;
+  color: var(--text-weak);
+  text-align: right;
+}
+
+.lazers-chart-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 16px 0;
+  color: var(--text-base);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.lazers-chart-empty p {
+  margin: 0;
+}
+
+.lazers-models-all-models-scroll {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.lazers-models-all-models table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.lazers-models-all-models th,
+.lazers-models-all-models td {
+  padding: 4px 8px 4px 0;
+  border-bottom: 1px solid var(--border-weak-base);
+  color: var(--text-base);
+  font-weight: 400;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.lazers-models-all-models thead th {
+  position: sticky;
+  top: 0;
+  color: var(--text-weak);
+  background: var(--background-base);
+}
+
+.lazers-models-all-models tbody th button {
+  max-width: 220px;
+  padding: 0;
+  border: 0;
+  color: var(--text-strong);
+  background: none;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.lazers-models-all-models tbody th button[aria-pressed="true"] {
+  text-decoration: underline;
+  text-decoration-color: var(--border-selected);
+  text-underline-offset: 2px;
+}
+
+.lazers-models-all-models tr[data-frontier] td:nth-child(3) {
+  color: var(--text-interactive-base, var(--text-base));
 }
