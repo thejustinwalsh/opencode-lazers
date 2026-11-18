@@ -114,6 +114,52 @@ export function selectedEventFor(data: PanelData | undefined) {
   )
 }
 
+/**
+ * The last loaded trajectory per project, scope, task and selected attempt. A panel that is
+ * mounted again (switching to another panel tab and back) renders it at once and refreshes it in
+ * place, instead of showing the skeleton again. Process-local; a few entries only.
+ */
+export class TrajectoryViewCache {
+  private readonly entries = new Map<string, PanelData>()
+  constructor(private readonly capacity = 6) {}
+
+  static key(
+    projectID: string,
+    scope: ObservationScope,
+    taskID: string,
+    selection: Selection | null,
+  ) {
+    return JSON.stringify([
+      projectID,
+      scope.kind,
+      scope.kind === "session" ? scope.sessionID : "",
+      taskID,
+      selection?.kind === "attempt" ? selection.id : "",
+    ])
+  }
+
+  get(key: string) {
+    const value = this.entries.get(key)
+    if (!value) return undefined
+    this.entries.delete(key)
+    this.entries.set(key, value)
+    return value
+  }
+
+  set(key: string, value: PanelData) {
+    this.entries.delete(key)
+    this.entries.set(key, value)
+    while (this.entries.size > this.capacity) this.entries.delete(this.entries.keys().next().value!)
+  }
+
+  clear() {
+    this.entries.clear()
+  }
+}
+
+/** Shared by every Trajectory panel in the process. */
+export const trajectoryViewCache = new TrajectoryViewCache()
+
 /** A first read that has not answered by now becomes a failure with Retry, not a spinner. */
 export const FIRST_READ_TIMEOUT_MS = 30_000
 
@@ -241,12 +287,35 @@ export class TrajectoryPanelState {
       const timer = setTimeout(callback, delayMs)
       return () => clearTimeout(timer)
     },
-    private readonly options: { autoContinue?: boolean; firstReadTimeoutMs?: number } = {},
+    private readonly options: {
+      autoContinue?: boolean
+      firstReadTimeoutMs?: number
+      cache?: TrajectoryViewCache
+    } = {},
   ) {}
 
   private update(change: Partial<PanelData>) {
     this.data = { ...this.data, ...change }
+    this.remember()
     this.changed(this.data)
+  }
+
+  /** Keep what a re-mounted panel can show at once; transient flags are not part of it. */
+  private remember() {
+    const cache = this.options.cache
+    const data = this.data
+    const scope = this.scope
+    if (!cache || !scope || !data.report || !data.taskID || data.loading) return
+    cache.set(TrajectoryViewCache.key(this.projectID, scope, data.taskID, data.selection), {
+      ...data,
+      key: "",
+      loading: false,
+      loadingActivity: false,
+      recapturingHistory: false,
+      stale: false,
+      error: "",
+      historyError: "",
+    })
   }
 
   connect(
@@ -272,16 +341,31 @@ export class TrajectoryPanelState {
         scope.kind !== "project")
         ? `Task ${this.target.reference} is unavailable in this project or scope.`
         : ""
+    const taskID = this.target?.taskID ?? preferences.taskID
+    const cached =
+      !this.targetError && taskID
+        ? this.options.cache?.get(
+            TrajectoryViewCache.key(projectID, scope, taskID, preferences.selection),
+          )
+        : undefined
     this.data = blank(key)
+    // A cache hit keeps the last content on screen; the forced read below refreshes it in place.
     this.update({
-      taskID: this.target?.taskID ?? preferences.taskID,
-      taskReference: this.target?.reference ?? null,
-      selection: this.target ? null : preferences.selection,
+      ...(cached ?? {}),
+      key,
+      taskID,
+      taskReference: this.target?.reference ?? cached?.taskReference ?? null,
+      selection: this.target
+        ? (cached?.selection ?? null)
+        : (preferences.selection ?? cached?.selection ?? null),
       ...(this.targetError ? { loading: false, error: this.targetError } : {}),
     })
     const generation = this.generation
     void this.watch(generation, transport, this.controller.signal)
-    if (!this.targetError) void this.refresh()
+    if (!this.targetError) {
+      void this.refresh({ force: cached !== undefined })
+      if (cached?.eventCursor) void this.drainActivity()
+    }
   }
 
   private retryRefresh() {
@@ -377,9 +461,8 @@ export class TrajectoryPanelState {
       const snapshot = parseProjectedSnapshot(response)
       const tasks = taskChoices(snapshot)
       const previousTaskID = this.data.taskID
-      const taskID = tasks.some((task) => task.taskID === previousTaskID)
-        ? previousTaskID
-        : (tasks[0]?.taskID ?? null)
+      // Nothing is chosen for the person: with no (or a vanished) selection the panel asks.
+      const taskID = tasks.some((task) => task.taskID === previousTaskID) ? previousTaskID : null
       const taskChanged = taskID !== previousTaskID
       if (taskChanged) this.beginTask(taskID)
       const taskSignal = AbortSignal.any([signal, this.taskController.signal])

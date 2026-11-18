@@ -49,7 +49,9 @@ test("failure is red on any track", () => {
 
 test("hatching marks recording gaps only; compressed idle is never hatched", () => {
   const hatched = rules.filter(([, body]) => body.includes("repeating-linear-gradient"))
-  expect(hatched.map(([selector]) => selector)).toEqual([".lazers-trajectory-mark[data-gap]"])
+  expect(hatched.map(([selector]) => selector)).toEqual([
+    ".lazers-trajectory-gridlines > .lazers-trajectory-gap-band",
+  ])
   const idle = rules.filter(([selector]) => selector.includes("lazers-trajectory-idle"))
   expect(idle.length).toBeGreaterThan(0)
   for (const [, body] of idle) expect(body).not.toContain("repeating-linear-gradient")

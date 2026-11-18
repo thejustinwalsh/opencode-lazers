@@ -9,6 +9,7 @@ import {
 import type { createTestUI } from "../../models-panel/fixtures/dom-host.ts"
 
 export { default as gui } from "../../../src/gui.tsx"
+export { trajectoryViewCache } from "../../../src/trajectory-panel/panel-state.ts"
 export {
   createReactiveStore,
   createTestUI,

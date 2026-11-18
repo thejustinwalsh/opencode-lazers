@@ -179,9 +179,10 @@ test("elapsed axis uses readable second, minute and hour steps", () => {
     "1h",
     "1h30m",
   ])
-  expect([240, 4_200, 287_000, 3_720_000].map(durationText)).toEqual([
-    "240 ms",
-    "4.2 s",
+  expect([240, 4_200, 18_400, 287_000, 3_720_000].map(durationText)).toEqual([
+    "240ms",
+    "4.2s",
+    "18s",
     "4m 47s",
     "1h 02m",
   ])
