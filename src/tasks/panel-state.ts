@@ -141,6 +141,22 @@ export interface PanelData {
 /** `moreError` when the next page repeated a cursor or listed nothing new. */
 export const STALLED_PAGE = "The next page did not advance."
 
+/** Views kept across panel re-mounts, so a tab switch renders the last content at once. */
+const CACHE_LIMIT = 24
+/** Last page, counts and selected detail per view key; module-level so it outlives the panel. */
+export const taskViewCache = new Map<string, PanelData>()
+/** The inspector's last complete data per server, project and session. */
+export const inspectedCache = new Map<string, { identity: string; data: PanelData }>()
+/** Canonical project per server, session and directory, so a re-mount skips the lookup. */
+export const projectCache = new Map<string, string>()
+
+/** Insert as most recent and drop the oldest beyond the limit. */
+export function remember<V>(cache: Map<string, V>, key: string, value: V) {
+  cache.delete(key)
+  cache.set(key, value)
+  while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!)
+}
+
 const blank = (key = ""): PanelData => ({
   key,
   tasks: [],
@@ -225,10 +241,14 @@ export class TaskPanelState {
   constructor(
     private readonly changed: (data: PanelData) => void,
     private readonly selected: (id: string) => void = () => {},
+    /** Keeps the last read per view; a later state for the same view starts from it. */
+    private readonly cache?: Map<string, PanelData>,
   ) {}
 
   private update(change: Partial<PanelData>) {
     this.data = { ...this.data, ...change }
+    if (this.cache && this.data.key && this.data.page)
+      remember(this.cache, this.data.key, this.data)
     this.changed(this.data)
   }
 
@@ -257,7 +277,8 @@ export class TaskPanelState {
     this.project = project
     // The same view on a new connection (a reconnect) keeps what it last read; the next read
     // replaces it. Another view starts empty.
-    const previous = this.data
+    const previous =
+      this.data.key === key && this.data.page ? this.data : (this.cache?.get(key) ?? this.data)
     const kept =
       previous.key === key && previous.page
         ? {
