@@ -2817,6 +2817,36 @@ export class RunnerStore {
           .get(this.repository.projectDirectory, sessionID, messageID) ?? undefined,
     )
   }
+  /** Delivered notices for these plans that sit in a session other than `sessionID` and are not yet cleaned up. */
+  deliveredOutsideSession(planIDs: string[], sessionID: string): OutboxRow[] {
+    if (!planIDs.length) return []
+    return this.read((db) =>
+      db
+        .query<OutboxRow, string[]>(
+          `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence
+           FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+           WHERE p.project_directory=? AND o.state='delivered' AND o.session_id<>?
+             AND o.plan_id IN (${planIDs.map(() => "?").join(",")})
+             AND (o.receipt IS NULL OR o.receipt NOT LIKE '%"retired-session-cleaned"%')
+           ORDER BY o.rowid`,
+        )
+        .all(this.repository.projectDirectory, sessionID, ...planIDs),
+    )
+  }
+  /** Append a receipt entry without changing the row's state. */
+  noteOutboxReceipt(id: string, receipt: unknown) {
+    this.atomic((db) => {
+      const current = db
+        .query<{ receipt: string | null }, [string]>("SELECT receipt FROM runner_outbox WHERE id=?")
+        .get(id)
+      if (!current) return
+      db.query("UPDATE runner_outbox SET receipt=? WHERE id=?").run(
+        appendOutboxReceipt(current.receipt, receipt),
+        id,
+      )
+      this.repository.changed()
+    })
+  }
   outboxRowByID(id: string): OutboxRow | undefined {
     return this.read(
       (db) =>

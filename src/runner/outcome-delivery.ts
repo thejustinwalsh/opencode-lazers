@@ -287,6 +287,65 @@ export class OutcomeDelivery {
   }
 
   /**
+   * After an owner change, this ledger's notices still queued in the plan's former
+   * sessions would cost a stray turn there. Cancel them; never block the new owner.
+   */
+  private async retireOldSessions(sessionID: string, rows: OutboxRow[], fence: number) {
+    const host = this.runtime.host
+    const old = this.runtime.store.deliveredOutsideSession(
+      [...new Set(rows.map((row) => row.plan_id))],
+      sessionID,
+    )
+    const bySession = new Map<string, OutboxRow[]>()
+    for (const row of old)
+      bySession.set(row.session_id, [...(bySession.get(row.session_id) ?? []), row])
+    for (const [oldSession, oldRows] of bySession) {
+      let queued: Awaited<ReturnType<NonNullable<typeof host.outcomeInbox>>>
+      try {
+        queued = host.outcomeInbox ? await host.outcomeInbox(oldSession) : []
+      } catch (error) {
+        this.hold(
+          oldRows,
+          "OUTCOME_OLD_INBOX_UNREADABLE",
+          { sessionID: oldSession, error: errorText(error).slice(0, 300) },
+          fence,
+        )
+        continue
+      }
+      for (const row of oldRows) {
+        const ownership = this.ownership(row)
+        const entry = queued.find((item) => item.id === row.message_id)
+        let cancelled = false
+        if (
+          entry &&
+          ownership &&
+          sameProject(ownership.lazersProjectID, this.runtime.projectID) &&
+          ownership.lazersProjectDirectory === this.runtime.directory &&
+          isOwnedQueuedOutcome(entry, ownership)
+        ) {
+          if (!host.cancelOutcome) continue
+          try {
+            await host.cancelOutcome({
+              sessionID: oldSession,
+              inboxID: row.message_id,
+              ownership,
+            })
+            cancelled = true
+          } catch {
+            // Consumed or cancelled meanwhile; it is listed again if it is still queued.
+            continue
+          }
+        } else if (entry) continue // A lookalike is not ours to cancel.
+        this.runtime.store.noteOutboxReceipt(row.id, {
+          kind: "retired-session-cleaned",
+          sessionID: oldSession,
+          cancelled,
+        })
+      }
+    }
+  }
+
+  /**
    * Merge a session's pending notices into one inbox item and cancel the ones it replaces.
    * Returns true when notices stay pending and delivery should be retried soon.
    */
@@ -439,6 +498,7 @@ export class OutcomeDelivery {
         // It was consumed or cancelled meanwhile; the next delivery lists the inbox again.
       }
     }
+    await this.retireOldSessions(sessionID, rows, fence)
     return false
   }
 

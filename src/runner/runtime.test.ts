@@ -11604,8 +11604,8 @@ test("generated renewal notifications are authenticated and do not form A-to-B-t
   expect(second.state).toBe("committed")
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(second.successor_session_id)
   expect(f.store.architectSourceInputs(middle.id)).toHaveLength(0)
-  // The middle Architect's own handoff stays queued there; no input notice follows it onward.
-  expect(f.inbox.get(middle.id)).toHaveLength(1)
+  // The middle Architect's handoff was replaced by the second one: it is cancelled, not left to cost a turn.
+  expect(f.inbox.get(middle.id)).toHaveLength(0)
   expect(
     f.notifications.filter((notification) =>
       notification.text.includes("retained Architect input update"),
@@ -14468,4 +14468,61 @@ test("a tick that loses the lease returns when the lease lapses", async () => {
   expect(delays).toHaveLength(1)
   expect(delays[0]!).toBeGreaterThanOrEqual(1_000)
   expect(delays[0]!).toBeLessThanOrEqual(11_000)
+})
+
+function handOverPlan(f: ReturnType<typeof fixture>, planID: string) {
+  f.sessions.set("owner-2", { ...f.sessions.get("owner")!, id: "owner-2", messages: [] })
+  f.store.updatePlanOwner(planID, "owner", "owner-2")
+}
+
+test("an owner change cancels this ledger's queued notice in the old session and leaves others", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 1)
+  emit(ids[0]!, { status: "blocked", reason: "first" })
+  await deliver()
+  const first = f.inbox.get("owner")![0]!
+  f.inbox.get("owner")!.push(
+    { id: "msg_user", type: "user", delivery: "queue" },
+    {
+      id: "msg_lookalike",
+      type: "synthetic",
+      delivery: "queue",
+      metadata: { ...first.metadata, lazersMessageID: "msg_lookalike", lazersOutboxID: "none" },
+    },
+  )
+  handOverPlan(f, ids[0]!)
+  emit(ids[0]!, { status: "blocked", reason: "second" })
+  await deliver()
+  expect(f.inbox.get("owner")!.map((entry) => entry.id)).toEqual(["msg_user", "msg_lookalike"])
+  expect(f.inbox.get("owner-2")).toHaveLength(1)
+  const cleaned = (f.store.detail(ids[0]!).delivery as { receipt: string | null }[]).filter((row) =>
+    row.receipt?.includes("retired-session-cleaned"),
+  )
+  expect(cleaned).toHaveLength(1)
+  // Cleaned once: a later delivery does not list or cancel again.
+  const cancels = f.events.filter((event) => event.startsWith("cancel:")).length
+  emit(ids[0]!, { status: "blocked", reason: "third" })
+  await deliver()
+  expect(f.events.filter((event) => event.startsWith("cancel:")).length).toBe(cancels + 1)
+})
+
+test("an unreadable old inbox is recorded once and never blocks the new owner", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 1)
+  emit(ids[0]!, { status: "blocked", reason: "first" })
+  await deliver()
+  handOverPlan(f, ids[0]!)
+  const read = f.host.outcomeInbox!
+  f.host.outcomeInbox = async (id) => {
+    if (id === "owner") throw new Error("404 session inbox not found")
+    return read(id)
+  }
+  emit(ids[0]!, { status: "blocked", reason: "second" })
+  expect(await deliver()).toBe(false)
+  expect(f.inbox.get("owner-2")).toHaveLength(1)
+  expect(transitions(f, ids[0]!, "OUTCOME_OLD_INBOX_UNREADABLE")).toHaveLength(1)
+  emit(ids[0]!, { status: "blocked", reason: "third" })
+  await deliver()
+  expect(transitions(f, ids[0]!, "OUTCOME_OLD_INBOX_UNREADABLE")).toHaveLength(1)
+  expect(f.inbox.get("owner-2")).toHaveLength(1)
 })
