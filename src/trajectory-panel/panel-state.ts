@@ -138,6 +138,20 @@ export class TrajectoryViewCache {
     ])
   }
 
+  private readonly lastTasks = new Map<string, string>()
+  private static viewKey(projectID: string, scope: ObservationScope) {
+    return JSON.stringify([projectID, scope.kind, scope.kind === "session" ? scope.sessionID : ""])
+  }
+
+  /** The task last shown for this project and scope, for a panel opened with no task context. */
+  lastTask(projectID: string, scope: ObservationScope) {
+    return this.lastTasks.get(TrajectoryViewCache.viewKey(projectID, scope))
+  }
+
+  noteTask(projectID: string, scope: ObservationScope, taskID: string) {
+    this.lastTasks.set(TrajectoryViewCache.viewKey(projectID, scope), taskID)
+  }
+
   get(key: string) {
     const value = this.entries.get(key)
     if (!value) return undefined
@@ -154,6 +168,7 @@ export class TrajectoryViewCache {
 
   clear() {
     this.entries.clear()
+    this.lastTasks.clear()
   }
 }
 
@@ -306,6 +321,7 @@ export class TrajectoryPanelState {
     const data = this.data
     const scope = this.scope
     if (!cache || !scope || !data.report || !data.taskID || data.loading) return
+    cache.noteTask(this.projectID, scope, data.taskID)
     cache.set(TrajectoryViewCache.key(this.projectID, scope, data.taskID, data.selection), {
       ...data,
       key: "",
@@ -341,7 +357,13 @@ export class TrajectoryPanelState {
         scope.kind !== "project")
         ? `Task ${this.target.reference} is unavailable in this project or scope.`
         : ""
-    const taskID = this.target?.taskID ?? preferences.taskID
+    // A task from the opener, then this view's last task, then the last one shown here; only a
+    // panel with none of these asks the person to pick.
+    const taskID =
+      this.target?.taskID ??
+      preferences.taskID ??
+      this.options.cache?.lastTask(projectID, scope) ??
+      null
     const cached =
       !this.targetError && taskID
         ? this.options.cache?.get(

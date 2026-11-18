@@ -148,3 +148,90 @@ test("the view cache is per project, scope, task and selected attempt, and keeps
   cache.clear()
   expect(cache.get("a")).toBeUndefined()
 })
+
+test("only a panel opened with no task context asks the person to pick", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const reads = new ObservationReads(
+    fixture.store,
+    {
+      session: (id) => fixture.host.session(id),
+      status: async (id) => {
+        const session = fixture.sessions.get(id)
+        return session
+          ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+          : null
+      },
+    },
+    "project",
+    cursorSecret,
+  )
+  const transport: TrajectoryTransport = {
+    snapshot: async (scope) => reads.snapshot(scope, tracker),
+    trajectory: async (scope, id) => reads.trajectory({ scope, taskID: id, limit: 50 }, tracker),
+    history: async (scope, id, _signal, cursor, limit = 50) =>
+      reads.trajectoryHistory({ scope, taskID: id, limit, ...(cursor ? { cursor } : {}) }, tracker),
+    status: async (scope, id) => reads.trajectoryStatus({ scope, taskID: id }, tracker),
+    changes: (signal) =>
+      (async function* () {
+        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()))
+        yield* []
+      })(),
+    online: () => true,
+  }
+  const scope = { kind: "project", sessionID: "ses-owner" } as const
+  const cache = new TrajectoryViewCache()
+  const open = (preferences: Parameters<TrajectoryPanelState["connect"]>[5], withCache = true) => {
+    const state = new TrajectoryPanelState(
+      () => {},
+      () => {},
+      undefined,
+      {
+        autoContinue: false,
+        ...(withCache ? { cache } : {}),
+      },
+    )
+    state.connect("view", "project", fixture.directory, scope, transport, preferences)
+    return state
+  }
+  const opened: TrajectoryPanelState[] = []
+  try {
+    // No context at all: nothing is picked for the person.
+    const bare = open({ taskID: null, selection: null })
+    opened.push(bare)
+    await until(() => bare.data.tasks.length > 0 && !bare.data.loading)
+    expect(bare.data.taskID).toBeNull()
+
+    // A remembered task of this view shows at once.
+    const remembered = open({ taskID, selection: null })
+    opened.push(remembered)
+    expect(remembered.data.taskID).toBe(taskID)
+    await until(() => Boolean(remembered.data.report) && !remembered.data.loading)
+
+    // The cache holds a last-viewed task for this project: a panel with no task shows it.
+    const again = open({ taskID: null, selection: null })
+    opened.push(again)
+    expect(again.data.taskID).toBe(taskID)
+    expect(again.data.report?.task.id).toBe(taskID)
+    expect(again.data.loading).toBe(false)
+
+    // Opened from a task (Tasks, Radar): that task, whatever was shown before.
+    const targeted = open({
+      taskID: null,
+      selection: null,
+      target: {
+        requestID: "from-task",
+        taskID,
+        reference: fixture.repository.referenceFor(taskID)!,
+        projectID: "project",
+        projectDirectory: fixture.directory,
+      },
+    })
+    opened.push(targeted)
+    expect(targeted.data.taskID).toBe(taskID)
+  } finally {
+    for (const state of opened) state.close()
+    fixture.close()
+  }
+})

@@ -37,6 +37,8 @@ import {
   eventPayload,
   isActiveAttemptState,
   settledHistory,
+  compactCount,
+  sourceName,
   sourceReferences,
 } from "./projection.ts"
 import type {
@@ -380,7 +382,8 @@ function PanelView(
     },
     ({ value, view, key }) => {
       setSplit(clampSplit(view.split))
-      setZoom(ZOOM_LEVELS.find((level) => level === view.zoom) ?? 1)
+      // A timeline opens fitted to the panel; zoom is a deliberate, momentary choice.
+      setZoom(1)
       const scope = { kind: view.scope, sessionID: value.session } as const
       const rpc = value.client.rpc(Observability)
       const transport = createTrajectoryTransport(
@@ -770,6 +773,20 @@ function PanelView(
       { defer: true },
     ),
   )
+  createEffect(
+    on(
+      () => selectedAttempt()?.id,
+      () => {
+        if (zoom() === 1) return
+        setZoom(1)
+        save({ zoom: 1 })
+        queueMicrotask(() => {
+          if (timelineScroll) timelineScroll.scrollLeft = 0
+        })
+      },
+      { defer: true },
+    ),
+  )
   const changeZoom = (next: number) => {
     const scroller = timelineScroll
     const previous = zoom()
@@ -1077,6 +1094,7 @@ function PanelView(
       <Ui.Menu
         label={prefs().scope === "session" ? "Session" : "Project"}
         trigger="button"
+        icon="chevron-down"
         items={[
           { label: "This session", onSelect: () => selectScope("session") },
           { label: "Project tasks", onSelect: () => selectScope("project") },
@@ -1170,6 +1188,7 @@ function PanelView(
                     <Ui.Menu
                       label={`Attempt ${headerAttempt()?.number ?? 1} of ${report()?.attempts.length ?? 1}`}
                       trigger="button"
+                      icon="chevron-down"
                       placement="bottom-start"
                       items={(report()?.attempts ?? []).map((attempt) => ({
                         label: `Attempt ${attempt.number} · ${attempt.state}`,
@@ -1271,7 +1290,12 @@ function PanelView(
                 </span>
                 <div class="lazers-trajectory-actions">
                   <span class="lazers-trajectory-choose">
-                    <Ui.Menu label="Choose task" trigger="button" items={menuItems()} />
+                    <Ui.Menu
+                      label="Choose task"
+                      trigger="button"
+                      icon="chevron-down"
+                      items={menuItems()}
+                    />
                   </span>
                 </div>
               </Show>
@@ -1372,6 +1396,7 @@ function PanelView(
             >
               <div
                 class="lazers-trajectory-scroll"
+                data-zoomed={zoom() > 1}
                 ref={(element) => {
                   timelineScroll = element
                 }}
@@ -1394,6 +1419,13 @@ function PanelView(
                         {(tick) => (
                           <span
                             class="lazers-trajectory-tick"
+                            data-edge={
+                              place(tick.elapsedMs) < 4
+                                ? "start"
+                                : place(tick.elapsedMs) > 96
+                                  ? "end"
+                                  : undefined
+                            }
                             style={{ left: `${place(tick.elapsedMs)}%` }}
                           >
                             {tick.label}
@@ -1942,7 +1974,7 @@ function PanelView(
                             <pre>{output()}</pre>
                           </Disclosure>
                         </Show>
-                        <Disclosure title="Timing source" note={basisText(check().timingBasis)}>
+                        <Disclosure title="Timing source" note={sourceName(check().timingBasis)}>
                           <p class="lazers-trajectory-disclosure-body">
                             {basisText(check().timingBasis)}
                             {timing().status === "invalid-order" ? ` · ${timing().reason}` : ""}
@@ -2007,7 +2039,7 @@ function PanelView(
                       <div class="lazers-trajectory-disclosures">
                         <Disclosure
                           title="Timing source"
-                          note={basisText(attempt().intervals.attempt.basis)}
+                          note={sourceName(attempt().intervals.attempt.basis)}
                         >
                           <p class="lazers-trajectory-disclosure-body">
                             {basisText(attempt().intervals.attempt.basis)}
@@ -2097,7 +2129,7 @@ function PanelView(
                         <Show when={tool().startSource || tool().endSource}>
                           <Disclosure
                             title="Timing source"
-                            note={tool().startSource ?? tool().endSource ?? ""}
+                            note={sourceName(tool().startSource ?? tool().endSource ?? "")}
                           >
                             <p class="lazers-trajectory-disclosure-body">
                               {[tool().startSource, tool().endSource].filter(Boolean).join(" → ")}
@@ -2157,11 +2189,7 @@ function PanelView(
               const tokenCount = (
                 key: keyof TrajectoryReport["effort"]["tokenUsage"]["measuredSubtotal"],
               ) => usage().total?.[key] ?? usage().measuredSubtotal[key]
-              const compact = (value: number) =>
-                new Intl.NumberFormat("en-US", {
-                  notation: "compact",
-                  maximumFractionDigits: 1,
-                }).format(value)
+              const compact = compactCount
               const tokensIn = () => {
                 const parts = (["uncachedInput", "cacheRead", "cacheWrite"] as const).map(
                   tokenCount,
@@ -2244,6 +2272,8 @@ function PanelView(
                   ? `${name(source.source)} prices · ${shortDate(index.retrievedAt)}`
                   : ""
               }
+              /** "OpenRouter · Nov 3": the source and date, as the Models panel words it. */
+              const priceHint = () => priceBasis().replace(" prices", "")
               /** "$0.42" for a whole-cent price, otherwise two significant digits: "$0.016". */
               const shortUSD = (value: number) =>
                 value >= 1 ? `$${value.toFixed(2)}` : `$${Number(value.toPrecision(2))}`
@@ -2264,14 +2294,7 @@ function PanelView(
                 const subtotal = marketCost()?.subtotalUSD ?? null
                 return subtotal === null || subtotal <= 0 ? "" : shortUSD(subtotal)
               }
-              const costLabel = () => {
-                const estimate = selectedEstimate()
-                if (estimate?.valueUSD === null || estimate?.valueUSD === undefined) {
-                  if (estimate?.rangeUSD) return "market cost range"
-                  if (estimate?.pricedPortionUSD) return "market cost, priced part"
-                }
-                return estimate?.status === "partial" ? "market cost · partial" : "market cost"
-              }
+              const costLabel = () => "market cost"
               return (
                 <>
                   <section class="lazers-trajectory-usage" aria-label="Usage">
@@ -2332,136 +2355,145 @@ function PanelView(
                       </Show>
                     </div>
                     <div class="lazers-trajectory-disclosures">
-                      <Show when={marketCost()}>
+                      <Show when={marketCost() || marketEstimate()}>
                         <details class="lazers-trajectory-payload lazers-trajectory-valuation">
-                          <summary>Pricing coverage and provenance</summary>
-                          <Show when={priceSourceSummary()}>
-                            <div class="lazers-trajectory-coverage">
-                              <span>{priceSourceSummary()}</span>
-                            </div>
-                          </Show>
-                          <p>{marketCost()!.meaning}</p>
-                          <Show
-                            when={
-                              selectedEstimate() && apiCost() !== null && indexPriceSourceSummary()
-                            }
-                          >
-                            <div class="lazers-trajectory-coverage">
-                              Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
-                              {indexPriceSourceSummary()}
-                            </div>
-                          </Show>
-                          <Show when={marketCost()!.currentIndex}>
-                            {(index) => (
+                          <summary>
+                            <span>Estimate basis and prices</span>
+                            <Show when={priceHint()}>
+                              <span class="lazers-trajectory-disclosure-note">{priceHint()}</span>
+                            </Show>
+                          </summary>
+                          <Show when={marketCost()}>
+                            <>
+                              <Show when={priceSourceSummary()}>
+                                <div class="lazers-trajectory-coverage">
+                                  <span>{priceSourceSummary()}</span>
+                                </div>
+                              </Show>
+                              <p>{marketCost()!.meaning}</p>
+                              <Show
+                                when={
+                                  selectedEstimate() &&
+                                  apiCost() !== null &&
+                                  indexPriceSourceSummary()
+                                }
+                              >
+                                <div class="lazers-trajectory-coverage">
+                                  Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
+                                  {indexPriceSourceSummary()}
+                                </div>
+                              </Show>
+                              <Show when={marketCost()!.currentIndex}>
+                                {(index) => (
+                                  <div class="lazers-trajectory-coverage">
+                                    <div>Models index {index().indexID}</div>
+                                    <div>Read {new Date(index().retrievedAt).toLocaleString()}</div>
+                                    <For each={index().sources}>
+                                      {(source) => (
+                                        <div>
+                                          {source.source} · snapshot {source.snapshotID} ·
+                                          generation {source.generation} · {source.priceBasis} ·{" "}
+                                          {source.rateUnit}
+                                          {source.asOf ? ` · as of ${source.asOf}` : ""}
+                                        </div>
+                                      )}
+                                    </For>
+                                  </div>
+                                )}
+                              </Show>
                               <div class="lazers-trajectory-coverage">
-                                <div>Models index {index().indexID}</div>
-                                <div>Read {new Date(index().retrievedAt).toLocaleString()}</div>
-                                <For each={index().sources}>
-                                  {(source) => (
-                                    <div>
-                                      {source.source} · snapshot {source.snapshotID} · generation{" "}
-                                      {source.generation} · {source.priceBasis} · {source.rateUnit}
-                                      {source.asOf ? ` · as of ${source.asOf}` : ""}
-                                    </div>
-                                  )}
-                                </For>
+                                {marketCost()!.coverage.pricedSessions} /{" "}
+                                {marketCost()!.coverage.totalUniqueSessions} sessions fully priced ·{" "}
+                                {marketCost()!.coverage.partialSessions} partial ·{" "}
+                                {marketCost()!.coverage.unpricedSessionIDs.length} unpriced
                               </div>
-                            )}
+                              <For each={marketCost()!.sessions}>
+                                {(session) => (
+                                  <div class="lazers-trajectory-coverage">
+                                    <span>
+                                      Session {session.sessionID} · {session.status} · route{" "}
+                                      {session.routeAllocation.status} · price {session.pinStatus}
+                                    </span>
+                                    <span>
+                                      <For each={Object.entries(session.categories)}>
+                                        {([name, category]) => (
+                                          <span>
+                                            {name}: {category.status}
+                                            {category.valueUSD === null
+                                              ? ""
+                                              : ` · ${formatMarketUSD(category.valueUSD)}`}{" "}
+                                          </span>
+                                        )}
+                                      </For>
+                                    </span>
+                                  </div>
+                                )}
+                              </For>
+                            </>
                           </Show>
-                          <div class="lazers-trajectory-coverage">
-                            {marketCost()!.coverage.pricedSessions} /{" "}
-                            {marketCost()!.coverage.totalUniqueSessions} sessions fully priced ·{" "}
-                            {marketCost()!.coverage.partialSessions} partial ·{" "}
-                            {marketCost()!.coverage.unpricedSessionIDs.length} unpriced
-                          </div>
-                          <For each={marketCost()!.sessions}>
-                            {(session) => (
-                              <div class="lazers-trajectory-coverage">
-                                <span>
-                                  Session {session.sessionID} · {session.status} · route{" "}
-                                  {session.routeAllocation.status} · price {session.pinStatus}
-                                </span>
-                                <span>
-                                  <For each={Object.entries(session.categories)}>
-                                    {([name, category]) => (
-                                      <span>
-                                        {name}: {category.status}
-                                        {category.valueUSD === null
-                                          ? ""
-                                          : ` · ${formatMarketUSD(category.valueUSD)}`}{" "}
-                                      </span>
+                          <Show when={marketEstimate()}>
+                            {(estimate) => (
+                              <>
+                                <div>Retained calls · {estimate().retainedCallCount}</div>
+                                <div>Estimate basis · {estimate().basis}</div>
+                                <p>{estimate().meaning}</p>
+                                <div class="lazers-trajectory-coverage">
+                                  <strong>Published sources and freshness</strong>
+                                  <For each={estimate().sources}>
+                                    {(source) => (
+                                      <div>
+                                        {source.source} · snapshot {source.snapshotID} · generation{" "}
+                                        {source.generation}
+                                        {source.currentGeneration !== source.generation
+                                          ? ` · current generation ${source.currentGeneration}`
+                                          : ""}{" "}
+                                        · {source.priceBasis} · {source.freshness} · read{" "}
+                                        {new Date(source.retrievedAt).toLocaleString()} ·{" "}
+                                        <a href={source.sourceURL} target="_blank" rel="noreferrer">
+                                          {source.sourceURL}
+                                        </a>
+                                      </div>
                                     )}
                                   </For>
-                                </span>
-                              </div>
+                                </div>
+                                <div class="lazers-trajectory-coverage">
+                                  <strong>Selected rates · USD per token</strong>
+                                  <For each={estimate().rateSets}>
+                                    {(rateSet) => (
+                                      <div>
+                                        {rateSet.tierID}
+                                        {rateSet.minPromptTokens === null
+                                          ? ""
+                                          : ` · prompt override above ${rateSet.minPromptTokens.toLocaleString()} tokens`}
+                                        {rateSet.contextTierTokens === null
+                                          ? ""
+                                          : ` · context tier ${rateSet.contextTierTokens.toLocaleString()} tokens`}
+                                        {` · prompt ${rateSet.prompt ?? "—"} · completion ${rateSet.completion ?? "—"} · cache read ${rateSet.cacheRead ?? "—"} · cache write ${rateSet.cacheWrite ?? "—"}`}
+                                      </div>
+                                    )}
+                                  </For>
+                                  <div>
+                                    Tier attribution · {estimate().tierAttribution.status} ·{" "}
+                                    {estimate().tierAttribution.basis}
+                                    {estimate().tierAttribution.thresholdSemantics
+                                      ? ` · ${estimate().tierAttribution.thresholdSemantics}`
+                                      : ""}
+                                  </div>
+                                </div>
+                                <div class="lazers-trajectory-coverage">
+                                  <strong>Secondary assumptions and limitations</strong>
+                                  <For each={estimate().assumptions}>
+                                    {(assumption) => <div>{assumption}</div>}
+                                  </For>
+                                  <div>
+                                    Recovery gaps · {estimate().recoveryGapCount} · exact historical
+                                    bill is not guaranteed.
+                                  </div>
+                                </div>
+                              </>
                             )}
-                          </For>
+                          </Show>
                         </details>
-                      </Show>
-                      <Show when={marketEstimate()}>
-                        {(estimate) => (
-                          <details class="lazers-trajectory-payload lazers-trajectory-valuation">
-                            <summary>
-                              Estimate assumptions and published-rate basis ·{" "}
-                              {estimate().retainedCallCount} retained calls
-                            </summary>
-                            <div>Estimate basis · {estimate().basis}</div>
-                            <p>{estimate().meaning}</p>
-                            <div class="lazers-trajectory-coverage">
-                              <strong>Published sources and freshness</strong>
-                              <For each={estimate().sources}>
-                                {(source) => (
-                                  <div>
-                                    {source.source} · snapshot {source.snapshotID} · generation{" "}
-                                    {source.generation}
-                                    {source.currentGeneration !== source.generation
-                                      ? ` · current generation ${source.currentGeneration}`
-                                      : ""}{" "}
-                                    · {source.priceBasis} · {source.freshness} · read{" "}
-                                    {new Date(source.retrievedAt).toLocaleString()} ·{" "}
-                                    <a href={source.sourceURL} target="_blank" rel="noreferrer">
-                                      {source.sourceURL}
-                                    </a>
-                                  </div>
-                                )}
-                              </For>
-                            </div>
-                            <div class="lazers-trajectory-coverage">
-                              <strong>Selected rates · USD per token</strong>
-                              <For each={estimate().rateSets}>
-                                {(rateSet) => (
-                                  <div>
-                                    {rateSet.tierID}
-                                    {rateSet.minPromptTokens === null
-                                      ? ""
-                                      : ` · prompt override above ${rateSet.minPromptTokens.toLocaleString()} tokens`}
-                                    {rateSet.contextTierTokens === null
-                                      ? ""
-                                      : ` · context tier ${rateSet.contextTierTokens.toLocaleString()} tokens`}
-                                    {` · prompt ${rateSet.prompt ?? "—"} · completion ${rateSet.completion ?? "—"} · cache read ${rateSet.cacheRead ?? "—"} · cache write ${rateSet.cacheWrite ?? "—"}`}
-                                  </div>
-                                )}
-                              </For>
-                              <div>
-                                Tier attribution · {estimate().tierAttribution.status} ·{" "}
-                                {estimate().tierAttribution.basis}
-                                {estimate().tierAttribution.thresholdSemantics
-                                  ? ` · ${estimate().tierAttribution.thresholdSemantics}`
-                                  : ""}
-                              </div>
-                            </div>
-                            <div class="lazers-trajectory-coverage">
-                              <strong>Secondary assumptions and limitations</strong>
-                              <For each={estimate().assumptions}>
-                                {(assumption) => <div>{assumption}</div>}
-                              </For>
-                              <div>
-                                Recovery gaps · {estimate().recoveryGapCount} · exact historical
-                                bill is not guaranteed.
-                              </div>
-                            </div>
-                          </details>
-                        )}
                       </Show>
                     </div>
                   </section>

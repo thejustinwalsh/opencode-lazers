@@ -693,7 +693,8 @@ export function buildTimeline(
   const maximum = Math.max(origin, ...values)
   const span = Math.max(0, maximum - origin)
   const step = tickStep(span)
-  const durationMs = Math.max(step, Math.ceil(span / step) * step)
+  // The axis ends at the last recorded time, not at the next tick step.
+  const durationMs = span > 0 ? span : step
   const ticks: TimelineTick[] = []
   for (let elapsed = 0; elapsed <= durationMs; elapsed += step)
     ticks.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
@@ -919,3 +920,30 @@ export function eventPayload(event: TrajectoryEvent) {
 }
 
 export type ScopeView = ObservationScopeView
+
+/** The plain name of a timing source: "verification receipt"; its field path stays in the body. */
+export function sourceName(basis: string) {
+  const words: string[] = []
+  for (const word of (basis.split(";")[0] ?? "").trim().split(/\s+/)) {
+    if (word.endsWith(":")) {
+      words.push(word.slice(0, -1))
+      break
+    }
+    if (/[./:]/.test(word)) break
+    words.push(word)
+  }
+  const name = words.join(" ").trim()
+  return name ? name[0]!.toLowerCase() + name.slice(1) : ""
+}
+
+/** Token counts as in the mockup: 950, 20.3k, 16M, 1.2B. */
+export function compactCount(value: number) {
+  const units = [
+    [1e9, "B"],
+    [1e6, "M"],
+    [1e3, "k"],
+  ] as const
+  for (const [size, unit] of units)
+    if (Math.abs(value) >= size) return `${Number((value / size).toFixed(1))}${unit}`
+  return String(Math.round(value))
+}
