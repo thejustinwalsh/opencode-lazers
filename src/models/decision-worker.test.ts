@@ -43,10 +43,20 @@ function inflateLedger(path: string, copies: number) {
           .map((column) => column.name),
       )
     }
+    // Truncating a random UUID collides when two ids differ only in the replaced
+    // suffix; memoize a fresh UUID per (copy, id) so references stay consistent.
+    const remapped = new Map<string, string>()
+    const freshID = (id: string, copy: number) => {
+      const key = `${copy}:${id}`
+      let next = remapped.get(key)
+      if (next === undefined) {
+        next = crypto.randomUUID()
+        remapped.set(key, next)
+      }
+      return next
+    }
     const remap = (value: string, copy: number) =>
-      value
-        .replace(UUID, (id) => id.slice(0, -4) + copy.toString(16).padStart(4, "0"))
-        .replace(SESSION, (id) => `${id}-c${copy}`)
+      value.replace(UUID, (id) => freshID(id, copy)).replace(SESSION, (id) => `${id}-c${copy}`)
     const baseSequence = (
       db.query("SELECT MAX(sequence) AS m FROM task_references").get() as { m: number }
     ).m

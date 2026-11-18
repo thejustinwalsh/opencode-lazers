@@ -321,12 +321,14 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       },
     }
     const client = {
-      location: {
-        get: async (_input: unknown, options: { signal: AbortSignal }) => {
+      // Radar identifies the project by path and reads only loaded locations; location.get would boot one.
+      project: {
+        list: async (_input: unknown, options: { signal: AbortSignal }) => {
           options.signal.throwIfAborted()
-          return { project: { id: projectID, canonical: fixture.directory } }
+          return [{ id: projectID, canonical: fixture.directory }]
         },
       },
+      debug: { location: { list: async () => [{ directory: fixture.directory }] } },
       rpc: (_definition: typeof Observability) => rpc,
     }
     const session = {

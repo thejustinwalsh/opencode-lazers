@@ -1,3 +1,4 @@
+import { RadarLocationNotLoadedError } from "./project.ts"
 import type {
   LiveHistoryResponse,
   LiveRadarResponse,
@@ -46,15 +47,27 @@ export function createRadarMonitorTransport(
   directory: string,
   online: () => boolean,
   projectID: string,
+  /** Location-scoped calls boot an unloaded location; skip them unless it is loaded. */
+  locationLoaded: () => Promise<boolean> = async () => true,
 ): RadarMonitorTransport {
+  const requireLoaded = async () => {
+    if (!(await locationLoaded())) throw new RadarLocationNotLoadedError(directory)
+  }
   return {
-    liveRadar: (scope, includeUnmanagedSessions, signal) =>
-      rpc().liveRadar({ scope, includeUnmanagedSessions }, { location: { directory }, signal }),
-    liveHistory: (scope, sessionID, cursor, signal) =>
-      rpc().liveHistory(
+    liveRadar: async (scope, includeUnmanagedSessions, signal) => {
+      await requireLoaded()
+      return rpc().liveRadar(
+        { scope, includeUnmanagedSessions },
+        { location: { directory }, signal },
+      )
+    },
+    liveHistory: async (scope, sessionID, cursor, signal) => {
+      await requireLoaded()
+      return rpc().liveHistory(
         { scope, sessionID, limit: 20, ...(cursor ? { cursor } : {}) },
         { location: { directory }, signal },
-      ),
+      )
+    },
     changes: (signal) =>
       (async function* () {
         for await (const event of rpc().events.subscribe("changed", { signal })) {

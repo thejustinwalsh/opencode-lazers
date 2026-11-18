@@ -1,3 +1,4 @@
+import { RadarLocationNotLoadedError } from "./project.ts"
 import type {
   ObservationChange,
   ObservationScope,
@@ -38,7 +39,12 @@ export function createRadarTransport(
   directory: string,
   online: () => boolean,
   initialProjectID?: string,
+  /** Location-scoped calls boot an unloaded location; skip them unless it is loaded. */
+  locationLoaded: () => Promise<boolean> = async () => true,
 ): RadarTransport {
+  const requireLoaded = async () => {
+    if (!(await locationLoaded())) throw new RadarLocationNotLoadedError(directory)
+  }
   let projectID = initialProjectID
   let resolveProjectID!: (value: string) => void
   const projectIDReady = new Promise<string>((resolve) => {
@@ -64,11 +70,13 @@ export function createRadarTransport(
 
   return {
     snapshot: async (scope, signal) => {
+      await requireLoaded()
       const response = await rpc().snapshot({ scope }, { location: { directory }, signal })
       rememberProjectID(response.projectID)
       return response
     },
     radar: async (scope, includeUnmanagedSessions, signal) => {
+      await requireLoaded()
       const response = await rpc().radar(
         { scope, includeUnmanagedSessions },
         { location: { directory }, signal },
