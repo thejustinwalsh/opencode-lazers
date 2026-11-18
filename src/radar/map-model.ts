@@ -192,12 +192,12 @@ export function createRadarMapModel(
       return {
         id: taskID,
         label: context?.objective ?? `Task ${shortID(taskID)}`,
-        state: task?.state ?? "unavailable",
+        state: task?.state ?? "",
         objective: context?.objective ?? null,
         reason: context?.reason ?? null,
       }
     })
-    const state = session.state === "unknown" ? "State unavailable" : session.state
+    const state = session.state === "unknown" ? "" : session.state
     const availability = session.availability === "available" ? "" : ` · ${session.availability}`
     addNode({
       id,
@@ -205,7 +205,7 @@ export function createRadarMapModel(
       group: groupFor("session"),
       label: session.agent ?? "Native session",
       subtitle: shortID(session.sessionID),
-      status: `${state}${availability}`,
+      status: state ? `${state}${availability}` : availability.replace(/^ · /, ""),
       record: {
         kind: "session",
         value: session,
@@ -235,7 +235,7 @@ export function createRadarMapModel(
       kind: "route",
       group: groupFor("route"),
       label: `${route.providerID} / ${route.modelID}`,
-      subtitle: route.variant ? `Variant ${route.variant}` : "Model variant unavailable",
+      subtitle: route.variant ? `Variant ${route.variant}` : "",
       status: sources.length === 1 ? sources[0]! : `${sources.length} route sources`,
       record: { kind: "route", value: values },
       related: [],

@@ -351,12 +351,8 @@ export function RadarMonitorView(props: Props) {
               <span class="lazers-radar-session-icon" aria-hidden="true">
                 <Ui.Icon name={sessionRole(value()).icon} size="small" />
               </span>
-              <span class="lazers-radar-session-identity">
-                <strong>{sessionRole(value()).label}</strong>
-                <Show when={sessionTask(value())}>
-                  {(task) => <span class="lazers-radar-session-task"> · {task()}</span>}
-                </Show>
-              </span>
+              <strong class="lazers-radar-session-role">{sessionRole(value()).label}</strong>
+              <span class="lazers-radar-session-task">{sessionTask(value())}</span>
               <Show when={model()}>
                 {(item) => (
                   <span class="lazers-radar-session-model" title={item().detail}>
@@ -547,7 +543,7 @@ export function RadarMonitorView(props: Props) {
       />
       <div class="lazers-radar-top" ref={(element) => (top = element)}>
         <PanelStatus ui={Ui} status={status} onRetry={props.onRefresh} skeleton="rows" />
-        <Show when={live()}>
+        <Show when={live() && !nothingRunning(live()!) ? live() : undefined}>
           {(response) => (
             <p class="lazers-radar-summary">
               <For each={monitorSegments(response())}>

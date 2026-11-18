@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { RadarResponse } from "../observability/contract.ts"
 import type { RadarLayoutResult } from "./layout-ipc.ts"
@@ -76,9 +77,9 @@ function keyDown(event: KeyboardEvent, choose: () => void) {
 }
 
 function liveTime(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "Unavailable"
+  if (value === null || value === undefined || !Number.isFinite(value)) return ""
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? "Unavailable" : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString()
 }
 
 function fullDateTime(value: number | null | undefined) {
@@ -121,8 +122,38 @@ function RelatedLinks(props: {
   )
 }
 
+const present = (value: unknown) => value !== null && value !== undefined && value !== ""
+
+/** One label-value row; a missing fact removes the row. */
+function Row(props: { label: string; value: unknown; mono?: string }) {
+  return (
+    <Show when={present(props.value)}>
+      <dt>{props.label}</dt>
+      <dd
+        class={props.mono ? "lazers-radar-code" : undefined}
+        style={props.mono ? { "font-family": props.mono } : undefined}
+      >
+        {String(props.value)}
+      </dd>
+    </Show>
+  )
+}
+
+/** Raw identifiers stay available, one disclosure away. */
+function Identifiers(props: { children: JSX.Element }) {
+  return (
+    <details class="lazers-radar-disclosure lazers-radar-identifiers">
+      <summary>Identifiers</summary>
+      <dl>{props.children}</dl>
+    </details>
+  )
+}
+
+const joined = (values: readonly string[]) => values.join("\n")
+
 function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
   const node = () => props.node
+  const mono = () => props.monoFont
   const links = () => (
     <RelatedLinks ids={node().related} model={props.model} onSelect={props.onSelect} />
   )
@@ -131,22 +162,14 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
       <h3>{node().label}</h3>
       <p>{node().status}</p>
       <dl>
-        <dt>Type</dt>
-        <dd>{node().kind}</dd>
-        <dt>State</dt>
-        <dd>{node().status}</dd>
+        <Row label="Type" value={node().kind} />
+        <Row label="State" value={node().status} />
       </dl>
       <Show when={recordKind(node(), "component")}>
         {(record) => (
           <dl>
-            <dt>Responsibility</dt>
-            <dd>{record().value.responsibility}</dd>
-            <dt>Source file</dt>
-            <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-              {record().value.sourceFile}
-            </dd>
-            <dt>Evidence</dt>
-            <dd>Code-backed architecture record</dd>
+            <Row label="Responsibility" value={record().value.responsibility} />
+            <Row label="Source file" value={record().value.sourceFile} mono={mono()} />
           </dl>
         )}
       </Show>
@@ -154,99 +177,77 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
         {(record) => (
           <>
             <dl>
-              <dt>Agent</dt>
-              <dd>{record().value.agent ?? "Unavailable"}</dd>
-              <dt>Native state</dt>
-              <dd>{record().value.state}</dd>
-              <dt>Availability / freshness</dt>
-              <dd>
-                {record().value.availability} · {record().value.freshness}
-              </dd>
-              <dt>Model / effort provenance</dt>
-              <dd>{radarSessionModelContext(record()).model}</dd>
-              <dt>Task context</dt>
-              <dd>
-                {record()
+              <Row label="Agent" value={record().value.agent} />
+              <Row label="Native state" value={record().value.state} />
+              <Row
+                label="Availability / freshness"
+                value={`${record().value.availability} · ${record().value.freshness}`}
+              />
+              <Row label="Model / effort" value={radarSessionModelContext(record()).model} />
+              <Row
+                label="Tasks"
+                value={record()
                   .tasks.map((task) => `${task.label} · ${task.state}`)
-                  .join("; ") || "Unavailable"}
-              </dd>
-              <dt>Classification / associations</dt>
-              <dd>
-                {record().value.classification} ·{" "}
-                {record().value.associations.join(", ") || "None recorded"}
-              </dd>
-              <dt>Session ID</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.sessionID}
-              </dd>
-              <dt>Project ID</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.projectID}
-              </dd>
-              <dt>Parent session</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.parentSessionID ?? "Unavailable"}
-              </dd>
-              <dt>Updated</dt>
-              <dd>{liveTime(record().value.updatedAt)}</dd>
-              <dt>Observed</dt>
-              <dd>{liveTime(record().value.observedAt)}</dd>
-              <dt>Current route</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.currentRouteID ?? "Unavailable"}
-              </dd>
-              <dt>Configured routes</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.configuredRouteIDs.join("\n") || "None recorded"}
-              </dd>
-              <dt>Plans</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.planIDs.join("\n") || "None recorded"}
-              </dd>
-              <dt>Tasks</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.taskIDs.join("\n") || "None recorded"}
-              </dd>
-              <dt>Attempts</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.attemptIDs.join("\n") || "None recorded"}
-              </dd>
+                  .join("; ")}
+              />
+              <Row
+                label="Classification"
+                value={[record().value.classification, ...record().value.associations].join(" · ")}
+              />
+              <Row label="Updated" value={liveTime(record().value.updatedAt)} />
+              <Row label="Observed" value={liveTime(record().value.observedAt)} />
             </dl>
-            <h4>Observed and configured routes</h4>
-            <For each={record().routes}>
-              {(route) => (
-                <details class="lazers-radar-disclosure">
-                  <summary>
-                    {route.providerID} / {route.modelID}
-                  </summary>
-                  <RouteDetails route={route} monoFont={props.monoFont} />
-                </details>
-              )}
-            </For>
+            <Identifiers>
+              <Row label="Session" value={record().value.sessionID} mono={mono()} />
+              <Row label="Project" value={record().value.projectID} mono={mono()} />
+              <Row label="Parent session" value={record().value.parentSessionID} mono={mono()} />
+              <Row label="Current route" value={record().value.currentRouteID} mono={mono()} />
+              <Row
+                label="Configured routes"
+                value={joined(record().value.configuredRouteIDs)}
+                mono={mono()}
+              />
+              <Row label="Plans" value={joined(record().value.planIDs)} mono={mono()} />
+              <Row label="Tasks" value={joined(record().value.taskIDs)} mono={mono()} />
+              <Row label="Attempts" value={joined(record().value.attemptIDs)} mono={mono()} />
+              <Row label="Identity" value={node().id} mono={mono()} />
+            </Identifiers>
+            <Show when={record().routes.length > 0}>
+              <h4>Observed and configured routes</h4>
+              <For each={record().routes}>
+                {(route) => (
+                  <details class="lazers-radar-disclosure">
+                    <summary>
+                      {route.providerID} / {route.modelID}
+                    </summary>
+                    <RouteDetails route={route} monoFont={props.monoFont} />
+                  </details>
+                )}
+              </For>
+            </Show>
             <Show when={record().attempts.length > 0}>
               <h4>Work attempts</h4>
               <For each={record().attempts}>
                 {(attempt) => (
-                  <dl>
-                    <dt>Attempt ID</dt>
-                    <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                      {attempt.id}
-                    </dd>
-                    <dt>Task / plan</dt>
-                    <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                      {attempt.taskID} / {attempt.planID}
-                    </dd>
-                    <dt>Attempt / state</dt>
-                    <dd>
-                      {attempt.number} · {attempt.state}
-                    </dd>
-                    <dt>Started</dt>
-                    <dd>{liveTime(attempt.startedAt)}</dd>
-                    <dt>Configured route</dt>
-                    <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                      {attempt.configuredRouteID ?? "Unavailable"}
-                    </dd>
-                  </dl>
+                  <>
+                    <dl>
+                      <Row label="Attempt" value={`${attempt.number} · ${attempt.state}`} />
+                      <Row label="Started" value={liveTime(attempt.startedAt)} />
+                    </dl>
+                    <Identifiers>
+                      <Row label="Attempt" value={attempt.id} mono={mono()} />
+                      <Row
+                        label="Task / plan"
+                        value={`${attempt.taskID} / ${attempt.planID}`}
+                        mono={mono()}
+                      />
+                      <Row
+                        label="Configured route"
+                        value={attempt.configuredRouteID}
+                        mono={mono()}
+                      />
+                    </Identifiers>
+                  </>
                 )}
               </For>
             </Show>
@@ -272,63 +273,47 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
       </Show>
       <Show when={recordKind(node(), "plan")}>
         {(record) => (
-          <dl>
-            <dt>Title</dt>
-            <dd>{record().value.title ?? "Unavailable"}</dd>
-            <dt>State</dt>
-            <dd>{record().value.state}</dd>
-            <dt>Related tasks</dt>
-            <dd>{record().tasks.length} recorded</dd>
-            <dt>Plan ID</dt>
-            <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-              {record().value.id}
-            </dd>
-            <dt>Owner session ID</dt>
-            <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-              {record().value.ownerSessionID}
-            </dd>
-          </dl>
+          <>
+            <dl>
+              <Row label="Title" value={record().value.title} />
+              <Row label="State" value={record().value.state} />
+              <Row label="Related tasks" value={`${record().tasks.length} recorded`} />
+            </dl>
+            <Identifiers>
+              <Row label="Plan" value={record().value.id} mono={mono()} />
+              <Row label="Owner session" value={record().value.ownerSessionID} mono={mono()} />
+              <Row label="Identity" value={node().id} mono={mono()} />
+            </Identifiers>
+          </>
         )}
       </Show>
       <Show when={recordKind(node(), "task")}>
         {(record) => (
           <>
             <dl>
-              <dt>State</dt>
-              <dd>{record().value.state}</dd>
-              <dt>Objective</dt>
-              <dd>{record().objective ?? "Unavailable in the lifecycle projection"}</dd>
-              <dt>Reason</dt>
-              <dd>{record().reason ?? "None recorded"}</dd>
-              <dt>Plan ID</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.planID ?? "Unplanned"}
-              </dd>
-              <dt>Task ID</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.id}
-              </dd>
+              <Row label="State" value={record().value.state} />
+              <Row label="Objective" value={record().objective} />
+              <Row label="Reason" value={record().reason} />
             </dl>
+            <Identifiers>
+              <Row label="Plan" value={record().value.planID} mono={mono()} />
+              <Row label="Task" value={record().value.id} mono={mono()} />
+              <Row label="Identity" value={node().id} mono={mono()} />
+            </Identifiers>
             <Show when={record().attempts.length > 0}>
               <h4>Attempts</h4>
               <For each={record().attempts}>
                 {(attempt) => (
-                  <dl>
-                    <dt>Attempt ID</dt>
-                    <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                      {attempt.id}
-                    </dd>
-                    <dt>Worker session</dt>
-                    <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                      {attempt.sessionID}
-                    </dd>
-                    <dt>Attempt / state</dt>
-                    <dd>
-                      {attempt.number} · {attempt.state}
-                    </dd>
-                    <dt>Started</dt>
-                    <dd>{liveTime(attempt.startedAt)}</dd>
-                  </dl>
+                  <>
+                    <dl>
+                      <Row label="Attempt" value={`${attempt.number} · ${attempt.state}`} />
+                      <Row label="Started" value={liveTime(attempt.startedAt)} />
+                    </dl>
+                    <Identifiers>
+                      <Row label="Attempt" value={attempt.id} mono={mono()} />
+                      <Row label="Worker session" value={attempt.sessionID} mono={mono()} />
+                    </Identifiers>
+                  </>
                 )}
               </For>
             </Show>
@@ -337,30 +322,35 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
       </Show>
       <Show when={recordKind(node(), "tool")}>
         {(record) => (
-          <dl>
-            <dt>Name</dt>
-            <dd>{record().value.name}</dd>
-            <dt>Associated sessions</dt>
-            <dd>{record().sessions.length} recorded</dd>
-            <dt>Tool ID</dt>
-            <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-              {record().value.id}
-            </dd>
-            <dt>Sessions</dt>
-            <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-              {record()
-                .sessions.map((session) => session.sessionID)
-                .join("\n") || "Unavailable"}
-            </dd>
-          </dl>
+          <>
+            <dl>
+              <Row label="Name" value={record().value.name} />
+              <Row label="Associated sessions" value={`${record().sessions.length} recorded`} />
+            </dl>
+            <Identifiers>
+              <Row label="Tool" value={record().value.id} mono={mono()} />
+              <Row
+                label="Sessions"
+                value={joined(record().sessions.map((session) => session.sessionID))}
+                mono={mono()}
+              />
+              <Row label="Identity" value={node().id} mono={mono()} />
+            </Identifiers>
+          </>
         )}
       </Show>
-      <dl>
-        <dt>Identity</dt>
-        <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-          {node().id}
-        </dd>
-      </dl>
+      <Show
+        when={
+          !recordKind(node(), "session") &&
+          !recordKind(node(), "plan") &&
+          !recordKind(node(), "task") &&
+          !recordKind(node(), "tool")
+        }
+      >
+        <Identifiers>
+          <Row label="Identity" value={node().id} mono={mono()} />
+        </Identifiers>
+      </Show>
       {links()}
     </>
   )
@@ -368,35 +358,30 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
 
 function RouteDetails(props: { route: RadarResponse["routes"][number]; monoFont: string }) {
   return (
-    <dl>
-      <dt>Provider / model</dt>
-      <dd>
-        {props.route.providerID} / {props.route.modelID}
-      </dd>
-      <dt>Variant</dt>
-      <dd>{props.route.variant ?? "Unavailable"}</dd>
-      <dt>Source</dt>
-      <dd>{props.route.source}</dd>
-      <dt>Route ID</dt>
-      <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-        {props.route.id}
-      </dd>
-      <dt>Session / attempt</dt>
-      <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-        {props.route.sessionID ?? "Unavailable"} / {props.route.attemptID ?? "Unavailable"}
-      </dd>
-      <dt>Message / event</dt>
-      <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-        {props.route.messageID ?? "Unavailable"} / {props.route.eventID ?? "Unavailable"}
-      </dd>
-      <dt>Observed</dt>
-      <dd>{liveTime(props.route.observedAt)}</dd>
-    </dl>
+    <>
+      <dl>
+        <Row
+          label="Provider / model"
+          value={`${props.route.providerID} / ${props.route.modelID}`}
+        />
+        <Row label="Variant" value={props.route.variant} />
+        <Row label="Source" value={props.route.source} />
+        <Row label="Observed" value={liveTime(props.route.observedAt)} />
+      </dl>
+      <Identifiers>
+        <Row label="Route" value={props.route.id} mono={props.monoFont} />
+        <Row label="Session" value={props.route.sessionID} mono={props.monoFont} />
+        <Row label="Attempt" value={props.route.attemptID} mono={props.monoFont} />
+        <Row label="Message" value={props.route.messageID} mono={props.monoFont} />
+        <Row label="Event" value={props.route.eventID} mono={props.monoFont} />
+      </Identifiers>
+    </>
   )
 }
 
 function EdgeDetails(props: RadarMapInspectorProps & { edge: RadarMapEdge }) {
   const edge = () => props.edge
+  const mono = () => props.monoFont
   const from = () => props.model.nodeByID.get(edge().from)?.label ?? edge().from
   const to = () => props.model.nodeByID.get(edge().to)?.label ?? edge().to
   return (
@@ -406,27 +391,18 @@ function EdgeDetails(props: RadarMapInspectorProps & { edge: RadarMapEdge }) {
         {from()} → {to()} · {edge().status}
       </p>
       <dl>
-        <dt>Kind</dt>
-        <dd>{edge().kind}</dd>
-        <dt>Latest status</dt>
-        <dd>{edge().status}</dd>
-        <dt>Records</dt>
-        <dd>{edge().records.length || edge().routeRecords.length || "Code-backed structure"}</dd>
+        <Row label="Kind" value={edge().kind} />
+        <Row label="Latest status" value={edge().status} />
+        <Row
+          label="Records"
+          value={edge().records.length || edge().routeRecords.length || "Code-backed structure"}
+        />
       </dl>
-      <dl>
-        <dt>Relationship ID</dt>
-        <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-          {edge().id}
-        </dd>
-        <dt>From</dt>
-        <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-          {edge().from}
-        </dd>
-        <dt>To</dt>
-        <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-          {edge().to}
-        </dd>
-      </dl>
+      <Identifiers>
+        <Row label="Relationship" value={edge().id} mono={mono()} />
+        <Row label="From" value={edge().from} mono={mono()} />
+        <Row label="To" value={edge().to} mono={mono()} />
+      </Identifiers>
       <Show when={edge().routeRecords.length > 0}>
         <h4>Route evidence</h4>
         <For each={edge().routeRecords}>
@@ -443,43 +419,23 @@ function EdgeDetails(props: RadarMapInspectorProps & { edge: RadarMapEdge }) {
                 {record.deliveryStage ? ` · ${record.deliveryStage}` : ""}
               </summary>
               <dl>
-                <dt>Original edge ID</dt>
-                <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                  {record.id}
-                </dd>
-                <dt>Plan / task</dt>
-                <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                  {record.planID ?? "Unavailable"} / {record.taskID ?? "Unavailable"}
-                </dd>
-                <dt>Attempt</dt>
-                <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                  {record.attemptID ?? "Unavailable"}
-                </dd>
-                <dt>Agent</dt>
-                <dd>{record.agentID ?? "Unavailable"}</dd>
-                <dt>Message / call</dt>
-                <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                  {record.messageID ?? "Unavailable"} / {record.callID ?? "Unavailable"}
-                </dd>
-                <dt>Route ID</dt>
-                <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                  {record.routeID ?? "Unavailable"}
-                </dd>
-                <dt>Started</dt>
-                <dd>
-                  <time dateTime={fullDateTime(record.startedAt)}>
-                    {liveTime(record.startedAt)}
-                  </time>
-                </dd>
-                <dt>Observed</dt>
-                <dd>
-                  <time dateTime={fullDateTime(record.observedAt)}>
-                    {liveTime(record.observedAt)}
-                  </time>
-                </dd>
-                <dt>Live activity</dt>
-                <dd>{record.live ? "Identified live event" : "Historical or structural"}</dd>
+                <Row label="Agent" value={record.agentID} />
+                <Row label="Started" value={liveTime(record.startedAt)} />
+                <Row label="Observed" value={liveTime(record.observedAt)} />
+                <Row
+                  label="Live activity"
+                  value={record.live ? "Identified live event" : "Historical or structural"}
+                />
               </dl>
+              <Identifiers>
+                <Row label="Original edge" value={record.id} mono={mono()} />
+                <Row label="Plan" value={record.planID} mono={mono()} />
+                <Row label="Task" value={record.taskID} mono={mono()} />
+                <Row label="Attempt" value={record.attemptID} mono={mono()} />
+                <Row label="Message" value={record.messageID} mono={mono()} />
+                <Row label="Call" value={record.callID} mono={mono()} />
+                <Row label="Route" value={record.routeID} mono={mono()} />
+              </Identifiers>
               <Show when={record.evidence.length > 0}>
                 <h4>Evidence</h4>
                 <ol class="lazers-radar-map-evidence">
@@ -491,98 +447,50 @@ function EdgeDetails(props: RadarMapInspectorProps & { edge: RadarMapEdge }) {
                           <Show when={evidenceKind(item, "native-event")}>
                             {(event) => (
                               <>
-                                <dt>Event</dt>
-                                <dd>
-                                  {event().eventType} · {event().eventID}
-                                </dd>
-                                <dt>Session</dt>
-                                <dd
-                                  class="lazers-radar-code"
-                                  style={{ "font-family": props.monoFont }}
-                                >
-                                  {event().sessionID}
-                                </dd>
-                                <dt>Message / call</dt>
-                                <dd>
-                                  {event().messageID ?? "Unavailable"} /{" "}
-                                  {event().callID ?? "Unavailable"}
-                                </dd>
-                                <dt>At</dt>
-                                <dd>{liveTime(event().at)}</dd>
+                                <Row label="Event" value={event().eventType} />
+                                <Row label="At" value={liveTime(event().at)} />
+                                <Row label="Event ID" value={event().eventID} mono={mono()} />
+                                <Row label="Session" value={event().sessionID} mono={mono()} />
+                                <Row label="Message" value={event().messageID} mono={mono()} />
+                                <Row label="Call" value={event().callID} mono={mono()} />
                               </>
                             )}
                           </Show>
                           <Show when={evidenceKind(item, "runner-transition")}>
                             {(transition) => (
                               <>
-                                <dt>Sequence / event</dt>
-                                <dd>
-                                  {transition().sequence} · {transition().event}
-                                </dd>
-                                <dt>Effect / outbox</dt>
-                                <dd
-                                  class="lazers-radar-code"
-                                  style={{ "font-family": props.monoFont }}
-                                >
-                                  {transition().effectID ?? "Unavailable"} /{" "}
-                                  {transition().outboxID ?? "Unavailable"}
-                                </dd>
-                                <dt>Message / time</dt>
-                                <dd>
-                                  {transition().messageID ?? "Unavailable"} /{" "}
-                                  {liveTime(transition().at)}
-                                </dd>
+                                <Row
+                                  label="Sequence / event"
+                                  value={`${transition().sequence} · ${transition().event}`}
+                                />
+                                <Row label="At" value={liveTime(transition().at)} />
+                                <Row label="Effect" value={transition().effectID} mono={mono()} />
+                                <Row label="Outbox" value={transition().outboxID} mono={mono()} />
+                                <Row label="Message" value={transition().messageID} mono={mono()} />
                               </>
                             )}
                           </Show>
                           <Show when={evidenceKind(item, "runner-record")}>
                             {(runner) => (
                               <>
-                                <dt>Record ID</dt>
-                                <dd
-                                  class="lazers-radar-code"
-                                  style={{ "font-family": props.monoFont }}
-                                >
-                                  {runner().recordID}
-                                </dd>
-                                <dt>Message / call</dt>
-                                <dd>
-                                  {runner().messageID ?? "Unavailable"} /{" "}
-                                  {runner().callID ?? "Unavailable"}
-                                </dd>
-                                <dt>At</dt>
-                                <dd>{liveTime(runner().at)}</dd>
+                                <Row label="At" value={liveTime(runner().at)} />
+                                <Row label="Record" value={runner().recordID} mono={mono()} />
+                                <Row label="Message" value={runner().messageID} mono={mono()} />
+                                <Row label="Call" value={runner().callID} mono={mono()} />
                               </>
                             )}
                           </Show>
                           <Show when={evidenceKind(item, "native-read")}>
                             {(read) => (
                               <>
-                                <dt>Session</dt>
-                                <dd
-                                  class="lazers-radar-code"
-                                  style={{ "font-family": props.monoFont }}
-                                >
-                                  {read().sessionID}
-                                </dd>
-                                <dt>Read at</dt>
-                                <dd>{liveTime(read().at)}</dd>
+                                <Row label="Read at" value={liveTime(read().at)} />
+                                <Row label="Session" value={read().sessionID} mono={mono()} />
                               </>
                             )}
                           </Show>
                           <Show when={evidenceKind(item, "code")}>
                             {(code) => (
-                              <>
-                                <dt>Source file</dt>
-                                <dd
-                                  class="lazers-radar-code"
-                                  style={{ "font-family": props.monoFont }}
-                                >
-                                  {code().reference}
-                                </dd>
-                                <dt>Timestamp</dt>
-                                <dd>Structural evidence; no event time</dd>
-                              </>
+                              <Row label="Source file" value={code().reference} mono={mono()} />
                             )}
                           </Show>
                         </dl>
@@ -1014,14 +922,18 @@ export function RadarMapView(props: RadarMapViewProps) {
           connections
         </summary>
         <div class="lazers-radar-map-overview-summary" aria-label="Current operational overview">
-          <div>
-            <strong>Scheduler</strong>
-            <span>{schedulerSummary() ?? "Task runtime unavailable"}</span>
-          </div>
-          <div>
-            <strong>Current Architect</strong>
-            <span>{architectSummary() ?? "Not identified from this active native session"}</span>
-          </div>
+          <Show when={schedulerSummary()}>
+            <div>
+              <strong>Scheduler</strong>
+              <span>{schedulerSummary()}</span>
+            </div>
+          </Show>
+          <Show when={architectSummary()}>
+            <div>
+              <strong>Current Architect</strong>
+              <span>{architectSummary()}</span>
+            </div>
+          </Show>
           <div>
             <strong>Active workers · {overview().activeWorkerCount}</strong>
             <Show when={overview().activeWorkerCount === 0}>
@@ -1036,7 +948,8 @@ export function RadarMapView(props: RadarMapViewProps) {
                     {node.record.kind === "session"
                       ? (node.record.value.agent ?? "Native worker")
                       : "Worker"}
-                    · {node.status} · {context()?.model ?? "Model/effort unavailable"}
+                    · {node.status}
+                    {context()?.model ? ` · ${context()!.model}` : ""}
                   </span>
                 )
               }}
