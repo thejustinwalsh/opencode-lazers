@@ -1021,24 +1021,15 @@ test("the inspector carries one meta line: priority, plan and step; sequencing o
   )
 })
 
-test("each listed row carries a right-aligned priority cell, blank for none and for nested rows", async () => {
+test("rows show no priority number: the order carries it, and the accessible name still says it", async () => {
   await withPanel(
     async (h) => {
       await until(() => Boolean(h.row(h.beta.join)))
-      const cell = (taskID: string) =>
-        h.row(taskID)!.querySelector<HTMLElement>(".lazers-tasks-row-priority")
-      expect(cell(h.beta.join)?.textContent).toBe("1")
-      expect(cell(h.alpha[0]!)?.textContent).toBe("2")
-      // Every row keeps the cell so the reference column stays aligned.
-      for (const item of h.container.querySelectorAll('[role="treeitem"]'))
-        expect(item.querySelector(".lazers-tasks-row-priority")).not.toBeNull()
-      // Nested dependency rows leave it blank.
-      h.key(h.row(h.beta.join)!, "ArrowRight")
-      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "true")
-      const nested = h.container.querySelector<HTMLElement>(
-        `[data-item-key="task:${h.beta.join}>${h.beta.a}"] .lazers-tasks-row-priority`,
-      )
-      expect(nested?.textContent).toBe("")
+      expect(h.container.querySelector(".lazers-tasks-row-priority")).toBeNull()
+      // Beta (priority 1) is listed above Alpha (priority 2).
+      const order = [...h.container.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+      expect(order.indexOf(h.row(h.beta.join)!)).toBeLessThan(order.indexOf(h.row(h.alpha[0]!)!))
+      expect(h.row(h.beta.join)!.textContent).not.toMatch(/^\s*1\b/)
     },
     {},
     { prioritized: true },

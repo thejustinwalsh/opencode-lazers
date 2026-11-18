@@ -900,14 +900,6 @@ function TaskPanel(
               <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
             </button>
           </Show>
-          <span
-            class="lazers-tasks-row-priority"
-            style={{ "font-family": ctx.appearance.font("mono") }}
-            data-top={item().priority === 1 ? "true" : undefined}
-            aria-hidden="true"
-          >
-            {item().priority ?? ""}
-          </span>
           <Show when={taskRow().reference}>
             {(reference) => (
               <span

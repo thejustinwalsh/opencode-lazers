@@ -595,19 +595,6 @@
 .lazers-tasks-ring {
   display: block;
 }
-/* Priority: two mono characters, right-aligned; the cell stays blank for none so rows align. */
-.lazers-tasks-row-priority {
-  flex: none;
-  width: 2ch;
-  box-sizing: content-box;
-  text-align: right;
-  color: var(--text-weak);
-  font-size: 0.85em;
-  font-variant-numeric: tabular-nums;
-}
-.lazers-tasks-row-priority[data-top="true"] {
-  color: var(--text-strong);
-}
 /* A fixed reference column keeps titles on one left edge across LZ-9 … LZ-999. */
 .lazers-tasks-row-reference {
   flex: none;

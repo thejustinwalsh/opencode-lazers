@@ -12,7 +12,7 @@ OpenCode permissions still control native tools and file access. Answer any perm
 
 Open **Tasks** from the session panel menu, or run `/lz-tasks`. Choose **This session** or **Project tasks**. Search tasks and filter by task state: **Open**, **Queued**, **Running**, **Blocked / waiting**, **Paused**, **Completed**, **Failed / exhausted**, **Cancelled**, or **All**. The header counts the tasks in the current filter.
 
-The list is flat and ordered by priority, shown in the column before each reference. Use the chevron to expand a task's dependencies in place. The glyph at the end of a row is its state: an outlined check is accepted, and the filled green check is integrated. **All** lists open work first, then accepted, integrated, failed and cancelled tasks.
+The list is flat and ordered by priority; a task's priority number is in its details. Use the chevron to expand a task's dependencies in place. The glyph at the end of a row is its state: an outlined check is accepted, and the filled green check is integrated. **All** lists open work first, then accepted, integrated, failed and cancelled tasks.
 
 Select a task to review its objective, done-when checklist, dependencies, worker activity, checks, and result below the divider. Changing the filter keeps the selection. The panel offers **Start** only when a plan can start under the runtime's rules.
 
