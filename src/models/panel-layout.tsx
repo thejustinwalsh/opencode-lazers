@@ -25,7 +25,7 @@ export function SplitPane(props: {
     const view = prefs()
     return storedState({
       open: view.open,
-      size: view.size ?? (view.split !== 64 ? sizeFromLegacySplit(view.split) : undefined),
+      size: view.size ?? sizeFromLegacySplit(view.split),
     })
   }
   createEffect(() => {
