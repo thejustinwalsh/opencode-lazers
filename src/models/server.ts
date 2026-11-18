@@ -25,7 +25,10 @@ import {
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
-import { ModelEvidenceRefresher } from "./source-refresh.ts"
+import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
+
+/** A background refresh gives up after this long. */
+const BACKGROUND_REFRESH_TIMEOUT_MS = 120_000
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { readModelComparison } from "./comparison-read.ts"
 import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
@@ -287,6 +290,8 @@ export function registerModelsServer(
       store.close()
     }
   }
+  /** The one source refresh in flight for this project; every panel and request shares it. */
+  const refreshGate = createRefreshGate()
   const withEvidenceStoreAsync = async <T>(
     run: (store: ModelEvidenceStore) => Promise<T>,
   ): Promise<T> => {
@@ -589,10 +594,28 @@ export function registerModelsServer(
               signal,
             )
             signal.throwIfAborted()
+            // The stored snapshots are served at once. Only sources past their TTL are fetched,
+            // in the background and once at a time; a forced refresh (the header button) waits.
+            const force = request.force === true
+            if (force) await refreshGate.wait()
+            if (!refreshGate.busy) {
+              const plan = await withEvidenceStoreAsync(async (store) =>
+                new ModelEvidenceRefresher(ctx, store, fetcher).due(force),
+              )
+              if (plan.size > 0) {
+                const run = refreshGate.start(() =>
+                  withEvidenceStoreAsync((store) =>
+                    new ModelEvidenceRefresher(ctx, store, fetcher).refresh(
+                      AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS),
+                      plan,
+                    ),
+                  ),
+                )
+                if (force) await run
+              }
+            }
             return ModelEvidenceOutputSchema.parse(
-              await withEvidenceStoreAsync((store) =>
-                new ModelEvidenceRefresher(ctx, store, fetcher).refresh(signal),
-              ),
+              await withEvidenceStoreAsync(async (store) => store.read()),
             )
           },
           catch: failure,

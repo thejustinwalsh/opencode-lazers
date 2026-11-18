@@ -161,12 +161,13 @@ export class ModelEvidenceStore {
     }
   }
 
-  beginRefresh(): SourceGeneration {
+  /** Start a refresh of the given sources (all by default); the others are left as they are. */
+  beginRefresh(sources: readonly ModelEvidenceSource[] = MODEL_EVIDENCE_SOURCES): SourceGeneration {
     const now = new Date().toISOString()
     return this.db
       .transaction(() => {
         const generations = {} as SourceGeneration
-        for (const source of MODEL_EVIDENCE_SOURCES) {
+        for (const source of sources) {
           this.db
             .query(
               `INSERT OR IGNORE INTO model_evidence_refreshes
@@ -449,6 +450,18 @@ export class ModelEvidenceStore {
         source,
         generation,
       )
+  }
+
+  /** The latest stored snapshot of a source, or null before the first successful fetch. */
+  latestSnapshot(source: ModelEvidenceSource): ModelEvidenceSnapshot | null {
+    const row = this.db
+      .query<{ body: string }, [string, string]>(
+        `SELECT s.body FROM model_evidence_refreshes r
+         JOIN model_evidence_snapshots s ON s.snapshot_id = r.latest_snapshot_id
+         WHERE r.project_directory=? AND r.source=?`,
+      )
+      .get(this.projectDirectory, source)
+    return row ? ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body)) : null
   }
 
   read(input: unknown = {}): ModelEvidenceOutput {

@@ -42,7 +42,11 @@ export const ModelEvidenceRPCInputSchema = z.strictObject({
   sessionID: SessionID,
   ...ModelEvidenceReadInputSchema.shape,
 })
-export const ModelSourceRefreshRPCInputSchema = z.strictObject({ sessionID: SessionID })
+export const ModelSourceRefreshRPCInputSchema = z.strictObject({
+  sessionID: SessionID,
+  /** The refresh button: fetch every source now, whatever its age. */
+  force: z.boolean().optional(),
+})
 export const ModelComparisonRPCInputSchema = z.strictObject({
   sessionID: SessionID,
   ...ModelComparisonReadInputSchema.shape,
