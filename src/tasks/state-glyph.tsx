@@ -1,4 +1,4 @@
-import { Match, Switch } from "solid-js"
+import { Match, Show, Switch } from "solid-js"
 import type { TaskRingGlyph } from "./row-presentation.ts"
 
 /**
@@ -16,14 +16,21 @@ export function TaskRing(props: { glyph: TaskRingGlyph }) {
       fill="none"
       aria-hidden="true"
     >
-      <circle
-        cx="10"
-        cy="10"
-        r="7.5"
-        stroke="currentColor"
-        stroke-width="1.5"
-        stroke-dasharray={props.glyph === "ring-dashed" ? "2.6 2.3" : undefined}
-      />
+      <Show
+        when={props.glyph === "disc-check"}
+        fallback={
+          <circle
+            cx="10"
+            cy="10"
+            r="7.5"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-dasharray={props.glyph === "ring-dashed" ? "2.6 2.3" : undefined}
+          />
+        }
+      >
+        <circle cx="10" cy="10" r="8.25" fill="currentColor" />
+      </Show>
       <Switch>
         <Match when={props.glyph === "ring-progress"}>
           <path d="M10 5.5a4.5 4.5 0 0 1 0 9z" fill="currentColor" />
@@ -36,6 +43,15 @@ export function TaskRing(props: { glyph: TaskRingGlyph }) {
         </Match>
         <Match when={props.glyph === "ring-minus"}>
           <path d="M6.75 10h6.5" stroke="currentColor" stroke-width="1.5" />
+        </Match>
+        <Match when={props.glyph === "ring-check" || props.glyph === "disc-check"}>
+          <path
+            d="M6.5 10.25l2.5 2.5 4.5-5"
+            stroke={props.glyph === "disc-check" ? "var(--background-base)" : "currentColor"}
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
         </Match>
         <Match when={props.glyph === "ring-clock"}>
           <path
