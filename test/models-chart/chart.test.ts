@@ -261,18 +261,6 @@ function routedRangeReference(
   return entry
 }
 
-function pricedRangeReference(configurationID: string, tokens: number) {
-  const entry = reference(configurationID, "partial", tokens)
-  entry.estimate = ModelDecisionReferenceEstimateSchema.parse({
-    ...entry.estimate,
-    knownSubtotalUSD: null,
-    knownSubtotalRangeUSD: { minimum: 0.00006, maximum: 0.00015 },
-    knownSubtotalUSDPerAcceptedTask: null,
-    knownSubtotalRangeUSDPerAcceptedTask: { minimum: 0.00002, maximum: 0.00005 },
-  })
-  return entry
-}
-
 function size(element: object, width: number, height: number) {
   sizes.set(element, { width, height })
 }

@@ -1,4 +1,4 @@
-import { For, createEffect } from "solid-js"
+import { For, Show, createEffect } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { clampSplit } from "./panel-shared.ts"
@@ -108,5 +108,20 @@ export function Segmented<T extends string>(props: {
         )}
       </For>
     </div>
+  )
+}
+
+/** A collapsed section: title on the left, an optional hint on the right. */
+export function Disclosure(props: { title: string; hint?: string; children: JSX.Element }) {
+  return (
+    <details class="lazers-models-disclosure">
+      <summary>
+        <span>{props.title}</span>
+        <Show when={props.hint}>
+          {(hint) => <span class="lazers-models-disclosure-hint">{hint()}</span>}
+        </Show>
+      </summary>
+      <div class="lazers-models-evidence-content">{props.children}</div>
+    </details>
   )
 }

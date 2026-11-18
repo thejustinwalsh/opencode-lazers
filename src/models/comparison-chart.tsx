@@ -6,7 +6,6 @@ import type { EChartsCoreOption, EChartsType } from "echarts/core"
 import { LabelLayout } from "echarts/features"
 import { SVGRenderer } from "echarts/renderers"
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount } from "solid-js"
-import { Portal } from "solid-js/web"
 import type { JSX } from "solid-js"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
@@ -1053,6 +1052,14 @@ export function ComparisonChart(props: ComparisonChartProps) {
     adapter = undefined
   })
 
+  // The table lives in the selected-model disclosures once that pane has a mount for it.
+  let dataSlot: HTMLElement | undefined
+  let dataDetails: HTMLElement | undefined
+  createEffect(() => {
+    const target = props.dataMount?.() ?? dataSlot
+    if (target && dataDetails && dataDetails.parentNode !== target) target.append(dataDetails)
+  })
+  onCleanup(() => dataDetails?.remove())
   const empty = () => !comparisonChartHasPlottablePoints(props.points, props.references ?? [])
   const keyboardOrder = () => comparisonChartKeyboardOrder(props.points, props.references ?? [])
   const [announcement, setAnnouncement] = createSignal("")
@@ -1155,52 +1162,55 @@ export function ComparisonChart(props: ComparisonChartProps) {
           </li>
         </Show>
       </ul>
-      {(() => {
-        const data = (
-          <details class="lazers-models-disclosure lazers-models-comparison-chart-data">
-            <summary>
-              <span>Chart data as a table</span>
-              <span class="lazers-models-disclosure-hint">{chartChoices().length} models</span>
-            </summary>
-            <ul>
-              <For each={chartChoices()}>
-                {([configurationID, choice]) => {
-                  const descriptions = [
-                    ...(choice.point ? [comparisonChartPointText(choice.point)] : []),
-                    ...(choice.reference ? [comparisonChartReferenceText(choice.reference)] : []),
-                    ...(choice.reference && !referenceIsPlottable(choice.reference)
-                      ? [
-                          "Not plotted: a numeric actual token coordinate or per-task amount is missing.",
-                        ]
-                      : []),
-                  ]
-                  const text = descriptions.join(" ")
-                  const visible = comparisonChartChoiceSummary(choice)
-                  return (
-                    <li>
-                      <button
-                        type="button"
-                        data-configuration-id={configurationID}
-                        aria-pressed={props.selectedConfigurationID === configurationID}
-                        aria-label={`Select ${text}`}
-                        title={text}
-                        onClick={() => props.onSelect(configurationID)}
-                      >
-                        {visible}
-                      </button>
-                    </li>
-                  )
-                }}
-              </For>
-            </ul>
-          </details>
-        )
-        return (
-          <Show when={props.dataMount?.()} fallback={data}>
-            {(mount) => <Portal mount={mount()}>{data}</Portal>}
-          </Show>
-        )
-      })()}
+      <div
+        class="lazers-models-chart-data-slot"
+        ref={(element) => {
+          dataSlot = element
+        }}
+      >
+        <details
+          class="lazers-models-disclosure lazers-models-comparison-chart-data"
+          ref={(element) => {
+            dataDetails = element
+          }}
+        >
+          <summary>
+            <span>Chart data as a table</span>
+            <span class="lazers-models-disclosure-hint">{chartChoices().length} models</span>
+          </summary>
+          <ul>
+            <For each={chartChoices()}>
+              {([configurationID, choice]) => {
+                const descriptions = [
+                  ...(choice.point ? [comparisonChartPointText(choice.point)] : []),
+                  ...(choice.reference ? [comparisonChartReferenceText(choice.reference)] : []),
+                  ...(choice.reference && !referenceIsPlottable(choice.reference)
+                    ? [
+                        "Not plotted: a numeric actual token coordinate or per-task amount is missing.",
+                      ]
+                    : []),
+                ]
+                const text = descriptions.join(" ")
+                const visible = comparisonChartChoiceSummary(choice)
+                return (
+                  <li>
+                    <button
+                      type="button"
+                      data-configuration-id={configurationID}
+                      aria-pressed={props.selectedConfigurationID === configurationID}
+                      aria-label={`Select ${text}`}
+                      title={text}
+                      onClick={() => props.onSelect(configurationID)}
+                    >
+                      {visible}
+                    </button>
+                  </li>
+                )
+              }}
+            </For>
+          </ul>
+        </details>
+      </div>
     </div>
   )
 }

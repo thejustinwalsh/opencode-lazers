@@ -1,6 +1,5 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount } from "solid-js"
 import type { JSX } from "solid-js"
-import { Portal } from "solid-js/web"
 import type { EChartsCoreOption } from "echarts/core"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import type { BenchmarkBaselineGap, BenchmarkBaselinePoint } from "./benchmark-baseline.ts"
@@ -245,6 +244,14 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
   let adapter: ComparisonChartAdapter<BenchmarkChartData> | undefined
   const descriptionID = createUniqueId()
   const [announcement, setAnnouncement] = createSignal("")
+  // The table lives in the selected-model disclosures once that pane has a mount for it.
+  let dataSlot: HTMLElement | undefined
+  let dataDetails: HTMLElement | undefined
+  createEffect(() => {
+    const target = props.dataMount?.() ?? dataSlot
+    if (target && dataDetails && dataDetails.parentNode !== target) target.append(dataDetails)
+  })
+  onCleanup(() => dataDetails?.remove())
   const empty = () => props.points.length === 0
   const currentTheme = () =>
     props.theme ??
@@ -365,57 +372,60 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
           </li>
         </Show>
       </ul>
-      {(() => {
-        const data = (
-          <details class="lazers-models-disclosure lazers-models-comparison-chart-data">
-            <summary>
-              <span>Chart data as a table</span>
-              <span class="lazers-models-disclosure-hint">
-                {props.points.length + props.gaps.length} models
-              </span>
-            </summary>
-            <ul>
-              <For each={props.points}>
-                {(point) => (
-                  <li>
-                    <button
-                      type="button"
-                      data-configuration-id={point.id}
-                      aria-pressed={props.selectedID === point.id}
-                      aria-label={`Select ${benchmarkPointText(point)}`}
-                      title={benchmarkPointText(point)}
-                      onClick={() => props.onSelect(point.id)}
-                    >
-                      {benchmarkPointTooltip(point)} · {benchmarkSourceName[point.price.source]}
-                    </button>
-                  </li>
-                )}
-              </For>
-              <For each={props.gaps}>
-                {(gap) => (
-                  <li>
-                    <button
-                      type="button"
-                      data-configuration-id={gap.id}
-                      aria-pressed={props.selectedID === gap.id}
-                      aria-label={`Select ${gap.label} · exact route ${routeLabel(gap.route)}. ${benchmarkGapText(gap)}.`}
-                      onClick={() => props.onSelect(gap.id)}
-                    >
-                      {benchmarkGapText(gap)}
-                    </button>
-                  </li>
-                )}
-              </For>
-            </ul>
-            {props.dataFooter}
-          </details>
-        )
-        return (
-          <Show when={props.dataMount?.()} fallback={data}>
-            {(mount) => <Portal mount={mount()}>{data}</Portal>}
-          </Show>
-        )
-      })()}
+      <div
+        class="lazers-models-chart-data-slot"
+        ref={(element) => {
+          dataSlot = element
+        }}
+      >
+        <details
+          class="lazers-models-disclosure lazers-models-comparison-chart-data"
+          ref={(element) => {
+            dataDetails = element
+          }}
+        >
+          <summary>
+            <span>Chart data as a table</span>
+            <span class="lazers-models-disclosure-hint">
+              {props.points.length + props.gaps.length} models
+            </span>
+          </summary>
+          <ul>
+            <For each={props.points}>
+              {(point) => (
+                <li>
+                  <button
+                    type="button"
+                    data-configuration-id={point.id}
+                    aria-pressed={props.selectedID === point.id}
+                    aria-label={`Select ${benchmarkPointText(point)}`}
+                    title={benchmarkPointText(point)}
+                    onClick={() => props.onSelect(point.id)}
+                  >
+                    {benchmarkPointTooltip(point)} · {benchmarkSourceName[point.price.source]}
+                  </button>
+                </li>
+              )}
+            </For>
+            <For each={props.gaps}>
+              {(gap) => (
+                <li>
+                  <button
+                    type="button"
+                    data-configuration-id={gap.id}
+                    aria-pressed={props.selectedID === gap.id}
+                    aria-label={`Select ${gap.label} · exact route ${routeLabel(gap.route)}. ${benchmarkGapText(gap)}.`}
+                    onClick={() => props.onSelect(gap.id)}
+                  >
+                    {benchmarkGapText(gap)}
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+          {props.dataFooter}
+        </details>
+      </div>
     </div>
   )
 }

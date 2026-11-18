@@ -353,8 +353,18 @@ export function createModelsController(props: ModelsProps) {
       )?.configuration
     )
   }
+  /**
+   * The last inspection that arrived for this project. A selection or refresh keeps showing it,
+   * dimmed, until the next one replaces it, so the pane never blanks and its disclosures stay open.
+   */
+  const heldInspection = createMemo<ModelComparisonPanelData["decisionInspection"]>((previous) => {
+    const panel = visible()
+    return panel ? (panel.decisionInspection ?? previous) : undefined
+  })
+  const heldMatchesSelection = () =>
+    heldInspection()?.configuration.configurationID === visible()?.selectedConfigurationID
   const selectedMarketEstimate = () => {
-    const inspection = visible()?.decisionInspection
+    const inspection = heldInspection()
     if (!inspection || inspection.status !== "found") return undefined
     const context = inspection.context
     const freshness =
@@ -372,25 +382,8 @@ export function createModelsController(props: ModelsProps) {
       priceFreshness: freshness,
     })
   }
-  /** Two-line summary: model · effort above, rounded cost · sample size · source below. */
-  const selectedSummaryLine = () => {
-    const inspection = visible()?.decisionInspection
-    if (!inspection || inspection.status !== "found") return undefined
-    const count = inspection.cohort.acceptedTaskCount
-    const tasks = `from ${count} task${count === 1 ? "" : "s"}`
-    const summary = selectedMarketEstimate()
-    // No applicable price: omit the cost rather than label it unavailable.
-    if (!summary)
-      return count > 0
-        ? { text: `From ${count} task${count === 1 ? "" : "s"}`, title: `${count} accepted tasks` }
-        : undefined
-    return {
-      text: `${summary.amount} · ${tasks} · ${marketSummarySource(summary.context)}`,
-      title: summary.title,
-    }
-  }
   const selectedFacts = () => {
-    const inspection = visible()?.decisionInspection
+    const inspection = heldInspection()
     if (!inspection || inspection.status !== "found") return undefined
     return selectedModelFacts({
       estimate: inspection.estimate,
@@ -399,9 +392,25 @@ export function createModelsController(props: ModelsProps) {
       cohort: inspection.cohort,
     })
   }
+  const [dataMount, setDataMount] = createSignal<HTMLElement>()
+  const filterPersona = () =>
+    personas().find((persona) => persona.persona === visible()?.decisionFilters.persona)
+  /** Right-hand hint of the basis disclosure, e.g. "OpenRouter · 17 Nov". */
+  const basisHint = () => {
+    const summary = selectedMarketEstimate()
+    const time = pricesAsOfTime()
+    const date =
+      time === undefined
+        ? undefined
+        : new Date(time).toLocaleDateString([], { day: "numeric", month: "short" })
+    const parts = [summary ? marketSummarySource(summary.context) : undefined, date].filter(
+      (part): part is string => part !== undefined,
+    )
+    return parts.length ? parts.join(" · ") : undefined
+  }
   /** "$0.35 – 0.67 per accepted task, 9 of 11 accepted"; each part is dropped when absent. */
   const selectedFactsSummary = () => {
-    const facts = selectedFacts()
+    const facts = heldMatchesSelection() ? selectedFacts() : undefined
     if (!facts) return undefined
     const parts = [
       facts.price ? `${facts.price} per accepted task` : undefined,
@@ -412,7 +421,7 @@ export function createModelsController(props: ModelsProps) {
     return parts.length ? parts.join(", ") : undefined
   }
   const selectedContributors = () => {
-    const inspection = visible()?.decisionInspection
+    const inspection = heldInspection()
     return inspection?.status === "found" ? inspection.contributorPage.contributors : []
   }
   type DecisionChartGraph = NonNullable<ModelComparisonPanelData["decisionOverview"]>["graph"]
@@ -1135,6 +1144,11 @@ export function createModelsController(props: ModelsProps) {
     clearConfirmedAssignmentWrite,
     compareMode,
     pricesAsOf,
+    heldInspection,
+    dataMount,
+    setDataMount,
+    filterPersona,
+    basisHint,
     disconnected,
     refreshAll,
     status,
@@ -1186,7 +1200,6 @@ export function createModelsController(props: ModelsProps) {
     selectedContributors,
     selectedDecisionConfiguration,
     selectedMarketEstimate,
-    selectedSummaryLine,
     selectedTask,
     setAssignmentPersona,
     setAssignmentPrefill,

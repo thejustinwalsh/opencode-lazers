@@ -26,7 +26,7 @@ import {
   chartFooterReserve,
   statusText,
 } from "./panel-shared.ts"
-import { SplitPane } from "./panel-layout.tsx"
+import { Disclosure, SplitPane } from "./panel-layout.tsx"
 
 function benchmarkLabel(candidate: ModelCandidate) {
   const benchmark = candidate.externalBenchmark
@@ -200,7 +200,59 @@ function variantCoverageLabel(candidate: ModelCandidate) {
   return `Variants (coverage unknown): ${variants?.join(", ") || "Not reported"}`
 }
 
-/** Compare mode top pane: sources, chart and benchmark. */
+/** Source snapshots and their refresh state; lives inside the basis disclosures. */
+function SourcesDetails(props: { ctl: ModelsController }) {
+  const { sourceWarning, visible } = props.ctl
+  return (
+    <details class="lazers-models-sources-details">
+      <summary>Sources</summary>
+      <div class="lazers-models-sources" aria-label="Source snapshot coverage">
+        <For each={visible()?.comparison?.sources ?? []}>
+          {(source) => (
+            <div
+              class="lazers-models-source"
+              title={source.snapshot?.sourceURL ?? sourceTitle(source.source)}
+            >
+              <strong>{sourceTitle(source.source)}</strong>
+              <span>{sourceState(source)}</span>
+              <Show when={source.refresh?.state === "failed"}>
+                <span class="lazers-models-source-warning">
+                  Latest refresh failed
+                  {source.refresh?.errorCode ? ` · ${source.refresh.errorCode}` : ""}
+                  {source.refresh?.httpStatus ? ` · HTTP ${source.refresh.httpStatus}` : ""}
+                </span>
+              </Show>
+              <Show when={source.refresh?.state === "refreshing"}>
+                <span class="lazers-models-source-warning">Refresh in progress</span>
+              </Show>
+              <Show when={source.refresh?.state === "cancelled"}>
+                <span class="lazers-models-source-warning">Latest refresh cancelled</span>
+              </Show>
+            </div>
+          )}
+        </For>
+        <Show when={sourceWarning()}>
+          {(warning) => <p class="lazers-models-source-meta">{warning().message}</p>}
+        </Show>
+        <Show when={visible()?.tasksError}>
+          <p class="lazers-models-source-meta">Task list unavailable: {visible()?.tasksError}</p>
+        </Show>
+        <Show when={visible()?.sourceRefreshError}>
+          <p class="lazers-models-source-meta">
+            Source refresh error: {visible()?.sourceRefreshError}
+          </p>
+        </Show>
+        <Show when={visible()?.comparisonError}>
+          <p class="lazers-models-source-meta">
+            Comparison read error: {visible()?.comparisonError}
+          </p>
+        </Show>
+      </div>
+    </details>
+  )
+}
+
+/** Compare mode top pane: the chart or the benchmark chart. */
 export function CompareTop(props: { ctl: ModelsController }) {
   const ctl = props.ctl
   const {
@@ -213,9 +265,9 @@ export function CompareTop(props: { ctl: ModelsController }) {
     compareMode,
     ctx,
     decisionChartPoints,
+    dataMount,
     decisionChartReferences,
     refreshAll,
-    sourceWarning,
     status,
     selectCompareMode,
     selectedBenchmark,
@@ -286,6 +338,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
               <Show when={visible()?.decisionOverview}>
                 {(overview) => (
                   <ComparisonChart
+                    dataMount={dataMount}
                     points={decisionChartPoints()}
                     references={decisionChartReferences()}
                     frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
@@ -310,6 +363,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
             </Show>
             <Show when={compareMode() === "benchmark"}>
               <BenchmarkChart
+                dataMount={dataMount}
                 points={baseline()?.points ?? []}
                 gaps={baseline()?.gaps ?? []}
                 selectedID={selectedBenchmark()?.id ?? null}
@@ -348,51 +402,6 @@ export function CompareTop(props: { ctl: ModelsController }) {
           </section>
         </div>
       </Show>
-      <details class="lazers-models-sources-details">
-        <summary>Sources</summary>
-        <div class="lazers-models-sources" aria-label="Source snapshot coverage">
-          <For each={visible()?.comparison?.sources ?? []}>
-            {(source) => (
-              <div
-                class="lazers-models-source"
-                title={source.snapshot?.sourceURL ?? sourceTitle(source.source)}
-              >
-                <strong>{sourceTitle(source.source)}</strong>
-                <span>{sourceState(source)}</span>
-                <Show when={source.refresh?.state === "failed"}>
-                  <span class="lazers-models-source-warning">
-                    Latest refresh failed
-                    {source.refresh?.errorCode ? ` · ${source.refresh.errorCode}` : ""}
-                    {source.refresh?.httpStatus ? ` · HTTP ${source.refresh.httpStatus}` : ""}
-                  </span>
-                </Show>
-                <Show when={source.refresh?.state === "refreshing"}>
-                  <span class="lazers-models-source-warning">Refresh in progress</span>
-                </Show>
-                <Show when={source.refresh?.state === "cancelled"}>
-                  <span class="lazers-models-source-warning">Latest refresh cancelled</span>
-                </Show>
-              </div>
-            )}
-          </For>
-          <Show when={sourceWarning()}>
-            {(warning) => <p class="lazers-models-source-meta">{warning().message}</p>}
-          </Show>
-          <Show when={visible()?.tasksError}>
-            <p class="lazers-models-source-meta">Task list unavailable: {visible()?.tasksError}</p>
-          </Show>
-          <Show when={visible()?.sourceRefreshError}>
-            <p class="lazers-models-source-meta">
-              Source refresh error: {visible()?.sourceRefreshError}
-            </p>
-          </Show>
-          <Show when={visible()?.comparisonError}>
-            <p class="lazers-models-source-meta">
-              Comparison read error: {visible()?.comparisonError}
-            </p>
-          </Show>
-        </div>
-      </details>
     </section>
   )
 }
@@ -404,15 +413,12 @@ function CompareInspector(props: { ctl: ModelsController }) {
     Ui,
     assignDisabled,
     assignMenuItems,
+    assignRoute,
     assignSelectedRoute,
-    assignmentBlocked,
     status,
     categoryRows,
     compareMode,
     configurationsForGroup,
-    decisionModelChoiceLabel,
-    providerChoices,
-    selectDecisionGroup,
     comparisonSource,
     decisionModelFullName,
     decisionModelLabel,
@@ -426,10 +432,16 @@ function CompareInspector(props: { ctl: ModelsController }) {
     save,
     selectedBenchmark,
     selectedCandidate,
-    selectedContributors,
     selectedDecisionConfiguration,
     selectedMarketEstimate,
-    selectedSummaryLine,
+    selectedFacts,
+    filterPersona,
+    basisHint,
+    heldInspection,
+    decisionModelChoiceLabel,
+    providerChoices,
+    selectDecisionGroup,
+    setDataMount,
     selectedTask,
     showObservedFor,
     state,
@@ -439,6 +451,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
   return (
     <section
       class="lazers-models-inspector-compare"
+      data-panel-dimmed={visible()?.decisionInspectLoading ? "true" : undefined}
       role="tabpanel"
       id="lazers-models-compare-panel"
       aria-labelledby="lazers-models-compare-tab"
@@ -456,65 +469,103 @@ function CompareInspector(props: { ctl: ModelsController }) {
             const route = () => entry().route
             const price = () => entry().price
             const scores = () => entry().benchmark
-            const summary = () =>
-              [
-                scores().codingIndex === null
-                  ? "No Coding Index"
-                  : `Coding ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(scores().codingIndex!)}`,
-                ...(price()
-                  ? [
-                      `${formatMarketAmount(price()!.blended)} / 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output})`,
-                      benchmarkSourceName[price()!.source],
-                    ]
-                  : []),
-              ].join(" · ")
             const perMillion = (value: number | null) =>
               value === null ? null : `${formatMarketAmount(value)}`
             return (
               <>
-                <div class="lazers-models-inspector-heading">
-                  <h2
-                    title={routeLabel(route())}
-                    aria-label={`Selected model ${entry().label}. Exact route ${routeLabel(route())}.`}
-                  >
-                    {boundedModelLabel(entry().label)}
-                  </h2>
-                  <p class="lazers-models-market-summary" role="status">
-                    <small>{summary()}</small>
-                  </p>
-                </div>
-                <div
-                  class="lazers-models-selection-actions"
-                  role="group"
-                  aria-label="Selected model actions"
-                >
-                  <Show when={observedConfigurationFor(route())}>
-                    <Ui.Button
-                      size="small"
-                      variant="ghost-muted"
-                      onClick={() => showObservedFor(route())}
+                <div class="lazers-models-selected-heading">
+                  <div class="lazers-models-selected-identity">
+                    <h2
+                      title={routeLabel(route())}
+                      aria-label={`Selected model ${entry().label}. Exact route ${routeLabel(route())}.`}
                     >
-                      Show observed cost
-                    </Ui.Button>
+                      {boundedModelLabel(entry().label)}
+                    </h2>
+                    <code>
+                      {route().providerID}/{route().modelID}
+                    </code>
+                  </div>
+                  <Show
+                    when={filterPersona()}
+                    fallback={
+                      <Ui.Menu
+                        label="Assign to…"
+                        trigger="button"
+                        icon="chevron-down"
+                        placement="bottom-end"
+                        disabled={assignDisabled()}
+                        items={assignMenuItems(() => ({ ...route(), variant: null }))}
+                      />
+                    }
+                  >
+                    {(persona) => (
+                      <Ui.Button
+                        size="small"
+                        disabled={assignDisabled()}
+                        onClick={() =>
+                          assignRoute(persona().persona, { ...route(), variant: null })
+                        }
+                      >
+                        {`Assign to ${persona().personaLabel}`}
+                      </Ui.Button>
+                    )}
                   </Show>
-                  <Ui.Menu
-                    label="Assign to…"
-                    trigger="button"
-                    icon="chevron-down"
-                    placement="bottom-start"
-                    disabled={assignDisabled()}
-                    items={assignMenuItems(() => ({ ...route(), variant: null }))}
-                  />
                 </div>
+                <Show when={price()}>
+                  {(rate) => (
+                    <p class="lazers-models-price">
+                      <strong>{formatMarketAmount(rate().blended)}</strong>{" "}
+                      <span>per 1M tokens</span>
+                    </p>
+                  )}
+                </Show>
+                <dl class="lazers-models-stats" aria-label="Benchmark scores">
+                  <Show when={scores().codingIndex !== null}>
+                    <div>
+                      <dt>coding</dt>
+                      <dd>{numericValue(scores().codingIndex)}</dd>
+                    </div>
+                  </Show>
+                  <Show when={scores().agenticIndex !== null}>
+                    <div>
+                      <dt>agentic</dt>
+                      <dd>{numericValue(scores().agenticIndex)}</dd>
+                    </div>
+                  </Show>
+                  <Show when={scores().intelligenceIndex !== null}>
+                    <div>
+                      <dt>intelligence</dt>
+                      <dd>{numericValue(scores().intelligenceIndex)}</dd>
+                    </div>
+                  </Show>
+                </dl>
+                <Show when={observedConfigurationFor(route())}>
+                  <Ui.Button
+                    size="small"
+                    variant="ghost-muted"
+                    onClick={() => showObservedFor(route())}
+                  >
+                    Show observed cost
+                  </Ui.Button>
+                </Show>
                 <details
-                  class="lazers-models-evidence-details lazers-models-benchmark-details"
+                  class="lazers-models-disclosure lazers-models-evidence-details lazers-models-benchmark-details"
                   open={prefs().evidenceOpen ?? false}
                   onToggle={(event) => {
                     const open = event.currentTarget.open
                     if (open !== (prefs().evidenceOpen ?? false)) save({ evidenceOpen: open })
                   }}
                 >
-                  <summary>Benchmark and price details</summary>
+                  <summary>
+                    <span>Benchmark and price details</span>
+                    <Show when={price()}>
+                      {(rate) => (
+                        <span class="lazers-models-disclosure-hint">
+                          {benchmarkSourceName[rate().source]}
+                        </span>
+                      )}
+                    </Show>
+                  </summary>
                   <div class="lazers-models-evidence-content">
                     <p>
                       Artificial Analysis · Coding {numericValue(scores().codingIndex)} · Agentic{" "}
@@ -575,6 +626,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                         .join(", then ") || "none"}
                       {priceSourceOrder().configured ? "" : " (default)"}
                     </p>
+                    <SourcesDetails ctl={ctl} />
                   </div>
                 </details>
               </>
@@ -593,95 +645,119 @@ function CompareInspector(props: { ctl: ModelsController }) {
         >
           {(configuration) => (
             <>
-              <div class="lazers-models-inspector-heading">
-                <h2
-                  title={routeLabel(configuration().route)}
-                  aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
+              <div class="lazers-models-selected-heading">
+                <div class="lazers-models-selected-identity">
+                  <h2
+                    title={routeLabel(configuration().route)}
+                    aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
+                  >
+                    {decisionModelLabel(configuration())}
+                  </h2>
+                  <code>
+                    {configuration().route.providerID}/{configuration().route.modelID}
+                    {configuration().route.variant ? ` · ${configuration().route.variant}` : ""}
+                  </code>
+                </div>
+                <Show
+                  when={filterPersona()}
+                  fallback={
+                    <Ui.Menu
+                      label="Assign to…"
+                      trigger="button"
+                      icon="chevron-down"
+                      placement="bottom-end"
+                      disabled={assignDisabled()}
+                      items={personas().map((persona) => ({
+                        label: persona.personaLabel,
+                        onSelect: () => assignSelectedRoute(persona.persona),
+                      }))}
+                    />
+                  }
                 >
-                  {decisionModelLabel(configuration())}
-                  {configuration().route.variant ? ` · ${configuration().route.variant}` : ""}
-                </h2>
-                <Show when={selectedSummaryLine()}>
-                  {(line) => (
-                    <p
-                      class="lazers-models-market-summary"
-                      role="status"
-                      aria-label={`Selected ${decisionModelFullName(configuration())} · exact route ${routeLabel(configuration().route)}. ${line().title}`}
-                      title={line().title}
+                  {(persona) => (
+                    <Ui.Button
+                      size="small"
+                      disabled={assignDisabled()}
+                      onClick={() => assignSelectedRoute(persona().persona)}
                     >
-                      <small>{line().text}</small>
-                    </p>
+                      {`Assign to ${persona().personaLabel}`}
+                    </Ui.Button>
                   )}
                 </Show>
               </div>
-              <div
-                class="lazers-models-selection-tools"
-                role="group"
-                aria-label="Model and effort selection"
-                title={`Exact route ${routeLabel(configuration().route)}`}
+              <Show when={selectedFacts()?.price}>
+                {(price) => (
+                  <p class="lazers-models-price">
+                    <strong>{price()}</strong> <span>per accepted task</span>
+                  </p>
+                )}
+              </Show>
+              <Show when={selectedFacts()}>
+                {(facts) => (
+                  <dl class="lazers-models-stats" aria-label="Selected model facts">
+                    <Show when={facts().accepted !== undefined && facts().terminal !== undefined}>
+                      <div>
+                        <dt>accepted</dt>
+                        <dd>
+                          {facts().accepted} of {facts().terminal}
+                        </dd>
+                      </div>
+                    </Show>
+                    <Show when={facts().tokens}>
+                      {(tokens) => (
+                        <div>
+                          <dt>tokens / task</dt>
+                          <dd>{tokens()}</dd>
+                        </div>
+                      )}
+                    </Show>
+                    <Show when={facts().attempts}>
+                      {(attempts) => (
+                        <div>
+                          <dt>attempts / task</dt>
+                          <dd>{attempts()}</dd>
+                        </div>
+                      )}
+                    </Show>
+                  </dl>
+                )}
+              </Show>
+              <Show
+                when={
+                  providerChoices().length > 1 ||
+                  configurationsForGroup(configuration().groupID).length > 1
+                }
               >
-                <Ui.Menu
-                  label={`Model · ${decisionModelLabel(configuration())}`}
-                  trigger="button"
-                  icon="chevron-down"
-                  disabled={!providerChoices().length}
-                  items={providerChoices().map((choice) => ({
-                    label: decisionModelChoiceLabel(choice),
-                    onSelect: () => selectDecisionGroup(choice.groupID),
-                  }))}
-                />
-                <Ui.Menu
-                  label={`Effort · ${configuration().route.variant ?? "Not specified"}`}
-                  trigger="button"
-                  icon="chevron-down"
-                  disabled={!configurationsForGroup(configuration().groupID).length}
-                  items={configurationsForGroup(configuration().groupID).map((choice) => ({
-                    label: choice.route.variant ?? "Not specified",
-                    onSelect: () => state.selectConfiguration(choice.configurationID),
-                  }))}
-                />
-              </div>
-              <div
-                class="lazers-models-selection-actions"
-                role="group"
-                aria-label="Selected model actions"
-              >
-                <Ui.Menu
-                  label="View contributing trajectories"
-                  trigger="button"
-                  icon="chevron-down"
-                  placement="bottom-start"
-                  disabled={!selectedContributors().length}
-                  items={[
-                    ...selectedContributors().map((contributor) => ({
-                      label: `${contributor.taskReference} · ${contributor.contribution}`,
-                      onSelect: () => openContributorTrajectory(contributor),
-                    })),
-                    ...(visible()?.decisionInspection?.contributorPage.nextCursor
-                      ? [
-                          { type: "separator" as const },
-                          {
-                            label: "Load more tasks",
-                            onSelect: () => void state.moreDecisionContributors(),
-                          },
-                        ]
-                      : []),
-                  ]}
-                />
-                <Ui.Menu
-                  label="Assign to…"
-                  trigger="button"
-                  icon="chevron-down"
-                  placement="bottom-start"
-                  disabled={
-                    !visible()?.settings || visible()?.settingsLoading || assignmentBlocked()
-                  }
-                  items={personas().map((persona) => ({
-                    label: persona.personaLabel,
-                    onSelect: () => assignSelectedRoute(persona.persona),
-                  }))}
-                />
-              </div>
+                <div
+                  class="lazers-models-selection-tools"
+                  role="group"
+                  aria-label="Model and effort"
+                  title={`Exact route ${routeLabel(configuration().route)}`}
+                >
+                  <Show when={providerChoices().length > 1}>
+                    <Ui.Menu
+                      label={decisionModelLabel(configuration())}
+                      trigger="button"
+                      icon="chevron-down"
+                      items={providerChoices().map((choice) => ({
+                        label: decisionModelChoiceLabel(choice),
+                        onSelect: () => selectDecisionGroup(choice.groupID),
+                      }))}
+                    />
+                  </Show>
+                  <Show when={configurationsForGroup(configuration().groupID).length > 1}>
+                    <Ui.Menu
+                      label={configuration().route.variant ?? "Default effort"}
+                      trigger="button"
+                      icon="chevron-down"
+                      items={configurationsForGroup(configuration().groupID).map((choice) => ({
+                        label: choice.route.variant ?? "Default effort",
+                        onSelect: () => state.selectConfiguration(choice.configurationID),
+                      }))}
+                    />
+                  </Show>
+                </div>
+              </Show>
               <Show
                 when={
                   visible()?.decisionRowsNextCursor || visible()?.decisionConfigurationsNextCursor
@@ -727,23 +803,23 @@ function CompareInspector(props: { ctl: ModelsController }) {
                   This model isn't in the current comparison. Choose another model.
                 </p>
               </Show>
-              <Show when={visible()?.decisionStatus === "backend-not-ready"}>
-                <p class="lazers-models-note" role="status">
-                  No estimate yet; comparison data isn't ready.
-                </p>
-              </Show>
-              <Show when={visible()?.decisionInspection}>
+              <Show when={heldInspection()}>
                 {(inspection) => (
                   <>
                     <details
-                      class="lazers-models-evidence-details"
+                      class="lazers-models-disclosure lazers-models-evidence-details"
                       open={prefs().evidenceOpen ?? false}
                       onToggle={(event) => {
                         const open = event.currentTarget.open
                         if (open !== (prefs().evidenceOpen ?? false)) save({ evidenceOpen: open })
                       }}
                     >
-                      <summary>Estimate details</summary>
+                      <summary>
+                        <span>Estimate basis and prices</span>
+                        <Show when={basisHint()}>
+                          {(hint) => <span class="lazers-models-disclosure-hint">{hint()}</span>}
+                        </Show>
+                      </summary>
                       <div class="lazers-models-evidence-content">
                         <Show when={selectedMarketEstimate()}>
                           {(summary) => <p class="lazers-models-market-basis">{summary().title}</p>}
@@ -913,238 +989,273 @@ function CompareInspector(props: { ctl: ModelsController }) {
                             )}
                           </For>
                         </section>
-                        <details class="lazers-models-contributor-details">
-                          <summary>
-                            Contributors · {inspection().contributorPage.totalCount}
-                          </summary>
-                          <section
-                            class="lazers-models-contributors"
-                            aria-label="Empirical contributors"
-                          >
-                            <For each={inspection().contributorPage.contributors}>
-                              {(contributor) => (
-                                <article class="lazers-models-contributor">
-                                  <div>
-                                    <strong>
-                                      {contributor.taskReference} · {contributor.contribution}
-                                    </strong>
-                                    <p>
-                                      {contributor.tokens === null
-                                        ? "Tokens unknown"
-                                        : `${formatNumber(contributor.tokens)} tokens`}{" "}
-                                      ·{" "}
-                                      {contributor.currentMarketUSD === null
-                                        ? "Current market cost unknown"
-                                        : formatMoney(contributor.currentMarketUSD)}{" "}
-                                      · native reported {formatMoney(contributor.nativeReportedUSD)}
-                                    </p>
-                                    <p class="lazers-models-source-meta">
-                                      Exact route ·{" "}
-                                      {contributor.route
-                                        ? routeLabel(contributor.route)
-                                        : "Unknown route"}
-                                      {" · Membership · "}
-                                      {contributorMembershipLabel(contributor.membership)}
-                                    </p>
-                                    <p class="lazers-models-source-meta">
-                                      Attempt · {contributor.attemptID ?? "not attributed"} ·
-                                      session · {contributor.sessionID || "not attributed"} ·
-                                      observed {formatDate(contributor.observedAt)}
-                                    </p>
-                                  </div>
-                                  <Ui.Button
-                                    size="small"
-                                    variant="ghost-muted"
-                                    aria-label={`Open trajectory for ${contributor.taskReference}`}
-                                    onClick={() => openContributorTrajectory(contributor)}
-                                  >
-                                    Open trajectory
-                                  </Ui.Button>
-                                </article>
-                              )}
-                            </For>
-                            <Show when={!inspection().contributorPage.contributors.length}>
-                              <p class="lazers-models-note">
-                                No contributor records are available.
-                              </p>
-                            </Show>
-                            <Show when={inspection().contributorPage.nextCursor}>
-                              <Ui.Button
-                                size="small"
-                                variant="ghost"
-                                busy={visible()?.decisionContributorsLoading}
-                                onClick={() => void state.moreDecisionContributors()}
-                              >
-                                Load more contributors
-                              </Ui.Button>
-                            </Show>
-                          </section>
-                        </details>
+                        <SourcesDetails ctl={ctl} />
                       </div>
                     </details>
+                    <Disclosure
+                      title="Runs with this model"
+                      hint={`${inspection().contributorPage.totalCount}`}
+                    >
+                      <div class="lazers-models-contributor-details">
+                        <section
+                          class="lazers-models-contributors"
+                          aria-label="Empirical contributors"
+                        >
+                          <For each={inspection().contributorPage.contributors}>
+                            {(contributor) => (
+                              <article class="lazers-models-contributor">
+                                <div>
+                                  <strong>
+                                    {contributor.taskReference} · {contributor.contribution}
+                                  </strong>
+                                  <p>
+                                    {contributor.tokens === null
+                                      ? "Tokens unknown"
+                                      : `${formatNumber(contributor.tokens)} tokens`}{" "}
+                                    ·{" "}
+                                    {contributor.currentMarketUSD === null
+                                      ? "Current market cost unknown"
+                                      : formatMoney(contributor.currentMarketUSD)}{" "}
+                                    · native reported {formatMoney(contributor.nativeReportedUSD)}
+                                  </p>
+                                  <p class="lazers-models-source-meta">
+                                    Exact route ·{" "}
+                                    {contributor.route
+                                      ? routeLabel(contributor.route)
+                                      : "Unknown route"}
+                                    {" · Membership · "}
+                                    {contributorMembershipLabel(contributor.membership)}
+                                  </p>
+                                  <p class="lazers-models-source-meta">
+                                    Attempt · {contributor.attemptID ?? "not attributed"} · session
+                                    · {contributor.sessionID || "not attributed"} · observed{" "}
+                                    {formatDate(contributor.observedAt)}
+                                  </p>
+                                </div>
+                                <Ui.Button
+                                  size="small"
+                                  variant="ghost-muted"
+                                  aria-label={`Open trajectory for ${contributor.taskReference}`}
+                                  onClick={() => openContributorTrajectory(contributor)}
+                                >
+                                  Open trajectory
+                                </Ui.Button>
+                              </article>
+                            )}
+                          </For>
+                          <Show when={!inspection().contributorPage.contributors.length}>
+                            <p class="lazers-models-note">No contributor records are available.</p>
+                          </Show>
+                          <Show when={inspection().contributorPage.nextCursor}>
+                            <Ui.Button
+                              size="small"
+                              variant="ghost"
+                              busy={visible()?.decisionContributorsLoading}
+                              onClick={() => void state.moreDecisionContributors()}
+                            >
+                              Load more contributors
+                            </Ui.Button>
+                          </Show>
+                        </section>
+                      </div>
+                      <section
+                        class="lazers-models-inspector-block"
+                        aria-label="Selected task execution"
+                      >
+                        <h3>Selected task</h3>
+                        <Show
+                          when={visible()?.selectedTaskID}
+                          fallback={
+                            <p class="lazers-models-note">
+                              Choose a project task to inspect its execution and categorized effort.
+                            </p>
+                          }
+                        >
+                          <Show when={visible()?.taskError}>
+                            <p class="lazers-models-error" role="alert">
+                              Task detail unavailable: {visible()?.taskError}
+                            </p>
+                          </Show>
+                          <Show when={visible()?.effortError}>
+                            <p class="lazers-models-note" role="status">
+                              Categorized effort unavailable: {visible()?.effortError}
+                            </p>
+                          </Show>
+                          <Show when={selectedTask()}>
+                            <div class="lazers-models-task-summary">
+                              <p class="lazers-models-task-reference">
+                                {selectedTask()?.reference} · execution{" "}
+                                {selectedTask()?.execution?.state ?? "not started"}
+                              </p>
+                              <Ui.Button
+                                size="small"
+                                variant="ghost-muted"
+                                aria-label={`Open trajectory for ${selectedTask()?.reference ?? "selected task"}`}
+                                onClick={openSelectedTrajectory}
+                              >
+                                Open trajectory
+                              </Ui.Button>
+                            </div>
+                            <p class="lazers-models-task-objective">
+                              {selectedTask()?.task.proposal.objective}
+                            </p>
+                          </Show>
+                          <Show when={visible()?.effortBasis}>
+                            {(basis) => (
+                              <details class="lazers-models-task-effort-details">
+                                <summary>{effortDetailsSummary()}</summary>
+                                <div class="lazers-models-evidence-content">
+                                  <p class="lazers-models-coverage">
+                                    {basis().attempts.count} recorded attempts ·{" "}
+                                    {basis().usage.coverage.totalUniqueSessions} unique worker
+                                    sessions
+                                  </p>
+                                  <For each={categoryRows}>
+                                    {([label, key]) => {
+                                      const measure = () => basis().usage.categories[key]
+                                      return (
+                                        <div class="lazers-models-category-row">
+                                          <span>{label}</span>
+                                          <span data-status={measure().status}>
+                                            {measure().value === null
+                                              ? statusText(measure().status)
+                                              : `${formatNumber(measure().value)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
+                                          </span>
+                                        </div>
+                                      )
+                                    }}
+                                  </For>
+                                  <p class="lazers-models-source-meta">
+                                    Session-deduplicated task effort ·{" "}
+                                    {basis().usage.coverage.nativeCumulativeSnapshots} native
+                                    snapshots · {basis().usage.coverage.retainedCumulativeSnapshots}{" "}
+                                    retained snapshots ·{" "}
+                                    {basis().usage.coverage.additiveStepSubtotals} additive
+                                    subtotals · {basis().usage.coverage.missingSessions.length}{" "}
+                                    missing sessions ·{" "}
+                                    {basis().usage.coverage.unavailableSessions.length} unavailable
+                                    sessions
+                                    {basis().usage.coverage.progressTruncated
+                                      ? " · progress evidence truncated"
+                                      : ""}
+                                  </p>
+                                  <p class="lazers-models-source-meta">
+                                    Full task cost:{" "}
+                                    {basis().cost.fullTaskCostUSD.valueUSD === null
+                                      ? "Unknown"
+                                      : formatMoney(basis().cost.fullTaskCostUSD.valueUSD)}{" "}
+                                    · market-equivalent cost:{" "}
+                                    {basis().cost.marketEquivalentCostUSD.valueUSD === null
+                                      ? "Unknown"
+                                      : formatMoney(
+                                          basis().cost.marketEquivalentCostUSD.valueUSD,
+                                        )}{" "}
+                                    · quality: {basis().quality.status} · task class:{" "}
+                                    {selectedTask()?.classification.classification?.primaryKind ??
+                                      "Not recorded"}
+                                  </p>
+                                </div>
+                              </details>
+                            )}
+                          </Show>
+                        </Show>
+                      </section>
+                    </Disclosure>
+                    <Show when={selectedCandidate()?.externalBenchmark}>
+                      {(benchmark) => (
+                        <Disclosure
+                          title="Public benchmark"
+                          hint={
+                            benchmark().codingIndex === null
+                              ? undefined
+                              : `Coding index ${benchmark().codingIndex}`
+                          }
+                        >
+                          <Show when={selectedCandidate()}>
+                            {(candidate) => (
+                              <>
+                                <p>
+                                  Native catalog ·{" "}
+                                  {candidate().native.enabled === null
+                                    ? "availability unknown"
+                                    : candidate().native.enabled
+                                      ? "available"
+                                      : "disabled"}{" "}
+                                  · {candidate().native.evidence.recordCount} record(s) ·{" "}
+                                  {candidate().native.type ?? "type not reported"} ·{" "}
+                                  {numericValue(candidate().native.contextTokens)} context tokens ·{" "}
+                                  {variantCoverageLabel(candidate())}
+                                </p>
+                                <p>
+                                  OpenRouter model · {candidate().correspondence.status} ·{" "}
+                                  {candidate().externalModel?.name ??
+                                    candidate().externalModel?.id ??
+                                    "no exact record"}{" "}
+                                  · benchmark {candidate().benchmarkCorrespondence.status} ·{" "}
+                                  {candidate().externalBenchmark
+                                    ? benchmarkLabel(candidate())
+                                    : "unavailable"}
+                                </p>
+                                <p>
+                                  Selected route variant ·{" "}
+                                  {candidate().identity.variant ?? "Not specified"}
+                                </p>
+                                <For each={candidate().native.evidence.records}>
+                                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
+                                </For>
+                                <For each={candidate().externalModelEvidence.records}>
+                                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
+                                </For>
+                                <For each={candidate().externalBenchmarkEvidence.records}>
+                                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
+                                </For>
+                                <Show when={candidate().externalBenchmark}>
+                                  {(benchmark) => (
+                                    <p>
+                                      External coding benchmark · index{" "}
+                                      {numericValue(benchmark().codingIndex)} · effort{" "}
+                                      {benchmark().effort ?? "Not reported"}; not a task-fit
+                                      estimate.
+                                    </p>
+                                  )}
+                                </Show>
+                                <Show when={visible()?.comparison?.sources}>
+                                  <For each={visible()?.comparison?.sources ?? []}>
+                                    {(source) => (
+                                      <p>
+                                        {sourceTitle(source.source)} ·{" "}
+                                        {source.snapshot
+                                          ? `retrieved ${formatDate(source.snapshot.retrievedAt)} · ${source.snapshot.sourceURL}`
+                                          : "No snapshot date"}{" "}
+                                        · {sourceState(source)}
+                                      </p>
+                                    )}
+                                  </For>
+                                </Show>
+                                <p>
+                                  External benchmarks and model metadata are separate from LAZERS
+                                  producer outcomes. Missing correspondence and price remain
+                                  unknown.
+                                </p>
+                              </>
+                            )}
+                          </Show>
+                        </Disclosure>
+                      )}
+                    </Show>
                   </>
                 )}
               </Show>
             </>
           )}
         </Show>
-
-        <section class="lazers-models-inspector-block" aria-label="Selected task execution">
-          <h3>Selected task</h3>
-          <Show
-            when={visible()?.selectedTaskID}
-            fallback={
-              <p class="lazers-models-note">
-                Choose a project task to inspect its execution and categorized effort.
-              </p>
-            }
-          >
-            <Show when={visible()?.taskError}>
-              <p class="lazers-models-error" role="alert">
-                Task detail unavailable: {visible()?.taskError}
-              </p>
-            </Show>
-            <Show when={visible()?.effortError}>
-              <p class="lazers-models-note" role="status">
-                Categorized effort unavailable: {visible()?.effortError}
-              </p>
-            </Show>
-            <Show when={selectedTask()}>
-              <div class="lazers-models-task-summary">
-                <p class="lazers-models-task-reference">
-                  {selectedTask()?.reference} · execution{" "}
-                  {selectedTask()?.execution?.state ?? "not started"}
-                </p>
-                <Ui.Button
-                  size="small"
-                  variant="ghost-muted"
-                  aria-label={`Open trajectory for ${selectedTask()?.reference ?? "selected task"}`}
-                  onClick={openSelectedTrajectory}
-                >
-                  Open trajectory
-                </Ui.Button>
-              </div>
-              <p class="lazers-models-task-objective">{selectedTask()?.task.proposal.objective}</p>
-            </Show>
-            <Show when={visible()?.effortBasis}>
-              {(basis) => (
-                <details class="lazers-models-task-effort-details">
-                  <summary>{effortDetailsSummary()}</summary>
-                  <div class="lazers-models-evidence-content">
-                    <p class="lazers-models-coverage">
-                      {basis().attempts.count} recorded attempts ·{" "}
-                      {basis().usage.coverage.totalUniqueSessions} unique worker sessions
-                    </p>
-                    <For each={categoryRows}>
-                      {([label, key]) => {
-                        const measure = () => basis().usage.categories[key]
-                        return (
-                          <div class="lazers-models-category-row">
-                            <span>{label}</span>
-                            <span data-status={measure().status}>
-                              {measure().value === null
-                                ? statusText(measure().status)
-                                : `${formatNumber(measure().value)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
-                            </span>
-                          </div>
-                        )
-                      }}
-                    </For>
-                    <p class="lazers-models-source-meta">
-                      Session-deduplicated task effort ·{" "}
-                      {basis().usage.coverage.nativeCumulativeSnapshots} native snapshots ·{" "}
-                      {basis().usage.coverage.retainedCumulativeSnapshots} retained snapshots ·{" "}
-                      {basis().usage.coverage.additiveStepSubtotals} additive subtotals ·{" "}
-                      {basis().usage.coverage.missingSessions.length} missing sessions ·{" "}
-                      {basis().usage.coverage.unavailableSessions.length} unavailable sessions
-                      {basis().usage.coverage.progressTruncated
-                        ? " · progress evidence truncated"
-                        : ""}
-                    </p>
-                    <p class="lazers-models-source-meta">
-                      Full task cost:{" "}
-                      {basis().cost.fullTaskCostUSD.valueUSD === null
-                        ? "Unknown"
-                        : formatMoney(basis().cost.fullTaskCostUSD.valueUSD)}{" "}
-                      · market-equivalent cost:{" "}
-                      {basis().cost.marketEquivalentCostUSD.valueUSD === null
-                        ? "Unknown"
-                        : formatMoney(basis().cost.marketEquivalentCostUSD.valueUSD)}{" "}
-                      · quality: {basis().quality.status} · task class:{" "}
-                      {selectedTask()?.classification.classification?.primaryKind ?? "Not recorded"}
-                    </p>
-                  </div>
-                </details>
-              )}
-            </Show>
-          </Show>
-        </section>
-
-        <Show when={prefs().tab === "compare" && selectedCandidate()}>
-          {(candidate) => (
-            <details class="lazers-models-evidence-details">
-              <summary>Native and external model evidence</summary>
-              <div class="lazers-models-evidence-content">
-                <p>
-                  Native catalog ·{" "}
-                  {candidate().native.enabled === null
-                    ? "availability unknown"
-                    : candidate().native.enabled
-                      ? "available"
-                      : "disabled"}{" "}
-                  · {candidate().native.evidence.recordCount} record(s) ·{" "}
-                  {candidate().native.type ?? "type not reported"} ·{" "}
-                  {numericValue(candidate().native.contextTokens)} context tokens ·{" "}
-                  {variantCoverageLabel(candidate())}
-                </p>
-                <p>
-                  OpenRouter model · {candidate().correspondence.status} ·{" "}
-                  {candidate().externalModel?.name ??
-                    candidate().externalModel?.id ??
-                    "no exact record"}{" "}
-                  · benchmark {candidate().benchmarkCorrespondence.status} ·{" "}
-                  {candidate().externalBenchmark ? benchmarkLabel(candidate()) : "unavailable"}
-                </p>
-                <p>Selected route variant · {candidate().identity.variant ?? "Not specified"}</p>
-                <For each={candidate().native.evidence.records}>
-                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
-                </For>
-                <For each={candidate().externalModelEvidence.records}>
-                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
-                </For>
-                <For each={candidate().externalBenchmarkEvidence.records}>
-                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
-                </For>
-                <Show when={candidate().externalBenchmark}>
-                  {(benchmark) => (
-                    <p>
-                      External coding benchmark · index {numericValue(benchmark().codingIndex)} ·
-                      effort {benchmark().effort ?? "Not reported"}; not a task-fit estimate.
-                    </p>
-                  )}
-                </Show>
-                <Show when={visible()?.comparison?.sources}>
-                  <For each={visible()?.comparison?.sources ?? []}>
-                    {(source) => (
-                      <p>
-                        {sourceTitle(source.source)} ·{" "}
-                        {source.snapshot
-                          ? `retrieved ${formatDate(source.snapshot.retrievedAt)} · ${source.snapshot.sourceURL}`
-                          : "No snapshot date"}{" "}
-                        · {sourceState(source)}
-                      </p>
-                    )}
-                  </For>
-                </Show>
-                <p>
-                  External benchmarks and model metadata are separate from LAZERS producer outcomes.
-                  Missing correspondence and price remain unknown.
-                </p>
-              </div>
-            </details>
-          )}
-        </Show>
       </Show>
+      <div
+        ref={(element) => {
+          setDataMount(element)
+          onCleanup(() => setDataMount(undefined))
+        }}
+      />
     </section>
   )
 }
