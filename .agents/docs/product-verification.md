@@ -5,6 +5,8 @@ OpenCode Desktop 2.2.5. It launches a separate Desktop profile and service; it
 does not repoint, restart, or authenticate through the driving OpenCode service.
 The first worker qualification is recorded in
 [`evidence/full-instance-qualification/worker-trial.md`](evidence/full-instance-qualification/worker-trial.md).
+Follow-up startup-recovery checks and their limits are recorded in
+[`evidence/full-instance-qualification/verification.md`](evidence/full-instance-qualification/verification.md).
 
 ## Safety boundary
 
@@ -133,6 +135,11 @@ endpoint to satisfy a rule intended for project servers.
 
    Inspect candidate `owned-launch.json` files; never guess a PID or remove a
    directory manually.
+
+   If cleanup reports `Service startup began without durable process ownership`,
+   preserve the root and reservation and stop for Architect review. The launch
+   may have started a service without retaining its PID; do not clear the marker,
+   retry launch, or remove the root manually.
 
 ## Native interaction adapter
 
@@ -452,11 +459,12 @@ leave the trial root and reservation intact and do not run cleanup.
    confirms/restores the protocol handler, checks for remaining owned Desktop
    helpers, and removes the owned root only when all checks pass. It prints
    `cleaned` after removal. A `cleanup-blocked` result preserves the root and
-   reservation; the reason distinguishes a live main process, changed identity,
-   unavailable process observation, remaining helpers, and unavailable helper
-   inventory. Inspect only the owned resource identities without editing them,
-   resolve or re-observe the concrete issue, then retry the same command. Never
-   force-delete a blocked root or send a signal by PID/name yourself.
+   reservation; the reason distinguishes unresolved startup ownership, a live
+   main process, changed identity, unavailable process observation, remaining
+   helpers, and unavailable helper inventory. Inspect only the owned resource
+   identities without editing them, resolve or re-observe the concrete issue,
+   then retry the same command. Never force-delete a blocked root or send a
+   signal by PID/name yourself.
 
 3. Repeat the read-only driver listener/handler check from setup. Confirm the
    original driver PID/start time, authenticated endpoint (using only its

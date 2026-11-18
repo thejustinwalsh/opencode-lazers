@@ -34,8 +34,8 @@ import {
   resolveNativeInteraction,
   runtimePaths,
   sameCandidateIdentity,
-  startOwnedDesktop,
   ServiceNotStartedError,
+  startOwnedDesktop,
   stopOwnedDesktopProcess,
   waitUntilGone,
 } from "../../src/verification/opencode/owned-launch.ts"
@@ -149,6 +149,7 @@ function dependencies(
     },
     startService: async ({ onSpawn }) => {
       calls.push("service")
+      expect(written.at(-1)?.serviceStartupPending).toBe(true)
       await onSpawn({
         pid: serviceProcess.pid,
         command: serviceProcess.command,
@@ -254,6 +255,7 @@ describe("owned Desktop launch proof", () => {
 
     expect(written.some((value) => value.pendingService?.pid === serviceProcess.pid)).toBe(true)
     expect(result.pendingService).toBeUndefined()
+    expect(result.serviceStartupPending).toBeUndefined()
     expect(result.service?.process).toEqual(serviceProcess)
     expect(result.status).toBe("ready")
     expect(result.target.serviceRegistrationPath).toBe(runtimePaths(root).serviceRegistration)
@@ -313,7 +315,7 @@ describe("owned Desktop launch proof", () => {
   })
 
   test("cleans a prepared root only once when service startup fails", async () => {
-    const { deps, calls } = dependencies()
+    const { deps, calls, written } = dependencies()
     deps.startService = async () => {
       calls.push("service")
       throw new ServiceNotStartedError("service executable could not start")
@@ -322,6 +324,7 @@ describe("owned Desktop launch proof", () => {
       "service executable could not start",
     )
     expect(calls.filter((call) => call === "cleanup")).toHaveLength(1)
+    expect(written.at(-1)?.serviceStartupPending).toBeUndefined()
     expect(calls).not.toContain("abort-prepared")
     expect(calls.at(-1)).toBe("release")
   })
@@ -361,15 +364,16 @@ describe("owned Desktop launch proof", () => {
     expect(calls).not.toContain("desktop")
   })
 
-  test("reopened pre-spawn intent preserves ownership when every post-spawn manifest write fails", async () => {
+  test("keeps the startup reservation when spawned-service identity cannot be persisted", async () => {
     const { deps, calls, written } = dependencies()
-    const persist = deps.writeManifest
+    const persistManifest = deps.writeManifest
     deps.writeManifest = async (value) => {
       if (value.pendingService !== undefined) throw new Error("post-spawn manifest write failed")
-      await persist(value)
+      await persistManifest(value)
     }
     deps.startService = async ({ onSpawn }) => {
       expect(written.at(-1)?.serviceStartupPending).toBe(true)
+      calls.push("service")
       await onSpawn({
         pid: serviceProcess.pid,
         command: serviceProcess.command,
@@ -377,33 +381,47 @@ describe("owned Desktop launch proof", () => {
       })
       return serviceProcess
     }
-    const cleanup = {
-      writeManifest: deps.writeManifest,
-      observeProcess: () => ({
-        kind: "observation-unavailable" as const,
-        reason: "probe-error" as const,
-      }),
-      verifyAndStopDesktop: async () => "already-stopped" as const,
-      verifyAndStopService: async () => "already-stopped" as const,
-      protocolHandler: deps.protocolHandler,
-      removeRoot: async () => {
-        calls.push("remove")
-      },
-    }
     deps.cleanup = async (value) => {
-      const result = await cleanupOwnedDesktop(value, cleanup)
+      calls.push("cleanup")
+      const result = await cleanupOwnedDesktop(value, {
+        writeManifest: deps.writeManifest,
+        observeProcess: () => ({ kind: "observation-unavailable", reason: "probe-error" }),
+        verifyAndStopDesktop: async () => "already-stopped",
+        verifyAndStopService: async () => "already-stopped",
+        protocolHandler: deps.protocolHandler,
+        removeRoot: async () => {
+          calls.push("remove")
+        },
+      })
       return { clean: result.status === "cleaned", reason: result.cleanupIssue }
     }
-    await expect(startOwnedDesktop(input, deps)).rejects.toThrow("post-spawn manifest write failed")
+
+    await expect(startOwnedDesktop(input, deps)).rejects.toThrow("cleanup remains retryable")
+    expect(written.at(-1)?.serviceStartupPending).toBe(true)
+    expect(written.at(-1)?.pendingService).toBeUndefined()
+    expect(calls).toContain("retain")
     expect(calls).not.toContain("remove")
     expect(calls).not.toContain("release")
-    const reopened = JSON.parse(JSON.stringify(written.at(-1)!)) as OwnedLaunchManifest
-    expect(reopened.serviceStartupPending).toBe(true)
-    expect(reopened.pendingService).toBeUndefined()
-    const reconciled = await cleanupOwnedDesktop(reopened, { ...cleanup, writeManifest: persist })
-    expect(reconciled.status).toBe("cleanup-blocked")
-    expect(reconciled.cleanupIssue).toContain("without durable process ownership")
-    expect(calls).not.toContain("remove")
+
+    let observations = 0
+    const reopened = structuredClone(written.at(-1)!)
+    const blocked = await cleanupOwnedDesktop(reopened, {
+      writeManifest: persistManifest,
+      observeProcess: () => {
+        observations++
+        return { kind: "authoritatively-absent" }
+      },
+      verifyAndStopDesktop: async () => "already-stopped",
+      verifyAndStopService: async () => "already-stopped",
+      protocolHandler: deps.protocolHandler,
+      removeRoot: async () => {
+        calls.push("reopened-remove")
+      },
+    })
+    expect(blocked.status).toBe("cleanup-blocked")
+    expect(blocked.cleanupIssue).toContain("without durable process ownership")
+    expect(observations).toBe(0)
+    expect(calls).not.toContain("reopened-remove")
   })
 
   test("unconfirmed service ownership survives failed cleanup and permits cleanup after authoritative exit", async () => {
@@ -453,6 +471,40 @@ describe("owned Desktop launch proof", () => {
       expect(removals).toBe(1)
       expect(signals).toBe(0)
     }
+  })
+
+  test("blocks cleanup before touching resources when startup intent has no durable PID", async () => {
+    const value = manifest({
+      service: undefined,
+      desktop: undefined,
+      serviceStartupPending: true,
+    })
+    let touched = false
+    const result = await cleanupOwnedDesktop(value, {
+      writeManifest: async () => undefined,
+      observeProcess: () => {
+        touched = true
+        return { kind: "authoritatively-absent" }
+      },
+      verifyAndStopDesktop: async () => {
+        touched = true
+        return "stopped"
+      },
+      verifyAndStopService: async () => {
+        touched = true
+        return "stopped"
+      },
+      protocolHandler: async () => {
+        touched = true
+        return "ai.opencode.desktop"
+      },
+      removeRoot: async () => {
+        touched = true
+      },
+    })
+    expect(result.status).toBe("cleanup-blocked")
+    expect(result.cleanupIssue).toContain("without durable process ownership")
+    expect(touched).toBe(false)
   })
 
   test("blocks a registration whose authenticated endpoint reports another process", async () => {

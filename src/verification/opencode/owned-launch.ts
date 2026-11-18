@@ -522,9 +522,17 @@ export async function startOwnedDesktop(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       cleanupAttempted = true
-      if (error instanceof ServiceNotStartedError && manifest.pendingService === undefined) {
+      if (
+        error instanceof ServiceNotStartedError &&
+        manifest.pendingService === undefined &&
+        manifest.service === undefined
+      ) {
         delete manifest.serviceStartupPending
-        await dependencies.writeManifest(manifest)
+        try {
+          await dependencies.writeManifest(manifest)
+        } catch {
+          // The pre-spawn classification is conclusive; cleanup still owns the root.
+        }
       }
       const cleanup = await dependencies.cleanup(manifest).catch((cleanupError: unknown) => ({
         clean: false,
@@ -533,8 +541,17 @@ export async function startOwnedDesktop(
       if (!cleanup.clean) {
         manifest.status = "cleanup-blocked"
         manifest.cleanupIssue = cleanup.reason ?? "Owned launch cleanup is incomplete"
-        await dependencies.writeManifest(manifest)
+        let persistenceIssue: string | undefined
+        try {
+          await dependencies.writeManifest(manifest)
+        } catch (persistError) {
+          persistenceIssue =
+            persistError instanceof Error ? persistError.message : String(persistError)
+        }
         await dependencies.retainBlockedReservation?.(manifest.ownerID)
+        if (persistenceIssue !== undefined) {
+          manifest.cleanupIssue = `${manifest.cleanupIssue}; cleanup state could not be persisted: ${persistenceIssue}`
+        }
         throw new Error(
           `${message}; owned cleanup remains retryable at ${manifest.root}: ${manifest.cleanupIssue}`,
           { cause: error },
@@ -593,16 +610,6 @@ export async function cleanupOwnedDesktop(
       "Native interaction delivery is pending or ambiguous; resolve the same request without replay before cleanup",
     )
   }
-  if (manifest.desktop !== undefined) {
-    const desktopResult = await dependencies.verifyAndStopDesktop(manifest.desktop)
-    const issue = cleanupIssueForOutcome("Desktop", desktopResult)
-    if (issue !== undefined) return block(issue)
-  }
-  if (manifest.service !== undefined) {
-    const serviceResult = await dependencies.verifyAndStopService(manifest)
-    const issue = cleanupIssueForOutcome("service", serviceResult)
-    if (issue !== undefined) return block(issue)
-  }
   if (
     manifest.serviceStartupPending === true &&
     manifest.pendingService === undefined &&
@@ -614,8 +621,9 @@ export async function cleanupOwnedDesktop(
   }
   if (manifest.pendingService !== undefined) {
     const spawned = manifest.pendingService
-    if (!isSpawnedService(spawned))
+    if (!isSpawnedService(spawned)) {
       return block("Unconfirmed service ownership is malformed; preserve the owned root")
+    }
     const observed = (dependencies.observeProcess ?? observeProcess)(spawned.pid)
     if (observed.kind !== "authoritatively-absent") {
       return block(
@@ -627,6 +635,16 @@ export async function cleanupOwnedDesktop(
     delete manifest.pendingService
     delete manifest.serviceStartupPending
     await dependencies.writeManifest(manifest)
+  }
+  if (manifest.desktop !== undefined) {
+    const desktopResult = await dependencies.verifyAndStopDesktop(manifest.desktop)
+    const issue = cleanupIssueForOutcome("Desktop", desktopResult)
+    if (issue !== undefined) return block(issue)
+  }
+  if (manifest.service !== undefined) {
+    const serviceResult = await dependencies.verifyAndStopService(manifest)
+    const issue = cleanupIssueForOutcome("service", serviceResult)
+    if (issue !== undefined) return block(issue)
   }
   if (manifest.desktop !== undefined) {
     const currentHandler = await dependencies.protocolHandler()
@@ -885,8 +903,9 @@ export class SystemLaunchDependencies implements LaunchDependencies {
     }
     child.once("error", () => {})
     child.unref()
-    if (child.pid === undefined)
+    if (child.pid === undefined) {
       throw new ServiceNotStartedError("Owned service child did not receive a PID")
+    }
     try {
       await input.onSpawn({
         pid: child.pid,
@@ -2265,16 +2284,16 @@ async function writeManifestFile(path: string, manifest: OwnedLaunchManifest): P
 
 function isSpawnedService(value: unknown): value is SpawnedService {
   if (typeof value !== "object" || value === null) return false
-  const process = value as Record<string, unknown>
+  const spawned = value as Record<string, unknown>
   return (
-    typeof process.pid === "number" &&
-    Number.isSafeInteger(process.pid) &&
-    process.pid > 0 &&
-    typeof process.command === "string" &&
-    process.command.length > 0 &&
-    typeof process.spawnedAt === "number" &&
-    Number.isSafeInteger(process.spawnedAt) &&
-    process.spawnedAt > 0
+    typeof spawned.pid === "number" &&
+    Number.isSafeInteger(spawned.pid) &&
+    spawned.pid > 0 &&
+    typeof spawned.command === "string" &&
+    spawned.command.length > 0 &&
+    typeof spawned.spawnedAt === "number" &&
+    Number.isSafeInteger(spawned.spawnedAt) &&
+    spawned.spawnedAt > 0
   )
 }
 
