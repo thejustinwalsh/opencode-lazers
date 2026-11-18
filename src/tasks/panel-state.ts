@@ -131,6 +131,8 @@ export interface PanelData {
   loading: boolean
   stale: boolean
   error: string
+  /** Epoch ms of the last successful list read; the shown tasks were current then. */
+  asOf?: number
   /** The next page failed to load. Only `retryMore` requests it again; the list stays usable. */
   moreError: string
 }
@@ -251,7 +253,25 @@ export class TaskPanelState {
     this.query = query
     this.schedulingScope = schedulingScope
     this.project = project
-    this.data = blank(key)
+    // The same view on a new connection (a reconnect) keeps what it last read; the next read
+    // replaces it. Another view starts empty.
+    const previous = this.data
+    const kept =
+      previous.key === key && previous.page
+        ? {
+            tasks: previous.tasks,
+            page: previous.page,
+            topology: previous.topology,
+            topologyError: previous.topologyError,
+            scheduling: previous.scheduling,
+            currentActivity: previous.currentActivity,
+            linkedDetails: previous.linkedDetails,
+            detail: previous.detail,
+            asOf: previous.asOf,
+            loading: false,
+          }
+        : {}
+    this.data = { ...blank(key), ...kept }
     this.update({ selectedID })
     const generation = this.generation
     const signal = this.controller.signal
@@ -559,6 +579,7 @@ export class TaskPanelState {
         loading: false,
         stale: !transport.online(),
         error: "",
+        asOf: Date.now(),
         // The failed page is gone with the cursor; a later one starts clean. A stalled chain keeps
         // its next page behind Retry.
         ...(stalled ? { moreError: STALLED_PAGE } : page.nextCursor ? {} : { moreError: "" }),
@@ -689,7 +710,8 @@ export class TaskPanelState {
     const generation = this.generation
     const request = ++this.detailRequest
     if (!refresh) {
-      this.update({ selectedID: taskID, detail: undefined })
+      // The previous detail stays until this task's read replaces it: the inspector never blanks.
+      this.update({ selectedID: taskID })
       this.selected(taskID)
       this.cancelCurrentActivity()
       // Selecting is not a loss of observation: the last result stays until this read replaces
