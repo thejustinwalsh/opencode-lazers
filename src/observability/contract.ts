@@ -538,6 +538,13 @@ const LiveFlow = z.strictObject({
   sourceNativeRevision: z.int().positive().nullable(),
   sourceEventID: z.string().max(200).nullable(),
   sourceEventType: z.string().max(120).nullable(),
+  /** Additive: measured tokens of the finished model step, only when the step recorded them. */
+  usage: z
+    .strictObject({
+      input: z.int().nonnegative().nullable(),
+      output: z.int().nonnegative().nullable(),
+    })
+    .optional(),
 })
 
 export const LiveRadarInput = z.strictObject({

@@ -427,6 +427,15 @@ function toNativeObservations(
     if (row.kind !== "step" || row.payload === null) continue
     const fact = factFor(row)
     const observations = observationList(fact.observations)
+    const measured = object(fact.usage)
+    const nonNegative = (value: unknown) => {
+      const count = numeric(value)
+      return count !== null && count >= 0 ? Math.floor(count) : null
+    }
+    const stepUsage =
+      measured && (nonNegative(measured.input) !== null || nonNegative(measured.output) !== null)
+        ? { input: nonNegative(measured.input), output: nonNegative(measured.output) }
+        : undefined
     for (const observation of observations) {
       const eventType = observation.eventType
       if (
@@ -501,6 +510,7 @@ function toNativeObservations(
         sourceNativeRevision: null,
         sourceEventID: eventID,
         sourceEventType: contractText(String(eventType), stats, 120),
+        ...(stepUsage && eventType === "session.step.ended" ? { usage: stepUsage } : {}),
       })
     }
   }
