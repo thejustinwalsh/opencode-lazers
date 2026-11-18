@@ -52,8 +52,10 @@ export const detailsPaneStyles = `
   .lazers-details-body {
     flex: none; min-height: 0; overflow: auto; overscroll-behavior: contain; box-sizing: border-box;
     height: clamp(72px, calc(var(--details-size) * 100cqh), max(72px, calc(100cqh - 120px)));
-    border-top: 1px solid var(--border-weak-base);
   }
+  /* No rule under the header: the bar and its content read as one block. Every panel's body
+     class sets its own padding, so the tight top is set here, after them, once. */
+  .lazers-details-pane .lazers-details-body { padding-top: 8px; }
   @media (prefers-reduced-motion: reduce) {
     .lazers-details-chevron > * { transition: none; }
   }
