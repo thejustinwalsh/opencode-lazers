@@ -12,8 +12,12 @@ const vite = await createServer({
 })
 afterAll(() => vite.close())
 const { KnownUsageMarketScenarioCard } = (await vite.ssrLoadModule(
-  "/src/models/comparison-panel.tsx",
-)) as typeof import("../../src/models/comparison-panel.tsx")
+  "/src/models/known-usage-card.tsx",
+)) as typeof import("../../src/models/known-usage-card.tsx")
+
+const { BenchmarkEmptyState } = (await vite.ssrLoadModule(
+  "/src/models/compare-view.tsx",
+)) as typeof import("../../src/models/compare-view.tsx")
 
 const renderedText = (html: string) => html.replace(/<[^>]*>/g, "")
 
@@ -155,7 +159,7 @@ test("known-usage inspector labels endpoint provenance and scoped documented cac
     expect(card.compactText).toContain("OpenRouter endpoint pricing · provider Moonshot AI")
     expect(card.compactText).not.toContain("OpenRouter model catalog")
     expect(card.compactText).toContain("moonshotai/mxfp4")
-    expect(card.compactText).toContain("service tier not specified · Current")
+    expect(card.compactText).toContain("tag moonshotai/mxfp4 · Current")
     expect(card.compactText).toContain("not actual charges")
     expect(card.compactText).not.toContain("scoped documentation")
     expect(card.compactText).not.toContain("Retry coverage complete")
@@ -423,4 +427,23 @@ test("incomplete retries expose a partial known subtotal without implying a task
   } finally {
     partialCard.dispose()
   }
+})
+
+test("the benchmark empty state names what is needed and offers settings and retry", () => {
+  const ui = {
+    Button: (props: { children: unknown }) => `[${String(props.children)}]`,
+  }
+  const markup = renderToString(() =>
+    createComponent(BenchmarkEmptyState, {
+      ui: ui as never,
+      onOpenSettings: () => {},
+      onRetry: () => {},
+    }),
+  )
+  const text = renderedText(markup)
+  expect(text).toContain("Benchmarks need OpenRouter")
+  expect(text).toContain("Connect OpenRouter in OpenCode")
+  expect(text).toContain("[Open provider settings]")
+  expect(text).toContain("[Retry]")
+  expect(text).not.toMatch(/unknown|unavailable/i)
 })

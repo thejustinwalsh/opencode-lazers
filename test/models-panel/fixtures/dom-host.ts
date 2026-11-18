@@ -60,6 +60,8 @@ function button(props: ButtonProps, menuTrigger = false) {
 export function createTestUI() {
   return {
     Button: button,
+    /** An icon button: its label is the accessible name, which the fixture also shows as text. */
+    IconButton: (props: ButtonProps) => button({ ...props, children: undefined }),
     Menu: (props: ButtonProps) => {
       const root = document.createElement("div")
       root.className = "test-menu"

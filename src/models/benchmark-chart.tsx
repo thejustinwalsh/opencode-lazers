@@ -187,6 +187,7 @@ export function benchmarkChartOptions(
               color: point.observed ? (selected ? theme.accent : theme.text) : theme.surface,
               borderColor: selected ? theme.text : theme.accent,
               borderWidth: selected ? 2.5 : 1.5,
+              ...(selected ? { shadowBlur: 12, shadowColor: theme.accent } : {}),
             },
             label: {
               show: selected || roomForAllLabels,
@@ -227,8 +228,8 @@ export function benchmarkChartOptions(
 export type BenchmarkChartProps = BenchmarkChartData & {
   gaps: readonly BenchmarkBaselineGap[]
   onSelect: (id: string) => void
-  /** Legend text for filled marks, e.g. "Observed for UI". */
-  observedLabel: string
+  /** Where the "Chart data as a table" disclosure renders; inline until the mount exists. */
+  dataMount?: () => HTMLElement | undefined
   emptyText: string
   /** Extra Chart data content, e.g. coverage and a load-more control. */
   dataFooter?: JSX.Element
@@ -243,6 +244,14 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
   let adapter: ComparisonChartAdapter<BenchmarkChartData> | undefined
   const descriptionID = createUniqueId()
   const [announcement, setAnnouncement] = createSignal("")
+  // The table lives in the selected-model disclosures once that pane has a mount for it.
+  let dataSlot: HTMLElement | undefined
+  let dataDetails: HTMLElement | undefined
+  createEffect(() => {
+    const target = props.dataMount?.() ?? dataSlot
+    if (target && dataDetails && dataDetails.parentNode !== target) target.append(dataDetails)
+  })
+  onCleanup(() => dataDetails?.remove())
   const empty = () => props.points.length === 0
   const currentTheme = () =>
     props.theme ??
@@ -344,71 +353,79 @@ export function BenchmarkChart(props: BenchmarkChartProps) {
         aria-label="Chart mark legend"
         hidden={empty()}
       >
-        <Show when={props.points.some((point) => point.observed)}>
-          <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-canonical"
-              aria-hidden="true"
-            />
-            {props.observedLabel}
-          </li>
-        </Show>
         <Show when={benchmarkFrontier(props.points).length > 0}>
           <li>
             <span
               class="lazers-models-chart-key lazers-models-chart-key-frontier"
               aria-hidden="true"
             />
-            Frontier
+            Best trade-off
           </li>
         </Show>
-        <Show when={props.points.some((point) => !point.observed)}>
+        <Show when={!empty()}>
           <li>
             <span
               class="lazers-models-chart-key lazers-models-chart-key-hollow"
               aria-hidden="true"
             />
-            Benchmark only
+            Other
           </li>
         </Show>
       </ul>
-      <details class="lazers-models-comparison-chart-data">
-        <summary>Chart data</summary>
-        <ul>
-          <For each={props.points}>
-            {(point) => (
-              <li>
-                <button
-                  type="button"
-                  data-configuration-id={point.id}
-                  aria-pressed={props.selectedID === point.id}
-                  aria-label={`Select ${benchmarkPointText(point)}`}
-                  title={benchmarkPointText(point)}
-                  onClick={() => props.onSelect(point.id)}
-                >
-                  {benchmarkPointTooltip(point)} · {benchmarkSourceName[point.price.source]}
-                </button>
-              </li>
-            )}
-          </For>
-          <For each={props.gaps}>
-            {(gap) => (
-              <li>
-                <button
-                  type="button"
-                  data-configuration-id={gap.id}
-                  aria-pressed={props.selectedID === gap.id}
-                  aria-label={`Select ${gap.label} · exact route ${routeLabel(gap.route)}. ${benchmarkGapText(gap)}.`}
-                  onClick={() => props.onSelect(gap.id)}
-                >
-                  {benchmarkGapText(gap)}
-                </button>
-              </li>
-            )}
-          </For>
-        </ul>
-        {props.dataFooter}
-      </details>
+      <div
+        class="lazers-models-chart-data-slot"
+        ref={(element) => {
+          dataSlot = element
+        }}
+      >
+        <details
+          class="lazers-models-disclosure lazers-models-comparison-chart-data"
+          ref={(element) => {
+            dataDetails = element
+          }}
+        >
+          <summary>
+            <span>Chart data as a table</span>
+            <span class="lazers-models-disclosure-hint">
+              {props.points.length + props.gaps.length} models
+            </span>
+          </summary>
+          <ul>
+            <For each={props.points}>
+              {(point) => (
+                <li>
+                  <button
+                    type="button"
+                    data-configuration-id={point.id}
+                    aria-pressed={props.selectedID === point.id}
+                    aria-label={`Select ${benchmarkPointText(point)}`}
+                    title={benchmarkPointText(point)}
+                    onClick={() => props.onSelect(point.id)}
+                  >
+                    {benchmarkPointTooltip(point)} · {benchmarkSourceName[point.price.source]}
+                  </button>
+                </li>
+              )}
+            </For>
+            <For each={props.gaps}>
+              {(gap) => (
+                <li>
+                  <button
+                    type="button"
+                    data-configuration-id={gap.id}
+                    aria-pressed={props.selectedID === gap.id}
+                    aria-label={`Select ${gap.label} · exact route ${routeLabel(gap.route)}. ${benchmarkGapText(gap)}.`}
+                    onClick={() => props.onSelect(gap.id)}
+                  >
+                    {benchmarkGapText(gap)}
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+          {props.dataFooter}
+        </details>
+      </div>
     </div>
   )
 }

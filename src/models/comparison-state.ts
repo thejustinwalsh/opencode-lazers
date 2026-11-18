@@ -301,6 +301,19 @@ function blank(
 }
 
 /** Coordinates bounded comparison reads and the selected task's actual observation. */
+/** Longest the first decision read waits for a source refresh before using saved prices. */
+export const SOURCE_WAIT_MS = 10_000
+
+function settleWithin(promise: Promise<unknown>, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    promise,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 export class ModelComparisonPanelState {
   data = blank()
   private controller = new AbortController()
@@ -602,7 +615,8 @@ export class ModelComparisonPanelState {
         const sourceRefresh =
           this.sourceRefreshPromise ??
           (this.data.sourceRefresh === "idle" ? this.refreshSources(generation) : undefined)
-        if (sourceRefresh) await sourceRefresh
+        // A slow source refresh must not hold the comparison back: continue with saved prices.
+        if (sourceRefresh) await settleWithin(sourceRefresh, SOURCE_WAIT_MS)
         if (!current()) return
 
         for (let attempt = 0; attempt < 2; attempt++) {

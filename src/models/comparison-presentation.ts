@@ -3,7 +3,11 @@ import type {
   ModelComparisonCandidateSchema,
   ModelComparisonSourceSchema,
 } from "./comparison-schema.ts"
-import type { ModelDecisionEstimate } from "./decision-contract.ts"
+import type {
+  ModelDecisionCohortCounts,
+  ModelDecisionEfficiency,
+  ModelDecisionEstimate,
+} from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 
 const NullableNumber = z.number().finite().nullable()
@@ -204,15 +208,25 @@ export function formatMarketRange(range: { minimum: number; maximum: number }) {
     : `${formatMarketAmount(range.minimum)}–${formatMarketAmount(range.maximum)}`
 }
 
+/** "current" or "stale"; absent when the age is not known, so callers omit the segment. */
 function marketFreshness(value: "current" | "stale" | "unknown" | "unavailable") {
-  return value === "current" ? "current" : value === "stale" ? "stale" : "freshness unknown"
+  return value === "current" ? "current" : value === "stale" ? "stale" : undefined
+}
+
+/** Joins the segments that exist; a missing fact removes its segment instead of naming the gap. */
+export function joinSegments(
+  segments: ReadonlyArray<string | null | undefined | false>,
+  separator = " · ",
+) {
+  return segments.filter((segment): segment is string => Boolean(segment)).join(separator)
 }
 
 function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   const freshness = marketFreshness(estimate.provenance.freshness)
+  const age = freshness ? ` · ${freshness}` : ""
   const retrievedAt = estimate.provenance.retrievedAt
     ? ` · retrieved ${estimate.provenance.retrievedAt}`
-    : " · retrieval date unavailable"
+    : ""
   const denominator = `${estimate.acceptedTaskCount} accepted task${estimate.acceptedTaskCount === 1 ? "" : "s"}`
 
   if (estimate.acceptedTaskCount < 1) return undefined
@@ -220,15 +234,15 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   if (estimate.status === "exact" && estimate.valueUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketAmount(estimate.valueUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter model catalog · ${freshness}`,
-      title: `OpenRouter model catalog scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog${age}`,
+      title: `OpenRouter model catalog scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model catalog reference cost per accepted task ${age}${retrievedAt}`,
     }
   }
   if (estimate.status === "conditional" && estimate.rangeUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketRange(estimate.rangeUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter model catalog · range · ${freshness}`,
-      title: `OpenRouter model catalog conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog · range${age}`,
+      title: `OpenRouter model catalog conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model catalog reference cost per accepted task ${age}${retrievedAt}`,
     }
   }
   if (estimate.status !== "partial") return undefined
@@ -236,15 +250,15 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   if (estimate.knownSubtotalUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketAmount(estimate.knownSubtotalUSDPerAcceptedTask)} priced portion / accepted task`,
-      context: `OpenRouter model catalog · ${freshness}`,
-      title: `OpenRouter model catalog known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog${age}`,
+      title: `OpenRouter model catalog known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task ${age}${retrievedAt}`,
     }
   }
   if (estimate.knownSubtotalRangeUSDPerAcceptedTask !== null) {
     return {
       amount: `≈${formatMarketRange(estimate.knownSubtotalRangeUSDPerAcceptedTask)} priced portion / accepted task`,
-      context: `OpenRouter model catalog · ${freshness}`,
-      title: `OpenRouter model catalog known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task · ${freshness}${retrievedAt}`,
+      context: `OpenRouter model catalog${age}`,
+      title: `OpenRouter model catalog known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model catalog reference cost per accepted task ${age}${retrievedAt}`,
     }
   }
   return undefined
@@ -263,6 +277,7 @@ export function currentMarketEstimateSummary(input: {
   const currentMarket = input.estimate.range.currentMarketUSD
   if (currentMarket) {
     const freshness = marketFreshness(input.priceFreshness)
+    const age = freshness ? ` · ${freshness}` : ""
     const source =
       input.priceSource === "openrouter"
         ? "OpenRouter model catalog"
@@ -278,8 +293,8 @@ export function currentMarketEstimateSummary(input: {
       input.estimate.status === "partial" ? ` · missing ${input.estimate.missing.join(", ")}` : ""
     return {
       amount: `≈${amount}${partial ? " priced portion" : ""} / accepted task`,
-      context: `${source}${isRange ? " · range" : ""} · ${freshness}`,
-      title: `Producer current-market estimate · exact USD per accepted task ${String(currentMarket.minimum)}${isRange ? `–${String(currentMarket.maximum)}` : ""} · ${input.estimate.observationCount} observation(s) · denominator ${input.acceptedTaskCount} accepted task${input.acceptedTaskCount === 1 ? "" : "s"} · ${source} · ${freshness}${partial ? " · partial observed cohort" : ""}${missing}`,
+      context: `${source}${isRange ? " · range" : ""}${age}`,
+      title: `Producer current-market estimate · exact USD per accepted task ${String(currentMarket.minimum)}${isRange ? `–${String(currentMarket.maximum)}` : ""} · ${input.estimate.observationCount} observation(s) · denominator ${input.acceptedTaskCount} accepted task${input.acceptedTaskCount === 1 ? "" : "s"} · ${source}${age}${partial ? " · partial observed cohort" : ""}${missing}`,
     }
   }
 
@@ -435,31 +450,46 @@ export function sourceTitle(source: ModelSource["source"]) {
   }
 }
 
+/** "retrieved <date>", or nothing when the date is missing. */
+export function retrievedLabel(value: string | null | undefined) {
+  const date = formatDate(value)
+  return date ? `retrieved ${date}` : undefined
+}
+
 export function sourceState(source: ModelSource) {
-  if (source.storage === "missing-both-tables") return "Snapshot and refresh history unavailable"
-  if (source.storage === "missing-snapshot-table") return "Snapshot storage unavailable"
-  if (source.snapshotState === "missing-table") return "Snapshot storage unavailable"
+  if (source.storage === "missing-both-tables") return "No snapshot or refresh history"
+  if (source.storage === "missing-snapshot-table") return "No snapshot storage"
+  if (source.snapshotState === "missing-table") return "No snapshot storage"
   if (source.storage === "missing-refresh-table") {
     if (source.snapshot)
-      return `${source.snapshot.recordCount.toLocaleString()} records · retrieved ${formatDate(source.snapshot.retrievedAt)} · refresh history unavailable`
-    return "No cached snapshot · refresh history unavailable"
+      return joinSegments([
+        `${source.snapshot.recordCount.toLocaleString()} records`,
+        retrievedLabel(source.snapshot.retrievedAt),
+        "no refresh history",
+      ])
+    return "No cached snapshot · no refresh history"
   }
   if (source.snapshotState === "missing-snapshot" || source.snapshotState === "none")
     return source.refresh?.state === "failed"
       ? "No cached snapshot · latest refresh failed"
       : "No cached snapshot"
-  if (!source.snapshot) return "Snapshot unavailable"
-  return `${source.snapshot.recordCount.toLocaleString()} records · retrieved ${formatDate(source.snapshot.retrievedAt)}`
+  if (!source.snapshot) return "No snapshot"
+  return joinSegments([
+    `${source.snapshot.recordCount.toLocaleString()} records`,
+    retrievedLabel(source.snapshot.retrievedAt),
+  ])
 }
 
+/** A local date and time; absent when there is none. */
 export function formatDate(value: string | null | undefined) {
-  if (!value) return "Date unavailable"
+  if (!value) return undefined
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? "Date unavailable" : parsed.toLocaleString()
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toLocaleString()
 }
 
+/** A localized number; absent when there is none. */
 export function numericValue(value: number | null | undefined) {
-  return value === null || value === undefined ? "Unknown" : value.toLocaleString()
+  return value === null || value === undefined ? undefined : value.toLocaleString()
 }
 
 export function exactRouteMatch(
@@ -489,4 +519,67 @@ export function recordReferenceLabel(reference: {
   recordID: string
 }) {
   return `${reference.source} · generation ${reference.generation} · record ${reference.recordIndex + 1} (${reference.recordID}) · snapshot ${reference.snapshotID}`
+}
+
+/** `$0.35 – 0.67`: one currency sign, the rounded range, no caveats. */
+export function formatPriceRange(range: { minimum: number; maximum: number }) {
+  return range.minimum === range.maximum
+    ? formatMarketAmount(range.minimum)
+    : `${formatMarketAmount(range.minimum)} – ${formatMarketAmount(range.maximum).replace(/^\$/, "")}`
+}
+
+/** `6.2M`, `840k`, `930`. */
+export function compactCount(value: number) {
+  if (Math.abs(value) >= 1_000_000) return `${trimCount(value / 1_000_000)}M`
+  if (Math.abs(value) >= 1_000) return `${trimCount(value / 1_000)}k`
+  return String(Math.round(value))
+}
+
+function trimCount(value: number) {
+  return (value >= 100 ? Math.round(value) : Math.round(value * 10) / 10).toString()
+}
+
+export type SelectedModelFacts = {
+  /** Rounded price range per accepted task; absent when no complete price exists. */
+  price?: string
+  accepted?: number
+  terminal?: number
+  tokens?: string
+  attempts?: string
+}
+
+/** The facts the first view of a selected model shows; a missing fact is absent, never labelled. */
+export function selectedModelFacts(input: {
+  estimate: ModelDecisionEstimate
+  referenceEstimate?: ModelDecisionReferenceEstimate
+  efficiency: ModelDecisionEfficiency
+  cohort: ModelDecisionCohortCounts
+}): SelectedModelFacts {
+  const { estimate, referenceEstimate, efficiency, cohort } = input
+  const facts: SelectedModelFacts = {}
+  if (cohort.acceptedTaskCount < 1) return facts
+
+  let range: { minimum: number; maximum: number } | undefined
+  if (estimate.status === "available" || estimate.status === "single-observation")
+    range = estimate.range.currentMarketUSD
+  else if (
+    referenceEstimate?.status === "exact" &&
+    referenceEstimate.valueUSDPerAcceptedTask !== null
+  )
+    range = {
+      minimum: referenceEstimate.valueUSDPerAcceptedTask,
+      maximum: referenceEstimate.valueUSDPerAcceptedTask,
+    }
+  else if (referenceEstimate?.status === "conditional" && referenceEstimate.rangeUSDPerAcceptedTask)
+    range = referenceEstimate.rangeUSDPerAcceptedTask
+  if (range) facts.price = formatPriceRange(range)
+
+  facts.accepted = cohort.acceptedTaskCount
+  facts.terminal = cohort.terminalTaskCount
+  if (efficiency.tokensPerAcceptedTask !== null)
+    facts.tokens = compactCount(efficiency.tokensPerAcceptedTask)
+  facts.attempts = (
+    Math.round((cohort.attemptCount / cohort.acceptedTaskCount) * 10) / 10
+  ).toString()
+  return facts
 }
