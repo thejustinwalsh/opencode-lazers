@@ -5,7 +5,10 @@ import type {
   ObservationChange,
   ObservationScope,
 } from "../observability/contract.ts"
+import { createKept } from "./kept.ts"
 import type { RadarMonitorTransport } from "./monitor-transport.ts"
+
+const kept = createKept<{ live: LiveRadarResponse; asOf: number | undefined }>()
 
 export type RadarMonitorData = {
   key: string
@@ -177,6 +180,7 @@ export class RadarMonitorState {
 
   private update(change: Partial<RadarMonitorData>) {
     this.data = { ...this.data, ...change }
+    if (this.data.live) kept.set(this.data.key, { live: this.data.live, asOf: this.data.asOf })
     this.changed(this.data)
   }
 
@@ -206,7 +210,20 @@ export class RadarMonitorState {
     this.controller = new AbortController()
     const epoch = this.epoch
     const signal = this.controller.signal
-    this.data = { ...blank(key), selectedSessionID: preferredSessionID }
+    const previous = kept.get(key)
+    this.data = {
+      ...blank(key),
+      selectedSessionID: preferredSessionID,
+      // Content shown before stays; the refresh below replaces it in place.
+      ...(previous
+        ? {
+            live: previous.live,
+            ...(previous.asOf !== undefined ? { asOf: previous.asOf } : {}),
+            loading: false,
+            connection: "connected" as const,
+          }
+        : {}),
+    }
     this.update({})
     void this.watch(epoch, transport, signal)
     void this.refresh(epoch, transport, signal)

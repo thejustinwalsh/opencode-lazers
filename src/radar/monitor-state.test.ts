@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { beforeEach, expect, test } from "bun:test"
 import type {
   LiveHistoryResponse,
   LiveRadarResponse,
@@ -7,6 +7,9 @@ import type {
 import type { RadarMonitorData } from "./monitor-state.ts"
 import type { RadarMonitorTransport } from "./monitor-transport.ts"
 import { RadarMonitorState } from "./monitor-state.ts"
+import { clearKept } from "./kept.ts"
+
+beforeEach(clearKept)
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -463,4 +466,40 @@ test("a stale restart head cannot overwrite a newer live head", async () => {
   } finally {
     state.close()
   }
+})
+
+test("a re-mounted panel renders the kept snapshot at once and refreshes in place", async () => {
+  const first = fakeTransport()
+  const one = new RadarMonitorState(() => {})
+  one.connect("kept-key", "project", projectScope, first.transport, false)
+  await until(() => Boolean(one.data.live))
+  const shown = one.data.live
+  one.close()
+
+  const gate = deferred<LiveRadarResponse>()
+  const second = fakeTransport({ radar: () => gate.promise })
+  const updates: RadarMonitorData[] = []
+  const two = new RadarMonitorState((data) => updates.push(data))
+  two.connect("kept-key", "project", projectScope, second.transport, false)
+  // Before the new read answers: content is there, nothing is loading, no reconnect banner state.
+  expect(two.data.live).toBe(shown)
+  expect(two.data.loading).toBe(false)
+  expect(two.data.connection).toBe("connected")
+  expect(updates.at(-1)?.live).toBe(shown)
+  gate.resolve(live(9))
+  await until(() => two.data.live?.boundary.eventSequence === 9)
+  two.close()
+})
+
+test("the skeleton belongs to a first load: another scope key starts empty", async () => {
+  const fake = fakeTransport()
+  const one = new RadarMonitorState(() => {})
+  one.connect("scope-a", "project", projectScope, fake.transport, false)
+  await until(() => Boolean(one.data.live))
+  one.close()
+  const two = new RadarMonitorState(() => {})
+  two.connect("scope-b", "project", projectScope, fakeTransport().transport, false)
+  expect(two.data.live).toBeUndefined()
+  expect(two.data.loading).toBe(true)
+  two.close()
 })
