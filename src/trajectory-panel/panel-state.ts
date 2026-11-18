@@ -2,6 +2,7 @@ import type { ObservationScope } from "../observability/contract.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import {
   checkKey,
+  currentTaskState,
   detailedChecks,
   parseProjectedSnapshot,
   parseTrajectoryReport,
@@ -447,7 +448,7 @@ export class TrajectoryPanelState {
           {
             taskID,
             title: target.reference,
-            status: this.data.report?.task.status ?? "loading",
+            status: this.data.report ? currentTaskState(this.data.report) : "loading",
           },
         ]
         this.update({ tasks, taskID, taskReference: target.reference, error: "" })
@@ -692,7 +693,7 @@ export class TrajectoryPanelState {
       this.statusCursor = response.live?.cursor ?? undefined
       this.readFingerprint = taskSnapshotFingerprint(this.data.snapshot, taskID)
       const tasks = this.data.tasks.map((task) =>
-        task.taskID === taskID ? { ...task, status: statusReport.task.status } : task,
+        task.taskID === taskID ? { ...task, status: currentTaskState(statusReport) } : task,
       )
       this.update({
         report,
@@ -869,7 +870,7 @@ export class TrajectoryPanelState {
             (eventIDs.includes(selection.id) ? previousEvent : undefined))
           : undefined
       const tasks = this.data.tasks.map((task) =>
-        task.taskID === taskID ? { ...task, status: report.task.status } : task,
+        task.taskID === taskID ? { ...task, status: currentTaskState(report) } : task,
       )
       this.statusCursor = undefined
       this.readFingerprint = taskSnapshotFingerprint(this.data.snapshot, taskID)

@@ -362,7 +362,8 @@
 .lazers-trajectory-plot {
   position: relative;
   width: calc(
-    var(--trajectory-label) + (100% - var(--trajectory-label)) * var(--trajectory-zoom, 1)
+    var(--trajectory-label) + var(--trajectory-end, 0px) +
+      (100% - var(--trajectory-label) - var(--trajectory-end, 0px)) * var(--trajectory-zoom, 1)
   );
   min-width: 100%;
 }
@@ -370,7 +371,7 @@
 .lazers-trajectory-attempt,
 .lazers-trajectory-lane {
   display: grid;
-  grid-template-columns: var(--trajectory-label) minmax(0, 1fr);
+  grid-template-columns: var(--trajectory-label) minmax(0, 1fr) var(--trajectory-end, 0px);
   align-items: stretch;
   min-width: 0;
 }
@@ -423,7 +424,7 @@
 .lazers-trajectory-gridlines {
   position: absolute;
   top: var(--trajectory-ruler);
-  right: 0;
+  right: var(--trajectory-end, 0px);
   bottom: 0;
   left: var(--trajectory-label);
   pointer-events: none;
