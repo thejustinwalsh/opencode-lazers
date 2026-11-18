@@ -5519,6 +5519,8 @@ export class TaskRuntime {
     }
   }
 
+  private readonly sourceScanFailures = new Map<string, string>()
+
   private async reconcileArchitectSources(fence: number) {
     if (!this.host.architectInputPage) return
     for (const source of this.store.architectSources()) {
@@ -5526,12 +5528,19 @@ export class TaskRuntime {
       if (!renewal) continue
       try {
         await this.inspectArchitectSourcePage(renewal, fence)
+        this.sourceScanFailures.delete(source.session_id)
       } catch (error) {
-        this.renewalEvent(
-          renewal,
-          "ARCHITECT_SOURCE_SCAN_FAILED",
-          { renewalID: renewal.id, sourceSessionID: source.session_id, error: errorText(error) },
-          fence,
+        const cause = errorText(error)
+        if (this.sourceScanFailures.get(source.session_id) === cause) continue
+        this.sourceScanFailures.set(source.session_id, cause)
+        // A persistent failure is one durable fact, not one row per tick: record only
+        // when the cause differs from the newest recorded scan failure for this plan.
+        this.store.fenced(this.owner, fence, () =>
+          this.store.recordOnce(renewal.anchor_plan_id, null, "ARCHITECT_SOURCE_SCAN_FAILED", {
+            renewalID: renewal.id,
+            sourceSessionID: source.session_id,
+            error: errorText(error),
+          }),
         )
       }
     }
