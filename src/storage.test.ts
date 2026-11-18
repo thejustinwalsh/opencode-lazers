@@ -1210,12 +1210,11 @@ test("preparing, running, verifying, and approval-held execution cannot be exter
   const held = createCancelledPlan("approval-held")
   repository.atomic((db) => {
     ensureRetainedVerificationTables(db)
-    db.query("INSERT INTO runner_retained_verifications VALUES(?,?,?,?,?,?,?)").run(
+    db.query("INSERT INTO runner_retained_verifications VALUES(?,?,?,?,?,?)").run(
       crypto.randomUUID(),
       "/repo",
       held.plan.planID,
       held.task.id,
-      1,
       "task-checks",
       "{}",
     )
