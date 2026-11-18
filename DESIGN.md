@@ -89,11 +89,11 @@ One flat, expandable list in the manner of Linear. No sections, headings or
 group rows. Each task is a single 30px row:
 
 ```
-[chevron] [priority] [reference] title ……………… [link] [elapsed] [state glyph]
+[chevron] [reference] title ……………… [link] [elapsed] [state glyph]
 ```
 
-- Priority is a two-character mono column and is the sort key. Leave it blank
-  for priority 0 and for nested rows.
+- The list is ordered by scheduler priority. The order is the only sign of it in
+  a row; the number itself is in the inspector's meta line.
 - The chevron is a button with an accessible name and `aria-expanded`.
   Dependencies expand in place under their task with a guide line.
 - Row status is a glyph only, at every width, so the title keeps the width. A
