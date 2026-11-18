@@ -691,6 +691,8 @@ export class OutcomeDelivery {
   }
 
   async deliver(fence: number, closeoutOnly = false) {
+    // A user-set pause keeps every notice queued; nothing prompts an Architect.
+    if (this.runtime.store.architectContactPaused()) return
     const messages = this.runtime.store.outboxForDelivery(this.runtime.directory)
     const groups = new Map<string, OutboxRow[]>()
     for (const message of messages) {

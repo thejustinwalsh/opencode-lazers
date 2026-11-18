@@ -7661,6 +7661,8 @@ export class TaskRuntime {
   ): Promise<HostSession> {
     const current = await this.host.session(plan.owner)
     if (this.validArchitect(current)) return current
+    // A user-set pause: never create, resume or fork an Architect session.
+    if (this.store.architectContactPaused()) throw new Error("Architect contact is paused")
 
     let continuation = this.store.continuation(plan.id)
     let priorContinuation: HostSession | null = null
@@ -8873,6 +8875,7 @@ export class TaskRuntime {
 
   private async considerArchitectRenewal(plan: PlanRow, owner: HostSession, fence: number) {
     if (
+      this.store.architectContactPaused() ||
       !this.architectPromptHook ||
       !this.host.updateSession ||
       !this.host.architectInputPage ||
@@ -8907,6 +8910,8 @@ export class TaskRuntime {
     fence: number,
     knownLabel?: string,
   ) {
+    // While Architect contact is paused no renewal may create, archive or resume a session.
+    if (this.store.architectContactPaused()) return
     try {
       return await this.withRenewalLock(initial.id, async () => {
         let renewal = this.store.architectRenewal(initial.id)
@@ -10366,7 +10371,8 @@ export class TaskRuntime {
       if (pending) await this.reconcileEffect(pending, fence)
       return
     }
-    const planRenewal = this.store.architectRenewalForPlan(plan.id)
+    const contactPaused = this.store.architectContactPaused()
+    const planRenewal = contactPaused ? undefined : this.store.architectRenewalForPlan(plan.id)
     if (
       planRenewal &&
       ["creating", "archiving", "recovering-input", "rolling-back"].includes(planRenewal.state)
@@ -10377,7 +10383,7 @@ export class TaskRuntime {
     // Routing always reaches a live Architect: the owner is advisory, so a
     // missing or archived one is replaced before any branch can return early.
     const owner = await this.host.session(plan.owner)
-    if (!this.validArchitect(owner)) {
+    if (!this.validArchitect(owner) && !contactPaused) {
       this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
       await this.ensureArchitectOwner(plan, owner)
       plan = this.store.plan(plan.id)!
@@ -10391,7 +10397,7 @@ export class TaskRuntime {
       await this.adoptionExecution.advanceAdoption(plan, adoption, fence)
       return
     }
-    if (this.validArchitect(owner)) {
+    if (this.validArchitect(owner) && !contactPaused) {
       const renewal = this.store.architectRenewalForSource(owner.id)
       if (
         renewal &&

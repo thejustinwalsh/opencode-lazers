@@ -6,6 +6,10 @@ import {
   registerLifecycleTransitions,
 } from "./lifecycle-machines.ts"
 import { dispatchControlTransition } from "./dispatch-control-machine.ts"
+import {
+  architectContactTransition,
+  type ArchitectContactState,
+} from "./architect-contact-machine.ts"
 import { progressRecencySQL } from "../progress/recency.ts"
 import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
@@ -816,6 +820,10 @@ export class RunnerStore {
         plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), state TEXT NOT NULL,
         reason TEXT NOT NULL, until_plans TEXT NOT NULL, updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS runner_architect_contact (
+        project_directory TEXT PRIMARY KEY, state TEXT NOT NULL,
+        reason TEXT NOT NULL, updated_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS runner_plans_project ON runner_plans(project_directory, state);
       CREATE TABLE IF NOT EXISTS runner_plan_revisions (
         plan_id TEXT NOT NULL REFERENCES runner_plans(id), revision INTEGER NOT NULL,
@@ -1287,6 +1295,42 @@ export class RunnerStore {
         .query<NodeRow, [string]>("SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal")
         .all(planID),
     )
+  }
+  /** Project-wide Architect contact; enabled unless a user paused it. */
+  architectContact(): { state: ArchitectContactState; reason: string; updatedAt: number | null } {
+    return this.read((db) => {
+      const row = db
+        .query<{ state: string; reason: string; updated_at: number }, [string]>(
+          "SELECT state,reason,updated_at FROM runner_architect_contact WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory)
+      return row
+        ? {
+            state: row.state === "paused" ? "paused" : "enabled",
+            reason: row.reason,
+            updatedAt: row.updated_at,
+          }
+        : { state: "enabled", reason: "", updatedAt: null }
+    })
+  }
+  architectContactPaused(): boolean {
+    return this.architectContact().state === "paused"
+  }
+  /** Moves the contact setting through its XState machine; an invalid change throws. */
+  setArchitectContact(state: ArchitectContactState, reason: string) {
+    return this.atomic((db) => {
+      const current = this.architectContact()
+      const next = architectContactTransition(
+        current.state,
+        state === "paused" ? "PAUSE" : "UNPAUSE",
+      )
+      db.query(
+        `INSERT INTO runner_architect_contact VALUES(?,?,?,?)
+         ON CONFLICT(project_directory) DO UPDATE SET state=excluded.state,reason=excluded.reason,updated_at=excluded.updated_at`,
+      ).run(this.repository.projectDirectory, next, reason, Date.now())
+      this.repository.changed()
+      return this.architectContact()
+    })
   }
   dispatchPause(planID: string) {
     return this.read((db) => {

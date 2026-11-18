@@ -41,6 +41,7 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
   },
   dispatch: { observable: [], architect: ["PAUSE", "UNPAUSE"], terminal: [] },
   source: { observable: ["PREPARE", "ACTIVATE", "RETIRE"], architect: [], terminal: [] },
+  contact: { observable: [], architect: ["PAUSE", "UNPAUSE"], terminal: [] },
   plan: {
     observable: ["blocked", "accepted", "cancelled", "cleanup-blocked", "integrated"],
     architect: ["running", "cancelling", "cleaning"],

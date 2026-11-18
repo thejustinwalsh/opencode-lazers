@@ -16284,3 +16284,77 @@ test("Start from a non-Architect session admits the plan without an Architect co
   expect(result.status).toBe("started")
   expect(f.store.plan(result.planID)!.state).toBe("running")
 })
+
+function countArchitectContact(f: ReturnType<typeof fixture>) {
+  const created: string[] = []
+  const create = f.host.createArchitect!
+  f.host.createArchitect = async (input) => {
+    created.push(input.id)
+    return create(input)
+  }
+  return { created }
+}
+
+test("Architect contact is a machine: enabled cannot unpause and invalid changes are rejected", () => {
+  const f = fixture()
+  expect(f.store.architectContact()).toMatchObject({ state: "enabled", updatedAt: null })
+  expect(() => f.store.setArchitectContact("enabled", "")).toThrow("Invalid Architect contact")
+  expect(f.store.setArchitectContact("paused", "Recovery mode")).toMatchObject({
+    state: "paused",
+    reason: "Recovery mode",
+  })
+  expect(f.store.setArchitectContact("paused", "Still recovering").state).toBe("paused")
+  expect(f.store.setArchitectContact("enabled", "").state).toBe("enabled")
+})
+
+test("while Architect contact is paused a missing owner is not replaced, and workers keep running", async () => {
+  const f = fixture({ taskFiles: [{ name: "a", path: "a.txt" }] })
+  const spy = countArchitectContact(f)
+  f.store.setArchitectContact("paused", "Recovery mode")
+  await runPlan(f)
+  f.sessions.get("owner")!.archived = true
+  await drive(f.runtime, 4)
+  expect(spy.created).toEqual([])
+  expect(f.store.latestTransition(f.receipt.planID, null, "ARCHITECT_ROUTED")).toBeUndefined()
+  // The scheduler still dispatches the worker without an Architect.
+  expect(f.store.attempts(f.receipt.planID).length).toBeGreaterThan(0)
+  f.store.setArchitectContact("enabled", "")
+  await drive(f.runtime, 3)
+  expect(spy.created.length).toBe(1)
+})
+
+test("while Architect contact is paused a cold large Architect is not renewed", async () => {
+  const now = 1_700_000_000_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const spy = countArchitectContact(f)
+  f.store.setArchitectContact("paused", "Recovery mode")
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)).toBeNull()
+  expect(spy.created).toEqual([])
+  f.store.setArchitectContact("enabled", "")
+  await f.runtime.tick()
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)?.state).toBe("committed")
+  expect(spy.created.length).toBe(1)
+})
+
+test("while Architect contact is paused notices stay queued and deliver after unpause", async () => {
+  const f = fixture({ taskFiles: [{ name: "a", path: "a.txt" }] })
+  f.store.setArchitectContact("paused", "Recovery mode")
+  await runPlan(f)
+  await drive(f.runtime, 3)
+  const queued = f.store.atomic((db) =>
+    db.query("SELECT COUNT(*) AS n FROM runner_outbox WHERE state='pending'").get(),
+  ) as { n: number }
+  expect(queued.n).toBeGreaterThan(0)
+  expect(f.notifications).toEqual([])
+  f.store.setArchitectContact("enabled", "")
+  await drive(f.runtime, 3)
+  expect(f.notifications.length).toBeGreaterThan(0)
+})

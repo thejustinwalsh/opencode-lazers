@@ -11,6 +11,7 @@ import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
 import { beginSourceGuard } from "./runner/source-quarantine.ts"
 import { registerSourceFence } from "./runner/source-fence-rpc.ts"
+import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
@@ -107,6 +108,9 @@ export default Plugin.define({
       yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, sourceGuard))
       yield* sectionEffect("setup:SourceFence", () =>
         registerSourceFence(ctx, runtime.store, sourceGuard).pipe(Effect.orDie),
+      )
+      yield* sectionEffect("setup:ArchitectContact", () =>
+        registerArchitectContact(ctx, runtime.store, () => core.wake()).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:RunnerTools", () => registerRunnerTools(ctx, runtime))
       yield* sectionEffect("setup:Progress", () =>
