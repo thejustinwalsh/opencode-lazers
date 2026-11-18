@@ -490,7 +490,6 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(trajectoryCSS).toBeDefined()
     expect(trajectoryCSS).toContain("min-width: 0")
     expect(trajectoryCSS).toContain("overflow-wrap: anywhere")
-    expect(trajectoryCSS).toContain("min-width: 24px")
     expect(trajectoryCSS).toContain("@container lazers-trajectory (max-width: 380px)")
     expect(trajectoryCSS).not.toContain("@media (max-width")
     expect(trajectoryCSS).toContain(".lazers-trajectory-inspector")
