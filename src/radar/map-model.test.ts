@@ -99,12 +99,25 @@ test("running work colours the path above it; nothing else is active", () => {
   expect(idle.edges.every((edge) => edge.tone === "weak")).toBe(true)
 })
 
-test("a failed item turns its path red and omitted data omits nodes, never 'unknown'", () => {
-  const map = createRadarMap(live([session("a")], { queued: 0, needsYou: 0, failed: 2 }), 2_000)
+test("failed and needs-you tones stay on their own node and edge; omitted data omits nodes", () => {
+  const map = createRadarMap(
+    live([architect, session("a")], { queued: 3, needsYou: 1, failed: 1 }),
+    2_000,
+  )
+  const tone = (id: string) => map.nodeByID.get(id)?.tone
+  expect(tone("item:failed")).toBe("failed")
+  expect(tone("item:needs-you")).toBe("attention")
+  expect(["you", "architect", "group:queue"].map(tone)).toEqual(["active", "active", "weak"])
+  const edgeTone = (to: string) => map.edges.find((edge) => edge.to === to)?.tone
+  expect(edgeTone("item:failed")).toBe("failed")
+  expect(edgeTone("item:needs-you")).toBe("attention")
+  expect(edgeTone("group:queue")).toBe("weak")
+  expect(edgeTone("group:runtime")).toBe("active")
+  expect(map.edges.filter((edge) => edge.tone === "failed").length).toBe(1)
+  const lone = createRadarMap(live([session("a")], { queued: 0, needsYou: 0, failed: 2 }), 2_000)
   // No Architect in the read: groups hang from You.
-  expect(map.nodeByID.get("group:runtime")?.parent).toBe("you")
-  expect(map.nodeByID.get("you")?.tone).toBe("failed")
-  const text = JSON.stringify(map.nodes)
+  expect(lone.nodeByID.get("group:runtime")?.parent).toBe("you")
+  const text = JSON.stringify(map.nodes.concat(lone.nodes))
   expect(text).not.toMatch(/nknown|navailable|undefined/)
   expect(createRadarMap(live([]), 1).nodes.map((node) => node.id)).toEqual(["you"])
 })

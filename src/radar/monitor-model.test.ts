@@ -475,8 +475,8 @@ test("workers nest under their recorded parent; the Architect is only the fallba
     ],
   })
   const groups = sessionGroups(response)
-  expect(groups.leading).toEqual(["ses-arch", "ses-orphan"])
-  expect(groups.children.get("ses-arch")).toEqual(["ses-lead", "ses-legacy"])
+  expect(groups.leading).toEqual(["ses-arch"])
+  expect(groups.children.get("ses-arch")).toEqual(["ses-lead", "ses-orphan", "ses-legacy"])
   expect(groups.children.get("ses-lead")).toEqual(["ses-sub"])
   const loop = sessionGroups(
     live({
