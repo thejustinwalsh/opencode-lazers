@@ -664,7 +664,10 @@ export type ModelEvidenceComparisonSourceRead = {
   snapshot: ModelEvidenceSnapshot | null
 }
 
-export type ModelEvidenceComparisonSnapshotSelection = Record<ModelEvidenceSource, string | null>
+type CoreEvidenceSource = Exclude<ModelEvidenceSource, "models-dev" | "epoch-benchmarks">
+/** Selections pinned before the public sources existed lack them; those read as latest. */
+export type ModelEvidenceComparisonSnapshotSelection = Record<CoreEvidenceSource, string | null> &
+  Partial<Record<"models-dev" | "epoch-benchmarks", string | null>>
 
 /** Read-only, project-scoped snapshot access for comparison projections. */
 export class ModelEvidenceReadStore {
@@ -746,8 +749,8 @@ export class ModelEvidenceReadStore {
           }
 
         let snapshotID: string | null
-        if (selection) {
-          snapshotID = selection[source]
+        if (selection && selection[source] !== undefined) {
+          snapshotID = selection[source] ?? null
         } else if (refreshRow) {
           snapshotID = refreshRow.latest_snapshot_id
         } else {

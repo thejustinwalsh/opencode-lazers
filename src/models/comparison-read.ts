@@ -14,6 +14,10 @@ import type {
 } from "./comparison-schema.ts"
 import { ModelEvidenceSnapshotSummarySchema, type ModelEvidenceSnapshot } from "./source-schema.ts"
 import type { ModelEvidenceComparisonSourceRead, ModelEvidenceReadStore } from "./source-store.ts"
+import { createPublicJoin } from "./public-join.ts"
+import type { PublicJoin } from "./public-join.ts"
+import { createModelIndex, vendorSlug } from "./name-identity.ts"
+import type { ModelIndex } from "./name-identity.ts"
 import {
   modelConfigurationID,
   resolveModelIdentity,
@@ -231,11 +235,34 @@ function indexBenchmarks(records: OpenRouterBenchmarkRecord[] | undefined) {
   return index
 }
 
+type BenchmarkEntry = { record: OpenRouterBenchmarkRecord; recordIndex: number }
+const benchmarkNameIndexes = new WeakMap<object, ModelIndex<BenchmarkEntry>>()
+
+/** Benchmark rows by every name they carry, for models the published slug does not reach. */
+function benchmarkNameIndex(records: OpenRouterBenchmarkRecord[]) {
+  let index = benchmarkNameIndexes.get(records)
+  if (!index) {
+    index = createModelIndex(
+      records.map((record, recordIndex) => ({
+        id: record.modelPermaslug,
+        names: record.displayName ? [record.displayName] : [],
+        vendor: vendorSlug(record.modelPermaslug.split("/")[0])
+          ? record.modelPermaslug.split("/")[0]!
+          : null,
+        value: { record, recordIndex },
+      })),
+    )
+    benchmarkNameIndexes.set(records, index)
+  }
+  return index
+}
+
 function candidatesFor(
   nativeSnapshot: Extract<ModelEvidenceSnapshot, { source: "native-catalog" }> | null,
   catalogSource: ModelEvidenceComparisonSourceRead,
   benchmarkSnapshot: Extract<ModelEvidenceSnapshot, { source: "openrouter-benchmarks" }> | null,
   filters: ModelComparisonFilters,
+  join: PublicJoin,
 ): Candidate[] {
   if (!nativeSnapshot) return []
   const groups = filtered(candidateGroups(nativeSnapshot), filters)
@@ -268,8 +295,19 @@ function candidatesFor(
     }
 
     let benchmarkMatches: Array<{ record: OpenRouterBenchmarkRecord; recordIndex: number }> = []
+    let viaName = false
     if (exactModel?.canonicalSlug && benchmarkSnapshot) {
       benchmarkMatches = benchmarkIndex.get(exactModel.canonicalSlug) ?? []
+      if (!benchmarkMatches.length) {
+        // The publisher spells the model differently: join by name identity.
+        const named = benchmarkNameIndex(benchmarkRecords).resolve(exactModel.canonicalSlug, {
+          vendor: vendorSlug(exactModel.id.split("/")[0]) ? exactModel.id.split("/")[0]! : null,
+        })
+        if (named.status === "matched") {
+          benchmarkMatches = named.items.map((item) => item.value)
+          viaName = true
+        }
+      }
     }
     const benchmarkReferences = benchmarkSnapshot
       ? benchmarkMatches.map(({ record, recordIndex }) =>
@@ -291,10 +329,21 @@ function candidatesFor(
     const benchmark = benchmarkMatches.length === 1 ? benchmarkMatches[0]!.record : null
     const benchmarkCorrespondence = {
       status: benchmarkStatus,
-      basis: benchmarkMatches.length ? ("published-canonical-slug" as const) : null,
+      basis: benchmarkMatches.length
+        ? viaName
+          ? ("name-identity" as const)
+          : ("published-canonical-slug" as const)
+        : null,
       evidence: benchmarkEvidence,
     }
 
+    const route = {
+      providerID: group.providerID,
+      modelID: group.modelID,
+      name: sameValue(group.records.map(({ record }) => record.name)) ?? null,
+    }
+    const publicModel = join.modelsDev(route)
+    const publicBenchmarks = join.epoch(route).slice(0, 100)
     const candidateVariants = sortedUnique([...group.candidateVariants])
     for (const variant of candidateVariants) {
       const native = nativeEvidence(nativeSnapshot, group, variant)
@@ -318,6 +367,8 @@ function candidatesFor(
           status: "unknown",
           evidence: boundedEvidence(effortReferences),
         },
+        publicModel: publicModel?.record ?? null,
+        publicBenchmarks: publicBenchmarks,
       })
     }
   }
@@ -389,11 +440,30 @@ export function readModelComparison(
   const benchmarkSource = sources.find(
     (source) => source.source === "openrouter-benchmarks",
   )?.snapshot
+  const native = nativeSource?.source === "native-catalog" ? nativeSource : null
+  const devSnapshot = sources.find((source) => source.source === "models-dev")?.snapshot
+  const epochSnapshot = sources.find((source) => source.source === "epoch-benchmarks")?.snapshot
+  const join = createPublicJoin({
+    modelsDev: devSnapshot?.source === "models-dev" ? devSnapshot.records : [],
+    epoch: epochSnapshot?.source === "epoch-benchmarks" ? epochSnapshot.records : [],
+    routes: native
+      ? [
+          ...new Map(
+            native.records.map((record) => [`${record.providerID}\u0000${record.id}`, record]),
+          ).values(),
+        ].map((record) => ({
+          providerID: record.providerID,
+          modelID: record.id,
+          name: record.name,
+        }))
+      : [],
+  })
   const allCandidates = candidatesFor(
-    nativeSource?.source === "native-catalog" ? nativeSource : null,
+    native,
     modelSource,
     benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
     filters,
+    join,
   )
   const offset = decoded?.offset ?? 0
   if (offset > allCandidates.length) throw new Error("Model comparison cursor is unavailable")
@@ -410,6 +480,7 @@ export function readModelComparison(
     candidates,
     totalCandidates: allCandidates.length,
     nextCursor,
+    ...(offset === 0 ? { publicCoverage: { epoch: join.coverage() } } : {}),
   })
 }
 

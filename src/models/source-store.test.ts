@@ -380,6 +380,18 @@ test("comparison reader reports missing tables without initializing source stora
         snapshotState: "missing-table",
         refresh: null,
       },
+      {
+        source: "models-dev",
+        storage: "missing-both-tables",
+        snapshotState: "missing-table",
+        refresh: null,
+      },
+      {
+        source: "epoch-benchmarks",
+        storage: "missing-both-tables",
+        snapshotState: "missing-table",
+        refresh: null,
+      },
     ])
     const check = new Database(path, { readonly: true, strict: true })
     try {

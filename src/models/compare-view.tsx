@@ -7,6 +7,8 @@ import { AllModelsTable } from "./all-models-table.tsx"
 import { benchmarkSourceName, comparisonChartEmptyText, projectedRankRows } from "./chart-data.ts"
 import { SMALL_SAMPLE_TERMINAL_TASKS, formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
 import { catalogSummaryText, sourceTagLabel } from "./catalog-projection.ts"
+import { epochScore } from "./public-score.ts"
+import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import {
   boundedModelLabel,
@@ -104,8 +106,11 @@ export function BenchmarkEmptyState(props: {
   const Ui = props.ui
   return (
     <div class="lazers-models-empty-state">
-      <h3>Benchmarks need OpenRouter</h3>
-      <p>Connect OpenRouter in OpenCode to load public benchmark scores and list prices.</p>
+      <h3>No benchmark source reachable</h3>
+      <p>
+        Public coding scores load from Epoch AI, which needs no key, and from OpenRouter when it is
+        connected in OpenCode. Neither has answered yet: retry, or check the network.
+      </p>
       <div>
         <Ui.Button size="small" onClick={props.onOpenSettings}>
           Open provider settings
@@ -199,7 +204,9 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
             revealDetails(ctl)
             state.selectCandidate(candidateID)
           }}
-          xTitle="Public coding index"
+          xTitle={
+            ctl.scoreBasis().source === "epoch" ? ctl.scoreBasis().label : "Public coding index"
+          }
           yTitle="Projected cost per accepted task"
           formatX={(value) => String(Math.round(value))}
           formatY={formatAxisMoney}
@@ -226,11 +233,13 @@ export function CompareTop(props: { ctl: ModelsController }) {
     catalogLoadingLine,
     compareMode,
     decisionChartReferences,
+    epochCoverageLine,
     observedCaption,
     observedPoints,
     openProviderSettings,
     projectedPoints,
     refreshAll,
+    scoreBasis,
     selectCompareMode,
     selectedBenchmark,
     state,
@@ -313,11 +322,11 @@ export function CompareTop(props: { ctl: ModelsController }) {
                     state.selectCandidate(candidateID)
                   }}
                   xTitle={`List price per 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} in:out)`}
-                  yTitle="Coding index"
+                  yTitle={scoreBasis().label}
                   formatX={formatAxisMoney}
                   formatY={(value) => String(Math.round(value))}
                   label="Public benchmark chart. Arrow keys move between models; Enter selects."
-                  caption={`Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price`}
+                  caption={`${scoreBasis().caption}${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price`}
                   emptyText={benchmarkEmptyText()}
                 />
                 <p class="lazers-models-benchmark-coverage">
@@ -325,6 +334,9 @@ export function CompareTop(props: { ctl: ModelsController }) {
                   loaded catalog models without a benchmark match
                   {baseline()?.ambiguousRoutes
                     ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
+                    : ""}
+                  {epochCoverageLine() && scoreBasis().source === "epoch"
+                    ? ` · ${epochCoverageLine()}`
                     : ""}
                 </p>
               </Show>
@@ -345,7 +357,16 @@ export function CompareTop(props: { ctl: ModelsController }) {
 
 /** Projected mode: the selected catalog model's source, rates, basis and where its set came from. */
 function ProjectedSummary(props: { ctl: ModelsController }) {
-  const { catalogEntries, catalogNotes, catalogSummary, profile, visible } = props.ctl
+  const {
+    catalogEntries,
+    catalogNotes,
+    catalogSummary,
+    epochCoverage,
+    epochCoverageLine,
+    profile,
+    scoreBasis,
+    visible,
+  } = props.ctl
   const entry = () => catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
   const day = (value: string | null | undefined) =>
     value ? new Date(value).toLocaleDateString([], { day: "numeric", month: "short" }) : ""
@@ -439,11 +460,98 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
                   : ""}
               </p>
               <For each={catalogNotes()}>{(note) => <p>{note}.</p>}</For>
+              <Show when={scoreBasis().source === "epoch"}>
+                <p>
+                  Score: {scoreBasis().caption}. {epochCoverageLine()}
+                </p>
+                <Show when={(epochCoverage()?.unmatched.length ?? 0) > 0}>
+                  <details class="lazers-models-sources-details">
+                    <summary>Benchmark names not matched to a catalog model</summary>
+                    <For each={epochCoverage()?.unmatched ?? []}>
+                      {(unmatched) => (
+                        <p class="lazers-models-source-meta">
+                          {unmatched.name} · {unmatched.reason}
+                        </p>
+                      )}
+                    </For>
+                  </details>
+                </Show>
+              </Show>
               <SourcesDetails ctl={props.ctl} />
             </Disclosure>
           </>
         )
       }}
+    </Show>
+  )
+}
+
+/**
+ * The selected model's Epoch AI coding benchmarks: the best score on each, the rows behind it,
+ * and how many benchmark rows reached any model of this catalog. Attribution is part of the data.
+ */
+function EpochBenchmarkDisclosure(props: { ctl: ModelsController }) {
+  const { comparisonSource, epochCoverage, epochCoverageLine, scoreBasis, selectedCandidate } =
+    props.ctl
+  const groups = () => {
+    const rows = selectedCandidate()?.publicBenchmarks ?? []
+    const byBenchmark = new Map<string, typeof rows>()
+    for (const row of rows)
+      byBenchmark.set(row.benchmarkID, [...(byBenchmark.get(row.benchmarkID) ?? []), row])
+    return [...byBenchmark].map(([benchmarkID, items]) => {
+      const best = items.reduce((left, right) => (right.score > left.score ? right : left))
+      return { benchmarkID, benchmark: best.benchmark, origin: best.origin, best, items }
+    })
+  }
+  const percent = (score: number) => `${Math.round(score * 1000) / 10}%`
+  const primary = () => {
+    const wanted = scoreBasis().benchmarkID
+    const candidate = selectedCandidate()
+    const score = wanted && candidate ? epochScore(candidate, wanted) : null
+    return score ? `${score.best.benchmark} ${score.value}%` : undefined
+  }
+  const retrieved = () =>
+    retrievedLabel(comparisonSource("epoch-benchmarks")?.snapshot?.retrievedAt)
+  return (
+    <Show when={groups().length > 0}>
+      <Disclosure title="Public benchmark" hint={primary() ?? groups()[0]?.benchmark}>
+        <p class="lazers-models-source-meta">{joinSegments([EPOCH_ATTRIBUTION, retrieved()])}</p>
+        <For each={groups()}>
+          {(group) => (
+            <div class="lazers-models-epoch-benchmark">
+              <p>{joinSegments([group.benchmark, percent(group.best.score), group.origin])}</p>
+              <For each={group.items}>
+                {(row) => (
+                  <p class="lazers-models-source-meta">
+                    {joinSegments([
+                      row.modelVersion,
+                      row.effort,
+                      row.agent,
+                      percent(row.score),
+                      row.stderr !== null ? `± ${percent(row.stderr)}` : undefined,
+                    ])}
+                  </p>
+                )}
+              </For>
+            </div>
+          )}
+        </For>
+        <Show when={epochCoverageLine()}>
+          {(line) => <p class="lazers-models-source-meta">{line()}</p>}
+        </Show>
+        <Show when={(epochCoverage()?.unmatched.length ?? 0) > 0}>
+          <details class="lazers-models-sources-details">
+            <summary>Benchmark names not matched to a catalog model</summary>
+            <For each={epochCoverage()?.unmatched ?? []}>
+              {(entry) => (
+                <p class="lazers-models-source-meta">
+                  {entry.name} · {entry.reason}
+                </p>
+              )}
+            </For>
+          </details>
+        </Show>
+      </Disclosure>
     </Show>
   )
 }
@@ -512,7 +620,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                 <dl class="lazers-models-stats" aria-label="Benchmark scores">
                   <Show when={scores().codingIndex !== null}>
                     <div>
-                      <dt>coding</dt>
+                      <dt>{scores().scoreName ?? "coding"}</dt>
                       <dd>{numericValue(scores().codingIndex)}</dd>
                     </div>
                   </Show>
@@ -1076,6 +1184,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                         </Show>
                       </section>
                     </Disclosure>
+                    <EpochBenchmarkDisclosure ctl={ctl} />
                     <Show when={selectedCandidate()?.externalBenchmark}>
                       {(benchmark) => (
                         <Disclosure

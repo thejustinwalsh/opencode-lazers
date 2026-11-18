@@ -26,7 +26,7 @@ Open **Trajectory** from the session panel menu, or run `/lz-trajectory`, to ins
 
 Open **Models** from the session panel menu, or run `/lz-models`.
 
-**Compare** plots models by cost and tokens per accepted task from your runs, or by public benchmark and list price under **Benchmark**. Filter by persona or task kind. Select a model to see its price, results and an **Assign to** button; the estimate basis, runs and the chart's data table are in the disclosures below. A model catalog or price lookup does not start inference.
+**Compare** plots models by cost and tokens per accepted task from your runs, or by public benchmark and list price under **Benchmark**. Prices come from OpenRouter, OpenCode and models.dev in that order; models.dev needs no key. Public coding scores come from Epoch AI (no key) and, when connected, OpenRouter; the score in use is named on the chart. Epoch AI data is credited as "Epoch AI · CC BY 4.0" with its snapshot date wherever it is shown. Beside each score, "Public benchmark" in the selected model's details lists the benchmark rows and how many benchmark rows matched a catalog model; the names that did not match are one level down. Filter by persona or task kind. Select a model to see its price, results and an **Assign to** button; the estimate basis, runs and the chart's data table are in the disclosures below. A model catalog or price lookup does not start inference.
 
 **Assignments** lists each persona's model and effort. Select a persona to change its model, effort and whether the choice applies to all projects, this project or one task. LAZERS supports the **UI**, **Systems**, and **Small task / refactoring** personas. New workers use the saved route; running workers keep theirs.
 

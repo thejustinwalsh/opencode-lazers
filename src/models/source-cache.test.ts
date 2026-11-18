@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -15,6 +15,9 @@ import { ModelEvidenceStore } from "./source-store.ts"
 
 const projectDirectory = "/source-cache-project"
 const MODELS_URL = "https://openrouter.ai/api/v1/models"
+const MODELS_DEV_URL = "https://models.dev/api.json"
+const EPOCH_URL = "https://epoch.ai/data/benchmark_data.zip"
+const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name))
 
 type Listing = Array<{ id: string; name: string; prompt: string; completion: string }>
 
@@ -43,6 +46,14 @@ function harness(options: { failModels?: () => boolean } = {}) {
           })),
         }),
       )
+    if (url === MODELS_DEV_URL)
+      return new Response(fixture("models-dev.excerpt.json"), {
+        headers: { "content-type": "application/json" },
+      })
+    if (url === EPOCH_URL)
+      return new Response(fixture("epoch-benchmark-data.excerpt.zip"), {
+        headers: { "content-type": "application/zip" },
+      })
     if (url.includes("benchmarks"))
       return new Response(
         JSON.stringify({
@@ -145,6 +156,8 @@ test("prices are due after an hour, benchmark rows and model info only after a w
       new Map([
         ["native-catalog", "prices"],
         ["openrouter-models", "prices"],
+        // models.dev lists prices too: hourly. The Epoch rows are info only.
+        ["models-dev", "prices"],
       ]),
     )
     expect(refresher.due(false, now + INFO_TTL_MS + 1000)).toEqual(
@@ -152,6 +165,8 @@ test("prices are due after an hour, benchmark rows and model info only after a w
         ["native-catalog", "info"],
         ["openrouter-models", "info"],
         ["openrouter-benchmarks", "info"],
+        ["models-dev", "info"],
+        ["epoch-benchmarks", "info"],
       ]),
     )
     // The manual refresh bypasses every TTL.
@@ -160,6 +175,8 @@ test("prices are due after an hour, benchmark rows and model info only after a w
         ["native-catalog", "info"],
         ["openrouter-models", "info"],
         ["openrouter-benchmarks", "info"],
+        ["models-dev", "info"],
+        ["epoch-benchmarks", "info"],
       ]),
     )
   } finally {
@@ -290,4 +307,202 @@ test("concurrent readers share one refresh", async () => {
     throw new Error("boom")
   })
   expect(gate.busy).toBe(false)
+})
+
+test("models.dev and Epoch are stored per source and served from cache with no fetch", async () => {
+  const { store, state } = await seeded()
+  try {
+    const dev = store.latestSnapshot("models-dev")!
+    expect(dev.source).toBe("models-dev")
+    expect(dev.records.length).toBeGreaterThan(5)
+    // USD per million tokens: Claude Haiku 4.5 is $1 in, $5 out.
+    const haiku = dev.records.find(
+      (record) =>
+        record.kind === "models-dev-model" &&
+        record.providerID === "anthropic" &&
+        record.id === "claude-haiku-4-5",
+    )
+    expect(haiku).toMatchObject({
+      prices: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+    })
+    // Every stored model can produce text; the rest are not coding models.
+    expect(
+      dev.records.every(
+        (record) =>
+          record.kind === "models-dev-model" &&
+          (record.outputModalities === null || record.outputModalities.includes("text")),
+      ),
+    ).toBe(true)
+    const epoch = store.latestSnapshot("epoch-benchmarks")!
+    expect(epoch.records.length).toBeGreaterThan(10)
+    expect(epoch.citation).toContain("Epoch AI · CC BY 4.0")
+    const before = state.requests.length
+    store.latestSnapshot("models-dev")
+    store.latestSnapshot("epoch-benchmarks")
+    expect(state.requests.length).toBe(before)
+  } finally {
+    store.close()
+  }
+})
+
+test("a public source that is down keeps its old data and does not stop the others", async () => {
+  let down = false
+  const h = harness()
+  const fetcher: ModelEvidenceFetcher = async (input, init) =>
+    down && (String(input) === MODELS_DEV_URL || String(input) === EPOCH_URL)
+      ? new Response("unavailable", { status: 503 })
+      : h.fetcher(input, init)
+  const store = h.open(path())
+  try {
+    await new ModelEvidenceRefresher(h.native, store, fetcher).refresh(signal())
+    const before = store.latestSnapshot("models-dev")!
+    const epochBefore = store.latestSnapshot("epoch-benchmarks")!
+    down = true
+    const refresher = new ModelEvidenceRefresher(h.native, store, fetcher)
+    const output = await refresher.refresh(signal(), refresher.due(true, Date.now()))
+    const status = (source: string) => output.sources.find((entry) => entry.source === source)!
+    expect(status("models-dev")).toMatchObject({ state: "failed", errorCode: "server-error" })
+    expect(status("epoch-benchmarks")).toMatchObject({ state: "failed", httpStatus: 503 })
+    expect(status("openrouter-models").state).toBe("succeeded")
+    expect(store.latestSnapshot("models-dev")!.snapshotID).toBe(before.snapshotID)
+    expect(store.latestSnapshot("epoch-benchmarks")!.snapshotID).toBe(epochBefore.snapshotID)
+    // The failed source waits out its retry delay rather than being hammered.
+    expect(refresher.due(false, Date.now() + 1000).has("models-dev")).toBe(false)
+  } finally {
+    store.close()
+  }
+})
+
+test("a malformed or empty public response is a failure, never an empty catalog", async () => {
+  const h = harness()
+  const fetcher: ModelEvidenceFetcher = async (input, init) =>
+    String(input) === MODELS_DEV_URL
+      ? new Response(JSON.stringify({ nothing: {} }))
+      : String(input) === EPOCH_URL
+        ? new Response("not a zip")
+        : h.fetcher(input, init)
+  const store = h.open(path())
+  try {
+    const output = await new ModelEvidenceRefresher(h.native, store, fetcher).refresh(signal())
+    expect(output.sources.find((s) => s.source === "models-dev")).toMatchObject({
+      state: "failed",
+      errorCode: "malformed-response",
+    })
+    expect(output.sources.find((s) => s.source === "epoch-benchmarks")).toMatchObject({
+      state: "failed",
+      errorCode: "malformed-response",
+    })
+    expect(store.latestSnapshot("models-dev")).toBeNull()
+  } finally {
+    store.close()
+  }
+})
+
+test("public source requests are plain GETs that carry no user, project or machine identifier", async () => {
+  const h = harness()
+  const seen: Array<{ url: string; headers: Record<string, string>; method: string }> = []
+  const fetcher: ModelEvidenceFetcher = async (input, init) => {
+    const url = String(input)
+    if (url === MODELS_DEV_URL || url === EPOCH_URL)
+      seen.push({
+        url,
+        method: init?.method ?? "",
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      })
+    return h.fetcher(input, init)
+  }
+  const store = h.open(path())
+  try {
+    await new ModelEvidenceRefresher(h.native, store, fetcher).refresh(signal())
+    expect(seen.map((request) => request.url).sort()).toEqual([EPOCH_URL, MODELS_DEV_URL])
+    for (const request of seen) {
+      expect(request.method).toBe("GET")
+      expect(new URL(request.url).search).toBe("")
+      expect(Object.keys(request.headers).sort()).toEqual(["accept", "user-agent"])
+      expect(request.headers["user-agent"]).toBe("model-catalog-client")
+      expect(JSON.stringify(request)).not.toContain(projectDirectory)
+    }
+  } finally {
+    store.close()
+  }
+})
+
+test("a models.dev price refresh updates rates and keeps the cached info", async () => {
+  const h = harness()
+  const store = h.open(path())
+  try {
+    await new ModelEvidenceRefresher(h.native, store, h.fetcher).refresh(signal())
+    const first = store.latestSnapshot("models-dev")!
+    const repriced = JSON.parse(
+      readFileSync(join(import.meta.dir, "fixtures", "models-dev.excerpt.json"), "utf8"),
+    )
+    repriced.anthropic.models["claude-haiku-4-5"].cost.input = 2
+    repriced.anthropic.models["claude-haiku-4-5"].name = "Renamed upstream"
+    const fetcher: ModelEvidenceFetcher = async (input, init) =>
+      String(input) === MODELS_DEV_URL
+        ? new Response(JSON.stringify(repriced))
+        : h.fetcher(input, init)
+    const refresher = new ModelEvidenceRefresher(h.native, store, fetcher)
+    await refresher.refresh(signal(), new Map([["models-dev", "prices" as const]]))
+    const second = store.latestSnapshot("models-dev")!
+    expect(second.snapshotID).not.toBe(first.snapshotID)
+    const haiku = second.records.find(
+      (record) =>
+        record.kind === "models-dev-model" &&
+        record.providerID === "anthropic" &&
+        record.id === "claude-haiku-4-5",
+    )
+    expect(haiku).toMatchObject({
+      name: expect.not.stringContaining("Renamed"),
+      prices: { input: 2 },
+    })
+    expect(second.asOf ?? second.retrievedAt).toBe(first.asOf ?? first.retrievedAt)
+  } finally {
+    store.close()
+  }
+})
+
+test("an OpenRouter price schedule the record cannot express does not fail the whole catalog", async () => {
+  const h = harness()
+  // Real OpenRouter data: a weekend-only override with `utc_days` and no tier or hour bounds.
+  const fetcher: ModelEvidenceFetcher = async (input, init) =>
+    String(input) === MODELS_URL
+      ? new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "deepseek/deepseek-v4.1-flash-1017",
+                name: "DeepSeek V4.1 Flash",
+                pricing: {
+                  prompt: "0.0000003",
+                  completion: "0.0000012",
+                  overrides: [
+                    {
+                      utc_days: ["saturday", "sunday"],
+                      prompt: "0.00000015",
+                      completion: "0.0000006",
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        )
+      : h.fetcher(input, init)
+  const store = h.open(path())
+  try {
+    const output = await new ModelEvidenceRefresher(h.native, store, fetcher).refresh(signal())
+    expect(output.sources.find((entry) => entry.source === "openrouter-models")?.state).toBe(
+      "succeeded",
+    )
+    const snapshot = store.latestSnapshot("openrouter-models")!
+    // The base rate stays the base rate; the schedule is not applied as one.
+    expect(snapshot.records[0]).toMatchObject({
+      kind: "openrouter-model",
+      prices: { tiers: [{ minPromptTokens: null, prompt: "0.0000003" }] },
+    })
+    expect((snapshot.records[0] as { prices: { tiers: unknown[] } }).prices.tiers).toHaveLength(1)
+  } finally {
+    store.close()
+  }
 })

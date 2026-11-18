@@ -198,7 +198,7 @@ function priceIndexFromSources(input: {
   )
   const settings = ModelPriceSourceSettingsSchema.parse({
     policy: input.policy,
-    access: { openrouter: input.openrouter, opencode },
+    access: { openrouter: input.openrouter, opencode, "models-dev": "configured" as const },
   })
   const index = buildCurrentPriceIndex({
     sourceStore: { readComparisonSources: () => [...input.sources] },
@@ -432,7 +432,7 @@ export function registerModelsServer(
             signal.throwIfAborted()
             return ModelPriceSourceSettingsSchema.parse({
               policy,
-              access: { openrouter, opencode },
+              access: { openrouter, opencode, "models-dev": "configured" as const },
             })
           },
           catch: failure,

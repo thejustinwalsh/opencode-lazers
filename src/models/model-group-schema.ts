@@ -10,6 +10,7 @@ import {
   ModelIdentityRuleSchema,
 } from "./model-identity.ts"
 import {
+  MODEL_EVIDENCE_SOURCES,
   NativeModelEvidenceRecordSchema,
   OpenRouterBenchmarkEvidenceRecordSchema,
   OpenRouterModelEvidenceRecordSchema,
@@ -106,7 +107,7 @@ export const ModelGroupsOutputSchema = z.strictObject({
   schemaVersion: z.literal(1),
   context: ModelGroupReadContextSchema,
   filters: ModelGroupFiltersSchema,
-  sources: z.array(ModelComparisonSourceSchema).length(3),
+  sources: z.array(ModelComparisonSourceSchema).length(MODEL_EVIDENCE_SOURCES.length),
   groups: z.array(ModelGroupSchema).max(100),
   totalGroups: z.number().int().nonnegative().max(200_000),
   nextCursor: z.string().max(8_192).nullable(),
@@ -172,7 +173,7 @@ export const ModelConfigurationsOutputSchema = z.strictObject({
   context: ModelGroupReadContextSchema,
   groupID: z.string().min(1).max(2_048),
   filters: ModelGroupFiltersSchema,
-  sources: z.array(ModelComparisonSourceSchema).length(3),
+  sources: z.array(ModelComparisonSourceSchema).length(MODEL_EVIDENCE_SOURCES.length),
   configurations: z.array(ModelGroupConfigurationSchema).max(100),
   totalConfigurations: z.number().int().nonnegative().max(200_000),
   nextCursor: z.string().max(8_192).nullable(),

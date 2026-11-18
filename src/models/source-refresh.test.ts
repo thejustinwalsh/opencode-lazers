@@ -9,6 +9,14 @@ import { ModelEvidenceRefresher } from "./source-refresh.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { ModelEvidenceStore } from "./source-store.ts"
 
+/** These tests cover the OpenRouter and OpenCode sources; the public sources have their own suite. */
+const CORE_PLAN = new Map(
+  (["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const).map((source) => [
+    source,
+    "info" as const,
+  ]),
+)
+
 const projectDirectory = "/source-refresh-project"
 const syntheticKey = "sk-or-v1-synthetic-test-secret-value"
 
@@ -347,11 +355,15 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
   try {
     const output = await new ModelEvidenceRefresher(native, store, fetcher).refresh(
       new AbortController().signal,
+      CORE_PLAN,
     )
     expect(output.sources.map(({ source, state }) => [source, state])).toEqual([
       ["native-catalog", "succeeded"],
       ["openrouter-models", "succeeded"],
       ["openrouter-benchmarks", "succeeded"],
+      // Not in this plan: the public sources are covered by public-sources.test.ts.
+      ["models-dev", "never"],
+      ["epoch-benchmarks", "never"],
     ])
     expect(calls).toEqual({ active: 1, resolve: 1 })
     expect(requests).toHaveLength(5)
@@ -380,10 +392,12 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
 
     const snapshots = Object.fromEntries(
       await Promise.all(
-        output.sources.map(async ({ source, latestSnapshotID }) => {
-          const page = store.read({ snapshotID: latestSnapshotID, limit: 100 }).snapshot!
-          return [source, page]
-        }),
+        output.sources
+          .filter(({ latestSnapshotID }) => latestSnapshotID !== null)
+          .map(async ({ source, latestSnapshotID }) => {
+            const page = store.read({ snapshotID: latestSnapshotID!, limit: 100 }).snapshot!
+            return [source, page]
+          }),
       ),
     )
     expect(snapshots["native-catalog"]).toMatchObject({
@@ -586,6 +600,7 @@ test("public model metadata refreshes without credentials while benchmark creden
     const missing = context({ key: null })
     const noKey = await new ModelEvidenceRefresher(missing.native, store, fetcher).refresh(
       new AbortController().signal,
+      CORE_PLAN,
     )
     expect(noKey.sources).toEqual(
       expect.arrayContaining([
@@ -614,7 +629,7 @@ test("public model metadata refreshes without credentials while benchmark creden
       unsupported.native,
       store,
       fetcher,
-    ).refresh(new AbortController().signal)
+    ).refresh(new AbortController().signal, CORE_PLAN)
     expect(noSupportedCredential.sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ source: "openrouter-models", state: "succeeded" }),
@@ -663,7 +678,7 @@ test("HTTP failures, malformed and oversized bodies are bounded and retain the p
   }
   try {
     const refresher = () => new ModelEvidenceRefresher(native, store, fetcher)
-    const first = await refresher().refresh(new AbortController().signal)
+    const first = await refresher().refresh(new AbortController().signal, CORE_PLAN)
     const firstBenchmarkID = first.sources[2]!.latestSnapshotID
     expect(first.sources[2]!.state).toBe("succeeded")
 
@@ -676,7 +691,7 @@ test("HTTP failures, malformed and oversized bodies are bounded and retain the p
       ["exception", "network-error"],
     ] as const) {
       failBenchmarks = code
-      const result = await refresher().refresh(new AbortController().signal)
+      const result = await refresher().refresh(new AbortController().signal, CORE_PLAN)
       expect(result.sources[2]).toMatchObject({
         state: "failed",
         errorCode: expected,
@@ -730,7 +745,10 @@ test("endpoint failures, malformed product selection and ambiguous records prese
   }
   try {
     const refresh = () =>
-      new ModelEvidenceRefresher(native, store, fetcher).refresh(new AbortController().signal)
+      new ModelEvidenceRefresher(native, store, fetcher).refresh(
+        new AbortController().signal,
+        CORE_PLAN,
+      )
     const first = await refresh()
     const firstKimi = first.endpointPricing!.scenarios[0]!
     expect(firstKimi.state).toBe("succeeded")
@@ -802,14 +820,19 @@ test("cached reads remain immediate and report refreshing while metadata request
   try {
     const pending = new ModelEvidenceRefresher(native, store, fetcher).refresh(
       new AbortController().signal,
+      CORE_PLAN,
     )
     await started
     expect(store.read().sources.map(({ state }) => state)).toEqual([
       "refreshing",
       "refreshing",
       "refreshing",
+      "never",
+      "never",
     ])
     expect(store.read().sources.map(({ latestSnapshotID }) => latestSnapshotID)).toEqual([
+      null,
+      null,
       null,
       null,
       null,
@@ -821,6 +844,8 @@ test("cached reads remain immediate and report refreshing while metadata request
       "succeeded",
       "succeeded",
       "succeeded",
+      "never",
+      "never",
     ])
     expect(refreshed.endpointPricing).toMatchObject({ state: "succeeded", complete: true })
   } finally {
@@ -844,11 +869,14 @@ test("cancellation before credential access or commit records cancellation witho
   try {
     const output = await new ModelEvidenceRefresher(native, store, fetcher).refresh(
       controller.signal,
+      CORE_PLAN,
     )
     expect(output.sources.map(({ state }) => state)).toEqual([
       "cancelled",
       "cancelled",
       "cancelled",
+      "never",
+      "never",
     ])
     expect(output.endpointPricing).toMatchObject({ state: "cancelled", complete: false })
     expect(output.endpointPricing?.scenarios.map(({ state }) => state)).toEqual([
@@ -880,11 +908,14 @@ test("cancellation after fetching but before persistence prevents any successful
   try {
     const output = await new ModelEvidenceRefresher(native, store, fetcher).refresh(
       controller.signal,
+      CORE_PLAN,
     )
     expect(output.sources.map(({ state }) => state)).toEqual([
       "cancelled",
       "cancelled",
       "cancelled",
+      "never",
+      "never",
     ])
     expect(output.endpointPricing).toMatchObject({ state: "cancelled", complete: false })
     expect(rowsFromDatabase(path)).toEqual([])
@@ -915,6 +946,7 @@ test("cancellation during endpoint fetch keeps last-good scenarios and commits n
   try {
     const first = await new ModelEvidenceRefresher(native, store, fetcher).refresh(
       new AbortController().signal,
+      CORE_PLAN,
     )
     const firstSnapshots = first.endpointPricing!.scenarios.map(
       ({ latestSnapshotID }) => latestSnapshotID,
@@ -936,6 +968,7 @@ test("cancellation during endpoint fetch keeps last-good scenarios and commits n
     }
     const cancelled = await new ModelEvidenceRefresher(native, store, cancellingFetcher).refresh(
       controller.signal,
+      CORE_PLAN,
     )
     expect(cancelled.endpointPricing).toMatchObject({ state: "cancelled", complete: false })
     expect(cancelled.endpointPricing?.scenarios.map(({ state }) => state)).toEqual([
@@ -984,6 +1017,7 @@ test("real router quote sentinel remains unknown without dropping normal or expl
       })
     const output = await new ModelEvidenceRefresher(context as never, store, fetcher).refresh(
       AbortSignal.timeout(5000),
+      CORE_PLAN,
     )
     const source = output.sources.find((x) => x.source === "openrouter-models")!
     expect(source.state).toBe("succeeded")
@@ -1035,6 +1069,7 @@ test("published UTC price overrides are retained separately from context thresho
       })
     const output = await new ModelEvidenceRefresher(context as never, store, fetcher).refresh(
       AbortSignal.timeout(5000),
+      CORE_PLAN,
     )
     const source = output.sources.find((x) => x.source === "openrouter-models")!
     expect(source.state).toBe("succeeded")

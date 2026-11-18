@@ -19,11 +19,19 @@ import type {
   ModelEvidenceSource,
 } from "./source-schema.ts"
 import { ModelEvidenceStore } from "./source-store.ts"
+import { parseEpochArchive } from "./epoch-parse.ts"
+import { parseModelsDev } from "./models-dev-parse.ts"
+import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 const OPENROUTER_BENCHMARKS_URL =
   "https://openrouter.ai/api/v1/benchmarks?source=artificial-analysis&task_type=coding"
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+/** The keyless public sources are larger files: models.dev is about 7 MB, the Epoch archive 2 MB. */
+const MAX_MODELS_DEV_BYTES = 24 * 1024 * 1024
+const MAX_EPOCH_ARCHIVE_BYTES = 16 * 1024 * 1024
+/** Requests to the public sources carry nothing about the user, project or machine. */
+const PUBLIC_SOURCE_HEADERS = { "User-Agent": "model-catalog-client" } as const
 const REQUEST_TIMEOUT_MS = 15_000
 const SENSITIVE_TEXT =
   /(?:authorization|bearer|api[\s_-]*key|secret|token(?:\b|[_=-])|password|sk-(?:or-)?[a-z0-9_-]{8,})/i
@@ -278,12 +286,14 @@ function openRouterModelRecords(payload: unknown): ModelEvidenceSnapshot["record
         for (const overrideValue of pricing.overrides) {
           const override = object(overrideValue)
           const minimum = optionalFinite(override.min_prompt_tokens)
+          // A schedule this record cannot express (for example weekend-only `utc_days`) is left
+          // out rather than failing the whole catalog or being applied as a base rate.
           if (
             minimum === null &&
             optionalFinite(override.utc_start) === null &&
             optionalFinite(override.utc_end) === null
           )
-            return malformed()
+            continue
           tiers.push(openRouterPriceTier(override, minimum))
         }
       }
@@ -351,9 +361,13 @@ function benchmarkRecords(payload: unknown): {
   }
 }
 
-async function boundedJSON(response: Response, signal: AbortSignal): Promise<unknown> {
+async function boundedJSON(
+  response: Response,
+  signal: AbortSignal,
+  limit = MAX_RESPONSE_BYTES,
+): Promise<unknown> {
   const length = response.headers.get("content-length")
-  if (length && /^\d+$/.test(length) && Number(length) > MAX_RESPONSE_BYTES)
+  if (length && /^\d+$/.test(length) && Number(length) > limit)
     throw new SourceFailure("response-too-large")
   if (!response.body) throw new SourceFailure("malformed-response")
 
@@ -367,7 +381,7 @@ async function boundedJSON(response: Response, signal: AbortSignal): Promise<unk
       const chunk = await reader.read()
       if (chunk.done) break
       bytes += chunk.value.byteLength
-      if (bytes > MAX_RESPONSE_BYTES) {
+      if (bytes > limit) {
         await reader.cancel().catch(() => undefined)
         throw new SourceFailure("response-too-large")
       }
@@ -382,6 +396,46 @@ async function boundedJSON(response: Response, signal: AbortSignal): Promise<unk
   } finally {
     reader.releaseLock()
   }
+}
+
+async function boundedBytes(
+  response: Response,
+  signal: AbortSignal,
+  limit: number,
+): Promise<Uint8Array> {
+  const length = response.headers.get("content-length")
+  if (length && /^\d+$/.test(length) && Number(length) > limit)
+    throw new SourceFailure("response-too-large")
+  if (!response.body) throw new SourceFailure("malformed-response")
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      signal.throwIfAborted()
+      const chunk = await reader.read()
+      if (chunk.done) break
+      bytes += chunk.value.byteLength
+      if (bytes > limit) {
+        await reader.cancel().catch(() => undefined)
+        throw new SourceFailure("response-too-large")
+      }
+      chunks.push(chunk.value)
+    }
+  } catch (error) {
+    if (error instanceof SourceFailure) throw error
+    if (signal.aborted) throw error
+    throw new SourceFailure("malformed-response")
+  } finally {
+    reader.releaseLock()
+  }
+  const all = new Uint8Array(bytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    all.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return all
 }
 
 function httpFailure(status: number): SourceFailure {
@@ -407,6 +461,12 @@ export const FAILED_RETRY_MS = 5 * 60 * 1000
 const STALE_REFRESHING_MS = 2 * 60 * 1000
 
 export type RefreshKind = "info" | "prices"
+
+/** Sources with no prices of their own: rows only, kept a week. */
+const INFO_ONLY_SOURCES: ReadonlySet<ModelEvidenceSource> = new Set([
+  "openrouter-benchmarks",
+  "epoch-benchmarks",
+])
 
 /**
  * The sources to fetch now and why. `infoAt` is each source's info time (a model list's `asOf`).
@@ -445,7 +505,7 @@ export function dueSources(
     if (!Number.isFinite(retrieved) || !Number.isFinite(info) || now - info >= INFO_TTL_MS)
       due.set(status.source, "info")
     // Benchmark rows are info only; the model lists also carry prices.
-    else if (status.source !== "openrouter-benchmarks" && now - retrieved >= PRICE_TTL_MS)
+    else if (!INFO_ONLY_SOURCES.has(status.source) && now - retrieved >= PRICE_TTL_MS)
       due.set(status.source, "prices")
   }
   return due
@@ -457,7 +517,9 @@ const recordKey = (record: ModelEvidenceSnapshot["records"][number]) =>
     ? `${record.providerID}\u0000${record.id}`
     : record.kind === "openrouter-model"
       ? record.id
-      : ""
+      : record.kind === "models-dev-model"
+        ? `${record.providerID}\u0000${record.id}`
+        : ""
 
 /**
  * A price refresh: the stored records keep their info and take the new rates; a model the
@@ -530,7 +592,7 @@ export class ModelEvidenceRefresher {
       // A model list's `asOf` is its info time; a benchmark's is the publisher's data date, so
       // its info time is when we fetched it.
       infoAt[source] = snapshot
-        ? source === "openrouter-benchmarks"
+        ? INFO_ONLY_SOURCES.has(source)
           ? snapshot.retrievedAt
           : (snapshot.asOf ?? snapshot.retrievedAt)
         : null
@@ -614,11 +676,14 @@ export class ModelEvidenceRefresher {
           ),
         )
       : Promise.resolve<EndpointPricingOutcome[]>([])
-    const [modelsOutcome, benchmarkOutcome, endpointOutcomes] = await Promise.all([
-      models,
-      benchmarks,
-      endpointPricing,
-    ])
+    const modelsDev = wanted.has("models-dev")
+      ? this.modelsDevOutcome(generations["models-dev"], native, signal)
+      : Promise.resolve(skipped)
+    const epoch = wanted.has("epoch-benchmarks")
+      ? this.epochOutcome(generations["epoch-benchmarks"], signal)
+      : Promise.resolve(skipped)
+    const [modelsOutcome, benchmarkOutcome, endpointOutcomes, modelsDevOutcome, epochOutcome] =
+      await Promise.all([models, benchmarks, endpointPricing, modelsDev, epoch])
 
     if (signal.aborted) {
       this.cancelAll(wanted, generations, endpointGenerations, endpointOutcomes)
@@ -628,6 +693,8 @@ export class ModelEvidenceRefresher {
       ["native-catalog", native],
       ["openrouter-models", modelsOutcome],
       ["openrouter-benchmarks", benchmarkOutcome],
+      ["models-dev", modelsDevOutcome],
+      ["epoch-benchmarks", epochOutcome],
     ] as const
     for (const [source, outcome] of outcomes) {
       if (!wanted.has(source)) continue
@@ -761,6 +828,98 @@ export class ModelEvidenceRefresher {
     }
   }
 
+  /** The providers this install routes, so models.dev keeps the lineups that matter to it. */
+  private routedProviders(native: Outcome): Set<string> {
+    const snapshot =
+      native.state === "success" && native.snapshot.source === "native-catalog"
+        ? native.snapshot
+        : this.store.latestSnapshot("native-catalog")
+    const providers = new Set<string>()
+    if (snapshot?.source === "native-catalog")
+      for (const record of snapshot.records) providers.add(record.providerID)
+    return providers
+  }
+
+  private async modelsDevOutcome(
+    generation: number,
+    native: Outcome,
+    signal: AbortSignal,
+  ): Promise<Outcome> {
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2)
+    const requestSignal = AbortSignal.any([signal, timeout])
+    try {
+      signal.throwIfAborted()
+      const response = await this.fetcher(MODEL_EVIDENCE_SOURCE_URLS["models-dev"], {
+        method: "GET",
+        headers: new Headers({ Accept: "application/json", ...PUBLIC_SOURCE_HEADERS }),
+        redirect: "error",
+        signal: requestSignal,
+      })
+      signal.throwIfAborted()
+      if (!response.ok) throw httpFailure(response.status)
+      const payload = await boundedJSON(response, requestSignal, MAX_MODELS_DEV_BYTES)
+      signal.throwIfAborted()
+      if (timeout.aborted) throw new SourceFailure("timeout")
+      let records
+      try {
+        records = parseModelsDev(payload, this.routedProviders(native))
+        if (!records.length) throw new Error("no models")
+      } catch {
+        throw new SourceFailure("malformed-response")
+      }
+      return {
+        state: "success",
+        snapshot: makeSnapshot("models-dev", this.store.projectDirectory, generation, {
+          asOf: null,
+          version: null,
+          citation: "models.dev (MIT), the open model database OpenCode uses",
+          upstreamSourceURL: null,
+          records,
+        }),
+      }
+    } catch (error) {
+      return asFailure(error, signal, timeout)
+    }
+  }
+
+  private async epochOutcome(generation: number, signal: AbortSignal): Promise<Outcome> {
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2)
+    const requestSignal = AbortSignal.any([signal, timeout])
+    try {
+      signal.throwIfAborted()
+      const response = await this.fetcher(MODEL_EVIDENCE_SOURCE_URLS["epoch-benchmarks"], {
+        method: "GET",
+        headers: new Headers({ Accept: "application/zip", ...PUBLIC_SOURCE_HEADERS }),
+        redirect: "error",
+        signal: requestSignal,
+      })
+      signal.throwIfAborted()
+      if (!response.ok) throw httpFailure(response.status)
+      const bytes = await boundedBytes(response, requestSignal, MAX_EPOCH_ARCHIVE_BYTES)
+      signal.throwIfAborted()
+      if (timeout.aborted) throw new SourceFailure("timeout")
+      let records
+      try {
+        records = parseEpochArchive(bytes).slice(0, 2_000)
+        if (!records.length) throw new Error("no rows")
+      } catch {
+        throw new SourceFailure("malformed-response")
+      }
+      return {
+        state: "success",
+        snapshot: makeSnapshot("epoch-benchmarks", this.store.projectDirectory, generation, {
+          asOf: null,
+          version: null,
+          citation: `${EPOCH_ATTRIBUTION}. Epoch AI, Capabilities & benchmarking, epoch.ai/benchmarks`,
+          upstreamSourceURL: "https://epoch.ai/benchmarks",
+          records,
+        }),
+      }
+    } catch (error) {
+      return asFailure(error, signal, timeout)
+    }
+  }
+
   private async endpointPricingOutcome(
     productID: EndpointPricingProductID,
     generation: number,
@@ -824,7 +983,7 @@ export class ModelEvidenceRefresher {
       let snapshot = outcome.snapshot
       // An info refresh stores the response as it is (info time = retrieved time); a price
       // refresh merges it into the stored records and keeps the earlier info time in `asOf`.
-      if (source !== "openrouter-benchmarks" && this.plan.get(source) === "prices") {
+      if (!INFO_ONLY_SOURCES.has(source) && this.plan.get(source) === "prices") {
         const previous = this.store.latestSnapshot(source)
         if (previous) snapshot = mergePriceRefresh(previous, snapshot)
       }

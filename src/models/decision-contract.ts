@@ -2,7 +2,7 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { TaskReferenceSchema } from "../task.ts"
-import { ModelPriceSourcePolicySchema, ModelPriceSourceSchema } from "./price-source-settings.ts"
+import { ModelPricePinSourceSchema, ModelPriceSourcePolicySchema } from "./price-source-settings.ts"
 import { KnownUsageMarketSchema } from "./market-range.ts"
 import { ModelDecisionReferenceEstimateSchema } from "./reference-estimate.ts"
 
@@ -136,7 +136,7 @@ export const ModelDecisionPriceIndexSchema = z
     pins: z
       .array(
         z.strictObject({
-          source: ModelPriceSourceSchema,
+          source: ModelPricePinSourceSchema,
           snapshotID: OpaqueID,
           retrievedAt: z.iso.datetime(),
           freshness: z.enum(["current", "stale"]),
@@ -254,7 +254,7 @@ export type ModelDecisionCohortCounts = z.infer<typeof ModelDecisionCohortCounts
 
 export const ModelDecisionPricePinSchema = z
   .strictObject({
-    source: ModelPriceSourceSchema.nullable(),
+    source: ModelPricePinSourceSchema.nullable(),
     sourcePolicyRevision: Count,
     sourceRecordID: OpaqueID.nullable(),
     snapshotID: OpaqueID.nullable(),
