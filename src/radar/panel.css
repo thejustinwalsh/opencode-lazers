@@ -1209,12 +1209,26 @@
   margin: 0 0 8px;
   padding: 8px 10px 9px;
   border: 1px solid var(--border-weak-base);
-  border-left: 2px solid var(--lazers-hue-tools, var(--text-interactive-base));
   border-radius: 7px;
   background: var(--surface-base);
 }
 .lazers-radar-model[data-idle="true"] {
   opacity: 0.55;
+}
+/* The model hue is the same swatch its destination carries on the canvas. */
+.lazers-radar-model-title::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--lazers-hue-tools, var(--text-interactive-base));
+  border-radius: 2px;
+  background: color-mix(
+    in oklch,
+    var(--lazers-hue-tools, var(--text-interactive-base)) 22%,
+    transparent
+  );
 }
 .lazers-radar-model-title {
   display: flex;
