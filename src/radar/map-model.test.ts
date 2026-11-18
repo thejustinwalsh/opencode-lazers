@@ -42,6 +42,7 @@ function live(
 ): LiveRadarResponse {
   return {
     sessions,
+    scope: { kind: "project" },
     scheduler: { status: "scheduled", participants: 2 },
     ...(workload ? { workload } : {}),
   } as unknown as LiveRadarResponse
@@ -192,4 +193,25 @@ test("Map lists only the sessions the shared idle filter shows", () => {
     "you",
     "group:queue",
   ])
+})
+
+test("a running Architect is blue and so is the edge from You", () => {
+  const busyArchitect = { ...architect, state: "busy" as const }
+  const map = createRadarMap(live([busyArchitect]), 2_000)
+  expect(map.nodeByID.get("architect")).toMatchObject({ tone: "active", running: true })
+  expect(map.edges.find((edge) => edge.to === "architect")?.tone).toBe("active")
+  expect(map.nodeByID.get("you")?.tone).toBe("active")
+})
+
+test("workers are siblings on a rail with a tick each, not a chain", () => {
+  const map = createRadarMap(live([architect, session("a"), session("b"), session("c")]), 2_000)
+  const layout = layoutMap(map, 500)
+  const items = layout.nodes.filter((node) => node.kind === "session")
+  const group = layout.nodes.find((node) => node.id === "group:runtime")!
+  // Items sit indented under the group, one per row, all joined to the same vertical rail.
+  expect(items.every((item) => item.x > group.x)).toBe(true)
+  const rail = (d: string) => d.match(/^M([\d.]+) /)?.[1]
+  const ticks = layout.edges.filter((edge) => edge.from === "group:runtime")
+  expect(new Set(ticks.map((edge) => rail(edge.d))).size).toBe(1)
+  for (const edge of ticks) expect(edge.d).toMatch(/V\d+H[\d.]+$/)
 })

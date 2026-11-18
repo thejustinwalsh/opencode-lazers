@@ -9,6 +9,7 @@ export type RadarNativeSession = {
   parentID: string | null
   directory: string
   agent: string | null
+  title?: string | null
   model: { providerID: string; id: string; variant: string | null } | null
   archived: boolean
   busy: boolean | null
@@ -40,7 +41,7 @@ export type RadarSessionHost = {
 
 type SessionInfo = Pick<
   Session.Info,
-  "id" | "parentID" | "projectID" | "agent" | "model" | "time" | "location"
+  "id" | "parentID" | "projectID" | "agent" | "title" | "model" | "time" | "location"
 >
 type SessionPage = {
   data: readonly SessionInfo[]
@@ -84,6 +85,7 @@ function view(session: SessionInfo): RadarNativeSession {
     parentID: session.parentID ?? null,
     directory: session.location.directory,
     agent: session.agent ?? null,
+    title: session.title ?? null,
     model: session.model
       ? {
           providerID: session.model.providerID,

@@ -1,5 +1,5 @@
 import type { LiveRadarResponse } from "../observability/contract.ts"
-import { formatAge, sessionState } from "./monitor-model.ts"
+import { formatAge, scopedWorkload, sessionState } from "./monitor-model.ts"
 import type { LiveSession } from "./monitor-model.ts"
 import { sessionRole } from "./monitor-model.ts"
 
@@ -54,7 +54,7 @@ export function createRadarMap(
   const working = available.filter((session) => session !== architect && session.assignment)
   const workers = working.filter((session) => session.assignment?.state !== "verifying")
   const verifiers = working.filter((session) => session.assignment?.state === "verifying")
-  const workload = live.workload
+  const workload = scopedWorkload(live)
 
   const nodes: MapNode[] = []
   const edges: MapEdge[] = []
@@ -84,7 +84,7 @@ export function createRadarMap(
       kind: "architect",
       title: "Architect",
       ...(state ? { sub: `${state}${age}` } : {}),
-      tone: "weak",
+      tone: architect.state === "busy" ? "active" : "weak",
       running: architect.state === "busy",
       parent: "you",
       sessionID: architect.sessionID,
@@ -213,7 +213,7 @@ export function relatedNodes(map: RadarMap, selectedID: string | null) {
 /** Facts for a system node's inspector; every line is something the read records. */
 export function mapFacts(live: Live, node: MapNode): Array<{ label: string; value: string }> {
   const facts: Array<{ label: string; value: string }> = []
-  const workload = live.workload
+  const workload = scopedWorkload(live)
   if (
     (node.id === "group:runtime" || node.id === "group:checks") &&
     live.scheduler.status !== "unknown"

@@ -308,6 +308,7 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     case "tool":
       view.tool = typeof value.tool === "string" ? safeText(value.tool, stats, 160) : null
       view.status = string(value.status)
+      if (typeof value.detail === "string") view.detail = safeText(value.detail, stats, 200)
       view.callStatus = value.callStatus === "called" ? "called" : null
       view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
       view.execution = projectedExecution(value.execution, stats)

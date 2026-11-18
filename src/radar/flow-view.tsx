@@ -194,6 +194,12 @@ export function RadarFlowCanvas(props: {
             const selected = () =>
               props.selection?.kind === "session" && props.selection.id === session.sessionID
             const label = () => (layout().narrow ? abbreviateRole(session.role) : session.role)
+            /** Characters left on the name line for the title, after the role and reference. */
+            const titleRoom = () =>
+              session.title
+                ? Math.floor((layout().frame.width - (session.x + 14) - 12) / 6.2) -
+                  (label().length + (session.ref ? session.ref.length + 1 : 0) + 3)
+                : 0
             return (
               <g
                 class="lazers-radar-flow-session"
@@ -281,6 +287,12 @@ export function RadarFlowCanvas(props: {
                   <tspan class="lazers-radar-flow-name">{label()}</tspan>
                   <Show when={session.ref}>
                     <tspan class="lazers-radar-flow-ref"> {session.ref}</tspan>
+                  </Show>
+                  <Show when={!layout().narrow && titleRoom() > 3}>
+                    <tspan class="lazers-radar-flow-title">
+                      {" "}
+                      · {truncate(session.title, titleRoom())}
+                    </tspan>
                   </Show>
                 </text>
                 <Show when={session.doing}>

@@ -471,6 +471,8 @@ const LiveSession = z.strictObject({
   classification: z.enum(["managed", "unmanaged"]),
   /** Additive: the native parent session, only when it has one. */
   parentSessionID: z.string().min(1).max(200).optional(),
+  /** Additive: the native session title, when the session has one. */
+  title: z.string().min(1).max(200).optional(),
   isViewSession: z.boolean(),
   isCurrentArchitect: z.boolean().nullable(),
   availability: z.enum(["available", "missing", "archived", "moved", "unavailable"]),
@@ -516,6 +518,8 @@ const LiveToolCall = z.strictObject({
       paths: z.array(z.string().max(512)).max(8),
     })
     .optional(),
+  /** Additive: a redacted one-line summary of what the call ran, such as its command or file. */
+  detail: z.string().max(200).optional(),
 })
 
 const LiveFlow = z.strictObject({
@@ -538,6 +542,8 @@ const LiveFlow = z.strictObject({
   sourceNativeRevision: z.int().positive().nullable(),
   sourceEventID: z.string().max(200).nullable(),
   sourceEventType: z.string().max(120).nullable(),
+  /** Additive: the call summary for tool phases, when one was recorded. */
+  detail: z.string().max(200).optional(),
   /** Additive: measured tokens of the finished model step, only when the step recorded them. */
   usage: z
     .strictObject({

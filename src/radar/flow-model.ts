@@ -1,5 +1,7 @@
 import type { LiveRadarResponse } from "../observability/contract.ts"
 import {
+  scopedWorkload,
+  callSummary,
   formatAge,
   sessionCallLines,
   sessionGroups,
@@ -34,6 +36,8 @@ export type FlowSession = {
   role: string
   /** `LZ-99`, absent for the Architect. */
   ref: string
+  /** The task title for a worker, or the session title: shown after the role when there is room. */
+  title: string
   tone: "run" | "idle"
   /** What it is doing now: `▸ bash: src/x.ts`, `idle 29m`; null when nothing is known. */
   doing: string | null
@@ -114,6 +118,9 @@ const ASK = /^(question|ask|permission|ask[-_ ]?user)/i
 
 /** The destination a tool call went to, or the generic tools destination. */
 export function toolDestination(tool: string, verifying: boolean, hasFileTargets: boolean) {
+  // Code mode: the Architect's `execute` runs LAZERS project tools, named `lz-*`.
+  if (/^execute$/i.test(tool) || /^lz-/i.test(tool))
+    return { id: "lazers", name: "LAZERS tools", kind: "service" as const }
   if (ASK.test(tool)) return { id: "you", name: "You", kind: "you" as const }
   if (/^(check|verify)/i.test(tool) || (verifying && SHELL.test(tool)))
     return { id: "checks", name: "Checks", kind: "service" as const }
@@ -127,10 +134,10 @@ export function toolDestination(tool: string, verifying: boolean, hasFileTargets
 
 function callDetail(line: ActivityLine) {
   if (line.status === "failed" && line.error) return line.error
-  const target = line.target
-    ? `${line.target}${line.extraTargets > 0 ? ` +${line.extraTargets}` : ""}`
-    : ""
-  return `${line.tool.toLowerCase()}${target ? ` ${target}` : ""}`
+  const summary = callSummary(line)
+  // A command reads as itself; a file or pattern reads with its tool.
+  if (summary && (SHELL.test(line.tool) || /^(check|verify)/i.test(line.tool))) return summary
+  return `${line.tool.toLowerCase()}${summary ? ` ${summary}` : ""}`
 }
 
 const compact = (value: number) =>
@@ -204,7 +211,7 @@ export function createFlowModel(
         dest.kind === "you"
           ? { text: `waiting for you · ${callDetail(running)}`, failed: false, waiting: true }
           : {
-              text: `▸ ${running.tool.toLowerCase()}${running.target ? `: ${running.target}` : ""}`,
+              text: `▸ ${running.tool.toLowerCase()}${callSummary(running) ? `: ${callSummary(running)}` : ""}`,
               failed: false,
               waiting: false,
             },
@@ -344,6 +351,7 @@ export function createFlowModel(
       parent: groups.parents.get(session.sessionID) ?? null,
       role,
       ref: session.assignment?.taskReference ?? "",
+      title: session.assignment?.taskTitle ?? session.title ?? "",
       tone: busy ? "run" : "idle",
       doing: note?.text ?? idleText ?? (busy ? "running" : null),
       doingFailed: note?.failed ?? false,
@@ -454,7 +462,7 @@ export function quietSentences(live: Live) {
   const architect = live.sessions.find(
     (session) => session.availability === "available" && session.isCurrentArchitect === true,
   )
-  const queued = live.workload?.queued ?? 0
+  const queued = scopedWorkload(live)?.queued ?? 0
   const parts = [
     architect?.state === "idle" ? "Architect is idle" : "",
     queued > 0 ? `${queued} ${queued === 1 ? "task is" : "tasks are"} queued` : "",
