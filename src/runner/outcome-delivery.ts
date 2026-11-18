@@ -651,6 +651,8 @@ export class OutcomeDelivery {
       )
       return
     }
+    // The pause may be set while this tick is already delivering: check again at the send.
+    if (this.runtime.store.architectContactPaused()) return
     if (
       !this.outcomeState(
         message,

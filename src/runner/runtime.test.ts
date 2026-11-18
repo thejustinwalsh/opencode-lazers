@@ -15207,3 +15207,21 @@ test("while Architect contact is paused notices stay queued and deliver after un
   await drive(f.runtime, 3)
   expect(f.notifications.length).toBeGreaterThan(0)
 })
+
+test("a pause set while a tick is delivering still stops the send to the Architect", async () => {
+  const f = fixture({ taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  const read = f.host.outcomeInbox!
+  let paused = false
+  f.host.outcomeInbox = async (id) => {
+    // The operator pauses after the tick began delivering, before the notice is sent.
+    if (!paused) {
+      paused = true
+      f.store.setArchitectContact("paused", "Recovery mode")
+    }
+    return read(id)
+  }
+  await drive(f.runtime, 4)
+  expect(paused).toBe(true)
+  expect(f.notifications).toEqual([])
+})

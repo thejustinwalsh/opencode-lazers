@@ -130,4 +130,5 @@ Keep source and docs in this one plugin package. Read [DESIGN.md](../../DESIGN.m
 ## Historical records
 
 The [roadmap](../../design/roadmap.md) and dated review files record plans and observations. Treat proposed work and environment-specific results as historical, not as release guarantees.
+
 - There is no source quarantine or source guard. Never add a host call scoped to a worktree location from an observation path: it boots the location. Read a location-scoped inventory only after `debug.location.list` shows it loaded, and identify a recorded workspace by path.
