@@ -378,7 +378,7 @@ export type TaskRuntimeOptions = {
   now?: () => number
   architectPromptHook?: boolean
   requestTick?: () => Promise<void>
-  wakeScheduler?: () => void
+  wakeScheduler?: (delayMs?: number) => void
   retainedDependencyInstaller?: RetainedDependencyInstaller
   beforeRetainedCheckBegin?: (input: {
     operationID: string
@@ -627,7 +627,7 @@ export class TaskRuntime {
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
-  private readonly wakeScheduler: (() => void) | undefined
+  private readonly wakeScheduler: ((delayMs?: number) => void) | undefined
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly beforeRetainedCheckBegin: TaskRuntimeOptions["beforeRetainedCheckBegin"]
   private readonly modelMappingResolver: ModelMappingResolver
@@ -8872,7 +8872,11 @@ export class TaskRuntime {
     let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
     try {
       const fence = section("tick:claim", () => this.store.claim(this.owner))
-      if (fence === null) return
+      if (fence === null) {
+        // Another owner's lease is still live. Come back when it lapses rather than a full interval later.
+        this.wakeScheduler?.(this.store.leaseRetryDelayMs(this.now()))
+        return
+      }
       if (this.sourceResyncPending) this.observeArchitectSourceEvent()
       section("tick:flushSourceInvalidations", () => this.flushSourceInvalidations())
       let heartbeatFailed = false
@@ -9051,7 +9055,9 @@ export class TaskRuntime {
           this.retainedVerificationExecution.notifyHeldRetainedVerification(operation.id, fence),
         )
       }
-      await sectionAsync("tick:deliver", () => this.outcomeDelivery.deliver(fence))
+      // Notices held for a retryable reason are tried again soon, not at the next full interval.
+      if (await sectionAsync("tick:deliver", () => this.outcomeDelivery.deliver(fence)))
+        this.wakeScheduler?.(15_000)
     } finally {
       await heartbeat?.dispose()
       this.running = false

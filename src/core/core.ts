@@ -195,7 +195,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     verificationTimeoutDefaults: verificationDefaults,
     architectPromptHook: true,
     requestTick: () => (scheduler ? scheduler.runNow() : runtime.tick()),
-    wakeScheduler: () => scheduler?.request(),
+    wakeScheduler: (delayMs) => scheduler?.request(delayMs),
   })
   built("runtime")
   // Lazy, offline-safe backfill of stable change identity; never blocks startup.
