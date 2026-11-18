@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js"
 import type { KnownUsageMarketScenario } from "./market-range.ts"
-import { formatDate } from "./comparison-presentation.ts"
+import { formatDate, joinSegments, retrievedLabel } from "./comparison-presentation.ts"
 import { statusText } from "./panel-shared.ts"
 
 const knownUsageCurrency = new Intl.NumberFormat("en-US", {
@@ -184,7 +184,7 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
       ? "Current"
       : scenario().freshness === "stale"
         ? "Stale"
-        : "Unavailable"
+        : undefined
   const routeCoverage = () => scenario().coverage.route
   const retries = () => scenario().coverage.retries
 
@@ -199,10 +199,14 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
         <strong>{valueLabel()}</strong>
       </p>
       <p class="lazers-models-market-meta">
-        {sourcePresentation().compact} · provider {provenance().providerName ?? "unavailable"} · tag{" "}
-        {provenance().tag ?? "unavailable"} · service tier{" "}
-        {provenance().serviceTier ?? "not specified"} · {freshness()} ·{" "}
-        {formatDate(provenance().retrievedAt)}
+        {joinSegments([
+          sourcePresentation().compact,
+          provenance().providerName && `provider ${provenance().providerName}`,
+          provenance().tag && `tag ${provenance().tag}`,
+          provenance().serviceTier && `service tier ${provenance().serviceTier}`,
+          freshness(),
+          formatDate(provenance().retrievedAt),
+        ])}
       </p>
       <p class="lazers-models-market-caveat">{essentialDescription()}</p>
       <details class="lazers-models-evidence-details lazers-models-market-evidence-details">
@@ -259,7 +263,9 @@ export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarket
                   (scenario().cacheWriteEvidence.basis === "endpoint-rate"
                     ? provenance().sourceURL
                     : "unavailable")}{" "}
-                · retrieved {formatDate(scenario().cacheWriteEvidence.retrievedAt)}
+                {retrievedLabel(scenario().cacheWriteEvidence.retrievedAt)
+                  ? ` · ${retrievedLabel(scenario().cacheWriteEvidence.retrievedAt)}`
+                  : ""}
               </dd>
               <dt>Tier attribution</dt>
               <dd>

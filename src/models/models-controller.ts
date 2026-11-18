@@ -740,10 +740,6 @@ export function createModelsController(props: ModelsProps) {
       if (point) state.selectConfiguration(point.configurationID)
     }
   }
-  const taskLabel = () => {
-    const task = selectedTask()
-    return task ? task.reference : visible()?.selectedTaskID ? "Task unavailable" : "Choose task"
-  }
   const taskDescription = () => {
     const task = selectedTask()
     return task
@@ -1214,7 +1210,6 @@ export function createModelsController(props: ModelsProps) {
     state,
     tabKey,
     taskDescription,
-    taskLabel,
     updateAssignmentRoute,
     visible,
   }

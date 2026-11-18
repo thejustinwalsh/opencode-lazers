@@ -1,16 +1,15 @@
 import { Show, For, onCleanup, onMount } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
-import type { ModelDecisionRow } from "./decision-contract.ts"
 import { PanelStatus } from "../panel-status.tsx"
 import { ComparisonChart, comparisonChartHasPlottablePoints } from "./comparison-chart.tsx"
 import { BenchmarkChart, benchmarkSourceName } from "./benchmark-chart.tsx"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
-import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
-import type { ModelCandidate, ModelComparisonPanelData } from "./comparison-state.ts"
 import {
   boundedModelLabel,
   formatDate,
+  joinSegments,
+  retrievedLabel,
   formatMarketAmount,
   numericValue,
   recordReferenceLabel,
@@ -27,178 +26,20 @@ import {
   statusText,
 } from "./panel-shared.ts"
 import { Disclosure, SplitPane } from "./panel-layout.tsx"
-
-function benchmarkLabel(candidate: ModelCandidate) {
-  const benchmark = candidate.externalBenchmark
-  if (!benchmark) {
-    return candidate.benchmarkCorrespondence.status === "ambiguous"
-      ? "Ambiguous benchmark match"
-      : "No matched benchmark"
-  }
-  return benchmark.codingIndex === null
-    ? "Coding index not reported"
-    : `Coding index ${benchmark.codingIndex}`
-}
-
-function efficiencyLabel(row: ModelDecisionRow) {
-  const efficiency = row.efficiency
-  switch (efficiency.status) {
-    case "available":
-      return `${formatNumber(efficiency.tokensPerAcceptedTask)} tokens · ${formatMoney(efficiency.currentMarketUSDPerAcceptedTask)} per accepted task · ${efficiency.observationCount} observations`
-    case "single-observation":
-      return `${formatNumber(efficiency.tokensPerAcceptedTask)} tokens · ${formatMoney(efficiency.currentMarketUSDPerAcceptedTask)} · n=1`
-    case "partial":
-      return `Partial · ${efficiency.tokensPerAcceptedTask === null ? "tokens unknown" : `${formatNumber(efficiency.tokensPerAcceptedTask)} tokens`} · ${efficiency.currentMarketUSDPerAcceptedTask === null ? "current price unknown" : formatMoney(efficiency.currentMarketUSDPerAcceptedTask)}`
-    case "zero-accepted":
-      return "No accepted tasks; no efficiency coordinate"
-    case "unknown":
-      return `Unknown · ${efficiency.reason}`
-  }
-}
-function moneyRangeLabel(range: { minimum: number; maximum: number }) {
-  return range.minimum === range.maximum
-    ? formatMoney(range.minimum)
-    : `${formatMoney(range.minimum)}–${formatMoney(range.maximum)}`
-}
-
-function referenceCostLabel(estimate: ModelDecisionReferenceEstimate) {
-  switch (estimate.status) {
-    case "exact":
-      return estimate.valueUSDPerAcceptedTask === null
-        ? "No numeric OpenRouter model catalog reference amount"
-        : `OpenRouter model catalog scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
-    case "conditional":
-      return estimate.rangeUSDPerAcceptedTask
-        ? `OpenRouter model catalog conditional range · ${moneyRangeLabel(estimate.rangeUSDPerAcceptedTask)} / accepted task`
-        : "No numeric OpenRouter model catalog range amount"
-    case "partial":
-      if (estimate.knownSubtotalUSDPerAcceptedTask !== null)
-        return `OpenRouter model catalog priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
-      if (estimate.knownSubtotalRangeUSDPerAcceptedTask)
-        return `OpenRouter model catalog priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
-      return "No priced portion is shown; total unknown"
-    case "zero-accepted":
-      return "No accepted tasks · no reference per-task amount"
-    case "unavailable":
-      return "No numeric OpenRouter model catalog reference amount"
-  }
-}
-
-const referenceUsageCategories = [
-  ["uncachedInput", "Uncached input"],
-  ["output", "Output"],
-  ["reasoning", "Reasoning"],
-  ["cacheRead", "Cache read"],
-  ["cacheWrite", "Cache write"],
-] as const
-
-function referenceCategoryStatus(estimate: ModelDecisionReferenceEstimate, category: string) {
-  const usage = estimate.coverage.categories[category as keyof typeof estimate.coverage.categories]
-  return `${usage.tokens === null ? "tokens unknown" : `${formatNumber(usage.tokens)} tokens`} · ${usage.status} usage · ${usage.rateCoverage} rate coverage`
-}
-function estimateLabel(
-  inspection: Extract<
-    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
-    { status: "found" }
-  >["estimate"],
-) {
-  const estimate = inspection
-  if (estimate.status === "zero-accepted") return "No accepted tasks; estimate unavailable."
-  if (estimate.status === "unknown") return "Estimate unavailable."
-  if (estimate.status === "single-observation")
-    return "Empirical observed value · n=1 accepted logical-task history"
-  if (estimate.status === "partial")
-    return `Partial empirical observed spread · n=${estimate.observationCount}`
-  return `Empirical observed spread · n=${estimate.observationCount} accepted logical-task histories`
-}
-
-function estimateValuesLabel(
-  inspection: Extract<
-    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
-    { status: "found" }
-  >["estimate"],
-) {
-  const estimate = inspection
-  if (estimate.status === "zero-accepted") return "No successful-task estimate is available."
-  if (estimate.status === "unknown") return "No complete estimate basis is available."
-  const tokenRange = estimate.range.tokens
-  const priceRange = estimate.range.currentMarketUSD
-  const renderRange = (range: { minimum: number; maximum: number } | null) => {
-    if (!range) return "Unknown"
-    return range.minimum === range.maximum
-      ? formatNumber(range.minimum)
-      : `${formatNumber(range.minimum)}–${formatNumber(range.maximum)}`
-  }
-  const price = priceRange
-    ? `${formatMoney(priceRange.minimum)}${priceRange.maximum === priceRange.minimum ? "" : `–${formatMoney(priceRange.maximum)}`}`
-    : "current market cost unknown"
-  const single = estimate.status === "single-observation" ? " · one value, no interval" : ""
-  const missing = estimate.status === "partial" ? ` · missing ${estimate.missing.join(", ")}` : ""
-  return `${renderRange(tokenRange)} tokens · ${price}${single}${missing}`
-}
-
-function estimateUnavailableReason(
-  estimate: Extract<
-    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
-    { status: "found" }
-  >["estimate"],
-) {
-  return estimate.status === "unknown" ? estimate.reason : undefined
-}
-
-function estimateHistoryScopeLabel(
-  estimate: Extract<
-    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
-    { status: "found" }
-  >["estimate"],
-) {
-  const historyScope = estimate.historyScope
-  const completeness =
-    historyScope?.completeness === "complete-accepted-logical-task-retry-history"
-      ? "Complete accepted-task retry history"
-      : "Accepted-task retry-history completeness unknown"
-  return `${completeness} · Route scope · ${historyScope?.routeScope ?? "unknown"}`
-}
-
-function estimateHistoryDescription(
-  estimate: Extract<
-    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
-    { status: "found" }
-  >["estimate"],
-) {
-  const historyIsComplete =
-    estimate.historyScope?.completeness === "complete-accepted-logical-task-retry-history"
-  return historyIsComplete
-    ? "The producer reports complete accepted-task histories, including retries. This is observed spread, not a predictive interval."
-    : "Accepted-task retry-history completeness is unknown. This is observed spread, not a predictive interval."
-}
-
-function contributorMembershipLabel(
-  membership: "cohort-effort" | "empirical-history" | "both" | undefined,
-) {
-  switch (membership) {
-    case "cohort-effort":
-      return "cohort-effort"
-    case "empirical-history":
-      return "history-only"
-    case "both":
-      return "both"
-    default:
-      return "unknown"
-  }
-}
-
-function variantCoverageLabel(candidate: ModelCandidate) {
-  const variants = candidate.native.availableVariants
-  const coverage = candidate.native.variantCoverage
-  const labels = variants?.length ? variants.join(", ") : "None reported"
-
-  if (coverage.status === "truncated")
-    return `Variants (${formatNumber(variants?.length)} shown of ${formatNumber(coverage.totalVariants)} total; ${formatNumber(coverage.omittedVariants)} omitted): ${labels}`
-  if (coverage.status === "complete")
-    return `Variants (${formatNumber(coverage.totalVariants)} total): ${labels}`
-  return `Variants (coverage unknown): ${variants?.join(", ") || "Not reported"}`
-}
+import {
+  benchmarkLabel,
+  contributorMembership,
+  efficiencySummary,
+  estimateHeadline,
+  estimateHistoryNote,
+  estimateHistoryScope,
+  estimateUnavailableReason,
+  estimateValues,
+  referenceCategorySummary,
+  referenceCostSummary,
+  referenceUsageCategories,
+  variantCoverage,
+} from "./selected-model-presentation.ts"
 
 /** Source snapshots and their refresh state; lives inside the basis disclosures. */
 function SourcesDetails(props: { ctl: ModelsController }) {
@@ -579,8 +420,10 @@ function CompareInspector(props: { ctl: ModelsController }) {
                       {(snapshot) => (
                         <p class="lazers-models-source-meta">
                           {snapshot().citation ?? "Artificial Analysis via OpenRouter"}
-                          {snapshot().asOf ? ` · as of ${formatDate(snapshot().asOf!)}` : ""} ·
-                          retrieved {formatDate(snapshot().retrievedAt)}
+                          {joinSegments([
+                            snapshot().asOf && `as of ${formatDate(snapshot().asOf!)}`,
+                            retrievedLabel(snapshot().retrievedAt),
+                          ])}
                         </p>
                       )}
                     </Show>
@@ -609,10 +452,8 @@ function CompareInspector(props: { ctl: ModelsController }) {
                           {rate().appliesBelowTokens
                             ? ` · base rate for prompts under ${rate().appliesBelowTokens!.toLocaleString()} tokens`
                             : ""}
-                          {rate().retrievedAt
-                            ? ` · retrieved ${formatDate(rate().retrievedAt!)}`
-                            : ""}
-                          . The chart blends {BENCHMARK_PRICE_MIX.input} input to{" "}
+                          {rate().retrievedAt ? ` · ${retrievedLabel(rate().retrievedAt!)}` : ""}.
+                          The chart blends {BENCHMARK_PRICE_MIX.input} input to{" "}
                           {BENCHMARK_PRICE_MIX.output} output tokens and excludes cache pricing. A
                           list price is not a task cost; Observed shows measured cost per accepted
                           task.
@@ -825,13 +666,15 @@ function CompareInspector(props: { ctl: ModelsController }) {
                           {(summary) => <p class="lazers-models-market-basis">{summary().title}</p>}
                         </Show>
                         <p class="lazers-models-estimate">
-                          {estimateLabel(inspection().estimate)} ·{" "}
-                          {estimateValuesLabel(inspection().estimate)}
+                          {joinSegments([
+                            estimateHeadline(inspection().estimate),
+                            estimateValues(inspection().estimate),
+                          ])}
                         </p>
-                        <p>{estimateHistoryDescription(inspection().estimate)}</p>
-                        <p class="lazers-models-history-scope">
-                          {estimateHistoryScopeLabel(inspection().estimate)}
-                        </p>
+                        <p>{estimateHistoryNote(inspection().estimate)}</p>
+                        <Show when={estimateHistoryScope(inspection().estimate)}>
+                          {(scope) => <p class="lazers-models-history-scope">{scope()}</p>}
+                        </Show>
                         <Show when={estimateUnavailableReason(inspection().estimate)}>
                           {(reason) => <p>Estimate details · {reason()}</p>}
                         </Show>
@@ -842,7 +685,9 @@ function CompareInspector(props: { ctl: ModelsController }) {
                               aria-label="OpenRouter actual-cohort model catalog reference estimate"
                             >
                               <h3>OpenRouter model catalog reference</h3>
-                              <p>{referenceCostLabel(reference())}</p>
+                              <Show when={referenceCostSummary(reference())}>
+                                {(summary) => <p>{summary()}</p>}
+                              </Show>
                               <details class="lazers-models-reference-details">
                                 <summary>
                                   OpenRouter model catalog reference coverage and source
@@ -876,17 +721,17 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                       : ""}
                                   </p>
                                   <p>
-                                    Source snapshot ·{" "}
-                                    {reference().provenance.snapshotID ?? "unavailable"} ·
-                                    generation ·{" "}
-                                    {reference().provenance.generation ?? "unavailable"} · record ·{" "}
-                                    {reference().provenance.recordID ?? "unavailable"}
-                                    {reference().provenance.recordIndex === null
-                                      ? ""
-                                      : ` · index ${Number(reference().provenance.recordIndex) + 1}`}
-                                    {reference().provenance.retrievedAt
-                                      ? ` · retrieved ${formatDate(reference().provenance.retrievedAt)}`
-                                      : " · retrieval date unavailable"}
+                                    {joinSegments([
+                                      "Source snapshot",
+                                      reference().provenance.snapshotID,
+                                      reference().provenance.generation !== null &&
+                                        `generation ${reference().provenance.generation}`,
+                                      reference().provenance.recordID &&
+                                        `record ${reference().provenance.recordID}`,
+                                      reference().provenance.recordIndex !== null &&
+                                        `index ${Number(reference().provenance.recordIndex) + 1}`,
+                                      retrievedLabel(reference().provenance.retrievedAt),
+                                    ])}
                                   </p>
                                   <Show when={reference().provenance.sourceURL}>
                                     {(sourceURL) => (
@@ -902,7 +747,8 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                     <For each={referenceUsageCategories}>
                                       {([category, label]) => (
                                         <li>
-                                          {label} · {referenceCategoryStatus(reference(), category)}
+                                          {label} ·{" "}
+                                          {referenceCategorySummary(reference(), category)}
                                         </li>
                                       )}
                                     </For>
@@ -916,16 +762,14 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                     complete usage
                                   </p>
                                   <p>
-                                    Attribution · {reference().coverage.attribution.status} ·{" "}
-                                    {reference().coverage.attribution.matchedRouteSessionCount}{" "}
-                                    matched route /{" "}
-                                    {reference().coverage.attribution.relatedSessionCount} related
-                                    sessions ·{" "}
-                                    {reference().coverage.attribution.unknownRouteTaskCount} tasks
-                                    with unknown route ·{" "}
-                                    {reference().coverage.attribution.sharedSessionCount} shared ·{" "}
-                                    {reference().coverage.attribution.unattributedSessionCount}{" "}
-                                    unattributed
+                                    {joinSegments([
+                                      `Attribution · ${reference().coverage.attribution.status}`,
+                                      `${reference().coverage.attribution.matchedRouteSessionCount} matched route / ${reference().coverage.attribution.relatedSessionCount} related sessions`,
+                                      reference().coverage.attribution.unknownRouteTaskCount > 0 &&
+                                        `${reference().coverage.attribution.unknownRouteTaskCount} tasks with unknown route`,
+                                      `${reference().coverage.attribution.sharedSessionCount} shared`,
+                                      `${reference().coverage.attribution.unattributedSessionCount} unattributed`,
+                                    ])}
                                   </p>
                                   <Show when={reference().reasons.length > 0}>
                                     <p>Reference notes · {reference().reasons.join(", ")}</p>
@@ -944,9 +788,9 @@ function CompareInspector(props: { ctl: ModelsController }) {
                         >
                           <h3>Exact route</h3>
                           <p>{routeLabel(inspection().configuration.route)}</p>
-                          <p>
-                            Effort · {inspection().configuration.route.variant ?? "Not specified"}
-                          </p>
+                          <Show when={inspection().configuration.route.variant}>
+                            {(variant) => <p>Effort · {variant()}</p>}
+                          </Show>
                           <h3>Configuration cohort</h3>
                           <p>
                             {inspection().cohort.acceptedTaskCount} accepted /{" "}
@@ -955,24 +799,27 @@ function CompareInspector(props: { ctl: ModelsController }) {
                             {inspection().cohort.retryAttemptCount} retries ·{" "}
                             {inspection().cohort.attemptCount} total attempts
                           </p>
-                          <p>{efficiencyLabel(inspection())}</p>
+                          <p>{efficiencySummary(inspection().efficiency)}</p>
                           <p>
-                            Native reported charges · {inspection().nativeReportedCost.source} ·{" "}
-                            {inspection().nativeReportedCost.status} ·{" "}
-                            {formatMoney(inspection().nativeReportedCost.totalUSD)} ·{" "}
-                            {inspection().nativeReportedCost.note}
+                            {joinSegments([
+                              "Native reported charges",
+                              inspection().nativeReportedCost.source,
+                              inspection().nativeReportedCost.status,
+                              inspection().nativeReportedCost.totalUSD !== null &&
+                                formatMoney(inspection().nativeReportedCost.totalUSD!),
+                              inspection().nativeReportedCost.note,
+                            ])}
                           </p>
                           <p class="lazers-models-source-meta">
-                            Current price ·{" "}
-                            {inspection().configuration.currentPrice.source ?? "unavailable"} ·{" "}
-                            {inspection().configuration.currentPrice.semantics} ·{" "}
-                            {inspection().configuration.currentPrice.freshness}
-                            {inspection().configuration.currentPrice.retrievedAt
-                              ? ` · retrieved ${formatDate(inspection().configuration.currentPrice.retrievedAt)}`
-                              : " · retrieval date unavailable"}
-                            {inspection().configuration.currentPrice.sourceRecordID
-                              ? ` · source record ${inspection().configuration.currentPrice.sourceRecordID}`
-                              : ""}
+                            {joinSegments([
+                              "Current price",
+                              inspection().configuration.currentPrice.source,
+                              inspection().configuration.currentPrice.semantics,
+                              inspection().configuration.currentPrice.freshness,
+                              retrievedLabel(inspection().configuration.currentPrice.retrievedAt),
+                              inspection().configuration.currentPrice.sourceRecordID &&
+                                `source record ${inspection().configuration.currentPrice.sourceRecordID}`,
+                            ])}
                           </p>
                           <p class="lazers-models-source-meta">
                             Price index · {inspection().context.priceIndex.source} ·{" "}
@@ -983,8 +830,13 @@ function CompareInspector(props: { ctl: ModelsController }) {
                           <For each={inspection().context.priceIndex.pins}>
                             {(pin) => (
                               <p class="lazers-models-source-meta">
-                                {pin.source} price snapshot · {pin.freshness} · retrieved{" "}
-                                {formatDate(pin.retrievedAt)} · {pin.snapshotID} · {pin.semantics}
+                                {joinSegments([
+                                  `${pin.source} price snapshot`,
+                                  pin.freshness,
+                                  retrievedLabel(pin.retrievedAt),
+                                  pin.snapshotID,
+                                  pin.semantics,
+                                ])}
                               </p>
                             )}
                           </For>
@@ -1009,27 +861,30 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                     {contributor.taskReference} · {contributor.contribution}
                                   </strong>
                                   <p>
-                                    {contributor.tokens === null
-                                      ? "Tokens unknown"
-                                      : `${formatNumber(contributor.tokens)} tokens`}{" "}
-                                    ·{" "}
-                                    {contributor.currentMarketUSD === null
-                                      ? "Current market cost unknown"
-                                      : formatMoney(contributor.currentMarketUSD)}{" "}
-                                    · native reported {formatMoney(contributor.nativeReportedUSD)}
+                                    {joinSegments([
+                                      contributor.tokens !== null &&
+                                        `${formatNumber(contributor.tokens)} tokens`,
+                                      contributor.currentMarketUSD !== null &&
+                                        formatMoney(contributor.currentMarketUSD),
+                                      contributor.nativeReportedUSD !== null &&
+                                        `native reported ${formatMoney(contributor.nativeReportedUSD)}`,
+                                    ])}
                                   </p>
                                   <p class="lazers-models-source-meta">
-                                    Exact route ·{" "}
-                                    {contributor.route
-                                      ? routeLabel(contributor.route)
-                                      : "Unknown route"}
-                                    {" · Membership · "}
-                                    {contributorMembershipLabel(contributor.membership)}
+                                    {joinSegments([
+                                      contributor.route &&
+                                        `Exact route · ${routeLabel(contributor.route)}`,
+                                      contributorMembership(contributor.membership) &&
+                                        `Membership · ${contributorMembership(contributor.membership)}`,
+                                    ])}
                                   </p>
                                   <p class="lazers-models-source-meta">
-                                    Attempt · {contributor.attemptID ?? "not attributed"} · session
-                                    · {contributor.sessionID || "not attributed"} · observed{" "}
-                                    {formatDate(contributor.observedAt)}
+                                    {joinSegments([
+                                      contributor.attemptID && `Attempt · ${contributor.attemptID}`,
+                                      contributor.sessionID && `session · ${contributor.sessionID}`,
+                                      contributor.observedAt &&
+                                        `observed ${formatDate(contributor.observedAt)}`,
+                                    ])}
                                   </p>
                                 </div>
                                 <Ui.Button
@@ -1119,7 +974,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                           <span data-status={measure().status}>
                                             {measure().value === null
                                               ? statusText(measure().status)
-                                              : `${formatNumber(measure().value)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
+                                              : `${formatNumber(measure().value!)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
                                           </span>
                                         </div>
                                       )
@@ -1140,19 +995,15 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                       : ""}
                                   </p>
                                   <p class="lazers-models-source-meta">
-                                    Full task cost:{" "}
-                                    {basis().cost.fullTaskCostUSD.valueUSD === null
-                                      ? "Unknown"
-                                      : formatMoney(basis().cost.fullTaskCostUSD.valueUSD)}{" "}
-                                    · market-equivalent cost:{" "}
-                                    {basis().cost.marketEquivalentCostUSD.valueUSD === null
-                                      ? "Unknown"
-                                      : formatMoney(
-                                          basis().cost.marketEquivalentCostUSD.valueUSD,
-                                        )}{" "}
-                                    · quality: {basis().quality.status} · task class:{" "}
-                                    {selectedTask()?.classification.classification?.primaryKind ??
-                                      "Not recorded"}
+                                    {joinSegments([
+                                      basis().cost.fullTaskCostUSD.valueUSD !== null &&
+                                        `Full task cost: ${formatMoney(basis().cost.fullTaskCostUSD.valueUSD!)}`,
+                                      basis().cost.marketEquivalentCostUSD.valueUSD !== null &&
+                                        `market-equivalent cost: ${formatMoney(basis().cost.marketEquivalentCostUSD.valueUSD!)}`,
+                                      `quality: ${basis().quality.status}`,
+                                      selectedTask()?.classification.classification?.primaryKind &&
+                                        `task class: ${selectedTask()?.classification.classification?.primaryKind}`,
+                                    ])}
                                   </p>
                                 </div>
                               </details>
@@ -1175,31 +1026,29 @@ function CompareInspector(props: { ctl: ModelsController }) {
                             {(candidate) => (
                               <>
                                 <p>
-                                  Native catalog ·{" "}
-                                  {candidate().native.enabled === null
-                                    ? "availability unknown"
-                                    : candidate().native.enabled
-                                      ? "available"
-                                      : "disabled"}{" "}
-                                  · {candidate().native.evidence.recordCount} record(s) ·{" "}
-                                  {candidate().native.type ?? "type not reported"} ·{" "}
-                                  {numericValue(candidate().native.contextTokens)} context tokens ·{" "}
-                                  {variantCoverageLabel(candidate())}
+                                  {joinSegments([
+                                    candidate().native.enabled === null
+                                      ? "Native catalog"
+                                      : `Native catalog · ${candidate().native.enabled ? "available" : "disabled"}`,
+                                    `${candidate().native.evidence.recordCount} record(s)`,
+                                    candidate().native.type,
+                                    numericValue(candidate().native.contextTokens) &&
+                                      `${numericValue(candidate().native.contextTokens)} context tokens`,
+                                    variantCoverage(candidate()),
+                                  ])}
                                 </p>
                                 <p>
-                                  OpenRouter model · {candidate().correspondence.status} ·{" "}
-                                  {candidate().externalModel?.name ??
-                                    candidate().externalModel?.id ??
-                                    "no exact record"}{" "}
-                                  · benchmark {candidate().benchmarkCorrespondence.status} ·{" "}
-                                  {candidate().externalBenchmark
-                                    ? benchmarkLabel(candidate())
-                                    : "unavailable"}
+                                  {joinSegments([
+                                    `OpenRouter model · ${candidate().correspondence.status}`,
+                                    candidate().externalModel?.name ??
+                                      candidate().externalModel?.id,
+                                    `benchmark ${candidate().benchmarkCorrespondence.status}`,
+                                    benchmarkLabel(candidate()),
+                                  ])}
                                 </p>
-                                <p>
-                                  Selected route variant ·{" "}
-                                  {candidate().identity.variant ?? "Not specified"}
-                                </p>
+                                <Show when={candidate().identity.variant}>
+                                  {(variant) => <p>Selected route variant · {variant()}</p>}
+                                </Show>
                                 <For each={candidate().native.evidence.records}>
                                   {(reference) => <code>{recordReferenceLabel(reference)}</code>}
                                 </For>
@@ -1212,10 +1061,13 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                 <Show when={candidate().externalBenchmark}>
                                   {(benchmark) => (
                                     <p>
-                                      External coding benchmark · index{" "}
-                                      {numericValue(benchmark().codingIndex)} · effort{" "}
-                                      {benchmark().effort ?? "Not reported"}; not a task-fit
-                                      estimate.
+                                      {joinSegments([
+                                        "External coding benchmark",
+                                        numericValue(benchmark().codingIndex) &&
+                                          `index ${numericValue(benchmark().codingIndex)}`,
+                                        benchmark().effort && `effort ${benchmark().effort}`,
+                                      ])}
+                                      ; not a task-fit estimate.
                                     </p>
                                   )}
                                 </Show>
@@ -1223,19 +1075,19 @@ function CompareInspector(props: { ctl: ModelsController }) {
                                   <For each={visible()?.comparison?.sources ?? []}>
                                     {(source) => (
                                       <p>
-                                        {sourceTitle(source.source)} ·{" "}
-                                        {source.snapshot
-                                          ? `retrieved ${formatDate(source.snapshot.retrievedAt)} · ${source.snapshot.sourceURL}`
-                                          : "No snapshot date"}{" "}
-                                        · {sourceState(source)}
+                                        {joinSegments([
+                                          sourceTitle(source.source),
+                                          retrievedLabel(source.snapshot?.retrievedAt),
+                                          source.snapshot?.sourceURL,
+                                          sourceState(source),
+                                        ])}
                                       </p>
                                     )}
                                   </For>
                                 </Show>
                                 <p>
                                   External benchmarks and model metadata are separate from LAZERS
-                                  producer outcomes. Missing correspondence and price remain
-                                  unknown.
+                                  producer outcomes.
                                 </p>
                               </>
                             )}

@@ -155,7 +155,7 @@ test("known-usage inspector labels endpoint provenance and scoped documented cac
     expect(card.compactText).toContain("OpenRouter endpoint pricing · provider Moonshot AI")
     expect(card.compactText).not.toContain("OpenRouter model catalog")
     expect(card.compactText).toContain("moonshotai/mxfp4")
-    expect(card.compactText).toContain("service tier not specified · Current")
+    expect(card.compactText).toContain("tag moonshotai/mxfp4 · Current")
     expect(card.compactText).toContain("not actual charges")
     expect(card.compactText).not.toContain("scoped documentation")
     expect(card.compactText).not.toContain("Retry coverage complete")

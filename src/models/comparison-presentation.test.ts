@@ -7,6 +7,12 @@ import {
   candidateFocusIndex,
   boundedModelLabel,
   currentMarketEstimateSummary,
+  compactCount,
+  formatDate,
+  formatPriceRange,
+  joinSegments,
+  numericValue,
+  selectedModelFacts,
   boundedModelEffortLabel,
   chartModelEffortLabel,
   modelEffortLabel,
@@ -189,7 +195,7 @@ test("source presentation distinguishes no-cache failure from missing refresh hi
     storage: "missing-refresh-table",
     refresh: null,
   } as ModelSource
-  expect(sourceState(missingHistory)).toContain("refresh history unavailable")
+  expect(sourceState(missingHistory)).toContain("no refresh history")
 
   const cached = {
     ...failed,
@@ -407,4 +413,113 @@ test("selected current-market summary keeps partial subtotals qualified and omit
     priceFreshness: "unavailable",
   })
   expect(unpriced).toBeUndefined()
+})
+
+const unknownWords = /unknown|unavailable|not reported|not recorded/i
+
+test("a missing optional fact is absent instead of labelled", () => {
+  expect(formatDate(null)).toBeUndefined()
+  expect(formatDate("not a date")).toBeUndefined()
+  expect(numericValue(null)).toBeUndefined()
+  expect(numericValue(1234)).toBe((1234).toLocaleString())
+  expect(joinSegments(["a", undefined, null, false, "b"])).toBe("a · b")
+})
+
+test("market summaries never name an unknown age or retrieval date", () => {
+  const summary = currentMarketEstimateSummary({
+    estimate: marketEstimate("available", { minimum: 0.1, maximum: 0.2 }),
+    referenceEstimate: referenceEstimate({
+      provenance: { ...referenceEstimate().provenance, freshness: "unknown", retrievedAt: null },
+    }),
+    acceptedTaskCount: 3,
+    priceSource: "openrouter",
+    priceFreshness: "unavailable",
+  })
+  expect(summary?.context).toBe("OpenRouter model catalog · range")
+  expect(`${summary?.amount} ${summary?.context} ${summary?.title}`).not.toMatch(unknownWords)
+
+  const reference = currentMarketEstimateSummary({
+    estimate: marketEstimate("unknown", null),
+    referenceEstimate: referenceEstimate({
+      provenance: { ...referenceEstimate().provenance, freshness: "unknown", retrievedAt: null },
+    }),
+    acceptedTaskCount: 3,
+    priceSource: "unavailable",
+    priceFreshness: "unavailable",
+  })
+  expect(`${reference?.amount} ${reference?.context} ${reference?.title}`).not.toMatch(
+    /freshness unknown|retrieval date unavailable/,
+  )
+})
+
+test("the selected-model facts are a rounded price range, counts and per-task averages", () => {
+  const facts = selectedModelFacts({
+    estimate: {
+      status: "available",
+      basis: "empirical-observed-spread",
+      observationCount: 9,
+      range: {
+        tokens: { minimum: 5_000_000, maximum: 7_000_000 },
+        currentMarketUSD: { minimum: 0.35, maximum: 0.67 },
+      },
+      confidenceInterval: null,
+    } as unknown as ModelDecisionEstimate,
+    efficiency: {
+      status: "available",
+      tokensPerAcceptedTask: 6_200_000,
+      currentMarketUSDPerAcceptedTask: 0.5,
+      observationCount: 9,
+    } as never,
+    cohort: {
+      acceptedTaskCount: 9,
+      terminalTaskCount: 11,
+      attemptCount: 11,
+      failedAttemptCount: 2,
+      retryAttemptCount: 0,
+    } as never,
+  })
+  expect(facts).toEqual({
+    price: "$0.35 – 0.67",
+    accepted: 9,
+    terminal: 11,
+    tokens: "6.2M",
+    attempts: "1.2",
+  })
+  expect(JSON.stringify(facts)).not.toMatch(unknownWords)
+  expect(formatPriceRange({ minimum: 0.35, maximum: 0.35 })).toBe("$0.35")
+  expect(compactCount(840_000)).toBe("840k")
+  expect(compactCount(930)).toBe("930")
+})
+
+test("a partial price is omitted from the facts rather than shown as a price", () => {
+  const facts = selectedModelFacts({
+    estimate: marketEstimate("partial", { minimum: 0.1, maximum: 0.2 }),
+    referenceEstimate: referenceEstimate({
+      status: "partial",
+      valueUSDPerAcceptedTask: null,
+      knownSubtotalUSDPerAcceptedTask: 0.00000005,
+    }),
+    efficiency: {
+      status: "partial",
+      tokensPerAcceptedTask: null,
+      currentMarketUSDPerAcceptedTask: null,
+    } as never,
+    cohort: {
+      acceptedTaskCount: 1,
+      terminalTaskCount: 10,
+      attemptCount: 14,
+      failedAttemptCount: 6,
+      retryAttemptCount: 4,
+    } as never,
+  })
+  expect(facts.price).toBeUndefined()
+  expect(facts.tokens).toBeUndefined()
+  expect(facts.accepted).toBe(1)
+  expect(
+    selectedModelFacts({
+      estimate: marketEstimate("zero-accepted", null),
+      efficiency: {} as never,
+      cohort: { acceptedTaskCount: 0, terminalTaskCount: 3, attemptCount: 3 } as never,
+    }),
+  ).toEqual({})
 })

@@ -72,18 +72,18 @@ export const chartHeightBounds = { minimum: 168, maximum: 320 } as const
 /** Legend, Chart data summary and pane padding kept visible below the plot. */
 export const chartFooterReserve = 56
 
-export function formatNumber(value: number | null | undefined) {
-  return value === null || value === undefined ? "Unknown" : value.toLocaleString()
+export function formatNumber(value: number) {
+  return value.toLocaleString()
 }
 
-export function formatMoney(value: number | null) {
-  return value === null
-    ? "Unknown market cost"
-    : new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        maximumSignificantDigits: 12,
-      }).format(value)
+const money = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumSignificantDigits: 12,
+})
+
+export function formatMoney(value: number) {
+  return money.format(value)
 }
 
 export function statusText(status: string) {
@@ -95,7 +95,7 @@ export function statusText(status: string) {
     case "missing":
       return "Missing"
     case "unavailable":
-      return "Unavailable"
+      return "Not reported"
     default:
       return status
   }

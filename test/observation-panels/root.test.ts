@@ -2433,14 +2433,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(routeEvidence.open).toBe(false)
     const unknownHistoryLabel =
       routeEvidence.querySelector(".lazers-models-history-scope")?.textContent ?? ""
-    expect(unknownHistoryLabel).toContain("Accepted-task retry-history completeness unknown")
-    expect(unknownHistoryLabel).toContain("Route scope · unknown")
-    expect(unknownHistoryLabel).not.toContain("same-route")
+    // No history scope from the producer: the row is omitted rather than labelled.
+    expect(unknownHistoryLabel).toBe("")
     routeEvidence.open = true
     routeEvidence.dispatchEvent(new Event("toggle"))
-    expect(routeEvidence.textContent).toContain(
-      "Accepted-task retry-history completeness is unknown",
-    )
+    expect(routeEvidence.textContent).toContain("Accepted-task retry history may be incomplete")
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "Current price",
     )
@@ -2456,9 +2453,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     unknownContributorDetails.open = true
     const unknownContributorMetadata =
       containerA.querySelector(".lazers-models-contributor")?.textContent ?? ""
-    expect(unknownContributorMetadata).toContain("Unknown route")
-    expect(unknownContributorMetadata).toContain("Membership · unknown")
-    expect(unknownContributorMetadata).not.toContain("same-route")
+    // A contributor with no recorded route or membership shows neither row.
+    expect(unknownContributorMetadata).not.toContain("Exact route")
+    expect(unknownContributorMetadata).not.toContain("Membership")
+    expect(unknownContributorMetadata).not.toMatch(/unknown/i)
     unknownContributorDetails.open = false
 
     expect(
@@ -2964,7 +2962,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     partialCoverage.open = true
     expect(partialCoverage.textContent).toContain(
-      "Cache write · tokens unknown · missing usage · missing rate coverage",
+      "Cache write · missing usage · missing rate coverage",
     )
     expect(partialCoverage.textContent).toContain("2 failed · 3 retries")
     expect(partialCoverage.textContent).toContain("unknown route")
@@ -2999,7 +2997,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     effortDetails.open = true
     expect(effortDetails.textContent).toContain("tokens")
-    expect(effortDetails.textContent).toContain("market-equivalent cost: Unknown")
+    expect(effortDetails.textContent).not.toContain("market-equivalent cost")
     effortDetails.open = false
 
     const separator = containerA.querySelector<HTMLDivElement>('[role="separator"]')!
