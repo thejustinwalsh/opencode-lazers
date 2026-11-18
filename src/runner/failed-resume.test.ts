@@ -169,6 +169,7 @@ function fixture() {
     },
   }
   const runtime = new TaskRuntime(store, host, "project", undefined, {
+    autoResumeInterrupted: false,
     requestTick: async () => {},
   })
   cleanup.push(async () => {

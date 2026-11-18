@@ -236,6 +236,7 @@ function fixture(options: FixtureOptions = {}) {
     interrupt: async () => {},
   }
   const runtime = new TaskRuntime(store, host, "project", undefined, {
+    autoResumeInterrupted: false,
     requestTick: async () => {},
     wakeScheduler: options.wakeScheduler,
   })

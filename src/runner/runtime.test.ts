@@ -81,6 +81,7 @@ function fixture(
     requireVerifierPreparation?: boolean
     loseWorktreeResponse?: boolean | "empty-error"
     architectIdleWindowMs?: number
+    autoResume?: boolean
     architectPromptHook?: boolean
     wakeScheduler?: () => void
     now?: () => number
@@ -406,6 +407,7 @@ function fixture(
   }
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     architectIdleWindowMs: options.architectIdleWindowMs,
+    autoResumeInterrupted: options.autoResume ?? false,
     architectPromptHook: options.architectPromptHook,
     wakeScheduler: options.wakeScheduler,
     ...(options.verificationTimeoutDefaults === undefined
@@ -689,7 +691,9 @@ test("active scope amendments durably update the same worker after it fetched ol
   const repository = new TaskRepository(f.repository.path, f.root)
   const store = new RunnerStore(repository)
   store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const runtime = new TaskRuntime(store, f.host, "project")
+  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await drive(runtime, 3)
     const effect = store.effects(planID).find((item) => item.id === effects[0]!.id)!
@@ -768,7 +772,9 @@ test("failed and lost scope-update replies recover keyed delivery without worker
     unavailable = false
     await f.runtime.stop()
     f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-    const reopened = new TaskRuntime(f.store, f.host, "project")
+    const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+      autoResumeInterrupted: false,
+    })
     try {
       await drive(reopened, 2)
       expect(f.store.effects(planID).at(-1)!.state).toBe("completed")
@@ -1132,6 +1138,7 @@ test("Architect run, scope amendment, reconcile, and cancel wake the scheduler b
   )
   let wakes = 0
   const runtime = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     wakeScheduler: () => {
       wakes++
       expect(f.store.plan(f.receipt.planID)?.state).toBe(wakes === 4 ? "cancelling" : "running")
@@ -1199,12 +1206,15 @@ test("Architect run, scope amendment, reconcile, and cancel wake the scheduler b
 
 test("shared scheduler routes manual Start through its elected runtime instead of a second lease owner", async () => {
   const f = fixture({ shared: true, startOnly: true, delayed: true })
-  const leader = new TaskRuntime(f.store, f.host, "project")
+  const leader = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   const registration = sharedScheduler.register(
     schedulerProjectKey(f.repository.path, f.root, "project"),
     { intervalMs: 2000, run: () => leader.tick() },
   )
   const follower = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     requestTick: () => registration.runNow(),
   })
   try {
@@ -1251,7 +1261,9 @@ test("a disposed follower Start cannot read or reopen its store after the electe
   const f = fixture({ shared: true, startOnly: true, delayed: true })
   const followerRepository = new TaskRepository(f.repository.path, f.root)
   const followerStore = new RunnerStore(followerRepository)
-  const leader = new TaskRuntime(f.store, f.host, "project")
+  const leader = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   let release!: () => void, entered!: () => void
   const gate = new Promise<void>((resolve) => {
     release = resolve
@@ -1273,6 +1285,7 @@ test("a disposed follower Start cannot read or reopen its store after the electe
     run: () => follower.tick(),
   })
   const follower = new TaskRuntime(followerStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     requestTick: () => followerRegistration.runNow(),
   })
   let closed = false,
@@ -1369,7 +1382,9 @@ test("Start recovers a lost native continuation-create response after restart", 
 
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   cleanup.push(() => reopened.stop())
   await drive(reopened)
   expect(f.store.plan(draft.id)?.state).toBe("accepted")
@@ -1458,7 +1473,9 @@ test("a lost continuation-create response is reconciled by stable native session
 
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   cleanup.push(() => reopened.stop())
   await drive(reopened)
   expect(f.store.plan(plan.id)?.state).toBe("accepted")
@@ -1930,7 +1947,9 @@ test("a reopened retry preserves the earlier route decision and uses the current
 
   await f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await reopened.tick()
   } finally {
@@ -2686,6 +2705,7 @@ function reopenRuntime(
   const store = new RunnerStore(repository)
   store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     verificationTimeoutDefaults,
     wakeScheduler,
   })
@@ -3262,7 +3282,9 @@ test("a real verification barrier does not block same-project dispatch, cancella
     expectedVersion: f.store.plan(planD.planID)!.version,
     action: "cancel",
   })
-  const competing = new TaskRuntime(f.store, f.host, "project")
+  const competing = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   cleanup.push(async () => competing.stop())
   await Promise.all([f.runtime.tick(), f.runtime.tick(), f.runtime.tick(), competing.tick()])
 
@@ -4102,7 +4124,9 @@ test("independent plans overlap while a second reconciler cannot duplicate dispa
   await runPlan(f, planB.planID, "run-b")
   await runPlan(f, planC.planID, "run-c")
 
-  const secondReconciler = new TaskRuntime(f.store, f.host, "project")
+  const secondReconciler = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await Promise.all([f.runtime.tick(), secondReconciler.tick()])
     const attemptsA = f.store.attempts(f.receipt.planID)
@@ -4187,7 +4211,9 @@ test("single-task acceptance coalesces its task handoff while another plan worke
   const ids = notifications.map((input) => input.id)
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   cleanup.push(() => reopened.stop())
   await reopened.tick()
   expect(notifications.map((input) => input.id)).toEqual(ids)
@@ -4807,7 +4833,9 @@ test("lost worktree creation response resumes its own blocked startup after reco
 
     f.runtime.stop()
     f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-    const reopened = new TaskRuntime(f.store, f.host, "project")
+    const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+      autoResumeInterrupted: false,
+    })
     try {
       await reopened.tick()
       expect(f.store.effects(f.receipt.planID).find((item) => item.id === effect.id)?.state).toBe(
@@ -4856,7 +4884,9 @@ test("a different block reason keeps a reconciled worktree startup blocked", asy
 
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await reopened.tick()
     expect(f.store.effects(planID).find((item) => item.id === effect.id)?.state).toBe("completed")
@@ -5745,7 +5775,9 @@ test("retry requeues a cancelled unstarted successor in the admitted graph and w
   const requeuedHistory = f.store.activity(planID, successorID).length
   const reopenedRepository = new TaskRepository(f.repository.path, f.repository.projectDirectory)
   const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopened = new TaskRuntime(reopenedStore, f.host, "project")
+  const reopened = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     expect(await reopened.command(requeue, "owner")).toEqual(receipt)
     await expect(
@@ -6267,7 +6299,9 @@ test("a shared node's first attempt starts at reviewed HEAD, not an older accept
   const predecessor = f.store.attempts(f.receipt.planID)[0]!
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   cleanup.push(() => reopened.stop())
   await driveWithTaskSourceLandings(f, 16, f.receipt.planID, reopened)
   const predecessorArtifact = f.store.attempts(f.receipt.planID)[0]!.artifact
@@ -6360,7 +6394,9 @@ test("an explicit corrected shared baseline wins across reopen and excludes revi
   // A fresh runtime must recover the selected source from durable retry history.
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await drive(reopened)
   } finally {
@@ -8840,7 +8876,9 @@ test("owner reconciliation binds an observed review input without replacing the 
   )
   expect(aliasCount).toBe(1)
 
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   cleanup.push(() => reopened.stop())
   expireRunnerLease(f)
   await drive(reopened, 6)
@@ -8906,7 +8944,9 @@ test.each(["OWNER_CONTINUED", "OWNER_REASSIGNED"] as const)(
     })
     expect(worker.turn).toEqual({ inputID: reviewInputID, state: "completed" })
 
-    const reopened = new TaskRuntime(f.store, f.host, "project")
+    const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+      autoResumeInterrupted: false,
+    })
     cleanup.push(() => reopened.stop())
     expireRunnerLease(f)
     await drive(reopened, 6)
@@ -10856,6 +10896,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
 
   owner.idleAt = now - DEFAULT_ARCHITECT_CACHE_WINDOW_MS
   const peer = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectPromptHook: true,
     now: () => now,
   })
@@ -12085,6 +12126,7 @@ test("a reopened scheduler recovers a durable transfer before archival without c
   const reopenedRepository = new TaskRepository(f.repository.path, f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
   const reopened = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectIdleWindowMs: 1_000,
     architectPromptHook: true,
     now: () => now,
@@ -12192,11 +12234,13 @@ test("a reopened two-scheduler runtime archives only after durable transfer and 
   const reopenedRepository = new TaskRepository(f.repository.path, f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
   const first = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectIdleWindowMs: 1_000,
     architectPromptHook: true,
     now: () => now,
   })
   const second = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectIdleWindowMs: 1_000,
     architectPromptHook: true,
     now: () => now,
@@ -12590,6 +12634,7 @@ test("concurrent plan admission joins the fixed successor and survives two-sched
   })
   const attempt = await prepareIdleArchitect(f, now, 1_000)
   const peer = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectPromptHook: true,
     architectIdleWindowMs: 1_000,
     now: () => now,
@@ -12651,11 +12696,13 @@ test("concurrent plan admission joins the fixed successor and survives two-sched
   const reopenedRepository = new TaskRepository(f.repository.path, f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
   const reopenedA = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectPromptHook: true,
     architectIdleWindowMs: 1_000,
     now: () => now,
   })
   const reopenedB = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
     architectPromptHook: true,
     architectIdleWindowMs: 1_000,
     now: () => now,
@@ -12843,7 +12890,9 @@ test("archived owners leave unresolved plans with a durable wake even after thei
   const attempts = f.store.attempts(f.receipt.planID).map((attempt) => attempt.id)
   await f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await drive(reopened, 3)
     const owner = f.store.plan(f.receipt.planID)!.owner
@@ -12912,7 +12961,9 @@ test("a cancelled prerequisite drops its edge once, survives restart and leaves 
   expect(records()).toBe(1)
   await f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await drive(reopened, 3)
     expect(records()).toBe(1)
@@ -13024,7 +13075,9 @@ test("dispatch pause survives restart and automatically clears only after record
   expect(f.store.attempts(child.planID)).toHaveLength(0)
   await f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-  const reopened = new TaskRuntime(f.store, f.host, "project")
+  const reopened = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+  })
   try {
     await drive(reopened, 2)
     expect(f.store.dispatchPause(child.planID)?.untilPlans).toEqual([dependency])
@@ -14269,4 +14322,71 @@ test("queued outcomes follow an archived Architect to its replacement as one not
   expect(f.store.outboxForDelivery()).toEqual([])
   const rows = f.store.detail(f.receipt.planID).delivery as { session_id: string }[]
   expect(rows.every((row) => row.session_id === owner)).toBe(true)
+})
+
+test("an interrupted worker resumes without an Architect command", async () => {
+  const f = fixture({
+    autoResume: true,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: attempt.message_id, state: "interrupted" }
+  await f.runtime.tick()
+  expect(f.store.latestTransition(planID, attempt.task_id, "WORKER_AUTO_RESUMED")).toMatchObject({
+    attemptID: attempt.id,
+  })
+  // The same worker continues; the plan is not left waiting for an explicit command.
+  expect(f.store.plan(planID)!.state).toBe("running")
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+  })
+  await f.runtime.tick()
+  expect(f.store.attempts(planID)[0]!.state).toBe("running")
+})
+
+test("a worker that went idle without answering its input fails the attempt instead of holding", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: attempt.message_id, state: "interrupted" }
+  await f.runtime.tick()
+  const reason = f.store.plan(planID)!.reason ?? ""
+  expect(reason).not.toContain("does not match a completed response")
+  expect(f.store.attempts(planID)[0]!.state).toBe("failed")
+})
+
+test("a write-scope overlap during mechanical preparation is a warning and never a hold", async () => {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "src/result.ts" }],
+    checkCommand: "bun fmt --check src/result.ts",
+    combinedCheckCommand: "test -f src/result.ts",
+  })
+  // Another active attempt reserves an overlapping scope.
+  ;(
+    f.runtime as unknown as { preparationAllowed: (attempt: { state: string }) => boolean }
+  ).preparationAllowed = (attempt) => attempt.state !== "verifying"
+  await runPlan(f)
+  await drive(f.runtime, 18)
+  const plan = f.store.plan(f.receipt.planID)!
+  const attempt = f.store.attempts(plan.id)[0]!
+  expect(plan.state).toBe("accepted")
+  expect(plan.reason ?? "").not.toContain("scope reservation")
+  expect(f.store.latestTransition(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING")).toMatchObject(
+    {
+      attemptID: attempt.id,
+    },
+  )
 })

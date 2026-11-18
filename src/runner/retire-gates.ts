@@ -5,7 +5,7 @@ export type RetiredGateMove = {
   from: string
   to: string
   reason: string | null
-  retired: "human-evidence" | "source-quarantine"
+  retired: "human-evidence" | "source-quarantine" | "stale-hold"
 }
 
 /** `Combined artifact evidence missing: a:human` or `Required evidence missing: a:human, b:human`. */
@@ -118,6 +118,94 @@ export function retireSourceQuarantines(db: Database): RetiredGateMove[] {
   db.exec("DROP INDEX IF EXISTS runner_source_quarantines_pending")
   db.exec("DROP TABLE IF EXISTS runner_source_quarantines")
   return moves
+}
+
+/**
+ * Reasons from holds the simplified runtime no longer raises. A plan blocked on
+ * one of them re-observes live facts: the runtime resumes the worker, fails an
+ * unanswered input, re-runs the verification, or releases a scope overlap.
+ */
+const STALE_BLOCKED_REASONS: readonly RegExp[] = [
+  /experimental\.idle|background observation|worker input lineage/i,
+  /^Recovery uncertain for (?:graph-)?verify:/,
+  /^Worker execution was interrupted; explicit reconciliation or cancellation is required/,
+  /^Mechanical candidate preparation is blocked by an active scope reservation/,
+]
+
+/**
+ * Offline, idempotent. Moves plans held by a retired reason forward through the
+ * plan machine, and supersedes verification effects that never produced a
+ * receipt so the check re-runs (they are re-runnable).
+ */
+export function retireStaleHolds(db: Database): RetiredGateMove[] {
+  const moves: RetiredGateMove[] = []
+  if (!tableExists(db, "runner_plans")) return moves
+  const plans = db
+    .query<{ id: string; state: string; reason: string | null; version: number }, []>(
+      "SELECT id,state,reason,version FROM runner_plans WHERE state IN ('blocked','cleanup-blocked') AND reason IS NOT NULL",
+    )
+    .all()
+  for (const plan of plans) {
+    if (!plan.reason || !STALE_BLOCKED_REASONS.some((pattern) => pattern.test(plan.reason!)))
+      continue
+    // A cleanup hold resumes cleanup; any other hold resumes running.
+    const event = plan.state === "cleanup-blocked" ? "cleaning" : "running"
+    const changed = db
+      .query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,?),reason=NULL,version=version+1 WHERE id=? AND state=? AND reason=?",
+      )
+      .run(event, plan.id, plan.state, plan.reason).changes
+    if (changed !== 1) continue
+    if (
+      /^Recovery uncertain for (?:graph-)?verify:/.test(plan.reason) &&
+      tableExists(db, "runner_effects")
+    )
+      supersedeReceiptlessVerifications(db, plan.id)
+    db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,'PLAN_GATE_RETIRED',?,?)",
+    ).run(
+      plan.id,
+      plan.version + 1,
+      JSON.stringify({ gate: "stale-hold", previousReason: plan.reason }),
+      Date.now(),
+    )
+    moves.push({
+      planID: plan.id,
+      from: plan.state,
+      to: event === "cleaning" ? "cleaning" : "running",
+      reason: plan.reason,
+      retired: "stale-hold",
+    })
+  }
+  return moves
+}
+
+function supersedeReceiptlessVerifications(db: Database, planID: string) {
+  const effects = db
+    .query<{ id: string; task_id: string | null; kind: string }, [string]>(
+      `SELECT id,task_id,kind FROM runner_effects
+       WHERE plan_id=? AND state IN ('intended','uncertain')
+         AND (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%' OR kind='mechanical-fix')
+         AND (receipt IS NULL OR receipt LIKE '%No conclusive host/artifact receipt%')`,
+    )
+    .all(planID)
+  for (const effect of effects) {
+    db.query(
+      "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
+    ).run(
+      JSON.stringify({ superseded: true, reason: "Retired hold: the check re-runs" }),
+      effect.id,
+    )
+    db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,(SELECT version FROM runner_plans WHERE id=?),'EFFECT_SUPERSEDED',?,?)",
+    ).run(
+      planID,
+      effect.task_id,
+      planID,
+      JSON.stringify({ effectID: effect.id, kind: effect.kind, reason: "retired hold" }),
+      Date.now(),
+    )
+  }
 }
 
 /**

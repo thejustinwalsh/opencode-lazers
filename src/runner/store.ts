@@ -17,6 +17,7 @@ import {
   retireHumanEvidenceGate,
   retireOutboxLifecycle,
   retireSourceQuarantines,
+  retireStaleHolds,
 } from "./retire-gates.ts"
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
@@ -1063,6 +1064,7 @@ export class RunnerStore {
         // Generation 6: the human-evidence gate is retired; move its blocked plans on.
         retireHumanEvidenceGate(db)
         retireSourceQuarantines(db)
+        retireStaleHolds(db)
       },
     )
     installPrioritySchema(repository)

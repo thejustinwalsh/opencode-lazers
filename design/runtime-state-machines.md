@@ -303,3 +303,23 @@ Observation never boots a location. `workerObservation` reads location-scoped
 inventories only when the location is already loaded, and the trajectory host
 checks a recorded attempt workspace by path (`ownsRecordedWorkspace`), not by
 asking the host to open the worktree.
+
+## Hold audit
+
+Holds raise only for real, directly observable loss, with an advertised unblock.
+
+- A write-scope overlap during mechanical preparation is a warning
+  (`SCOPE_OVERLAP_WARNING`, recorded once); it never holds.
+- An interrupted worker resumes by itself: the runtime issues the exact-attempt
+  `resume` once per input (`WORKER_AUTO_RESUMED`, at most three per attempt). The
+  hold stays only as the fallback and advertises `resume`.
+- A worker that went idle without a completed response to its input fails the
+  attempt (retried through the normal path). A completed turn for a different
+  input stays a hold that advertises `reconcile`, so the Architect can bind it
+  as a review input.
+- Runner schema generation 11 runs `retireStaleHolds`: plans blocked on a hold
+  the simplified code no longer raises (`experimental.idle` background
+  observation, `Recovery uncertain for verify:/graph-verify:`, the old
+  interrupted-worker text, the scope-reservation hold) move through the plan
+  machine, and verification effects that never produced a receipt are
+  superseded so the check re-runs. A retired cleanup hold resumes `cleaning`.
