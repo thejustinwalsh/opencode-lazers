@@ -70,3 +70,25 @@ export async function resolveRadarProject(
   if (!project) throw new Error(`No known OpenCode project owns ${directory}.`)
   return radarProjectIdentity(project)
 }
+
+/**
+ * The location guard for a Radar transport. The directory of the session the
+ * user is viewing is necessarily loaded, so it is never asked about (and a GUI
+ * client without `debug` cannot block it). Any other directory must be proven
+ * loaded; "cannot tell" or a failed listing fails closed so it is never booted.
+ */
+export function radarLocationGuard(
+  client: LoadedLocations,
+  directory: string,
+  viewedDirectory: () => string | undefined,
+): () => Promise<boolean> {
+  return async () => {
+    const viewed = viewedDirectory()
+    if (viewed !== undefined && trimSlash(viewed) === trimSlash(directory)) return true
+    try {
+      return await isRadarLocationLoaded(client, directory)
+    } catch {
+      return false
+    }
+  }
+}

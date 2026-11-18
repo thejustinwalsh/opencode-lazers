@@ -3,6 +3,7 @@ import { createRadarMonitorTransport } from "./monitor-transport.ts"
 import {
   isRadarLocationLoaded,
   matchRadarProject,
+  radarLocationGuard,
   RadarLocationNotLoadedError,
   resolveRadarProject,
 } from "./project.ts"
@@ -89,4 +90,34 @@ test("project identity resolves by path from the global list without location.ge
   expect(matchRadarProject(projects, "/work/projectile")).toBeUndefined()
   await expect(resolveRadarProject(client, "/nowhere", signal)).rejects.toThrow()
   expect(calls).not.toContain("location.get")
+})
+
+test("the viewed session directory proceeds with a GUI client that has no debug namespace", async () => {
+  const { calls, rpc } = spyRPC()
+  const gui = {}
+  const viewed = "/work/project"
+  const guard = radarLocationGuard(gui, viewed, () => viewed)
+  const radar = createRadarTransport(
+    () => rpc,
+    viewed,
+    () => true,
+    "p",
+    guard,
+  )
+  const monitor = createRadarMonitorTransport(
+    () => rpc,
+    viewed,
+    () => true,
+    "p",
+    guard,
+  )
+  await radar.snapshot(scope, signal)
+  await monitor.liveRadar(scope, false, signal)
+  expect(calls).toEqual(["snapshot", "liveRadar"])
+
+  // Any other directory fails closed: no debug API, or a failing listing.
+  const other = "/work/project.worktrees/idle"
+  expect(await radarLocationGuard(gui, other, () => viewed)()).toBe(false)
+  const broken = { debug: { location: { list: async () => Promise.reject(new Error("x")) } } }
+  expect(await radarLocationGuard(broken, other, () => viewed)()).toBe(false)
 })

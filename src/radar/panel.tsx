@@ -21,7 +21,7 @@ import { createRadarTransport } from "./transport.ts"
 import { statechartLayout } from "./statechart.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
-import { isRadarLocationLoaded, resolveRadarProject } from "./project.ts"
+import { radarLocationGuard, resolveRadarProject } from "./project.ts"
 import { RadarLayout } from "./layout-ipc.ts"
 import { RadarMapInspector, RadarMapView } from "./map-view.tsx"
 import { createRadarMapModel } from "./map-model.ts"
@@ -215,7 +215,7 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
         value.directory,
         () => props.session.server.connected,
         undefined,
-        () => isRadarLocationLoaded(value.client, value.directory),
+        radarLocationGuard(value.client, value.directory, () => props.session.directory),
       )
       state.connect(
         key,
@@ -1154,7 +1154,7 @@ function RadarLiveMonitorPanel(
         value.directory,
         () => props.session.server.connected,
         value.projectID,
-        () => isRadarLocationLoaded(value.client, value.directory),
+        radarLocationGuard(value.client, value.directory, () => props.session.directory),
       )
       state.connect(
         key,
