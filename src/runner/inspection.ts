@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite"
 import { z } from "zod"
 import { planPrioritySortSQL } from "./priority.ts"
 import { retainedVerificationsForInspection } from "./retained-verification/store.ts"
@@ -11,6 +12,12 @@ import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
 const CompactInspectPlanInput = z.strictObject({
   planID: z.uuid().optional(),
   full: z.boolean().optional().default(false),
+  /** Full view only: rows per history list (activity, evidence, delivery); newest first page. */
+  limit: z.number().int().min(1).max(1000).optional(),
+  /** Full view only: `paging.<list>.next` from a prior result, to read the next older page. */
+  activityBefore: z.number().int().min(0).optional(),
+  evidenceBefore: z.number().int().min(0).optional(),
+  deliveryBefore: z.number().int().min(0).optional(),
 })
 const JournalInspectPlanInput = z.strictObject({
   planID: z.uuid(),
@@ -229,34 +236,53 @@ function planRows(store: RunnerStore, planID?: string): PlanRow[] {
   )
 }
 
+function nodeLatestTransitions(db: Database, planID: string) {
+  const latest = new Map<string, TransitionRow>()
+  const query = db.query<TransitionRow, [string, string]>(
+    "SELECT task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id DESC LIMIT 1",
+  )
+  for (const node of db
+    .query<{ task_id: string }, [string]>("SELECT task_id FROM runner_nodes WHERE plan_id=?")
+    .all(planID)) {
+    const row = query.get(planID, node.task_id)
+    if (row) latest.set(node.task_id, row)
+  }
+  return latest
+}
+
 function compactPlan(store: RunnerStore, plan: PlanRow) {
-  const { nodes, dependencies, attempts, effects, transitions } = store.atomic((db) => ({
-    nodes: db
-      .query<NodeRow, [string]>(
-        "SELECT task_id,ordinal,state,version,reason,artifact FROM runner_nodes WHERE plan_id=? ORDER BY ordinal",
-      )
-      .all(plan.id),
-    dependencies: db
-      .query<DependencyRow, [string]>(
-        "SELECT prerequisite,successor FROM runner_dependencies WHERE plan_id=? ORDER BY prerequisite,successor",
-      )
-      .all(plan.id),
-    attempts: db
-      .query<AttemptRow, [string]>(
-        "SELECT id,task_id,number,state,started_at,tool_count,retry_count,token_count,cost FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
-      )
-      .all(plan.id),
-    effects: db
-      .query<EffectRow, [string]>(
-        "SELECT id,task_id,attempt_id,kind,state,receipt FROM runner_effects WHERE plan_id=? ORDER BY rowid",
-      )
-      .all(plan.id),
-    transitions: db
-      .query<TransitionRow, [string]>(
-        "SELECT task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? ORDER BY id",
-      )
-      .all(plan.id),
-  }))
+  const { nodes, dependencies, attempts, effects, transitionCounts, latestByTask } = store.atomic(
+    (db) => ({
+      nodes: db
+        .query<NodeRow, [string]>(
+          "SELECT task_id,ordinal,state,version,reason,artifact FROM runner_nodes WHERE plan_id=? ORDER BY ordinal",
+        )
+        .all(plan.id),
+      dependencies: db
+        .query<DependencyRow, [string]>(
+          "SELECT prerequisite,successor FROM runner_dependencies WHERE plan_id=? ORDER BY prerequisite,successor",
+        )
+        .all(plan.id),
+      attempts: db
+        .query<AttemptRow, [string]>(
+          "SELECT id,task_id,number,state,started_at,tool_count,retry_count,token_count,cost FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
+        )
+        .all(plan.id),
+      effects: db
+        .query<EffectRow, [string]>(
+          "SELECT id,task_id,attempt_id,kind,state,receipt FROM runner_effects WHERE plan_id=? ORDER BY rowid",
+        )
+        .all(plan.id),
+      // Aggregated in SQL over runner_transitions_plan_event; never materializes history.
+      transitionCounts: db
+        .query<{ event: string; n: number }, [string]>(
+          "SELECT event,COUNT(*) AS n FROM runner_transitions WHERE plan_id=? GROUP BY event",
+        )
+        .all(plan.id),
+      // One indexed point read per task (runner_transitions_task_latest).
+      latestByTask: nodeLatestTransitions(db, plan.id),
+    }),
+  )
 
   const prerequisites = new Map<string, string[]>()
   for (const dependency of dependencies) {
@@ -271,8 +297,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
     attemptsByTask.set(attempt.task_id, list)
   }
   const nodeStates = new Map(nodes.map((node) => [node.task_id, node.state]))
-  const lastTransition = new Map<string, TransitionRow>()
-  for (const event of transitions) if (event.task_id) lastTransition.set(event.task_id, event)
+  const lastTransition = latestByTask
 
   const checks = new Map<string, Record<string, unknown>>()
   for (const effect of effects) {
@@ -351,7 +376,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
         .length,
       attemptsByState: countBy(attempts.map((attempt) => attempt.state)),
       effectsByState: countBy(effects.map((effect) => effect.state)),
-      transitionsByEvent: countBy(transitions.map((event) => event.event)),
+      transitionsByEvent: Object.fromEntries(transitionCounts.map((row) => [row.event, row.n])),
     },
     nodes: nodes.map((node) => {
       const waitingOn = (prerequisites.get(node.task_id) ?? []).filter(
@@ -497,7 +522,12 @@ export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
     throw new Error("Selected source messages require an authenticated active Architect read")
   if (input.full) {
     if (!input.planID) return { plans: store.plans(), audit: store.audit() }
-    const detail = store.detail(input.planID)
+    const detail = store.detail(input.planID, {
+      limit: input.limit,
+      activityBefore: input.activityBefore,
+      evidenceBefore: input.evidenceBefore,
+      deliveryBefore: input.deliveryBefore,
+    })
     return {
       ...detail,
       retainedVerifications: decorateRetainedInspection(
