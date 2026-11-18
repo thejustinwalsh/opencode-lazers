@@ -455,7 +455,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
           target: null,
           selectedKind: "",
           selectedRecordID: "",
-          split: 56,
+          open: true,
         },
       } as Record<string, unknown>,
     })
@@ -631,8 +631,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(selected(markerStarting("Attempt 1 check quality"))).toBe(false)
     const command = () => container.querySelector(".lazers-trajectory-command")?.textContent
     const duration = () =>
-      container.querySelector(".lazers-trajectory-inspector-heading .lazers-trajectory-duration")
-        ?.textContent
+      container.querySelector(".lazers-details-header .lazers-trajectory-duration")?.textContent
     const facts = () => container.querySelector(".lazers-trajectory-facts")?.textContent ?? ""
     const timingSource = () =>
       [...container.querySelectorAll<HTMLDetailsElement>(".lazers-trajectory-payload")].find(
@@ -642,6 +641,13 @@ test("registered Trajectory panel renders proportional check intervals and preci
     // The reference arrives with the report; the view store supplied none.
     expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
     expect(duration()).toBe("240ms")
+    // The outcome, kind and duration are the pane's sticky header, not part of the scrolling body.
+    expect(container.querySelector(".lazers-details-header")?.textContent).toContain("check · exit 0")
+    expect(
+      container
+        .querySelector(".lazers-trajectory-inspector")!
+        .contains(container.querySelector(".lazers-details-header")),
+    ).toBe(false)
     expect(container.querySelector(".lazers-trajectory-payload")?.hasAttribute("open")).toBe(false)
     expect(facts()).toContain("Started")
     expect(facts()).toContain("Ended")
@@ -784,7 +790,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
 
     capturedEvents()[0]!.click()
     const eventHeading = () =>
-      [...container.querySelectorAll<HTMLElement>(".lazers-trajectory-inspector-heading")].find(
+      [...container.querySelectorAll<HTMLElement>(".lazers-details-header")].find(
         (heading) =>
           heading.querySelector(".lazers-trajectory-kind")?.textContent === "VERIFY · accepted",
       )

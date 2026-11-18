@@ -109,7 +109,6 @@ export default Plugin.define({
           selectedTaskID: null,
           selectedKind: "" as const,
           selectedRecordID: "",
-          split: 56,
         }
         draft.projects[request.projectDirectory] = {
           ...previous,

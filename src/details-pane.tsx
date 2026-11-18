@@ -28,6 +28,8 @@ export function DetailsPane(props: {
   top: JSX.Element
   class?: string
   bodyClass?: string
+  /** Dims the body while its content is stale (`data-panel-dimmed`). */
+  dimmed?: "true" | undefined
   /** Called with the body element while it is mounted and with undefined when it unmounts. */
   bodyRef?: (element: HTMLDivElement | undefined) => void
   onBodyScroll?: JSX.EventHandler<HTMLDivElement, Event>
@@ -149,6 +151,7 @@ export function DetailsPane(props: {
             class={`lazers-details-body${props.bodyClass ? ` ${props.bodyClass}` : ""}`}
             id={bodyID}
             role="region"
+            data-panel-dimmed={props.dimmed}
             aria-label="Details"
             ref={(element) => {
               props.bodyRef?.(element)

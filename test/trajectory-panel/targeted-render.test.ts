@@ -260,7 +260,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           target,
           selectedKind: "",
           selectedRecordID: "",
-          split: 56,
+          open: true,
         },
       },
     })
@@ -474,7 +474,6 @@ test("a task target renders its scoped report timeline without a broad snapshot"
         target: null,
         selectedKind: "",
         selectedRecordID: "",
-        split: 56,
       }
     })
     const emptyContainer = browserDocument.createElement("main")
@@ -487,18 +486,20 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     expect(emptyContainer.querySelector(".lazers-trajectory-empty b")?.textContent).toBe(
       "Pick a task",
     )
-    expect(emptyContainer.querySelector(".lazers-trajectory")?.getAttribute("data-split")).toBe(
-      "false",
+    // With no task the details pane is still there: one collapsed bar saying nothing is selected.
+    expect(emptyContainer.querySelector(".lazers-details-header")?.textContent).toBe(
+      "No call selected",
     )
-    expect(emptyContainer.querySelector(".lazers-trajectory-separator")).toBeNull()
+    expect(
+      emptyContainer.querySelector(".lazers-details-chevron")?.getAttribute("aria-expanded"),
+    ).toBe("false")
     expect(emptyContainer.querySelector(".lazers-trajectory-inspector")).toBeNull()
     expect(emptyContainer.querySelector(".lazers-trajectory-timeline")).toBeNull()
     emptyContainer.querySelector<HTMLButtonElement>(".lazers-trajectory-recent-row")!.click()
     await until(() => emptyContainer.querySelector(".lazers-trajectory-heading") !== null)
-    expect(emptyContainer.querySelector(".lazers-trajectory")?.getAttribute("data-split")).toBe(
-      "true",
-    )
-    expect(emptyContainer.querySelector(".lazers-trajectory-separator")).not.toBeNull()
+    // Loading a trajectory does not open the pane; it stays one collapsed bar.
+    expect(emptyContainer.querySelector(".lazers-details-resize")).not.toBeNull()
+    expect(emptyContainer.querySelector(".lazers-trajectory-inspector")).toBeNull()
   } finally {
     disposePanel?.()
     disposeSetup?.()
