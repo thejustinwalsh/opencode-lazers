@@ -721,7 +721,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(tooltip(rowPart(ids.active, ".lazers-tasks-state"))).toBe(
       "Input · Input pending · Approval pending",
     )
-    expect(unknownRow.getAttribute("aria-label")).toContain("observed foreground activity unknown")
+    expect(unknownRow.getAttribute("aria-label")).not.toContain("observed foreground activity")
     expect(unknownRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
     expect(unknownRow.getAttribute("aria-label")).toContain("activity observation unavailable")
     expect(rowPart(ids.unknown, ".lazers-tasks-state")?.getAttribute("aria-label")).toBe("Waiting")
@@ -864,7 +864,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => activityDetails().open)
     diagnosticText = activityDetails().textContent ?? ""
     expect(diagnosticText).toContain("Recorded running")
-    expect(diagnosticText).toContain("Worker unknown")
+    expect(diagnosticText).not.toContain("Worker unknown")
     expect(diagnosticText).toContain("Observation unavailable")
     expect(diagnosticText).toContain("ses-worker-unknown")
     expect(diagnosticText).toContain("Additional hold: retain the audit trail")
@@ -984,6 +984,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => queryCalls.at(-1)?.state === "completed" && Boolean(row(ids.completed)))
     expect(row(ids.completed)?.getAttribute("aria-label")).toContain("recorded lifecycle accepted")
     expect(row(ids.completed)?.getAttribute("aria-label")).not.toContain("waiting")
+    // The earlier selection is kept (it is not in this list), so the inspector keeps its task until
+    // another is chosen.
+    row(ids.completed)!.click()
     await until(
       () => container.querySelector(".lazers-tasks-inspector-state")?.textContent === "accepted",
     )
