@@ -87,7 +87,7 @@ export function sessionTask(session: LiveSession) {
 
 /** The task's title, falling back to its reference, for the inspector heading. */
 export function sessionTaskTitle(session: LiveSession) {
-  return session.assignment?.taskTitle ?? session.assignment?.taskReference ?? null
+  return session.assignment?.taskTitle ?? session.assignment?.taskReference ?? session.title ?? null
 }
 
 /** The lower-case state word, or undefined when the read gives none; the view omits it. */
@@ -374,15 +374,24 @@ export function sessionGroups(live: Live, include?: ReadonlySet<string>) {
 
 export type SummarySegment = { count: number; word: string }
 
+/**
+ * Task counts follow the selected scope. The runner records them for the whole project, so in
+ * session scope they cannot be attributed to one session and are left out.
+ */
+export function scopedWorkload(live: Live) {
+  return live.scope.kind === "session" ? undefined : live.workload
+}
+
+/**
+ * Running counts workers: sessions with a runner assignment that are running or preparing, and
+ * those checking. A busy Architect is visible on its own row and is not counted here.
+ */
 function runningCounts(live: Live) {
-  const available = live.sessions.filter((session) => session.availability === "available")
-  const verifying = available.filter((session) => session.assignment?.state === "verifying").length
-  const running = available.filter(
-    (session) =>
-      session.assignment?.state !== "verifying" &&
-      (session.assignment !== null || session.state === "busy"),
-  ).length
-  return { running, verifying }
+  const workers = live.sessions.filter(
+    (session) => session.availability === "available" && session.assignment !== null,
+  )
+  const verifying = workers.filter((session) => session.assignment?.state === "verifying").length
+  return { running: workers.length - verifying, verifying }
 }
 
 /**
@@ -393,10 +402,9 @@ function runningCounts(live: Live) {
  */
 export function monitorSegments(live: Live): SummarySegment[] {
   const { running, verifying } = runningCounts(live)
-  const workload = live.workload
+  const workload = scopedWorkload(live)
   return [
-    { count: running, word: "running" },
-    { count: verifying, word: "verifying" },
+    { count: running + verifying, word: "running" },
     { count: workload?.needsYou ?? 0, word: "needs you" },
     { count: workload?.failed ?? 0, word: "failed" },
     { count: workload?.queued ?? 0, word: "queued" },
@@ -408,8 +416,8 @@ export function flowSegments(live: Live): SummarySegment[] {
   const { running, verifying } = runningCounts(live)
   return [
     { count: running + verifying, word: "running" },
-    { count: live.workload?.needsYou ?? 0, word: "needs you" },
-    { count: live.workload?.failed ?? 0, word: "failed" },
+    { count: scopedWorkload(live)?.needsYou ?? 0, word: "needs you" },
+    { count: scopedWorkload(live)?.failed ?? 0, word: "failed" },
   ].filter((segment) => segment.count > 0)
 }
 
@@ -482,7 +490,7 @@ export function idleSentence(live: Live) {
     architect && architect.state === "idle"
       ? "Architect is idle and no workers are active."
       : "No sessions are running."
-  const queued = live.workload?.queued ?? 0
+  const queued = scopedWorkload(live)?.queued ?? 0
   return queued > 0 ? `${base} ${queued} ${queued === 1 ? "task is" : "tasks are"} queued.` : base
 }
 

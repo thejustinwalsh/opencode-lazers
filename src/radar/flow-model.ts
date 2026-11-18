@@ -1,5 +1,6 @@
 import type { LiveRadarResponse } from "../observability/contract.ts"
 import {
+  scopedWorkload,
   callSummary,
   formatAge,
   sessionCallLines,
@@ -35,6 +36,8 @@ export type FlowSession = {
   role: string
   /** `LZ-99`, absent for the Architect. */
   ref: string
+  /** The task title for a worker, or the session title: shown after the role when there is room. */
+  title: string
   tone: "run" | "idle"
   /** What it is doing now: `▸ bash: src/x.ts`, `idle 29m`; null when nothing is known. */
   doing: string | null
@@ -348,6 +351,7 @@ export function createFlowModel(
       parent: groups.parents.get(session.sessionID) ?? null,
       role,
       ref: session.assignment?.taskReference ?? "",
+      title: session.assignment?.taskTitle ?? session.title ?? "",
       tone: busy ? "run" : "idle",
       doing: note?.text ?? idleText ?? (busy ? "running" : null),
       doingFailed: note?.failed ?? false,
@@ -458,7 +462,7 @@ export function quietSentences(live: Live) {
   const architect = live.sessions.find(
     (session) => session.availability === "available" && session.isCurrentArchitect === true,
   )
-  const queued = live.workload?.queued ?? 0
+  const queued = scopedWorkload(live)?.queued ?? 0
   const parts = [
     architect?.state === "idle" ? "Architect is idle" : "",
     queued > 0 ? `${queued} ${queued === 1 ? "task is" : "tasks are"} queued` : "",

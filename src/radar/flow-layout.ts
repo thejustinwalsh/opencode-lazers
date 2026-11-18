@@ -40,7 +40,8 @@ export function layoutFlow(model: FlowModel, width: number): FlowLayout {
   const rowH = narrow ? 50 : 54
   const top = 34
   const sinkX = width - 20
-  const frameW = narrow ? 180 : Math.min(274, Math.round(width * 0.55))
+  // The session column grows with the panel so titles can show: about 45%, from 274 to 420 px.
+  const frameW = narrow ? 180 : Math.min(420, Math.max(274, Math.round(width * 0.45)))
   const x0 = frameW + 12
   const charPx = 6.2
   // Edges end where the widest destination label begins; narrow panels truncate labels instead.

@@ -19,6 +19,8 @@ import {
   sessionRole,
   sessionState,
   visibleSessions,
+  scopedWorkload,
+  flowSegments,
   sessionActive,
   sessionTask,
   sessionTaskTitle,
@@ -348,10 +350,11 @@ test("summary segments, coverage gaps and the three connection words", () => {
         ],
       }),
     ),
-  ).toEqual([
-    { count: 1, word: "running" },
-    { count: 1, word: "verifying" },
-  ])
+  ).toEqual([{ count: 2, word: "running" }])
+  // Running counts workers: a busy session with no assignment (an Architect) is not one.
+  expect(
+    monitorSegments(live({ sessions: [session({ assignment: null, state: "busy" })] })),
+  ).toEqual([])
 
   const data = (change: Partial<RadarMonitorData>): RadarMonitorData => ({
     key: "k",
@@ -449,7 +452,7 @@ test("active and assigned sessions lead; sessions without live data are not rows
   const groups = sessionGroups(response)
   expect(groups.leading).toEqual(["ses-assigned", "ses-busy", "ses-idle", "ses-unknown"])
   expect(groups.children.size).toBe(0)
-  expect(monitorSegments(response)).toEqual([{ count: 2, word: "running" }])
+  expect(monitorSegments(response)).toEqual([{ count: 1, word: "running" }])
 })
 
 test("workers nest under the current Architect, in rank order", () => {
@@ -612,4 +615,20 @@ describe("idle sessions are hidden by default", () => {
     expect(all.shown.size).toBe(2)
     expect(all.hidden).toBe(2)
   })
+})
+
+test("task counts follow the scope: omitted in session scope", () => {
+  const workload = { queued: 6, needsYou: 4, failed: 1 }
+  const project = live({ workload })
+  expect(monitorSegments(project).map((item) => item.word)).toEqual([
+    "running",
+    "needs you",
+    "failed",
+    "queued",
+  ])
+  const scoped = live({ workload, scope: { kind: "session", sessionID: "ses-worker" } })
+  expect(monitorSegments(scoped)).toEqual([{ count: 1, word: "running" }])
+  expect(flowSegments(scoped)).toEqual([{ count: 1, word: "running" }])
+  expect(scopedWorkload(scoped)).toBeUndefined()
+  expect(idleSentence(scoped)).not.toMatch(/queued/)
 })
