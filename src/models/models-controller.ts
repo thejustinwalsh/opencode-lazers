@@ -28,6 +28,7 @@ import {
   boundedModelLabel,
   currentMarketEstimateSummary,
   formatDate,
+  joinSegments,
   modelDisplayLabel,
   routeLabel,
   selectedModelFacts,
@@ -684,15 +685,33 @@ export function createModelsController(props: ModelsProps) {
     const date = snapshot?.asOf ?? snapshot?.retrievedAt
     return date ? formatDate(date) : undefined
   }
+  /** The comparison loaded but the benchmark snapshot never arrived: OpenRouter is not set up. */
+  const benchmarkNeedsOpenRouter = () =>
+    Boolean(visible()?.comparison) &&
+    !comparisonSource("openrouter-benchmarks")?.snapshot &&
+    !(baseline()?.points.length || baseline()?.gaps.length)
   const benchmarkEmptyText = () => {
-    const source = comparisonSource("openrouter-benchmarks")
     const current = baseline()
-    if (!source?.snapshot)
-      return "Public benchmark data hasn't been retrieved. It needs OpenRouter access configured in OpenCode; Refresh retries."
     if (!current || current.points.length + current.gaps.length === 0)
       return `None of the ${new Set(visible()?.candidates.map((candidate) => routeKey(candidate.identity))).size} loaded catalog models match a public benchmark yet.`
     return "Benchmarked models have no applicable list price from the configured price sources."
   }
+  /** "14 accepted tasks · OpenRouter prices" under the observed chart. */
+  const observedCaption = () => {
+    const overview = visible()?.decisionOverview
+    if (!overview) return undefined
+    const accepted = overview.graph.points.reduce((sum, point) => sum + point.acceptedTaskCount, 0)
+    const source = { openrouter: "OpenRouter", opencode: "OpenCode", mixed: "Configured" }[
+      overview.context.priceIndex.source as "openrouter" | "opencode" | "mixed"
+    ]
+    return (
+      joinSegments([
+        accepted > 0 && `${accepted} accepted task${accepted === 1 ? "" : "s"}`,
+        source && `${source} prices`,
+      ]) || undefined
+    )
+  }
+  const openProviderSettings = () => props.ctx.layout.settings("providers")
   const selectedBenchmark = () => {
     const current = baseline()
     const selectedID = visible()?.selectedCandidateID
@@ -1132,6 +1151,9 @@ export function createModelsController(props: ModelsProps) {
     baseline,
     benchmarkAsOf,
     benchmarkEmptyText,
+    benchmarkNeedsOpenRouter,
+    observedCaption,
+    openProviderSettings,
     benchmarkPriceSourceLabel,
     catalogOptions,
     categoryRows,

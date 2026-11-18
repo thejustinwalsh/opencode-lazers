@@ -968,6 +968,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const deferredLocationA4 = deferred<PanelLocation>()
     const deferredLocationB1 = deferred<PanelLocation>()
     const opened: unknown[][] = []
+    const settingsOpened: unknown[][] = []
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const modelStore = host.createReactiveStore({
       projects: {
@@ -1675,7 +1676,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       },
       add: (token: unknown, value: unknown) => registrations.push({ token, value }),
       sessions: { current: () => sessionA, list: () => sessions },
-      layout: { open: (...args: unknown[]) => opened.push(args) },
+      layout: {
+        open: (...args: unknown[]) => opened.push(args),
+        settings: (...args: unknown[]) => settingsOpened.push(args),
+      },
       stores: {
         modelsView: () => modelStore,
         trajectoryView: () => trajectoryStore,

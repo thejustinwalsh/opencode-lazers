@@ -93,6 +93,29 @@ function SourcesDetails(props: { ctl: ModelsController }) {
   )
 }
 
+/** The Benchmark view when OpenRouter has delivered nothing: what is needed, and the two ways out. */
+export function BenchmarkEmptyState(props: {
+  ui: ModelsController["Ui"]
+  onOpenSettings: () => void
+  onRetry: () => void
+}) {
+  const Ui = props.ui
+  return (
+    <div class="lazers-models-empty-state">
+      <h3>Benchmarks need OpenRouter</h3>
+      <p>Connect OpenRouter in OpenCode to load public benchmark scores and list prices.</p>
+      <div>
+        <Ui.Button size="small" onClick={props.onOpenSettings}>
+          Open provider settings
+        </Ui.Button>
+        <Ui.Button size="small" variant="ghost-muted" onClick={props.onRetry}>
+          Retry
+        </Ui.Button>
+      </div>
+    </div>
+  )
+}
+
 /** Compare mode top pane: the chart or the benchmark chart. */
 export function CompareTop(props: { ctl: ModelsController }) {
   const ctl = props.ctl
@@ -101,6 +124,9 @@ export function CompareTop(props: { ctl: ModelsController }) {
     baseline,
     benchmarkAsOf,
     benchmarkEmptyText,
+    benchmarkNeedsOpenRouter,
+    observedCaption,
+    openProviderSettings,
     benchmarkPriceSourceLabel,
     chartHeight,
     compareMode,
@@ -203,43 +229,59 @@ export function CompareTop(props: { ctl: ModelsController }) {
               </Show>
             </Show>
             <Show when={compareMode() === "benchmark"}>
-              <BenchmarkChart
-                dataMount={dataMount}
-                points={baseline()?.points ?? []}
-                gaps={baseline()?.gaps ?? []}
-                selectedID={selectedBenchmark()?.id ?? null}
-                onSelect={(candidateID) => state.selectCandidate(candidateID)}
-                emptyText={benchmarkEmptyText()}
-                appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-                monoFontFamily={ctx.appearance.font("mono")}
-                dataFooter={
-                  <div class="lazers-models-benchmark-coverage">
-                    <p>
-                      {baseline()?.points.length ?? 0} plotted · {baseline()?.unmatchedRoutes ?? 0}{" "}
-                      loaded catalog models without a benchmark match
-                      {baseline()?.ambiguousRoutes
-                        ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
-                        : ""}
-                    </p>
-                    <Show when={visible()?.comparison?.nextCursor}>
-                      <Ui.Button
-                        size="small"
-                        variant="ghost"
-                        busy={visible()?.comparisonLoading}
-                        onClick={() => void state.moreCandidates()}
-                      >
-                        Load more catalog models
-                      </Ui.Button>
-                    </Show>
-                  </div>
+              <Show
+                when={!benchmarkNeedsOpenRouter()}
+                fallback={
+                  <BenchmarkEmptyState
+                    ui={Ui}
+                    onOpenSettings={openProviderSettings}
+                    onRetry={refreshAll}
+                  />
                 }
-              />
+              >
+                <BenchmarkChart
+                  dataMount={dataMount}
+                  points={baseline()?.points ?? []}
+                  gaps={baseline()?.gaps ?? []}
+                  selectedID={selectedBenchmark()?.id ?? null}
+                  onSelect={(candidateID) => state.selectCandidate(candidateID)}
+                  emptyText={benchmarkEmptyText()}
+                  appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
+                  monoFontFamily={ctx.appearance.font("mono")}
+                  dataFooter={
+                    <div class="lazers-models-benchmark-coverage">
+                      <p>
+                        {baseline()?.points.length ?? 0} plotted ·{" "}
+                        {baseline()?.unmatchedRoutes ?? 0} loaded catalog models without a benchmark
+                        match
+                        {baseline()?.ambiguousRoutes
+                          ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
+                          : ""}
+                      </p>
+                      <Show when={visible()?.comparison?.nextCursor}>
+                        <Ui.Button
+                          size="small"
+                          variant="ghost"
+                          busy={visible()?.comparisonLoading}
+                          onClick={() => void state.moreCandidates()}
+                        >
+                          Load more catalog models
+                        </Ui.Button>
+                      </Show>
+                    </div>
+                  }
+                />
+              </Show>
             </Show>
-            <p class="lazers-models-chart-caption">
-              {compareMode() === "benchmark"
-                ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
-                : "Your task runs · market cost and tokens per accepted task"}
-            </p>
+            <Show
+              when={compareMode() === "benchmark" ? !benchmarkNeedsOpenRouter() : observedCaption()}
+            >
+              <p class="lazers-models-chart-caption">
+                {compareMode() === "benchmark"
+                  ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
+                  : observedCaption()}
+              </p>
+            </Show>
           </section>
         </div>
       </Show>

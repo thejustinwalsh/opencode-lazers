@@ -132,7 +132,6 @@
   max-width: 100%;
 }
 
-.lazers-models-filter-details,
 .lazers-models-sources-details,
 .lazers-models-warning-details {
   min-width: 0;
@@ -140,7 +139,6 @@
   font-size: 10px;
 }
 
-.lazers-models-filter-details summary,
 .lazers-models-sources-details summary,
 .lazers-models-warning-details summary {
   min-height: 28px;
@@ -156,13 +154,6 @@
   min-height: 20px;
 }
 
-.lazers-models-filter-details > div {
-  max-width: 42rem;
-  padding: 2px 0 6px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
 .lazers-models-warning-details p {
   margin: 2px 0 6px;
   color: var(--text-weak);
@@ -176,7 +167,6 @@
   border-bottom: 1px solid var(--border-weak-base);
 }
 
-.lazers-models-refresh-note,
 .lazers-models-source-meta,
 .lazers-models-coverage {
   color: var(--text-weak);
@@ -185,7 +175,6 @@
   overflow-wrap: anywhere;
 }
 
-.lazers-models-refresh-note,
 .lazers-models-error {
   margin: 4px 0 0;
 }
@@ -198,10 +187,6 @@
 }
 
 .lazers-models-compare {
-  min-width: 0;
-}
-
-.lazers-models-comparison-content {
   min-width: 0;
 }
 
@@ -236,20 +221,6 @@
 .lazers-models-overview {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-}
-
-.lazers-models-decision-tools {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  min-width: 0;
-  padding: 8px 0 2px;
-}
-
-.lazers-models-decision-tools > * {
-  max-width: 100%;
   min-width: 0;
 }
 
@@ -423,44 +394,12 @@
   background: var(--text-base);
 }
 
-.lazers-models-chart-key-reference {
-  background: var(--border-selected);
-  clip-path: polygon(50% 0, 100% 100%, 0 100%);
-}
-
 .lazers-models-chart-key-frontier {
   width: 7px;
   height: 7px;
   margin: 0 1px;
   background: var(--text-base);
   transform: rotate(45deg);
-}
-
-.lazers-models-chart-key-range {
-  width: 2px;
-  height: 10px;
-  margin: 0 3px;
-  border: 0;
-  background: var(--border-selected);
-  box-shadow:
-    0 -2px 0 -0.5px var(--border-selected),
-    0 2px 0 -0.5px var(--border-selected);
-}
-
-.lazers-models-chart-key-subtotal {
-  background: var(--surface-base);
-  transform: rotate(45deg);
-}
-
-.lazers-models-chart-key-subtotal-range {
-  width: 2px;
-  height: 10px;
-  margin: 0 3px;
-  border: 0;
-  border-left: 2px dashed var(--border-selected);
-  box-shadow:
-    0 -2px 0 -0.5px var(--border-selected),
-    0 2px 0 -0.5px var(--border-selected);
 }
 
 .lazers-models-comparison-chart-data ul {
@@ -516,36 +455,6 @@
   content: "";
 }
 
-.lazers-models-inspector-heading {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding-bottom: 8px;
-}
-
-.lazers-models-inspector-heading h2 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 16px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-inspector-heading p {
-  margin: 4px 0 0;
-  color: var(--text-weak);
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-inspector-heading .lazers-models-market-summary {
-  gap: 0;
-  min-width: 0;
-  margin: 2px 0 0;
-  padding: 0;
-  border: 0;
-}
-
 .lazers-models-estimate {
   display: grid;
   gap: 3px;
@@ -564,44 +473,6 @@
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
-}
-
-.lazers-models-market-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 1px;
-  min-width: 0;
-  margin: 3px 0 0;
-  padding: 3px 0 0;
-  border-top: 1px solid var(--border-weak-base);
-}
-
-.lazers-models-market-summary small {
-  grid-column: 1;
-  min-width: 0;
-  color: var(--text-base);
-  font-size: 12px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-selection-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-weak-base);
-}
-
-.lazers-models-selection-actions > * {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.lazers-models-status-details {
-  margin: 0 0 4px;
 }
 
 .lazers-models-route-pages {
@@ -851,12 +722,6 @@
   cursor: pointer;
 }
 
-.lazers-models-inspector-columns {
-  display: grid;
-  gap: 20px;
-  min-width: 0;
-}
-
 .lazers-models-inspector-block {
   min-width: 0;
 }
@@ -891,11 +756,6 @@
   overflow-wrap: anywhere;
 }
 
-.lazers-models-category-list {
-  display: grid;
-  min-width: 0;
-}
-
 .lazers-models-category-row {
   display: flex;
   justify-content: space-between;
@@ -916,41 +776,6 @@
   color: var(--text-weak);
 }
 
-.lazers-models-unknown-cost {
-  margin: 8px 0;
-  color: var(--text-weak);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.lazers-models-task-routes {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-weak-base);
-}
-
-.lazers-models-task-routes > p,
-.lazers-models-route-evidence > span,
-.lazers-models-route-evidence > code {
-  display: block;
-  margin: 4px 0;
-  color: var(--text-weak);
-  font-size: 10px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-route-evidence {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  margin: 8px 0;
-  padding: 8px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 5px;
-}
-
-.lazers-models-route-evidence > code,
 .lazers-models-evidence-content code {
   overflow-wrap: anywhere;
   font-size: 10px;
@@ -1404,6 +1229,40 @@ span.lazers-models-assignment-route {
   font-size: 12px;
 }
 
+.lazers-models-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px 12px;
+  text-align: center;
+}
+
+.lazers-models-empty-state h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.lazers-models-empty-state p {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--text-weak);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.lazers-models-empty-state > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.lazers-models-chart-data-slot {
+  min-width: 0;
+}
+
 .lazers-models-note {
   margin: 8px 0;
   color: var(--text-weak);
@@ -1423,10 +1282,6 @@ span.lazers-models-assignment-route {
   .lazers-models-comparison-chart-plot {
     height: var(--models-chart-height, 260px);
   }
-
-  .lazers-models-inspector-columns {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
-  }
 }
 
 @container models-panel (max-width: 500px) {
@@ -1444,11 +1299,6 @@ span.lazers-models-assignment-route {
 }
 
 @container models-panel (max-width: 719px) {
-  .lazers-models-decision-tools {
-    gap: 4px 6px;
-    padding-top: 5px;
-  }
-
   .lazers-models-chart {
     padding-top: 5px;
     padding-bottom: 5px;

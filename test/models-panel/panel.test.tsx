@@ -15,6 +15,10 @@ const { KnownUsageMarketScenarioCard } = (await vite.ssrLoadModule(
   "/src/models/known-usage-card.tsx",
 )) as typeof import("../../src/models/known-usage-card.tsx")
 
+const { BenchmarkEmptyState } = (await vite.ssrLoadModule(
+  "/src/models/compare-view.tsx",
+)) as typeof import("../../src/models/compare-view.tsx")
+
 const renderedText = (html: string) => html.replace(/<[^>]*>/g, "")
 
 function renderMarketScenario(scenario: KnownUsageMarketScenario) {
@@ -423,4 +427,23 @@ test("incomplete retries expose a partial known subtotal without implying a task
   } finally {
     partialCard.dispose()
   }
+})
+
+test("the benchmark empty state names what is needed and offers settings and retry", () => {
+  const ui = {
+    Button: (props: { children: unknown }) => `[${String(props.children)}]`,
+  }
+  const markup = renderToString(() =>
+    createComponent(BenchmarkEmptyState, {
+      ui: ui as never,
+      onOpenSettings: () => {},
+      onRetry: () => {},
+    }),
+  )
+  const text = renderedText(markup)
+  expect(text).toContain("Benchmarks need OpenRouter")
+  expect(text).toContain("Connect OpenRouter in OpenCode")
+  expect(text).toContain("[Open provider settings]")
+  expect(text).toContain("[Retry]")
+  expect(text).not.toMatch(/unknown|unavailable/i)
 })
