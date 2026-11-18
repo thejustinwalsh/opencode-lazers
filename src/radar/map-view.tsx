@@ -82,12 +82,6 @@ function liveTime(value: number | null | undefined) {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString()
 }
 
-function fullDateTime(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return undefined
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
-}
-
 function objectRelated(model: RadarMapModel, id: string) {
   return model.nodeByID.has(id) || model.edgeByID.has(id)
 }
