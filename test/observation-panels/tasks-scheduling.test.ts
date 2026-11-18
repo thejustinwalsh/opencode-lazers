@@ -200,7 +200,8 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
         projectDirectory,
         snapshot: version,
         count: 3,
-        tasks: [ids.active, ids.waiting, ids.next].map(summaries),
+        // The read orders by priority: the higher-priority target plan leads.
+        tasks: [ids.next, ids.active, ids.waiting].map(summaries),
         nextCursor: null,
         serverTime: "2026-11-05T00:00:00.000Z",
       }

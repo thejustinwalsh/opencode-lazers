@@ -67,6 +67,8 @@ type Fixture = {
   runningSince?: number
   /** The list read carries per-state counts. */
   stateCounts?: boolean
+  /** State: All answers in reverse plan order, in two pages. */
+  readOrder?: boolean
 }
 
 async function withPanel(
@@ -299,7 +301,16 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
         queue.length,
       )
     }
-    const ids = [...alpha, ...betaTasks, ...extraPlans.flatMap((plan) => plan.tasks)]
+    if (fixture.readOrder && input.state === "all") {
+      // The read's order is the only order: here it runs against plan order, over two pages.
+      const full = [...alpha, ...betaTasks, ...extraPlans.flatMap((plan) => plan.tasks)].reverse()
+      const page = input.cursor ? 1 : 0
+      return pageOf(full.slice(page * 40, page * 40 + 40), page === 0 ? "all-1" : null, full.length)
+    }
+    // The read answers in its own order: with priorities, Beta (1) leads Alpha (2).
+    const ids = fixture.prioritized
+      ? [...betaTasks, ...alpha, ...extraPlans.flatMap((plan) => plan.tasks)]
+      : [...alpha, ...betaTasks, ...extraPlans.flatMap((plan) => plan.tasks)]
     return pageOf(ids, null, ids.length)
   }
   const node = (taskID: string, ordinal: number) => ({
@@ -1168,6 +1179,31 @@ test("the inspector for a still-selected task is unchanged while a filter reload
     },
     {},
     { scheduling: true, prioritized: true },
+  )
+})
+
+test("State: All renders in the read's order across two pages, not in plan order", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => h.rows().length > 0)
+      h.chooseFilter("All")
+      await until(() => h.queryCalls.at(-1)?.state === "all" && Boolean(h.row(h.beta.join)))
+      // Plan order would lead with Alpha; the read leads with the last task.
+      expect(h.rowKeys().slice(0, 4)).toEqual(
+        [h.beta.join, h.beta.b, h.beta.a, h.beta.root].map((id) => `task:${id}`),
+      )
+      for (const top of [400, 560, 640, 700, 700, 760]) h.scrollTo(top)
+      await until(() =>
+        h.queryCalls.some((call) => call.state === "all" && call.cursor === "all-1"),
+      )
+      h.scrollTo(64 * ROW)
+      // Page two continues the same order: the last rows are Alpha 2 and Alpha 1.
+      await until(() => Boolean(h.row(h.alpha[0]!)))
+      expect(h.rowKeys().at(-1)).toBe(`task:${h.alpha[0]}`)
+      expect(h.rowKeys().slice(-2)).toEqual([`task:${h.alpha[1]}`, `task:${h.alpha[0]}`])
+    },
+    {},
+    { readOrder: true },
   )
 })
 

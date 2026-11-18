@@ -78,35 +78,26 @@ export function listedRows(model: ExecutionList) {
   return [...model.plans.flatMap((group) => group.rows), ...model.unplanned]
 }
 
-/** Open work first, then accepted, integrated, and failed or cancelled. */
-export function stateRank(status: string) {
-  switch (status) {
-    case "accepted":
-      return 1
-    case "incorporated":
-      return 2
-    case "failed":
-    case "exhausted":
-    case "cancelled":
-      return 3
-    default:
-      return 0
-  }
-}
-
 export function flattenExecutionList(input: {
   model: ExecutionList
   /** Item keys of expanded rows; everything else is collapsed. */
   expanded: ReadonlySet<string>
   /** Append a loader row while another page exists. */
   hasMore?: boolean
+  /**
+   * Task IDs in the read's order. The read is the one sort key (state, priority, recency), so the
+   * top-level rows follow it; the plan grouping only supplies nesting and priority. Rows the read
+   * did not list keep their model order after the listed ones.
+   */
+  order?: readonly string[]
 }): VirtualItem[] {
-  // Stable: inside one state rank the scheduler's priority order is kept.
+  const position = new Map((input.order ?? []).map((taskID, index) => [taskID, index]))
   const top = listedRows(input.model)
     .map((row, index) => ({ row, index }))
     .toSorted(
       (left, right) =>
-        stateRank(left.row.status) - stateRank(right.row.status) || left.index - right.index,
+        (position.get(left.row.taskID) ?? Number.MAX_SAFE_INTEGER) -
+          (position.get(right.row.taskID) ?? Number.MAX_SAFE_INTEGER) || left.index - right.index,
     )
     .map(({ row }) => row)
   const priorityOf = new Map<string, number>()
