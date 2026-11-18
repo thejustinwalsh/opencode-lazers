@@ -1,18 +1,18 @@
 import type { MapNode, MapTone, RadarMap } from "./map-model.ts"
 
 export const MAP_PAD = 12
-const NODE_HEIGHT = 54
-const ROW_GAP = 26
-const COLUMN_GAP = 12
-const MAX_NODE_WIDTH = 170
+const NODE_HEIGHT = 36
+const ROW_GAP = 30
+const COLUMN_GAP = 8
+const MAX_NODE_WIDTH = 100
 
 export type PlacedNode = MapNode & { x: number; y: number; width: number; height: number }
 export type PlacedEdge = { id: string; from: string; to: string; tone: MapTone; d: string }
 export type MapLayout = { width: number; height: number; nodes: PlacedNode[]; edges: PlacedEdge[] }
 
 /** Truncate a label to what fits a node of this width at this font size. */
-export function fitText(text: string, width: number, size = 13) {
-  const limit = Math.max(3, Math.floor((width - 16) / (size * 0.56)))
+export function fitText(text: string, width: number, size = 12) {
+  const limit = Math.max(3, Math.floor((width - 10) / (size * 0.52)))
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
 }
 

@@ -171,13 +171,13 @@ export function createRadarMap(live: Live, now: number): RadarMap {
   }
 
   const byID = new Map(nodes.map((node) => [node.id, node]))
-  // Active or failed children colour the path above them: the route from you to what runs.
+  // Only running work colours the path above it. A failed or needs-you node marks itself and
+  // the one edge into it; its ancestors never inherit that tone.
   for (const node of nodes) {
-    if (node.tone !== "active" && node.tone !== "failed") continue
+    if (node.tone !== "active") continue
     for (let id = node.parent; id; id = byID.get(id)?.parent ?? null) {
       const parent = byID.get(id)!
-      if (parent.tone === "weak" || (parent.tone === "active" && node.tone === "failed"))
-        parent.tone = node.tone
+      if (parent.tone === "weak") parent.tone = "active"
     }
   }
   for (const edge of edges) edge.tone = byID.get(edge.to)!.tone

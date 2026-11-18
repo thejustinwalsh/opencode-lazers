@@ -11,6 +11,7 @@ import { RadarHeader } from "./radar-header.tsx"
 import type { RadarScopeChoice, RadarViewChoice } from "./radar-header.tsx"
 import {
   callRow,
+  clockCompact,
   clockMinutes,
   clockTime,
   connectionStatus,
@@ -294,8 +295,12 @@ export function RadarMonitorView(props: Props) {
               {local.detailed ? callElapsed(line()!) : callWhen(line()!)}
             </code>
             <Show when={local.detailed && clockTime(line()!.startedAt)}>
-              <code class="lazers-radar-call-clock" style={{ "font-family": props.monoFont }}>
-                {clockTime(line()!.startedAt)}
+              <code
+                class="lazers-radar-call-clock"
+                style={{ "font-family": props.monoFont }}
+                title={clockTime(line()!.startedAt)}
+              >
+                {clockCompact(line()!.startedAt)}
               </code>
             </Show>
           </button>

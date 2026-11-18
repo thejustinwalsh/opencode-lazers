@@ -328,8 +328,9 @@ export function sessionGroups(live: Live) {
   const architect = ranked.find((session) => session.isCurrentArchitect === true)
   const parentOf = (session: LiveSession) => {
     const reported = session.parentSessionID
-    if (reported !== undefined)
-      return byID.has(reported) && reported !== session.sessionID ? reported : undefined
+    if (reported !== undefined && byID.has(reported) && reported !== session.sessionID)
+      return reported
+    // No parent in the read, whether unreported or outside it: assigned work sits under the Architect.
     return architect !== undefined && session !== architect && session.assignment !== null
       ? architect.sessionID
       : undefined
@@ -453,6 +454,13 @@ export function clockTime(value: number | null | undefined) {
   return Number.isNaN(date.getTime())
     ? ""
     : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+}
+
+/** `1:35:27`: the list form of a clock time, without AM/PM; the tooltip carries the full time. */
+export function clockCompact(value: number | null | undefined) {
+  return clockTime(value)
+    .replace(/^0/, "")
+    .replace(/\s?[AP]M$/i, "")
 }
 
 /** `5:43 PM`: a time of day to the minute, for facts lines. */

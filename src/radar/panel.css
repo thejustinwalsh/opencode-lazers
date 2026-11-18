@@ -545,9 +545,6 @@
   gap: 8px;
   padding: 0 var(--radar-inset, 16px);
 }
-.lazers-radar-top:empty {
-  display: none;
-}
 .lazers-radar-summary {
   display: flex;
   flex-wrap: wrap;
@@ -580,11 +577,11 @@
 }
 .lazers-radar-session-main {
   width: 100%;
-  min-height: 32px;
+  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 0 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -642,7 +639,7 @@
 .lazers-radar-session-model {
   flex: none;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: 11.5px;
   white-space: nowrap;
 }
 .lazers-radar-session-when {
@@ -679,19 +676,19 @@
 .lazers-radar-session-children {
   min-width: 0;
   margin: 0 0 0 15px;
-  padding: 0 0 0 8px;
+  padding: 0 0 0 4px;
   border-left: 1px solid var(--border-base);
   list-style: none;
 }
 .lazers-radar-session-lines {
   display: grid;
-  margin: 0 0 4px 32px;
+  margin: 0 0 4px 26px;
 }
 .lazers-radar-call {
   width: 100%;
-  min-height: 28px;
+  min-height: 24px;
   display: grid;
-  grid-template-columns: 16px 5.5ch minmax(0, 1fr) auto;
+  grid-template-columns: 16px 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 2px 8px;
@@ -704,8 +701,8 @@
   cursor: pointer;
 }
 .lazers-radar-call[data-detailed="true"] {
-  grid-template-columns: 16px 5.5ch minmax(0, 1fr) auto auto;
-  min-height: 32px;
+  grid-template-columns: 16px 44px minmax(0, 1fr) auto auto;
+  min-height: 26px;
   padding-inline: 0;
   border-radius: 0;
   border-bottom: 1px solid var(--border-weak-base);
@@ -716,7 +713,7 @@
 }
 .lazers-radar-call code {
   min-width: 0;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .lazers-radar-call-icon {
   width: 16px;
@@ -738,6 +735,7 @@
 }
 .lazers-radar-call-time,
 .lazers-radar-call-clock {
+  font-size: 11px;
   color: var(--text-weak);
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -862,6 +860,9 @@
 .lazers-radar-inspector-state .lazers-radar-session-ref {
   color: var(--text-weak);
 }
+.lazers-radar-inspector-word::first-letter {
+  text-transform: uppercase;
+}
 .lazers-radar-inspector-glyph {
   display: inline-flex;
   flex: none;
@@ -876,11 +877,14 @@
   display: -webkit-box;
   margin: 10px 0 6px;
   overflow: hidden;
+  flex: none;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -1001,12 +1005,12 @@
 }
 .lazers-radar-node-title {
   fill: var(--text-strong);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 .lazers-radar-node-sub {
   fill: var(--text-weak);
-  font-size: 11.5px;
+  font-size: 10px;
 }
 .lazers-radar-node[data-dim="true"],
 .lazers-radar-edge[data-dim="true"] {
