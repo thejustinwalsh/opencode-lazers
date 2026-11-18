@@ -2451,13 +2451,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA
-          .querySelector(".lazers-models-price")
+          .querySelector(".lazers-models-selected-price")
           ?.textContent?.includes("per accepted task") === true,
     )
     expect(
-      containerA
-        .querySelector(".lazers-models-selected-price")
-        ?.closest(".lazers-models-inspector"),
+      containerA.querySelector(".lazers-models-selected-price")?.closest(".lazers-details-bar"),
     ).not.toBeNull()
     expect(
       containerA.querySelector<HTMLElement>(".lazers-models-evidence-details")?.textContent,
@@ -2615,9 +2613,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(benchmarkDetails.textContent).toContain("does not state the effort")
     expect(benchmarkDetails.textContent).toContain("input $0.4 · output $1.6 · cache read $0.1")
     expect(benchmarkDetails.textContent).toContain("A list price is not a task cost")
-    const benchmarkActions = containerA.querySelector<HTMLElement>(
-      ".lazers-models-inspector-compare .lazers-models-selected-heading",
-    )!
+    const benchmarkActions = containerA.querySelector<HTMLElement>(".lazers-details-bar")!
     const benchmarkAssign = buttonWithText(benchmarkActions, "Assign to Systems")!
     await until(() => !benchmarkAssign.disabled)
     expect(containerA.querySelector(".lazers-models-selection-tools")).toBeNull()
@@ -2752,7 +2748,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     // "Assign to <persona>" opens the existing editor with the compared route as an unsaved draft.
     const assignAction = buttonWithText(
-      containerA.querySelector(".lazers-models-selected-heading")!,
+      containerA.querySelector(".lazers-details-bar")!,
       "Assign to Systems",
     )!
     await until(() => !assignAction.disabled)
@@ -2769,9 +2765,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       )?.value
     expect(draftInput("Provider ID")).toBe("openai")
     expect(draftInput("Variant / effort (optional)")).toBe("high")
-    expect(containerA.querySelector(".lazers-models-assignment-editor h3")?.textContent).toBe(
-      "Systems",
-    )
+    expect(containerA.querySelector(".lazers-details-header h2")?.textContent).toBe("Systems")
     expect(containerA.querySelector(".lazers-models-assignment-editor")?.textContent).toContain(
       "New workers use this route. Running workers keep theirs.",
     )
@@ -2847,7 +2841,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector("[data-decision-status]")).toBeNull()
     expect(containerA.textContent).not.toContain("Select a model to compare.")
     expect(assignmentEditor.getAttribute("aria-labelledby")).toBe(
-      assignmentEditor.querySelector("h3")!.id,
+      containerA.querySelector(".lazers-details-header h2")!.id,
     )
     expect(rowForPersona("UI").getAttribute("aria-pressed")).toBe("true")
     expect(rowForPersona("Systems").getAttribute("aria-pressed")).toBe("false")
@@ -2863,7 +2857,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         (input) => !input.disabled,
       ),
     ).toBe(true)
-    expect(buttonWithText(assignmentEditor, "Save")?.disabled).toBe(false)
+    expect(buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.disabled).toBe(
+      false,
+    )
     expect(
       assignmentEditor.querySelector<HTMLButtonElement>(".lazers-models-assignment-choice > button")
         ?.disabled,
@@ -2875,7 +2871,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       '[role="tab"][aria-controls="lazers-models-compare-panel"]',
     )!
     compareTab.click()
-    await until(() => containerA.querySelector(".lazers-models-selected-heading") !== null)
+    await until(() => containerA.querySelector(".lazers-details-bar") !== null)
     await until(() =>
       chartDescription().includes("An unusually long catalog-backed model display name"),
     )
@@ -3040,7 +3036,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await chooseCatalogModel()
     chooseVariant("high")
-    buttonWithText(currentAssignmentEditor(), "Save")?.click()
+    buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.click()
     await until(
       () =>
         containerA
@@ -3090,7 +3086,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await chooseCatalogModel()
     chooseVariant("xhigh")
     await until(() => buttonWithText(currentAssignmentEditor(), "xhigh") !== undefined)
-    buttonWithText(currentAssignmentEditor(), "Save")?.click()
+    buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.click()
     await until(
       () =>
         containerA

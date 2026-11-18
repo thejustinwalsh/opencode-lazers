@@ -31,8 +31,10 @@ export function SplitPane(props: {
   createEffect(() => {
     const value = current()
     if (!value || !visible()) return
-    const { topPane } = refs
+    const { topPane, inspector } = refs
     if (topPane && topPane.scrollTop !== prefs().topScroll) topPane.scrollTop = prefs().topScroll
+    if (inspector && inspector.scrollTop !== prefs().inspectorScroll)
+      inspector.scrollTop = prefs().inspectorScroll
   })
   return (
     <DetailsPane

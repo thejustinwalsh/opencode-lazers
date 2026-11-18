@@ -31,6 +31,15 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
 - Lists/visualizations sit **above** a selected-item inspector, separated by a
   horizontal resizable divider, including at wide widths. Each region scrolls
   independently. Keep useful content visible before requiring scroll.
+- Details pane (`src/details-pane.tsx`, every list-over-inspector panel). It is always
+  present at the bottom as a 32 px header bar and starts collapsed; the header is the
+  collapsed state: one line saying what is selected, with its actions at the right
+  (`empty` text when nothing is). A chevron, a double-click on the bar or Enter toggles
+  it; there is no divider row: the bar's top 5 px is the resize handle (a focusable
+  `role="separator"`, Up/Down move 5 %), a pip appears there only on hover or focus,
+  dragging below a 72 px body snaps it collapsed. Open, the bar stays pinned and only
+  the body scrolls; the list above keeps at least 120 px. Selecting never opens it,
+  and callers persist `open` and `size`.
 - Make the primary identity and current state clear. Put payloads, technical
   provenance and secondary history behind disclosures. Long meaningful text wraps;
   short display labels may truncate only with full content accessible.

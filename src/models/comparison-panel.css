@@ -299,9 +299,6 @@
   border: 0 !important;
 }
 
-/* The plot owns its height; legend and Chart data stack below and never squeeze it. */
-}
-
 .lazers-models-estimate {
   display: grid;
   gap: 3px;

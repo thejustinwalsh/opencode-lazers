@@ -139,7 +139,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     )
   }
   const detailsActions = () =>
-    assignmentSettings() && (assignmentDirty() || assignmentBusy()) ? (
+    assignmentSettings() && (assignmentDirty() || assignmentCanSave() || assignmentBusy()) ? (
       <>
         <Ui.Button
           size="small"
