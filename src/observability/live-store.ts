@@ -4,6 +4,8 @@ import { z } from "zod"
 import type { LiveHistoryRequest } from "./contract.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
+import { taskTitle } from "../tasks/presentation.ts"
+import { terminalPlanStates } from "../runner/plan-control.ts"
 
 export const LIVE_LIMITS = {
   sessions: 32,
@@ -49,7 +51,15 @@ export type LiveAttemptAssignment = {
   workspace: string | null
   workspaceOmitted: boolean
   workspaceMatches: boolean | null
+  /** Runner attempt ordinal for the task; always present on an active attempt row. */
+  attemptNumber: number
+  /** From the task record; absent when the task tables or fields are missing. */
+  taskTitle?: string
+  taskReference?: string
 }
+
+/** Counts of recorded task states in non-terminal plans; no new notion, just the runner nodes. */
+export type LiveWorkload = { queued: number; needsYou: number; failed: number }
 
 export type LiveProgressRow = {
   seq: number
@@ -82,6 +92,7 @@ export type LiveStoreMetrics = {
 
 export type LiveSourceSnapshot = LiveStoreMetrics & {
   runnerRevision: number | null
+  workload?: LiveWorkload
   assignments: Map<string, LiveAttemptAssignment>
   progress: Map<string, LiveProgressRow[]>
 }
@@ -102,6 +113,7 @@ type AssignmentRow = {
   attempt_id: string
   state: "preparing" | "running" | "verifying"
   started_at: number
+  attempt_number: number
   policy: string | null
   policy_bytes: number
   policy_omitted: number
@@ -307,6 +319,7 @@ function assignmentFromRow(row: AssignmentRow): LiveAttemptAssignment {
     attemptID: row.attempt_id,
     state: row.state,
     startedAt: row.started_at,
+    attemptNumber: row.attempt_number,
     policy: row.policy,
     policyBytes: row.policy_bytes,
     policyOmitted: row.policy_omitted !== 0,
@@ -316,9 +329,71 @@ function assignmentFromRow(row: AssignmentRow): LiveAttemptAssignment {
   }
 }
 
+/**
+ * Queued, blocked and failed task counts from the runner nodes of plans that are still open.
+ * One grouped query over a project's open plans; absent when the tables are not readable.
+ */
+function readWorkload(db: Database, metrics: LiveStoreMetrics, projectDirectory: string) {
+  try {
+    const terminal = [...terminalPlanStates]
+    countQuery(metrics)
+    const rows = db
+      .query<{ state: string; count: number }, string[]>(
+        `SELECT n.state AS state,COUNT(*) AS count
+           FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+          WHERE p.project_directory=? AND p.state NOT IN (${terminal.map(() => "?").join(",")})
+            AND n.state IN ('queued','ready','blocked','failed','exhausted')
+          GROUP BY n.state`,
+      )
+      .all(projectDirectory, ...terminal)
+    countRows(metrics, rows)
+    const count = (...states: string[]) =>
+      rows.filter((row) => states.includes(row.state)).reduce((sum, row) => sum + row.count, 0)
+    return {
+      queued: count("queued", "ready"),
+      needsYou: count("blocked"),
+      failed: count("failed", "exhausted"),
+    } satisfies LiveWorkload
+  } catch {
+    return undefined
+  }
+}
+
+/** Task title and reference for the active attempts, by primary-key lookup; best effort. */
+function readTaskLabels(
+  db: Database,
+  metrics: LiveStoreMetrics,
+  projectDirectory: string,
+  assignments: Map<string, LiveAttemptAssignment>,
+) {
+  if (assignments.size === 0) return
+  try {
+    const taskIDs = [...new Set([...assignments.values()].map((item) => item.taskID))]
+    countQuery(metrics)
+    const rows = db
+      .query<{ id: string; title: string | null; reference: string | null }, string[]>(
+        `SELECT t.id AS id,substr(json_extract(t.body,'$.proposal.objective'),1,600) AS title,
+                substr(r.reference,1,40) AS reference
+           FROM tasks t
+           LEFT JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
+          WHERE t.project_directory=? AND t.id IN (${taskIDs.map(() => "?").join(",")})`,
+      )
+      .all(projectDirectory, ...taskIDs)
+    countRows(metrics, rows)
+    const byTask = new Map(rows.map((row) => [row.id, row]))
+    for (const assignment of assignments.values()) {
+      const row = byTask.get(assignment.taskID)
+      if (row?.title?.trim()) assignment.taskTitle = taskTitle(row.title)
+      if (row?.reference) assignment.taskReference = row.reference
+    }
+  } catch {
+    // Older stores without task references simply omit the labels.
+  }
+}
+
 /** The denormalized project key and partial index keep historical attempts out of the live scan. */
 export function activeAssignmentsQuery(sessionScoped: boolean) {
-  return `SELECT a.session_id,a.plan_id,a.task_id,a.id AS attempt_id,a.state,a.started_at,
+  return `SELECT a.session_id,a.plan_id,a.task_id,a.id AS attempt_id,a.state,a.started_at,a.number AS attempt_number,
                  CASE WHEN ${boundedBytePrefix("a.policy", POLICY_BYTES)}<=? THEN a.policy END AS policy,
                  ${boundedBytePrefix("a.policy", POLICY_BYTES)} AS policy_bytes,
                  ${boundedBytePrefix("a.policy", POLICY_BYTES)}>? AS policy_omitted,
@@ -470,6 +545,10 @@ export class LiveReadStore {
           )
         }
 
+        signal.throwIfAborted()
+        const workload = readWorkload(db, metrics, this.projectDirectory)
+        readTaskLabels(db, metrics, this.projectDirectory, assignments)
+
         if (factsAvailable && assignments.size) {
           signal.throwIfAborted()
           countQuery(metrics)
@@ -567,7 +646,7 @@ export class LiveReadStore {
             )
           }
         }
-        return { runnerRevision, assignments, progress }
+        return { runnerRevision, assignments, progress, ...(workload ? { workload } : {}) }
       })
 
       signal.throwIfAborted()

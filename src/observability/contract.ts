@@ -458,6 +458,10 @@ const LiveAssignment = z.strictObject({
   attemptID: z.uuid(),
   state: z.enum(["preparing", "running", "verifying"]),
   startedAt: z.number().finite(),
+  /** Additive: absent when the read cannot supply it. */
+  attemptNumber: z.int().positive().optional(),
+  taskTitle: z.string().min(1).max(240).optional(),
+  taskReference: z.string().min(1).max(60).optional(),
 })
 
 const LiveSession = z.strictObject({
@@ -465,6 +469,8 @@ const LiveSession = z.strictObject({
   sessionID: z.string().min(1).max(200),
   projectID: z.string().min(1).max(200),
   classification: z.enum(["managed", "unmanaged"]),
+  /** Additive: the native parent session, only when it has one. */
+  parentSessionID: z.string().min(1).max(200).optional(),
   isViewSession: z.boolean(),
   isCurrentArchitect: z.boolean().nullable(),
   availability: z.enum(["available", "missing", "archived", "moved", "unavailable"]),
@@ -558,6 +564,14 @@ export const LiveRadarOutput = z.strictObject({
     status: z.enum(["scheduled", "draining", "registered", "absent", "stale", "unknown"]),
     participants: z.int().nonnegative().nullable(),
   }),
+  /** Additive: recorded task counts in open plans; absent when the runner tables cannot be read. */
+  workload: z
+    .strictObject({
+      queued: z.int().nonnegative(),
+      needsYou: z.int().nonnegative(),
+      failed: z.int().nonnegative(),
+    })
+    .optional(),
   coverage: z.strictObject({
     sessionCount: z.int().nonnegative(),
     managedSessionCount: z.int().nonnegative(),

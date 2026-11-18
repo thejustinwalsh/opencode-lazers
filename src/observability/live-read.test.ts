@@ -172,6 +172,56 @@ test("bounded live read and separately selected history carry only attributed fi
   }
 })
 
+test("live sessions carry parent, task labels, attempt number and recorded workload, omitting what is absent", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID)
+      db.query("UPDATE runner_plans SET state='running'").run()
+      db.query("UPDATE runner_nodes SET state='queued'").run()
+    })
+    const failed = fixture.sessions.get("ses-failed")!
+    failed.parentID = "ses-owner"
+    const reads = operationalReads(fixture)
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(23),
+      "project",
+    )
+    tracker.initialize()
+    const read = async () =>
+      (await reads.liveRadar(
+        { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+        tracker,
+        new AbortController().signal,
+        crypto.randomUUID(),
+      )) as LiveRadarResponse
+    const live = await read()
+    const worker = live.sessions.find((item) => item.sessionID === "ses-failed")!
+    expect(worker.parentSessionID).toBe("ses-owner")
+    expect(worker.assignment).toMatchObject({
+      attemptNumber: 1,
+      taskTitle: "Inspect a worker attempt without disclosing private data",
+    })
+    expect(worker.assignment?.taskReference).toMatch(/\S/)
+    expect(live.workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
+
+    fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='blocked'").run())
+    expect((await read()).workload).toEqual({ queued: 0, needsYou: 1, failed: 0 })
+    fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='failed'").run())
+    expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 1 })
+    // Terminal plans do not count.
+    fixture.store.atomic((db) => db.query("UPDATE runner_plans SET state='failed'").run())
+    expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
+
+    // A session without a native parent omits the field rather than carrying null.
+    const owner = (await read()).sessions.find((item) => item.sessionID !== "ses-failed")
+    if (owner) expect("parentSessionID" in owner).toBe(owner.parentSessionID !== undefined)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("Project live read adds only its exact current session and reports exact-key scheduler state", async () => {
   const fixture = makeFixture()
   const root = fixture.directory

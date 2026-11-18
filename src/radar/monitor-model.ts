@@ -88,8 +88,17 @@ export function sessionRole(session: LiveSession): { label: string; icon: IconNa
   return { label, icon }
 }
 
+/** `LZ-99 · title` from the task record; never a raw id. Null when the read has neither. */
 export function sessionTask(session: LiveSession) {
-  return session.assignment ? `Task ${shortID(session.assignment.taskID)}` : null
+  const assignment = session.assignment
+  if (!assignment) return null
+  const text = [assignment.taskReference, assignment.taskTitle].filter(Boolean).join(" · ")
+  return text || null
+}
+
+/** The task's title, falling back to its reference, for the inspector heading. */
+export function sessionTaskTitle(session: LiveSession) {
+  return session.assignment?.taskTitle ?? session.assignment?.taskReference ?? null
 }
 
 /** The state word, or undefined when the read gives none; the view omits the segment. */
@@ -335,10 +344,9 @@ function sessionRank(session: LiveSession) {
 
 /**
  * Available sessions lead in recorded-state order; the server's order is kept within a rank so
- * rows only move when their state changes. Workers (sessions holding an assignment) nest under
- * the current Architect when it is in the read. The live read carries no explicit parent
- * relation, so this is derived from `isCurrentArchitect` and `assignment`.
- * Unavailable (historical) sessions are grouped apart.
+ * rows only move when their state changes. A session nests under its recorded native parent when
+ * that parent is in the read. Only a session whose parent is not reported at all falls back to
+ * nesting under the current Architect. Unavailable (historical) sessions are grouped apart.
  */
 export function sessionGroups(live: Live) {
   const available = live.sessions.filter((session) => session.availability === "available")
@@ -349,16 +357,42 @@ export function sessionGroups(live: Live) {
         sessionRank(left.session) - sessionRank(right.session) || left.index - right.index,
     )
     .map(({ session }) => session)
+  const byID = new Map(ranked.map((session) => [session.sessionID, session]))
   const architect = ranked.find((session) => session.isCurrentArchitect === true)
-  const nested = (session: LiveSession) =>
-    architect !== undefined && session !== architect && session.assignment !== null
+  const parentOf = (session: LiveSession) => {
+    const reported = session.parentSessionID
+    if (reported !== undefined)
+      return byID.has(reported) && reported !== session.sessionID ? reported : undefined
+    return architect !== undefined && session !== architect && session.assignment !== null
+      ? architect.sessionID
+      : undefined
+  }
+  // A parent chain that loops back to the session would hide it; such a session stays top-level.
+  const loops = (session: LiveSession) => {
+    const seen = new Set([session.sessionID])
+    for (let id = parentOf(session); id !== undefined; id = parentOf(byID.get(id)!)) {
+      if (seen.has(id)) return true
+      seen.add(id)
+    }
+    return false
+  }
+  const parents = new Map(
+    ranked.flatMap((session) => {
+      const parent = loops(session) ? undefined : parentOf(session)
+      return parent === undefined ? [] : [[session.sessionID, parent] as const]
+    }),
+  )
+  const children = new Map<string, string[]>()
+  for (const session of ranked) {
+    const parent = parents.get(session.sessionID)
+    if (parent !== undefined)
+      children.set(parent, [...(children.get(parent) ?? []), session.sessionID])
+  }
   return {
-    leading: ranked.filter((session) => !nested(session)).map((session) => session.sessionID),
-    children: new Map<string, string[]>(
-      architect
-        ? [[architect.sessionID, ranked.filter(nested).map((session) => session.sessionID)]]
-        : [],
-    ),
+    leading: ranked
+      .filter((session) => !parents.has(session.sessionID))
+      .map((session) => session.sessionID),
+    children,
     unavailable: live.sessions
       .filter((session) => session.availability !== "available")
       .map((session) => session.sessionID),
@@ -367,12 +401,7 @@ export function sessionGroups(live: Live) {
 
 export type SummarySegment = { count: number; word: string }
 
-/**
- * The one line under the header. Running always appears; every other segment appears only when
- * its number exists. The live read carries no queue, failure, attention or capacity counts, so
- * those segments are absent until a read provides them.
- */
-export function monitorSegments(live: Live): SummarySegment[] {
+function runningCounts(live: Live) {
   const available = live.sessions.filter((session) => session.availability === "available")
   const verifying = available.filter((session) => session.assignment?.state === "verifying").length
   const running = available.filter(
@@ -380,12 +409,27 @@ export function monitorSegments(live: Live): SummarySegment[] {
       session.assignment?.state !== "verifying" &&
       (session.assignment !== null || session.state === "busy"),
   ).length
+  return { running, verifying }
+}
+
+/**
+ * The one line under the header: running, needs you, failed, queued. Each segment appears only
+ * when its number is present and non-zero. The queue, failure and attention counts come from the
+ * recorded task states in the live read's `workload`; capacity is not recorded by the runtime, so
+ * it never appears.
+ */
+export function monitorSegments(live: Live): SummarySegment[] {
+  const { running, verifying } = runningCounts(live)
+  const workload = live.workload
   const gaps = coverageGaps(live).length
   return [
     { count: running, word: "running" },
-    ...(verifying > 0 ? [{ count: verifying, word: "verifying" }] : []),
-    ...(gaps > 0 ? [{ count: gaps, word: gaps === 1 ? "data gap" : "data gaps" }] : []),
-  ]
+    { count: verifying, word: "verifying" },
+    { count: workload?.needsYou ?? 0, word: "needs you" },
+    { count: workload?.failed ?? 0, word: "failed" },
+    { count: workload?.queued ?? 0, word: "queued" },
+    { count: gaps, word: gaps === 1 ? "data gap" : "data gaps" },
+  ].filter((segment) => segment.count > 0)
 }
 
 /** What is true when nothing is running, in one plain sentence. */
@@ -393,15 +437,18 @@ export function idleSentence(live: Live) {
   const architect = live.sessions.find(
     (session) => session.availability === "available" && session.isCurrentArchitect === true,
   )
-  return architect && architect.state === "idle"
-    ? "Architect is idle and no workers are active."
-    : "No sessions are running."
+  const base =
+    architect && architect.state === "idle"
+      ? "Architect is idle and no workers are active."
+      : "No sessions are running."
+  const queued = live.workload?.queued ?? 0
+  return queued > 0 ? `${base} ${queued} ${queued === 1 ? "task is" : "tasks are"} queued.` : base
 }
 
 /** True when no available session is running or verifying work. */
 export function nothingRunning(live: Live) {
-  const [running] = monitorSegments(live)
-  return running!.count === 0 && !monitorSegments(live).some((item) => item.word === "verifying")
+  const { running, verifying } = runningCounts(live)
+  return running === 0 && verifying === 0
 }
 
 export function coverageGaps(live: Live) {

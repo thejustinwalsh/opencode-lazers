@@ -1210,6 +1210,9 @@ export class LiveRadarReader {
         sessionID: candidate.id,
         projectID: this.projectID,
         classification: assignment ? "managed" : "unmanaged",
+        ...(native?.parentID && native.parentID.length <= 200
+          ? { parentSessionID: native.parentID }
+          : {}),
         isViewSession: candidate.id === request.scope.sessionID,
         isCurrentArchitect:
           candidate.id !== request.scope.sessionID || !native
@@ -1238,6 +1241,13 @@ export class LiveRadarReader {
               attemptID: assignment.attemptID,
               state: assignment.state,
               startedAt: assignment.startedAt,
+              ...(assignment.attemptNumber > 0 ? { attemptNumber: assignment.attemptNumber } : {}),
+              ...(assignment.taskTitle
+                ? { taskTitle: contractText(assignment.taskTitle, stats, 240) }
+                : {}),
+              ...(assignment.taskReference
+                ? { taskReference: contractText(assignment.taskReference, stats, 60) }
+                : {}),
             }
           : null,
         selectedRouteID,
@@ -1302,6 +1312,7 @@ export class LiveRadarReader {
           return { status: "unknown" as const, participants: null }
         }
       })(),
+      ...(source.workload ? { workload: source.workload } : {}),
       coverage: {
         sessionCount: sessionRows.length,
         managedSessionCount: sessionRows.filter((session) => session.classification === "managed")
