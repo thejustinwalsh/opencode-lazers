@@ -129,7 +129,6 @@ export type CompactInspectionSummary = {
     waitingOnPlans: CompactWaitingPlan[]
     counts: { nodes: number; nodesByState: Record<string, number> }
   }>
-  audit: { watermark: number; findingCount: number; findingsByCode: Record<string, number> }
 }
 
 type PlanRow = {
@@ -438,18 +437,6 @@ function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
   }
 }
 
-function compactAudit(store: RunnerStore) {
-  const audit = store.audit()
-  return {
-    watermark: audit.watermark,
-    findingCount: audit.findings.length,
-    findingsByCode: audit.findings.reduce<Record<string, number>>((counts, finding) => {
-      counts[finding.code] = (counts[finding.code] ?? 0) + 1
-      return counts
-    }, {}),
-  }
-}
-
 type InspectablePlan = {
   id: string
   body: string
@@ -682,6 +669,5 @@ export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
     : {
         mode: "compact",
         plans: plans.map((plan) => compactPlanSummary(store, plan)),
-        audit: compactAudit(store),
       }
 }

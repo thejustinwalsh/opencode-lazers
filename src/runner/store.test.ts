@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { fingerprint } from "../identity.ts"
 import { TaskRepository } from "../storage.ts"
+import { scopePatternsConflict } from "./artifacts.ts"
 import { PlanInput } from "./schema.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
@@ -509,6 +510,93 @@ test("F-S4-1 selected duplicate checks match the audit without execution/scope s
   expect(
     f.store.atomic((db) => db.query("SELECT COUNT(*) AS n FROM runner_conflict_scans").get()),
   ).toEqual({ n: 0 })
+})
+
+function seedAuditTasks(f: ReturnType<typeof fixture>, count: number) {
+  const scopes = [
+    ["src/a/**"],
+    ["src/b/x.ts"],
+    ["docs/**"],
+    ["docs/guide.md", "lib/z/**"],
+    ["lib/**"],
+    ["README.md"],
+    ["**/*.ts"],
+    ["src/a*"],
+  ]
+  const ids: string[] = []
+  for (let i = 0; i < count; i++) {
+    const proposal = {
+      ...validProposal(),
+      objective: `Audit fixture objective ${i % 7 === 0 ? "shared" : i}`,
+      writeScope: scopes[i % scopes.length]!,
+    }
+    ids.push(
+      f.repository.insert({
+        schemaVersion: 1,
+        id: crypto.randomUUID(),
+        revision: 1,
+        status: "submitted",
+        createdAt: new Date().toISOString(),
+        provenance: {
+          projectID: "project",
+          projectDirectory: f.projectDirectory,
+          workspaceDirectory: f.projectDirectory,
+          sessionID: "owner",
+          startingRevision: { kind: "unborn" },
+        },
+        proposal,
+      }).id,
+    )
+  }
+  return ids
+}
+
+/** The pre-optimization all-pairs audit, kept as the behavioral oracle. */
+function referenceAudit(f: ReturnType<typeof fixture>, ids: string[]) {
+  const out: { code: string; taskIDs: string[] }[] = []
+  for (const id of ids) if (!f.store.execution(id)) out.push({ code: "unplanned", taskIDs: [id] })
+  for (let i = 0; i < ids.length; i++)
+    for (let j = i + 1; j < ids.length; j++) {
+      const exact =
+        fingerprint(f.repository.get(ids[i]!)!.proposal) ===
+        fingerprint(f.repository.get(ids[j]!)!.proposal)
+      const overlap = scopePatternsConflict(
+        f.store.effectiveWriteScope(ids[i]!),
+        f.store.effectiveWriteScope(ids[j]!),
+      )
+      if (exact || overlap)
+        out.push({ code: exact ? "exact-content" : "scope-overlap", taskIDs: [ids[i]!, ids[j]!] })
+    }
+  return out
+}
+
+test("audit findings equal the all-pairs result on a mixed fixture", () => {
+  const f = fixture("audit-equivalence")
+  const ids = [f.input.nodes[0]!.taskID, ...seedAuditTasks(f, 60)]
+  f.store.submit(f.input, "owner")
+  const actual = f.store.audit().findings.map(({ code, taskIDs }) => ({ code, taskIDs }))
+  const expected = referenceAudit(
+    f,
+    ids.filter((id) => !f.repository.taskDisposition(id)),
+  )
+  expect(actual).toEqual(expected)
+  expect(actual.some((x) => x.code === "exact-content")).toBe(true)
+  expect(actual.some((x) => x.code === "scope-overlap")).toBe(true)
+})
+
+test("audit reads each task once instead of once per pair", () => {
+  const f = fixture("audit-linear")
+  const count = 600
+  seedAuditTasks(f, count)
+  const get = f.repository.get.bind(f.repository)
+  let reads = 0
+  f.repository.get = (id) => {
+    reads++
+    return get(id)
+  }
+  const audit = f.store.audit()
+  expect(audit.findings.length).toBeGreaterThan(0)
+  expect(reads).toBeLessThanOrEqual(count + 1)
 })
 
 test("retained repair generations remain task-bound and the latest plan operation is observable", () => {

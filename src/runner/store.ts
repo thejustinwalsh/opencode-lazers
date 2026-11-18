@@ -250,6 +250,24 @@ type ArchitectSourceNoticeSource = Pick<
   "session_id" | "renewal_id" | "revision"
 >
 
+/**
+ * Top-level path buckets for a write scope. Two scopes can only conflict when they
+ * share a bucket; a pattern whose literal prefix has no complete first segment
+ * (root or leading wildcard) makes the scope "wild" and it is compared with all.
+ */
+function scopeBuckets(scope: readonly string[]): Set<string> | "wild" {
+  const buckets = new Set<string>()
+  for (const pattern of scope) {
+    const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "")
+    const wildcard = normalized.search(/[*?{}[\]!]/)
+    const prefix = wildcard < 0 ? normalized : normalized.slice(0, wildcard)
+    const slash = prefix.indexOf("/")
+    if (slash <= 0) return "wild"
+    buckets.add(prefix.slice(0, slash))
+  }
+  return buckets
+}
+
 function architectSourceJournalExists(db: Database, sessionID: string) {
   return Boolean(
     db
@@ -3501,8 +3519,10 @@ export class RunnerStore {
         .all(planID, taskID),
     )
   }
-  effectiveWriteScope(taskID: string): string[] {
-    const task = this.repository.get(taskID)
+  effectiveWriteScope(
+    taskID: string,
+    task: ReturnType<typeof this.repository.get> = this.repository.get(taskID),
+  ): string[] {
     if (!task) throw new Error("Task not found")
     const execution = this.execution(taskID)
     const amendment = execution
@@ -3857,65 +3877,107 @@ export class RunnerStore {
       return run(db)
     })
   }
+  /**
+   * Project audit. Per-task work (record parse, fingerprint, effective scope) runs
+   * once per task inside the read; pair detection runs outside it. Exact duplicates
+   * group by fingerprint; scope overlap compares only tasks sharing a top-level
+   * path bucket (wildcard/root patterns compare against everything), so findings
+   * equal the all-pairs result.
+   */
   audit(): { watermark: number; findings: Finding[] } {
-    return this.read((db) => {
-      const tasks = db
-        .query<{ id: string; body: string }, [string]>(
-          "SELECT id,body FROM tasks WHERE project_directory=? ORDER BY rowid",
+    const { tasks, relations, watermark } = this.read((db) => {
+      const rows = db
+        .query<{ id: string }, [string]>(
+          "SELECT id FROM tasks WHERE project_directory=? ORDER BY rowid",
         )
         .all(this.repository.projectDirectory)
         .filter((task) => !this.repository.taskDisposition(task.id))
+      const tasks = rows.map(({ id }) => {
+        const record = this.repository.get(id)
+        return {
+          id,
+          planned: !!this.execution(id),
+          content: fingerprint(record!.proposal),
+          scope: this.effectiveWriteScope(id, record),
+        }
+      })
       const relations = db
         .query<{ task_id: string; other_task_id: string }, [string]>(
           "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",
         )
         .all(this.repository.projectDirectory)
-      const findings: Finding[] = []
-      const add = (code: string, taskIDs: string[], evidence: string, actions: string[]) =>
-        findings.push({
-          id: fingerprint({ code, taskIDs }).slice(0, 24),
-          code,
-          taskIDs,
-          evidence,
-          actions,
-        })
-      for (const task of tasks)
-        if (!this.execution(task.id))
-          add("unplanned", [task.id], "Specification has no admitted execution plan", [
-            "plan",
-            "reuse",
-          ])
-      for (let i = 0; i < tasks.length; i++)
-        for (let j = i + 1; j < tasks.length; j++) {
-          const a = tasks[i]!,
-            b = tasks[j]!
-          if (
-            relations.some(
-              (r) =>
-                (r.task_id === a.id && r.other_task_id === b.id) ||
-                (r.task_id === b.id && r.other_task_id === a.id),
-            )
-          )
-            continue
-          const aa = this.repository.get(a.id)!,
-            bb = this.repository.get(b.id)!
-          const exact = fingerprint(aa.proposal) === fingerprint(bb.proposal)
-          const aScope = this.effectiveWriteScope(a.id)
-          const bScope = this.effectiveWriteScope(b.id)
-          const overlap = scopePatternsConflict(aScope, bScope)
-          if (exact || overlap)
-            add(
-              exact ? "exact-content" : "scope-overlap",
-              [a.id, b.id],
-              exact
-                ? "Validated proposal fingerprints match"
-                : `Conflicting path scopes: ${aScope.join(", ")} ↔ ${bScope.join(", ")}`,
-              ["distinct", "duplicate", "supplements"],
-            )
-        }
-      const watermark = this.repository.version()
-      return { watermark, findings }
+      return { tasks, relations, watermark: this.repository.version() }
     })
+    const findings: Finding[] = []
+    const add = (code: string, taskIDs: string[], evidence: string, actions: string[]) =>
+      findings.push({
+        id: fingerprint({ code, taskIDs }).slice(0, 24),
+        code,
+        taskIDs,
+        evidence,
+        actions,
+      })
+    for (const task of tasks)
+      if (!task.planned)
+        add("unplanned", [task.id], "Specification has no admitted execution plan", [
+          "plan",
+          "reuse",
+        ])
+    const related = new Set(
+      relations.flatMap((r) => [
+        `${r.task_id}\0${r.other_task_id}`,
+        `${r.other_task_id}\0${r.task_id}`,
+      ]),
+    )
+    const n = tasks.length
+    const exact = new Set<number>()
+    const candidates = new Set<number>()
+    const key = (i: number, j: number) => (i < j ? i * n + j : j * n + i)
+    const byContent = new Map<string, number[]>()
+    const byBucket = new Map<string, number[]>()
+    const wild: number[] = []
+    tasks.forEach((task, i) => {
+      const group = byContent.get(task.content)
+      if (group) {
+        for (const j of group) exact.add(key(j, i))
+        group.push(i)
+      } else byContent.set(task.content, [i])
+      const buckets = scopeBuckets(task.scope)
+      if (buckets === "wild") wild.push(i)
+      else
+        for (const bucket of buckets) {
+          const list = byBucket.get(bucket)
+          if (list) list.push(i)
+          else byBucket.set(bucket, [i])
+        }
+    })
+    for (const list of byBucket.values())
+      for (let x = 0; x < list.length; x++)
+        for (let y = x + 1; y < list.length; y++) candidates.add(key(list[x]!, list[y]!))
+    for (const w of wild) for (let i = 0; i < n; i++) if (i !== w) candidates.add(key(w, i))
+    const pairs = new Map<number, boolean>()
+    for (const k of exact) pairs.set(k, true)
+    for (const k of candidates)
+      if (!pairs.has(k)) {
+        const a = tasks[Math.floor(k / n)]!
+        const b = tasks[k % n]!
+        if (scopePatternsConflict(a.scope, b.scope)) pairs.set(k, false)
+      }
+    for (const k of [...pairs.keys()].sort((x, y) => x - y)) {
+      const a = tasks[Math.floor(k / n)]!
+      const b = tasks[k % n]!
+      if (related.has(`${a.id}\0${b.id}`)) continue
+      const isExact = pairs.get(k)!
+      add(
+        isExact ? "exact-content" : "scope-overlap",
+        [a.id, b.id],
+        isExact
+          ? "Validated proposal fingerprints match"
+          : `Conflicting path scopes: ${a.scope.join(", ")} ↔ ${b.scope.join(", ")}`,
+        ["distinct", "duplicate", "supplements"],
+      )
+    }
+    return { watermark, findings }
   }
   /** Admission needs duplicate-content conflicts for its selected tasks, not a project audit. */
   exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
@@ -3943,17 +4005,18 @@ export class RunnerStore {
         ]),
       )
       const findings: Finding[] = []
+      const byContent = new Map<string, number[]>()
+      tasks.forEach((task, i) => {
+        const group = byContent.get(task.content)
+        if (group) group.push(i)
+        else byContent.set(task.content, [i])
+      })
       for (let i = 0; i < tasks.length; i++) {
         const a = tasks[i]!
         if (!selected.has(a.id)) continue
-        for (let j = 0; j < tasks.length; j++) {
+        for (const j of byContent.get(a.content)!) {
           const b = tasks[j]!
-          if (
-            i === j ||
-            (j < i && selected.has(b.id)) ||
-            a.content !== b.content ||
-            related.has(JSON.stringify([a.id, b.id]))
-          )
+          if (i === j || (j < i && selected.has(b.id)) || related.has(JSON.stringify([a.id, b.id])))
             continue
           const pair = i < j ? [a.id, b.id] : [b.id, a.id]
           findings.push({
