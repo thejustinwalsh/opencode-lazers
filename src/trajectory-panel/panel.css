@@ -9,7 +9,7 @@
    * resolve to either; failures turn red on any track.
    */
   --trajectory-hue-attempts: var(--text-interactive-base, var(--text-base));
-  --trajectory-hue-tools: var(--syntax-keyword, var(--icon-agent-build-base, var(--text-base)));
+  --trajectory-hue-tools: var(--icon-agent-plan-base, var(--icon-info-base, var(--text-base)));
   --trajectory-hue-files: var(--icon-warning-base, var(--text-base));
   --trajectory-hue-checks: var(--text-strong);
   --trajectory-gap: var(--text-weak);

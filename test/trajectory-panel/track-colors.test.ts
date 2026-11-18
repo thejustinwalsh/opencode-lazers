@@ -22,9 +22,9 @@ test("no track hue resolves to a success or green token", () => {
     expect(value).toBeDefined()
     expect(value).not.toMatch(green)
   }
-  // Tool marks specifically left the olive string color.
-  expect(declaration("--trajectory-hue-tools")).toContain("--syntax-keyword")
-  expect(declaration("--trajectory-hue-tools")).not.toContain("--syntax-string")
+  // Tool marks use the host violet: not the olive string color, not the orange keyword color.
+  expect(declaration("--trajectory-hue-tools")).toContain("--icon-agent-plan-base")
+  expect(declaration("--trajectory-hue-tools")).not.toMatch(/syntax-string|syntax-keyword/)
 })
 
 test("no rule that paints a track, mark or rail uses a success token", () => {
