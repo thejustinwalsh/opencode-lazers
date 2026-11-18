@@ -9,7 +9,6 @@ import type { RetainedVerification } from "./retained-verification/schema.ts"
 import {
   createRetainedVerification,
   ensureRetainedVerificationTables,
-  recordRetainedVerificationEvidence,
 } from "./retained-verification/store.ts"
 import {
   InspectPlanInput,
@@ -620,90 +619,6 @@ test("direct retained-history cursor capture pages without writing lifecycle or 
   expect(JSON.stringify(first)).not.toContain("PRIVATE_REASON_CANARY")
   expect(JSON.stringify(first)).not.toContain("retained-verification-workspace-canary")
   expect(facts()).toEqual(before)
-})
-
-test("retained verification view binds human evidence to exact candidate and generation", () => {
-  const f = fixture()
-  const task = f.repository.insert({
-    ...f.first,
-    id: crypto.randomUUID(),
-    proposal: {
-      ...f.first.proposal,
-      acceptance: [
-        {
-          id: "approval",
-          assertion: "A human decision is required",
-          evidence: [{ kind: "human", decision: "PRIVATE_DECISION_CANARY" }],
-        },
-      ],
-    },
-  })
-  const plan = f.store.submit(
-    {
-      ...f.input,
-      requestID: "retained-human-evidence",
-      nodes: [{ taskID: task.id, revision: 1 as const }],
-      dependencies: [],
-      integrationOrder: [task.id],
-    },
-    "owner",
-  )
-  const operation = retainedOperation(f.projectDirectory, plan.planID, task.id, 1, "waiting-human")
-  f.store.atomic((db) => createRetainedVerification(db, f.projectDirectory, operation))
-  const first = inspectPlan(f.store, {
-    planID: plan.planID,
-    view: "retained-verifications",
-    limit: 10,
-  }) as {
-    latest: Array<{
-      nextSteps: Array<Record<string, unknown>>
-      humanEvidence: { missingAssertionIDs: string[] }
-    }>
-  }
-  const actions = first.latest[0]!.nextSteps
-  expect(first.latest[0]!.humanEvidence.missingAssertionIDs).toEqual(["approval"])
-  expect(actions).toContainEqual(
-    expect.objectContaining({
-      action: "human-evidence",
-      operationID: operation.id,
-      generation: 1,
-      phase: "task",
-      taskID: task.id,
-      candidateArtifact: operation.artifact,
-      assertionIDs: ["approval"],
-    }),
-  )
-  expect(actions.map((action) => action.action)).not.toContain("resume")
-  expect(actions.map((action) => action.action)).not.toContain("retry")
-  expect(actions.map((action) => action.action)).not.toContain("cleanup")
-  f.store.atomic((db) =>
-    recordRetainedVerificationEvidence(db, {
-      id: crypto.randomUUID(),
-      operationID: operation.id,
-      generation: operation.generation,
-      phase: "task",
-      taskID: task.id,
-      assertionID: "approval",
-      artifact: operation.artifact,
-      body: JSON.stringify({ decision: "PRIVATE_DECISION_CANARY" }),
-      createdAt: Date.now(),
-    }),
-  )
-  const afterEvidence = inspectPlan(f.store, {
-    planID: plan.planID,
-    view: "retained-verifications",
-    limit: 10,
-  }) as {
-    latest: Array<{
-      nextSteps: Array<Record<string, unknown>>
-      humanEvidence: { missingAssertionIDs: string[] }
-    }>
-  }
-  expect(afterEvidence.latest[0]!.humanEvidence.missingAssertionIDs).toEqual([])
-  expect(afterEvidence.latest[0]!.nextSteps.map((action) => action.action)).not.toContain(
-    "human-evidence",
-  )
-  expect(JSON.stringify(afterEvidence)).not.toContain("PRIVATE_DECISION_CANARY")
 })
 
 test("in-progress retained checks keep progress runtime-owned", () => {

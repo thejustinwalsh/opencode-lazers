@@ -14,8 +14,6 @@ import type {
   ArchitectInputPage,
   ArchitectSourceResult,
   HostMessage,
-  HostBackgroundObservation,
-  NativeCleanupSettlement,
   RunnerHost,
   WorktreeLocationRetirement,
 } from "./host.ts"
@@ -28,8 +26,6 @@ import { SourceFence } from "./source-fence-rpc.ts"
 import { sourceGuardMatches, sourceReviewBinding } from "./source-quarantine.ts"
 import { reviewMetadata } from "./review-input.ts"
 import { ModelPolicy } from "./schema.ts"
-import { NativeIdleStore } from "./native-idle.ts"
-import type { NativeIdleReport, NativeIdleState, NativeIdleTerminal } from "./native-idle.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { sameProject } from "../project-key.ts"
@@ -66,58 +62,6 @@ const nativeInboxDependencies: NativeInboxDependencies = {
   processID: () => process.pid,
 }
 
-function unknownNativeIdle(reason: string): HostBackgroundObservation {
-  return { state: "unknown", source: "experimental.idle", reason }
-}
-
-function hasLatestSuccessfulIdleMarker(
-  messages: readonly SessionMessage.Info[],
-  inputID: string | undefined,
-  terminal: NativeIdleTerminal,
-) {
-  let expectedID: string
-  try {
-    expectedID = SessionMessage.ID.fromEvent(terminal.eventID)
-  } catch {
-    return false
-  }
-  if (expectedID !== terminal.messageID) return false
-  const latestIdleIndex = messages.findLastIndex((message) => message.type === "idle")
-  if (latestIdleIndex < 0) return false
-  const marker = messages[latestIdleIndex]
-  if (
-    marker?.type !== "idle" ||
-    marker.id !== terminal.messageID ||
-    marker.outcome !== "succeeded" ||
-    !DateTime.isDateTime(marker.time.created) ||
-    !Number.isFinite(DateTime.toEpochMillis(marker.time.created))
-  )
-    return false
-  const currentInputIndex = inputID
-    ? messages.findLastIndex(
-        (message) =>
-          message.id === inputID && (message.type === "user" || message.type === "synthetic"),
-      )
-    : -1
-  // Completed compaction can remove every input from model context. The caller
-  // resolves that input from retained native history and binds it to the idle
-  // report; requiring its presence here would reject a genuine completed turn.
-  const inputPrecedesIdle =
-    currentInputIndex >= 0
-      ? currentInputIndex < latestIdleIndex
-      : inputID !== undefined &&
-        messages.some(
-          (message, index) =>
-            index < latestIdleIndex &&
-            message.type === "compaction" &&
-            message.status === "completed",
-        )
-  return (
-    inputPrecedesIdle &&
-    !messages.slice(latestIdleIndex + 1).some((message) => message.type === "assistant")
-  )
-}
-
 class NativeProcessMismatchError extends Error {}
 
 async function assertNativeProcess(
@@ -146,176 +90,6 @@ type NativeWorkerObservation = {
   runningShells: number
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-const CLEANUP_INVALIDATING_EVENTS = new Set([
-  "session.execution.started",
-  "session.execution.failed",
-  "session.execution.interrupted",
-  "session.inbox.enqueued",
-  "session.inbox.delivered",
-  "session.inbox.cancelled",
-  "session.synthetic",
-  "session.shell.started",
-  "session.shell.ended",
-])
-
-async function currentSuccessfulTerminal(
-  readSessionLog: (sessionID: string) => AsyncIterable<unknown>,
-  sessionID: string,
-): Promise<NativeIdleTerminal | undefined> {
-  let synced = false
-  let watermark: number | undefined
-  let lastSequence: number | undefined
-  let startSequence: number | undefined
-  let terminal: NativeIdleTerminal | undefined
-  try {
-    for await (const raw of readSessionLog(sessionID)) {
-      const item = record(raw)
-      if (item?.type === "log.synced") {
-        if (synced || item.aggregateID !== sessionID) return undefined
-        synced = true
-        if (item.seq !== undefined) {
-          if (typeof item.seq !== "number" || !Number.isSafeInteger(item.seq) || item.seq < 0)
-            return undefined
-          watermark = item.seq
-        }
-        continue
-      }
-      if (synced || !item || typeof item.type !== "string") return undefined
-      const durable = record(item.durable)
-      if (
-        durable?.aggregateID !== sessionID ||
-        typeof durable.seq !== "number" ||
-        !Number.isSafeInteger(durable.seq) ||
-        durable.seq < 0 ||
-        (lastSequence !== undefined && durable.seq <= lastSequence)
-      )
-        return undefined
-      lastSequence = durable.seq
-      const eventSessionID = record(item.data)?.sessionID
-      if (CLEANUP_INVALIDATING_EVENTS.has(item.type)) {
-        if (eventSessionID !== sessionID) return undefined
-        if (item.type === "session.execution.started") {
-          startSequence = durable.seq
-          terminal = undefined
-        } else if (
-          item.type === "session.execution.failed" ||
-          item.type === "session.execution.interrupted"
-        ) {
-          startSequence = undefined
-          terminal = undefined
-        } else if (terminal) {
-          startSequence = undefined
-          terminal = undefined
-        }
-        continue
-      }
-      if (item.type === "session.execution.succeeded") {
-        if (
-          eventSessionID !== sessionID ||
-          startSequence === undefined ||
-          terminal !== undefined ||
-          durable.seq <= startSequence ||
-          typeof item.id !== "string"
-        ) {
-          startSequence = undefined
-          terminal = undefined
-          continue
-        }
-        let messageID: string
-        try {
-          messageID = SessionMessage.ID.fromEvent(item.id)
-        } catch {
-          startSequence = undefined
-          terminal = undefined
-          continue
-        }
-        terminal = {
-          sequence: durable.seq,
-          eventID: item.id,
-          messageID,
-          previousEventSequence: startSequence,
-        }
-      }
-    }
-  } catch {
-    return undefined
-  }
-  return synced &&
-    (lastSequence === undefined || (watermark !== undefined && watermark >= lastSequence))
-    ? terminal
-    : undefined
-}
-
-type NativeCleanupIdleEvidence = {
-  state: NativeIdleState
-  report: NativeIdleReport & {
-    count: 0
-    kinds: { shell: 0; subagent: 0; image: 0 }
-  }
-  terminal: NativeIdleTerminal
-}
-
-function currentCleanupIdleEvidence(
-  state: NativeIdleState | undefined,
-  input: {
-    projectID: string
-    attemptID: string
-    sessionID: string
-    workspace: string
-    assignedMessageID: string
-  },
-): NativeCleanupIdleEvidence {
-  const report = state?.report
-  const terminal = state?.terminal
-  if (!state || !report || !terminal || state.invalidation || state.pendingTerminal)
-    throw new Error(
-      "A current confirmed experimental.idle background report is unavailable; preserve the worktree and retry only after the native idle hook records exact zero-background evidence",
-    )
-  if (
-    report.count !== 0 ||
-    report.kinds.shell !== 0 ||
-    report.kinds.subagent !== 0 ||
-    report.kinds.image !== 0
-  )
-    throw new Error(
-      "The confirmed experimental.idle report observed shell, subagent, or image background work; preserve the worktree until a later exact zero-background report is confirmed",
-    )
-  if (
-    state.binding.projectID !== input.projectID ||
-    state.binding.attemptID !== input.attemptID ||
-    state.binding.sessionID !== input.sessionID ||
-    state.binding.workspace !== input.workspace ||
-    state.binding.assignedMessageID !== input.assignedMessageID ||
-    report.inputID !== input.assignedMessageID ||
-    state.executionStartSequence !== report.executionStartSequence ||
-    state.lastEventSequence !== terminal.sequence ||
-    terminal.sequence <= report.eventSequence ||
-    terminal.previousEventSequence !== report.eventSequence
-  )
-    throw new Error(
-      "The experimental.idle background report is stale or mismatched for this worker completion; preserve the worktree",
-    )
-  return {
-    state,
-    report: {
-      ...report,
-      count: 0,
-      kinds: { shell: 0, subagent: 0, image: 0 },
-    },
-    terminal,
-  }
-}
-
-function sameCleanupTerminal(a: NativeIdleTerminal, b: NativeIdleTerminal) {
-  return a.sequence === b.sequence && a.eventID === b.eventID && a.messageID === b.messageID
-}
-
 function isMissingNativeSession(
   error: unknown,
   sessionID: string,
@@ -328,6 +102,12 @@ function isMissingNativeSession(
     "sessionID" in error &&
     error.sessionID === sessionID
   )
+}
+
+function pathInside(path: string, directory: string) {
+  const base = resolve(directory)
+  const target = resolve(path)
+  return target === base || target.startsWith(`${base}/`)
 }
 
 async function workerObservation(
@@ -399,7 +179,9 @@ async function workerObservation(
       throw new Error("Native worker shell inventory is unavailable")
     return `${entry.id}:${entry.status}:${entry.cwd}:${entry.time.started}:${entry.time.completed ?? ""}`
   })
-  const runningShells = (shells?.data ?? []).filter((entry) => entry.status === "running").length
+  const runningShells = (shells?.data ?? []).filter(
+    (entry) => entry.status === "running" && (!directory || pathInside(entry.cwd, directory)),
+  ).length
   return {
     active: Object.prototype.hasOwnProperty.call(active, sessionID),
     pendingInput: inbox.length > 0,
@@ -527,12 +309,7 @@ export function nativeHost(
 ): RunnerHost & {
   ownsCurrentWorkspace(directory: string): Promise<boolean>
   retainedInputID(sessionID: string): Promise<string | undefined>
-  readSessionLog(sessionID: string): AsyncIterable<unknown>
 } {
-  const idleStore =
-    typeof (repository as TaskRepository | undefined)?.atomic === "function"
-      ? new NativeIdleStore(repository)
-      : undefined
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
   const invalidate = (client: NativeInboxClient) => {
@@ -570,31 +347,16 @@ export function nativeHost(
     directory?: string,
     confirmedAbsent = false,
   ) =>
-    runNative(client, () =>
-      workerObservation(client, sessionID, directory, Boolean(idleStore), confirmedAbsent),
-    )
+    runNative(client, () => workerObservation(client, sessionID, directory, true, confirmedAbsent))
   const retainedInputID = async (sessionID: string) => {
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
   }
-  const readSessionLog = (sessionID: string): AsyncIterable<unknown> => ({
-    [Symbol.asyncIterator]: async function* () {
-      const client = await connectedClient()
-      try {
-        yield* client.experimental.session.log({ sessionID, follow: false })
-      } catch (error) {
-        invalidate(client)
-        throw error
-      }
-    },
-  })
   const host: RunnerHost & {
     ownsCurrentWorkspace(directory: string): Promise<boolean>
     retainedInputID(sessionID: string): Promise<string | undefined>
-    readSessionLog(sessionID: string): AsyncIterable<unknown>
   } = {
     retainedInputID,
-    readSessionLog,
     async ownsCurrentWorkspace(directory) {
       const client = await connectedClient()
       const location = client.location
@@ -723,12 +485,6 @@ export function nativeHost(
         return null
       }
 
-      const binding = idleStore?.assignmentForSession(id)
-      const idleBefore = binding ? idleStore?.read(binding) : undefined
-      const backgroundBefore =
-        binding && idleStore
-          ? idleStore.background(binding, idleBefore)
-          : unknownNativeIdle("Durable native idle observation is unavailable")
       const before = await observeWorker(client, id, session.location.directory)
       const readMessages = () =>
         runNative(client, () =>
@@ -774,11 +530,6 @@ export function nativeHost(
       }
       const latest = detailed ? await readSession() : session
       if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-      const idleAfter = binding ? idleStore?.read(binding) : undefined
-      const backgroundAfter =
-        binding && idleStore
-          ? idleStore.background(binding, idleAfter)
-          : unknownNativeIdle("Durable native idle observation is unavailable")
       if (!latest) {
         if (before.active || after.active || before.pendingInput || after.pendingInput)
           throw new Error("Native worker session disappeared during execution observation")
@@ -811,8 +562,7 @@ export function nativeHost(
           before.permissionRequests !== after.permissionRequests ||
           before.forms !== after.forms ||
           before.shells !== after.shells ||
-          JSON.stringify(backgroundBefore) !== JSON.stringify(backgroundAfter) ||
-          idleBefore?.revision !== idleAfter?.revision ||
+          inputBefore !== currentInputID ||
           sessionIdentity(session) !== sessionIdentity(middle) ||
           sessionIdentity(middle) !== sessionIdentity(latest) ||
           beforeState !== sessionExecutionState(middle) ||
@@ -879,55 +629,12 @@ export function nativeHost(
                     : "completed") as "pending" | "completed" | "interrupted" | "unknown",
           }
         : undefined
-      let freshBackground = backgroundAfter
-      const matchesAssignedSession =
-        binding !== undefined &&
-        binding.projectDirectory === repository.projectDirectory &&
-        binding.projectID === ctx.location.project.id &&
-        binding.sessionID === latest.id &&
-        binding.workspace === latest.location.directory &&
-        binding.attemptID === latest.metadata?.lazersAttemptID &&
-        latest.projectID === binding.projectID &&
-        isWorkerAgent(latest.agent)
-      if (detailed && binding && idleStore && backgroundAfter.state === "observed") {
-        const report = idleAfter?.report
-        const terminal = idleAfter?.terminal
-        const terminalMessageExact =
-          report !== null &&
-          report !== undefined &&
-          report.count === 0 &&
-          terminal !== null &&
-          terminal !== undefined &&
-          hasLatestSuccessfulIdleMarker(messages, currentInputID, terminal) &&
-          terminal.sequence > report.eventSequence
-        const assignmentOrInputChanged =
-          !matchesAssignedSession ||
-          observationUnstable ||
-          inputBefore !== currentInputID ||
-          currentInputID === undefined ||
-          currentInputID !== report?.inputID ||
-          active ||
-          pendingInput ||
-          pendingInteraction
-        if (assignmentOrInputChanged)
-          freshBackground = unknownNativeIdle(
-            "Native idle evidence did not match fresh stable assignment, current input, and location observations",
-          )
-        else if (
-          backgroundAfter.count === 0 &&
-          (!terminalMessageExact || latest.outcome !== "succeeded")
-        )
-          freshBackground = unknownNativeIdle(
-            "Native zero-background idle evidence lacked the exact current successful idle marker",
-          )
-        else if (
-          backgroundAfter.count === 0 &&
-          (before.runningShells > 0 || after.runningShells > 0)
-        )
-          freshBackground = unknownNativeIdle("Native assigned location has a running shell")
-      } else if (detailed && backgroundAfter.state === "observed") {
-        freshBackground = unknownNativeIdle("Native idle assignment could not be revalidated")
-      }
+      // Live background activity: read from the host now, never from a hook report.
+      const runningShells = Math.max(before.runningShells, after.runningShells)
+      const lineage = await runNative(client, () =>
+        activeSessionLineage(client, id, latest.location.directory),
+      )
+      const activeChildren = lineage.activeDescendants.length
       const outcome =
         active || pendingInput || pendingInteraction || observationUnstable
           ? undefined
@@ -948,8 +655,11 @@ export function nativeHost(
         ...(!observationUnstable || pendingForms ? { pendingForms } : {}),
         ...(observationUnstable ? { observationUnstable: true } : {}),
         ...(turn ? { turn } : {}),
-        background: freshBackground,
+        runningShells,
+        activeChildren,
         ...(idleAt ? { idleAt } : {}),
+        // Last model activity: request start or completion, whichever is later.
+        ...(Math.max(busyAt, idleAt) > 0 ? { activityAt: Math.max(busyAt, idleAt) } : {}),
         outcome,
         model: latest.model,
         usage: {
@@ -1044,170 +754,6 @@ export function nativeHost(
         )
           throw new Error("Integrated worker archival or idle state could not be confirmed")
       })
-    },
-    async cleanupSettlement(input): Promise<NativeCleanupSettlement> {
-      if (!idleStore)
-        throw new Error("Native cleanup settlement storage is unavailable; preserve the worktree")
-      const binding = idleStore.assignmentForSession(input.sessionID)
-      if (
-        !binding ||
-        binding.projectDirectory !== repository.projectDirectory ||
-        binding.projectID !== input.projectID ||
-        binding.attemptID !== input.attemptID ||
-        binding.sessionID !== input.sessionID ||
-        binding.workspace !== input.workspace ||
-        binding.assignedMessageID !== input.assignedMessageID
-      )
-        throw new Error("Native cleanup settlement assignment changed; preserve the worktree")
-      const initialIdleState = idleStore.read(binding)
-      const initialIdleEvidence = currentCleanupIdleEvidence(initialIdleState, input)
-
-      const client = await connectedClient()
-      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-      const capture = async () => {
-        const idleBefore = idleStore.read(binding)
-        const idleEvidenceBefore = currentCleanupIdleEvidence(idleBefore, input)
-        if (JSON.stringify(idleBefore) !== JSON.stringify(initialIdleState))
-          throw new Error(
-            "Native idle settlement changed before cleanup observation; preserve the worktree",
-          )
-        const before = await runNative(client, () =>
-          client.session.get({ sessionID: Session.ID.make(input.sessionID) }),
-        )
-        const activeBefore = await runNative(client, () =>
-          activeSessionLineage(client, input.sessionID, input.workspace),
-        )
-        const inventoryBefore = await observeWorker(client, input.sessionID, input.workspace)
-        const messages = await runNative(client, () =>
-          Effect.runPromise(ctx.session.context({ sessionID: Session.ID.make(input.sessionID) })),
-        )
-        const inputID = await resolveNativeInputID(messages, () => retainedInputID(input.sessionID))
-        const terminal = await currentSuccessfulTerminal(readSessionLog, input.sessionID)
-        const idleAfter = idleStore.read(binding)
-        const idleEvidenceAfter = currentCleanupIdleEvidence(idleAfter, input)
-        const inventoryAfter = await observeWorker(client, input.sessionID, input.workspace)
-        const activeAfter = await runNative(client, () =>
-          activeSessionLineage(client, input.sessionID, input.workspace),
-        )
-        const after = await runNative(client, () =>
-          client.session.get({ sessionID: Session.ID.make(input.sessionID) }),
-        )
-        const state = (session: typeof before) => ({
-          id: session.id,
-          parentID: session.parentID,
-          projectID: session.projectID,
-          agent: session.agent,
-          attemptID: session.metadata?.lazersAttemptID,
-          directory: session.location.directory,
-          archived: session.time.archived !== undefined,
-          busyAt: session.time.busy ?? 0,
-          idleAt: session.time.idle ?? 0,
-          outcome: session.outcome,
-        })
-        if (
-          JSON.stringify(state(before)) !== JSON.stringify(state(after)) ||
-          JSON.stringify(idleBefore) !== JSON.stringify(idleAfter) ||
-          JSON.stringify(inventoryBefore) !== JSON.stringify(inventoryAfter) ||
-          JSON.stringify(activeBefore) !== JSON.stringify(activeAfter)
-        )
-          throw new Error(
-            "Native worker settlement changed during observation; preserve the worktree",
-          )
-        if (
-          before.id !== input.sessionID ||
-          before.projectID !== input.projectID ||
-          before.location.directory !== input.workspace ||
-          before.metadata?.lazersAttemptID !== input.attemptID ||
-          !isWorkerAgent(before.agent) ||
-          before.outcome !== "succeeded" ||
-          !before.time.idle ||
-          (before.time.busy && before.time.busy >= before.time.idle)
-        )
-          throw new Error(
-            "Native worker has no exact successful idle settlement; preserve the worktree",
-          )
-        if (
-          activeBefore.activeRoot ||
-          activeBefore.activeDescendants.length > 0 ||
-          activeBefore.activeAtWorkspace.length > 0 ||
-          inventoryBefore.active ||
-          inventoryBefore.pendingInput ||
-          inventoryBefore.pendingPermissions !== 0 ||
-          inventoryBefore.pendingForms !== 0 ||
-          inventoryBefore.locationPendingPermissions !== 0 ||
-          inventoryBefore.locationPendingForms !== 0 ||
-          inventoryBefore.runningShells !== 0
-        )
-          throw new Error(
-            "Native worker or assigned worktree still has active/background work; let it settle and retry cleanup recovery",
-          )
-        if (
-          inputID !== input.assignedMessageID ||
-          !terminal ||
-          !sameCleanupTerminal(idleEvidenceBefore.terminal, terminal) ||
-          !sameCleanupTerminal(idleEvidenceAfter.terminal, terminal) ||
-          !sameCleanupTerminal(initialIdleEvidence.terminal, terminal) ||
-          !hasLatestSuccessfulIdleMarker(messages, inputID, terminal)
-        )
-          throw new Error(
-            "A synced current native success, matching confirmed zero-background report, and exact idle marker are unavailable; preserve the worktree and wait for genuine native idle evidence",
-          )
-        return {
-          inputID,
-          terminal: {
-            sequence: terminal.sequence,
-            eventID: terminal.eventID,
-            messageID: terminal.messageID,
-            previousEventSequence: idleEvidenceBefore.report.eventSequence,
-          },
-          idleReport: {
-            source: "experimental.idle" as const,
-            ...idleEvidenceBefore.report,
-          },
-          activeRoot: activeBefore.activeRoot,
-          activeDescendants: activeBefore.activeDescendants,
-          activeAtWorkspace: activeBefore.activeAtWorkspace,
-          inventory: inventoryBefore,
-        }
-      }
-
-      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-      const first = await capture()
-      const second = await capture()
-      const projection = (result: typeof first) => ({
-        inputID: result.inputID,
-        terminal: result.terminal,
-        idleReport: result.idleReport,
-        activeRoot: result.activeRoot,
-        activeDescendants: result.activeDescendants,
-        activeAtWorkspace: result.activeAtWorkspace,
-        inventory: result.inventory,
-      })
-      if (JSON.stringify(projection(first)) !== JSON.stringify(projection(second)))
-        throw new Error(
-          "Native worker settlement was not stable across fresh reads; preserve the worktree",
-        )
-      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
-      return {
-        schemaVersion: 1,
-        projectID: input.projectID,
-        attemptID: input.attemptID,
-        sessionID: input.sessionID,
-        workspace: input.workspace,
-        assignedMessageID: input.assignedMessageID,
-        inputID: second.inputID,
-        idleReport: second.idleReport,
-        terminal: second.terminal,
-        observedAt: Date.now(),
-        inventory: {
-          activeSession: false,
-          activeDescendants: 0,
-          pendingInput: false,
-          pendingPermissions: 0,
-          pendingForms: 0,
-          runningShells: 0,
-        },
-      }
     },
     async waitForSession(sessionID) {
       await Effect.runPromise(ctx.session.wait({ sessionID: Session.ID.make(sessionID) }))

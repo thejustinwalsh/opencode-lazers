@@ -58,7 +58,8 @@ export const VerificationTimeoutAmendmentSchema = z.strictObject({
   planRevision: z.int().positive(),
   planVersion: z.int().positive(),
   owner: z.string().min(1),
-  ownerEpoch: z.int().min(0),
+  /** Retired: older receipts carry it; it no longer binds anything. */
+  ownerEpoch: z.int().min(0).optional(),
   phase: VerificationPhase,
   taskID: z.uuid().nullable(),
   taskRevision: z.int().positive().nullable(),

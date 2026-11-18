@@ -6,14 +6,14 @@ not reach. Mockups show the recommended design for each panel.
 
 ## Ranking and order
 
-| Rank | Surface | Why it needs work | Size |
-| --- | --- | --- | --- |
-| 1 | **Loading and failure states (all panels)** | After a service restart, Radar, Models and Trajectory spun for 4–6 minutes with no timeout, retry or last-known content. This hides every other panel's design. | M |
-| 2 | **Models** | Six competing status lines while loading; the Assignments tab swaps only the lower pane; the densest "unknown / unavailable" vocabulary in the product. | L |
-| 3 | **Trajectory** | Seven header lines before the timeline; raw Unix milliseconds and internal prose in the inspector; manual "Load more"; olive-green tool marks. | M |
-| 4 | **Radar** | Header reflows between Monitor and Diagnostics; an empty inspector is open by default; two overlapping error messages. | M |
-| 5 | **Tasks** | Closest to done. Priority is the sort key but is not shown; accepted and integrated differ by color only; the inspector truncates its title and leaks runtime prose. | S–M |
-| 6 | **Settings and header indicators** | Two differently built pages for one plugin; 40 px indicator beside 26 px host controls. | S |
+| Rank | Surface                                     | Why it needs work                                                                                                                                                    | Size |
+| ---- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| 1    | **Loading and failure states (all panels)** | After a service restart, Radar, Models and Trajectory spun for 4–6 minutes with no timeout, retry or last-known content. This hides every other panel's design.      | M    |
+| 2    | **Models**                                  | Six competing status lines while loading; the Assignments tab swaps only the lower pane; the densest "unknown / unavailable" vocabulary in the product.              | L    |
+| 3    | **Trajectory**                              | Seven header lines before the timeline; raw Unix milliseconds and internal prose in the inspector; manual "Load more"; olive-green tool marks.                       | M    |
+| 4    | **Radar**                                   | Header reflows between Monitor and Diagnostics; an empty inspector is open by default; two overlapping error messages.                                               | M    |
+| 5    | **Tasks**                                   | Closest to done. Priority is the sort key but is not shown; accepted and integrated differ by color only; the inspector truncates its title and leaks runtime prose. | S–M  |
+| 6    | **Settings and header indicators**          | Two differently built pages for one plugin; 40 px indicator beside 26 px host controls.                                                                              | S    |
 
 Recommended implementation order:
 
@@ -26,12 +26,12 @@ Recommended implementation order:
 
 ## How the review was done, and its limits
 
-| Done live | Not possible in this session |
-| --- | --- |
+| Done live                                                                          | Not possible in this session                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Opened Tasks, Radar, Models, Trajectory, LAZERS settings, Provider budget settings | Selecting or expanding Tasks tree rows, scrolling, hover tooltips and keyboard navigation: background accessibility input reaches buttons, tabs and menus only, and full-screen control was interrupted on every attempt |
-| Tasks: state filter menu (Open → All → Open), search open/close, blocker link | Resizing the pane to 360 px (not attempted, to leave the persisted layout alone) |
-| Radar: actions menu, Diagnostics, back to Monitor | Loaded Radar and Models: they never finished loading after the restart |
-| Models: Observed ↔ Benchmark, Compare ↔ Assignments | Settings menus: they could not be closed again without choosing a value, so they were left unopened |
+| Tasks: state filter menu (Open → All → Open), search open/close, blocker link      | Resizing the pane to 360 px (not attempted, to leave the persisted layout alone)                                                                                                                                         |
+| Radar: actions menu, Diagnostics, back to Monitor                                  | Loaded Radar and Models: they never finished loading after the restart                                                                                                                                                   |
+| Models: Observed ↔ Benchmark, Compare ↔ Assignments                                | Settings menus: they could not be closed again without choosing a value, so they were left unopened                                                                                                                      |
 
 Two things to know when reading the findings:
 
@@ -51,13 +51,13 @@ Evidence images are in `evidence/`. Mockups are in `mockups/` (`<panel>.html` so
 
 ### 1. Loading has no end (highest priority)
 
-| Panel | Observed after the 5:54 PM restart | Evidence |
-| --- | --- | --- |
-| Radar | "Connecting" + "Loading live activity…" for about 4 minutes, then "Live observation is unavailable. Transport: Timed out waiting for th…" with Retry, plus a second line "Live session activity is unavailable. Nothing can be concluded about workers." The status chip read "Syncing" at the same time. | `radar-01`, `radar-02` |
-| Models | "Refreshing sources…", "No comparison yet · Loading", "Loading comparison…", "Task unavailable", "Select a model to compare.", "Loading selected task evidence…" all at once, unchanged for 6 minutes. Refresh disabled. | `models-01` |
-| Trajectory | "Loading trajectory" spinner for 6+ minutes. No retry, no elapsed time. | `trajectory-02`, `trajectory-03` |
-| Tasks | Reloaded in under 30 s. On selection or filter change the inspector blanks to "Loading task…". | `tasks-04`, `tasks-07` |
-| Host | A service restart closes the plugin's tabs and shows "New tab". | `host-05` |
+| Panel      | Observed after the 5:54 PM restart                                                                                                                                                                                                                                                                        | Evidence                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Radar      | "Connecting" + "Loading live activity…" for about 4 minutes, then "Live observation is unavailable. Transport: Timed out waiting for th…" with Retry, plus a second line "Live session activity is unavailable. Nothing can be concluded about workers." The status chip read "Syncing" at the same time. | `radar-01`, `radar-02`           |
+| Models     | "Refreshing sources…", "No comparison yet · Loading", "Loading comparison…", "Task unavailable", "Select a model to compare.", "Loading selected task evidence…" all at once, unchanged for 6 minutes. Refresh disabled.                                                                                  | `models-01`                      |
+| Trajectory | "Loading trajectory" spinner for 6+ minutes. No retry, no elapsed time.                                                                                                                                                                                                                                   | `trajectory-02`, `trajectory-03` |
+| Tasks      | Reloaded in under 30 s. On selection or filter change the inspector blanks to "Loading task…".                                                                                                                                                                                                            | `tasks-04`, `tasks-07`           |
+| Host       | A service restart closes the plugin's tabs and shows "New tab".                                                                                                                                                                                                                                           | `host-05`                        |
 
 Recommendation, one contract for all four panels:
 
@@ -89,17 +89,17 @@ Plan:
 The owner rule: omit data that legitimately does not exist; missing telemetry and prices are bugs.
 Places that break it today:
 
-| Where | Text | Source |
-| --- | --- | --- |
-| Tasks inspector (live) | "Native idle background observation is unknown: Native session.inbox.delivered was observed after the last experimental.idle background report" | `evidence/tasks-03` |
-| Tasks row fallback | state word defaults to "Unknown" | `src/tasks/row-presentation.ts` `stateWord` |
-| Trajectory inspector (live) | "duration not recorded"; "absent endpoints remain unknown" | `evidence/trajectory-01` |
-| Trajectory | "Unknown", "Time unknown", "Model not recorded", "duration unavailable: …", "Price source unavailable", "Known subtotal · full total unavailable" | `src/trajectory-panel/panel.tsx` lines 89, 151, 159, 112, 1836, 1873 |
-| Models | "Unknown", "Unknown market cost", "Age unknown", "tokens unknown", "Unavailable · not a zero price", "freshness unknown", "provider unavailable · tag unavailable" | `src/models/comparison-panel.tsx` lines 124–493, `comparison-presentation.ts` lines 208–462 |
-| Models (live) | disabled chip "Task unavailable" | `evidence/models-01` |
-| Radar | "State unknown", "Scheduler unknown", "Unknown tool", "status unknown", "Model not observed", "Unavailable", "Not reported", "None reported" | `src/radar/monitor-model.ts` lines 103–334, `monitor-view.tsx` lines 323, 503, 748, 750 |
-| Radar (historical, 8 Nov) | "unavailable · unknown · unknown"; "unknown · participant count unknown" | `evidence/historical-radar-20261108.png` |
-| Budget tooltip | "Earlier weekly usage unknown"; label "—" | `src/budget/gui.tsx` `presentation` |
+| Where                       | Text                                                                                                                                                               | Source                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Tasks inspector (live)      | "Native idle background observation is unknown: Native session.inbox.delivered was observed after the last experimental.idle background report"                    | `evidence/tasks-03`                                                                         |
+| Tasks row fallback          | state word defaults to "Unknown"                                                                                                                                   | `src/tasks/row-presentation.ts` `stateWord`                                                 |
+| Trajectory inspector (live) | "duration not recorded"; "absent endpoints remain unknown"                                                                                                         | `evidence/trajectory-01`                                                                    |
+| Trajectory                  | "Unknown", "Time unknown", "Model not recorded", "duration unavailable: …", "Price source unavailable", "Known subtotal · full total unavailable"                  | `src/trajectory-panel/panel.tsx` lines 89, 151, 159, 112, 1836, 1873                        |
+| Models                      | "Unknown", "Unknown market cost", "Age unknown", "tokens unknown", "Unavailable · not a zero price", "freshness unknown", "provider unavailable · tag unavailable" | `src/models/comparison-panel.tsx` lines 124–493, `comparison-presentation.ts` lines 208–462 |
+| Models (live)               | disabled chip "Task unavailable"                                                                                                                                   | `evidence/models-01`                                                                        |
+| Radar                       | "State unknown", "Scheduler unknown", "Unknown tool", "status unknown", "Model not observed", "Unavailable", "Not reported", "None reported"                       | `src/radar/monitor-model.ts` lines 103–334, `monitor-view.tsx` lines 323, 503, 748, 750     |
+| Radar (historical, 8 Nov)   | "unavailable · unknown · unknown"; "unknown · participant count unknown"                                                                                           | `evidence/historical-radar-20261108.png`                                                    |
+| Budget tooltip              | "Earlier weekly usage unknown"; label "—"                                                                                                                          | `src/budget/gui.tsx` `presentation`                                                         |
 
 Rule to apply everywhere: a missing optional fact removes its row or segment; a missing required
 fact (model, price, timing of a recorded call) is logged as a defect and shown once in a
@@ -154,19 +154,19 @@ Mockup: `mockups/tasks.png`.
 
 **Ranked improvements**
 
-| # | Change | Rationale |
-| --- | --- | --- |
-| 1 | Add a 2-character mono priority column before the reference; omit for priority 0 | Makes the flat order self-explaining without sections or headings |
-| 2 | Accepted = outlined check, neutral. Integrated = filled disc, green | Shape carries state; green stays unique to finished work |
-| 3 | In All, sort open → accepted → integrated → failed/cancelled, priority inside each. No headings | Open work stays on top; honors the no-sections decision |
-| 4 | Keep selection across filter changes when the task is still listed; otherwise keep the inspector's last content until a new selection | Removes the blank inspector and the jump |
-| 5 | Inspector: two-line title; one meta line "Priority 1 · plan name · step n"; drop Sequencing unless there are dependencies | Removes three rows; more room for Done when |
-| 6 | Reason line in user terms, raw reason behind "Details" | Readable, and removes "unknown" |
-| 7 | Chevron becomes a 20 × 24 px button with hover | Usable target |
-| 8 | State menu: checkmark on current, count per state; split Completed into Accepted and Integrated | Shows the integration backlog |
-| 9 | Replace header dot with "23 open · 4 running" | Text says what the dot could not |
-| 10 | Elapsed time on running rows only ("12m") | One glance shows which worker is stuck |
-| 11 | Search input fills the row | Alignment |
+| #   | Change                                                                                                                                | Rationale                                                         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1   | Add a 2-character mono priority column before the reference; omit for priority 0                                                      | Makes the flat order self-explaining without sections or headings |
+| 2   | Accepted = outlined check, neutral. Integrated = filled disc, green                                                                   | Shape carries state; green stays unique to finished work          |
+| 3   | In All, sort open → accepted → integrated → failed/cancelled, priority inside each. No headings                                       | Open work stays on top; honors the no-sections decision           |
+| 4   | Keep selection across filter changes when the task is still listed; otherwise keep the inspector's last content until a new selection | Removes the blank inspector and the jump                          |
+| 5   | Inspector: two-line title; one meta line "Priority 1 · plan name · step n"; drop Sequencing unless there are dependencies             | Removes three rows; more room for Done when                       |
+| 6   | Reason line in user terms, raw reason behind "Details"                                                                                | Readable, and removes "unknown"                                   |
+| 7   | Chevron becomes a 20 × 24 px button with hover                                                                                        | Usable target                                                     |
+| 8   | State menu: checkmark on current, count per state; split Completed into Accepted and Integrated                                       | Shows the integration backlog                                     |
+| 9   | Replace header dot with "23 open · 4 running"                                                                                         | Text says what the dot could not                                  |
+| 10  | Elapsed time on running rows only ("12m")                                                                                             | One glance shows which worker is stuck                            |
+| 11  | Search input fills the row                                                                                                            | Alignment                                                         |
 
 **Implementation plan**
 
@@ -174,7 +174,7 @@ Mockup: `mockups/tasks.png`.
   Remove the "Unknown" fallback in `stateWord`.
 - `src/tasks/state-glyph.tsx`: add `ring-check` and filled `disc-check`.
 - `src/tasks/panel.tsx`: priority cell and elapsed cell in the row; chevron as `<button
-  tabIndex={-1}>`; header count; menu items with check and counts; inspector meta line and
+tabIndex={-1}>`; header count; menu items with check and counts; inspector meta line and
   conditional Sequencing; selection retention.
 - `src/tasks/panel.css`: grid columns for priority; `-webkit-line-clamp: 2` on the inspector
   title; search input `flex: 1`.
@@ -215,15 +215,15 @@ Mockup: `mockups/radar.png`. Loaded-state findings are from source and the 8 Nov
 
 **Ranked improvements**
 
-| # | Change | Rationale |
-| --- | --- | --- |
-| 1 | Shared loading contract; one error sentence; connection chip has three values: Live, Reconnecting, Offline | Removes contradiction |
-| 2 | One header for all views: title, `Monitor · Map · Flow` segmented control, connection, scope, ⋯ | No reflow; Diagnostics becomes one click |
-| 3 | No inspector until something is selected; the list takes the full height | Content before chrome |
-| 4 | Workers indented under their Architect with a guide line | Relationship at a glance |
-| 5 | One summary line: running, needs you, failed, queued, capacity | The first question Radar should answer |
-| 6 | Inspector: state, task link, one facts line, then Calls / Files / Messages | Replaces label-value grids of ids |
-| 7 | Idle state says what is true and links to Tasks | Useful empty state |
+| #   | Change                                                                                                     | Rationale                                |
+| --- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| 1   | Shared loading contract; one error sentence; connection chip has three values: Live, Reconnecting, Offline | Removes contradiction                    |
+| 2   | One header for all views: title, `Monitor · Map · Flow` segmented control, connection, scope, ⋯            | No reflow; Diagnostics becomes one click |
+| 3   | No inspector until something is selected; the list takes the full height                                   | Content before chrome                    |
+| 4   | Workers indented under their Architect with a guide line                                                   | Relationship at a glance                 |
+| 5   | One summary line: running, needs you, failed, queued, capacity                                             | The first question Radar should answer   |
+| 6   | Inspector: state, task link, one facts line, then Calls / Files / Messages                                 | Replaces label-value grids of ids        |
+| 7   | Idle state says what is true and links to Tasks                                                            | Useful empty state                       |
 
 **Implementation plan**
 
@@ -275,16 +275,16 @@ Mockup: `mockups/models.png`. Loaded-state findings are from source and the 6 No
 
 **Ranked improvements**
 
-| # | Change | Rationale |
-| --- | --- | --- |
-| 1 | Assignments becomes a full view: persona rows on top, one editor below; Compare chrome is not rendered | The tab means what it says |
-| 2 | One loading surface: chart skeleton + one line | Replaces six messages |
-| 3 | Header in two rows: `Models · Compare · Assignments … prices time · refresh icon`, then filters + `Your runs · Benchmark` | Chart moves up about 80 px |
-| 4 | Selected model: name, price range in large type, four stats, one button "Assign to <persona>" | Decision and action together |
-| 5 | Everything about basis, coverage, sources and rates moves into disclosures under the selection | Honest without caveats in the first view |
-| 6 | Benchmark empty state: title, one sentence, "Open provider settings" | Actionable |
-| 7 | Chips match Tasks: value then chevron; "Task" chip appears only when a task filter applies | Consistency; removes "Task unavailable" |
-| 8 | Fewer y ticks at narrow widths; legend reduced to "Best trade-off" and "Other" | Legibility |
+| #   | Change                                                                                                                    | Rationale                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| 1   | Assignments becomes a full view: persona rows on top, one editor below; Compare chrome is not rendered                    | The tab means what it says               |
+| 2   | One loading surface: chart skeleton + one line                                                                            | Replaces six messages                    |
+| 3   | Header in two rows: `Models · Compare · Assignments … prices time · refresh icon`, then filters + `Your runs · Benchmark` | Chart moves up about 80 px               |
+| 4   | Selected model: name, price range in large type, four stats, one button "Assign to <persona>"                             | Decision and action together             |
+| 5   | Everything about basis, coverage, sources and rates moves into disclosures under the selection                            | Honest without caveats in the first view |
+| 6   | Benchmark empty state: title, one sentence, "Open provider settings"                                                      | Actionable                               |
+| 7   | Chips match Tasks: value then chevron; "Task" chip appears only when a task filter applies                                | Consistency; removes "Task unavailable"  |
+| 8   | Fewer y ticks at narrow widths; legend reduced to "Best trade-off" and "Other"                                            | Legibility                               |
 
 **Implementation plan**
 
@@ -339,16 +339,16 @@ restart (`evidence/trajectory-01-initial.jpg`).
 
 **Ranked improvements**
 
-| # | Change | Rationale |
-| --- | --- | --- |
-| 1 | Header in three lines: reference + state + Open task; two-line title; attempt picker + model + active time + counts | Timeline moves up about 90 px |
-| 2 | Hatch only recording gaps; compressed idle is a narrow labelled break ("1m32s idle") | The two are different facts and must look different |
-| 3 | Track hues: attempt blue, tools violet, files amber, checks neutral strong; failures red on any track | No green outside success |
-| 4 | Lane labels: "Attempt 1", "Tools 31", "Files 7", "Checks 6" | Words beside numbers |
-| 5 | Remove "Load more"; show "118 of 184 events" with a thin progress line while streaming | Matches the streaming contract |
-| 6 | Inspector: state + kind + duration; the command; Started / Ended / Result in clock time with offset; Output and Timing source as disclosures | Removes Unix ms and prose |
-| 7 | Attempt usage block: market cost, tokens in (cached), tokens out, with price source and date; omit cost when no price exists | One honest summary |
-| 8 | Reconciliation counts ("placed" vs "runner counted") move to a "Data gaps" disclosure shown only when they differ | A defect report, not a footer |
+| #   | Change                                                                                                                                       | Rationale                                           |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| 1   | Header in three lines: reference + state + Open task; two-line title; attempt picker + model + active time + counts                          | Timeline moves up about 90 px                       |
+| 2   | Hatch only recording gaps; compressed idle is a narrow labelled break ("1m32s idle")                                                         | The two are different facts and must look different |
+| 3   | Track hues: attempt blue, tools violet, files amber, checks neutral strong; failures red on any track                                        | No green outside success                            |
+| 4   | Lane labels: "Attempt 1", "Tools 31", "Files 7", "Checks 6"                                                                                  | Words beside numbers                                |
+| 5   | Remove "Load more"; show "118 of 184 events" with a thin progress line while streaming                                                       | Matches the streaming contract                      |
+| 6   | Inspector: state + kind + duration; the command; Started / Ended / Result in clock time with offset; Output and Timing source as disclosures | Removes Unix ms and prose                           |
+| 7   | Attempt usage block: market cost, tokens in (cached), tokens out, with price source and date; omit cost when no price exists                 | One honest summary                                  |
+| 8   | Reconciliation counts ("placed" vs "runner counted") move to a "Data gaps" disclosure shown only when they differ                            | A defect report, not a footer                       |
 
 **Implementation plan**
 
@@ -398,7 +398,7 @@ Mockup: `mockups/settings.png`.
    "Voice: …") instead of label left, control right.
 7. **Voice has no preview** next to the picker (source: voice tests exist elsewhere on the page).
 8. **Inference indicator is 40 × 40 px** (`inferenceIndicatorStyles`: `min-width: 40px; height:
-   40px`) beside 26 px host controls; the accessibility frame is 37 × 37 against the neighbor's
+40px`) beside 26 px host controls; the accessibility frame is 37 × 37 against the neighbor's
    55 × 26 (`header-01`). It showed the icon only, alternating between the unloaded diamond and
    the error mark during the review, with no model name.
 9. **Budget indicator shows "—"** when there is no reading (source). It was switched off on this
@@ -406,16 +406,16 @@ Mockup: `mockups/settings.png`.
 
 **Ranked improvements**
 
-| # | Change | Rationale |
-| --- | --- | --- |
-| 1 | One LAZERS page; provider usage becomes a section on it | One place, one style |
-| 2 | Every setting is a row: label and hint left, control right | Scannable; matches host pages |
-| 3 | Show only the fields for the chosen provider | Removes dead inputs |
-| 4 | Drop the "Task workflow" section; fold its one fact into the page lede | First control near the top |
-| 5 | Rename to "Keep model loaded" with values Always / 1 / 5 / 15 minutes; runtime state shown once in the section header | Positive phrasing of the owner's default |
-| 6 | Voice row: picker + Preview | Choose by ear |
-| 7 | Indicators at 26 px height with 16 px glyphs; name + glyph; compact mode drops the name | Aligns with host controls |
-| 8 | Budget ring with no reading shows a dashed ring only | No "—" |
+| #   | Change                                                                                                                | Rationale                                |
+| --- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| 1   | One LAZERS page; provider usage becomes a section on it                                                               | One place, one style                     |
+| 2   | Every setting is a row: label and hint left, control right                                                            | Scannable; matches host pages            |
+| 3   | Show only the fields for the chosen provider                                                                          | Removes dead inputs                      |
+| 4   | Drop the "Task workflow" section; fold its one fact into the page lede                                                | First control near the top               |
+| 5   | Rename to "Keep model loaded" with values Always / 1 / 5 / 15 minutes; runtime state shown once in the section header | Positive phrasing of the owner's default |
+| 6   | Voice row: picker + Preview                                                                                           | Choose by ear                            |
+| 7   | Indicators at 26 px height with 16 px glyphs; name + glyph; compact mode drops the name                               | Aligns with host controls                |
+| 8   | Budget ring with no reading shows a dashed ring only                                                                  | No "—"                                   |
 
 **Implementation plan**
 
@@ -436,13 +436,13 @@ Mockup: `mockups/settings.png`.
 
 ## Mockups
 
-| File | Shows |
-| --- | --- |
-| `mockups/tasks.png` | Priority column, tree expansion with guides, two-line inspector, filter menu with counts, All ordering, reconnecting state, glyph set |
-| `mockups/radar.png` | Single header with Monitor/Map/Flow, parent → worker tree with live calls, inspector on selection only, offline state, map view, idle state |
-| `mockups/models.png` | Compare with chart-first layout and "Assign to" action, Assignments as its own view, single loading surface, actionable benchmark empty state |
+| File                     | Shows                                                                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mockups/tasks.png`      | Priority column, tree expansion with guides, two-line inspector, filter menu with counts, All ordering, reconnecting state, glyph set                 |
+| `mockups/radar.png`      | Single header with Monitor/Map/Flow, parent → worker tree with live calls, inspector on selection only, offline state, map view, idle state           |
+| `mockups/models.png`     | Compare with chart-first layout and "Assign to" action, Assignments as its own view, single loading surface, actionable benchmark empty state         |
 | `mockups/trajectory.png` | Three-line header, non-green tracks, labelled idle break vs hatched gap, clean inspector with usage, streaming progress, slow-load and no-task states |
-| `mockups/settings.png` | Unified LAZERS settings page; inference and budget indicators at host size in every state |
+| `mockups/settings.png`   | Unified LAZERS settings page; inference and budget indicators at host size in every state                                                             |
 
 Mockup colors are stand-ins sampled from the live dark theme (`mockups/shared.css`); product code
 keeps using the host tokens named in DESIGN.md. Values in the mockups are illustrative.

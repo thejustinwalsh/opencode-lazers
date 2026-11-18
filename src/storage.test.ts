@@ -146,7 +146,7 @@ test("S2-4 startup inventory reports three drift classes without mutating tables
   const drift = repository.schemaDrift()
   expect(drift.undeclaredTables).toContain("legacy_orphan")
   expect(drift.missingTables).toContain("runner_plans")
-  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 5 })
+  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 6 })
   expect(repository.read((db) => db.query("SELECT * FROM legacy_orphan").all())).toEqual([
     { value: "keep" },
   ])
@@ -1216,7 +1216,7 @@ test("preparing, running, verifying, and approval-held execution cannot be exter
       held.plan.planID,
       held.task.id,
       1,
-      "waiting-human",
+      "task-checks",
       "{}",
     )
   })
@@ -1226,7 +1226,7 @@ test("preparing, running, verifying, and approval-held execution cannot be exter
         taskID: held.task.id,
         requestID: "approval-held-review",
         disposition: "fulfilled",
-        reason: "Retained verification is awaiting its required approval.",
+        reason: "Retained verification is still running its checks.",
         evidence: [{ kind: "human", reference: "review" }],
       },
       { sessionID: "architect-session", agent: "architect" },

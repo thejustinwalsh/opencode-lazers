@@ -25,7 +25,7 @@ export const schemaModules = {
     tables: ["lazers_projects", "lazers_project_aliases", "lazers_project_paths"],
   },
   runner: {
-    generation: 5,
+    generation: 6,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",
@@ -149,11 +149,6 @@ export const schemaModules = {
     generation: 1,
     source: "src/audit/history.ts",
     tables: ["audit_runs", "audit_sections", "audit_decisions"],
-  },
-  "native-idle": {
-    generation: 1,
-    source: "src/runner/native-idle.ts",
-    tables: ["runner_native_idle"],
   },
   observability: {
     generation: 1,

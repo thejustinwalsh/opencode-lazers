@@ -88,12 +88,7 @@ function fixture(
       {
         id: "task-result",
         assertion: "The task result satisfies its fresh check",
-        evidence: [
-          { kind: "verification", verificationID: "task-check" },
-          ...(mode === "failed-task" || sharedAssertionID
-            ? [{ kind: "human" as const, decision: "Review this exact task artifact" }]
-            : []),
-        ],
+        evidence: [{ kind: "verification", verificationID: "task-check" }],
       },
     ]
     if (sharedAssertionID) proposal.acceptance[0]!.id = sharedAssertionID
@@ -118,10 +113,7 @@ function fixture(
     {
       id: sharedAssertionID ?? "combined-result",
       assertion: "The reviewed combined artifact contains the repaired result",
-      evidence: [
-        { kind: "verification" as const, verificationID: "combined-check" },
-        { kind: "human" as const, decision: "Review the exact combined candidate" },
-      ],
+      evidence: [{ kind: "verification" as const, verificationID: "combined-check" }],
     },
   ]
   const events: string[] = []
@@ -143,16 +135,7 @@ function fixture(
     pendingInput: false,
     pendingPermissions: 0,
     pendingForms: 0,
-    background: {
-      state: "observed",
-      source: "experimental.idle",
-      observedAt: Date.now(),
-      inputID: "architect-input",
-      executionStartSequence: 1,
-      eventSequence: 1,
-      count: 0,
-      kinds: { shell: 0, subagent: 0, image: 0 },
-    },
+
     model: { providerID: "fixture", id: "architect" },
     tokens: null,
     tools: 0,
@@ -238,16 +221,7 @@ function fixture(
         pendingInput: false,
         pendingPermissions: 0,
         pendingForms: 0,
-        background: {
-          state: "observed",
-          source: "experimental.idle",
-          observedAt: Date.now(),
-          inputID: "unassigned-input",
-          executionStartSequence: 1,
-          eventSequence: 1,
-          count: 0,
-          kinds: { shell: 0, subagent: 0, image: 0 },
-        },
+
         tokens: null,
         tools: 0,
         cost: null,
@@ -276,17 +250,6 @@ function fixture(
       session.pendingInput = false
       session.outcome = "succeeded"
       session.turn = { inputID: input.id, state: "completed" }
-      session.background = {
-        state: "observed",
-        source: "experimental.idle",
-        observedAt: Date.now(),
-        inputID: input.id,
-        executionStartSequence: 1,
-        eventSequence: 2,
-        terminalSequence: 2,
-        count: 0,
-        kinds: { shell: 0, subagent: 0, image: 0 },
-      }
     },
     updateInstruction: async () => {
       throw new Error("Adoption must not update worker instructions")
@@ -604,66 +567,6 @@ function landCandidate(f: TestFixture, oldArtifact: string) {
   return git(f.root, ["rev-parse", "HEAD"])
 }
 
-async function recordHumanEvidence(
-  f: TestFixture,
-  adoptionID: string,
-  artifact: string,
-  includeTask: boolean,
-) {
-  const expectedVersion = f.store.plan(f.planID)!.version
-  if (includeTask)
-    await f.runtime.command(
-      {
-        requestID: `human-task-${adoptionID}`,
-        planID: f.planID,
-        expectedVersion,
-        action: "human-evidence",
-        adoptionID,
-        taskID: f.task.id,
-        assertionID: "task-result",
-        artifact,
-        reason: "Reviewed the exact descendant task artifact",
-      },
-      "owner",
-    )
-  await f.runtime.command(
-    {
-      requestID: `human-combined-${adoptionID}`,
-      planID: f.planID,
-      expectedVersion,
-      action: "human-evidence",
-      adoptionID,
-      assertionID: "combined-result",
-      artifact,
-      reason: "Reviewed the exact combined descendant artifact",
-    },
-    "owner",
-  )
-}
-
-async function recordPhaseHumanEvidence(
-  f: TestFixture,
-  adoptionID: string,
-  phase: "task" | "combined",
-  assertionID: string,
-  artifact: string,
-) {
-  await f.runtime.command(
-    {
-      requestID: `human-${phase}-${adoptionID}`,
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "human-evidence",
-      adoptionID,
-      ...(phase === "task" ? { taskID: f.task.id } : {}),
-      assertionID,
-      artifact,
-      reason: `Reviewed the exact ${phase} adoption artifact`,
-    },
-    "owner",
-  )
-}
-
 function adoptionCommand(
   f: TestFixture,
   attemptID: string,
@@ -755,7 +658,7 @@ async function integratePlan(f: TestFixture) {
   await drive(f.runtime, 4)
 }
 
-test("failed/READY task adopts only after fresh checks and new task/combined human evidence, including receipt recovery", async () => {
+test("failed/READY task adopts only after fresh checks, including receipt recovery", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   f.store.move(f.planID, f.task.id, "RETRY", "Requeued without starting another worker")
@@ -788,16 +691,14 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("pending")
   const worktreeCount = f.events.filter((event) => event.startsWith("worktree:")).length
   await f.reopen()
-  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
   const taskWorkspace = JSON.parse(uncertain.payload).workspace
   expect(f.events.filter((event) => event === `worktree:${taskWorkspace}`)).toHaveLength(1)
   expect(f.events.filter((event) => event.startsWith("worktree:")).length).toBe(worktreeCount + 1)
   const adoption = f.store.adoption(requested.adoptionID)!
-  expect(adoption.state).toBe("waiting-human")
+  expect(adoption.state).toBe("accepted")
   expect(adoption.task_workspace).not.toBeNull()
   expect(adoption.combined_workspace).not.toBeNull()
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("ready")
   expect(f.store.adoptionChecks(adoption.id).every((check) => check.state === "completed")).toBe(
     true,
   )
@@ -810,9 +711,6 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   expect(completedTaskChecks).toBe(2)
   expect(completedGraphChecks).toBe(1)
 
-  await recordHumanEvidence(f, adoption.id, candidate, true)
-  await waitForAdoptionState(f, adoption.id, "accepted")
-  expect(f.store.adoption(adoption.id)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
   expect(f.store.nodes(f.planID)[0]).toMatchObject({ state: "accepted", artifact: candidate })
   expect(f.store.attempts(f.planID)).toHaveLength(1)
@@ -842,7 +740,7 @@ test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup wi
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
   const taskChecks = readFileSync(f.taskLog, "utf8").length
   const combinedChecks = readFileSync(f.graphLog, "utf8").length
   expect(
@@ -899,7 +797,7 @@ test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup wi
   await f.reopen({ inactivityTimeoutMs: 25_000, hardTimeoutMs: 50_000 })
   await f.runtime.tick()
 
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   expect(readFileSync(f.taskLog, "utf8").length).toBe(taskChecks)
   expect(readFileSync(f.graphLog, "utf8").length).toBe(combinedChecks)
   expect(
@@ -917,8 +815,6 @@ test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup wi
   ).toBe(true)
   const taskWorkspace = f.store.adoption(requested.adoptionID)!.task_workspace!
   const combinedWorkspace = f.store.adoption(requested.adoptionID)!.combined_workspace!
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
-  await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(readFileSync(f.taskLog, "utf8").length).toBe(taskChecks)
   expect(readFileSync(f.graphLog, "utf8").length).toBe(combinedChecks)
   await integratePlan(f)
@@ -1036,7 +932,6 @@ test("accepted task with blocked combined check adopts a descendant without rewr
     combinedArtifact: string
   }
   expect(requested.combinedArtifact).toBe(candidate)
-  await recordHumanEvidence(f, requested.adoptionID, candidate, false)
   await waitForAdoptionState(f, requested.adoptionID, "accepted")
 
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
@@ -1105,7 +1000,6 @@ test("adoption scope uses the latest reviewed integration baseline, not interven
     "owner",
   )) as { adoptionID: string }
   expect(f.store.adoption(requested.adoptionID)?.reviewed_baseline).toBe(reviewedBaseline)
-  await recordHumanEvidence(f, requested.adoptionID, candidate, false)
   await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
@@ -1143,8 +1037,6 @@ test("adoption verifies reviewed main with independent work without widening wor
     adoptionCommand(f, attempt.id, oldArtifact, candidate),
     "owner",
   )) as { adoptionID: string }
-  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
   await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
   expect(f.store.effectiveWriteScope(f.task.id)).toEqual(["result.txt"])
@@ -1217,7 +1109,9 @@ test("revoking a mistaken supplemental scope restores adoption without changing 
     scopeRemovals: ["parallel-ui.txt"],
     reason: "Restore the task's actual authority",
   }
-  await expect(f.runtime.command(removal, "foreign-owner")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(removal, "foreign-owner")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   await expect(
     f.runtime.command({ ...removal, expectedVersion: removal.expectedVersion - 1 }, "owner"),
   ).rejects.toThrow("Stale plan version")
@@ -1286,56 +1180,6 @@ test("supplemental scope cannot be revoked during a writer or an active adoption
 })
 
 test.each(["task", "combined"] as const)(
-  "identical assertion/artifact results stay phase-bound when %s is reviewed first",
-  async (firstPhase) => {
-    const f = fixture("failed-task", "shared-result")
-    const { node, attempt } = await strand(f)
-    const candidate = landCandidate(f, node.artifact!)
-    const requested = (await f.runtime.command(
-      adoptionCommand(f, attempt.id, node.artifact!, candidate),
-      "owner",
-    )) as { adoptionID: string; combinedArtifact: string }
-    expect(requested.combinedArtifact).toBe(candidate)
-    await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
-    expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
-
-    await recordPhaseHumanEvidence(f, requested.adoptionID, firstPhase, "shared-result", candidate)
-    await f.runtime.tick()
-    await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
-    expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
-    expect(f.store.plan(f.planID)?.state).toBe("blocked")
-    expect(
-      f.store.hasAdoptionEvidence(
-        requested.adoptionID,
-        firstPhase,
-        firstPhase === "task" ? f.task.id : null,
-        "shared-result",
-        candidate,
-      ),
-    ).toBe(true)
-    expect(
-      f.store.hasAdoptionEvidence(
-        requested.adoptionID,
-        firstPhase === "task" ? "combined" : "task",
-        firstPhase === "task" ? null : f.task.id,
-        "shared-result",
-        candidate,
-      ),
-    ).toBe(false)
-
-    await recordPhaseHumanEvidence(
-      f,
-      requested.adoptionID,
-      firstPhase === "task" ? "combined" : "task",
-      "shared-result",
-      candidate,
-    )
-    await waitForAdoptionState(f, requested.adoptionID, "accepted")
-  },
-  10_000,
-)
-
-test.each(["task", "combined"] as const)(
   "restart recovers the %s check receipt cut without replaying checks",
   async (cutPhase) => {
     const f = fixture("failed-task", undefined, { manualTicks: true })
@@ -1386,9 +1230,9 @@ test.each(["task", "combined"] as const)(
     ).length
 
     await f.reopen()
-    await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
+    await waitForAdoptionState(f, requested.adoptionID, "accepted")
 
-    expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+    expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
     expect(
       f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
     ).toBe(true)
@@ -1431,8 +1275,6 @@ test("irrelevant environment churn is ignored while check inputs and operation e
   const candidate = landCandidate(f, node.artifact!)
   const firstCommand = adoptionCommand(f, attempt.id, node.artifact!, candidate)
   const first = (await f.runtime.command(firstCommand, "owner")) as { adoptionID: string }
-  await waitForAdoptionState(f, first.adoptionID, "waiting-human")
-  await recordHumanEvidence(f, first.adoptionID, candidate, true)
 
   const currentEnvironment = verificationEnvironmentIdentity()
   const oldValue = process.env.LAZERS_ADOPTION_TEST_ENV
@@ -1454,7 +1296,6 @@ test("irrelevant environment churn is ignored while check inputs and operation e
   expect(
     f.store.adoptionChecks(first.adoptionID).every((check) => check.state === "completed"),
   ).toBe(true)
-  expect(f.store.adoptionEvidence(first.adoptionID)).toHaveLength(2)
   expect(f.store.attempts(f.planID)).toHaveLength(1)
 })
 
@@ -1462,12 +1303,14 @@ test("changed verification command input invalidates completed adoption receipts
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
+  writeFileSync(f.graphGate, "wait\n")
   const requested = (await f.runtime.command(
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
+  await waitForAdoptionCondition(f, requested.adoptionID, "combined verification barrier", () =>
+    existsSync(f.graphStarted),
+  )
   const taskRow = f.store.atomic((db) =>
     db.query<{ body: string }, [string]>("SELECT body FROM tasks WHERE id=?").get(f.task.id)!,
   )
@@ -1476,36 +1319,50 @@ test("changed verification command input invalidates completed adoption receipts
   f.store.atomic((db) =>
     db.query("UPDATE tasks SET body=? WHERE id=?").run(JSON.stringify(changedTask), f.task.id),
   )
-  await f.runtime.tick()
-  expect(f.store.adoption(requested.adoptionID)?.state).toBe("held")
+  writeFileSync(f.graphRelease, "go\n")
+  await waitForAdoptionState(f, requested.adoptionID, "held")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.adoptionChecks(requested.adoptionID, "task")[0]?.state).toBe("completed")
-  expect(f.store.adoptionChecks(requested.adoptionID, "combined")[0]?.state).toBe("completed")
   expect(readFileSync(f.taskLog, "utf8")).toHaveLength(2)
-  expect(readFileSync(f.graphLog, "utf8")).toHaveLength(1)
   expect(f.events.filter((event) => /^(create|prompt):/.test(event))).toHaveLength(2)
 }, 15_000)
 
-test("owner-session loss after verification holds instead of publishing acceptance", async () => {
+test("owner-session loss after verification is replaced by a fresh Architect and acceptance still publishes", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
+  writeFileSync(f.graphGate, "wait\n")
   const requested = (await f.runtime.command(
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
+  await waitForAdoptionCondition(f, requested.adoptionID, "combined verification barrier", () =>
+    existsSync(f.graphStarted),
+  )
   f.store.atomic((db) =>
     db.query("UPDATE runner_outbox SET state='consumed' WHERE plan_id=?").run(f.planID),
   )
   f.sessions.get("owner")!.archived = true
+  f.host.createArchitect = async (input) => {
+    f.sessions.set(input.id, {
+      ...structuredClone(f.sessions.get("owner")!),
+      id: input.id,
+      archived: false,
+      metadata: {
+        lazersContinuation: true,
+        lazersPlanID: input.planID,
+        ...(input.planIDs ? { lazersPlanIDs: input.planIDs } : {}),
+        lazersSourceSessionID: input.sourceSessionID,
+      },
+    })
+  }
+  writeFileSync(f.graphRelease, "go\n")
   await f.runtime.tick()
-  await waitForAdoptionState(f, requested.adoptionID, "held")
-  expect(f.store.plan(f.planID)?.state).toBe("blocked")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  // Depends on the adoption fix: owner replacement must not bump the plan version.
+  await waitForAdoptionState(f, requested.adoptionID, "accepted")
+  expect(f.store.plan(f.planID)?.owner).not.toBe("owner")
+  expect(f.sessions.get(f.store.plan(f.planID)!.owner)?.agent).toBe("architect")
 })
 
 test("candidate index changes during combined verification invalidate publication", async () => {
@@ -1526,7 +1383,6 @@ test("candidate index changes during combined verification invalidate publicatio
       activity.metadata.phase === "combined",
   )
   expect(combinedActivity?.state).toBe("running")
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
   writeFileSync(join(f.root, "staged-during-verification.txt"), "new input\n")
   git(f.root, ["add", "staged-during-verification.txt"])
   writeFileSync(f.graphRelease, "go\n")
@@ -1566,7 +1422,9 @@ test("dirty candidates, wrong bindings, foreign owners, and worker controls fail
   await expect(f.runtime.command({ ...good, artifact: f.base }, "owner")).rejects.toThrow(
     "exact latest attempt and task result",
   )
-  await expect(f.runtime.command(good, "foreign-owner")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command(good, "foreign-owner")).rejects.toThrow(
+    "A live Architect session of this project must command the plan",
+  )
   const worker = f.sessions.get(attempt.session_id)!
   const workerMetadata = worker.metadata
   worker.metadata = { ...worker.metadata, lazersAttemptID: "replaced-attempt" }
@@ -1692,11 +1550,14 @@ test("a worker activated after the final idle observation still fences adoption 
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
+  writeFileSync(f.graphGate, "wait\n")
   const requested = (await f.runtime.command(
     adoptionCommand(f, attempt.id, node.artifact!, candidate),
     "owner",
   )) as { adoptionID: string }
-  await waitForAdoptionState(f, requested.adoptionID, "waiting-human")
+  await waitForAdoptionCondition(f, requested.adoptionID, "combined verification barrier", () =>
+    existsSync(f.graphStarted),
+  )
   let activatedDuringFinalRead = false
   f.setWorkerSessionHook(4, () => {
     activatedDuringFinalRead = true
@@ -1704,8 +1565,8 @@ test("a worker activated after the final idle observation still fences adoption 
       db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(attempt.id),
     )
   })
-  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
-  await f.runtime.tick()
+  writeFileSync(f.graphRelease, "go\n")
+  await waitForAdoptionState(f, requested.adoptionID, "held")
   expect(activatedDuringFinalRead).toBe(true)
   f.store.atomic((db) =>
     db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id),

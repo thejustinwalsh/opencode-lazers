@@ -46,7 +46,6 @@ export function resolveRetainedRepairInputLineage(input: {
   originalMessageID: string
   assignedMessageID: string
   owner: string
-  ownerEpoch: number
   allowLegacyReceipt: boolean
   transitions: readonly RetainedRepairContinuationTransition[]
 }): RetainedRepairInputLineage {
@@ -109,8 +108,6 @@ export function resolveRetainedRepairInputLineage(input: {
         recovery.failedMessageID !== currentMessageID ||
         recovery.interruptedInputID !== receipt.terminalInputID ||
         recovery.interruptedInputID !== receipt.interruptedInputID ||
-        recovery.owner !== input.owner ||
-        recovery.ownerEpoch !== input.ownerEpoch ||
         !Number.isSafeInteger(recovery.blockedTransitionID) ||
         !Number.isSafeInteger(recovery.cancelledTransitionID) ||
         !Number.isSafeInteger(recovery.failedResumeTransitionID) ||
@@ -138,9 +135,7 @@ export function resolveRetainedRepairInputLineage(input: {
       if (
         marker
           ? marker.schema !== "lazers-retained-repair-continuation/v1" ||
-            marker.operationID !== input.operationID ||
-            marker.owner !== input.owner ||
-            marker.ownerEpoch !== input.ownerEpoch
+            marker.operationID !== input.operationID
           : !input.allowLegacyReceipt
       )
         return {
@@ -172,7 +167,6 @@ export type TerminalWorkerHold = {
   pendingPermissions?: unknown
   pendingForms?: unknown
   observationUnstable?: unknown
-  background?: HostSession["background"]
 }
 
 export type TerminalWorkerContinuationFacts = {
@@ -193,7 +187,6 @@ export type TerminalWorkerContinuationFacts = {
   projectID: string
   taskCurrent: boolean
   assignedInputMatches: boolean
-  backgroundInputMatches: boolean
   stopObservation: WorkerStopObservation | undefined
   planHoldObservation: TerminalWorkerHold | undefined
   retainedSession: boolean
@@ -333,26 +326,8 @@ export function terminalWorkerContinuationProblem(
   )
     return "Terminal worker hold does not match the current assigned input lineage"
 
-  if (worker.background?.state === "observed") {
-    if (worker.background.count > 0)
-      return "Known background work must finish before the terminal attempt can continue"
-    if (
-      worker.background.count !== 0 ||
-      !facts.backgroundInputMatches ||
-      worker.background.inputID !== worker.turn.inputID
-    )
-      return "Native idle background observation does not match the current worker input lineage"
-  }
-  const heldBackground = verifying ? undefined : planHoldObservation!.background
-  if (
-    heldBackground?.state === "observed" &&
-    heldBackground.count > 0 &&
-    (worker.background?.state !== "observed" ||
-      worker.background.count !== 0 ||
-      !facts.backgroundInputMatches ||
-      worker.background.inputID !== worker.turn.inputID)
-  )
-    return "Known background work has no matching cleared observation"
+  if ((worker.runningShells ?? 0) > 0 || (worker.activeChildren ?? 0) > 0)
+    return "Running shells or child sessions must finish before the terminal attempt can continue"
 
   return undefined
 }

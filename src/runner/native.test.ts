@@ -7,14 +7,10 @@ import { DateTime, Effect, Schema } from "effect"
 import { Worktree } from "@opencode/schema/worktree"
 import { AbsolutePath } from "@opencode/schema/schema"
 import type { Plugin } from "@opencode/plugin/effect"
-import { SessionMessage } from "@opencode/schema/session-message"
 import { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
 import { nativeHost } from "./native.ts"
 import type { NativeInboxClient, NativeInboxDependencies } from "./native.ts"
-import { NativeIdleStore } from "./native-idle.ts"
-import { observeReviewInput } from "./review-input.ts"
-import type { NativeIdleBinding } from "./native-idle.ts"
 import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
@@ -44,8 +40,19 @@ function nativeRevalidationHost(
   repository: TaskRepository,
   options: NativeRevalidationOptions = {},
 ) {
-  const idle = new NativeIdleStore(repository)
-  const binding = idle.assignmentForSession("ses-accepted")!
+  const assigned = repository.atomic((db) =>
+    db
+      .query<{ id: string; session_id: string; workspace: string }, [string]>(
+        "SELECT id,session_id,workspace FROM runner_attempts WHERE session_id=?",
+      )
+      .get("ses-accepted"),
+  )!
+  const binding = {
+    sessionID: assigned.session_id,
+    projectID: "project",
+    attemptID: assigned.id,
+    workspace: assigned.workspace,
+  }
   const now = DateTime.nowUnsafe()
   const baseSession: Record<string, unknown> = {
     id: binding.sessionID,
@@ -169,105 +176,6 @@ function testNativeObject(value: unknown): Record<string, unknown> | undefined {
     ? (value as Record<string, unknown>)
     : undefined
 }
-
-function persistNativeIdle(
-  store: NativeIdleStore,
-  binding: NativeIdleBinding,
-  count: number,
-  withSuccess = true,
-  executionStartSequence = 100,
-  eventID = "evt_terminal",
-  inputID = "msg_current_input",
-  kinds = { shell: count, subagent: 0, image: 0 },
-) {
-  const started = store.observeEvent(binding, "session.execution.started", executionStartSequence)
-  if (started.status !== "changed") throw new Error("Expected fresh native execution start")
-  if (
-    !store.recordIdle(
-      binding,
-      {
-        observedAt: 123,
-        inputID,
-        executionStartSequence,
-        eventSequence: executionStartSequence,
-        count,
-        kinds,
-      },
-      started.revision,
-    )
-  )
-    throw new Error("Expected genuine native idle report")
-  if (!withSuccess) return undefined
-  const messageID = SessionMessage.ID.fromEvent(eventID)
-  const terminal = store.observeEvent(
-    binding,
-    "session.execution.succeeded",
-    executionStartSequence + 1,
-    eventID,
-    messageID,
-  )
-  if (terminal.status !== "terminal-pending")
-    throw new Error("Expected the native execution success terminal marker")
-  if (
-    !store.confirmSuccess(
-      binding,
-      inputID,
-      {
-        sequence: executionStartSequence + 1,
-        eventID,
-        messageID,
-        previousEventSequence: executionStartSequence,
-      },
-      terminal.revision,
-    )
-  )
-    throw new Error("Expected exact native execution success")
-  return { eventID, messageID }
-}
-
-test.each([
-  {
-    name: "an image job",
-    eventID: "evt_cleanup_image_background",
-    kinds: { shell: 0, subagent: 0, image: 1 },
-  },
-  {
-    name: "a background shell owned by an inactive descendant",
-    eventID: "evt_cleanup_descendant_background",
-    kinds: { shell: 1, subagent: 0, image: 0 },
-  },
-])(
-  "native cleanup settlement rejects a confirmed idle report containing $name",
-  async (scenario) => {
-    const fixture = makeTrajectoryFixture()
-    try {
-      const native = nativeRevalidationHost(fixture.repository)
-      const idleStore = new NativeIdleStore(fixture.repository)
-      persistNativeIdle(
-        idleStore,
-        native.binding,
-        1,
-        true,
-        100,
-        scenario.eventID,
-        native.binding.assignedMessageID,
-        scenario.kinds,
-      )
-
-      await expect(
-        native.host.cleanupSettlement!({
-          projectID: native.binding.projectID,
-          attemptID: native.binding.attemptID,
-          sessionID: native.binding.sessionID,
-          workspace: native.binding.workspace,
-          assignedMessageID: native.binding.assignedMessageID,
-        }),
-      ).rejects.toThrow("The confirmed experimental.idle report observed shell, subagent, or image")
-    } finally {
-      fixture.close()
-    }
-  },
-)
 
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 
@@ -1209,60 +1117,6 @@ test("native selected source-message reads are authenticated, bounded and privac
   ])
 })
 
-test("native host reads a non-following session log on its validated client and invalidates failures", async () => {
-  const fixture = makeTrajectoryFixture()
-  let discoveries = 0
-  let clients = 0
-  const calls: Array<{ sessionID: string; follow: boolean; client: number }> = []
-  const dependencies: NativeInboxDependencies = {
-    discover: async () => {
-      discoveries++
-      return { url: "https://opencode.localhost", auth: undefined }
-    },
-    make: () => {
-      const client = ++clients
-      return {
-        server: { info: async () => ({ pid: 42, version: "2.2.5" }) },
-        experimental: {
-          session: {
-            log: ({ sessionID, follow }: { sessionID: string; follow?: boolean }) => {
-              calls.push({ sessionID, follow: follow ?? false, client })
-              return (async function* () {
-                yield { type: "log.synced", aggregateID: sessionID }
-                if (client === 1) throw new Error("native log stream disconnected")
-              })()
-            },
-          },
-        },
-      } as unknown as NativeInboxClient
-    },
-    processID: () => 42,
-  }
-  try {
-    const host = nativeHost(
-      { app: { version: "2.2.5" } } as Plugin.Context,
-      fixture.repository,
-      dependencies,
-    )
-    const readAll = async () => {
-      const result: unknown[] = []
-      for await (const item of host.readSessionLog("ses-log")) result.push(item)
-      return result
-    }
-
-    await expect(readAll()).rejects.toThrow("native log stream disconnected")
-    expect(await readAll()).toEqual([{ type: "log.synced", aggregateID: "ses-log" }])
-    expect(discoveries).toBe(2)
-    expect(clients).toBe(2)
-    expect(calls).toEqual([
-      { sessionID: "ses-log", follow: false, client: 1 },
-      { sessionID: "ses-log", follow: false, client: 2 },
-    ])
-  } finally {
-    fixture.close()
-  }
-})
-
 test("actionable notifications use the authenticated native client with durable ownership", async () => {
   let received: unknown
   const { host } = nativeOutcomeFixture({ onSynthetic: (input) => (received = input) })
@@ -1552,6 +1406,50 @@ test("native session heartbeat reads metadata without context and opts into mess
   ])
 })
 
+test("live idle check needs no hook report: a quiet worker reports zero shells and children", async () => {
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe() })
+  // A freshly constructed host has seen no experimental.idle hook (restart, eviction).
+  for (const options of [undefined, { messages: true }]) {
+    const session = await fixture.host.session("ses_worker", options)
+    expect(session).toMatchObject({ busy: false, runningShells: 0, activeChildren: 0 })
+    expect(session).not.toHaveProperty("background")
+  }
+})
+
+test("live idle check counts only running shells whose cwd is inside the worktree", async () => {
+  const directory = "/project/.worktrees/attempt"
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    directory,
+    shells: [
+      { id: "inside", status: "running", cwd: `${directory}/packages/a`, time: { started: 1 } },
+      { id: "root", status: "running", cwd: directory, time: { started: 2 } },
+      { id: "ended", status: "completed", cwd: directory, time: { started: 3, completed: 4 } },
+      { id: "outside", status: "running", cwd: "/project", time: { started: 5 } },
+      { id: "sibling", status: "running", cwd: `${directory}-other`, time: { started: 6 } },
+    ],
+  })
+  expect((await fixture.host.session("ses_worker"))?.runningShells).toBe(2)
+})
+
+test("live idle check counts active descendants of the worker but not unrelated sessions", async () => {
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    active: {
+      ses_child: { type: "running" },
+      ses_grandchild: { type: "running" },
+      ses_other: { type: "running" },
+    },
+    sessions: {
+      ses_child: { parentID: "ses_worker", directory: "/project/.worktrees/attempt" },
+      ses_grandchild: { parentID: "ses_child", directory: "/project/.worktrees/attempt" },
+      ses_other: { parentID: "ses_unrelated", directory: "/elsewhere" },
+      ses_unrelated: { directory: "/elsewhere" },
+    },
+  })
+  expect((await fixture.host.session("ses_worker"))?.activeChildren).toBe(2)
+})
+
 test("compacted worker turns retain the actual latest input without replaying history", async () => {
   for (const latestType of ["user", "synthetic"] as const) {
     const fixture = nativeLivenessFixture({
@@ -1602,30 +1500,6 @@ test("a current failed idle marker completes an input that never received an ass
       turn: { inputID: "msg_assigned", state: markerTime === now ? "completed" : "pending" },
     })
   }
-})
-
-test("foreground inventory overrides idle-looking timestamps and cached discovery is reused", async () => {
-  const now = DateTime.nowUnsafe()
-  const fixture = nativeLivenessFixture({
-    active: { ses_foreground: { type: "running" } },
-    sessionID: "ses_foreground",
-    busy: now,
-    idle: now,
-  })
-
-  const first = await fixture.host.session("ses_foreground")
-  const second = await fixture.host.session("ses_foreground")
-
-  expect(first).toMatchObject({ busy: true, outcome: undefined })
-  expect(second?.busy).toBe(true)
-  expect(fixture.discoveries).toBe(1)
-  expect(fixture.clients).toBe(1)
-  expect(fixture.identityReads).toBe(1)
-  expect(fixture.locationReads).toHaveLength(4)
-  expect(
-    fixture.locationReads.every((read) => read.directory === "/project/.worktrees/attempt"),
-  ).toBe(true)
-  expect(first?.background).toMatchObject({ state: "unknown", source: "experimental.idle" })
 })
 
 test("orphaned busy timestamps and unfinished latest assistant override historical success", async () => {
@@ -1769,30 +1643,6 @@ test("discovery, authentication, inventory, PID, and version failures remain exp
   }
 })
 
-test("native adapter fails closed when durable idle persistence is unavailable", async () => {
-  const fixture = nativeLivenessFixture({
-    sessionID: "ses_background",
-    outcome: "succeeded",
-    messages: [
-      { id: "msg_current", type: "user", text: "Done" },
-      {
-        id: "msg_done",
-        type: "assistant",
-        time: { completed: 1 },
-        finish: "stop",
-        content: [{ type: "text", text: "Done" }],
-      },
-    ],
-  })
-  expect(
-    (await fixture.host.session("ses_background", { messages: true }))?.background,
-  ).toMatchObject({
-    state: "unknown",
-    source: "experimental.idle",
-    reason: "Durable native idle observation is unavailable",
-  })
-})
-
 // Pinned core session/error.ts uses this tag, unlike the HTTP protocol error.
 class CoreSessionNotFound extends Schema.TaggedError<CoreSessionNotFound>()(
   "Session.NotFoundError",
@@ -1861,435 +1711,6 @@ test("only confirmed native absence permits a same-session missing inbox", async
       ).rejects.toBeDefined()
     }
   } finally {
-    fixture.close()
-  }
-})
-
-test("fresh native reads confirm the separate pinned idle terminal marker after reopening context twice", async () => {
-  const fixture = makeTrajectoryFixture()
-  try {
-    const idleStore = new NativeIdleStore(fixture.repository)
-    const { binding } = nativeRevalidationHost(fixture.repository)
-    const terminal = persistNativeIdle(idleStore, binding, 0)!
-    const now = DateTime.nowUnsafe()
-    const assistantID = "msg_assistant_terminal"
-    const messages = [
-      { id: "msg_current_input", type: "user", text: "Continue" },
-      {
-        id: assistantID,
-        type: "assistant",
-        time: { created: now, completed: now },
-        finish: "stop",
-        content: [{ type: "text", text: "Done." }],
-      },
-      {
-        id: terminal.messageID,
-        type: "idle",
-        outcome: "succeeded",
-        time: { created: now },
-      },
-    ]
-    const fixtureHost = nativeRevalidationHost(fixture.repository, { messages })
-    const result = await fixtureHost.host.session(binding.sessionID, { messages: true })
-    expect(terminal.messageID).toBe(SessionMessage.ID.fromEvent(terminal.eventID))
-    expect(terminal.messageID).not.toBe(assistantID)
-    expect(result?.background).toMatchObject({
-      state: "observed",
-      count: 0,
-      inputID: "msg_current_input",
-      executionStartSequence: 100,
-      terminalSequence: 101,
-      terminalEventID: "evt_terminal",
-      terminalMessageID: terminal.messageID,
-      workspace: binding.workspace,
-      attemptID: binding.attemptID,
-    })
-    expect(fixtureHost.contextReads).toBe(2)
-    expect(fixtureHost.locationReads).toHaveLength(6)
-    expect(
-      fixtureHost.locationReads.every(
-        ({ requested, returned }) =>
-          requested === binding.workspace && returned === binding.workspace,
-      ),
-    ).toBe(true)
-  } finally {
-    fixture.close()
-  }
-})
-
-test("compacted native idle confirmation uses retained input without accepting stale markers", async () => {
-  for (const inputType of ["user", "synthetic"] as const) {
-    for (const scenario of [
-      "current",
-      "foreign-input",
-      "stale-marker",
-      "later-response",
-    ] as const) {
-      const fixture = makeTrajectoryFixture()
-      try {
-        const idleStore = new NativeIdleStore(fixture.repository)
-        const binding = idleStore.assignmentForSession("ses-accepted")!
-        const terminal = persistNativeIdle(idleStore, binding, 0)!
-        const now = DateTime.nowUnsafe()
-        const assistant = {
-          id: "msg_after_compaction",
-          type: "assistant",
-          time: { created: now, completed: now },
-          finish: "stop",
-          content: [],
-        }
-        const messages = [
-          { id: "msg_compaction", type: "compaction", status: "completed" },
-          assistant,
-          {
-            id: scenario === "stale-marker" ? "msg_other_idle" : terminal.messageID,
-            type: "idle",
-            outcome: "succeeded",
-            time: { created: now },
-          },
-          ...(scenario === "later-response" ? [{ ...assistant, id: "msg_later_response" }] : []),
-        ]
-        const inputID = scenario === "foreign-input" ? "msg_foreign_input" : "msg_current_input"
-        const adapter = nativeRevalidationHost(fixture.repository, {
-          messages,
-          history: [{ id: inputID, type: inputType }],
-        })
-        const result = await adapter.host.session(binding.sessionID, { messages: true })
-        expect(result?.turn?.inputID).toBe(inputID)
-        expect(result?.background).toMatchObject(
-          scenario === "current"
-            ? { state: "observed", count: 0, inputID, terminalMessageID: terminal.messageID }
-            : { state: "unknown" },
-        )
-        expect(adapter.contextReads).toBe(2)
-      } finally {
-        fixture.close()
-      }
-    }
-  }
-})
-
-test("compacted completed review keeps its exact retained input binding", async () => {
-  const fixture = makeTrajectoryFixture()
-  try {
-    const idleStore = new NativeIdleStore(fixture.repository)
-    const binding = idleStore.assignmentForSession("ses-accepted")!
-    const attempt = fixture.store
-      .attempts(fixture.receipt.planID)
-      .find((row) => row.id === binding.attemptID)!
-    const terminal = persistNativeIdle(idleStore, binding, 0)!
-    const now = DateTime.nowUnsafe()
-    const input = {
-      id: "msg_current_input",
-      type: "synthetic",
-      text: "Repair the actual task defect",
-      metadata: {
-        lazersReview: {
-          taskID: attempt.task_id,
-          attemptID: binding.attemptID,
-          requestID: "substantive-correction",
-        },
-      },
-    }
-    const messages = [
-      { id: "msg_compaction", type: "compaction", status: "completed" },
-      {
-        id: "msg_completed_response",
-        type: "assistant",
-        time: { created: now, completed: now },
-        finish: "stop",
-        content: [],
-      },
-      { id: terminal.messageID, type: "idle", outcome: "succeeded", time: { created: now } },
-    ]
-    for (const scenario of ["matching", "wrong-id", "unavailable"] as const) {
-      let reads = 0
-      const adapter = nativeRevalidationHost(fixture.repository, {
-        messages,
-        history: [input],
-        retainedMessageAt: (id, message) => {
-          reads++
-          expect(id).toBe(input.id)
-          if (scenario === "unavailable") throw new Error("Retained read unavailable")
-          return scenario === "wrong-id" ? { ...input, id: "different-input" } : message
-        },
-      })
-      if (scenario !== "matching") {
-        await expect(adapter.host.session(binding.sessionID, { messages: true })).rejects.toThrow(
-          scenario === "wrong-id" ? "does not match" : "Retained read unavailable",
-        )
-        continue
-      }
-      const worker = await adapter.host.session(binding.sessionID, { messages: true })
-      expect(reads).toBe(1)
-      expect(worker?.messages[0]).toEqual(input)
-      expect(messages.some((message) => message.id === input.id)).toBe(false)
-      const evidence = observeReviewInput(worker!, {
-        ...binding,
-        taskID: attempt.task_id,
-        planID: attempt.plan_id,
-        reviewInputID: input.id,
-        ownerSessionID: "ses-owner",
-        commandRequestID: "reconcile-completed-correction",
-        expectedPlanVersion: 1,
-        model: { providerID: "openai", id: "gpt-6-luna" },
-      })
-      expect(evidence.reviewRequestID).toBe("substantive-correction")
-      expect(evidence.observation.turnState).toBe("completed")
-    }
-  } finally {
-    fixture.close()
-  }
-})
-
-test("fresh revalidation requires the latest same-input execution's own idle certificate", async () => {
-  const now = DateTime.nowUnsafe()
-  const assistantA = {
-    id: "msg_assistant_execution_a",
-    type: "assistant",
-    time: { created: now, completed: now },
-    finish: "stop",
-    content: [],
-  }
-  const assistantB = {
-    id: "msg_assistant_execution_b",
-    type: "assistant",
-    time: { created: now, completed: now },
-    finish: "stop",
-    content: [],
-  }
-
-  const olderFixture = makeTrajectoryFixture()
-  try {
-    const store = new NativeIdleStore(olderFixture.repository)
-    const binding = store.assignmentForSession("ses-accepted")!
-    const olderTerminal = persistNativeIdle(store, binding, 0)!
-    const latestMessageID = SessionMessage.ID.fromEvent("evt_newer_terminal")
-    const messages = [
-      { id: "msg_current_input", type: "user", text: "Continue" },
-      assistantA,
-      {
-        id: olderTerminal.messageID,
-        type: "idle",
-        outcome: "succeeded",
-        time: { created: now },
-      },
-      assistantB,
-      {
-        id: latestMessageID,
-        type: "idle",
-        outcome: "succeeded",
-        time: { created: now },
-      },
-    ]
-    const result = await nativeRevalidationHost(olderFixture.repository, { messages }).host.session(
-      binding.sessionID,
-      { messages: true },
-    )
-
-    expect(latestMessageID).not.toBe(olderTerminal.messageID)
-    expect(result?.background).toMatchObject({
-      state: "unknown",
-      reason:
-        "Native zero-background idle evidence lacked the exact current successful idle marker",
-    })
-  } finally {
-    olderFixture.close()
-  }
-
-  const currentFixture = makeTrajectoryFixture()
-  try {
-    const store = new NativeIdleStore(currentFixture.repository)
-    const binding = store.assignmentForSession("ses-accepted")!
-    const currentTerminal = persistNativeIdle(store, binding, 0, true, 102, "evt_newer_terminal")!
-    const messages = [
-      { id: "msg_current_input", type: "user", text: "Continue" },
-      assistantA,
-      {
-        id: SessionMessage.ID.fromEvent("evt_terminal"),
-        type: "idle",
-        outcome: "succeeded",
-        time: { created: now },
-      },
-      assistantB,
-      {
-        id: currentTerminal.messageID,
-        type: "idle",
-        outcome: "succeeded",
-        time: { created: now },
-      },
-    ]
-    const result = await nativeRevalidationHost(currentFixture.repository, {
-      messages,
-    }).host.session(binding.sessionID, { messages: true })
-
-    expect(currentTerminal.messageID).toBe(SessionMessage.ID.fromEvent(currentTerminal.eventID))
-    expect(currentTerminal.messageID).not.toBe(assistantB.id)
-    expect(result?.background).toMatchObject({
-      state: "observed",
-      count: 0,
-      executionStartSequence: 102,
-      terminalSequence: 103,
-      terminalEventID: "evt_newer_terminal",
-      terminalMessageID: currentTerminal.messageID,
-    })
-  } finally {
-    currentFixture.close()
-  }
-})
-
-test("missing, failed, stale-input, and wrong-identity terminal facts block zero-background proof", async () => {
-  const fixture = makeTrajectoryFixture()
-  try {
-    const idleStore = new NativeIdleStore(fixture.repository)
-    const binding = idleStore.assignmentForSession("ses-accepted")!
-    const terminal = persistNativeIdle(idleStore, binding, 0)!
-    const now = DateTime.nowUnsafe()
-    const assistant = {
-      id: "msg_assistant_terminal",
-      type: "assistant",
-      time: { created: now, completed: now },
-      finish: "stop",
-      content: [],
-    }
-    const baseMessages = [
-      { id: "msg_current_input", type: "user", text: "Continue" },
-      assistant,
-      {
-        id: terminal.messageID,
-        type: "idle",
-        outcome: "succeeded",
-        time: { created: now },
-      },
-    ]
-    const withoutMarker = nativeRevalidationHost(fixture.repository, {
-      messages: baseMessages.filter((message) => testNativeObject(message)?.type !== "idle"),
-    })
-    expect(
-      (await withoutMarker.host.session(binding.sessionID, { messages: true }))?.background,
-    ).toMatchObject({
-      state: "unknown",
-      reason:
-        "Native zero-background idle evidence lacked the exact current successful idle marker",
-    })
-
-    const failedMarker = nativeRevalidationHost(fixture.repository, {
-      messages: [
-        ...baseMessages.slice(0, 2),
-        { id: terminal.messageID, type: "idle", outcome: "failed", time: { created: now } },
-      ],
-    })
-    expect(
-      (await failedMarker.host.session(binding.sessionID, { messages: true }))?.background,
-    ).toMatchObject({
-      state: "unknown",
-      reason:
-        "Native zero-background idle evidence lacked the exact current successful idle marker",
-    })
-
-    const newerAssistant = nativeRevalidationHost(fixture.repository, {
-      messages: [
-        ...baseMessages,
-        {
-          id: "msg_newer_same_input_assistant",
-          type: "assistant",
-          time: { created: now, completed: now },
-          finish: "stop",
-          content: [],
-        },
-      ],
-    })
-    expect(
-      (await newerAssistant.host.session(binding.sessionID, { messages: true }))?.background,
-    ).toMatchObject({
-      state: "unknown",
-      reason:
-        "Native zero-background idle evidence lacked the exact current successful idle marker",
-    })
-
-    const changedInput = nativeRevalidationHost(fixture.repository, {
-      messages: baseMessages,
-      contextAt: (read, messages) =>
-        read === 0
-          ? messages
-          : [{ id: "msg_new_input", type: "synthetic", text: "New work" }, ...messages.slice(1)],
-    })
-    expect(
-      (await changedInput.host.session(binding.sessionID, { messages: true }))?.background,
-    ).toMatchObject({
-      state: "unknown",
-      reason:
-        "Native idle evidence did not match fresh stable assignment, current input, and location observations",
-    })
-
-    const wrongAttempt = nativeRevalidationHost(fixture.repository, {
-      messages: baseMessages,
-      sessionAt: (_read, session) => ({
-        ...session,
-        metadata: { lazersAttemptID: "attempt-foreign" },
-      }),
-    })
-    expect(
-      (await wrongAttempt.host.session(binding.sessionID, { messages: true }))?.background,
-    ).toMatchObject({
-      state: "unknown",
-      reason:
-        "Native idle evidence did not match fresh stable assignment, current input, and location observations",
-    })
-  } finally {
-    fixture.close()
-  }
-})
-
-test("wrong-location and unavailable location shell reads block and persisted positive background survives reopen", async () => {
-  const fixture = makeTrajectoryFixture()
-  let reopened: TaskRepository | undefined
-  try {
-    const initial = new NativeIdleStore(fixture.repository)
-    const binding = initial.assignmentForSession("ses-accepted")!
-    persistNativeIdle(initial, binding, 1, false)
-    reopened = new TaskRepository(fixture.repository.path, fixture.repository.projectDirectory)
-    const messages = [
-      { id: "msg_current_input", type: "user", text: "Continue" },
-      {
-        id: "msg_assistant_terminal",
-        type: "assistant",
-        time: { created: DateTime.nowUnsafe(), completed: DateTime.nowUnsafe() },
-        finish: "stop",
-        content: [],
-      },
-    ]
-    const positive = nativeRevalidationHost(reopened, { messages })
-    expect(
-      (await positive.host.session(binding.sessionID, { messages: true }))?.background,
-    ).toMatchObject({
-      state: "observed",
-      count: 1,
-      kinds: { shell: 1, subagent: 0, image: 0 },
-    })
-    expect(
-      positive.locationReads.some(
-        (read) => read.kind === "shell" && read.returned === binding.workspace,
-      ),
-    ).toBe(true)
-
-    const wrongLocation = nativeRevalidationHost(reopened, {
-      messages,
-      shellDirectory: () => "/foreign/worktree",
-    })
-    await expect(wrongLocation.host.session(binding.sessionID, { messages: true })).rejects.toThrow(
-      "Native worker approval inventory did not match its assigned location",
-    )
-
-    const unavailableShells = nativeRevalidationHost(reopened, {
-      messages,
-      omitShellList: true,
-    })
-    await expect(
-      unavailableShells.host.session(binding.sessionID, { messages: true }),
-    ).rejects.toThrow("Native worker location shell inventory is unavailable")
-  } finally {
-    reopened?.close()
     fixture.close()
   }
 })

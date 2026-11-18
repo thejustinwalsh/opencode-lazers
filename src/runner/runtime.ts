@@ -12,7 +12,6 @@ import {
   isCommitID,
   isRecord,
   sameVerificationCheckIdentity,
-  type CleanupRecoveryAuthorization,
   actualCheckResultFromEffect,
   checkSettlementProblem,
   errorText,
@@ -74,12 +73,20 @@ import {
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
+import {
+  architectCacheWindowMs,
+  architectContextTokens,
+  architectReuseMaxContextTokens,
+  routeArchitect,
+  type ArchitectRoute,
+  type ArchitectRoutingOptions,
+} from "./architect-routing.ts"
+import { holdActions } from "./hold-actions.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
-import { equivalentShas, FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
+import { FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
 import {
   baseReachable,
   proofForArtifact,
-  requireIntegration,
   storedEvidence,
   type BaseReach,
   type IntegrationProof,
@@ -172,7 +179,6 @@ import {
   ensureRetainedVerificationTables,
   latestRetainedVerificationGeneration,
   markRetainedVerificationCheckUncertain,
-  recordRetainedVerificationEvidence,
   retainedVerification,
   retainedVerificationChecks,
   retainedVerificationsForPlan,
@@ -229,7 +235,6 @@ type CombinedVerificationContinuationBinding = {
   projectID: string
   planID: string
   owner: string
-  ownerEpoch: number
   planRevision: number
   expectedPlanVersion: number
   resumedPlanVersion: number
@@ -252,7 +257,6 @@ type PreparedVerificationDeadlineExtension = {
   deadline: VerificationDeadline
   effectiveInactivityTimeoutMs: number
   effectiveHardTimeoutMs: number
-  ownerEpoch: number
   sourceEffect?: {
     id: string
     payloadFingerprint: string
@@ -301,7 +305,6 @@ function parseCombinedVerificationContinuation(
     typeof value.projectID !== "string" ||
     typeof value.planID !== "string" ||
     typeof value.owner !== "string" ||
-    !Number.isSafeInteger(value.ownerEpoch) ||
     !Number.isSafeInteger(value.planRevision) ||
     !Number.isSafeInteger(value.expectedPlanVersion) ||
     !Number.isSafeInteger(value.resumedPlanVersion) ||
@@ -373,11 +376,13 @@ function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
     return false
   }
 }
-export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
 // Recheck external/native facts periodically, but don't repeat full safety
 // observations on every ordinary scheduler tick when durable facts are stable.
 export type TaskRuntimeOptions = {
+  /** Deprecated alias of `architectCacheWindowMs`. */
   architectIdleWindowMs?: number
+  architectCacheWindowMs?: number
+  architectReuseMaxContextTokens?: number
   verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
   architectPromptHook?: boolean
@@ -419,7 +424,6 @@ type StartupRecoveryAuthorization = {
   requestID: string
   owner: string
   planVersion: number
-  ownerEpoch: number
   planRevision: number
   taskID: string
   attemptID: string
@@ -439,7 +443,6 @@ type RetainedRepairSeed = {
   messageID: string
   operationID: string
   owner: string
-  ownerEpoch: number
   sessionID: string
   workspace: string
   model: ModelPolicy
@@ -459,7 +462,6 @@ type RetainedRepairRecord = {
   continued: boolean
   terminalOutcome?: "interrupted" | "succeeded" | "failed"
   owner: string
-  ownerEpoch: number
   sessionID: string
   workspace: string
   route: unknown
@@ -473,7 +475,6 @@ type RetainedRepairRecoverySeed = {
   failedMessageID: string
   interruptedInputID: string
   owner: string
-  ownerEpoch: number
   taskRevision: number
   planVersion: number
   planRevision: number
@@ -497,7 +498,6 @@ type WorkerObservationFence = {
   planVersion: number
   planState: string
   owner: string
-  controlEpoch: number
   reconcileRequestID: number
   taskID: string
   attemptID: string
@@ -524,12 +524,8 @@ const cleanupObservationStages = [
   "observation-stability",
   "pending-permissions",
   "pending-forms",
-  "outcome",
-  "turn",
-  "background",
-  "assigned-input",
-  "turn-input",
-  "background-count",
+  "running-shells",
+  "active-children",
 ] as const
 type CleanupObservationStage = (typeof cleanupObservationStages)[number]
 type CleanupObservationCheck = {
@@ -567,11 +563,33 @@ type CleanupAuditDiagnostics = {
   >
 }
 
+/** Verification effects only read the candidate; a missing receipt means run the check again. */
+export function isRerunnableEffect(kind: string): boolean {
+  return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
+}
+
+/** Only a plan submitted with `draft: true` stays a draft; older drafts predate that choice. */
+function explicitDraft(plan: PlanRow): boolean {
+  try {
+    return (JSON.parse(plan.body) as { draft?: unknown }).draft === true
+  } catch {
+    return false
+  }
+}
+
+/** A re-runnable effect that was replaced for lack of a receipt; it no longer holds anything. */
+function effectSuperseded(effect: EffectRow): boolean {
+  if (effect.state !== "failed" || !effect.receipt) return false
+  try {
+    return (JSON.parse(effect.receipt) as { superseded?: unknown }).superseded === true
+  } catch {
+    return false
+  }
+}
+
+/** Deprecated alias of `architectCacheWindowMs`; the plugin entry point still passes this option. */
 export function architectIdleWindowMs(value: unknown): number {
-  if (value === undefined) return DEFAULT_ARCHITECT_IDLE_WINDOW_MS
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
-    throw new Error("architectIdleWindowMs must be a positive integer number of milliseconds")
-  return value
+  return architectCacheWindowMs(value)
 }
 
 type AdoptionFingerprintInput = {
@@ -614,7 +632,7 @@ export class TaskRuntime {
     { generation: number; updatedAt: number; checkedAt: number }
   >()
   private readonly now: () => number
-  private readonly architectIdleWindowMs: number
+  private readonly architectRouting: ArchitectRoutingOptions
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
@@ -635,7 +653,14 @@ export class TaskRuntime {
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
     this.schedulingRead = new TaskSchedulingRead(store, this.now)
-    this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
+    this.architectRouting = {
+      architectCacheWindowMs: architectCacheWindowMs(
+        options.architectCacheWindowMs ?? options.architectIdleWindowMs,
+      ),
+      architectReuseMaxContextTokens: architectReuseMaxContextTokens(
+        options.architectReuseMaxContextTokens,
+      ),
+    }
     this.verificationTimeoutDefaults = verificationTimeoutDefaults(
       options.verificationTimeoutDefaults,
     )
@@ -665,8 +690,6 @@ export class TaskRuntime {
       directory: this.directory,
       effect: (...args) => this.effect(...args),
       host: this.host,
-      isPriorContinuationBackground: (...args) => this.isPriorContinuationBackground(...args),
-      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
       now: (...args) => this.now(...args),
       outcome: (...args) => this.outcome(...args),
       owner: this.owner,
@@ -747,7 +770,7 @@ export class TaskRuntime {
 
   /**
    * Async Git proofs a command needs, gathered before its transaction:
-   * integration containment (`integrated`, `recover-cleanup`) and baseline
+   * integration containment (`integrated`) and baseline
    * reachability (an explicit `baseCommit`).
    */
   private async preflightProofs(command: CommandInput, plan: PlanRow) {
@@ -763,12 +786,11 @@ export class TaskRuntime {
           this.store.repository.read((db) => knownTree(db, command.baseCommit)),
         ),
       )
-    if (command.action === "integrated" || command.action === "recover-cleanup") {
+    if (command.action === "integrated") {
       const task = command.taskID
         ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
         : undefined
-      const artifact =
-        command.action === "integrated" ? (task?.artifact ?? plan.artifact) : command.artifact
+      const artifact = task?.artifact ?? plan.artifact
       if (artifact) {
         const attempt = command.taskID
           ? this.store
@@ -1321,7 +1343,6 @@ export class TaskRuntime {
       planID: input.plan.id,
       planRevision: input.plan.revision,
       planVersion: input.originalPlanVersion,
-      owner: input.plan.owner,
       taskID: input.taskID,
       taskRevision: input.taskRevision,
       taskProposal: task.proposal,
@@ -1475,7 +1496,7 @@ export class TaskRuntime {
       (worker.pendingForms ?? 0) === 0 &&
       Boolean(worker.outcome) &&
       ["completed", "interrupted"].includes(worker.turn?.state ?? "unknown") &&
-      !this.backgroundBlockReason(worker, attempt, true)
+      !this.backgroundBlockReason(worker)
     )
   }
 
@@ -1496,11 +1517,7 @@ export class TaskRuntime {
       throw new Error(
         "Descendant adoption requires taskID, attemptID, exact old artifact, descendantCommit, targetBranch and reason",
       )
-    if (
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner
-    )
+    if (!this.validArchitect(ownerSession))
       throw new Error("Descendant adoption requires the current same-project Architect owner")
     if (plan.state !== "blocked")
       throw new Error("Descendant adoption is only available for a blocked, non-finalized plan")
@@ -1655,8 +1672,6 @@ export class TaskRuntime {
     if (
       !repair ||
       repair.operationID !== binding.operationID ||
-      repair.owner !== plan.owner ||
-      repair.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
       repair.sessionID !== attempt.session_id ||
       repair.workspace !== attempt.workspace ||
       sourceQuarantine(this.store, attempt.id)
@@ -1706,11 +1721,8 @@ export class TaskRuntime {
         model,
       )
       if (problem) throw new Error(problem)
-      if (
-        worker?.background?.state === "observed" &&
-        (worker.background.count !== 0 || worker.background.inputID !== attempt.message_id)
-      )
-        throw new Error("Retained repair has unresolved background work or input lineage")
+      const backgroundProblem = worker ? this.backgroundBlockReason(worker) : undefined
+      if (backgroundProblem) throw new Error(`Retained repair is not idle: ${backgroundProblem}`)
     }
     const before = await this.host.session(attempt.session_id, { messages: true })
     validate(before)
@@ -1791,12 +1803,7 @@ export class TaskRuntime {
       throw new Error(
         "Retained verification requires current project, plan, task, attempt and candidate bindings",
       )
-    if (
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner ||
-      command.projectID !== this.projectID
-    )
+    if (!this.validArchitect(ownerSession) || command.projectID !== this.projectID)
       throw new Error("Retained verification requires the current same-project Architect owner")
     if (command.planRevision !== plan.revision)
       throw new Error("Retained verification plan revision is stale")
@@ -1975,7 +1982,6 @@ export class TaskRuntime {
       planVersion: plan.version,
       planBody: this.store.planBodyIdentity(plan.body),
       owner: caller,
-      ownerEpoch: this.store.planControlEpoch(plan.id),
       taskID: task.id,
       taskRevision: task.revision,
       taskProposal: task.proposal,
@@ -2010,7 +2016,6 @@ export class TaskRuntime {
       planRevision: plan.revision,
       planVersion: plan.version,
       owner: caller,
-      ownerEpoch: this.store.planControlEpoch(plan.id),
       taskID: task.id,
       taskRevision: task.revision,
       attemptID: attempt.id,
@@ -2059,63 +2064,6 @@ export class TaskRuntime {
         plan.reason === checkFailureReason(check),
       )
     })
-  }
-
-  private async hasSettledHumanEvidenceHold(plan: PlanRow, attempt: AttemptRow): Promise<boolean> {
-    const artifact = attempt.artifact
-    if (
-      plan.state !== "blocked" ||
-      !artifact ||
-      !plan.reason?.startsWith("Required evidence missing:")
-    )
-      return false
-    const proposal = this.store.repository.get(attempt.task_id)?.proposal
-    if (!proposal) return false
-    const effects = this.store.effects(plan.id).filter((effect) => effect.attempt_id === attempt.id)
-    if (effects.some((effect) => ["intended", "uncertain"].includes(effect.state))) return false
-    const repairID: string | undefined = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const receipts: CheckReceipt[] = []
-    for (const check of proposal.verification) {
-      const effect: EffectRow | undefined = effects.findLast((item): boolean => {
-        if (item.kind !== `verify:${check.id}`) return false
-        const payload = JSON.parse(item.payload)
-        return (
-          payload.artifact === artifact &&
-          (payload.repairID ?? undefined) === repairID &&
-          sameVerificationCheckIdentity(payload.check, check)
-        )
-      })
-      const receipt: CheckReceipt | undefined =
-        effect?.state === "completed" && effect.receipt
-          ? (JSON.parse(effect.receipt) as { check?: CheckReceipt }).check
-          : undefined
-      if (
-        !receipt ||
-        receipt.id !== check.id ||
-        receipt.cwd !== attempt.workspace ||
-        receipt.artifact !== artifact ||
-        receipt.command !== check.command ||
-        !checkSucceeded(receipt) ||
-        !checkResourcesSettled(receipt)
-      )
-        return false
-      receipts.push(receipt)
-    }
-    const missing = await this.missingEvidence(
-      plan.id,
-      attempt.task_id,
-      artifact,
-      attempt.workspace,
-      proposal.acceptance,
-      receipts,
-      undefined,
-      repairID,
-    )
-    return (
-      missing.length > 0 &&
-      missing.every((item) => item.endsWith(":human")) &&
-      plan.reason === `Required evidence missing: ${missing.join(", ")}`
-    )
   }
 
   private cancelledRetainedTimeoutMatchesHold(
@@ -2201,7 +2149,6 @@ export class TaskRuntime {
     input: ReturnType<typeof PlanInput.parse>,
     continuation: "timing" | "interrupted" = "timing",
   ): Promise<PreparedVerificationDeadlineExtension> {
-    const ownerEpoch = this.store.planControlEpoch(plan.id)
     if (
       continuation === "interrupted" &&
       (command.action !== "continue-retained-check" ||
@@ -2241,7 +2188,6 @@ export class TaskRuntime {
       operation.projectID !== this.projectID ||
       operation.projectDirectory !== this.directory ||
       operation.planRevision !== plan.revision ||
-      plan.owner !== caller ||
       operation.taskID !== command.taskID ||
       operation.taskRevision !== command.taskRevision ||
       operation.attemptID !== command.attemptID ||
@@ -2591,7 +2537,6 @@ export class TaskRuntime {
       deadline,
       effectiveInactivityTimeoutMs: requested.inactivityTimeoutMs,
       effectiveHardTimeoutMs: requested.hardTimeoutMs,
-      ownerEpoch,
       ...(continuation === "interrupted"
         ? {
             planBodyFingerprint: fingerprint(plan.body),
@@ -2627,9 +2572,7 @@ export class TaskRuntime {
     )
       throw new Error("Retained-check continuation requires every exact combined-check binding")
     if (
-      caller !== plan.owner ||
       !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner ||
       ownerSession.projectID !== this.projectID ||
       command.projectID !== this.projectID ||
       command.planRevision !== plan.revision
@@ -2670,9 +2613,7 @@ export class TaskRuntime {
     )
       throw new Error("Verification deadline extension requires every exact check binding")
     if (
-      caller !== plan.owner ||
       !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner ||
       ownerSession.projectID !== this.projectID ||
       command.projectID !== this.projectID
     )
@@ -2883,7 +2824,6 @@ export class TaskRuntime {
       deadline,
       effectiveInactivityTimeoutMs: requested.inactivityTimeoutMs,
       effectiveHardTimeoutMs: requested.hardTimeoutMs,
-      ownerEpoch: this.store.planControlEpoch(plan.id),
       sourceEffect: {
         id: source.id,
         payloadFingerprint: fingerprint(source.payload),
@@ -2901,7 +2841,6 @@ export class TaskRuntime {
     const retained = prepared.retained
     const requested = requestedVerificationTimeouts(command, prepared.deadline)
     if (
-      plan.owner !== caller ||
       plan.version !== command.expectedVersion ||
       plan.revision !== prepared.target.planRevision ||
       (retained
@@ -2920,8 +2859,7 @@ export class TaskRuntime {
       command.retainedVerificationID !== (retained?.operation.id ?? undefined) ||
       command.retainedGeneration !== (retained?.operation.generation ?? undefined) ||
       requested.inactivityTimeoutMs !== prepared.effectiveInactivityTimeoutMs ||
-      requested.hardTimeoutMs !== prepared.effectiveHardTimeoutMs ||
-      this.store.planControlEpoch(plan.id) !== prepared.ownerEpoch
+      requested.hardTimeoutMs !== prepared.effectiveHardTimeoutMs
     )
       throw new Error("Verification deadline owner or plan authorization changed before admission")
     if (retained) {
@@ -3002,7 +2940,6 @@ export class TaskRuntime {
       !check ||
       !prepared.planBodyFingerprint ||
       !prepared.acceptedArtifacts ||
-      plan.owner !== caller ||
       plan.version !== command.expectedVersion ||
       plan.revision !== operation.planRevision ||
       !["running", "blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
@@ -3018,8 +2955,7 @@ export class TaskRuntime {
       command.retainedGeneration !== operation.generation ||
       operation.state !== "held" ||
       (!operation.sourceQuarantine && operation.planVersion !== plan.version) ||
-      fingerprint(plan.body) !== prepared.planBodyFingerprint ||
-      this.store.planControlEpoch(plan.id) !== prepared.ownerEpoch
+      fingerprint(plan.body) !== prepared.planBodyFingerprint
     )
       throw new Error("Retained-check continuation owner, version or exact binding changed")
 
@@ -3314,33 +3250,8 @@ export class TaskRuntime {
     return matches
   }
 
-  /** Deep admission check: observes evidence files, then applies the transactional recheck. */
-  private async quarantineTarget(
-    plan: PlanRow,
-    command: PlanCommand,
-    observed = { humanHold: false },
-  ) {
-    const candidate = command.attemptID
-      ? this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
-      : undefined
-    if (
-      candidate?.state === "verifying" &&
-      !this.hasSettledVerificationTimeout(plan, candidate) &&
-      !this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            effect.attempt_id === candidate.id &&
-            effect.state === "uncertain" &&
-            effect.kind.startsWith("verify:"),
-        )
-    )
-      observed.humanHold = await this.hasSettledHumanEvidenceHold(plan, candidate)
-    return this.quarantineTargetCurrent(plan, command, observed.humanHold)
-  }
-
-  /** Synchronous, transaction-safe form of `quarantineTarget` over an observed evidence hold. */
-  private quarantineTargetCurrent(plan: PlanRow, command: PlanCommand, humanHold: boolean) {
+  /** Transaction-safe admission check for source quarantine. */
+  private quarantineTargetCurrent(plan: PlanRow, command: PlanCommand) {
     if (!command.attemptID || !command.reason)
       throw new Error("Source quarantine requires attemptID and reason")
     const attempt = this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
@@ -3357,7 +3268,6 @@ export class TaskRuntime {
     if (
       attempt.state === "verifying" &&
       !this.hasSettledVerificationTimeout(plan, attempt) &&
-      !humanHold &&
       !this.store
         .effects(plan.id)
         .some(
@@ -3367,9 +3277,7 @@ export class TaskRuntime {
             effect.kind.startsWith("verify:"),
         )
     )
-      throw new Error(
-        "Source quarantine requires a retained uncertain check, settled timeout, or settled human evidence hold",
-      )
+      throw new Error("Source quarantine requires a retained uncertain check or settled timeout")
     if (!this.host.archiveRetainedWorker || !this.host.ensureSourceGuard)
       throw new Error("The native worker source guard and archive control must be installed")
     return attempt
@@ -3443,7 +3351,8 @@ export class TaskRuntime {
       observationUnstable: worker.observationUnstable ?? false,
       outcome: worker.outcome ?? null,
       turn: worker.turn ?? null,
-      background: worker.background ?? null,
+      runningShells: worker.runningShells ?? 0,
+      activeChildren: worker.activeChildren ?? 0,
       idleAt: worker.idleAt ?? null,
       messages: worker.messages.map((message) => ({ id: message.id, type: message.type ?? null })),
     })
@@ -3465,14 +3374,6 @@ export class TaskRuntime {
       !isWorkerAgent(worker.agent) ||
       worker.archived ||
       worker.metadata?.lazersAttemptID !== attempt.id ||
-      (worker.parentID !== plan.owner &&
-        (typeof worker.parentID !== "string" ||
-          !this.store.hasPlanOwnerTransfer(
-            plan.id,
-            worker.parentID,
-            plan.owner,
-            attempt.started_at,
-          ))) ||
       !this.sameModel(worker.model, model)
     )
       return "Retained repair worker identity, location, or route changed"
@@ -3497,45 +3398,14 @@ export class TaskRuntime {
   }
 
   private retainedRepairBackgroundProblem(
-    attempt: AttemptRow,
     worker: HostSession | null | undefined,
     inputID: string | undefined,
-    assignedMessageID: string,
   ) {
-    const background = worker?.background
-    if (!background || background.state !== "observed")
-      return "Retained repair requires a fresh native idle/background observation"
-    if (background.count !== 0)
-      return "Known background work must finish before the retained repair can continue"
-    const executionStart = background.executionStartSequence
-    const eventSequence = background.eventSequence
-    const terminalSequence = background.terminalSequence
-    if (
-      !inputID ||
-      background.inputID !== inputID ||
-      worker?.turn?.inputID !== inputID ||
-      background.projectDirectory !== this.directory ||
-      background.projectID !== this.projectID ||
-      background.attemptID !== attempt.id ||
-      background.sessionID !== attempt.session_id ||
-      background.workspace !== attempt.workspace ||
-      background.assignedMessageID !== assignedMessageID ||
-      !Number.isFinite(background.observedAt) ||
-      typeof executionStart !== "number" ||
-      !Number.isSafeInteger(executionStart) ||
-      executionStart < 0 ||
-      typeof eventSequence !== "number" ||
-      !Number.isSafeInteger(eventSequence) ||
-      eventSequence < executionStart ||
-      typeof terminalSequence !== "number" ||
-      !Number.isSafeInteger(terminalSequence) ||
-      terminalSequence <= eventSequence ||
-      typeof background.terminalEventID !== "string" ||
-      !background.terminalEventID ||
-      typeof background.terminalMessageID !== "string" ||
-      !background.terminalMessageID
-    )
-      return "Retained repair idle evidence does not bind the exact current native input and assignment"
+    if (!worker) return "Retained repair worker session is unavailable"
+    const reason = this.backgroundBlockReason(worker)
+    if (reason) return `${reason}; it must finish before the retained repair can continue`
+    if (!inputID || worker.turn?.inputID !== inputID)
+      return "Retained repair worker's current turn is not the repaired input"
     return undefined
   }
 
@@ -3567,12 +3437,7 @@ export class TaskRuntime {
   ): Promise<RetainedRepairRecoverySeed> {
     if (!command.taskID || !command.attemptID || !command.reason)
       throw new Error("Retained repair recovery requires the exact task, attempt and reason")
-    if (
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner ||
-      ownerSession.projectID !== this.projectID
-    )
+    if (!this.validArchitect(ownerSession) || ownerSession.projectID !== this.projectID)
       throw new Error("Retained repair recovery requires the current same-project Architect owner")
     if (plan.state !== "blocked" || plan.artifact !== null)
       throw new Error("Retained repair recovery requires the original blocked, unintegrated plan")
@@ -3611,8 +3476,6 @@ export class TaskRuntime {
     const operationID = repair?.operationID
     const repairMessageID = repair?.messageID
     const previousMessageID = repair?.previousMessageID
-    const repairOwner = repair?.owner
-    const repairOwnerEpoch = repair?.ownerEpoch
     const repairRoute = ModelPolicy.safeParse(repair?.route)
     const policy = (() => {
       try {
@@ -3631,9 +3494,6 @@ export class TaskRuntime {
       typeof previousMessageID !== "string" ||
       repair?.attemptID !== attempt.id ||
       repairTransition.task_id !== task.id ||
-      repairOwner !== plan.owner ||
-      repairOwnerEpoch !== this.store.planControlEpoch(plan.id) ||
-      !Number.isSafeInteger(repairOwnerEpoch) ||
       typeof repair?.sessionID !== "string" ||
       repair.sessionID !== attempt.session_id ||
       repair.workspace !== attempt.workspace ||
@@ -3878,9 +3738,6 @@ export class TaskRuntime {
       projectID: this.projectID,
       taskCurrent: true,
       assignedInputMatches: confirmedWorker.turn?.inputID === repairMessageID,
-      backgroundInputMatches:
-        confirmedWorker.background?.state === "observed" &&
-        confirmedWorker.background.inputID === repairMessageID,
       stopObservation: stopped,
       planHoldObservation: priorHold,
       retainedSession: sessionReceipt,
@@ -3889,10 +3746,7 @@ export class TaskRuntime {
       reservationAvailable: this.preparationAllowed(attempt),
     } satisfies TerminalWorkerContinuationFacts)
     if (continuationProblem) throw new Error(continuationProblem)
-    if (
-      this.store.plan(plan.id)?.version !== plan.version ||
-      this.store.planControlEpoch(plan.id) !== repairOwnerEpoch
-    )
+    if (this.store.plan(plan.id)?.version !== plan.version)
       throw new Error(
         "Retained repair recovery plan or owner authorization changed during revalidation",
       )
@@ -3904,7 +3758,6 @@ export class TaskRuntime {
       failedMessageID: attempt.message_id,
       interruptedInputID: repairMessageID,
       owner: caller,
-      ownerEpoch: repairOwnerEpoch as number,
       taskRevision: task.revision,
       planVersion: plan.version,
       planRevision: plan.revision,
@@ -3943,9 +3796,7 @@ export class TaskRuntime {
       currentPlan?.state === "blocked" &&
       currentPlan.version === recovery.planVersion &&
       currentPlan.revision === recovery.planRevision &&
-      currentPlan.owner === recovery.owner &&
       currentPlan.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
-      this.store.planControlEpoch(plan.id) === recovery.ownerEpoch &&
       currentAttempt?.state === "cancelled" &&
       currentAttempt.message_id === recovery.failedMessageID &&
       currentAttempt.session_id === attempt.session_id &&
@@ -4037,13 +3888,8 @@ export class TaskRuntime {
       throw new Error(
         "Retained repair requires taskID, attemptID, exact artifact and concrete defect reason",
       )
-    if (
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner
-    )
+    if (!this.validArchitect(ownerSession))
       throw new Error("Retained repair requires the current same-project Architect owner")
-    const ownerEpoch = this.store.planControlEpoch(plan.id)
     if (!["running", "accepted", "blocked"].includes(plan.state))
       throw new Error("Retained repair requires a running, accepted or blocked, unintegrated plan")
     if (this.store.activeAdoptions(plan.id).length)
@@ -4166,12 +4012,7 @@ export class TaskRuntime {
     await this.host.waitForSession(attempt.session_id)
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const nativeInputID = observed?.turn?.inputID ?? undefined
-    const backgroundProblem = this.retainedRepairBackgroundProblem(
-      attempt,
-      observed,
-      nativeInputID,
-      previousMessageID,
-    )
+    const backgroundProblem = this.retainedRepairBackgroundProblem(observed, nativeInputID)
     if (!nativeInputID || !this.matchesWorkerInput(attempt, nativeInputID))
       throw new Error("Retained repair requires the exact captured successful native input")
     const problem = this.retainedRepairWorkerProblem(
@@ -4194,10 +4035,8 @@ export class TaskRuntime {
       attemptModel.data,
     )
     const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      attempt,
       confirmed,
       nativeInputID,
-      previousMessageID,
     )
     if (
       confirmedProblem ||
@@ -4211,10 +4050,7 @@ export class TaskRuntime {
           confirmedBackgroundProblem ??
           "Retained worker input or ownership changed during repair admission",
       )
-    if (
-      this.store.plan(plan.id)?.version !== command.expectedVersion ||
-      this.store.planControlEpoch(plan.id) !== ownerEpoch
-    )
+    if (this.store.plan(plan.id)?.version !== command.expectedVersion)
       throw new Error("Retained repair plan changed during native observation")
     return {
       taskID: task.id,
@@ -4225,7 +4061,6 @@ export class TaskRuntime {
       messageID: messageID(),
       operationID: crypto.randomUUID(),
       owner: caller,
-      ownerEpoch,
       sessionID: attempt.session_id,
       workspace: attempt.workspace,
       model: attemptModel.data,
@@ -4243,11 +4078,7 @@ export class TaskRuntime {
       return undefined
     if (command.action !== "reconcile" || !command.taskID || !command.attemptID)
       throw new Error("Review input reconciliation requires reconcile, taskID and attemptID")
-    if (
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner
-    )
+    if (!this.validArchitect(ownerSession))
       throw new Error(
         "Review input reconciliation requires the current same-project Architect owner",
       )
@@ -4402,11 +4233,6 @@ export class TaskRuntime {
       taskCurrent,
       assignedInputMatches: Boolean(
         attempt && worker?.turn && this.matchesWorkerInput(attempt, worker.turn.inputID),
-      ),
-      backgroundInputMatches: Boolean(
-        attempt &&
-        worker?.background?.state === "observed" &&
-        this.matchesWorkerInput(attempt, worker.background.inputID),
       ),
       stopObservation,
       planHoldObservation,
@@ -4741,14 +4567,6 @@ export class TaskRuntime {
       const currentOperation = db
         .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?")
         .get(operation.id)
-      const ownerEpoch = db
-        .query<{ epoch: number }, [string]>(
-          `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
-           WHERE plan_id=? AND task_id IS NULL AND event IN (
-             'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
-           )`,
-        )
-        .get(plan.id)!.epoch
       const latestAuthorization = db
         .query<{ payload: string }, [string, string]>(
           `SELECT payload FROM runner_transitions
@@ -4768,10 +4586,8 @@ export class TaskRuntime {
         !currentAttempt ||
         !currentOperation ||
         currentPlan.state !== "running" ||
-        currentPlan.owner !== authorization.owner ||
         currentPlan.version < authorization.planVersion ||
         currentPlan.revision !== authorization.planRevision ||
-        ownerEpoch !== authorization.ownerEpoch ||
         !latestAuthorization ||
         fingerprint(JSON.parse(latestAuthorization.payload)) !== fingerprint(authorization) ||
         currentAttempt.state !== "preparing" ||
@@ -4857,7 +4673,6 @@ export class TaskRuntime {
     if (
       !plan ||
       plan.version !== expectedPlan.version ||
-      plan.owner !== expectedPlan.owner ||
       plan.state !== "blocked" ||
       !attempt ||
       attempt.task_id !== expectedAttempt.task_id ||
@@ -4973,7 +4788,6 @@ export class TaskRuntime {
       typeof authorization.requestID !== "string" ||
       typeof authorization.owner !== "string" ||
       typeof authorization.planVersion !== "number" ||
-      typeof authorization.ownerEpoch !== "number" ||
       typeof authorization.planRevision !== "number" ||
       authorization.taskID !== attempt.task_id ||
       authorization.attemptID !== attempt.id ||
@@ -5000,9 +4814,7 @@ export class TaskRuntime {
       current &&
       currentAttempt &&
       current.state === "running" &&
-      current.owner === authorization.owner &&
       current.version >= authorization.planVersion &&
-      this.store.planControlEpoch(plan.id) === authorization.ownerEpoch &&
       current.revision === authorization.planRevision &&
       currentAttempt.state === "preparing" &&
       currentAttempt.task_id === authorization.taskID &&
@@ -5278,11 +5090,7 @@ export class TaskRuntime {
       command.baseCommit !== undefined
     )
       throw new Error("Plan-level verification resume requires only a reason, not task controls")
-    if (
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner
-    )
+    if (!this.validArchitect(ownerSession))
       throw new Error("Combined verification resume requires the current same-project Architect")
     if (plan.state !== "blocked" || plan.artifact !== null)
       throw new Error("Combined verification resume requires a blocked, unaccepted plan")
@@ -5354,7 +5162,6 @@ export class TaskRuntime {
     if (!existsSync(workspace) || !(await workspaceAtArtifact(workspace, artifact)))
       throw new Error("Interrupted combined verification candidate changed; preserve it for review")
 
-    const ownerEpoch = this.store.planControlEpoch(plan.id)
     const binding: CombinedVerificationContinuationBinding = {
       schema: "lazers-combined-verification-continuation/v1",
       requestID: command.requestID,
@@ -5362,7 +5169,6 @@ export class TaskRuntime {
       projectID: this.projectID,
       planID: plan.id,
       owner: plan.owner,
-      ownerEpoch,
       planRevision: plan.revision,
       expectedPlanVersion: command.expectedVersion,
       resumedPlanVersion: plan.version + 1,
@@ -5393,13 +5199,10 @@ export class TaskRuntime {
     const currentPlan = this.store.plan(plan.id)
     if (
       !this.validArchitect(currentOwner) ||
-      currentOwner.id !== plan.owner ||
       !currentPlan ||
       currentPlan.version !== plan.version ||
       currentPlan.revision !== plan.revision ||
       currentPlan.body !== plan.body ||
-      currentPlan.owner !== plan.owner ||
-      this.store.planControlEpoch(plan.id) !== ownerEpoch ||
       fingerprint(
         await this.acceptedCombinedArtifactsAsync(
           currentPlan,
@@ -5436,7 +5239,25 @@ export class TaskRuntime {
   }
 
   async command(input: unknown, caller: string): Promise<unknown> {
+    return this.runCommand(input, caller, false)
+  }
+
+  /**
+   * Admission is the scheduler's act, not an Architect command: a plan is
+   * admitted when it is submitted or started, whoever submitted it.
+   */
+  private admitPlan(plan: PlanRow, requestID: string) {
+    return this.runCommand(
+      { requestID, planID: plan.id, expectedVersion: plan.version, action: "run" },
+      plan.owner,
+      true,
+    )
+  }
+
+  private async runCommand(input: unknown, caller: string, admission: boolean): Promise<unknown> {
     const command = CommandInput.parse(input)
+    if (admission && command.action !== "run")
+      throw new Error("Only admission runs without an Architect caller")
     const retainedCheckAdmissionSequence =
       command.action === "continue-retained-check" ||
       (command.action === "extend-verification-deadline" &&
@@ -5450,15 +5271,21 @@ export class TaskRuntime {
       return prior
     }
     // Resolve host facts before the transaction, then recheck durable versions within it.
-    const old = this.store.plan(command.planID)
+    let old = this.store.plan(command.planID)
     if (!old) throw new Error("Plan not found")
-    // Reject stale/foreign requests before any asynchronous owner recovery effect.
-    // Receipts above remain bound to the ORIGINAL command and caller, even when
-    // a valid owner is durably continued to a different native session.
+    // Reject stale requests before any asynchronous owner recovery effect.
     if (old.version !== command.expectedVersion)
       throw new Error(`Stale plan version; current ${old.version}`)
-    if (caller !== old.owner && !["audit", "reassign"].includes(command.action))
-      throw new Error("Only the plan owner may change execution")
+    // The owner is advisory. Any live Architect of this project may command the
+    // plan and is adopted as its owner; reading (audit) needs no Architect.
+    if (command.action !== "audit" && !admission) {
+      if (!this.validArchitect(await this.host.session(caller)))
+        throw new Error("A live Architect session of this project must command the plan")
+      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller)) {
+        this.refreshArchitectSourceOwners()
+        old = this.store.plan(command.planID)!
+      }
+    }
     let continuedOwner: string | undefined
     const configuredWorker =
       command.action === "run" && !JSON.parse(old.body).workerModel
@@ -5484,9 +5311,7 @@ export class TaskRuntime {
         "cancel-retained-verification",
         "extend-verification-deadline",
         "continue-retained-check",
-        "recover-cleanup",
-      ].includes(command.action) ||
-      (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
+      ].includes(command.action)
     ) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
@@ -5502,8 +5327,7 @@ export class TaskRuntime {
           worker: HostSession
         }
       | undefined
-    let terminalRepairContinuation:
-      { operationID: string; owner: string; ownerEpoch: number } | undefined
+    let terminalRepairContinuation: { operationID: string; owner: string } | undefined
     let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
     let combinedVerificationResume: CombinedVerificationContinuation | undefined
     if (command.action === "resume" && command.taskID) {
@@ -5551,19 +5375,13 @@ export class TaskRuntime {
         )
         if (latestRepair?.attemptID === attempt.id) {
           const repair = this.retainedRepairForAttempt(attempt)
-          if (
-            !repair ||
-            repair.messageID !== attempt.message_id ||
-            repair.owner !== caller ||
-            repair.ownerEpoch !== this.store.planControlEpoch(old.id)
-          )
+          if (!repair || repair.messageID !== attempt.message_id)
             throw new Error(
               "Retained repair continuation is missing its current owner/control authorization",
             )
           terminalRepairContinuation = {
             operationID: repair.operationID,
             owner: repair.owner,
-            ownerEpoch: repair.ownerEpoch,
           }
         }
       }
@@ -5623,7 +5441,6 @@ export class TaskRuntime {
       if (
         !confirmedPlan ||
         !this.validArchitect(confirmedOwner) ||
-        confirmedOwner.id !== old.owner ||
         confirmedOwner.projectID !== this.projectID
       )
         throw new Error("Verification deadline owner changed during admission")
@@ -5644,7 +5461,6 @@ export class TaskRuntime {
       if (
         !confirmedPlan ||
         !this.validArchitect(confirmedOwner) ||
-        confirmedOwner.id !== old.owner ||
         confirmedOwner.projectID !== this.projectID
       )
         throw new Error("Retained-check continuation owner changed during admission")
@@ -5659,11 +5475,10 @@ export class TaskRuntime {
       ownerSession = confirmedOwner
     }
     let quarantineAttempt: AttemptRow | undefined
-    const quarantineObserved = { humanHold: false }
     let quarantineReview: SourceReviewBinding | undefined
     if (command.action === "quarantine-source") {
       if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
-      quarantineAttempt = await this.quarantineTarget(old, command, quarantineObserved)
+      quarantineAttempt = this.quarantineTargetCurrent(old, command)
       const worker = await this.host.session(
         quarantineAttempt.session_id,
         quarantineAttempt.state === "running" ? { messages: true } : undefined,
@@ -5740,8 +5555,7 @@ export class TaskRuntime {
         !command.attemptID ||
         !command.reason ||
         !ownerSession ||
-        !this.validArchitect(ownerSession) ||
-        ownerSession.id !== old.owner
+        !this.validArchitect(ownerSession)
       )
         throw new Error(
           "Startup settlement requires the current Architect owner and exact task attempt",
@@ -5770,18 +5584,16 @@ export class TaskRuntime {
       ])
       if (
         !this.validArchitect(currentOwner) ||
-        currentOwner.id !== old.owner ||
-        currentPlan?.owner !== retainedVerificationSeed.owner ||
+        !currentPlan ||
         currentPlan.version !== retainedVerificationSeed.planVersion ||
-        currentPlan.revision !== retainedVerificationSeed.planRevision ||
-        this.store.planControlEpoch(old.id) !== retainedVerificationSeed.ownerEpoch
+        currentPlan.revision !== retainedVerificationSeed.planRevision
       )
         throw new Error(
           "Retained verification owner or plan authorization changed before reservation",
         )
       const observeOwner = async () => {
         ownerSession = await this.host.session(caller)
-        if (!this.validArchitect(ownerSession) || ownerSession.id !== old.owner)
+        if (!this.validArchitect(ownerSession))
           throw new Error("Retained verification owner changed during final native admission")
       }
       if (retainedVerificationSeed.repair) {
@@ -5802,11 +5614,7 @@ export class TaskRuntime {
       const attempt = this.store
         .attempts(old.id)
         .find((candidate) => candidate.id === retainedRepair.attemptID)
-      if (
-        !attempt ||
-        this.store.plan(old.id)?.version !== command.expectedVersion ||
-        this.store.planControlEpoch(old.id) !== retainedRepair.ownerEpoch
-      )
+      if (!attempt || this.store.plan(old.id)?.version !== command.expectedVersion)
         throw new Error("Retained repair plan or attempt changed before final native revalidation")
       const observedOwner = await this.host.session(old.owner)
       if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
@@ -5820,10 +5628,8 @@ export class TaskRuntime {
         retainedRepair.model,
       )
       const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
-        attempt,
         observedWorker,
         retainedRepair.nativeInputID,
-        retainedRepair.previousMessageID,
       )
       if (
         observedProblem ||
@@ -5844,10 +5650,8 @@ export class TaskRuntime {
         retainedRepair.model,
       )
       const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-        attempt,
         confirmedWorker,
         retainedRepair.nativeInputID,
-        retainedRepair.previousMessageID,
       )
       if (
         confirmedProblem ||
@@ -5855,7 +5659,6 @@ export class TaskRuntime {
         !confirmedWorker ||
         this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
         this.store.plan(old.id)?.version !== command.expectedVersion ||
-        this.store.planControlEpoch(old.id) !== retainedRepair.ownerEpoch ||
         !this.preparationAllowed(attempt)
       )
         throw new Error(
@@ -5886,24 +5689,6 @@ export class TaskRuntime {
       )
         throw new Error("Retained repair recovery changed during final native revalidation")
     }
-    let humanCombinedArtifact: string | undefined
-    if (
-      command.action === "human-evidence" &&
-      !command.taskID &&
-      !command.retainedVerificationID &&
-      !command.adoptionID
-    ) {
-      const input = PlanInput.parse(JSON.parse(old.body))
-      const nodes = this.store.nodes(old.id)
-      const ordered = input.integrationOrder.map((id) => nodes.find((node) => node.task_id === id))
-      if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
-        throw new Error("Plan evidence requires all accepted task artifacts")
-      humanCombinedArtifact = await combineArtifacts(
-        this.directory,
-        input.baseCommit,
-        ordered.map((node) => node!.artifact!),
-      )
-    }
     // Native cleanup observations are sampled outside the command transaction,
     // then published only if the recorded plan version is still current.
     const cleanupDiagnostics =
@@ -5915,8 +5700,6 @@ export class TaskRuntime {
           const plan = this.store.plan(command.planID)!
           if (plan.version !== command.expectedVersion)
             throw new Error(`Stale plan version; current ${plan.version}`)
-          if (caller !== plan.owner && !["audit", "reassign"].includes(command.action))
-            throw new Error("Only the plan owner may change execution")
           // Commit owner adoption with the original request receipt. If native
           // creation succeeds but this command fails, exact replay can recover it
           // without granting an old owner authority over a reassigned plan.
@@ -5924,23 +5707,15 @@ export class TaskRuntime {
           const activeAdoptions = this.store.activeAdoptions(plan.id)
           if (
             activeAdoptions.length &&
-            ![
-              "adopt-descendant",
-              "human-evidence",
-              "cancel",
-              "audit",
-              "reconcile-source-notices",
-            ].includes(command.action)
+            !["adopt-descendant", "cancel", "audit", "reconcile-source-notices"].includes(
+              command.action,
+            )
           )
             throw new Error(
-              "A descendant adoption is pending; only its evidence or cancellation is allowed",
+              "A descendant adoption is pending; only its adoption or cancellation is allowed",
             )
           if (command.action === "quarantine-source") {
-            const attempt = this.quarantineTargetCurrent(
-              plan,
-              command,
-              quarantineObserved.humanHold,
-            )
+            const attempt = this.quarantineTargetCurrent(plan, command)
             if (!sourceGuardInstalled(this.store, attempt.workspace))
               throw new Error("Native worker source guard is not installed")
             if (
@@ -6003,11 +5778,7 @@ export class TaskRuntime {
               throw new Error("Retained repair requires the current same-project Architect owner")
             if (caller !== plan.owner || ownerSession.id !== plan.owner)
               throw new Error("Retained repair owner changed before admission")
-            if (
-              caller !== retainedRepair.owner ||
-              plan.owner !== retainedRepair.owner ||
-              this.store.planControlEpoch(plan.id) !== retainedRepair.ownerEpoch
-            )
+            if (caller !== retainedRepair.owner || plan.owner !== retainedRepair.owner)
               throw new Error(
                 "Retained repair owner/control authorization changed before admission",
               )
@@ -6120,7 +5891,6 @@ export class TaskRuntime {
               operationID: retainedRepair.operationID,
               requestID: command.requestID,
               owner: caller,
-              ownerEpoch: retainedRepair.ownerEpoch,
               expectedVersion: command.expectedVersion,
               attemptID: attempt.id,
               previousMessageID: retainedRepair.previousMessageID,
@@ -6160,7 +5930,6 @@ export class TaskRuntime {
               !retained ||
               !ownerSession ||
               !this.validArchitect(ownerSession) ||
-              ownerSession.id !== plan.owner ||
               ownerSession.projectID !== this.projectID
             )
               throw new Error("Retained-check continuation requires the current Architect owner")
@@ -6209,9 +5978,7 @@ export class TaskRuntime {
                 continuationID,
                 requestID: command.requestID,
                 owner: caller,
-                ownerEpoch: prepared.ownerEpoch,
                 priorOwner: operation.owner,
-                priorOwnerEpoch: operation.ownerEpoch,
                 planRevision: operation.planRevision,
                 planVersion: nextPlan.version,
                 operationID: operation.id,
@@ -6245,7 +6012,6 @@ export class TaskRuntime {
               ...current,
               planVersion: nextPlan.version,
               owner: caller,
-              ownerEpoch: prepared.ownerEpoch,
               state: "combined-checks",
               holdReason: null,
               updatedAt: this.now(),
@@ -6280,7 +6046,6 @@ export class TaskRuntime {
               !prepared ||
               !ownerSession ||
               !this.validArchitect(ownerSession) ||
-              ownerSession.id !== plan.owner ||
               ownerSession.projectID !== this.projectID
             )
               throw new Error(
@@ -6331,7 +6096,6 @@ export class TaskRuntime {
               planRevision: plan.revision,
               planVersion: nextPlan.version,
               owner: caller,
-              ownerEpoch: prepared.ownerEpoch,
               phase: prepared.target.phase,
               taskID: prepared.target.taskID,
               taskRevision: prepared.target.taskRevision,
@@ -6386,9 +6150,7 @@ export class TaskRuntime {
                 {
                   requestID: command.requestID,
                   owner: caller,
-                  ownerEpoch: prepared.ownerEpoch,
                   priorOwner: operation.owner,
-                  priorOwnerEpoch: operation.ownerEpoch,
                   planRevision: operation.planRevision,
                   operationID: operation.id,
                   generation: operation.generation,
@@ -6418,7 +6180,6 @@ export class TaskRuntime {
                 ...current,
                 planVersion: nextPlan.version,
                 owner: caller,
-                ownerEpoch: prepared.ownerEpoch,
                 state: prepared.target.phase === "task" ? "task-checks" : "combined-checks",
                 holdReason: null,
                 updatedAt: this.now(),
@@ -6627,11 +6388,8 @@ export class TaskRuntime {
                 "Retained verification requires the current same-project Architect owner",
               )
             if (
-              ownerSession.id !== plan.owner ||
-              caller !== plan.owner ||
               plan.version !== seed.planVersion ||
               plan.revision !== seed.planRevision ||
-              this.store.planControlEpoch(plan.id) !== seed.ownerEpoch ||
               command.projectID !== this.projectID ||
               command.taskID !== seed.taskID ||
               command.taskRevision !== seed.taskRevision ||
@@ -6736,7 +6494,6 @@ export class TaskRuntime {
               artifact: operation.artifact,
               combinedArtifact: operation.combinedArtifact,
               owner: operation.owner,
-              ownerEpoch: operation.ownerEpoch,
               requestID: command.requestID,
               oldExecutionAndResourceHoldsPreserved: true,
             })
@@ -6774,15 +6531,9 @@ export class TaskRuntime {
               !operation ||
               operation.planID !== plan.id ||
               operation.projectDirectory !== this.directory ||
-              ![
-                "pending",
-                "task-checks",
-                "combined-checks",
-                "waiting-human",
-                "waiting-human-combined",
-                "task-accepted",
-                "held",
-              ].includes(operation.state)
+              !["pending", "task-checks", "combined-checks", "task-accepted", "held"].includes(
+                operation.state,
+              )
             )
               throw new Error("Cancellation must name a current retained verification generation")
             const cancelled: RetainedVerification = {
@@ -6811,126 +6562,6 @@ export class TaskRuntime {
               operationID: operation.id,
               generation: operation.generation,
               version: plan.version,
-            }
-          }
-          if (command.action === "recover-cleanup") {
-            if (
-              !this.validArchitect(ownerSession) ||
-              ownerSession.id !== plan.owner ||
-              caller !== plan.owner
-            )
-              throw new Error("Cleanup recovery requires the current Architect owner")
-            if (plan.state !== "cleanup-blocked")
-              throw new Error("Cleanup recovery is available only for an existing cleanup hold")
-            if (!command.taskID || !command.attemptID || !command.artifact || !command.targetBranch)
-              throw new Error("Cleanup recovery requires the exact accepted task and attempt")
-            const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-            const proposal = PlanInput.parse(JSON.parse(plan.body))
-            const proposedNode = proposal.nodes.find((item) => item.taskID === command.taskID)
-            const task = this.store.repository.get(command.taskID)
-            const attempts = this.store
-              .attempts(plan.id)
-              .filter((candidate) => candidate.task_id === command.taskID)
-            const attempt = attempts.at(-1)
-            if (
-              !node ||
-              node.state !== "accepted" ||
-              node.artifact !== command.artifact ||
-              !proposedNode ||
-              !task ||
-              task.revision !== proposedNode.revision ||
-              !sameProject(task.provenance.projectID, this.projectID) ||
-              task.provenance.projectDirectory !== this.directory ||
-              !attempt ||
-              attempt.id !== command.attemptID ||
-              attempt.state !== "accepted" ||
-              attempt.artifact !== command.artifact
-            )
-              throw new Error("Cleanup recovery task, accepted artifact or latest attempt changed")
-            const sourceEffect = this.store.effects(plan.id).find((effect) => {
-              if (
-                !["worktree", "worktree-recovery"].includes(effect.kind) ||
-                effect.state !== "completed" ||
-                effect.attempt_id !== attempt.id
-              )
-                return false
-              try {
-                return JSON.parse(effect.receipt ?? "{}").workspace === attempt.workspace
-              } catch {
-                return false
-              }
-            })
-            if (
-              !sourceEffect ||
-              attempt.workspace === this.directory ||
-              !existsSync(attempt.workspace)
-            )
-              throw new Error(
-                "Exact owned attempt worktree is unavailable; preserve it for reconciliation",
-              )
-            const taskIntegration = this.store.latestTransition<{
-              artifact?: string
-              branch?: string
-            }>(plan.id, command.taskID, "TASK_INTEGRATION_RECORDED")
-            const planIntegration = this.store.latestTransition<{
-              artifact?: string
-              branch?: string
-            }>(plan.id, null, "INTEGRATION_RECORDED")
-            const integrated =
-              (taskIntegration?.artifact === command.artifact &&
-                taskIntegration.branch === command.targetBranch) ||
-              (planIntegration?.artifact === plan.artifact &&
-                planIntegration.branch === command.targetBranch)
-            if (!integrated)
-              throw new Error(
-                "Cleanup recovery requires a durable matching source integration record",
-              )
-            if (obs.git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
-              throw new Error("The current checkout is not the recorded integration target branch")
-            requireIntegration(
-              preflight.integration,
-              command.artifact,
-              "The accepted artifact",
-              "the recorded integration branch",
-            )
-            if (obs.git(attempt.workspace, ["status", "--porcelain"]))
-              throw new Error(`Accepted attempt worktree is dirty; preserve ${attempt.workspace}`)
-
-            const ownerEpoch = this.store.planControlEpoch(plan.id)
-            this.store.record(plan.id, command.taskID, "WORKTREE_CLEANUP_RECOVERY_AUTHORIZED", {
-              schemaVersion: 1,
-              projectDirectory: this.directory,
-              planID: plan.id,
-              planRevision: plan.revision,
-              planArtifact: plan.artifact,
-              taskID: command.taskID,
-              taskRevision: proposedNode.revision,
-              attemptID: attempt.id,
-              artifact: command.artifact,
-              workspace: attempt.workspace,
-              sourceEffectID: sourceEffect.id,
-              sessionID: attempt.session_id,
-              assignedMessageID: attempt.message_id,
-              owner: caller,
-              ownerEpoch,
-              targetBranch: command.targetBranch,
-              requestID: command.requestID,
-              reason: command.reason ?? "Owner-authorized native cleanup recovery",
-            } satisfies CleanupRecoveryAuthorization)
-            const changed = db
-              .query(
-                `UPDATE runner_plans SET version=version+1
-             WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='cleanup-blocked'`,
-              )
-              .run(plan.id, this.directory, caller, command.expectedVersion).changes
-            if (changed !== 1)
-              throw new Error("Cleanup recovery plan changed during owner authorization")
-            return {
-              status: "cleanup-recovery-requested",
-              taskID: attempt.task_id,
-              attemptID: attempt.id,
-              workspace: attempt.workspace,
-              version: this.store.plan(plan.id)!.version,
             }
           }
           if (command.action === "integrated")
@@ -7088,176 +6719,6 @@ export class TaskRuntime {
             this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
             return { status: "cancelling", version: this.store.plan(plan.id)!.version }
           }
-          if (command.action === "human-evidence") {
-            if (!command.assertionID || !command.artifact || !command.reason)
-              throw new Error("Human evidence requires assertion, exact artifact and decision")
-            if (command.retainedVerificationID) {
-              if (
-                !ownerSession ||
-                !this.validArchitect(ownerSession) ||
-                ownerSession.id !== plan.owner
-              )
-                throw new Error(
-                  "Retained verification evidence requires the current same-project Architect",
-                )
-              const operation = retainedVerification(db, command.retainedVerificationID)
-              if (
-                !operation ||
-                operation.planID !== plan.id ||
-                operation.owner !== caller ||
-                operation.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
-                operation.planVersion !== plan.version ||
-                operation.planRevision !== plan.revision ||
-                ![
-                  "pending",
-                  "task-checks",
-                  "combined-checks",
-                  "waiting-human",
-                  "waiting-human-combined",
-                ].includes(operation.state)
-              )
-                throw new Error(
-                  "Human evidence must name the current retained verification generation",
-                )
-              const taskEvidence = command.taskID === operation.taskID
-              if (command.taskID && !taskEvidence)
-                throw new Error("Retained task evidence must name its exact task")
-              const assertions = taskEvidence
-                ? (this.store.repository.get(operation.taskID)?.proposal.acceptance ?? [])
-                : PlanInput.parse(JSON.parse(plan.body)).acceptance
-              const artifact = taskEvidence ? operation.artifact : operation.combinedArtifact
-              const assertion = assertions.find((item) => item.id === command.assertionID)
-              if (
-                !artifact ||
-                command.artifact !== artifact ||
-                !assertion?.evidence.some((item) => item.kind === "human")
-              )
-                throw new Error(
-                  "Human evidence does not bind to the retained assertion, phase and exact candidate",
-                )
-              recordRetainedVerificationEvidence(db, {
-                id: crypto.randomUUID(),
-                operationID: operation.id,
-                generation: operation.generation,
-                phase: taskEvidence ? "task" : "combined",
-                taskID: taskEvidence ? operation.taskID : null,
-                assertionID: assertion.id,
-                artifact,
-                body: JSON.stringify({ decision: command.reason, caller }),
-                createdAt: this.now(),
-              })
-              this.store.record(
-                plan.id,
-                command.taskID ?? null,
-                "RETAINED_VERIFICATION_HUMAN_EVIDENCE",
-                {
-                  operationID: operation.id,
-                  generation: operation.generation,
-                  assertionID: assertion.id,
-                  artifact,
-                  phase: taskEvidence ? "task" : "combined",
-                },
-              )
-              return {
-                status: "recorded",
-                operationID: operation.id,
-                generation: operation.generation,
-              }
-            }
-            if (command.adoptionID) {
-              const adoption = this.store.adoption(command.adoptionID)
-              if (
-                !adoption ||
-                adoption.plan_id !== plan.id ||
-                adoption.owner !== caller ||
-                !["pending", "task-checks", "combined-checks", "waiting-human"].includes(
-                  adoption.state,
-                )
-              )
-                throw new Error("Human evidence must name a current pending descendant adoption")
-              const taskEvidence = command.taskID === adoption.task_id
-              if (command.taskID && !taskEvidence)
-                throw new Error("Adoption task evidence must name its exact task")
-              const assertions = taskEvidence
-                ? (this.store.repository.get(adoption.task_id)?.proposal.acceptance ?? [])
-                : PlanInput.parse(JSON.parse(plan.body)).acceptance
-              const artifact = taskEvidence
-                ? adoption.descendant_commit
-                : adoption.combined_artifact
-              const assertion = assertions.find((item) => item.id === command.assertionID)
-              if (
-                command.artifact !== artifact ||
-                !assertion?.evidence.some((e) => e.kind === "human")
-              )
-                throw new Error("Human evidence does not bind to the adoption assertion/artifact")
-              this.store.recordAdoptionEvidence({
-                id: crypto.randomUUID(),
-                adoptionID: adoption.id,
-                taskID: taskEvidence ? adoption.task_id : null,
-                phase: taskEvidence ? "task" : "combined",
-                assertionID: assertion.id,
-                artifact,
-                body: { decision: command.reason, caller },
-              })
-              this.store.record(
-                plan.id,
-                command.taskID ?? null,
-                "DESCENDANT_ADOPTION_HUMAN_EVIDENCE",
-                {
-                  adoptionID: adoption.id,
-                  assertionID: assertion.id,
-                  artifact,
-                },
-              )
-              return { status: "recorded", version: this.store.plan(plan.id)!.version }
-            }
-            const nodes = this.store.nodes(plan.id)
-            let assertions: TaskProposal["acceptance"]
-            let artifact: string | null
-            if (command.taskID) {
-              artifact = nodes.find((node) => node.task_id === command.taskID)?.artifact ?? null
-              assertions = this.store.repository.get(command.taskID)?.proposal.acceptance ?? []
-            } else {
-              const input = PlanInput.parse(JSON.parse(plan.body))
-              const ordered = input.integrationOrder.map((id) =>
-                nodes.find((node) => node.task_id === id),
-              )
-              if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
-                throw new Error("Plan evidence requires all accepted task artifacts")
-              artifact = humanCombinedArtifact ?? null
-              assertions = input.acceptance
-            }
-            const assertion = assertions.find((item) => item.id === command.assertionID)
-            if (
-              artifact !== command.artifact ||
-              !assertion?.evidence.some((e) => e.kind === "human")
-            )
-              throw new Error("Human evidence does not bind to the current assertion/artifact")
-            const sourceGeneration = command.taskID
-              ? this.retainedRepairGeneration(plan.id, command.taskID)
-              : this.retainedRepairGeneration(plan.id)
-            db.query(
-              "INSERT INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,?,'human',?,?,?)",
-            ).run(
-              crypto.randomUUID(),
-              plan.id,
-              command.taskID ?? null,
-              null,
-              assertion.id,
-              command.artifact,
-              JSON.stringify({
-                decision: command.reason,
-                caller,
-                ...(sourceGeneration ? { sourceGeneration } : {}),
-              }),
-              Date.now(),
-            )
-            this.store.record(plan.id, command.taskID ?? null, "HUMAN_EVIDENCE", {
-              assertionID: assertion.id,
-              artifact: command.artifact,
-            })
-            return { status: "recorded", version: this.store.plan(plan.id)!.version }
-          }
           if (command.action === "resume" || command.action === "retry") {
             const retry = command.action === "retry"
             if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
@@ -7267,12 +6728,9 @@ export class TaskRuntime {
               if (
                 plan.state !== "blocked" ||
                 plan.artifact !== null ||
-                plan.owner !== caller ||
-                ownerSession.id !== plan.owner ||
                 !this.validArchitect(ownerSession) ||
                 plan.version !== combinedVerificationResume.expectedPlanVersion ||
-                plan.revision !== combinedVerificationResume.planRevision ||
-                this.store.planControlEpoch(plan.id) !== combinedVerificationResume.ownerEpoch
+                plan.revision !== combinedVerificationResume.planRevision
               )
                 throw new Error("Combined verification owner or plan authorization changed")
 
@@ -7283,7 +6741,6 @@ export class TaskRuntime {
               const currentBinding: CombinedVerificationContinuationBinding = {
                 ...bindingData,
                 owner: plan.owner,
-                ownerEpoch: this.store.planControlEpoch(plan.id),
                 planRevision: plan.revision,
                 expectedPlanVersion: command.expectedVersion,
                 resumedPlanVersion: plan.version + 1,
@@ -7438,7 +6895,6 @@ export class TaskRuntime {
                   undefined ||
                 command.taskID !== retainedRepairRecovery.taskID ||
                 command.attemptID !== retainedRepairRecovery.attemptID ||
-                ownerSession?.id !== plan.owner ||
                 !this.validArchitect(ownerSession) ||
                 !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
               )
@@ -7479,7 +6935,6 @@ export class TaskRuntime {
                   failedMessageID: retainedRepairRecovery.failedMessageID,
                   interruptedInputID: retainedRepairRecovery.interruptedInputID,
                   owner: retainedRepairRecovery.owner,
-                  ownerEpoch: retainedRepairRecovery.ownerEpoch,
                   failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
                   blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
                   cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
@@ -7581,9 +7036,7 @@ export class TaskRuntime {
                 (latestRepair?.attemptID === attempt!.id &&
                   (!terminalRepairContinuation ||
                     !currentRepair ||
-                    currentRepair.operationID !== terminalRepairContinuation.operationID ||
-                    currentRepair.owner !== terminalRepairContinuation.owner ||
-                    currentRepair.ownerEpoch !== terminalRepairContinuation.ownerEpoch)) ||
+                    currentRepair.operationID !== terminalRepairContinuation.operationID)) ||
                 (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
               )
                 throw new Error("Retained repair continuation authority changed before reservation")
@@ -7670,8 +7123,6 @@ export class TaskRuntime {
                 attempt!.state !== "preparing" ||
                 plan.state !== "blocked" ||
                 !this.validArchitect(ownerSession) ||
-                ownerSession.id !== plan.owner ||
-                caller !== plan.owner ||
                 !settlement
               )
                 throw new Error(
@@ -7705,7 +7156,6 @@ export class TaskRuntime {
                 requestID: command.requestID,
                 owner: plan.owner,
                 planVersion: plan.version + 1,
-                ownerEpoch: this.store.planControlEpoch(plan.id),
                 planRevision: plan.revision,
                 taskID: attempt!.task_id,
                 attemptID: attempt!.id,
@@ -7833,7 +7283,6 @@ export class TaskRuntime {
                         schema: "lazers-retained-repair-continuation/v1",
                         operationID: terminalRepairContinuation.operationID,
                         owner: terminalRepairContinuation.owner,
-                        ownerEpoch: terminalRepairContinuation.ownerEpoch,
                       },
                     }
                   : {}),
@@ -7855,7 +7304,6 @@ export class TaskRuntime {
             if (reviewInput) {
               const { binding, evidence } = reviewInput
               if (
-                caller !== plan.owner ||
                 !this.validArchitect(ownerSession) ||
                 ownerSession.id !== binding.ownerSessionID ||
                 binding.planID !== plan.id ||
@@ -7936,7 +7384,11 @@ export class TaskRuntime {
               }
             }
             if (
-              this.store.effects(plan.id).some((e) => ["intended", "uncertain"].includes(e.state))
+              this.store
+                .effects(plan.id)
+                .some(
+                  (e) => ["intended", "uncertain"].includes(e.state) && !isRerunnableEffect(e.kind),
+                )
             )
               return {
                 status: "blocked",
@@ -8001,11 +7453,8 @@ export class TaskRuntime {
             throw new Error(
               "Existing execution must be reconciled; admission cannot replace its policy",
             )
-          if (!ownerSession || ownerSession.archived)
-            return this.hold(plan, "Owner is missing or archived")
-          if (ownerSession.projectID !== this.projectID) throw new Error("Foreign owner session")
-          if (command.action === "run" && ownerSession.agent !== "architect")
-            throw new Error("Only an Architect session can own execution")
+          if (!ownerSession || ownerSession.projectID !== this.projectID)
+            throw new Error("An Architect session of this project must command the plan")
           const proposal = PlanInput.parse(JSON.parse(plan.body))
           const selectedModel = proposal.workerModel ?? configuredWorker
           const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
@@ -8093,18 +7542,26 @@ export class TaskRuntime {
         result?.status === "retained-verification-check-continued") ||
       (command.action === "continue-retained-check" &&
         result?.status === "retained-verification-check-continued") ||
-      command.action === "recover-cleanup" ||
       command.action === "pause" ||
-      command.action === "unpause" ||
-      (command.action === "human-evidence" && command.retainedVerificationID !== undefined)
+      command.action === "unpause"
     )
       await this.requestTick()
     if (command.action === "reassign" || continuedOwner) this.refreshArchitectSourceOwners()
     return result
   }
 
-  submitPlan(input: unknown, owner: string) {
-    return this.store.submit(input, owner, this.verificationTimeoutDefaults)
+  /**
+   * Submitting a plan admits it: the scheduler runs its tasks with no separate
+   * Architect `run`. Base-commit and model-route preflight stay in admission.
+   * A plan is saved as a draft only when the Architect explicitly asks.
+   */
+  async submitPlan(input: unknown, owner: string) {
+    const receipt = this.store.submit(input, owner, this.verificationTimeoutDefaults)
+    const plan = this.store.plan(receipt.planID)
+    if (!plan || plan.state !== "draft" || explicitDraft(plan)) return receipt
+    await this.admitPlan(plan, `submit-admit:${plan.id}`)
+    await this.requestTick()
+    return { ...receipt, status: "submitted", admitted: true }
   }
 
   async startTask(input: StartTaskInput): Promise<StartTaskResult> {
@@ -8167,16 +7624,7 @@ export class TaskRuntime {
       created = true
     }
 
-    if (plan.state === "draft")
-      await this.command(
-        {
-          requestID: `task-start-run:${task.id}:1`,
-          planID: plan.id,
-          expectedVersion: plan.version,
-          action: "run",
-        },
-        plan.owner,
-      )
+    if (plan.state === "draft") await this.admitPlan(plan, `task-start-run:${task.id}:1`)
     await this.requestTick()
     const execution = this.store.execution(task.id)
     if (!execution) throw new Error("Runtime did not record task execution")
@@ -8287,7 +7735,7 @@ export class TaskRuntime {
 
   private adoptArchitectOwner(plan: PlanRow, sessionID: string) {
     const changed = this.store.atomic(() => {
-      if (!this.store.updatePlanOwner(plan.id, plan.owner, sessionID)) return false
+      if (!this.store.adoptPlanOwner(plan.id, plan.owner, sessionID)) return false
       // Persist the replacement's wake with ownership so a restart cannot split them.
       this.wakeRecoveredArchitect(plan.id)
       return true
@@ -8698,12 +8146,7 @@ export class TaskRuntime {
     ownerSession: HostSession | null | undefined,
   ) {
     const sourceSessionID = command.sourceSessionID
-    if (
-      !sourceSessionID ||
-      caller !== plan.owner ||
-      !this.validArchitect(ownerSession) ||
-      ownerSession.id !== plan.owner
-    )
+    if (!sourceSessionID || !this.validArchitect(ownerSession))
       throw new Error("Source notice reconciliation requires the current active Architect owner")
     const legacyPage = this.store.architectLegacySourceNoticePage(sourceSessionID, 20)
     if (!legacyPage.total)
@@ -9392,6 +8835,38 @@ export class TaskRuntime {
     this.renewalEvent(renewal, event, { renewalID: renewal.id, error, ...payload }, fence)
   }
 
+  /** The single routing decision: reuse a warm or small Architect, otherwise create a fresh one. */
+  private architectRoute(session: HostSession | null | undefined): ArchitectRoute {
+    return routeArchitect(
+      this.validArchitect(session) ? session : null,
+      this.now(),
+      this.architectRouting,
+    )
+  }
+
+  /** Record the routing decision once per change, with its reason, before acting on it. */
+  private recordArchitectRoute(
+    plan: PlanRow,
+    route: ArchitectRoute,
+    session: HostSession | null | undefined,
+  ) {
+    const previous = this.store.latestTransition<{ sessionID: string | null; reason: string }>(
+      plan.id,
+      null,
+      "ARCHITECT_ROUTED",
+    )
+    if (previous?.sessionID === route.sessionID && previous.reason === route.reason) return
+    this.store.record(plan.id, null, "ARCHITECT_ROUTED", {
+      action: route.action,
+      reason: route.reason,
+      sessionID: route.sessionID,
+      owner: plan.owner,
+      contextTokens: session ? architectContextTokens(session) : null,
+      cacheWindowMs: this.architectRouting.architectCacheWindowMs,
+      reuseMaxContextTokens: this.architectRouting.architectReuseMaxContextTokens,
+    })
+  }
+
   private architectWaitingForHuman(session: HostSession) {
     return (session.pendingForms ?? 0) > 0 || (session.pendingPermissions ?? 0) > 0
   }
@@ -9405,7 +8880,7 @@ export class TaskRuntime {
       owner.busy ||
       this.architectWaitingForHuman(owner) ||
       !owner.model ||
-      this.now() - owner.idleAt < this.architectIdleWindowMs
+      this.architectRoute(owner).action !== "fresh"
     )
       return false
     if (!this.store.architectContinuity(owner.id)) return false
@@ -9558,8 +9033,7 @@ export class TaskRuntime {
 
           const predecessor = await this.host.session(renewal.previous_session_id)
           const tooRecent =
-            predecessor?.idleAt === undefined ||
-            this.now() - predecessor.idleAt < this.architectIdleWindowMs
+            predecessor?.idleAt === undefined || this.architectRoute(predecessor).action !== "fresh"
           if (
             !this.validArchitect(predecessor) ||
             predecessor.busy ||
@@ -9708,7 +9182,7 @@ export class TaskRuntime {
           predecessorBeforeArchive.busy ||
           this.architectWaitingForHuman(predecessorBeforeArchive) ||
           predecessorBeforeArchive.idleAt === undefined ||
-          this.now() - predecessorBeforeArchive.idleAt < this.architectIdleWindowMs
+          this.architectRoute(predecessorBeforeArchive).action !== "fresh"
         ) {
           this.renewalIssue(
             renewal,
@@ -9877,10 +9351,12 @@ export class TaskRuntime {
   private hold(
     plan: PlanRow,
     reason: string,
-    allowedActions = ["audit", "reconcile", "cancel"],
+    requestedActions: readonly string[] = ["audit", "reconcile", "cancel"],
     workerObservation?: TerminalWorkerHold,
     observationFence?: WorkerObservationFence,
   ) {
+    // A hold advertises every action that unblocks its reason.
+    const allowedActions = holdActions(reason, requestedActions)
     const currentObservation = this.store.atomic((db) => {
       if (observationFence && !this.workerObservationCurrent(observationFence)) return false
       const current = db
@@ -9952,13 +9428,6 @@ export class TaskRuntime {
       pendingPermissions: worker.pendingPermissions ?? 0,
       pendingForms: worker.pendingForms ?? 0,
       observationUnstable: worker.observationUnstable ?? false,
-      background:
-        worker.background ??
-        ({
-          state: "unknown",
-          source: "experimental.idle",
-          reason: "Native idle background observation is unavailable",
-        } as const),
     }
   }
   private outcome(planID: string, payload: unknown, resume: boolean) {
@@ -10042,12 +9511,27 @@ export class TaskRuntime {
     payload: unknown,
     fence: number,
   ): EffectRow {
-    const id = fingerprint({ planID, taskID, attemptID, kind, payload })
+    const baseID = fingerprint({ planID, taskID, attemptID, kind, payload })
     return this.store.fenced(this.owner, fence, (db) => {
+      let id = baseID
       const existing = db
         .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?")
-        .get(id)
-      if (existing) throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
+        .get(baseID)
+      if (existing) {
+        // A verification effect is re-runnable: once its earlier run was
+        // superseded (no receipt), the same check runs again on the candidate.
+        if (!isRerunnableEffect(kind))
+          throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
+        const runs = db
+          .query<{ id: string; state: string }, [string, string, string]>(
+            "SELECT id,state FROM runner_effects WHERE plan_id=? AND kind=? AND payload=?",
+          )
+          .all(planID, kind, JSON.stringify(payload))
+          .filter((row) => row.id === baseID || row.id.startsWith(`${baseID}:`))
+        if (runs.some((row) => row.state !== "failed"))
+          throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
+        id = `${baseID}:${runs.length}`
+      }
       db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,?)").run(
         id,
         planID,
@@ -10072,6 +9556,22 @@ export class TaskRuntime {
       this.store.record(effect.plan_id, effect.task_id, "EFFECT_COMPLETED", {
         effectID: effect.id,
         kind: effect.kind,
+      })
+    })
+  }
+  /** A re-runnable effect with no receipt is replaced, not left uncertain. */
+  private supersedeEffect(effect: EffectRow, reason: string, fence: number) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+        )
+        .run(JSON.stringify({ superseded: true, reason }), effect.id).changes
+      if (changed !== 1) return
+      this.store.record(effect.plan_id, effect.task_id, "EFFECT_SUPERSEDED", {
+        effectID: effect.id,
+        kind: effect.kind,
+        reason,
       })
     })
   }
@@ -10425,7 +9925,7 @@ export class TaskRuntime {
         session?.busy ||
         session?.pendingInput ||
         session?.observationUnstable ||
-        (session?.background?.state === "observed" && session.background.count > 0)
+        (session && this.backgroundBlockReason(session))
       )
         return
     }
@@ -10637,17 +10137,13 @@ export class TaskRuntime {
         }
         await this.reconcilePlan(candidate.id, fence, "step", async () => {
           let plan: PlanRow = candidate
-          if (plan.state === "draft" && !this.taskStartID(plan)) return
           if (plan.state === "draft") {
-            const taskID = this.taskStartID(plan)!
-            await this.command(
-              {
-                requestID: `task-start-run:${taskID}:1`,
-                planID: plan.id,
-                expectedVersion: plan.version,
-                action: "run",
-              },
-              plan.owner,
+            // Only an explicit draft waits. Every other draft is admitted: the request is the authorization.
+            if (explicitDraft(plan)) return
+            const taskID = this.taskStartID(plan)
+            await this.admitPlan(
+              plan,
+              taskID ? `task-start-run:${taskID}:1` : `submit-admit:${plan.id}`,
             )
             plan = this.store.plan(plan.id)!
           }
@@ -10712,89 +10208,103 @@ export class TaskRuntime {
       )
   }
 
+  /**
+   * A cancelled prerequisite drops its dependency edge and notifies the
+   * Architect; dependents are never held on it. The dropped edge is recorded
+   * in a plan revision. A hold left by an earlier version is released through
+   * the task and plan machines.
+   */
   private reconcileCancelledDependencies(planID: string, fence: number) {
     return this.store.fenced(this.owner, fence, (db) => {
       const plan = this.store.plan(planID)!
       if (!["running", "blocked"].includes(plan.state)) return plan
-      type Saved = {
-        roots: string[]
-        nodes: Array<{ taskID: string; version: number; reason: string }>
-        planHold: { previousState: string; previousReason: string | null; reason: string } | null
-      }
-      const previous = this.store.latestTransition<Saved>(
-        planID,
-        null,
-        "DEPENDENCY_CANCELLATION",
-      ) ?? { roots: [], nodes: [], planHold: null }
-      const cancelledPlans = this.store.cancelledDependencyPlans(planID)
-      const cancelledNodes = this.store.cancelledDependencyNodes(planID)
-      const roots = [
-        ...new Set([
-          ...cancelledPlans.map((item) => item.reference),
-          ...cancelledNodes.map((item) => item.reference),
-        ]),
-      ].sort()
-      const reason = roots.length
-        ? `Prerequisite cancelled: ${roots.join(", ")}`
-        : "Cancelled prerequisite resolved"
-      const nodes: Saved["nodes"] = []
-      for (const node of this.store.nodes(planID)) {
-        const saved = previous.nodes.find((item) => item.taskID === node.task_id)
-        const owned =
-          node.state === "blocked" &&
-          node.version === saved?.version &&
-          node.reason === saved.reason
-        const affected =
-          cancelledPlans.length > 0 || cancelledNodes.some((item) => item.taskID === node.task_id)
-        if (affected && (["queued", "ready"].includes(node.state) || owned)) {
-          if (owned && node.reason === reason) nodes.push(saved!)
-          else {
-            if (owned) this.store.move(planID, node.task_id, "RECONCILE")
-            this.store.move(planID, node.task_id, "BLOCK", reason)
-            const blocked = this.store.nodes(planID).find((item) => item.task_id === node.task_id)!
-            nodes.push({ taskID: node.task_id, version: blocked.version, reason })
-          }
-        } else if (owned && !affected) this.store.move(planID, node.task_id, "RECONCILE")
-      }
-      let planHold = previous.planHold
-      const ownsHold = planHold && plan.state === "blocked" && plan.reason === planHold.reason
-      if (cancelledPlans.length && (plan.state === "running" || ownsHold)) {
-        planHold = {
-          previousState: planHold?.previousState ?? plan.state,
-          previousReason: planHold
-            ? planHold.previousReason === planHold.reason
-              ? null
-              : planHold.previousReason
-            : plan.reason,
-          reason,
-        }
-        if (plan.state !== "blocked" || plan.reason !== reason)
+      const input = PlanInput.parse(JSON.parse(plan.body))
+      const cancelledPlan = (id: string) =>
+        ["cancelling", "cancelled"].includes(this.store.plan(id)?.state ?? "")
+      const nodes = this.store.nodes(planID)
+      const planEdges = (input.afterPlans ?? []).filter(cancelledPlan)
+      const pause = this.store.dispatchPause(planID)
+      const pausedUntil = (pause?.untilPlans ?? []).filter(cancelledPlan)
+      const taskEdges = input.dependencies.filter(
+        (edge) => nodes.find((node) => node.task_id === edge.prerequisite)?.state === "cancelled",
+      )
+      if (planEdges.length || taskEdges.length) {
+        this.store.revisePlan(
+          plan,
+          PlanInput.parse({
+            ...input,
+            afterPlans: (input.afterPlans ?? []).filter((id) => !planEdges.includes(id)),
+            dependencies: input.dependencies.filter((edge) => !taskEdges.includes(edge)),
+          }),
+          "DEPENDENCY_EDGE_DROPPED",
+          {
+            planPrerequisites: planEdges,
+            taskEdges: taskEdges.map((edge) => ({
+              prerequisite: edge.prerequisite,
+              successor: edge.successor,
+            })),
+          },
+        )
+        for (const edge of taskEdges)
           db.query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=?",
-          ).run(reason, planID)
-      } else if (!cancelledPlans.length && ownsHold) {
-        db.query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,?),reason=?,version=version+1 WHERE id=?",
-        ).run(planHold!.previousState, planHold!.previousReason, planID)
-        planHold = null
-      } else if (!ownsHold) planHold = null
-      const next: Saved = { roots, nodes, planHold }
-      if (JSON.stringify(previous) !== JSON.stringify(next)) {
-        this.store.record(planID, null, "DEPENDENCY_CANCELLATION", next)
+            "DELETE FROM runner_dependencies WHERE plan_id=? AND prerequisite=? AND successor=?",
+          ).run(planID, edge.prerequisite, edge.successor)
+      }
+      if (pause && pausedUntil.length) {
+        const remaining = pause.untilPlans.filter((id) => !pausedUntil.includes(id))
+        this.store.setDispatchPause(
+          planID,
+          remaining.length ? { reason: pause.reason, untilPlans: remaining } : null,
+          { droppedCancelledPrerequisites: pausedUntil },
+        )
+      }
+      if (planEdges.length || taskEdges.length || pausedUntil.length)
         this.outcome(
           planID,
           {
-            status: roots.length ? "blocked" : "dependency-resolved",
-            reason,
-            cancelledPrerequisites: roots,
-            blockedTaskIDs: nodes.map((node) => node.taskID),
-            allowedActions: ["schedule", "reconcile", "cancel"],
+            status: "dependency-dropped",
+            reason: "A cancelled prerequisite was dropped; dependent work continues",
+            droppedPlanPrerequisites: planEdges,
+            droppedTaskPrerequisites: taskEdges.map((edge) => edge.prerequisite),
+            droppedPauseConditions: pausedUntil,
+            allowedActions: ["schedule", "audit"],
           },
           true,
         )
-      }
+      this.releaseLegacyDependencyHold(plan.id)
       return this.store.plan(planID)!
     })
+  }
+
+  /** Releases a hold applied by an earlier version for a cancelled prerequisite. */
+  private releaseLegacyDependencyHold(planID: string) {
+    type Saved = {
+      roots: string[]
+      nodes: Array<{ taskID: string; version: number; reason: string }>
+      planHold: { previousState: string; previousReason: string | null; reason: string } | null
+    }
+    const previous = this.store.latestTransition<Saved>(planID, null, "DEPENDENCY_CANCELLATION")
+    if (!previous || (!previous.nodes.length && !previous.planHold)) return
+    for (const node of this.store.nodes(planID)) {
+      const saved = previous.nodes.find((item) => item.taskID === node.task_id)
+      if (saved && node.state === "blocked" && node.version === saved.version)
+        this.store.move(planID, node.task_id, "RECONCILE")
+    }
+    const plan = this.store.plan(planID)!
+    const hold = previous.planHold
+    if (hold && plan.state === "blocked" && plan.reason === hold.reason)
+      this.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,?),reason=?,version=version+1 WHERE id=?",
+          )
+          .run(hold.previousState, hold.previousReason, planID),
+      )
+    this.store.record(planID, null, "DEPENDENCY_CANCELLATION", {
+      roots: [],
+      nodes: [],
+      planHold: null,
+    } satisfies Saved)
   }
 
   private interruptedChecksFor(plan: PlanRow, attempt: AttemptRow) {
@@ -10864,6 +10374,14 @@ export class TaskRuntime {
       await this.continueArchitectRenewal(planRenewal, fence)
       return
     }
+    // Routing always reaches a live Architect: the owner is advisory, so a
+    // missing or archived one is replaced before any branch can return early.
+    const owner = await this.host.session(plan.owner)
+    if (!this.validArchitect(owner)) {
+      this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
+      await this.ensureArchitectOwner(plan, owner)
+      plan = this.store.plan(plan.id)!
+    }
     if (plan.state === "cleaning") {
       await this.worktreeCleanup.cleanupWorktrees(plan, fence)
       return
@@ -10873,7 +10391,6 @@ export class TaskRuntime {
       await this.adoptionExecution.advanceAdoption(plan, adoption, fence)
       return
     }
-    const owner = await this.host.session(plan.owner)
     if (this.validArchitect(owner)) {
       const renewal = this.store.architectRenewalForSource(owner.id)
       if (
@@ -10883,11 +10400,11 @@ export class TaskRuntime {
         await this.continueArchitectRenewal(renewal, fence)
         return
       }
-      if (await this.considerArchitectRenewal(plan, owner, fence)) return
-    }
-    if (!this.validArchitect(owner)) {
-      await this.ensureArchitectOwner(plan, owner)
-      plan = this.store.plan(plan.id)!
+      // Only work that needs judgement routes; a cold, large Architect is replaced.
+      if (["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) {
+        this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
+        if (await this.considerArchitectRenewal(plan, owner, fence)) return
+      }
     }
     // An owner read can overlap an authorized resume, cancellation, or reassignment.
     if (this.store.plan(plan.id)?.version !== plan.version) return
@@ -11123,22 +10640,12 @@ export class TaskRuntime {
             effect.state === "completed",
         )
       this.observeUsage(attempt, session, fence)
-      const backgroundReason = this.backgroundBlockReason(session, attempt)
-      const knownBackgroundWork =
-        session.background?.state === "observed" && session.background.count > 0
+      const backgroundReason = this.backgroundBlockReason(session)
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
         this.approvalWait(plan, attempt, session, fence)
       if (session.busy) {
         await this.host.interrupt(attempt.session_id)
-        if (backgroundReason)
-          this.backgroundWait(
-            plan,
-            attempt,
-            session,
-            backgroundReason,
-            fence,
-            knownBackgroundWork ? "WORKER_BACKGROUND_WAIT" : "WORKER_BACKGROUND_UNKNOWN",
-          )
+        if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
         waiting = true
         continue
       }
@@ -11151,20 +10658,11 @@ export class TaskRuntime {
         waiting = true
         continue
       }
-      if (knownBackgroundWork) {
-        this.backgroundWait(plan, attempt, session, backgroundReason!, fence)
+      if (backgroundReason) {
+        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
         waiting = true
         continue
       }
-      if (backgroundReason)
-        this.backgroundWait(
-          plan,
-          attempt,
-          session,
-          backgroundReason,
-          fence,
-          "WORKER_BACKGROUND_UNKNOWN",
-        )
       session = await this.host.session(attempt.session_id, { messages: true })
       if (!session) {
         if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
@@ -11184,23 +10682,12 @@ export class TaskRuntime {
         waiting = true
         continue
       }
-      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
-      const detailedKnownBackgroundWork =
-        session.background?.state === "observed" && session.background.count > 0
-      if (detailedKnownBackgroundWork) {
-        this.backgroundWait(plan, attempt, session, detailedBackgroundReason!, fence)
+      const detailedBackgroundReason = this.backgroundBlockReason(session)
+      if (detailedBackgroundReason) {
+        this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         waiting = true
         continue
       }
-      if (detailedBackgroundReason)
-        this.backgroundWait(
-          plan,
-          attempt,
-          session,
-          detailedBackgroundReason,
-          fence,
-          "WORKER_BACKGROUND_UNKNOWN",
-        )
       if (
         promptCompleted &&
         (!session.turn ||
@@ -11268,7 +10755,7 @@ export class TaskRuntime {
         .filter((candidate) => candidate.task_id === attempt.task_id)
         .at(-1)
       if (
-        currentPlan?.owner !== plan.owner ||
+        !currentPlan ||
         currentPlan.state !== plan.state ||
         current?.id !== attempt.id ||
         current.session_id !== attempt.session_id ||
@@ -11424,32 +10911,6 @@ export class TaskRuntime {
     })
   }
 
-  private isPriorContinuationBackground(
-    attempt: AttemptRow,
-    background: HostSession["background"],
-    currentInputID: string | null | undefined,
-  ) {
-    const assignedInputID = currentInputID === undefined ? attempt.message_id : currentInputID
-    if (!assignedInputID || !this.matchesWorkerInput(attempt, assignedInputID)) return false
-    if (background?.state === "observed")
-      return (
-        background.inputID !== assignedInputID &&
-        this.isPriorContinuationInput(attempt, background.inputID)
-      )
-    if (background?.state !== "unknown") return false
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      inputID?: string
-      background?: HostSession["background"]
-    }>(attempt.plan_id, attempt.task_id, "WORKER_BACKGROUND_UNKNOWN")
-    return (
-      previous?.attemptID === attempt.id &&
-      previous.inputID !== assignedInputID &&
-      this.isPriorContinuationInput(attempt, previous.inputID) &&
-      JSON.stringify(previous.background) === JSON.stringify(background)
-    )
-  }
-
   private async observeCleanupSession(attempt: AttemptRow): Promise<CleanupSessionObservation> {
     try {
       const session = await this.host.session(attempt.session_id, { messages: true })
@@ -11515,33 +10976,10 @@ export class TaskRuntime {
     pass("pending-permissions")
     if ((session.pendingForms ?? 0) !== 0) return fail("pending-forms", "pending-forms")
     pass("pending-forms")
-    if (!session.outcome) return fail("outcome", "outcome-absent")
-    pass("outcome")
-    if (!session.turn) return fail("turn", "turn-absent")
-    if (session.turn.state === "pending") return fail("turn", "turn-pending")
-    if (session.turn.state !== "completed" && session.turn.state !== "interrupted")
-      return fail("turn", "turn-unknown")
-    pass("turn")
-    if (this.isPriorContinuationBackground(attempt, session.background, session.turn.inputID)) {
-      // Reflect the existing cleanup exception without reclassifying old input as current.
-      stages.push({ stage: "background", status: "passed", code: "prior-continuation-background" })
-      for (const stage of cleanupObservationStages.slice(
-        cleanupObservationStages.indexOf("background") + 1,
-      ))
-        stages.push({ stage, status: "not-evaluated" })
-      return { binding, firstBlocker: null, stages }
-    }
-    if (!session.background) return fail("background", "background-absent")
-    if (session.background.state === "unknown") return fail("background", "background-unknown")
-    pass("background")
-    if (!this.matchesWorkerInput(attempt, session.background.inputID))
-      return fail("assigned-input", "assigned-input-mismatch")
-    pass("assigned-input")
-    if (session.turn.inputID !== session.background.inputID)
-      return fail("turn-input", "turn-input-mismatch")
-    pass("turn-input")
-    if (session.background.count > 0) return fail("background-count", "positive-background-count")
-    pass("background-count")
+    if ((session.runningShells ?? 0) !== 0) return fail("running-shells", "running-shells")
+    pass("running-shells")
+    if ((session.activeChildren ?? 0) !== 0) return fail("active-children", "active-children")
+    pass("active-children")
     return { binding, firstBlocker: null, stages }
   }
 
@@ -11604,28 +11042,16 @@ export class TaskRuntime {
     }
   }
 
-  private backgroundBlockReason(
-    session: HostSession,
-    attempt: AttemptRow,
-    requireTurnLineage = false,
-  ): string | undefined {
-    const background = session.background
-    if (!background) return "Native idle background observation is unknown"
-    if (background.state === "unknown")
-      return `Native idle background observation is unknown: ${background.reason}`
-    if (
-      !this.matchesWorkerInput(attempt, background.inputID) ||
-      (requireTurnLineage && session.turn?.inputID !== background.inputID)
-    )
-      return "Native idle background observation does not match the current worker input lineage"
-    if (background.count > 0) {
-      const kinds = Object.entries(background.kinds)
-        .filter(([, count]) => count > 0)
-        .map(([kind, count]) => `${count} ${kind}`)
-        .join(", ")
-      return `Worker has ${background.count} known background job(s) in the last experimental.idle report${kinds ? ` (${kinds})` : ""}`
-    }
-    return undefined
+  /**
+   * Live idle check: a worker with a running shell in its worktree or an
+   * active child session is not idle. The counts are read from the host at
+   * observation time; there is no report to wait for.
+   */
+  backgroundBlockReason(session: HostSession): string | undefined {
+    const shells = session.runningShells ?? 0
+    const children = session.activeChildren ?? 0
+    if (shells === 0 && children === 0) return undefined
+    return `Worker has ${shells} running shell(s) and ${children} active child session(s)`
   }
 
   private approvalWait(
@@ -11712,7 +11138,6 @@ export class TaskRuntime {
       !currentPlan ||
       currentPlan.version !== plan.version ||
       currentPlan.state !== plan.state ||
-      currentPlan.owner !== plan.owner ||
       !currentAttempt ||
       currentAttempt.id !== attempt.id ||
       currentAttempt.state !== attempt.state ||
@@ -11728,7 +11153,6 @@ export class TaskRuntime {
       planVersion: plan.version,
       planState: plan.state,
       owner: plan.owner,
-      controlEpoch: this.store.planControlEpoch(plan.id),
       reconcileRequestID: this.reconcileRequestID(plan.id),
       taskID: attempt.task_id,
       attemptID: attempt.id,
@@ -11755,8 +11179,6 @@ export class TaskRuntime {
       plan &&
       plan.version === observation.planVersion &&
       plan.state === observation.planState &&
-      plan.owner === observation.owner &&
-      this.store.planControlEpoch(observation.planID) === observation.controlEpoch &&
       this.reconcileRequestID(observation.planID) === observation.reconcileRequestID &&
       attempt?.id === observation.attemptID &&
       attempt.state === observation.attemptState &&
@@ -11812,9 +11234,13 @@ export class TaskRuntime {
     const current = this.store.plan(plan.id)
     const reason = current?.reason
     const observationReason = reason?.replace(/^Worker execution (?:failed|completed); /, "")
+    // Legacy holds named the retired experimental.idle report; they clear the same way.
     const backgroundWait =
       observationReason?.startsWith("Native idle background observation") ||
-      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "")
+      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "") ||
+      /^Worker has \d+ running shell\(s\) and \d+ active child session\(s\)/.test(
+        observationReason ?? "",
+      )
     const approvalWait = this.approvalWaitReason(reason)
     if (current?.state !== "blocked" || !reason || (!backgroundWait && !approvalWait)) return
     if (approvalWait && !this.conclusiveApprovalClear(attempt, session)) return false
@@ -11834,8 +11260,7 @@ export class TaskRuntime {
       if (
         current?.state !== "blocked" ||
         current.reason !== reason ||
-        current.version !== observation.planVersion ||
-        current.owner !== observation.owner
+        current.version !== observation.planVersion
       )
         return false
       const changed =
@@ -11847,7 +11272,7 @@ export class TaskRuntime {
       if (changed)
         this.store.record(plan.id, null, "WORKER_OBSERVATION_SETTLED", {
           previousReason: reason,
-          observation: approvalWait ? "worker-approvals" : "experimental.idle-background",
+          observation: approvalWait ? "worker-approvals" : "live-idle-check",
         })
       return changed
     })
@@ -11859,32 +11284,25 @@ export class TaskRuntime {
     session: HostSession,
     reason: string,
     fence: number,
-    event: "WORKER_BACKGROUND_WAIT" | "WORKER_BACKGROUND_UNKNOWN" = "WORKER_BACKGROUND_WAIT",
   ) {
-    const background = session.background ?? {
-      state: "unknown" as const,
-      source: "experimental.idle" as const,
-      reason: "Native idle background observation is unavailable",
+    const background = {
+      runningShells: session.runningShells ?? 0,
+      activeChildren: session.activeChildren ?? 0,
     }
-    const inputID =
-      session.turn?.inputID ?? (background.state === "observed" ? background.inputID : undefined)
     const previous = this.store.latestTransition<{
       attemptID?: string
-      inputID?: string
-      background?: HostSession["background"]
-    }>(plan.id, attempt.task_id, event)
+      background?: typeof background
+    }>(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT")
     if (
       previous?.attemptID === attempt.id &&
-      previous.inputID === inputID &&
       JSON.stringify(previous.background) === JSON.stringify(background)
     )
       return
     this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, event, {
+      this.store.record(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT", {
         attemptID: attempt.id,
         sessionID: attempt.session_id,
         workspace: attempt.workspace,
-        ...(inputID ? { inputID } : {}),
         reason,
         background,
       }),
@@ -12022,7 +11440,6 @@ export class TaskRuntime {
   }
 
   private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
-    const dispatchEpoch = this.store.planControlEpoch(plan.id)
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
     const first = attempts[0]
@@ -12133,10 +11550,8 @@ export class TaskRuntime {
         !current ||
         current.state !== "running" ||
         this.store.dispatchPause(plan.id) !== undefined ||
-        current.owner !== plan.owner ||
         current.revision !== plan.revision ||
         current.body !== plan.body ||
-        this.store.planControlEpoch(plan.id) !== dispatchEpoch ||
         currentNode?.state !== node.state
       )
         return false
@@ -12173,7 +11588,6 @@ export class TaskRuntime {
     if (!admitted) return
     const admissionPlan = this.store.plan(plan.id)!
     const admissionOwner = admissionPlan.owner
-    const admissionEpoch = this.store.planControlEpoch(plan.id)
     this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {
       attemptID: id,
       packet: policy.packet,
@@ -12181,12 +11595,7 @@ export class TaskRuntime {
     })
     if (input.workspaceMode === "shared") {
       const current = this.store.plan(plan.id)
-      if (
-        current?.state !== "running" ||
-        current.owner !== admissionOwner ||
-        this.store.planControlEpoch(plan.id) !== admissionEpoch
-      )
-        return
+      if (current?.state !== "running" || current.owner !== admissionOwner) return
       await this.prepareWorker(plan, attempt, fence)
       return
     }
@@ -12205,12 +11614,7 @@ export class TaskRuntime {
       return
     }
     const current = this.store.plan(plan.id)
-    if (
-      current?.state !== "running" ||
-      current.owner !== admissionOwner ||
-      this.store.planControlEpoch(plan.id) !== admissionEpoch
-    )
-      return
+    if (current?.state !== "running" || current.owner !== admissionOwner) return
     await this.prepareWorker(plan, attempt, fence)
   }
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
@@ -12271,19 +11675,13 @@ export class TaskRuntime {
     return true
   }
 
-  private async promptAdmissionAllowed(
-    planID: string,
-    attempt: AttemptRow,
-    authority: { owner: string; ownerEpoch: number },
-  ) {
+  private async promptAdmissionAllowed(planID: string, attempt: AttemptRow) {
     const plan = this.store.plan(planID)
     const currentAttempt = this.store
       .attempts(planID)
       .find((candidate) => candidate.id === attempt.id)
     if (
       plan?.state !== "running" ||
-      plan.owner !== authority.owner ||
-      this.store.planControlEpoch(planID) !== authority.ownerEpoch ||
       currentAttempt?.state !== "preparing" ||
       !this.preparationAllowed(currentAttempt)
     )
@@ -12443,7 +11841,6 @@ export class TaskRuntime {
       nativeAssignmentID?: unknown
       messageID?: unknown
       owner?: unknown
-      ownerEpoch?: unknown
       sessionID?: unknown
       workspace?: unknown
       route?: unknown
@@ -12461,8 +11858,6 @@ export class TaskRuntime {
       !repair.messageID ||
       typeof repair.owner !== "string" ||
       !repair.owner.trim() ||
-      !Number.isSafeInteger(repair.ownerEpoch) ||
-      (repair.ownerEpoch as number) < 0 ||
       typeof repair.sessionID !== "string" ||
       typeof repair.workspace !== "string" ||
       typeof repair.defect !== "string" ||
@@ -12473,12 +11868,7 @@ export class TaskRuntime {
     )
       return undefined
     const plan = this.store.plan(attempt.plan_id)
-    if (
-      !plan ||
-      plan.owner !== repair.owner ||
-      this.store.planControlEpoch(attempt.plan_id) !== repair.ownerEpoch
-    )
-      return undefined
+    if (!plan || plan.owner !== repair.owner) return undefined
     const repairRoute = ModelPolicy.safeParse(repair.route)
     let attemptRoute: ReturnType<typeof ModelPolicy.safeParse> | undefined
     let planRoute: ReturnType<typeof ModelPolicy.safeParse> | undefined
@@ -12514,8 +11904,6 @@ export class TaskRuntime {
       }
       if (!isRecord(captured)) return undefined
       const turn = isRecord(captured.turn) ? captured.turn : undefined
-      const background = isRecord(captured.background) ? captured.background : undefined
-      const boundBackground = background as HostSession["background"]
       if (
         captured.id !== attempt.session_id ||
         captured.projectID !== this.projectID ||
@@ -12530,28 +11918,8 @@ export class TaskRuntime {
         captured.outcome !== "succeeded" ||
         turn?.inputID !== admissionInputID ||
         turn?.state !== "completed" ||
-        this.retainedRepairBackgroundProblem(
-          attempt,
-          {
-            id: attempt.session_id,
-            projectID: this.projectID,
-            directory: attempt.workspace,
-            metadata: { lazersAttemptID: attempt.id },
-            busy: false,
-            pendingInput: false,
-            pendingPermissions: 0,
-            pendingForms: 0,
-            turn: { inputID: admissionInputID, state: "completed" },
-            background: boundBackground,
-            archived: false,
-            tokens: null,
-            tools: 0,
-            cost: null,
-            messages: [],
-          },
-          admissionInputID,
-          admissionAssignmentID,
-        )
+        Number(captured.runningShells ?? 0) !== 0 ||
+        Number(captured.activeChildren ?? 0) !== 0
       )
         return undefined
     }
@@ -12592,8 +11960,6 @@ export class TaskRuntime {
           if (
             recovery.schema !== "lazers-retained-repair-recovery/v1" ||
             recovery.operationID !== repair.operationID ||
-            recovery.owner !== repair.owner ||
-            recovery.ownerEpoch !== repair.ownerEpoch ||
             recovery.interruptedInputID !== repair.messageID ||
             !repairTransition ||
             !Number.isSafeInteger(failedResumeID) ||
@@ -12640,7 +12006,6 @@ export class TaskRuntime {
       originalMessageID: repair.messageID,
       assignedMessageID: attempt.message_id,
       owner: repair.owner,
-      ownerEpoch: repair.ownerEpoch as number,
       allowLegacyReceipt: true,
       transitions,
     })
@@ -12667,7 +12032,6 @@ export class TaskRuntime {
       continued: lineage.status === "continued",
       ...(lineage.status === "continued" ? { terminalOutcome: lineage.terminalOutcome } : {}),
       owner: repair.owner,
-      ownerEpoch: repair.ownerEpoch as number,
       sessionID: repair.sessionID,
       workspace: repair.workspace,
       route: repair.route,
@@ -12716,9 +12080,6 @@ export class TaskRuntime {
       const latestRepair = this.retainedRepairForAttempt(attempt)
       return Boolean(
         latestPlan?.state === "running" &&
-        latestPlan.owner === repair.owner &&
-        plan.owner === repair.owner &&
-        this.store.planControlEpoch(plan.id) === repair.ownerEpoch &&
         latestAttempt?.state === "preparing" &&
         latestAttempt.message_id === attempt.message_id &&
         latestAttempt.session_id === attempt.session_id &&
@@ -12737,15 +12098,7 @@ export class TaskRuntime {
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const expectedInputID = repair.nativeInputID
     const expectedOutcome = repair.continued ? repair.terminalOutcome! : "succeeded"
-    const backgroundProblem =
-      observed?.background?.state === "observed"
-        ? this.retainedRepairBackgroundProblem(
-            attempt,
-            observed,
-            expectedInputID,
-            repair.nativeAssignmentID,
-          )
-        : undefined
+    const backgroundProblem = this.retainedRepairBackgroundProblem(observed, expectedInputID)
     if (
       backgroundProblem ||
       this.retainedRepairWorkerProblem(
@@ -12763,15 +12116,10 @@ export class TaskRuntime {
     const owner = await this.host.session(repair.owner)
     if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
     const confirmed = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedBackgroundProblem =
-      confirmed?.background?.state === "observed"
-        ? this.retainedRepairBackgroundProblem(
-            attempt,
-            confirmed,
-            expectedInputID,
-            repair.nativeAssignmentID,
-          )
-        : undefined
+    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
+      confirmed,
+      expectedInputID,
+    )
     return Boolean(
       !this.retainedRepairWorkerProblem(
         plan,
@@ -12793,14 +12141,9 @@ export class TaskRuntime {
 
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
     const admissionPlan = this.store.plan(plan.id)
-    if (!admissionPlan || admissionPlan.state !== "running" || admissionPlan.owner !== plan.owner)
-      return
-    const authority = {
-      owner: admissionPlan.owner,
-      ownerEpoch: this.store.planControlEpoch(plan.id),
-    }
+    if (!admissionPlan || admissionPlan.state !== "running") return
     if (!(await this.startupWorkspaceReady(admissionPlan, attempt, fence))) return
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
+    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
     const retainedRepair = this.retainedRepairForAttempt(attempt)
     const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
       plan.id,
@@ -12827,7 +12170,7 @@ export class TaskRuntime {
       !retainedRepair &&
       !existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")
     ) {
-      if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
+      if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -12852,7 +12195,7 @@ export class TaskRuntime {
         return
       }
     }
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
+    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
     const repairPrompt = retainedRepair
       ? existing.find(
           (effect) =>
@@ -12913,7 +12256,7 @@ export class TaskRuntime {
           JSON.parse(e.payload).messageID === attempt.message_id,
       )
     ) {
-      if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
+      if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
       if (
         retainedRepair &&
         !(await this.retainedRepairPromptCurrent(plan, attempt, retainedRepair))
@@ -12989,7 +12332,7 @@ export class TaskRuntime {
         return
       }
     }
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt, authority))) return
+    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
     const started = this.store.fenced(this.owner, fence, (db) => {
       const currentPlan = this.store.plan(plan.id)
       const currentAttempt = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
@@ -13024,16 +12367,12 @@ export class TaskRuntime {
     attempt: AttemptRow,
     worker: HostSession,
   ) {
-    // A matching foreground completion can be retained even when the last
-    // idle report belongs to another input. Known jobs still keep the source.
+    // A completed foreground worker's source can be retained; a running shell or
+    // child session keeps it.
     if (
       plan.state !== "blocked" ||
       (attempt.state !== "running" &&
-        !(
-          attempt.state === "verifying" &&
-          (this.hasSettledVerificationTimeout(plan, attempt) ||
-            (await this.hasSettledHumanEvidenceHold(plan, attempt)))
-        )) ||
+        !(attempt.state === "verifying" && this.hasSettledVerificationTimeout(plan, attempt))) ||
       attempt.workspace === this.directory ||
       !this.host.ensureSourceGuard ||
       !this.host.archiveRetainedWorker ||
@@ -13043,7 +12382,7 @@ export class TaskRuntime {
       worker.observationUnstable ||
       worker.pendingPermissions !== 0 ||
       worker.pendingForms !== 0 ||
-      (worker.background?.state === "observed" && worker.background.count > 0) ||
+      this.backgroundBlockReason(worker) !== undefined ||
       worker.outcome !== "succeeded"
     )
       return
@@ -13114,7 +12453,6 @@ export class TaskRuntime {
       const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
       if (
         !currentPlan ||
-        currentPlan.owner !== plan.owner ||
         !["running", "blocked"].includes(currentPlan.state) ||
         latest?.id !== attempt.id ||
         latest.message_id !== attempt.message_id ||
@@ -13228,12 +12566,7 @@ export class TaskRuntime {
       this.isPriorContinuationInput(attempt, session.turn.inputID)
     )
       return
-    const priorBackground = this.isPriorContinuationBackground(
-      attempt,
-      session.background,
-      session.turn?.inputID,
-    )
-    const backgroundReason = this.backgroundBlockReason(session, attempt)
+    const backgroundReason = this.backgroundBlockReason(session)
     const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
       plan.id,
       null,
@@ -13251,8 +12584,7 @@ export class TaskRuntime {
       previousHold.idleAt === session.idleAt &&
       (!session.turn ||
         (previousHold.inputID === session.turn.inputID &&
-          previousHold.turnState === session.turn.state)) &&
-      JSON.stringify(previousHold.background) === JSON.stringify(session.background)
+          previousHold.turnState === session.turn.state))
     if (
       !session.busy &&
       !session.pendingInput &&
@@ -13262,22 +12594,16 @@ export class TaskRuntime {
       ((session.outcome !== "failed" && session.outcome !== "succeeded") ||
         unchangedTerminal ||
         session.archived ||
-        (session.outcome === "succeeded" &&
-          session.background?.state === "observed" &&
-          session.background.count > 0))
+        session.outcome === "succeeded")
     ) {
-      if (!priorBackground) {
-        this.hold(
-          plan,
-          backgroundReason,
-          ["audit", "reconcile", "cancel"],
-          unchangedTerminal ? previousHold : undefined,
-          observation,
-        )
-        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        if (unchangedTerminal)
-          await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
-      }
+      this.hold(
+        plan,
+        backgroundReason,
+        ["audit", "reconcile", "cancel"],
+        unchangedTerminal ? previousHold : undefined,
+        observation,
+      )
+      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
       return
     }
     if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
@@ -13300,12 +12626,7 @@ export class TaskRuntime {
         this.isPriorContinuationInput(attempt, session.turn.inputID)
       )
         return
-      const priorBackground = this.isPriorContinuationBackground(
-        attempt,
-        session.background,
-        session.turn?.inputID,
-      )
-      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
+      const detailedBackgroundReason = this.backgroundBlockReason(session)
       if (session.outcome === "interrupted") {
         this.workerEvent(
           plan,
@@ -13319,16 +12640,7 @@ export class TaskRuntime {
           ? `Worker execution was interrupted; ${detailedBackgroundReason}`
           : "Worker execution was interrupted; explicit reconciliation or cancellation is required"
         if (detailedBackgroundReason)
-          this.backgroundWait(
-            plan,
-            attempt,
-            session,
-            detailedBackgroundReason,
-            fence,
-            session.background?.state === "unknown" || !session.background
-              ? "WORKER_BACKGROUND_UNKNOWN"
-              : "WORKER_BACKGROUND_WAIT",
-          )
+          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         this.hold(
           plan,
           reason,
@@ -13348,16 +12660,7 @@ export class TaskRuntime {
             session.outcome,
             session.turn?.inputID,
           )
-          this.backgroundWait(
-            plan,
-            attempt,
-            session,
-            detailedBackgroundReason,
-            fence,
-            session.background?.state === "unknown" || !session.background
-              ? "WORKER_BACKGROUND_UNKNOWN"
-              : "WORKER_BACKGROUND_WAIT",
-          )
+          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
           this.hold(
             plan,
             `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${detailedBackgroundReason}`,
@@ -13365,10 +12668,8 @@ export class TaskRuntime {
             this.terminalWorkerObservation(attempt, session),
             observation,
           )
-          await this.isolateStoppedWorkerSource(this.store.plan(plan.id)!, attempt, session)
           return
         }
-        if (priorBackground && !session.outcome) return
         this.hold(
           plan,
           detailedBackgroundReason,
@@ -13527,7 +12828,6 @@ export class TaskRuntime {
       environmentIdentity,
       messageID: attempt.message_id,
       ...(repairID ? { repairID } : {}),
-      controlEpoch: this.store.planControlEpoch(plan.id),
       planVersion: plan.version,
       receiptPath: join(
         this.dataDirectory,
@@ -13538,6 +12838,7 @@ export class TaskRuntime {
     }
     const existing = this.store.effects(plan.id).findLast((effect) => {
       if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
+      if (effectSuperseded(effect)) return false
       const recorded = JSON.parse(effect.payload)
       if (
         recorded.messageID !== attempt.message_id ||
@@ -13574,8 +12875,7 @@ export class TaskRuntime {
         recorded.command !== payload.command ||
         JSON.stringify(recorded.scope) !== JSON.stringify(scope) ||
         recorded.messageID !== attempt.message_id ||
-        recorded.repairID !== payload.repairID ||
-        recorded.controlEpoch !== payload.controlEpoch
+        recorded.repairID !== payload.repairID
       ) {
         this.hold(
           plan,
@@ -13831,6 +13131,7 @@ export class TaskRuntime {
         .toReversed()
         .find((e) => {
           if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
+          if (effectSuperseded(e)) return false
           const payload = JSON.parse(e.payload) as {
             artifact?: unknown
             identity?: unknown
@@ -14005,16 +13306,7 @@ export class TaskRuntime {
       this.hold(plan, errorText(error))
       return
     }
-    const missing = await this.missingEvidence(
-      plan.id,
-      attempt.task_id,
-      artifact.commit,
-      attempt.workspace,
-      proposal.acceptance,
-      receipts,
-      undefined,
-      repairID,
-    )
+    const missing = await this.missingEvidence(attempt.workspace, proposal.acceptance, receipts)
     if (missing.length) {
       this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
       return
@@ -14048,14 +13340,9 @@ export class TaskRuntime {
     }
   }
   private async missingEvidence(
-    planID: string,
-    taskID: string | null,
-    artifact: string,
     workspace: string,
     assertions: TaskProposal["acceptance"],
     receipts: CheckReceipt[],
-    adoptionID?: string,
-    sourceGeneration?: string,
   ) {
     const missing: string[] = []
     for (const assertion of assertions)
@@ -14067,34 +13354,6 @@ export class TaskRuntime {
           missing.push(assertion.id)
         if (evidence.kind === "artifact" && !(await artifactExists(workspace, evidence.reference)))
           missing.push(`${assertion.id}:${evidence.reference}`)
-        if (evidence.kind === "human") {
-          const found = adoptionID
-            ? this.store.hasAdoptionEvidence(
-                adoptionID,
-                taskID === null ? "combined" : "task",
-                taskID,
-                assertion.id,
-                artifact,
-              )
-            : this.store.atomic((db) => {
-                const rows = db
-                  .query<{ body: string }, [string, string | null, string, string]>(
-                    "SELECT body FROM runner_evidence WHERE plan_id=? AND task_id IS ? AND kind='human' AND assertion_id=? AND artifact IN (SELECT value FROM json_each(?))",
-                  )
-                  .all(planID, taskID, assertion.id, JSON.stringify(equivalentShas(db, artifact)))
-                return rows.some((row) => {
-                  try {
-                    return (
-                      ((JSON.parse(row.body) as { sourceGeneration?: unknown }).sourceGeneration ??
-                        undefined) === sourceGeneration
-                    )
-                  } catch {
-                    return false
-                  }
-                })
-              })
-          if (!found) missing.push(`${assertion.id}:human`)
-        }
       }
     return missing
   }
@@ -14192,10 +13451,8 @@ export class TaskRuntime {
         !currentPlan ||
         currentPlan.state !== "running" ||
         currentPlan.version !== continuation.resumedPlanVersion ||
-        currentPlan.owner !== continuation.owner ||
         currentPlan.revision !== continuation.planRevision ||
         fingerprint(currentPlan.body) !== continuation.planBodyFingerprint ||
-        this.store.planControlEpoch(plan.id) !== continuation.ownerEpoch ||
         continuation.projectDirectory !== this.directory ||
         continuation.projectID !== this.projectID ||
         continuation.planID !== plan.id ||
@@ -14235,7 +13492,6 @@ export class TaskRuntime {
         const currentBinding: CombinedVerificationContinuationBinding = {
           ...bindingData,
           owner: currentPlan.owner,
-          ownerEpoch: this.store.planControlEpoch(plan.id),
           planRevision: currentPlan.revision,
           resumedPlanVersion: currentPlan.version,
           planBodyFingerprint: fingerprint(currentPlan.body),
@@ -14424,6 +13680,7 @@ export class TaskRuntime {
       }
       const existing = this.store.effects(plan.id).find((e) => {
         if (e.kind !== `graph-verify:${check.id}`) return false
+        if (effectSuperseded(e)) return false
         try {
           const payload = JSON.parse(e.payload) as {
             artifact?: unknown
@@ -14526,16 +13783,7 @@ export class TaskRuntime {
       this.hold(plan, "Combined candidate changed after verification")
       return
     }
-    const missing = await this.missingEvidence(
-      plan.id,
-      null,
-      artifact,
-      workspace,
-      input.acceptance,
-      receipts,
-      undefined,
-      sourceGeneration,
-    )
+    const missing = await this.missingEvidence(workspace, input.acceptance, receipts)
     if (missing.length) {
       this.hold(plan, `Combined artifact evidence missing: ${missing.join(", ")}`)
       return
@@ -14746,9 +13994,8 @@ export class TaskRuntime {
                 }
                 recoveryBinding = Boolean(
                   authorization &&
-                  plan?.owner === authorization.owner &&
+                  plan &&
                   plan.version >= authorization.planVersion &&
-                  this.store.planControlEpoch(plan.id) === authorization.ownerEpoch &&
                   operation.recoveryID === authorization.recoveryID &&
                   operation.sourceEffectID === authorization.sourceEffectID,
                 )
@@ -14934,6 +14181,11 @@ export class TaskRuntime {
           )
           return
         }
+      }
+      if (isRerunnableEffect(effect.kind)) {
+        this.supersedeEffect(effect, "No receipt was recorded; the check re-runs", fence)
+        this.tickRequested = true
+        return
       }
       if (effect.state !== "uncertain")
         this.uncertain(

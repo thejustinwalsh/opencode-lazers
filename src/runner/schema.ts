@@ -78,6 +78,12 @@ export const PlanInput = z
         "Optional concise Architect-authored label; preserve verbatim and do not derive from objective.",
       ),
     objective: z.string().trim().min(1).max(8000),
+    draft: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true only to save the plan without admitting it. Submitting a plan otherwise admits it, and the scheduler runs its tasks; run an explicit draft later with lz-plan-command run.",
+      ),
     priority: PlanPriority.optional().describe(PRIORITY_DESCRIPTION),
     afterPlans: z
       .array(z.uuid())
@@ -184,11 +190,9 @@ export const CommandInput = z
         "reconcile",
         "reconcile-source-notices",
         "reassign",
-        "human-evidence",
         "resume",
         "retry",
         "integrated",
-        "recover-cleanup",
         "schedule",
         "amend-scope",
         "adopt-descendant",
@@ -201,7 +205,7 @@ export const CommandInput = z
         "continue-retained-check",
       ])
       .describe(
-        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, reviewed integration and recover-cleanup for an exact accepted attempt held after integration. recover-cleanup requires the current owner and exact taskID, attemptID, merged artifact, target branch and reason; it never reruns the worker or forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+        "Plan controls include schedule/run/cancel and pause/unpause. Pause stops new dispatch while active workers finish; resumeAfterPlans optionally unpauses after integration. Cancellation is an intentional stop, not temporary coordination. Other controls include audit/reconcile, evidence, and reviewed integration. A held cleanup retries by itself when its observed facts change; it never forces removal. resume continues the exact retained terminal worker; it also narrowly recovers the original cancelled retained-repair attempt only when durable/native evidence proves the runtime's unprompted repair-fence failure. Supply exact taskID and attemptID; resume does not silently override intentional cancellation or unrelated holds; resolve the reason and choose explicit resume/retry, reconciliation or replanning as appropriate. Without taskID, resume only continues a blocked plan after its ordinary combined check was interrupted or its stopped deadline was explicitly extended and every resource conclusively settled; it never prompts accepted workers. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. While a plan remains running, the same action is restricted to an exact verifying candidate behind a sealed, guarded source quarantine; it does not settle the original worker or authorize its cleanup. Task acceptance and combined acceptance remain separate. extend-verification-deadline changes only the effective timeout for an exact stopped task or combined check and never starts it. continue-retained-check authorizes only an exact conclusively settled non-timeout interrupted combined check in a held retained operation, without changing timing; it does not settle or clean up the original worker/source. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
       ),
     reason: z
       .string()
@@ -259,7 +263,6 @@ export const CommandInput = z
       .describe(
         "Exact supplemental scope patterns to revoke for stopped work; original task scope remains.",
       ),
-    assertionID: z.string().max(64).optional(),
     artifact: z
       .string()
       .max(128)
@@ -322,7 +325,7 @@ export const CommandInput = z
       .uuid()
       .optional()
       .describe(
-        "Exact durable retained-verification operation for cancellation, human evidence, or explicit settled-check continuation.",
+        "Exact durable retained-verification operation for cancellation or explicit settled-check continuation.",
       ),
     retainedGeneration: z
       .int()
@@ -408,33 +411,6 @@ export const CommandInput = z
             path: [field],
             message: `Startup settlement requires ${field}`,
           })
-    if (command.action === "recover-cleanup") {
-      for (const field of ["taskID", "attemptID", "artifact", "targetBranch", "reason"] as const)
-        if (!command[field])
-          context.addIssue({
-            code: "custom",
-            path: [field],
-            message: `Cleanup recovery requires ${field}`,
-          })
-      if (command.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(command.artifact))
-        context.addIssue({
-          code: "custom",
-          path: ["artifact"],
-          message: "Cleanup recovery requires an exact full merged artifact identity",
-        })
-      if (!command.reason?.trim())
-        context.addIssue({
-          code: "custom",
-          path: ["reason"],
-          message: "Cleanup recovery requires a concrete owner reason",
-        })
-      if (!command.targetBranch?.trim())
-        context.addIssue({
-          code: "custom",
-          path: ["targetBranch"],
-          message: "Cleanup recovery requires the exact integration branch",
-        })
-    }
     if (command.action === "verify-retained") {
       for (const field of [
         "projectID",
@@ -565,7 +541,6 @@ export const CommandInput = z
         "reviewInputID",
         "scopeAdditions",
         "scopeRemovals",
-        "assertionID",
         "descendantCommit",
         "adoptionID",
         "targetBranch",
@@ -639,7 +614,6 @@ export const CommandInput = z
         "reviewInputID",
         "scopeAdditions",
         "scopeRemovals",
-        "assertionID",
         "descendantCommit",
         "adoptionID",
         "targetBranch",
@@ -657,16 +631,9 @@ export const CommandInput = z
         path: ["retainedVerificationID"],
         message: "Cancellation requires the exact retained verification operation ID",
       })
-    if (command.adoptionID !== undefined && command.retainedVerificationID !== undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["retainedVerificationID"],
-        message: "Human evidence can name only one retained operation",
-      })
     if (
       command.retainedVerificationID !== undefined &&
       command.action !== "cancel-retained-verification" &&
-      command.action !== "human-evidence" &&
       command.action !== "extend-verification-deadline" &&
       command.action !== "continue-retained-check"
     )
@@ -674,7 +641,7 @@ export const CommandInput = z
         code: "custom",
         path: ["retainedVerificationID"],
         message:
-          "Retained verification ID is valid only for cancellation, human evidence or explicit check continuation",
+          "Retained verification ID is valid only for cancellation or explicit check continuation",
       })
     for (const field of ["verificationPhase", "checkID", "retainedGeneration"] as const)
       if (

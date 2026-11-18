@@ -38,7 +38,7 @@ must distinguish an already-removed directory from an unfinished removal, and
 never remove unrelated worktrees. Reconcile leftovers at startup and after merges.
 
 For blocked cleanup, ordinary scheduler ticks compare cheap durable ownership,
-plan/effect and native-idle revisions first. Those changes trigger prompt fresh
+plan/effect revisions first. Those changes trigger prompt fresh
 reconciliation; when no event or durable change is observed, a bounded one-minute
 fallback checks external filesystem, Git and native-session changes. This fallback
 only schedules a new attempt: before non-forced removal the runtime obtains fresh

@@ -1,5 +1,6 @@
 // Mockup icon set on the host's 20-unit grid, 1.5 stroke. <i data-i="name" class="..."></i> → inline SVG.
-const S = 'fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"'
+const S =
+  'fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"'
 const R = `<circle cx="10" cy="10" r="7.25" ${S}/>`
 const ICONS = {
   "chev-r": `<path d="M8 6l4 4-4 4" ${S}/>`,
@@ -58,11 +59,18 @@ function paint(root = document) {
   })
 }
 function hostTabs(active) {
-  const t = [["Tasks", "tasks"], ["Radar", "eye"], ["Models", "hex"], ["Trajectory", "branch"]]
+  const t = [
+    ["Tasks", "tasks"],
+    ["Radar", "eye"],
+    ["Models", "hex"],
+    ["Trajectory", "branch"],
+  ]
   return `<div class="tabs">${t.map(([n, i]) => `<span class="tab"${n === active ? " data-on" : ""}><i data-i="${i}" class="s"></i>${n}${n === active ? '<i data-i="x" class="s" style="margin-left:4px;opacity:.6"></i>' : ""}</span>`).join("")}<span class="sp"></span><span class="iconbtn"><i data-i="plus"></i></span></div>`
 }
 document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll("[data-tabs]").forEach((el) => (el.outerHTML = hostTabs(el.dataset.tabs)))
+  document
+    .querySelectorAll("[data-tabs]")
+    .forEach((el) => (el.outerHTML = hostTabs(el.dataset.tabs)))
   window.build && window.build()
   paint()
 })

@@ -23,6 +23,14 @@ export type NativeLivenessFixtureOptions = {
   inboxError?: Error
   permissions?: Array<{ id: string; sessionID: string }>
   forms?: Array<{ id: string; sessionID: string }>
+  shells?: Array<{
+    id: string
+    status: string
+    cwd: string
+    time: { started: number; completed?: number }
+  }>
+  /** Other native sessions by ID, e.g. children of the worker. */
+  sessions?: Record<string, { parentID?: string; directory: string }>
   messages?: unknown[]
   history?: Array<{ id: string; type: string }>
   busy?: ReturnType<typeof DateTime.nowUnsafe>
@@ -76,6 +84,12 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
           }
         },
       },
+      shell: {
+        list: async ({ location }: { location?: { directory?: string } } = {}) => ({
+          location: { directory: location?.directory ?? "" },
+          data: options.shells ?? [],
+        }),
+      },
       permission: {
         request: {
           list: async ({ location }: { location?: { directory?: string } } = {}) => {
@@ -105,7 +119,17 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
           activeReads++
           return observed ?? options.active ?? {}
         },
-        get: async () => session,
+        get: async ({ sessionID: requested }: { sessionID: string } = { sessionID }) => {
+          const other = options.sessions?.[requested]
+          return other && requested !== sessionID
+            ? {
+                ...session,
+                id: requested,
+                parentID: other.parentID,
+                location: { directory: other.directory },
+              }
+            : session
+        },
         synthetic: async () => ({ id: "msg_synthetic" }),
         inbox: {
           list: async () => {

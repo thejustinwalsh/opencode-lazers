@@ -13,14 +13,14 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lz-submit-plan",
         description:
-          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order (1 is top, 0 is none, larger integers are lower) and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Does not run until lz-plan-command action run. Stable requestID is mandatory for safe retries.",
+          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order (1 is top, 0 is none, larger integers are lower) and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Submitting admits the plan and the scheduler runs it, with no separate run command; set draft true only to save it without admitting (run it later with lz-plan-command run). Stable requestID is mandatory for safe retries.",
         schema: PlanInput,
         run: (input: unknown, sessionID: string) => runtime.submitPlan(input, sessionID),
       },
       {
         name: "lz-plan-command",
         description:
-          "Use expectedVersion and stable requestID. Resume without taskID continues settled combined checks. Defaults: 15m inactivity/60m hard; project/per-check timing overrides. timeoutMs is history. extend-verification-deadline binds owner/check/candidate. Retained continuation binds retainedVerificationID/generation/task/attempt and settled resources; reruns only that isolated check. retained-repair recovers runtime-fenced retained repair; user cancellation is excluded. recover-cleanup requires settlement/no force. verify-retained checks without an implementation turn; handles startup settlement.",
+          "Use expectedVersion and stable requestID. Resume without taskID continues settled combined checks. Defaults: 15m inactivity/60m hard; project/per-check timing overrides. timeoutMs is history. extend-verification-deadline binds owner/check/candidate. Retained continuation binds retainedVerificationID/generation/task/attempt and settled resources; reruns only that isolated check. retained-repair recovers runtime-fenced retained repair; user cancellation is excluded. verify-retained checks without an implementation turn; handles startup settlement.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },

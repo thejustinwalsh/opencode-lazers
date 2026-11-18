@@ -1,17 +1,14 @@
-import { timedHooks, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { DateTime, Effect, Stream } from "effect"
+import { Effect, Stream } from "effect"
 import { z } from "zod"
-import { NativeIdleStore } from "../runner/native-idle.ts"
-import type { NativeIdleBinding, NativeIdleTerminal } from "../runner/native-idle.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
-import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
-import { resolveNativeInputID } from "../runner/native-input.ts"
+import { ProgressInput } from "./schema.ts"
 import { toolObservationScope } from "./tool-observation.ts"
+import { timedHooks, sectionAsync } from "../diagnostics/stall-probe.ts"
 import type { ProgressAssignment, ProgressRecorder } from "./recorder.ts"
 import {
   registerProgressReconstruction,
@@ -23,27 +20,6 @@ type ProgressContext = Pick<
   Plugin.Context,
   "event" | "permission" | "session" | "tool" | "location"
 >
-
-type ObservedExecutionStart = {
-  binding: NativeIdleBinding
-  sequence: number
-  source: "live" | "native-log-replay" | "live-peer" | "current-idle"
-  current?: () => boolean
-}
-type LiveStartObserver = (
-  binding: NativeIdleBinding,
-  sequence: number,
-) => { current(): boolean } | undefined
-
-// Local plugin imports are replaced independently for each loaded location.
-// Keep only live listener registrations here; no start survives their retirement.
-const liveStartsKey = Symbol.for("opencode-lazers.live-native-start-observers.v1")
-const liveStartsHost = globalThis as typeof globalThis & {
-  [liveStartsKey]?: Map<string, Map<string, LiveStartObserver>>
-}
-const liveStartObservers: Map<string, Map<string, LiveStartObserver>> = (liveStartsHost[
-  liveStartsKey
-] ??= new Map())
 
 const NATIVE_EVENT_TYPES = [
   "session.created",
@@ -78,237 +54,13 @@ const NATIVE_EVENT_TYPES = [
   "session.status",
 ] as const
 
-const BACKGROUND_INVALIDATING_EVENTS = new Set<string>([
-  "session.execution.started",
-  "session.execution.failed",
-  "session.execution.interrupted",
-  "session.inbox.enqueued",
-  "session.inbox.delivered",
-  "session.inbox.cancelled",
-  "session.synthetic",
-  "session.shell.started",
-  "session.shell.ended",
-])
-
 const HANDOFF_REMINDER =
   "Provide only any remaining concise handoff: changes, checks/artifact/commit, blockers, or judgment needed from the plan owner. Do not repeat recorded facts, claim acceptance, or alter task state."
-
-type NativeIdleWork = { kind: "shell" | "subagent" | "image" }
-type NativeIdleHook = { sessionID: Session.ID; background: readonly NativeIdleWork[] }
-type NativeSessionLogReader = (
-  sessionID: string,
-) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>
-type NativeReplayedStart = {
-  sequence: number
-  lastObservedEventSequence: number
-  reportEventSequence: number
-  terminal?: NativeIdleTerminal
-}
-
-function rejectedLineage(
-  checks: Partial<Record<NativeLineageRejection, boolean>>,
-): NativeLineageRejection | undefined {
-  for (const reason of Object.keys(checks) as NativeLineageRejection[])
-    if (!checks[reason]) return reason
-  return undefined
-}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
-}
-
-function eventSequence(event: unknown, sessionID: string): number | undefined {
-  const durable = object(object(event)?.durable)
-  if (
-    durable?.aggregateID !== sessionID ||
-    typeof durable.seq !== "number" ||
-    !Number.isSafeInteger(durable.seq) ||
-    durable.seq < 0
-  )
-    return undefined
-  return durable.seq
-}
-
-async function replayCurrentExecutionStart(
-  readSessionLog: NativeSessionLogReader,
-  sessionID: string,
-): Promise<NativeReplayedStart | undefined> {
-  let synced = false
-  let watermark: number | undefined
-  let lastSequence: number | undefined
-  let lastObservedEventSequence: number | undefined
-  let executionStartSequence: number | undefined
-  let reportEventSequence: number | undefined
-  let terminal: NativeIdleTerminal | undefined
-
-  try {
-    const log = await readSessionLog(sessionID)
-    for await (const raw of log) {
-      const item = object(raw)
-      if (item?.type === "log.synced") {
-        if (synced || item.aggregateID !== sessionID) return undefined
-        synced = true
-        if (item.seq !== undefined) {
-          if (typeof item.seq !== "number" || !Number.isSafeInteger(item.seq) || item.seq < 0)
-            return undefined
-          watermark = item.seq
-        }
-        continue
-      }
-      if (synced || !item || typeof item.type !== "string") return undefined
-      const durable = object(item.durable)
-      // Session.log filters a shared aggregate sequence; gaps are valid, reordering is not.
-      if (
-        durable?.aggregateID !== sessionID ||
-        typeof durable.seq !== "number" ||
-        !Number.isSafeInteger(durable.seq) ||
-        durable.seq < 0 ||
-        (lastSequence !== undefined && durable.seq <= lastSequence)
-      )
-        return undefined
-      lastSequence = durable.seq
-
-      const observedByIdleStore =
-        BACKGROUND_INVALIDATING_EVENTS.has(item.type) || item.type === "session.execution.succeeded"
-      if (observedByIdleStore) {
-        if (object(item.data)?.sessionID !== sessionID) return undefined
-        lastObservedEventSequence = durable.seq
-      }
-      if (item.type === "session.execution.started") {
-        executionStartSequence = durable.seq
-        reportEventSequence = durable.seq
-        terminal = undefined
-      } else if (item.type === "session.execution.succeeded") {
-        const rawEventID = item.id
-        let messageID: string | undefined
-        if (typeof rawEventID === "string") {
-          try {
-            messageID = SessionMessage.ID.fromEvent(rawEventID)
-          } catch {
-            messageID = undefined
-          }
-        }
-        if (
-          executionStartSequence === undefined ||
-          reportEventSequence === undefined ||
-          durable.seq <= reportEventSequence ||
-          typeof rawEventID !== "string" ||
-          !messageID
-        ) {
-          executionStartSequence = undefined
-          reportEventSequence = undefined
-          terminal = undefined
-        } else {
-          terminal = {
-            sequence: durable.seq,
-            eventID: rawEventID,
-            messageID,
-            previousEventSequence: reportEventSequence,
-          }
-        }
-      } else if (BACKGROUND_INVALIDATING_EVENTS.has(item.type)) {
-        // The persisted idle store retains the active execution while advancing its
-        // report sequence to the latest relevant event. Input delivered after success
-        // starts a new lineage and cannot confirm the prior terminal marker.
-        if (
-          item.type === "session.execution.failed" ||
-          item.type === "session.execution.interrupted"
-        ) {
-          executionStartSequence = undefined
-          reportEventSequence = undefined
-          terminal = undefined
-        } else if (terminal) {
-          executionStartSequence = undefined
-          reportEventSequence = undefined
-          terminal = undefined
-        } else if (executionStartSequence !== undefined) {
-          reportEventSequence = durable.seq
-        }
-      }
-    }
-  } catch {
-    return undefined
-  }
-
-  if (
-    !synced ||
-    // The sync watermark also covers durable events omitted from this filtered log.
-    (lastSequence !== undefined && (watermark === undefined || watermark < lastSequence))
-  )
-    return undefined
-  return executionStartSequence === undefined ||
-    reportEventSequence === undefined ||
-    lastObservedEventSequence === undefined
-    ? undefined
-    : {
-        sequence: executionStartSequence,
-        lastObservedEventSequence,
-        reportEventSequence,
-        ...(terminal ? { terminal } : {}),
-      }
-}
-
-function sameTerminal(
-  a: NativeIdleTerminal | null | undefined,
-  b: NativeIdleTerminal | null | undefined,
-) {
-  return (
-    a?.sequence === b?.sequence &&
-    a?.eventID === b?.eventID &&
-    a?.messageID === b?.messageID &&
-    a?.previousEventSequence === b?.previousEventSequence
-  )
-}
-
-function idleBinding(
-  assignment: ReturnType<ProgressRecorder["assignmentForSession"]>,
-  projectDirectory: string,
-): NativeIdleBinding | undefined {
-  if (!assignment) return undefined
-  return {
-    projectDirectory,
-    projectID: assignment.projectID,
-    attemptID: assignment.attemptID,
-    sessionID: assignment.sessionID,
-    workspace: assignment.workspace,
-    assignedMessageID: assignment.assignedMessageID,
-  }
-}
-
-function sameIdleBinding(a: NativeIdleBinding | undefined, b: NativeIdleBinding | undefined) {
-  return (
-    a?.projectDirectory === b?.projectDirectory &&
-    a?.projectID === b?.projectID &&
-    a?.attemptID === b?.attemptID &&
-    a?.sessionID === b?.sessionID &&
-    a?.workspace === b?.workspace &&
-    a?.assignedMessageID === b?.assignedMessageID
-  )
-}
-
-function hasExactSuccessfulIdleMarker(messages: readonly unknown[], terminal: NativeIdleTerminal) {
-  let expectedID: string
-  try {
-    expectedID = SessionMessage.ID.fromEvent(terminal.eventID)
-  } catch {
-    return false
-  }
-  if (expectedID !== terminal.messageID) return false
-  return messages.some((raw) => {
-    const message = object(raw)
-    if (
-      message?.type !== "idle" ||
-      message.id !== terminal.messageID ||
-      message.outcome !== "succeeded"
-    )
-      return false
-    const time = object(message.time)
-    return (
-      DateTime.isDateTime(time?.created) && Number.isFinite(DateTime.toEpochMillis(time.created))
-    )
-  })
 }
 
 function hasVisibleHandoff(messages: readonly unknown[]): boolean {
@@ -467,22 +219,10 @@ export function registerProgress(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
   projectID: string,
-  retainedInputID: (sessionID: string) => Promise<string | undefined> = async () => undefined,
-  readSessionLog?: NativeSessionLogReader,
   sourceChanged?: (sessionID?: string) => void,
   workerIdle?: () => void,
 ) {
   return Effect.gen(function* () {
-    const readInputID = (sessionID: Session.ID) =>
-      ctx.session.context({ sessionID }).pipe(
-        Effect.flatMap((messages) =>
-          Effect.tryPromise({
-            try: () => resolveNativeInputID(messages, () => retainedInputID(sessionID)),
-            catch: (error) => error,
-          }),
-        ),
-      )
-    const idleStore = new NativeIdleStore(recorder.store.repository)
     const listenerID = crypto.randomUUID()
     let observing = true
     let sourceStreamGap = false
@@ -494,52 +234,12 @@ export function registerProgress(
         // Retry source invalidation at the next boundary; progress ingestion remains independent.
       }
     }
-    const observedExecutionStarts = new Map<string, ObservedExecutionStart>()
-    const startsRequiringNewerObservation = new Map<string, number | null>()
-    const requireNewerStart = (sessionID: string, afterSequence: number | null) => {
-      const current = startsRequiringNewerObservation.get(sessionID)
-      startsRequiringNewerObservation.set(
-        sessionID,
-        current === null || afterSequence === null ? null : Math.max(current ?? -1, afterSequence),
-      )
-    }
-    const refreshUnknownStartFences = () => {
-      // A readable recovery watermark is only a stale-event cutoff, never local start lineage.
-      for (const [sessionID, afterSequence] of startsRequiringNewerObservation) {
-        if (afterSequence !== null) continue
-        try {
-          const binding = bindingFor(sessionID)
-          if (!binding) continue
-          startsRequiringNewerObservation.set(
-            sessionID,
-            idleStore.read(binding)?.lastEventSequence ?? -1,
-          )
-        } catch {
-          // Keep the unknown fence until a later stream boundary has a readable row.
-        }
-      }
-    }
-    const invalidateListenerStarts = () => {
-      observedExecutionStarts.clear()
-      for (const assignment of recorder.assignments()) {
-        const binding = bindingFor(assignment.sessionID)
-        let lastEventSequence: number | null
-        try {
-          lastEventSequence = binding ? (idleStore.read(binding)?.lastEventSequence ?? -1) : null
-        } catch {
-          lastEventSequence = null
-        }
-        requireNewerStart(assignment.sessionID, lastEventSequence)
-      }
-    }
     const projectDirectory = recorder.store.repository.projectDirectory
     const toolScope = toolObservationScope(
       ctx,
       projectID,
       ctx.location?.directory ?? projectDirectory,
     )
-    const bindingFor = (sessionID: string) =>
-      idleBinding(recorder.assignmentForSession(sessionID), projectDirectory)
     const trace = (
       sessionID: string,
       phase: string,
@@ -557,34 +257,11 @@ export function registerProgress(
         // Diagnostic storage cannot change the native observation or worker execution.
       }
     }
-    const liveStartsScope = JSON.stringify([
-      recorder.store.repository.path,
-      projectDirectory,
-      projectID,
-    ])
-    const livePeers =
-      liveStartObservers.get(liveStartsScope) ?? new Map<string, LiveStartObserver>()
-    liveStartObservers.set(liveStartsScope, livePeers)
-    livePeers.set(listenerID, (binding, sequence) => {
-      const start = observedExecutionStarts.get(binding.sessionID)
-      const current = () =>
-        observing &&
-        start !== undefined &&
-        start.source !== "live-peer" &&
-        observedExecutionStarts.get(binding.sessionID) === start &&
-        start.sequence === sequence &&
-        sameIdleBinding(start.binding, binding) &&
-        !startsRequiringNewerObservation.has(binding.sessionID)
-      return current() ? { current } : undefined
-    })
-    // The first project listener repairs activity missed while the plugin was offline.
-    if (livePeers.size === 1) invalidateSources()
+    // The first listener repairs activity missed while the plugin was offline.
+    invalidateSources()
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         observing = false
-        livePeers.delete(listenerID)
-        if (!livePeers.size && liveStartObservers.get(liveStartsScope) === livePeers)
-          liveStartObservers.delete(liveStartsScope)
       }),
     )
     yield* ctx.tool.transform((editor) =>
@@ -678,369 +355,21 @@ export function registerProgress(
       }),
     )
 
-    const readNativeSession = (sessionID: string) =>
-      Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) }))
-    const matchesBinding = (session: Session.Info, binding: NativeIdleBinding) =>
-      session.id === binding.sessionID &&
-      session.projectID === binding.projectID &&
-      isWorkerAgent(session.agent) &&
-      session.location.directory === binding.workspace &&
-      session.metadata?.lazersAttemptID === binding.attemptID
-
-    const observeIdleHook = async (idle: NativeIdleHook) => {
-      const sessionID = idle.sessionID
-      if (!observing) return
-      const binding = bindingFor(sessionID)
-      if (!binding) {
-        trace(sessionID, "idle-unassigned", { backgroundCount: idle.background.length })
-        return
-      }
-      const remindIfEmpty = async () => {
-        if (idle.background.length === 0 && observing)
-          await Effect.runPromise(reminderEffect(ctx, recorder, sessionID, 0))
-      }
-      const initial = idleStore.read(binding)
-      if (
-        initial?.terminal ||
-        (initial?.pendingTerminal &&
-          initial.report?.executionStartSequence === initial.executionStartSequence &&
-          initial.report.inputID === binding.assignedMessageID)
-      ) {
-        trace(sessionID, "idle-after-terminal", {
-          eventSequence: initial.lastEventSequence ?? undefined,
-        })
-        return
-      }
-      const expectedRevision = initial?.revision ?? 0
-      trace(sessionID, "idle-entered", {
-        executionStartSequence: initial?.executionStartSequence ?? undefined,
-        eventSequence: initial?.lastEventSequence ?? undefined,
-        backgroundCount: idle.background.length,
-      })
-      try {
-        const before = await readNativeSession(sessionID)
-        let inputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
-        const after = await readNativeSession(sessionID)
-        const latest = idleStore.read(binding)
-        const liveLatestStart = observedExecutionStarts.get(sessionID)
-        const racedTerminal = Boolean(
-          latest?.pendingTerminal &&
-          latest.lastEventSequence === latest.pendingTerminal.sequence &&
-          latest.pendingTerminal.previousEventSequence !== undefined &&
-          latest.executionStartSequence === liveLatestStart?.sequence &&
-          sameIdleBinding(liveLatestStart.binding, binding) &&
-          liveLatestStart.current?.() !== false &&
-          (latest.invalidation === null ||
-            latest.invalidation.eventSequence === latest.executionStartSequence),
-        )
-        if (
-          !observing ||
-          !sameIdleBinding(binding, bindingFor(sessionID)) ||
-          ((latest?.revision ?? 0) !== expectedRevision && !readSessionLog && !racedTerminal)
-        ) {
-          trace(sessionID, "idle-stale", {
-            inputID,
-            eventSequence: latest?.lastEventSequence ?? undefined,
-          })
-          return
-        }
-        let reportExpectedRevision = latest?.revision ?? 0
-        if (!matchesBinding(before, binding) || !matchesBinding(after, binding)) {
-          idleStore.invalidate(
-            binding,
-            "Experimental idle hook did not match the assigned native session identity",
-            expectedRevision,
-          )
-          return
-        }
-        let executionStartSequence = latest?.executionStartSequence
-        let eventSequence =
-          latest?.pendingTerminal?.previousEventSequence ?? latest?.lastEventSequence
-        let observedStart = observedExecutionStarts.get(sessionID)
-        if (
-          executionStartSequence !== null &&
-          executionStartSequence !== undefined &&
-          !startsRequiringNewerObservation.has(sessionID) &&
-          (observedStart?.sequence !== executionStartSequence ||
-            !sameIdleBinding(observedStart.binding, binding) ||
-            observedStart.current?.() === false)
-        ) {
-          for (const [peerID, peer] of livePeers) {
-            if (peerID === listenerID) continue
-            const witness = peer(binding, executionStartSequence)
-            if (!witness) continue
-            observedStart = {
-              binding,
-              sequence: executionStartSequence,
-              source: "live-peer",
-              current: witness.current,
-            }
-            observedExecutionStarts.set(sessionID, observedStart)
-            trace(sessionID, "idle-lineage-live-peer", {
-              executionStartSequence,
-              eventSequence: eventSequence ?? undefined,
-            })
-            break
-          }
-        }
-        if (
-          executionStartSequence === null ||
-          executionStartSequence === undefined ||
-          observedStart?.sequence !== executionStartSequence ||
-          !sameIdleBinding(observedStart.binding, binding) ||
-          observedStart.current?.() === false
-        ) {
-          if (readSessionLog) {
-            const replayedStart = await replayCurrentExecutionStart(readSessionLog, sessionID)
-            if (replayedStart !== undefined) {
-              const replaySession = await readNativeSession(sessionID)
-              const replayInputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
-              const replayedState = idleStore.read(binding)
-              const replayedSequence = replayedStart.sequence
-              const lineageRejection = rejectedLineage({
-                "observer-stopped": observing,
-                "binding-changed": sameIdleBinding(binding, bindingFor(sessionID)),
-                "start-changed": replayedState?.executionStartSequence === replayedSequence,
-                "event-changed":
-                  replayedState?.lastEventSequence === replayedStart.lastObservedEventSequence,
-                "pending-terminal": sameTerminal(
-                  replayedState?.pendingTerminal,
-                  replayedStart.terminal,
-                ),
-                terminal: replayedState?.terminal === null,
-                "input-changed": replayInputID === inputID,
-                "native-identity-changed": matchesBinding(replaySession, binding),
-              })
-              if (lineageRejection) trace(sessionID, "idle-replay-rejected", { lineageRejection })
-              if (!lineageRejection && replayedState) {
-                inputID = replayInputID
-                executionStartSequence = replayedSequence
-                eventSequence = replayedStart.reportEventSequence
-                reportExpectedRevision = replayedState.revision
-                observedStart = { binding, sequence: replayedSequence, source: "native-log-replay" }
-                observedExecutionStarts.set(sessionID, observedStart)
-                // S7-5: the synced replay proves the exact current durable lineage.
-                startsRequiringNewerObservation.delete(sessionID)
-                trace(sessionID, "idle-lineage-replayed", {
-                  inputID,
-                  executionStartSequence: replayedSequence,
-                  eventSequence: eventSequence ?? undefined,
-                })
-              }
-            } else {
-              trace(sessionID, "idle-replay-rejected", { lineageRejection: "replay-not-current" })
-            }
-          } else {
-            trace(sessionID, "idle-replay-rejected", { lineageRejection: "replay-unavailable" })
-          }
-        }
-        if (
-          executionStartSequence === null ||
-          executionStartSequence === undefined ||
-          observedStart?.sequence !== executionStartSequence ||
-          !sameIdleBinding(observedStart.binding, binding) ||
-          observedStart.current?.() === false
-        ) {
-          // A current idle callback may witness the exact durable lineage after
-          // replacement; it cannot invent sequences or outlive assignment fences.
-          const assignment = recorder.assignmentForSession(sessionID)
-          const assignedBinding = idleBinding(assignment, projectDirectory)
-          const plan = assignment ? recorder.store.plan(assignment.planID) : undefined
-          const currentAssignment = () => {
-            const current = recorder.assignmentForSession(sessionID)
-            return Boolean(
-              assignment &&
-              current &&
-              current.attemptState === "running" &&
-              sameProgressAssignment(current, assignment) &&
-              sameIdleBinding(idleBinding(current, projectDirectory), binding) &&
-              ["running", "blocked"].includes(recorder.store.plan(current.planID)?.state ?? "") &&
-              !recorder.store.repository.taskDisposition(current.taskID),
-            )
-          }
-          const eligibilityRejection = rejectedLineage({
-            "assignment-missing": assignment !== undefined,
-            "attempt-not-running": assignment?.attemptState === "running",
-            "plan-not-running": ["running", "blocked"].includes(plan?.state ?? ""),
-            "task-disposed": Boolean(
-              assignment && !recorder.store.repository.taskDisposition(assignment.taskID),
-            ),
-            "binding-changed": sameIdleBinding(assignedBinding, binding),
-            "invalid-start":
-              executionStartSequence != null &&
-              Number.isSafeInteger(executionStartSequence) &&
-              executionStartSequence >= 0,
-            "invalid-event":
-              eventSequence != null &&
-              executionStartSequence != null &&
-              Number.isSafeInteger(eventSequence) &&
-              eventSequence >= executionStartSequence,
-            "newer-start-fence": !startsRequiringNewerObservation.has(sessionID),
-            "input-not-assigned": Boolean(
-              assignment &&
-              inputID !== undefined &&
-              recorder.matchesAssignedInput(
-                assignment.attemptID,
-                assignment.sessionID,
-                assignment.assignedMessageID,
-                inputID,
-              ),
-            ),
-          })
-          if (eligibilityRejection)
-            trace(sessionID, "idle-current-hook-rejected", {
-              lineageRejection: eligibilityRejection,
-            })
-          if (
-            !eligibilityRejection &&
-            assignment &&
-            executionStartSequence !== null &&
-            executionStartSequence !== undefined &&
-            eventSequence !== null &&
-            eventSequence !== undefined
-          ) {
-            const currentStartSequence = executionStartSequence
-            const currentEventSequence = eventSequence
-            const currentBefore = await readNativeSession(sessionID)
-            const currentInputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
-            const currentAfter = await readNativeSession(sessionID)
-            const currentState = idleStore.read(binding)
-            const lineageRejection = rejectedLineage({
-              "observer-stopped": observing,
-              "assignment-changed": currentAssignment(),
-              "binding-changed": sameIdleBinding(binding, bindingFor(sessionID)),
-              "revision-changed": currentState?.revision === expectedRevision,
-              "start-changed": currentState?.executionStartSequence === currentStartSequence,
-              "event-changed": currentState?.lastEventSequence === currentEventSequence,
-              "pending-terminal": currentState?.pendingTerminal === null,
-              terminal: currentState?.terminal === null,
-              "input-changed": currentInputID === inputID,
-              "input-not-assigned": recorder.matchesAssignedInput(
-                assignment.attemptID,
-                assignment.sessionID,
-                assignment.assignedMessageID,
-                currentInputID,
-              ),
-              "native-identity-changed":
-                matchesBinding(currentBefore, binding) && matchesBinding(currentAfter, binding),
-            })
-            if (lineageRejection)
-              trace(sessionID, "idle-current-hook-rejected", { lineageRejection })
-            if (!lineageRejection) {
-              const currentIdleStart: ObservedExecutionStart = {
-                binding,
-                sequence: currentStartSequence,
-                source: "current-idle",
-                current: () =>
-                  observing &&
-                  observedExecutionStarts.get(sessionID) === currentIdleStart &&
-                  !startsRequiringNewerObservation.has(sessionID) &&
-                  currentAssignment(),
-              }
-              observedStart = currentIdleStart
-              observedExecutionStarts.set(sessionID, currentIdleStart)
-              trace(sessionID, "idle-lineage-current-hook", {
-                inputID,
-                executionStartSequence: currentStartSequence,
-                eventSequence: currentEventSequence,
-              })
-            }
-          }
-        }
-        if (
-          executionStartSequence === null ||
-          executionStartSequence === undefined ||
-          observedStart?.sequence !== executionStartSequence ||
-          !sameIdleBinding(observedStart.binding, binding) ||
-          observedStart.current?.() === false
-        ) {
-          trace(sessionID, "idle-lineage-unavailable", {
-            inputID,
-            executionStartSequence: executionStartSequence ?? undefined,
-            eventSequence: eventSequence ?? undefined,
-          })
-          await remindIfEmpty()
-          return
-        }
-        if (
-          !inputID ||
-          executionStartSequence === null ||
-          executionStartSequence === undefined ||
-          eventSequence === null ||
-          eventSequence === undefined
-        ) {
-          idleStore.invalidate(
-            binding,
-            "Experimental idle report could not be tied to the current execution and input",
-            expectedRevision,
-          )
-          await remindIfEmpty()
-          return
-        }
-        const kinds = { shell: 0, subagent: 0, image: 0 }
-        for (const work of idle.background) kinds[work.kind]++
-        const recorded = idleStore.recordIdle(
-          binding,
-          {
-            observedAt: Date.now(),
-            inputID,
-            executionStartSequence,
-            eventSequence,
-            count: idle.background.length,
-            kinds,
-          },
-          reportExpectedRevision,
-        )
-        trace(
-          sessionID,
-          recorded
-            ? observedStart.source === "native-log-replay"
-              ? "idle-report-replayed-lineage"
-              : "idle-report"
-            : "idle-stale",
-          {
-            inputID,
-            executionStartSequence,
-            eventSequence,
-            backgroundCount: idle.background.length,
-          },
-        )
-        const current = idleStore.read(binding)
-        const sameExecutionReport =
-          !recorded &&
-          current !== undefined &&
-          current.terminal === null &&
-          current?.executionStartSequence === executionStartSequence &&
-          current.report?.executionStartSequence === executionStartSequence &&
-          current.report.eventSequence === eventSequence &&
-          current.report.inputID === inputID
-        if ((recorded || sameExecutionReport) && current?.pendingTerminal)
-          await observeExecutionSuccess(binding, current.pendingTerminal, current.revision)
-        const settled = idleStore.read(binding)
-        if (
-          (recorded || sameExecutionReport) &&
-          idle.background.length === 0 &&
-          !settled?.pendingTerminal &&
-          !settled?.terminal
-        )
-          await remindIfEmpty()
-      } catch (error) {
-        trace(sessionID, "idle-observation-failed", { error })
-        try {
-          idleStore.invalidate(
-            binding,
-            "Native idle persistence or lineage read failed",
-            expectedRevision,
-          )
-        } catch {
-          // A failed durable write remains unknown when cleanup reopens the store.
-        }
-        await remindIfEmpty()
-      }
-    }
+    // The idle hook carries the host's current background list. It is a live
+    // observation, never persisted: it triggers the handoff reminder and wakes
+    // the scheduler, which then asks the host for the worker's current activity.
     yield* timedHooks(ctx.session, "session").hook("experimental.idle", (idle) =>
       Effect.tryPromise({
-        try: () => observeIdleHook(idle),
+        try: async () => {
+          if (!observing || !recorder.assignmentForSession(idle.sessionID)) return
+          trace(idle.sessionID, "idle-hook", { backgroundCount: idle.background.length })
+          try {
+            if (idle.background.length === 0)
+              await Effect.runPromise(reminderEffect(ctx, recorder, idle.sessionID, 0))
+          } finally {
+            workerIdle?.()
+          }
+        },
         catch: (error) => new Error(safeError(error, privacyStats())),
       }).pipe(Effect.catch(() => Effect.void)),
     )
@@ -1060,93 +389,6 @@ export function registerProgress(
     })
     yield* Effect.addFinalizer(() => Effect.sync(() => reconstruction.dispose()))
 
-    const observeExecutionSuccess = async (
-      binding: NativeIdleBinding,
-      terminal: NativeIdleTerminal,
-      expectedRevision: number,
-    ) => {
-      const state = idleStore.read(binding)
-      if (
-        !state ||
-        state.revision !== expectedRevision ||
-        state.pendingTerminal?.sequence !== terminal.sequence ||
-        !state.report
-      )
-        return
-      const observedStart = observedExecutionStarts.get(binding.sessionID)
-      const requiredAfterSequence = startsRequiringNewerObservation.get(binding.sessionID)
-      const liveLineage = Boolean(
-        state.executionStartSequence !== null &&
-        state.executionStartSequence !== undefined &&
-        observedStart?.sequence === state.executionStartSequence &&
-        sameIdleBinding(observedStart.binding, binding) &&
-        observedStart.current?.() !== false &&
-        requiredAfterSequence !== null &&
-        (requiredAfterSequence === undefined ||
-          state.executionStartSequence > requiredAfterSequence),
-      )
-      const replayedStart =
-        !liveLineage && readSessionLog
-          ? await replayCurrentExecutionStart(readSessionLog, binding.sessionID)
-          : undefined
-      const durableLineage = Boolean(
-        state.executionStartSequence !== null &&
-        state.executionStartSequence !== undefined &&
-        replayedStart?.sequence === state.executionStartSequence &&
-        replayedStart.lastObservedEventSequence === terminal.sequence &&
-        replayedStart.reportEventSequence === state.report?.eventSequence &&
-        sameTerminal(replayedStart.terminal, terminal),
-      )
-      if (!durableLineage && !liveLineage)
-        // A synced native log survives listener replacement and reopen; otherwise a live
-        // listener must still own the exact execution-start witness.
-        return
-      if (durableLineage) startsRequiringNewerObservation.delete(binding.sessionID)
-      const before = await readNativeSession(binding.sessionID)
-      const messages = await Effect.runPromise(
-        ctx.session.context({ sessionID: Session.ID.make(binding.sessionID) }),
-      )
-      const inputID = await resolveNativeInputID(messages, () => retainedInputID(binding.sessionID))
-      const after = await readNativeSession(binding.sessionID)
-      const exact =
-        observing &&
-        (durableLineage || observedStart?.current?.() !== false) &&
-        sameIdleBinding(binding, bindingFor(binding.sessionID)) &&
-        matchesBinding(before, binding) &&
-        matchesBinding(after, binding) &&
-        after.outcome === "succeeded" &&
-        hasExactSuccessfulIdleMarker(messages, terminal) &&
-        inputID === state.report?.inputID
-      if (inputID !== state.report?.inputID) {
-        idleStore.invalidate(
-          binding,
-          "Native execution success does not match the current idle input lineage",
-          expectedRevision,
-          terminal.sequence,
-        )
-        trace(binding.sessionID, "execution-success-input-mismatch", {
-          eventSequence: terminal.sequence,
-          inputID,
-        })
-        return
-      }
-      if (exact && idleStore.confirmSuccess(binding, inputID, terminal, expectedRevision)) {
-        trace(binding.sessionID, "execution-success-confirmed", {
-          eventSequence: terminal.sequence,
-          inputID,
-        })
-        workerIdle?.()
-        return
-      }
-      // Native success can be published before the idle marker is visible in context. Keep the
-      // exact terminal candidate pending; a later session.idle event or replacement listener
-      // can verify it without treating missing history as completion.
-      trace(binding.sessionID, "execution-success-awaiting-marker", {
-        eventSequence: terminal.sequence,
-        inputID,
-      })
-    }
-
     const observeNativeEvent = async (event: unknown) => {
       const rawType = object(event)?.type
       const rawSessionID = object(object(event)?.data)?.sessionID
@@ -1165,116 +407,15 @@ export function registerProgress(
       if (sessionID) reconstruction.changed(sessionID)
       if (
         observing &&
-        type &&
         sessionID &&
-        (BACKGROUND_INVALIDATING_EVENTS.has(type) || type === "session.execution.succeeded")
-      ) {
-        const binding = bindingFor(sessionID)
-        if (binding) {
-          const sequence = eventSequence(event, sessionID)
-          const rawEventID = object(event)?.id
-          const eventID = typeof rawEventID === "string" ? rawEventID : undefined
-          let terminalMessageID: string | undefined
-          if (type === "session.execution.succeeded" && eventID) {
-            try {
-              terminalMessageID = SessionMessage.ID.fromEvent(eventID)
-            } catch {
-              terminalMessageID = undefined
-            }
-          }
-          try {
-            const result = idleStore.observeEvent(
-              binding,
-              type,
-              sequence,
-              eventID,
-              terminalMessageID,
-            )
-            const current = idleStore.read(binding)
-            const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
-            if (
-              requiredAfterSequence === null &&
-              result.status === "changed" &&
-              sequence !== undefined &&
-              Number.isSafeInteger(sequence) &&
-              sequence >= 0 &&
-              current?.lastEventSequence === sequence
-            ) {
-              if (type === "session.execution.started") {
-                // A newly advanced durable start proves it is beyond the unknown cutoff.
-                startsRequiringNewerObservation.delete(sessionID)
-              } else {
-                // A finite event advances only the cutoff; it never creates local start lineage.
-                startsRequiringNewerObservation.set(sessionID, sequence)
-              }
-            }
-            trace(sessionID, `event-${result.status}`, {
-              eventSequence: sequence,
-              executionStartSequence: current?.executionStartSequence ?? undefined,
-            })
-            if (type === "session.execution.started" && sequence !== undefined) {
-              const observedStart = observedExecutionStarts.get(sessionID)
-              if (
-                result.status === "stale" &&
-                observedStart &&
-                sameIdleBinding(observedStart.binding, binding) &&
-                sequence > observedStart.sequence
-              ) {
-                observedExecutionStarts.delete(sessionID)
-                requireNewerStart(sessionID, sequence)
-              } else if (result.status === "changed" || result.status === "seen") {
-                const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
-                if (
-                  current?.lastEventSequence === sequence &&
-                  current.executionStartSequence === sequence &&
-                  sameIdleBinding(current.binding, binding) &&
-                  (requiredAfterSequence === undefined ||
-                    (requiredAfterSequence !== null && sequence > requiredAfterSequence))
-                ) {
-                  observedExecutionStarts.set(sessionID, { binding, sequence, source: "live" })
-                  startsRequiringNewerObservation.delete(sessionID)
-                }
-              }
-            } else if (
-              sequence === undefined ||
-              type === "session.execution.failed" ||
-              type === "session.execution.interrupted"
-            ) {
-              observedExecutionStarts.delete(sessionID)
-            }
-            if (type === "session.execution.succeeded" && sequence !== undefined) {
-              const pending = current?.pendingTerminal
-              if (
-                current &&
-                pending &&
-                pending.sequence === sequence &&
-                current.lastEventSequence === sequence
-              )
-                await observeExecutionSuccess(binding, pending, current.revision)
-            }
-            if (result.status === "changed" && sequence === undefined)
-              trace(sessionID, "event-order-unknown")
-          } catch (error) {
-            observedExecutionStarts.delete(sessionID)
-            requireNewerStart(sessionID, sequence ?? null)
-            throw error
-          } finally {
-            if (type === "session.execution.failed" || type === "session.execution.interrupted")
-              workerIdle?.()
-          }
-        }
-      } else if (observing && type === "session.idle" && sessionID) {
-        const binding = bindingFor(sessionID)
-        if (binding) {
-          try {
-            const current = idleStore.read(binding)
-            if (current?.pendingTerminal && current.report)
-              await observeExecutionSuccess(binding, current.pendingTerminal, current.revision)
-          } finally {
-            workerIdle?.()
-          }
-        }
-      }
+        (type === "session.execution.succeeded" ||
+          type === "session.execution.failed" ||
+          type === "session.execution.interrupted" ||
+          type === "session.shell.ended" ||
+          type === "session.idle") &&
+        recorder.assignmentForSession(sessionID)
+      )
+        workerIdle?.()
       try {
         const toolSession =
           sessionID && type?.startsWith("session.tool.") ? await toolScope.owns(sessionID) : false
@@ -1286,7 +427,6 @@ export function registerProgress(
 
     const listen = Effect.forever(
       Effect.suspend(() => {
-        refreshUnknownStartFences()
         return Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
           Effect.tryPromise({
             try: () => sectionAsync(`event:${event.type}`, () => observeNativeEvent(event)),
@@ -1298,7 +438,6 @@ export function registerProgress(
               invalidateSources()
               toolScope.clear()
               trace("unknown", "stream-failed", { error })
-              invalidateListenerStarts()
               for (const assignment of recorder.assignments()) {
                 recorder.markRecoveryGap(
                   assignment.sessionID,
@@ -1311,7 +450,6 @@ export function registerProgress(
               invalidateSources()
               toolScope.clear()
               trace("unknown", "stream-ended")
-              invalidateListenerStarts()
               for (const assignment of recorder.assignments()) {
                 recorder.markRecoveryGap(
                   assignment.sessionID,

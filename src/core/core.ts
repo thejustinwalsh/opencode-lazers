@@ -15,7 +15,7 @@ import { ObservationReads } from "../observability/read.ts"
 import { registerProject } from "../project-key.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { nativeHost } from "../runner/native.ts"
-import { TaskRuntime, architectIdleWindowMs } from "../runner/runtime.ts"
+import { TaskRuntime } from "../runner/runtime.ts"
 import {
   PROJECT_RECONCILIATION_INTERVAL_MS,
   schedulerProjectKey,
@@ -186,7 +186,11 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const nativeRunnerHost = nativeHost(host, repository)
   let scheduler: ReturnType<typeof sharedScheduler.register> | undefined
   const runtime: TaskRuntime = new TaskRuntime(runnerStore, nativeRunnerHost, projectID, progress, {
-    architectIdleWindowMs: architectIdleWindowMs(info.options.architectIdleWindowMs),
+    architectCacheWindowMs: info.options.architectCacheWindowMs as number | undefined,
+    architectReuseMaxContextTokens: info.options.architectReuseMaxContextTokens as
+      number | undefined,
+    // Deprecated alias of architectCacheWindowMs.
+    architectIdleWindowMs: info.options.architectIdleWindowMs as number | undefined,
     verificationTimeoutDefaults: verificationDefaults,
     architectPromptHook: true,
     requestTick: () => (scheduler ? scheduler.runNow() : runtime.tick()),

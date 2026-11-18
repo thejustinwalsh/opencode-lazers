@@ -1,182 +1,502 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Models — recommended</title>
-<link rel="stylesheet" href="shared.css">
-<style>
-.vt { display: flex; gap: 14px; margin-left: 10px; font-size: 12.5px; color: var(--text-weak); }
-.vt span { padding: 4px 0; }
-.vt span[data-on] { color: var(--text-strong); box-shadow: 0 1.5px 0 var(--text-strong); }
-.filters { display: flex; gap: 6px; padding: 0 16px 8px; flex-wrap: wrap; align-items: center; }
-.filters .sp { flex: 1; }
-.chartwrap { padding: 0 12px; }
-svg.ch text { font: 10.5px var(--mono); fill: var(--text-weak); }
-svg.ch .lab { font: 11.5px var(--sans); fill: var(--text-base); }
-svg.ch .lab.on { fill: var(--text-strong); font-weight: 500; }
-svg.ch .grid { stroke: var(--border-weak-base); fill: none; }
-svg.ch .axis { stroke: var(--border-base); fill: none; }
-svg.ch .front { stroke: var(--text-interactive-base); stroke-width: 1.5; fill: none; opacity: .75; }
-svg.ch .pt { fill: var(--background-base); stroke: var(--text-base); stroke-width: 1.5; }
-svg.ch .pt.f { fill: var(--text-interactive-base); stroke: var(--text-interactive-base); }
-svg.ch .pt.sel { stroke: var(--text-strong); stroke-width: 2; }
-svg.ch .halo { fill: rgba(143,203,247,.16); }
-svg.ch .rng { stroke: var(--text-base); stroke-width: 1.25; opacity: .6; }
-.capt { padding: 2px 16px 8px; font-size: 11.5px; color: var(--text-weak); display: flex; gap: 12px; align-items: center; }
-.capt .k { display: inline-flex; align-items: center; gap: 5px; }
-.capt .dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--text-base); }
-.capt .dot.f { background: var(--text-interactive-base); border-color: var(--text-interactive-base); }
-.insp { padding: 12px 16px 0; display: flex; flex-direction: column; gap: 8px; }
-.insp .top { display: flex; align-items: baseline; gap: 8px; }
-.insp .top .sp { flex: 1; }
-.insp h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.big { font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
-.big small { font-size: 12px; font-weight: 400; color: var(--text-weak); margin-left: 6px; }
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 8px 0 4px; }
-.stats div { font-size: 11.5px; color: var(--text-weak); }
-.stats b { display: block; font: 500 13px var(--mono); color: var(--text-strong); margin-bottom: 1px; }
-.pr { display: grid; grid-template-columns: 18px 96px minmax(0,1fr) auto; column-gap: 8px; align-items: center; height: 34px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; }
-.pr[data-sel] { background: var(--surface-base-hover); }
-.pr .rt { font-family: var(--mono); font-size: 11.5px; color: var(--text-base); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pr .sc { font-size: 11px; color: var(--text-weak); }
-.form { display: grid; grid-template-columns: 76px 1fr; gap: 8px 10px; align-items: center; font-size: 12.5px; color: var(--text-weak); }
-.field { height: 28px; border: 1px solid var(--border-base); border-radius: 6px; display: flex; align-items: center; padding: 0 8px; color: var(--text-strong); background: var(--surface-base); justify-content: space-between; }
-.field.mono { font-size: 11.5px; }
-.empty { padding: 22px 20px; text-align: center; color: var(--text-weak); font-size: 12.5px; }
-.empty b { display: block; color: var(--text-strong); font-weight: 500; margin-bottom: 4px; font-size: 13px; }
-</style>
-<script src="icons.js"></script>
-</head>
-<body>
-<div class="stage">
-
-  <div class="col" style="width:500px">
-    <div class="cap"><b>Models</b> · 500 px · Compare, model selected</div>
-    <div class="panel">
-      <div data-tabs="Models"></div>
-      <div class="hdr">
-        <h2>Models</h2>
-        <span class="vt"><span data-on>Compare</span><span>Assignments</span></span>
-        <span class="sp"></span>
-        <span class="weak" style="font-size:11.5px">Prices 5:41 PM</span>
-        <span class="iconbtn"><i data-i="refresh"></i></span>
-      </div>
-      <div class="filters">
-        <span class="ctl box">Implementer<i data-i="chev-d" class="s"></i></span>
-        <span class="ctl box">All kinds<i data-i="chev-d" class="s"></i></span>
-        <span class="sp"></span>
-        <span class="seg"><span data-on>Your runs</span><span>Benchmark</span></span>
-      </div>
-      <div class="chartwrap">
-        <svg class="ch" viewBox="0 0 474 262" width="474" height="262">
-          <g class="grid"><path d="M44 20H464M44 70H464M44 120H464M44 170H464"/><path d="M149 20V220M254 20V220M359 20V220M464 20V220"/></g>
-          <path class="axis" d="M44 20V220H464"/>
-          <text x="38" y="224" text-anchor="end">$0</text><text x="38" y="174" text-anchor="end">$1</text><text x="38" y="124" text-anchor="end">$2</text><text x="38" y="74" text-anchor="end">$3</text><text x="38" y="24" text-anchor="end">$4</text>
-          <text x="44" y="236" text-anchor="middle">0</text><text x="149" y="236" text-anchor="middle">5M</text><text x="254" y="236" text-anchor="middle">10M</text><text x="359" y="236" text-anchor="middle">15M</text><text x="464" y="236" text-anchor="end">20M</text>
-          <text x="254" y="256" text-anchor="middle" class="lab" style="fill:var(--text-weak)">Tokens per accepted task</text>
-          <text x="12" y="120" text-anchor="middle" class="lab" style="fill:var(--text-weak)" transform="rotate(-90 12 120)">Cost per accepted task</text>
-          <path class="front" d="M92 204L174 192L263 150"/>
-          <path class="rng" d="M174 178V203"/>
-          <circle class="pt f" cx="92" cy="204" r="4.5"/><text class="lab" x="102" y="208">Qwen 3.8 Flash</text>
-          <circle class="halo" cx="174" cy="192" r="12"/><circle class="pt f sel" cx="174" cy="192" r="5.5"/><text class="lab on" x="150" y="170">GPT-6 Luna · max</text>
-          <circle class="pt f" cx="263" cy="150" r="4.5"/><text class="lab" x="273" y="146">Kimi K3.1 Pro</text>
-          <circle class="pt" cx="318" cy="92" r="4.5"/><text class="lab" x="328" y="96">GPT-6.1 Sol · high</text>
-          <circle class="pt" cx="306" cy="184" r="4.5"/><text class="lab" x="316" y="188">Luna · low</text>
-          <circle class="pt" cx="402" cy="128" r="4.5"/><text class="lab" x="412" y="124" >Terra</text>
-        </svg>
-      </div>
-      <div class="capt"><span class="k"><span class="dot f"></span>Best trade-off</span><span class="k"><span class="dot"></span>Other</span><span style="margin-left:auto">14 accepted tasks · OpenRouter prices</span></div>
-      <div style="flex:1"></div>
-      <div class="split"></div>
-      <div class="insp" style="height:318px">
-        <div class="top"><h3>GPT-6 Luna</h3><span class="mono weak">openai/gpt-6-luna · max</span><span class="sp"></span><span class="btn">Assign to Implementer</span></div>
-        <div class="big">$0.35 – 0.67<small>per accepted task</small></div>
-        <div class="stats">
-          <div><b>9 of 11</b>accepted</div>
-          <div><b>6.2M</b>tokens / task</div>
-          <div><b>14m</b>median time</div>
-          <div><b>1.2</b>attempts / task</div>
-        </div>
-        <div>
-          <div class="disc"><i data-i="chev-r" class="s"></i>Estimate basis and prices<span class="n">OpenRouter · 17 Nov</span></div>
-          <div class="disc"><i data-i="chev-r" class="s"></i>Runs with this model<span class="n">11</span></div>
-          <div class="disc"><i data-i="chev-r" class="s"></i>Public benchmark<span class="n">Coding index 61</span></div>
-          <div class="disc"><i data-i="chev-r" class="s"></i>Chart data as a table<span class="n">6 models</span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col" style="width:360px">
-    <div class="cap"><b>Narrow</b> · 360 px · Assignments is its own view</div>
-    <div class="panel">
-      <div data-tabs="Models"></div>
-      <div class="hdr">
-        <h2>Models</h2>
-        <span class="vt"><span>Compare</span><span data-on>Assignments</span></span>
-        <span class="sp"></span>
-        <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
-      </div>
-      <div style="padding:0 6px">
-        <div class="pr"><i data-i="architect" class="base"></i><b style="font-weight:500">Architect</b><span class="rt">gpt-6.1-sol · high</span><span class="sc">shared</span></div>
-        <div class="pr" data-sel><i data-i="agent" class="base"></i><b style="font-weight:500">Implementer</b><span class="rt">gpt-6-luna · max</span><span class="sc">project</span></div>
-        <div class="pr"><i data-i="ring-check" class="base"></i><b style="font-weight:500">Verifier</b><span class="rt">qwen3.8-flash</span><span class="sc">shared</span></div>
-        <div class="pr"><i data-i="eye" class="base"></i><b style="font-weight:500">Reviewer</b><span class="rt weak" style="font-family:var(--sans);font-size:12px;color:var(--text-weak)">Uses the session model</span><span class="sc"></span></div>
-      </div>
-      <div style="flex:1"></div>
-      <div class="split"></div>
-      <div class="insp" style="height:372px">
-        <div class="top"><h3>Implementer</h3><span class="sp"></span><span class="weak" style="font-size:12px">Edited · not saved</span></div>
-        <div class="form">
-          <span>Model</span><span class="field mono">openai/gpt-6-luna<i data-i="chev-d" class="s"></i></span>
-          <span>Effort</span><span class="field">max<i data-i="chev-d" class="s"></i></span>
-          <span>Applies to</span><span class="seg" style="justify-self:start"><span>All projects</span><span data-on>This project</span></span>
-        </div>
-        <div class="why" style="display:flex;gap:8px;font-size:12px;color:var(--text-base);padding:7px 10px;border-radius:7px;background:var(--surface-base)"><i data-i="arrow" class="s weak" style="margin-top:2px"></i><span>From Compare: $0.35 – 0.67 per accepted task, 9 of 11 accepted.</span></div>
-        <div style="display:flex;gap:8px;margin-top:2px"><span class="btn primary">Save</span><span class="btn ghost">Revert</span></div>
-        <div class="weak" style="font-size:12px">New workers use this route. Running workers keep theirs.</div>
-        <div style="margin-top:2px">
-          <div class="disc"><i data-i="chev-r" class="s"></i>Other model ID</div>
-          <div class="disc"><i data-i="chev-r" class="s"></i>History<span class="n">3 changes</span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col" style="width:340px">
-    <div class="cap"><b>States</b> · one loading surface · actionable empty</div>
-    <div class="stack">
-      <div class="panel" style="flex:0 0 360px">
-        <div data-tabs="Models"></div>
-        <div class="hdr">
-          <h2>Models</h2>
-          <span class="vt"><span data-on>Compare</span><span>Assignments</span></span>
-          <span class="sp"></span>
-          <span class="iconbtn"><i data-i="refresh" class="weak"></i></span>
-        </div>
-        <div class="filters"><span class="ctl box">Implementer<i data-i="chev-d" class="s"></i></span><span class="ctl box">All kinds<i data-i="chev-d" class="s"></i></span></div>
-        <div style="padding:6px 16px; display:flex; flex-direction:column; gap:14px">
-          <div style="height:150px;border:1px solid var(--border-weak-base);border-radius:8px;position:relative;overflow:hidden">
-            <div class="sk" style="position:absolute;left:40px;top:108px;width:10px;height:10px;border-radius:50%"></div>
-            <div class="sk" style="position:absolute;left:104px;top:92px;width:10px;height:10px;border-radius:50%"></div>
-            <div class="sk" style="position:absolute;left:170px;top:60px;width:10px;height:10px;border-radius:50%"></div>
-            <div class="sk" style="position:absolute;left:236px;top:36px;width:10px;height:10px;border-radius:50%"></div>
+  <head>
+    <meta charset="utf-8" />
+    <title>Models — recommended</title>
+    <link rel="stylesheet" href="shared.css" />
+    <style>
+      .vt {
+        display: flex;
+        gap: 14px;
+        margin-left: 10px;
+        font-size: 12.5px;
+        color: var(--text-weak);
+      }
+      .vt span {
+        padding: 4px 0;
+      }
+      .vt span[data-on] {
+        color: var(--text-strong);
+        box-shadow: 0 1.5px 0 var(--text-strong);
+      }
+      .filters {
+        display: flex;
+        gap: 6px;
+        padding: 0 16px 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .filters .sp {
+        flex: 1;
+      }
+      .chartwrap {
+        padding: 0 12px;
+      }
+      svg.ch text {
+        font: 10.5px var(--mono);
+        fill: var(--text-weak);
+      }
+      svg.ch .lab {
+        font: 11.5px var(--sans);
+        fill: var(--text-base);
+      }
+      svg.ch .lab.on {
+        fill: var(--text-strong);
+        font-weight: 500;
+      }
+      svg.ch .grid {
+        stroke: var(--border-weak-base);
+        fill: none;
+      }
+      svg.ch .axis {
+        stroke: var(--border-base);
+        fill: none;
+      }
+      svg.ch .front {
+        stroke: var(--text-interactive-base);
+        stroke-width: 1.5;
+        fill: none;
+        opacity: 0.75;
+      }
+      svg.ch .pt {
+        fill: var(--background-base);
+        stroke: var(--text-base);
+        stroke-width: 1.5;
+      }
+      svg.ch .pt.f {
+        fill: var(--text-interactive-base);
+        stroke: var(--text-interactive-base);
+      }
+      svg.ch .pt.sel {
+        stroke: var(--text-strong);
+        stroke-width: 2;
+      }
+      svg.ch .halo {
+        fill: rgba(143, 203, 247, 0.16);
+      }
+      svg.ch .rng {
+        stroke: var(--text-base);
+        stroke-width: 1.25;
+        opacity: 0.6;
+      }
+      .capt {
+        padding: 2px 16px 8px;
+        font-size: 11.5px;
+        color: var(--text-weak);
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .capt .k {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .capt .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        border: 1.5px solid var(--text-base);
+      }
+      .capt .dot.f {
+        background: var(--text-interactive-base);
+        border-color: var(--text-interactive-base);
+      }
+      .insp {
+        padding: 12px 16px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .insp .top {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .insp .top .sp {
+        flex: 1;
+      }
+      .insp h3 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .big {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .big small {
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--text-weak);
+        margin-left: 6px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        padding: 8px 0 4px;
+      }
+      .stats div {
+        font-size: 11.5px;
+        color: var(--text-weak);
+      }
+      .stats b {
+        display: block;
+        font: 500 13px var(--mono);
+        color: var(--text-strong);
+        margin-bottom: 1px;
+      }
+      .pr {
+        display: grid;
+        grid-template-columns: 18px 96px minmax(0, 1fr) auto;
+        column-gap: 8px;
+        align-items: center;
+        height: 34px;
+        padding: 0 10px;
+        border-radius: 6px;
+        font-size: 12.5px;
+      }
+      .pr[data-sel] {
+        background: var(--surface-base-hover);
+      }
+      .pr .rt {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-base);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pr .sc {
+        font-size: 11px;
+        color: var(--text-weak);
+      }
+      .form {
+        display: grid;
+        grid-template-columns: 76px 1fr;
+        gap: 8px 10px;
+        align-items: center;
+        font-size: 12.5px;
+        color: var(--text-weak);
+      }
+      .field {
+        height: 28px;
+        border: 1px solid var(--border-base);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        padding: 0 8px;
+        color: var(--text-strong);
+        background: var(--surface-base);
+        justify-content: space-between;
+      }
+      .field.mono {
+        font-size: 11.5px;
+      }
+      .empty {
+        padding: 22px 20px;
+        text-align: center;
+        color: var(--text-weak);
+        font-size: 12.5px;
+      }
+      .empty b {
+        display: block;
+        color: var(--text-strong);
+        font-weight: 500;
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+    </style>
+    <script src="icons.js"></script>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="col" style="width: 500px">
+        <div class="cap"><b>Models</b> · 500 px · Compare, model selected</div>
+        <div class="panel">
+          <div data-tabs="Models"></div>
+          <div class="hdr">
+            <h2>Models</h2>
+            <span class="vt"><span data-on>Compare</span><span>Assignments</span></span>
+            <span class="sp"></span>
+            <span class="weak" style="font-size: 11.5px">Prices 5:41 PM</span>
+            <span class="iconbtn"><i data-i="refresh"></i></span>
           </div>
-          <div class="weak" style="font-size:12px">Loading comparison · 14 tasks so far</div>
-          <div class="sk" style="width:60%"></div><div class="sk" style="width:38%"></div>
+          <div class="filters">
+            <span class="ctl box">Implementer<i data-i="chev-d" class="s"></i></span>
+            <span class="ctl box">All kinds<i data-i="chev-d" class="s"></i></span>
+            <span class="sp"></span>
+            <span class="seg"><span data-on>Your runs</span><span>Benchmark</span></span>
+          </div>
+          <div class="chartwrap">
+            <svg class="ch" viewBox="0 0 474 262" width="474" height="262">
+              <g class="grid">
+                <path d="M44 20H464M44 70H464M44 120H464M44 170H464" />
+                <path d="M149 20V220M254 20V220M359 20V220M464 20V220" />
+              </g>
+              <path class="axis" d="M44 20V220H464" />
+              <text x="38" y="224" text-anchor="end">$0</text>
+              <text x="38" y="174" text-anchor="end">$1</text>
+              <text x="38" y="124" text-anchor="end">$2</text>
+              <text x="38" y="74" text-anchor="end">$3</text>
+              <text x="38" y="24" text-anchor="end">$4</text>
+              <text x="44" y="236" text-anchor="middle">0</text>
+              <text x="149" y="236" text-anchor="middle">5M</text>
+              <text x="254" y="236" text-anchor="middle">10M</text>
+              <text x="359" y="236" text-anchor="middle">15M</text>
+              <text x="464" y="236" text-anchor="end">20M</text>
+              <text x="254" y="256" text-anchor="middle" class="lab" style="fill: var(--text-weak)">
+                Tokens per accepted task
+              </text>
+              <text
+                x="12"
+                y="120"
+                text-anchor="middle"
+                class="lab"
+                style="fill: var(--text-weak)"
+                transform="rotate(-90 12 120)"
+              >
+                Cost per accepted task
+              </text>
+              <path class="front" d="M92 204L174 192L263 150" />
+              <path class="rng" d="M174 178V203" />
+              <circle class="pt f" cx="92" cy="204" r="4.5" />
+              <text class="lab" x="102" y="208">Qwen 3.8 Flash</text>
+              <circle class="halo" cx="174" cy="192" r="12" />
+              <circle class="pt f sel" cx="174" cy="192" r="5.5" />
+              <text class="lab on" x="150" y="170">GPT-6 Luna · max</text>
+              <circle class="pt f" cx="263" cy="150" r="4.5" />
+              <text class="lab" x="273" y="146">Kimi K3.1 Pro</text>
+              <circle class="pt" cx="318" cy="92" r="4.5" />
+              <text class="lab" x="328" y="96">GPT-6.1 Sol · high</text>
+              <circle class="pt" cx="306" cy="184" r="4.5" />
+              <text class="lab" x="316" y="188">Luna · low</text>
+              <circle class="pt" cx="402" cy="128" r="4.5" />
+              <text class="lab" x="412" y="124">Terra</text>
+            </svg>
+          </div>
+          <div class="capt">
+            <span class="k"><span class="dot f"></span>Best trade-off</span
+            ><span class="k"><span class="dot"></span>Other</span
+            ><span style="margin-left: auto">14 accepted tasks · OpenRouter prices</span>
+          </div>
+          <div style="flex: 1"></div>
+          <div class="split"></div>
+          <div class="insp" style="height: 318px">
+            <div class="top">
+              <h3>GPT-6 Luna</h3>
+              <span class="mono weak">openai/gpt-6-luna · max</span><span class="sp"></span
+              ><span class="btn">Assign to Implementer</span>
+            </div>
+            <div class="big">$0.35 – 0.67<small>per accepted task</small></div>
+            <div class="stats">
+              <div><b>9 of 11</b>accepted</div>
+              <div><b>6.2M</b>tokens / task</div>
+              <div><b>14m</b>median time</div>
+              <div><b>1.2</b>attempts / task</div>
+            </div>
+            <div>
+              <div class="disc">
+                <i data-i="chev-r" class="s"></i>Estimate basis and prices<span class="n"
+                  >OpenRouter · 17 Nov</span
+                >
+              </div>
+              <div class="disc">
+                <i data-i="chev-r" class="s"></i>Runs with this model<span class="n">11</span>
+              </div>
+              <div class="disc">
+                <i data-i="chev-r" class="s"></i>Public benchmark<span class="n"
+                  >Coding index 61</span
+                >
+              </div>
+              <div class="disc">
+                <i data-i="chev-r" class="s"></i>Chart data as a table<span class="n"
+                  >6 models</span
+                >
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="panel">
-        <div class="hdr">
-          <h2>Models</h2>
-          <span class="vt"><span data-on>Compare</span><span>Assignments</span></span>
-          <span class="sp"></span>
+
+      <div class="col" style="width: 360px">
+        <div class="cap"><b>Narrow</b> · 360 px · Assignments is its own view</div>
+        <div class="panel">
+          <div data-tabs="Models"></div>
+          <div class="hdr">
+            <h2>Models</h2>
+            <span class="vt"><span>Compare</span><span data-on>Assignments</span></span>
+            <span class="sp"></span>
+            <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
+          </div>
+          <div style="padding: 0 6px">
+            <div class="pr">
+              <i data-i="architect" class="base"></i><b style="font-weight: 500">Architect</b
+              ><span class="rt">gpt-6.1-sol · high</span><span class="sc">shared</span>
+            </div>
+            <div class="pr" data-sel>
+              <i data-i="agent" class="base"></i><b style="font-weight: 500">Implementer</b
+              ><span class="rt">gpt-6-luna · max</span><span class="sc">project</span>
+            </div>
+            <div class="pr">
+              <i data-i="ring-check" class="base"></i><b style="font-weight: 500">Verifier</b
+              ><span class="rt">qwen3.8-flash</span><span class="sc">shared</span>
+            </div>
+            <div class="pr">
+              <i data-i="eye" class="base"></i><b style="font-weight: 500">Reviewer</b
+              ><span
+                class="rt weak"
+                style="font-family: var(--sans); font-size: 12px; color: var(--text-weak)"
+                >Uses the session model</span
+              ><span class="sc"></span>
+            </div>
+          </div>
+          <div style="flex: 1"></div>
+          <div class="split"></div>
+          <div class="insp" style="height: 372px">
+            <div class="top">
+              <h3>Implementer</h3>
+              <span class="sp"></span
+              ><span class="weak" style="font-size: 12px">Edited · not saved</span>
+            </div>
+            <div class="form">
+              <span>Model</span
+              ><span class="field mono">openai/gpt-6-luna<i data-i="chev-d" class="s"></i></span>
+              <span>Effort</span><span class="field">max<i data-i="chev-d" class="s"></i></span>
+              <span>Applies to</span
+              ><span class="seg" style="justify-self: start"
+                ><span>All projects</span><span data-on>This project</span></span
+              >
+            </div>
+            <div
+              class="why"
+              style="
+                display: flex;
+                gap: 8px;
+                font-size: 12px;
+                color: var(--text-base);
+                padding: 7px 10px;
+                border-radius: 7px;
+                background: var(--surface-base);
+              "
+            >
+              <i data-i="arrow" class="s weak" style="margin-top: 2px"></i
+              ><span>From Compare: $0.35 – 0.67 per accepted task, 9 of 11 accepted.</span>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 2px">
+              <span class="btn primary">Save</span><span class="btn ghost">Revert</span>
+            </div>
+            <div class="weak" style="font-size: 12px">
+              New workers use this route. Running workers keep theirs.
+            </div>
+            <div style="margin-top: 2px">
+              <div class="disc"><i data-i="chev-r" class="s"></i>Other model ID</div>
+              <div class="disc">
+                <i data-i="chev-r" class="s"></i>History<span class="n">3 changes</span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="filters"><span class="ctl box">Implementer<i data-i="chev-d" class="s"></i></span><span class="sp"></span><span class="seg"><span>Your runs</span><span data-on>Benchmark</span></span></div>
-        <div class="empty"><b>Benchmarks need OpenRouter</b>Connect OpenRouter in OpenCode to load public benchmark scores and list prices.<div style="margin-top:12px;display:flex;gap:8px;justify-content:center"><span class="btn">Open provider settings</span><span class="btn ghost">Retry</span></div></div>
+      </div>
+
+      <div class="col" style="width: 340px">
+        <div class="cap"><b>States</b> · one loading surface · actionable empty</div>
+        <div class="stack">
+          <div class="panel" style="flex: 0 0 360px">
+            <div data-tabs="Models"></div>
+            <div class="hdr">
+              <h2>Models</h2>
+              <span class="vt"><span data-on>Compare</span><span>Assignments</span></span>
+              <span class="sp"></span>
+              <span class="iconbtn"><i data-i="refresh" class="weak"></i></span>
+            </div>
+            <div class="filters">
+              <span class="ctl box">Implementer<i data-i="chev-d" class="s"></i></span
+              ><span class="ctl box">All kinds<i data-i="chev-d" class="s"></i></span>
+            </div>
+            <div style="padding: 6px 16px; display: flex; flex-direction: column; gap: 14px">
+              <div
+                style="
+                  height: 150px;
+                  border: 1px solid var(--border-weak-base);
+                  border-radius: 8px;
+                  position: relative;
+                  overflow: hidden;
+                "
+              >
+                <div
+                  class="sk"
+                  style="
+                    position: absolute;
+                    left: 40px;
+                    top: 108px;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                  "
+                ></div>
+                <div
+                  class="sk"
+                  style="
+                    position: absolute;
+                    left: 104px;
+                    top: 92px;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                  "
+                ></div>
+                <div
+                  class="sk"
+                  style="
+                    position: absolute;
+                    left: 170px;
+                    top: 60px;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                  "
+                ></div>
+                <div
+                  class="sk"
+                  style="
+                    position: absolute;
+                    left: 236px;
+                    top: 36px;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                  "
+                ></div>
+              </div>
+              <div class="weak" style="font-size: 12px">Loading comparison · 14 tasks so far</div>
+              <div class="sk" style="width: 60%"></div>
+              <div class="sk" style="width: 38%"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="hdr">
+              <h2>Models</h2>
+              <span class="vt"><span data-on>Compare</span><span>Assignments</span></span>
+              <span class="sp"></span>
+            </div>
+            <div class="filters">
+              <span class="ctl box">Implementer<i data-i="chev-d" class="s"></i></span
+              ><span class="sp"></span
+              ><span class="seg"><span>Your runs</span><span data-on>Benchmark</span></span>
+            </div>
+            <div class="empty">
+              <b>Benchmarks need OpenRouter</b>Connect OpenRouter in OpenCode to load public
+              benchmark scores and list prices.
+              <div style="margin-top: 12px; display: flex; gap: 8px; justify-content: center">
+                <span class="btn">Open provider settings</span><span class="btn ghost">Retry</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-</div>
-</body>
+  </body>
 </html>

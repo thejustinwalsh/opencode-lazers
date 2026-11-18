@@ -237,9 +237,7 @@ function safeSpec(task: TaskSpec, stats: PrivacyStats) {
       evidence: item.evidence.map((evidence) =>
         evidence.kind === "verification"
           ? { kind: "verification", verificationID: safeText(evidence.verificationID, stats) }
-          : evidence.kind === "artifact"
-            ? { kind: "artifact", reference: safeText(evidence.reference, stats) }
-            : { kind: "human", decision: safeText(evidence.decision, stats) },
+          : { kind: "artifact", reference: safeText(evidence.reference, stats) },
       ),
     })),
     requirements: {
@@ -1025,9 +1023,7 @@ export async function inspectTrajectory(
       evidence: item.evidence.map((evidence) =>
         evidence.kind === "verification"
           ? { kind: "verification", verificationID: safeText(evidence.verificationID, stats) }
-          : evidence.kind === "artifact"
-            ? { kind: "artifact", reference: safeText(evidence.reference, stats) }
-            : { kind: "human", decision: safeText(evidence.decision, stats) },
+          : { kind: "artifact", reference: safeText(evidence.reference, stats) },
       ),
     })),
     checks: checksByPlan.get(snapshot.row.id) ?? [],

@@ -1,171 +1,589 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Radar — recommended</title>
-<link rel="stylesheet" href="shared.css">
-<style>
-.live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-weak); }
-.live .d { width: 6px; height: 6px; border-radius: 50%; background: var(--text-interactive-base); box-shadow: 0 0 0 3px rgba(143,203,247,.14); }
-.live[data-off] .d { background: var(--icon-warning-base); box-shadow: none; }
-.sched { display: flex; gap: 14px; padding: 0 16px 8px; font-size: 12px; color: var(--text-weak); }
-.sched b { color: var(--text-strong); font-weight: 500; font-family: var(--mono); font-size: 11.5px; }
-.ses { padding: 0 6px; }
-.sr { display: grid; grid-template-columns: 18px minmax(0,1fr) auto auto; column-gap: 8px; align-items: center; height: 30px; padding: 0 10px; border-radius: 6px; }
-.sr[data-sel] { background: var(--surface-base-hover); }
-.sr .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sr .who b { font-weight: 500; }
-.sr .who .mono { color: var(--text-weak); margin-left: 6px; }
-.sr .mdl { font-size: 11.5px; color: var(--text-weak); white-space: nowrap; }
-.sr .st { font-size: 12px; min-width: 62px; text-align: right; white-space: nowrap; }
-.sr .st .mono { color: var(--text-weak); margin-left: 4px; }
-.kid { margin-left: 15px; border-left: 1px solid var(--border-base); padding-left: 4px; }
-.ln { display: grid; grid-template-columns: 16px 44px minmax(0,1fr) auto; column-gap: 8px; align-items: center; height: 24px; padding: 0 10px 0 36px; font-size: 12px; color: var(--text-base); }
-.ln .tool { font-family: var(--mono); font-size: 11.5px; color: var(--text-strong); }
-.ln .tg { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-base); }
-.ln .du { font-family: var(--mono); font-size: 11px; color: var(--text-weak); }
-.ln[data-run] .i { color: var(--text-interactive-base); }
-.ln[data-fail] .i, .ln[data-fail] .tg { color: var(--icon-critical-base); }
-.insp { padding: 12px 16px 0; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.insp .top { display: flex; align-items: center; gap: 8px; }
-.insp .top .sp { flex: 1; }
-.insp h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.35; }
-.facts { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-weak); }
-.facts b { color: var(--text-base); font-weight: 400; }
-.call { display: grid; grid-template-columns: 16px 44px minmax(0,1fr) auto auto; column-gap: 8px; align-items: center; height: 26px; font-size: 12px; border-top: 1px solid var(--border-weak-base); }
-.call .tool { font-family: var(--mono); font-size: 11.5px; }
-.call .tg { font-family: var(--mono); font-size: 11.5px; color: var(--text-base); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.call .du, .call .at { font-family: var(--mono); font-size: 11px; color: var(--text-weak); }
-.sub { font-size: 12px; color: var(--text-weak); margin-top: 4px; display: flex; gap: 12px; }
-.sub span[data-on] { color: var(--text-strong); box-shadow: 0 1px 0 var(--text-strong); padding-bottom: 3px; }
-.empty { padding: 28px 20px; text-align: center; color: var(--text-weak); font-size: 12.5px; }
-.empty b { display: block; color: var(--text-strong); font-weight: 500; margin-bottom: 4px; font-size: 13px; }
-svg.map text { font: 11px var(--sans); fill: var(--text-base); }
-svg.map .n { fill: var(--surface-base); stroke: var(--border-base); }
-svg.map .e { stroke: var(--border-base); fill: none; stroke-width: 1.25; }
-svg.map .hot { stroke: var(--text-interactive-base); }
-svg.map .bad { stroke: var(--icon-critical-base); }
-</style>
-<script src="icons.js"></script>
-</head>
-<body>
-<div class="stage">
+  <head>
+    <meta charset="utf-8" />
+    <title>Radar — recommended</title>
+    <link rel="stylesheet" href="shared.css" />
+    <style>
+      .live {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-weak);
+      }
+      .live .d {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--text-interactive-base);
+        box-shadow: 0 0 0 3px rgba(143, 203, 247, 0.14);
+      }
+      .live[data-off] .d {
+        background: var(--icon-warning-base);
+        box-shadow: none;
+      }
+      .sched {
+        display: flex;
+        gap: 14px;
+        padding: 0 16px 8px;
+        font-size: 12px;
+        color: var(--text-weak);
+      }
+      .sched b {
+        color: var(--text-strong);
+        font-weight: 500;
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+      .ses {
+        padding: 0 6px;
+      }
+      .sr {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) auto auto;
+        column-gap: 8px;
+        align-items: center;
+        height: 30px;
+        padding: 0 10px;
+        border-radius: 6px;
+      }
+      .sr[data-sel] {
+        background: var(--surface-base-hover);
+      }
+      .sr .who {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .sr .who b {
+        font-weight: 500;
+      }
+      .sr .who .mono {
+        color: var(--text-weak);
+        margin-left: 6px;
+      }
+      .sr .mdl {
+        font-size: 11.5px;
+        color: var(--text-weak);
+        white-space: nowrap;
+      }
+      .sr .st {
+        font-size: 12px;
+        min-width: 62px;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .sr .st .mono {
+        color: var(--text-weak);
+        margin-left: 4px;
+      }
+      .kid {
+        margin-left: 15px;
+        border-left: 1px solid var(--border-base);
+        padding-left: 4px;
+      }
+      .ln {
+        display: grid;
+        grid-template-columns: 16px 44px minmax(0, 1fr) auto;
+        column-gap: 8px;
+        align-items: center;
+        height: 24px;
+        padding: 0 10px 0 36px;
+        font-size: 12px;
+        color: var(--text-base);
+      }
+      .ln .tool {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-strong);
+      }
+      .ln .tg {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text-base);
+      }
+      .ln .du {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-weak);
+      }
+      .ln[data-run] .i {
+        color: var(--text-interactive-base);
+      }
+      .ln[data-fail] .i,
+      .ln[data-fail] .tg {
+        color: var(--icon-critical-base);
+      }
+      .insp {
+        padding: 12px 16px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-height: 0;
+      }
+      .insp .top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .insp .top .sp {
+        flex: 1;
+      }
+      .insp h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.35;
+      }
+      .facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        font-size: 12px;
+        color: var(--text-weak);
+      }
+      .facts b {
+        color: var(--text-base);
+        font-weight: 400;
+      }
+      .call {
+        display: grid;
+        grid-template-columns: 16px 44px minmax(0, 1fr) auto auto;
+        column-gap: 8px;
+        align-items: center;
+        height: 26px;
+        font-size: 12px;
+        border-top: 1px solid var(--border-weak-base);
+      }
+      .call .tool {
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+      .call .tg {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-base);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .call .du,
+      .call .at {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-weak);
+      }
+      .sub {
+        font-size: 12px;
+        color: var(--text-weak);
+        margin-top: 4px;
+        display: flex;
+        gap: 12px;
+      }
+      .sub span[data-on] {
+        color: var(--text-strong);
+        box-shadow: 0 1px 0 var(--text-strong);
+        padding-bottom: 3px;
+      }
+      .empty {
+        padding: 28px 20px;
+        text-align: center;
+        color: var(--text-weak);
+        font-size: 12.5px;
+      }
+      .empty b {
+        display: block;
+        color: var(--text-strong);
+        font-weight: 500;
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+      svg.map text {
+        font: 11px var(--sans);
+        fill: var(--text-base);
+      }
+      svg.map .n {
+        fill: var(--surface-base);
+        stroke: var(--border-base);
+      }
+      svg.map .e {
+        stroke: var(--border-base);
+        fill: none;
+        stroke-width: 1.25;
+      }
+      svg.map .hot {
+        stroke: var(--text-interactive-base);
+      }
+      svg.map .bad {
+        stroke: var(--icon-critical-base);
+      }
+    </style>
+    <script src="icons.js"></script>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="col" style="width: 500px">
+        <div class="cap"><b>Radar</b> · 500 px · live monitor, worker selected</div>
+        <div class="panel">
+          <div data-tabs="Radar"></div>
+          <div class="hdr">
+            <h2>Radar</h2>
+            <span class="seg" style="margin-left: 6px"
+              ><span data-on>Monitor</span><span>Map</span><span>Flow</span></span
+            >
+            <span class="sp"></span>
+            <span class="live"><span class="d"></span>Live</span>
+            <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
+            <span class="iconbtn"><i data-i="more"></i></span>
+          </div>
+          <div class="sched">
+            <span><b>3</b> running</span><span><b>1</b> needs you</span><span><b>1</b> failed</span
+            ><span><b>6</b> queued</span><span style="margin-left: auto">capacity <b>3/4</b></span>
+          </div>
+          <div class="ses">
+            <div class="sr">
+              <i data-i="architect" class="base"></i
+              ><span class="who"
+                ><b>Architect</b
+                ><span class="weak"> · LAZERS roadmap and renewal-context fix</span></span
+              ><span class="mdl">gpt-6.1-sol · high</span
+              ><span class="st weak">idle<span class="mono">29m</span></span>
+            </div>
+            <div class="kid">
+              <div class="sr" data-sel>
+                <i data-i="ring-progress" class="blue"></i
+                ><span class="who"
+                  ><b>Implementer</b><span class="mono">LZ-99</span
+                  ><span class="weak"> · Same-attempt resume</span></span
+                ><span class="mdl">gpt-6-luna · max</span
+                ><span class="st blue">running<span class="mono">12m</span></span>
+              </div>
+              <div class="ln" data-run>
+                <i data-i="terminal" class="s"></i><span class="tool">bash</span
+                ><span class="tg">bun test src/runner/resume.test.ts</span
+                ><span class="du">0:42</span>
+              </div>
+              <div class="ln">
+                <i data-i="edit" class="s weak"></i><span class="tool">edit</span
+                ><span class="tg">src/runner/lifecycle.ts</span><span class="du">3s ago</span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-progress" class="blue"></i
+                ><span class="who"
+                  ><b>Implementer</b><span class="mono">LZ-146</span
+                  ><span class="weak"> · Models Compare layout</span></span
+                ><span class="mdl">gpt-6-luna · max</span
+                ><span class="st blue">running<span class="mono">4m</span></span>
+              </div>
+              <div class="ln" data-run>
+                <i data-i="read" class="s"></i><span class="tool">read</span
+                ><span class="tg">src/models/comparison-panel.tsx</span><span class="du">0:02</span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-alert" class="warn"></i
+                ><span class="who"
+                  ><b>Implementer</b><span class="mono">LZ-135</span
+                  ><span class="weak"> · Retained-message projection</span></span
+                ><span class="mdl">kimi-k3.1-pro</span
+                ><span class="st warn">needs you<span class="mono">6m</span></span>
+              </div>
+              <div class="ln">
+                <i data-i="terminal" class="s warn"></i><span class="tool">bash</span
+                ><span class="tg">Permission requested: git worktree prune</span
+                ><span class="du">6m</span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-progress" class="blue"></i
+                ><span class="who"
+                  ><b>Verifier</b><span class="mono">LZ-134</span
+                  ><span class="weak"> · Renewal source pushes</span></span
+                ><span class="mdl">qwen3.8-flash</span
+                ><span class="st blue">checking<span class="mono">58s</span></span>
+              </div>
+              <div class="ln" data-run>
+                <i data-i="terminal" class="s"></i><span class="tool">check</span
+                ><span class="tg">bun run verify</span><span class="du">0:58</span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-x" class="crit"></i
+                ><span class="who"
+                  ><b>Implementer</b><span class="mono">LZ-118</span
+                  ><span class="weak"> · Stale lease rejection</span></span
+                ><span class="mdl">gpt-6-luna · max</span
+                ><span class="st crit">failed<span class="mono">14m</span></span>
+              </div>
+              <div class="ln" data-fail>
+                <i data-i="terminal" class="s"></i><span class="tool">bash</span
+                ><span class="tg">exit 1 · 3 tests failed in lease.test.ts</span
+                ><span class="du">14m</span>
+              </div>
+            </div>
+          </div>
+          <div style="flex: 1"></div>
+          <div class="split"></div>
+          <div class="insp" style="height: 300px">
+            <div class="top">
+              <i data-i="ring-progress" class="blue"></i
+              ><span class="blue" style="font-size: 12px">Running</span
+              ><span class="mono weak">LZ-99</span>
+              <span class="sp"></span>
+              <span class="btn ghost">Open task</span><span class="btn ghost">Trajectory</span>
+            </div>
+            <h3>
+              Implementer · Allow explicit same-attempt resume of a post-restart interrupted worker
+            </h3>
+            <div class="facts">
+              <span><b>gpt-6-luna · max</b></span
+              ><span>attempt <b>2</b></span
+              ><span>started <b>5:43 PM</b></span
+              ><span>last activity <b>3s ago</b></span>
+            </div>
+            <div class="sub">
+              <span data-on>Calls 31</span><span>Files 7</span><span>Messages 4</span>
+            </div>
+            <div>
+              <div class="call">
+                <i data-i="terminal" class="s blue"></i><span class="tool">bash</span
+                ><span class="tg">bun test src/runner/resume.test.ts</span
+                ><span class="du blue">0:42</span><span class="at">5:55:12</span>
+              </div>
+              <div class="call">
+                <i data-i="edit" class="s weak"></i><span class="tool">edit</span
+                ><span class="tg">src/runner/lifecycle.ts</span><span class="du">0.4s</span
+                ><span class="at">5:55:09</span>
+              </div>
+              <div class="call">
+                <i data-i="read" class="s weak"></i><span class="tool">read</span
+                ><span class="tg">src/runner/lifecycle.ts</span><span class="du">0.1s</span
+                ><span class="at">5:54:51</span>
+              </div>
+              <div class="call">
+                <i data-i="terminal" class="s crit"></i><span class="tool">bash</span
+                ><span class="tg crit">bun test src/runner · exit 1</span><span class="du">18s</span
+                ><span class="at">5:54:30</span>
+              </div>
+              <div class="call">
+                <i data-i="search" class="s weak"></i><span class="tool">grep</span
+                ><span class="tg">"interrupted" src/runner</span><span class="du">0.2s</span
+                ><span class="at">5:54:02</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  <div class="col" style="width:500px">
-    <div class="cap"><b>Radar</b> · 500 px · live monitor, worker selected</div>
-    <div class="panel">
-      <div data-tabs="Radar"></div>
-      <div class="hdr">
-        <h2>Radar</h2>
-        <span class="seg" style="margin-left:6px"><span data-on>Monitor</span><span>Map</span><span>Flow</span></span>
-        <span class="sp"></span>
-        <span class="live"><span class="d"></span>Live</span>
-        <span class="ctl">Project<i data-i="chev-d" class="s"></i></span>
-        <span class="iconbtn"><i data-i="more"></i></span>
-      </div>
-      <div class="sched"><span><b>3</b> running</span><span><b>1</b> needs you</span><span><b>1</b> failed</span><span><b>6</b> queued</span><span style="margin-left:auto">capacity <b>3/4</b></span></div>
-      <div class="ses">
-        <div class="sr"><i data-i="architect" class="base"></i><span class="who"><b>Architect</b><span class="weak"> · LAZERS roadmap and renewal-context fix</span></span><span class="mdl">gpt-6.1-sol · high</span><span class="st weak">idle<span class="mono">29m</span></span></div>
-        <div class="kid">
-          <div class="sr" data-sel><i data-i="ring-progress" class="blue"></i><span class="who"><b>Implementer</b><span class="mono">LZ-99</span><span class="weak"> · Same-attempt resume</span></span><span class="mdl">gpt-6-luna · max</span><span class="st blue">running<span class="mono">12m</span></span></div>
-          <div class="ln" data-run><i data-i="terminal" class="s"></i><span class="tool">bash</span><span class="tg">bun test src/runner/resume.test.ts</span><span class="du">0:42</span></div>
-          <div class="ln"><i data-i="edit" class="s weak"></i><span class="tool">edit</span><span class="tg">src/runner/lifecycle.ts</span><span class="du">3s ago</span></div>
-          <div class="sr"><i data-i="ring-progress" class="blue"></i><span class="who"><b>Implementer</b><span class="mono">LZ-146</span><span class="weak"> · Models Compare layout</span></span><span class="mdl">gpt-6-luna · max</span><span class="st blue">running<span class="mono">4m</span></span></div>
-          <div class="ln" data-run><i data-i="read" class="s"></i><span class="tool">read</span><span class="tg">src/models/comparison-panel.tsx</span><span class="du">0:02</span></div>
-          <div class="sr"><i data-i="ring-alert" class="warn"></i><span class="who"><b>Implementer</b><span class="mono">LZ-135</span><span class="weak"> · Retained-message projection</span></span><span class="mdl">kimi-k3.1-pro</span><span class="st warn">needs you<span class="mono">6m</span></span></div>
-          <div class="ln"><i data-i="terminal" class="s warn"></i><span class="tool">bash</span><span class="tg">Permission requested: git worktree prune</span><span class="du">6m</span></div>
-          <div class="sr"><i data-i="ring-progress" class="blue"></i><span class="who"><b>Verifier</b><span class="mono">LZ-134</span><span class="weak"> · Renewal source pushes</span></span><span class="mdl">qwen3.8-flash</span><span class="st blue">checking<span class="mono">58s</span></span></div>
-          <div class="ln" data-run><i data-i="terminal" class="s"></i><span class="tool">check</span><span class="tg">bun run verify</span><span class="du">0:58</span></div>
-          <div class="sr"><i data-i="ring-x" class="crit"></i><span class="who"><b>Implementer</b><span class="mono">LZ-118</span><span class="weak"> · Stale lease rejection</span></span><span class="mdl">gpt-6-luna · max</span><span class="st crit">failed<span class="mono">14m</span></span></div>
-          <div class="ln" data-fail><i data-i="terminal" class="s"></i><span class="tool">bash</span><span class="tg">exit 1 · 3 tests failed in lease.test.ts</span><span class="du">14m</span></div>
+      <div class="col" style="width: 360px">
+        <div class="cap"><b>Narrow</b> · 360 px · connection lost, last snapshot kept</div>
+        <div class="panel">
+          <div data-tabs="Radar"></div>
+          <div class="hdr">
+            <h2>Radar</h2>
+            <span class="seg" style="margin-left: 6px"
+              ><span data-on>Monitor</span><span>Map</span><span>Flow</span></span
+            >
+            <span class="sp"></span>
+            <span class="live" data-off><span class="d"></span>Offline</span>
+            <span class="iconbtn"><i data-i="more"></i></span>
+          </div>
+          <div class="banner">
+            <i data-i="wifi" class="s warn"></i
+            ><span>Live updates stopped at 5:54:12 PM. Retrying in 8s.</span><span class="sp"></span
+            ><a>Retry</a>
+          </div>
+          <div class="ses" style="opacity: 0.72">
+            <div class="sr">
+              <i data-i="architect" class="base"></i
+              ><span class="who"><b>Architect</b><span class="weak"> · LAZERS roadmap</span></span
+              ><span class="mdl"></span><span class="st weak">idle</span>
+            </div>
+            <div class="kid">
+              <div class="sr">
+                <i data-i="ring-progress" class="base"></i
+                ><span class="who"><b>Implementer</b><span class="mono">LZ-99</span></span
+                ><span class="mdl">gpt-6-luna</span><span class="st weak">running</span>
+              </div>
+              <div class="ln" style="padding-left: 36px">
+                <i data-i="terminal" class="s"></i><span class="tool">bash</span
+                ><span class="tg">bun test src/runner/resume.test.ts</span><span class="du"></span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-progress" class="base"></i
+                ><span class="who"><b>Implementer</b><span class="mono">LZ-146</span></span
+                ><span class="mdl">gpt-6-luna</span><span class="st weak">running</span>
+              </div>
+              <div class="ln">
+                <i data-i="read" class="s"></i><span class="tool">read</span
+                ><span class="tg">src/models/comparison-panel.tsx</span><span class="du"></span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-alert" class="base"></i
+                ><span class="who"><b>Implementer</b><span class="mono">LZ-135</span></span
+                ><span class="mdl">kimi-k3.1</span><span class="st weak">needs you</span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-progress" class="base"></i
+                ><span class="who"><b>Verifier</b><span class="mono">LZ-134</span></span
+                ><span class="mdl">qwen3.8</span><span class="st weak">checking</span>
+              </div>
+              <div class="sr">
+                <i data-i="ring-x" class="base"></i
+                ><span class="who"><b>Implementer</b><span class="mono">LZ-118</span></span
+                ><span class="mdl">gpt-6-luna</span><span class="st weak">failed</span>
+              </div>
+            </div>
+          </div>
+          <div style="flex: 1"></div>
+          <div class="cap" style="padding: 0 16px 10px; height: auto">
+            No selection: the list keeps the full height. The inspector opens when a session is
+            selected.
+          </div>
         </div>
       </div>
-      <div style="flex:1"></div>
-      <div class="split"></div>
-      <div class="insp" style="height:300px">
-        <div class="top">
-          <i data-i="ring-progress" class="blue"></i><span class="blue" style="font-size:12px">Running</span><span class="mono weak">LZ-99</span>
-          <span class="sp"></span>
-          <span class="btn ghost">Open task</span><span class="btn ghost">Trajectory</span>
-        </div>
-        <h3>Implementer · Allow explicit same-attempt resume of a post-restart interrupted worker</h3>
-        <div class="facts"><span><b>gpt-6-luna · max</b></span><span>attempt <b>2</b></span><span>started <b>5:43 PM</b></span><span>last activity <b>3s ago</b></span></div>
-        <div class="sub"><span data-on>Calls 31</span><span>Files 7</span><span>Messages 4</span></div>
-        <div>
-          <div class="call"><i data-i="terminal" class="s blue"></i><span class="tool">bash</span><span class="tg">bun test src/runner/resume.test.ts</span><span class="du blue">0:42</span><span class="at">5:55:12</span></div>
-          <div class="call"><i data-i="edit" class="s weak"></i><span class="tool">edit</span><span class="tg">src/runner/lifecycle.ts</span><span class="du">0.4s</span><span class="at">5:55:09</span></div>
-          <div class="call"><i data-i="read" class="s weak"></i><span class="tool">read</span><span class="tg">src/runner/lifecycle.ts</span><span class="du">0.1s</span><span class="at">5:54:51</span></div>
-          <div class="call"><i data-i="terminal" class="s crit"></i><span class="tool">bash</span><span class="tg crit">bun test src/runner · exit 1</span><span class="du">18s</span><span class="at">5:54:30</span></div>
-          <div class="call"><i data-i="search" class="s weak"></i><span class="tool">grep</span><span class="tg">"interrupted" src/runner</span><span class="du">0.2s</span><span class="at">5:54:02</span></div>
+
+      <div class="col" style="width: 340px">
+        <div class="cap"><b>Views</b> · Map in the same header · idle state</div>
+        <div class="stack">
+          <div class="panel" style="flex: 0 0 404px">
+            <div data-tabs="Radar"></div>
+            <div class="hdr">
+              <h2>Radar</h2>
+              <span class="seg" style="margin-left: 6px"
+                ><span>Monitor</span><span data-on>Map</span><span>Flow</span></span
+              >
+              <span class="sp"></span>
+              <span class="live"><span class="d"></span>Live</span>
+              <span class="iconbtn"><i data-i="more"></i></span>
+            </div>
+            <svg class="map" viewBox="0 0 338 300" width="338" height="300">
+              <path class="e" d="M169 52v34" />
+              <path class="e hot" d="M169 122v20M169 142H70v26M169 142v26" />
+              <path class="e" d="M169 142h99v26" />
+              <path class="e bad" d="M268 204v30" />
+              <path class="e hot" d="M70 204v30M169 204v30" />
+              <rect class="n" x="119" y="20" width="100" height="32" rx="7" />
+              <text x="169" y="40" text-anchor="middle">You · session</text>
+              <rect class="n" x="119" y="86" width="100" height="36" rx="7" />
+              <text x="169" y="103" text-anchor="middle" style="fill: var(--text-strong)">
+                Architect
+              </text>
+              <text
+                x="169"
+                y="116"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--text-weak)"
+              >
+                idle 29m
+              </text>
+              <rect
+                class="n"
+                x="24"
+                y="168"
+                width="92"
+                height="36"
+                rx="7"
+                style="stroke: var(--text-interactive-base)"
+              />
+              <text x="70" y="185" text-anchor="middle" style="fill: var(--text-strong)">
+                Runtime
+              </text>
+              <text
+                x="70"
+                y="198"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--text-weak)"
+              >
+                3 of 4 slots
+              </text>
+              <rect class="n" x="123" y="168" width="92" height="36" rx="7" />
+              <text x="169" y="185" text-anchor="middle" style="fill: var(--text-strong)">
+                Checks
+              </text>
+              <text
+                x="169"
+                y="198"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--text-weak)"
+              >
+                1 running
+              </text>
+              <rect class="n" x="222" y="168" width="92" height="36" rx="7" />
+              <text x="268" y="185" text-anchor="middle" style="fill: var(--text-strong)">
+                Worktrees
+              </text>
+              <text
+                x="268"
+                y="198"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--text-weak)"
+              >
+                5 leased
+              </text>
+              <rect class="n" x="24" y="234" width="92" height="36" rx="7" />
+              <text x="70" y="251" text-anchor="middle" style="fill: var(--text-strong)">
+                Workers
+              </text>
+              <text
+                x="70"
+                y="264"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--text-weak)"
+              >
+                3 running
+              </text>
+              <rect class="n" x="123" y="234" width="92" height="36" rx="7" />
+              <text x="169" y="251" text-anchor="middle" style="fill: var(--text-strong)">
+                Verifier
+              </text>
+              <text
+                x="169"
+                y="264"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--text-weak)"
+              >
+                LZ-134
+              </text>
+              <rect
+                class="n"
+                x="222"
+                y="234"
+                width="92"
+                height="36"
+                rx="7"
+                style="stroke: var(--icon-critical-base)"
+              />
+              <text x="268" y="251" text-anchor="middle" style="fill: var(--text-strong)">
+                LZ-118
+              </text>
+              <text
+                x="268"
+                y="264"
+                text-anchor="middle"
+                style="font-size: 10px; fill: var(--icon-critical-base)"
+              >
+                failed
+              </text>
+            </svg>
+          </div>
+          <div class="panel">
+            <div class="hdr">
+              <h2>Radar</h2>
+              <span class="seg" style="margin-left: 6px"
+                ><span data-on>Monitor</span><span>Map</span><span>Flow</span></span
+              >
+              <span class="sp"></span><span class="live"><span class="d"></span>Live</span>
+            </div>
+            <div class="empty">
+              <b>Nothing is running</b>Architect is idle and no workers are active.<br />6 tasks are
+              queued.
+              <div style="margin-top: 12px"><span class="btn">Open Tasks</span></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
-  </div>
-
-  <div class="col" style="width:360px">
-    <div class="cap"><b>Narrow</b> · 360 px · connection lost, last snapshot kept</div>
-    <div class="panel">
-      <div data-tabs="Radar"></div>
-      <div class="hdr">
-        <h2>Radar</h2>
-        <span class="seg" style="margin-left:6px"><span data-on>Monitor</span><span>Map</span><span>Flow</span></span>
-        <span class="sp"></span>
-        <span class="live" data-off><span class="d"></span>Offline</span>
-        <span class="iconbtn"><i data-i="more"></i></span>
-      </div>
-      <div class="banner"><i data-i="wifi" class="s warn"></i><span>Live updates stopped at 5:54:12 PM. Retrying in 8s.</span><span class="sp"></span><a>Retry</a></div>
-      <div class="ses" style="opacity:.72">
-        <div class="sr"><i data-i="architect" class="base"></i><span class="who"><b>Architect</b><span class="weak"> · LAZERS roadmap</span></span><span class="mdl"></span><span class="st weak">idle</span></div>
-        <div class="kid">
-          <div class="sr"><i data-i="ring-progress" class="base"></i><span class="who"><b>Implementer</b><span class="mono">LZ-99</span></span><span class="mdl">gpt-6-luna</span><span class="st weak">running</span></div>
-          <div class="ln" style="padding-left:36px"><i data-i="terminal" class="s"></i><span class="tool">bash</span><span class="tg">bun test src/runner/resume.test.ts</span><span class="du"></span></div>
-          <div class="sr"><i data-i="ring-progress" class="base"></i><span class="who"><b>Implementer</b><span class="mono">LZ-146</span></span><span class="mdl">gpt-6-luna</span><span class="st weak">running</span></div>
-          <div class="ln"><i data-i="read" class="s"></i><span class="tool">read</span><span class="tg">src/models/comparison-panel.tsx</span><span class="du"></span></div>
-          <div class="sr"><i data-i="ring-alert" class="base"></i><span class="who"><b>Implementer</b><span class="mono">LZ-135</span></span><span class="mdl">kimi-k3.1</span><span class="st weak">needs you</span></div>
-          <div class="sr"><i data-i="ring-progress" class="base"></i><span class="who"><b>Verifier</b><span class="mono">LZ-134</span></span><span class="mdl">qwen3.8</span><span class="st weak">checking</span></div>
-          <div class="sr"><i data-i="ring-x" class="base"></i><span class="who"><b>Implementer</b><span class="mono">LZ-118</span></span><span class="mdl">gpt-6-luna</span><span class="st weak">failed</span></div>
-        </div>
-      </div>
-      <div style="flex:1"></div>
-      <div class="cap" style="padding:0 16px 10px; height:auto">No selection: the list keeps the full height. The inspector opens when a session is selected.</div>
-    </div>
-  </div>
-
-  <div class="col" style="width:340px">
-    <div class="cap"><b>Views</b> · Map in the same header · idle state</div>
-    <div class="stack">
-      <div class="panel" style="flex:0 0 404px">
-        <div data-tabs="Radar"></div>
-        <div class="hdr">
-          <h2>Radar</h2>
-          <span class="seg" style="margin-left:6px"><span>Monitor</span><span data-on>Map</span><span>Flow</span></span>
-          <span class="sp"></span>
-          <span class="live"><span class="d"></span>Live</span>
-          <span class="iconbtn"><i data-i="more"></i></span>
-        </div>
-        <svg class="map" viewBox="0 0 338 300" width="338" height="300">
-          <path class="e" d="M169 52v34"/><path class="e hot" d="M169 122v20M169 142H70v26M169 142v26"/><path class="e" d="M169 142h99v26"/>
-          <path class="e bad" d="M268 204v30"/><path class="e hot" d="M70 204v30M169 204v30"/>
-          <rect class="n" x="119" y="20" width="100" height="32" rx="7"/><text x="169" y="40" text-anchor="middle">You · session</text>
-          <rect class="n" x="119" y="86" width="100" height="36" rx="7"/><text x="169" y="103" text-anchor="middle" style="fill:var(--text-strong)">Architect</text><text x="169" y="116" text-anchor="middle" style="font-size:10px;fill:var(--text-weak)">idle 29m</text>
-          <rect class="n" x="24" y="168" width="92" height="36" rx="7" style="stroke:var(--text-interactive-base)"/><text x="70" y="185" text-anchor="middle" style="fill:var(--text-strong)">Runtime</text><text x="70" y="198" text-anchor="middle" style="font-size:10px;fill:var(--text-weak)">3 of 4 slots</text>
-          <rect class="n" x="123" y="168" width="92" height="36" rx="7"/><text x="169" y="185" text-anchor="middle" style="fill:var(--text-strong)">Checks</text><text x="169" y="198" text-anchor="middle" style="font-size:10px;fill:var(--text-weak)">1 running</text>
-          <rect class="n" x="222" y="168" width="92" height="36" rx="7"/><text x="268" y="185" text-anchor="middle" style="fill:var(--text-strong)">Worktrees</text><text x="268" y="198" text-anchor="middle" style="font-size:10px;fill:var(--text-weak)">5 leased</text>
-          <rect class="n" x="24" y="234" width="92" height="36" rx="7"/><text x="70" y="251" text-anchor="middle" style="fill:var(--text-strong)">Workers</text><text x="70" y="264" text-anchor="middle" style="font-size:10px;fill:var(--text-weak)">3 running</text>
-          <rect class="n" x="123" y="234" width="92" height="36" rx="7"/><text x="169" y="251" text-anchor="middle" style="fill:var(--text-strong)">Verifier</text><text x="169" y="264" text-anchor="middle" style="font-size:10px;fill:var(--text-weak)">LZ-134</text>
-          <rect class="n" x="222" y="234" width="92" height="36" rx="7" style="stroke:var(--icon-critical-base)"/><text x="268" y="251" text-anchor="middle" style="fill:var(--text-strong)">LZ-118</text><text x="268" y="264" text-anchor="middle" style="font-size:10px;fill:var(--icon-critical-base)">failed</text>
-        </svg>
-      </div>
-      <div class="panel">
-        <div class="hdr">
-          <h2>Radar</h2>
-          <span class="seg" style="margin-left:6px"><span data-on>Monitor</span><span>Map</span><span>Flow</span></span>
-          <span class="sp"></span><span class="live"><span class="d"></span>Live</span>
-        </div>
-        <div class="empty"><b>Nothing is running</b>Architect is idle and no workers are active.<br>6 tasks are queued.<div style="margin-top:12px"><span class="btn">Open Tasks</span></div></div>
-      </div>
-    </div>
-  </div>
-</div>
-</body>
+  </body>
 </html>

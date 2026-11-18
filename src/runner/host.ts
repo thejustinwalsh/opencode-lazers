@@ -38,41 +38,6 @@ export type ArchitectSourceMessage = {
   privacy: PrivacyStats
 }
 
-export type HostBackgroundObservation =
-  | {
-      state: "observed"
-      source: "experimental.idle"
-      observedAt: number
-      /** Current user/synthetic input reported by session context at the idle hook. */
-      inputID: string
-      /** Durable event epoch associated with the current foreground execution. */
-      executionStartSequence: number
-      /** Latest durable event sequence observed when the idle hook ran. */
-      eventSequence: number
-      /** Durable sequence of the matching native execution-success event. */
-      terminalSequence?: number
-      /** Native event that produced the terminal idle marker. */
-      terminalEventID?: string
-      /** Pinned SessionMessage.ID.fromEvent marker; distinct from the assistant response ID. */
-      terminalMessageID?: string
-      projectDirectory?: string
-      projectID?: string
-      attemptID?: string
-      sessionID?: string
-      workspace?: string
-      assignedMessageID?: string
-      /** Most recent older durable event ignored without overwriting this report. */
-      staleEventSequence?: number
-      count: number
-      kinds: { shell: number; subagent: number; image: number }
-    }
-  | {
-      state: "unknown"
-      source: "experimental.idle"
-      reason: string
-      observedAt?: number
-    }
-
 export type HostSession = {
   id: string
   parentID?: string
@@ -95,9 +60,16 @@ export type HostSession = {
     inputID: string | null
     state: "pending" | "completed" | "interrupted" | "unknown"
   }
-  /** Reported idle-hook background work only; never a complete quiescence inventory. */
-  background?: HostBackgroundObservation
+  /**
+   * Live background activity, read from the host at observation time. Running
+   * shells have a cwd inside this worker's worktree; active children are
+   * descendant sessions. Absent means none were observed.
+   */
+  runningShells?: number
+  activeChildren?: number
   idleAt?: number
+  /** Last model activity: assistant completion or request start. Preferred over `idleAt` for cache warmth. */
+  activityAt?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   model?: ModelPolicy
   usage?: {
@@ -133,39 +105,6 @@ export type RetainedWorkerArchive = {
 }
 export type WorktreeLocationRetirement =
   "evicted" | "not-loaded" | "active-session" | "current-location" | "unavailable"
-export type NativeCleanupSettlement = {
-  schemaVersion: 1
-  projectID: string
-  attemptID: string
-  sessionID: string
-  workspace: string
-  assignedMessageID: string
-  inputID: string
-  idleReport: {
-    source: "experimental.idle"
-    observedAt: number
-    inputID: string
-    executionStartSequence: number
-    eventSequence: number
-    count: 0
-    kinds: { shell: 0; subagent: 0; image: 0 }
-  }
-  terminal: {
-    sequence: number
-    eventID: string
-    messageID: string
-    previousEventSequence: number
-  }
-  observedAt: number
-  inventory: {
-    activeSession: false
-    activeDescendants: 0
-    pendingInput: false
-    pendingPermissions: 0
-    pendingForms: 0
-    runningShells: 0
-  }
-}
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
   /** Current native implementor-agent selection; never inferred from Architect identity. */
@@ -232,14 +171,6 @@ export interface RunnerHost {
     sessionID: string
     workspace: string
   }): Promise<void>
-  /** Fresh synced native terminal and resource-inventory proof for explicit cleanup recovery. */
-  cleanupSettlement?(input: {
-    projectID: string
-    attemptID: string
-    sessionID: string
-    workspace: string
-    assignedMessageID: string
-  }): Promise<NativeCleanupSettlement>
   prompt(input: {
     sessionID: string
     id: string
