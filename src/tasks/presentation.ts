@@ -37,28 +37,65 @@ export function taskHeading(objective: string) {
 const INTERRUPTED =
   "Worker was interrupted by the service restart. Resumes when the runtime confirms the session is idle."
 
-/** Runtime reasons worth rewriting, tried in order; the first match wins. */
+/** Runtime reasons worth rewriting, tried in order; the first match wins. Each says what happened and what happens next. */
 const reasonMap: ReadonlyArray<readonly [RegExp, string]> = [
   [/native idle background observation/i, INTERRUPTED],
   [/(idle|background) (report|observation)/i, INTERRUPTED],
-  [/unknown (installer|process|settlement)/i, "The runtime is checking what was left running."],
+  [
+    /does not match a completed response|completed turn for another input/i,
+    "The worker finished a different request than the one it was given. Architect can reconcile it or retry.",
+  ],
+  [
+    /prerequisite .*(integrat|not been integrated)|prerequisite plans? .*integrated/i,
+    "Waiting for prerequisite work to be integrated. This starts once it lands.",
+  ],
+  [
+    /checkout or write scope|scopes are reserved|conflicting write scope/i,
+    "Another task holds the files this one needs. This starts when they are free.",
+  ],
+  [/higher-priority/i, "A higher-priority plan goes first. This runs after it."],
+  [/cancellation requested/i, "Cancellation was requested. The runtime is stopping this work."],
+  [/awaits human evidence/i, "This needs evidence from you. Open Architect to provide it."],
+  [
+    /no task is currently dispatchable/i,
+    "Nothing in this plan can start yet. It starts when a prerequisite finishes.",
+  ],
+  [
+    /unknown (installer|process|settlement)/i,
+    "The runtime is checking what was left running. This clears once it finishes.",
+  ],
+  [
+    /coverage is (incomplete|bounded|insufficient)|(facts|ancestry|coverage) (is|are) unavailable/i,
+    "The scheduler is still gathering facts. This clears on the next refresh.",
+  ],
 ]
 
-/** Fallback for a runtime reason no rule covers and that still names an unknown. */
-const PENDING = "Waiting for the runtime to confirm the current state."
+/** One user sentence per state for a runtime reason no rule covers. Never prints the raw text. */
+const GENERIC: Readonly<Record<string, string>> = {
+  waiting: "This task is on hold. It continues when the runtime clears the hold.",
+  blocked: "This task is on hold. It continues when the runtime clears the hold.",
+  paused: "Starting new work on this task is paused. It resumes when the pause is lifted.",
+  failed: "The last attempt failed. Open Architect to choose the next step.",
+  exhausted: "The last attempt failed. Open Architect to choose the next step.",
+}
+const GENERIC_DEFAULT = "The runtime recorded a note on this task. Details has the full text."
 
 export type TaskReasonView = {
-  /** One plain sentence in user terms; never contains "unknown". */
+  /** One plain sentence in user terms; never contains raw runtime prose or "unknown". */
   text: string
-  /** The recorded runtime reason, when it differs from `text`; shown behind "Details". */
+  /** The recorded runtime reason, behind "Details"; absent only when it already is `text`. */
   raw?: string
 }
 
-/** Present a recorded runtime reason as one user sentence, keeping the raw text for Details. */
-export function taskReasonView(reason: string): TaskReasonView {
+/**
+ * Present a recorded runtime reason as one user sentence, keeping the raw text for Details.
+ * `state` picks the generic sentence for a reason no rule covers.
+ */
+export function taskReasonView(reason: string, state?: string): TaskReasonView {
   const raw = reason.trim()
-  const mapped = reasonMap.find(([pattern]) => pattern.test(raw))?.[1]
-  const first = raw.split(/\r?\n/)[0]!.trim()
-  const text = mapped ?? (/unknown/i.test(first) ? PENDING : first)
+  const text =
+    reasonMap.find(([pattern]) => pattern.test(raw))?.[1] ??
+    GENERIC[(state ?? "").toLowerCase()] ??
+    GENERIC_DEFAULT
   return text === raw ? { text } : { text, raw }
 }
