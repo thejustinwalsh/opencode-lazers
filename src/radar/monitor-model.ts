@@ -312,8 +312,11 @@ function sessionRank(session: LiveSession) {
  * parent is not reported at all nests under the current Architect. Sessions without live data are
  * not rows: they have nothing to show.
  */
-export function sessionGroups(live: Live) {
-  const available = live.sessions.filter((session) => session.availability === "available")
+export function sessionGroups(live: Live, include?: ReadonlySet<string>) {
+  const available = live.sessions.filter(
+    (session) =>
+      session.availability === "available" && (!include || include.has(session.sessionID)),
+  )
   const ranked = available
     .map((session, index) => ({ session, index }))
     .toSorted(
@@ -404,6 +407,66 @@ export function flowSegments(live: Live): SummarySegment[] {
     { count: live.workload?.needsYou ?? 0, word: "needs you" },
     { count: live.workload?.failed ?? 0, word: "failed" },
   ].filter((segment) => segment.count > 0)
+}
+
+/** How recent a failure or a finished call must be for an otherwise idle session to count. */
+export const ACTIVE_WINDOW_MS = 120_000
+
+/**
+ * A session is active when it is running, checking, preparing or busy, has a call in progress
+ * (which includes waiting on you), or has finished a call or started a model request in the last
+ * two minutes, so a recent failure stays visible. Everything else is idle.
+ */
+export function sessionActive(live: Live, session: LiveSession, now: number) {
+  if (session.availability !== "available") return false
+  if (session.assignment !== null || session.state === "busy") return true
+  const recent = (at: number | null) => at !== null && now - at <= ACTIVE_WINDOW_MS
+  const calls = sessionCallLines(live, session.sessionID)
+  if (calls.some((call) => call.current || recent(call.endedAt))) return true
+  return live.flow.some(
+    (item) =>
+      item.sessionID === session.sessionID &&
+      item.kind === "model-request" &&
+      recent(item.startedAt ?? item.observedAt),
+  )
+}
+
+/**
+ * Which sessions Monitor, Map and Flow list. A family (a root session and its descendants) shows
+ * when any member is active; inside it the root always shows and idle descendants do not. A
+ * family with no active member is hidden whole. The selected session is never hidden. With
+ * `showIdle` every available session shows. `hidden` always counts what the default hides.
+ */
+export function visibleSessions(
+  live: Live,
+  now: number,
+  options: { showIdle?: boolean; selectedID?: string | null } = {},
+) {
+  const groups = sessionGroups(live)
+  const available = live.sessions.filter((session) => session.availability === "available")
+  const byID = new Map(available.map((session) => [session.sessionID, session]))
+  const active = new Set(
+    available.filter((session) => sessionActive(live, session, now)).map((s) => s.sessionID),
+  )
+  const keep = new Set<string>()
+  const keepWithAncestors = (id: string) => {
+    for (
+      let at: string | undefined = id;
+      at !== undefined && !keep.has(at);
+      at = groups.parents.get(at)
+    )
+      keep.add(at)
+  }
+  for (const id of active) keepWithAncestors(id)
+  // Roots of a shown family stay even when idle; ancestors above are already kept.
+  const selected = options.selectedID
+  if (selected && byID.has(selected)) keepWithAncestors(selected)
+  const shown = options.showIdle ? new Set(available.map((session) => session.sessionID)) : keep
+  return {
+    shown,
+    active,
+    hidden: available.filter((session) => !keep.has(session.sessionID)).length,
+  }
 }
 
 /** What is true when nothing is running, in one plain sentence. */

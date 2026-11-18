@@ -151,6 +151,7 @@ the first question: running, needs you, failed, queued, capacity. The inspector
 opens only when a session is selected; until then the list has the full height.
 It shows state, task link, one facts line, then Calls, Files and Messages.
 When nothing is running, say so and link to Tasks.
+Idle sessions are hidden by default; the summary line says how many and shows them on request.
 
 The three views answer different questions and share one live snapshot, so
 switching between them never reloads.

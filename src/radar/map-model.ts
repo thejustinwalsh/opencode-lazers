@@ -40,8 +40,16 @@ type Item = Omit<MapNode, "parent">
 
 const plural = (count: number, one: string) => `${count} ${count === 1 ? one : `${one}s`}`
 
-export function createRadarMap(live: Live, now: number): RadarMap {
-  const available = live.sessions.filter((session) => session.availability === "available")
+export function createRadarMap(
+  live: Live,
+  now: number,
+  /** Sessions the shared idle filter lists; absent lists every available session. */
+  visible?: ReadonlySet<string>,
+): RadarMap {
+  const available = live.sessions.filter(
+    (session) =>
+      session.availability === "available" && (!visible || visible.has(session.sessionID)),
+  )
   const architect = available.find((session) => session.isCurrentArchitect === true)
   const working = available.filter((session) => session !== architect && session.assignment)
   const workers = working.filter((session) => session.assignment?.state !== "verifying")

@@ -347,3 +347,8 @@ test("the mockup fixture yields every destination, the failed worker and the wai
   expect(byName["Architect"]!.doing).toBe("idle 29m")
   expect(model.models.map((card) => card.name)[0]).toBe("gpt-6-luna")
 })
+
+test("Flow lists only the sessions the shared idle filter shows", () => {
+  const model = createFlowModel(busy(), NOW, new Set(["arch", "lz-1"]))
+  expect(model.sessions.map((item) => item.sessionID)).toEqual(["arch", "lz-1"])
+})

@@ -571,6 +571,14 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const inspectorHead = container.querySelector(".lazers-radar-inspector-head")!
     expect(inspectorHead.querySelector(".lazers-radar-inspector-glyph")).not.toBeNull()
     expect(inspectorHead.querySelector(".lazers-radar-session-icon")).toBeNull()
+    // Idle sessions are hidden by default; the summary says how many and shows them on request.
+    const idleToggle = () =>
+      container.querySelector<HTMLButtonElement>(".lazers-radar-idle-toggle")!
+    expect(idleToggle().textContent).toMatch(/^\d+ idle hidden$/)
+    const rowsBefore = container.querySelectorAll(".lazers-radar-session").length
+    idleToggle().click()
+    await until(() => idleToggle().textContent === "Hide idle")
+    expect(container.querySelectorAll(".lazers-radar-session").length).toBeGreaterThan(rowsBefore)
     const rowStates = [
       ...container.querySelectorAll(".lazers-radar-sessions .lazers-radar-session-state"),
     ].map((state) => state.textContent ?? "")
@@ -581,7 +589,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(container.querySelector(".lazers-radar-unavailable")).toBeNull()
     const summary = container.querySelector(".lazers-radar-summary")!
     expect(summary.textContent).toMatch(/\d+ running/)
-    expect(summary.textContent).not.toMatch(/Scheduler|active|idle/)
+    expect(summary.textContent?.replace("Hide idle", "")).not.toMatch(/Scheduler|active|idle/)
     expect(container.querySelector(".lazers-radar-monitor-status")).toBeNull()
 
     const activity = container.querySelector<HTMLDivElement>(".lazers-radar-monitor-activity")!
@@ -605,7 +613,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const menuLabels = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map(
       (button) => button.textContent,
     )
-    expect(menuLabels).toEqual(["Refresh", "Open worker"])
+    expect(menuLabels).toEqual(["Refresh", "Open worker", "Show idle sessions"])
     ;[...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
       .find((button) => button.textContent === "Open worker")!
       .click()
@@ -645,6 +653,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )[0]!.project
     expect(savedProject.monitorSplit).toBe(Number(separator.getAttribute("aria-valuenow")))
     expect(savedProject.monitorSessionID).toBe("ses-failed")
+    expect((savedProject as { showIdle?: boolean }).showIdle).toBe(true)
 
     activity.scrollTop = 37
     readLine.focus()
