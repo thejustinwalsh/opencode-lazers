@@ -404,7 +404,8 @@ test("scheduler ordering is global across pages and identical for project and as
       ids.push(...page.tasks.map((task) => task.taskID))
       cursor = page.nextCursor ?? undefined
     } while (cursor)
-    expect(ids).toEqual([running, held, high, firstTie, secondTie, ...tail])
+    // Unplanned tasks follow all planned work, most recent first.
+    expect(ids).toEqual([running, held, high, firstTie, secondTie, ...tail.toReversed()])
   }
   const page = reads.query({ sort: "schedule", limit: 2 })
   expect(() => reads.query({ sort: "recent", cursor: page.nextCursor! })).toThrow("does not match")
