@@ -39,6 +39,16 @@ Change identity lives in git notes on `refs/notes/lazers`; after pushing `main`,
 also push `refs/notes/lazers` (`git push github refs/notes/lazers:refs/notes/lazers`).
 Bare `git push` is never reconfigured by the runtime.
 
+## Server bundle
+
+OpenCode loads the server plugin from `dist/server.js` (package export `.`), a single
+bundle of `src/` with dependencies external, plus worker scripts beside it
+(`processor.js`, `repo-worker.js`, `decision-worker.js`). Editing `src/` does not reload
+live plugins; run `bun run build:server` (or `bun run build` for GUI too), then reload.
+`bun run build:server --watch` rebuilds on every source edit for hot reload. New worker
+threads must be added to `scripts/build-server.ts` and spawned via `workerURL`
+(`src/worker-url.ts`). Generation is the bundle's content hash.
+
 ## Product cost basis
 
 Product costs and estimates use configured ordered price sources, independent of execution provider or subscription. Initially offer OpenRouter then OpenCode by default, reusing access configured in OpenCode. Skip unavailable sources. A missing applicable price is a defect to investigate; when no source prices a model, omit the price UI rather than showing unknown. Preserve chosen-source provenance, exact execution provider/model/effort and measured tokens. Published zeros require source support; session-reported charges are diagnostics, not market rates. Refresh reprices unchanged usage. Price lookup does not authorize inference.

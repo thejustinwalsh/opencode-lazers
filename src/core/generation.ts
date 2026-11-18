@@ -1,18 +1,33 @@
-import { readdirSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const SOURCE = /\.(?:tsx?|md|json)$/
 
+/** True when this module runs from the built server bundle (dist/server.js), not from src. */
+const bundled = () => !new URL(import.meta.url).pathname.endsWith(".ts")
+
 /**
- * Stable hash of the loaded code generation: the plugin source tree (path, size and
- * mtime of every source file) plus this module's own URL. A reload that picks up
- * changed code produces a different stamp, so new locations build a new core instead
- * of reusing an older core that still runs the previous code. Computed once per
- * module copy, and OpenCode loads a fresh copy per location boot.
+ * Stable hash of the loaded code generation. A reload that picks up changed code produces
+ * a different stamp, so new locations build a new core instead of reusing an older core
+ * that still runs the previous code.
+ *
+ * - Built bundle: the SHA-256 of the bundle file contents, so a rebuild yields a new core
+ *   and a touch without a rebuild does not.
+ * - Source run (tests, dev): path, size and mtime of every source file under `root` plus
+ *   this module's URL.
+ *
+ * Computed once per module copy; OpenCode loads a fresh copy per location boot.
  */
-export function computeGeneration(root = join(dirname(fileURLToPath(import.meta.url)), "..")) {
+export function computeGeneration(
+  root = join(dirname(fileURLToPath(import.meta.url)), ".."),
+  bundle: string | undefined = bundled() ? fileURLToPath(import.meta.url) : undefined,
+) {
   const hasher = new Bun.CryptoHasher("sha256")
+  if (bundle !== undefined) {
+    hasher.update(readFileSync(bundle))
+    return hasher.digest("hex").slice(0, 16)
+  }
   hasher.update(import.meta.url.split("?")[0] ?? "")
   const walk = (directory: string) => {
     let entries: import("node:fs").Dirent[]

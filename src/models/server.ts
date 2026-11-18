@@ -33,7 +33,7 @@ import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
 import type { TaskValuationProvider } from "./task-valuation.ts"
-import { createModelDecisionReader } from "./decision-read.ts"
+import { createThreadedDecisionReader } from "./decision-worker-client.ts"
 import {
   ModelsDecision,
   ModelDecisionConfigurationsOutputSchema,
@@ -47,7 +47,6 @@ import {
 } from "./decision-contract.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
-import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import { ModelSettingsService } from "./service.ts"
 import {
@@ -309,9 +308,9 @@ export function registerModelsServer(
   const failure = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
   return Effect.gen(function* () {
-    const decisionReader = createModelDecisionReader({
+    const decisionReader = createThreadedDecisionReader({
+      path,
       projectDirectory,
-      openLedger: () => openReadOnlyObservationLedger(path, projectDirectory),
       readPriceState: async (routes: readonly CurrentPriceApplicability[], signal) => {
         signal?.throwIfAborted()
         const [policy, openrouter] = await Promise.all([
