@@ -140,6 +140,8 @@ export type CatalogEntry = {
   projection: Projection | null
   /** The public score on the set's basis, when a benchmark row matches. */
   score: number | null
+  /** For a public-catalog model no route runs: the source that listed it (not the price source). */
+  listedBy?: ModelPriceSource
   /** What `score` is called (the Coding index, or an Epoch benchmark in percent). */
   scoreName?: string
   /** Context window in tokens, when the catalog lists one. */
@@ -392,22 +394,34 @@ export function buildCatalog(input: CatalogInput): {
     { item: PublicCatalogItem; price: BenchmarkPrice; score: number | null }
   >()
   for (const item of input.external ?? []) {
-    const source = item.source === "models-dev" ? "models-dev" : "openrouter"
-    if (!item.prices || !input.priceSources.includes(source)) continue
+    // Price by the ordered setting, whichever source listed the model: the first configured
+    // source that quotes this identity. The listing source's own price is the fallback quote.
+    const own = item.prices ? [{ source: item.source, ...item.prices }] : []
+    const quotes = [...(item.quotes ?? []), ...own]
+    let quote: (typeof quotes)[number] | undefined
+    for (const source of input.priceSources) {
+      quote = quotes.find((candidate) => candidate.source === source)
+      if (quote) break
+    }
+    if (!quote) continue
+    const source = quote.source as ModelPriceSource
     const key = routeKey({ providerID: item.providerID, modelID: item.modelID })
     if (bases.has(key) || externals.has(key)) continue
     const { input: inShare, output: outShare } = BENCHMARK_PRICE_MIX
     const price: BenchmarkPrice = {
       source,
-      input: item.prices.input,
-      output: item.prices.output,
-      cacheRead: item.prices.cacheRead,
-      cacheWrite: item.prices.cacheWrite,
-      blended: (item.prices.input * inShare + item.prices.output * outShare) / (inShare + outShare),
+      input: quote.input,
+      output: quote.output,
+      cacheRead: quote.cacheRead,
+      cacheWrite: quote.cacheWrite,
+      blended: (quote.input * inShare + quote.output * outShare) / (inShare + outShare),
       appliesBelowTokens: null,
       retrievedAt:
-        (source === "models-dev" ? input.sourceDates.modelsDev : input.sourceDates.openrouter) ??
-        null,
+        (source === "models-dev"
+          ? input.sourceDates.modelsDev
+          : source === "openrouter"
+            ? input.sourceDates.openrouter
+            : input.sourceDates.opencode) ?? null,
     }
     const rows =
       choice.basis.source === "epoch"
@@ -444,6 +458,7 @@ export function buildCatalog(input: CatalogInput): {
       projection: price && input.profile ? projectCost(input.profile, price) : null,
       score: base?.score ?? outside?.score ?? null,
       scoreName: choice.basis.label,
+      ...(outside ? { listedBy: outside.item.source as ModelPriceSource } : {}),
       contextTokens:
         representative?.native.contextTokens ??
         representative?.externalModel?.contextLength ??
@@ -514,4 +529,22 @@ export const sourceKeyLabel: Record<ModelPriceSource, string> = {
   openrouter: "OpenRouter",
   opencode: "OpenCode",
   "models-dev": "models.dev",
+}
+
+/**
+ * "Catalog · listed by models.dev · priced by OpenRouter · 18 Nov": the tags, which source
+ * listed a model no route runs, and the source and time of the price that was taken.
+ */
+export function entryProvenanceText(entry: CatalogEntry) {
+  const when = entry.price?.retrievedAt ? Date.parse(entry.price.retrievedAt) : Number.NaN
+  return [
+    entry.tags.map((tag) => sourceTagLabel[tag]).join(" · "),
+    entry.listedBy ? `listed by ${sourceKeyLabel[entry.listedBy]}` : "",
+    entry.price ? `priced by ${sourceKeyLabel[entry.price.source]}` : "",
+    Number.isFinite(when)
+      ? new Date(when).toLocaleDateString([], { day: "numeric", month: "short" })
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
 }

@@ -166,6 +166,22 @@ export const PublicCatalogItemSchema = z.strictObject({
       cacheWrite: z.number().finite().nonnegative().nullable(),
     })
     .nullable(),
+  /**
+   * What each price source quotes for this model, joined by name identity whichever source
+   * listed it. The reader walks the configured order and takes the first.
+   */
+  quotes: z
+    .array(
+      z.strictObject({
+        source: z.enum(["openrouter", "opencode", "models-dev"]),
+        input: z.number().finite().nonnegative(),
+        output: z.number().finite().nonnegative(),
+        cacheRead: z.number().finite().nonnegative().nullable(),
+        cacheWrite: z.number().finite().nonnegative().nullable(),
+      }),
+    )
+    .max(3)
+    .optional(),
   benchmarks: z.array(EpochBenchmarkRecordSchema).max(24),
 })
 export type PublicCatalogItem = z.infer<typeof PublicCatalogItemSchema>

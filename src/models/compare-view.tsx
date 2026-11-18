@@ -6,7 +6,7 @@ import { ModelChart, RankingChart } from "./model-chart.tsx"
 import { AllModelsTable } from "./all-models-table.tsx"
 import { benchmarkSourceName, comparisonChartEmptyText, projectedRankRows } from "./chart-data.ts"
 import { SMALL_SAMPLE_TERMINAL_TASKS, formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
-import { catalogSummaryText, sourceTagLabel } from "./catalog-projection.ts"
+import { catalogSummaryText, entryProvenanceText } from "./catalog-projection.ts"
 import { epochScore } from "./public-score.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
@@ -418,15 +418,7 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
           ].filter((row): row is [string, string] => row[1] !== undefined)
         return (
           <>
-            <p class="lazers-models-source-line">
-              {joinSegments([
-                item()
-                  .tags.map((tag) => sourceTagLabel[tag])
-                  .join(" · "),
-                item().price ? benchmarkSourceName[item().price!.source] : undefined,
-                day(item().price?.retrievedAt),
-              ])}
-            </p>
+            <p class="lazers-models-source-line">{entryProvenanceText(item())}</p>
             <Show when={stats().length > 0}>
               <dl class="lazers-models-stats" aria-label="Selected model facts">
                 <For each={stats()}>

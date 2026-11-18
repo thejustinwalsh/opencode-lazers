@@ -282,7 +282,98 @@ export function createPublicJoin(input: {
       })
       listed++
     }
-    return items
+    return items.map((item) => ({ ...item, quotes: quotesFor(item) }))
+  }
+
+  // OpenRouter's listings by every name they carry, to price a model the way the ordered
+  // price-source setting says whichever source listed it.
+  let openrouterIndex: ModelIndex<OpenRouterRecord> | undefined
+  const openrouterListings = () =>
+    (openrouterIndex ??= createModelIndex(
+      (input.openrouter ?? []).map((record) => {
+        const slash = record.id.indexOf("/")
+        const owner = slash > 0 ? record.id.slice(0, slash) : ""
+        return {
+          id: slash > 0 ? record.id.slice(slash + 1) : record.id,
+          names: [record.id, record.canonicalSlug, record.name].filter((name): name is string =>
+            Boolean(name),
+          ),
+          vendor: vendorSlug(owner) ? owner : null,
+          value: record,
+        }
+      }),
+    ))
+  const basePrice = (record: OpenRouterRecord) => {
+    const base = record.prices?.tiers.find(
+      (tier) =>
+        tier.minPromptTokens === null &&
+        (tier.utcStart ?? null) === null &&
+        (tier.utcEnd ?? null) === null,
+    )
+    const prompt = base?.prompt == null ? Number.NaN : Number(base.prompt)
+    const completion = base?.completion == null ? Number.NaN : Number(base.completion)
+    if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt < 0 || completion < 0)
+      return null
+    const perMillion = (value: string | null | undefined) =>
+      value == null || !Number.isFinite(Number(value)) ? null : Number(value) * 1_000_000
+    return {
+      input: prompt * 1_000_000,
+      output: completion * 1_000_000,
+      cacheRead: perMillion(base?.inputCacheRead),
+      cacheWrite: perMillion(base?.inputCacheWrite),
+    }
+  }
+  /**
+   * The OpenRouter listing of a model, by name identity (same tier, same version). Provider
+   * copies of one identity prefer the vendor's own listing; a reseller's is taken only when it
+   * is the only listing.
+   */
+  const openrouterPrice = (route: Route) => {
+    if (!input.openrouter?.length) return null
+    const vendor = vendorSlug(route.providerID) ? route.providerID : null
+    const result = openrouterListings().resolve(route.modelID, { vendor })
+    const hits =
+      result.status === "matched"
+        ? result.items
+        : route.name
+          ? (() => {
+              const byName = openrouterListings().resolve(route.name!, { vendor })
+              return byName.status === "matched" ? byName.items : []
+            })()
+          : []
+    if (!hits.length) return null
+    const owned = hits.filter((hit) => {
+      const owner = hit.value.id.split("/")[0] ?? ""
+      return vendorSlug(owner) !== null && vendorSlug(owner) === (vendor ?? result.identity.vendor)
+    })
+    const pool = owned.length ? owned : hits.length === 1 ? hits : []
+    // An undated or newest listing speaks for the identity; `:batch`-style variants are noise.
+    const record = pool
+      .map((hit) => hit.value)
+      .filter((value) => !value.id.includes(":"))
+      .toSorted(
+        (a, b) =>
+          Number(parseModelName(a.canonicalSlug ?? a.id).date !== null) -
+            Number(parseModelName(b.canonicalSlug ?? b.id).date !== null) ||
+          a.id.length - b.id.length,
+      )[0]
+    return record ? basePrice(record) : null
+  }
+  const quotesFor = (item: PublicCatalogItem): NonNullable<PublicCatalogItem["quotes"]> => {
+    const quotes: NonNullable<PublicCatalogItem["quotes"]> = []
+    const route = { providerID: item.providerID, modelID: item.modelID, name: item.name }
+    const openrouter = openrouterPrice(route)
+    if (openrouter) quotes.push({ source: "openrouter", ...openrouter })
+    const dev = item.source === "models-dev" ? item.prices : modelsDev(route)?.record.prices
+    if (dev && dev.input != null && dev.output != null)
+      quotes.push({
+        source: "models-dev",
+        input: dev.input,
+        output: dev.output,
+        cacheRead: dev.cacheRead ?? null,
+        cacheWrite: dev.cacheWrite ?? null,
+      })
+    return quotes
   }
 
   return { modelsDev, epoch, coverage, external }
