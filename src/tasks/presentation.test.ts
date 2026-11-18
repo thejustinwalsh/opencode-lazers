@@ -20,9 +20,32 @@ test("runtime reasons read as user sentences with the raw text kept for Details"
     "Worker was interrupted by the service restart. Resumes when the runtime confirms the session is idle.",
   )
   expect(view.raw).toBe(raw)
-  expect(taskReasonView("Waiting on LZ-12 (running)")).toEqual({
-    text: "Waiting on LZ-12 (running)",
-  })
+})
+
+test("a known runtime reason gets a plain sentence: what happened and what happens next", () => {
+  const raw =
+    "Native worker success does not match a completed response to the current assigned input"
+  const view = taskReasonView(raw, "waiting")
+  expect(view.text).toBe(
+    "The worker finished a different request than the one it was given. Architect can reconcile it or retry.",
+  )
+  expect(view.raw).toBe(raw)
+  expect(taskReasonView("Waiting for prerequisite source integration.").text).toBe(
+    "Waiting for prerequisite work to be integrated. This starts once it lands.",
+  )
+})
+
+test("an unmatched runtime reason never becomes the primary line", () => {
+  const raw = "Frobnicator quorum 3/5 reached with lease epoch 41"
+  for (const state of ["waiting", "paused", "failed", "running", undefined]) {
+    const view = taskReasonView(raw, state)
+    expect(view.text).not.toContain("Frobnicator")
+    expect(view.text).not.toContain("lease")
+    expect(view.raw).toBe(raw)
+  }
+  expect(taskReasonView(raw, "waiting").text).toBe(
+    "This task is on hold. It continues when the runtime clears the hold.",
+  )
 })
 
 test("no mapped or unmapped reason shows 'unknown'", () => {

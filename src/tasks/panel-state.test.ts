@@ -4,7 +4,7 @@ import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
 import type { TopologyResponse } from "../observability/contract.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
-import type { TaskPanelChange } from "./panel-state.ts"
+import type { PanelData, TaskPanelChange } from "./panel-state.ts"
 import type { SchedulingPage, SchedulingScope } from "./scheduling-contract.ts"
 import { buildExecutionList } from "./execution-list.ts"
 
@@ -1697,4 +1697,52 @@ test("a refresh reading grown pages stops at a cursor cycle and leaves the rest 
   } finally {
     state.close()
   }
+})
+
+test("a re-mounted view renders its last page, counts and detail at once and refreshes in place", async () => {
+  const cache = new Map<string, PanelData>()
+  const taskID = crypto.randomUUID()
+  const first = { ...page("/project", taskID), stateCounts: { open: 7 } } as TaskPage
+  const before = new TaskPanelState(() => {}, undefined, cache)
+  before.connect(
+    "view",
+    "/project",
+    transport(async () => first),
+    {},
+  )
+  await until(() => before.data.page !== undefined && before.data.loading === false)
+  before.close()
+  expect(cache.get("view")?.page).toEqual(first)
+
+  // A new state object (the panel mounted again) holds the content before any read returns.
+  const gate = deferred<TaskPage>()
+  const after = new TaskPanelState(() => {}, undefined, cache)
+  after.connect(
+    "view",
+    "/project",
+    transport(() => gate.promise),
+    {},
+  )
+  try {
+    expect(after.data.page).toEqual(first)
+    expect(after.data.tasks).toEqual(first.tasks)
+    expect(after.data.loading).toBe(false)
+    // The refresh replaces it in place when it arrives.
+    gate.resolve({ ...first, snapshot: 2, count: 2 })
+    await until(() => after.data.page?.snapshot === 2)
+    expect(cache.get("view")?.page?.snapshot).toBe(2)
+  } finally {
+    after.close()
+  }
+
+  // Another view starts empty, and without a cache nothing carries over.
+  const never = () => new Promise<TaskPage>(() => {})
+  const other = new TaskPanelState(() => {}, undefined, cache)
+  other.connect("other", "/project", transport(never), {})
+  expect(other.data.page).toBeUndefined()
+  other.close()
+  const bare = new TaskPanelState(() => {})
+  bare.connect("view", "/project", transport(never), {})
+  expect(bare.data.page).toBeUndefined()
+  bare.close()
 })

@@ -32,7 +32,13 @@ import { Tasks } from "./contract.ts"
 import { TasksScheduling } from "./scheduling-contract.ts"
 import type { SchedulingScope } from "./scheduling-contract.ts"
 import { Observability } from "../observability/contract.ts"
-import { TaskPanelState } from "./panel-state.ts"
+import {
+  TaskPanelState,
+  inspectedCache,
+  projectCache,
+  remember,
+  taskViewCache,
+} from "./panel-state.ts"
 import { taskChanges } from "./events.ts"
 import type { PanelData } from "./panel-state.ts"
 import {
@@ -44,7 +50,7 @@ import {
   splitFromPointer,
   splitWasAdjusted,
 } from "./panel-layout.ts"
-import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
+import { createPanelStatus, PanelSkeleton, PanelStatus } from "../panel-status.tsx"
 import { taskTitle, taskHeading, taskReasonView, sourcePlanLine } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import { StartFeedback, ScrollRestoration, canStart, workerActivityLabel } from "./panel-view.ts"
@@ -213,6 +219,11 @@ function VirtualItemView(props: {
   )
 }
 
+/** The lookup key for a session's canonical project. */
+function scopeKey(source: { server: string; session: string; directory: string }) {
+  return `${source.server}\0${source.session}\0${source.directory}`
+}
+
 function TaskPanel(
   props: PanelProps & {
     ctx: TaskContext
@@ -292,11 +303,17 @@ function TaskPanel(
       { location: { directory: source.directory } },
       { signal },
     )
+    remember(projectCache, scopeKey(source), location.project.canonical)
     return { ...source, project: location.project.canonical }
   })
   const current = () => {
     if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
     const value = scope.latest
+    // A re-mounted panel knows this project already: the lookup refreshes in the background.
+    const source = scopeSource()
+    const cached = source ? projectCache.get(scopeKey(source)) : undefined
+    if (source && cached && !(value && !scope.loading && value.session === source.session))
+      return { ...source, project: cached }
     return value &&
       value.session === props.session.id &&
       value.server === props.session.server.id &&
@@ -320,11 +337,14 @@ function TaskPanel(
       draft.projects[value.project] = { ...(draft.projects[value.project] ?? initial), ...change }
     })
   }
-  const state = new TaskPanelState(setData, (selectedID) =>
-    save({
-      selectedID,
-      detailScroll: selectedID === prefs().selectedID ? prefs().detailScroll : 0,
-    }),
+  const state = new TaskPanelState(
+    setData,
+    (selectedID) =>
+      save({
+        selectedID,
+        detailScroll: selectedID === prefs().selectedID ? prefs().detailScroll : 0,
+      }),
+    taskViewCache,
   )
   onCleanup(() => {
     state.close()
@@ -447,7 +467,10 @@ function TaskPanel(
   createEffect(() => {
     const value = visible()
     // Only a finished read holds every input the inspector derives its state from.
-    if (value?.detail && !value.loading) setLastInspected({ identity: identity(), data: value })
+    if (value?.detail && !value.loading) {
+      setLastInspected({ identity: identity(), data: value })
+      remember(inspectedCache, identity(), { identity: identity(), data: value })
+    }
   })
   // One clock for every elapsed cell, once a minute; only those cells read it.
   const [minute, setMinute] = createSignal(Date.now())
@@ -471,7 +494,7 @@ function TaskPanel(
     // activity it is presented with; a partial set would show the recorded lifecycle instead of
     // the real status. Hold the last complete set instead.
     if (value?.detail && !value.loading) return value
-    const kept = lastInspected()
+    const kept = lastInspected() ?? inspectedCache.get(identity())
     if (kept && kept.identity === identity()) return kept.data
     // First load: nothing complete to hold yet, so present no task rather than a partial one.
     if (!value?.detail) return value
@@ -1072,20 +1095,48 @@ function TaskPanel(
       }
     return undefined
   }
-  /** A runtime reason as one user sentence, its raw text behind Details. */
-  const renderReason = (reason: string, className: string) => {
-    const view = taskReasonView(reason)
+  /**
+   * A runtime reason as a callout: the state glyph, one user sentence and an inline Details link
+   * that reveals the raw runtime text. `children` render under the sentence (reservations).
+   */
+  const renderReason = (reason: string, className: string, children?: () => JSX.Element) => {
+    const view = taskReasonView(reason, selectedInspectorStatus())
+    const [open, setOpen] = createSignal(false)
     return (
-      <div class={className}>
-        {view.text}
-        <Show when={view.raw}>
-          {(raw) => (
-            <details class="lazers-tasks-reason-details">
-              <summary>Details</summary>
-              <pre>{raw()}</pre>
-            </details>
-          )}
-        </Show>
+      <div
+        class={`lazers-tasks-callout ${className}`}
+        data-tone={selectedPresentation().tone}
+        role="status"
+      >
+        <span class="lazers-tasks-callout-icon" data-tone={selectedPresentation().tone}>
+          {renderGlyph(selectedPresentation().icon)}
+        </span>
+        <div class="lazers-tasks-callout-body">
+          <div class="lazers-tasks-callout-text">
+            {view.text}
+            <Show when={view.raw}>
+              <>
+                {" "}
+                <button
+                  type="button"
+                  class="lazers-tasks-callout-toggle"
+                  aria-expanded={open()}
+                  onClick={() => setOpen(!open())}
+                >
+                  Details
+                </button>
+              </>
+            </Show>
+          </div>
+          <Show when={view.raw}>
+            {(raw) => (
+              <pre class="lazers-tasks-callout-raw" hidden={!open()}>
+                {raw()}
+              </pre>
+            )}
+          </Show>
+          {children?.()}
+        </div>
       </div>
     )
   }
@@ -1095,12 +1146,32 @@ function TaskPanel(
     if (!facts) return ""
     return [
       facts.priority > 0 ? `Priority ${facts.priority}` : "",
-      [facts.title, facts.state].filter(Boolean).join(" · "),
+      facts.title,
       facts.step !== undefined ? `step ${facts.step + 1}` : "",
     ]
       .filter(Boolean)
       .join(" · ")
   }
+  const reservationRefs = () => (
+    <Show when={selectedReservations().length}>
+      <div class="lazers-tasks-node-references">
+        <span>Reserved by</span>
+        <For each={selectedReservations().slice(0, RESERVATION_PREVIEW)}>
+          {renderSchedulingReference}
+        </For>
+      </div>
+      <Show when={selectedReservations().length > RESERVATION_PREVIEW}>
+        <details class="lazers-tasks-node-references-more">
+          <summary>{selectedReservations().length - RESERVATION_PREVIEW} more</summary>
+          <div class="lazers-tasks-node-references">
+            <For each={selectedReservations().slice(RESERVATION_PREVIEW)}>
+              {renderSchedulingReference}
+            </For>
+          </div>
+        </details>
+      </Show>
+    </Show>
+  )
   const selectedSequencing = () => {
     const row = selectedRow()
     return taskSequencing(
@@ -1767,13 +1838,21 @@ function TaskPanel(
         <Show
           when={selectedTask()}
           fallback={
-            <div class="lazers-tasks-note">
-              {visible()?.detail?.status === "not_found"
-                ? "Task is not available in this view."
-                : visible()?.selectedID
-                  ? "Loading task…"
-                  : "Select a task to see its details."}
-            </div>
+            <Show
+              when={visible()?.detail?.status !== "not_found" && visible()?.selectedID}
+              fallback={
+                <div class="lazers-tasks-note">
+                  {visible()?.detail?.status === "not_found"
+                    ? "Task is not available in this view."
+                    : "Select a task to see its details."}
+                </div>
+              }
+            >
+              {/* First load only: the previous task's content stays until the next one arrives. */}
+              <div class="lazers-tasks-detail-loading" aria-busy="true">
+                <PanelSkeleton shape="rows" />
+              </div>
+            </Show>
           }
         >
           {(task) => (
@@ -1797,6 +1876,7 @@ function TaskPanel(
                   class="lazers-tasks-inspector-state"
                   data-state={selectedRecordedState()}
                   data-waiting={selectedIsWaiting()}
+                  data-tone={selectedPresentation().tone}
                   aria-label={`${selectedInspectorStatus()}${selectedRecordedState() ? `; recorded lifecycle ${selectedRecordedState()}` : ""}`}
                 >
                   {selectedInspectorStatus()}
@@ -1863,13 +1943,6 @@ function TaskPanel(
               <Show when={selectedSequencing().kind === "sequenced"}>
                 <p class="lazers-tasks-meta">{selectedSequencing().detail}</p>
               </Show>
-              <Show when={selectedExecution()?.dispatchPause}>
-                {(pause) => (
-                  <p class="lazers-tasks-blocker" data-kind="pause" title={pause().reason}>
-                    Paused · {pause().reason}
-                  </p>
-                )}
-              </Show>
               <Show
                 when={
                   selectedRelations().waitingOn.length || selectedRelations().waitingOnPlans.length
@@ -1898,32 +1971,18 @@ function TaskPanel(
                   </For>
                 </div>
               </Show>
+              <Show when={selectedExecution()?.dispatchPause}>
+                {(pause) => renderReason(pause().reason, "lazers-tasks-blocker")}
+              </Show>
               <Show when={selectedScheduling()?.reason || selectedReservations().length}>
-                <div class="lazers-tasks-node-reason" aria-label="Scheduling reason">
-                  <Show when={selectedScheduling()?.reason}>
-                    {(reason) => renderReason(reason(), "lazers-tasks-node-reason-text")}
-                  </Show>
-                  <Show when={selectedReservations().length}>
-                    <div class="lazers-tasks-node-references">
-                      <span>Reserved by</span>
-                      <For each={selectedReservations().slice(0, RESERVATION_PREVIEW)}>
-                        {renderSchedulingReference}
-                      </For>
-                    </div>
-                    <Show when={selectedReservations().length > RESERVATION_PREVIEW}>
-                      <details class="lazers-tasks-node-references-more">
-                        <summary>
-                          {selectedReservations().length - RESERVATION_PREVIEW} more
-                        </summary>
-                        <div class="lazers-tasks-node-references">
-                          <For each={selectedReservations().slice(RESERVATION_PREVIEW)}>
-                            {renderSchedulingReference}
-                          </For>
-                        </div>
-                      </details>
-                    </Show>
-                  </Show>
-                </div>
+                <Show
+                  when={selectedScheduling()?.reason}
+                  fallback={<div class="lazers-tasks-node-reason">{reservationRefs()}</div>}
+                >
+                  {(reason) =>
+                    renderReason(reason(), "lazers-tasks-node-reason", () => reservationRefs())
+                  }
+                </Show>
               </Show>
               <Show
                 when={
@@ -1950,7 +2009,11 @@ function TaskPanel(
                 >
                   {(assertion) => (
                     <li>
-                      <Ui.Markdown text={assertion.assertion} />
+                      {/* The read records no per-requirement result, so none is drawn as met. */}
+                      <span class="lazers-tasks-check" aria-hidden="true" />
+                      <div class="lazers-tasks-assertion-text">
+                        <Ui.Markdown text={assertion.assertion} />
+                      </div>
                     </li>
                   )}
                 </For>
@@ -1967,134 +2030,10 @@ function TaskPanel(
                     : `Show all ${task().proposal.acceptance.length}`}
                 </button>
               </Show>
-              <details class="lazers-tasks-section lazers-tasks-activity-details">
-                <summary>
-                  <Ui.Icon name="chevron-right" size="small" />
-                  Activity and holds
-                </summary>
-                <For each={selectedHoldReasons()}>
-                  {(reason) => (
-                    <p class="lazers-tasks-reason" role="status">
-                      Waiting: {reason}
-                    </p>
-                  )}
-                </For>
-                <Show
-                  when={
-                    ["running", "verifying"].includes(selectedRecordedState() ?? "") ||
-                    selectedIsWaiting() ||
-                    selectedActivity()?.foreground === "active" ||
-                    selectedActivity()?.waiting
-                  }
-                >
-                  <div
-                    class="lazers-tasks-current-activity"
-                    aria-label="Recorded lifecycle and observed foreground activity"
-                  >
-                    <span>Recorded {selectedRecordedState()}</span>
-                    <Show when={workerActivityLabel(selectedActivity())}>
-                      {(label) => (
-                        <span class="lazers-tasks-foreground">
-                          <span
-                            class="lazers-tasks-activity-indicator"
-                            data-state={selectedActivity()?.foreground}
-                            aria-hidden="true"
-                          />
-                          Worker {label()}
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={selectedActivity()?.unknownReason}>
-                      {(reason) => (
-                        <span>
-                          Observation{" "}
-                          {reason() === "no-current-attempt"
-                            ? "has no current attempt"
-                            : "unavailable"}
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={selectedActivity()?.workerSessionID}>
-                      {(workerSessionID) => (
-                        <span
-                          class="lazers-tasks-worker"
-                          aria-label={`Latest worker session ${workerSessionID()}`}
-                        >
-                          Latest worker{" "}
-                          <code style={{ "font-family": ctx.appearance.font("mono") }}>
-                            {workerSessionID()}
-                          </code>
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={selectedActivity()?.outcome}>
-                      {(outcome) => <span>Worker outcome {outcome()}</span>}
-                    </Show>
-                    <Show when={selectedActivity()?.waiting}>
-                      <span class="lazers-tasks-waiting">Waiting</span>
-                    </Show>
-                    <Show when={selectedActivity()?.pendingInput}>
-                      <span>Input pending</span>
-                    </Show>
-                    <Show
-                      when={
-                        (selectedActivity()?.pendingPermissions ?? 0) > 0 ||
-                        (selectedActivity()?.pendingForms ?? 0) > 0
-                      }
-                    >
-                      <span>Approval pending</span>
-                    </Show>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().prerequisites.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>Prerequisites </span>
-                    <For each={selectedRelations().prerequisites}>
-                      {(taskID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderRelation(taskID)}
-                        </>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().successors.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>Blocks </span>
-                    <For each={selectedRelations().successors}>
-                      {(taskID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderRelation(taskID)}
-                        </>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().planPrerequisites.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>
-                      Plan waits for
-                      {selectedRelations().planPrerequisitesComplete
-                        ? " "
-                        : ` (showing ${selectedRelations().planPrerequisites.length} of ${selectedRelations().planPrerequisitesCount} prerequisite plans) `}
-                    </span>
-                    <For each={selectedRelations().planPrerequisites}>
-                      {(planID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderPlanRelation(planID)}
-                        </>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              </details>
               <details class="lazers-tasks-section">
                 <summary>
                   <Ui.Icon name="chevron-right" size="small" />
-                  Details
+                  <span class="lazers-tasks-section-label">Details</span>
                 </summary>
                 <details class="lazers-tasks-evidence">
                   <summary>Required evidence</summary>
@@ -2307,11 +2246,136 @@ function TaskPanel(
                   </div>
                 </details>
               </details>
-              <details class="lazers-tasks-section">
+              <details class="lazers-tasks-section lazers-tasks-activity-details">
                 <summary>
                   <Ui.Icon name="chevron-right" size="small" />
-                  Activity
+                  <span class="lazers-tasks-section-label">Activity</span>
+                  <Show when={selectedDetail()?.activity?.length}>
+                    {(count) => (
+                      <span class="lazers-tasks-section-count">
+                        {count()} {count() === 1 ? "event" : "events"}
+                      </span>
+                    )}
+                  </Show>
                 </summary>
+                <For each={selectedHoldReasons()}>
+                  {(reason) => (
+                    <p class="lazers-tasks-reason" role="status">
+                      Waiting: {reason}
+                    </p>
+                  )}
+                </For>
+                <Show
+                  when={
+                    ["running", "verifying"].includes(selectedRecordedState() ?? "") ||
+                    selectedIsWaiting() ||
+                    selectedActivity()?.foreground === "active" ||
+                    selectedActivity()?.waiting
+                  }
+                >
+                  <div
+                    class="lazers-tasks-current-activity"
+                    aria-label="Recorded lifecycle and observed foreground activity"
+                  >
+                    <span>Recorded {selectedRecordedState()}</span>
+                    <Show when={workerActivityLabel(selectedActivity())}>
+                      {(label) => (
+                        <span class="lazers-tasks-foreground">
+                          <span
+                            class="lazers-tasks-activity-indicator"
+                            data-state={selectedActivity()?.foreground}
+                            aria-hidden="true"
+                          />
+                          Worker {label()}
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={selectedActivity()?.unknownReason}>
+                      {(reason) => (
+                        <span>
+                          Observation{" "}
+                          {reason() === "no-current-attempt"
+                            ? "has no current attempt"
+                            : "unavailable"}
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={selectedActivity()?.workerSessionID}>
+                      {(workerSessionID) => (
+                        <span
+                          class="lazers-tasks-worker"
+                          aria-label={`Latest worker session ${workerSessionID()}`}
+                        >
+                          Latest worker{" "}
+                          <code style={{ "font-family": ctx.appearance.font("mono") }}>
+                            {workerSessionID()}
+                          </code>
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={selectedActivity()?.outcome}>
+                      {(outcome) => <span>Worker outcome {outcome()}</span>}
+                    </Show>
+                    <Show when={selectedActivity()?.waiting}>
+                      <span class="lazers-tasks-waiting">Waiting</span>
+                    </Show>
+                    <Show when={selectedActivity()?.pendingInput}>
+                      <span>Input pending</span>
+                    </Show>
+                    <Show
+                      when={
+                        (selectedActivity()?.pendingPermissions ?? 0) > 0 ||
+                        (selectedActivity()?.pendingForms ?? 0) > 0
+                      }
+                    >
+                      <span>Approval pending</span>
+                    </Show>
+                  </div>
+                </Show>
+                <Show when={selectedRelations().prerequisites.length}>
+                  <div class="lazers-tasks-dependencies">
+                    <span>Prerequisites </span>
+                    <For each={selectedRelations().prerequisites}>
+                      {(taskID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderRelation(taskID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={selectedRelations().successors.length}>
+                  <div class="lazers-tasks-dependencies">
+                    <span>Blocks </span>
+                    <For each={selectedRelations().successors}>
+                      {(taskID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderRelation(taskID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={selectedRelations().planPrerequisites.length}>
+                  <div class="lazers-tasks-dependencies">
+                    <span>
+                      Plan waits for
+                      {selectedRelations().planPrerequisitesComplete
+                        ? " "
+                        : ` (showing ${selectedRelations().planPrerequisites.length} of ${selectedRelations().planPrerequisitesCount} prerequisite plans) `}
+                    </span>
+                    <For each={selectedRelations().planPrerequisites}>
+                      {(planID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderPlanRelation(planID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Show>
                 <p>
                   Submitted {new Date(task().createdAt).toLocaleString()} ·{" "}
                   <span style={{ "font-family": ctx.appearance.font("mono") }}>

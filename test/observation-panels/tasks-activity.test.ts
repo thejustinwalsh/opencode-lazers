@@ -742,6 +742,48 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(inspectorPane.querySelectorAll(".lazers-tasks-assertions li").length).toBe(
       Math.min(3, proposal.acceptance.length),
     )
+    // The reason is a callout: a user sentence first, the runtime's own text behind Details.
+    const callout = inspectorPane.querySelector<HTMLElement>(".lazers-tasks-callout")!
+    expect(callout.querySelector(".lazers-tasks-callout-icon")).not.toBeNull()
+    const calloutText = callout.querySelector(".lazers-tasks-callout-text")!.textContent ?? ""
+    expect(calloutText).not.toContain("Reconciliation hold")
+    expect(calloutText).toMatch(/\.\s*Details$/)
+    const rawReason = callout.querySelector<HTMLElement>(".lazers-tasks-callout-raw")!
+    expect(rawReason.textContent).toContain("Reconciliation hold")
+    expect(rawReason.hasAttribute("hidden")).toBe(true)
+    const detailsLink = callout.querySelector<HTMLButtonElement>(".lazers-tasks-callout-toggle")!
+    detailsLink.click()
+    await until(() => !rawReason.hasAttribute("hidden"))
+    expect(detailsLink.getAttribute("aria-expanded")).toBe("true")
+    detailsLink.click()
+    await until(() => rawReason.hasAttribute("hidden"))
+    // Two disclosures only, each a full-width row; the activity count sits at the right.
+    const disclosureLabels = [
+      ...inspectorPane.querySelectorAll(":scope > details > summary .lazers-tasks-section-label"),
+    ].map((label) => label.textContent)
+    expect(disclosureLabels).toEqual(["Details", "Activity"])
+    expect(inspectorPane.querySelectorAll(":scope > details")).toHaveLength(2)
+    expect(inspectorText).not.toContain("Activity and holds")
+    // Done when: every item is one grid row of a 16px checkbox and its text, spaced uniformly.
+    const doneItems = [...inspectorPane.querySelectorAll(".lazers-tasks-assertions li")]
+    expect(doneItems.length).toBeGreaterThan(0)
+    for (const item of doneItems) {
+      expect(item.children).toHaveLength(2)
+      expect(item.children[0]!.classList.contains("lazers-tasks-check")).toBe(true)
+      expect(item.children[1]!.classList.contains("lazers-tasks-assertion-text")).toBe(true)
+    }
+    expect((tasksCSS ?? "").match(/^\.lazers-tasks-assertions \{[^}]*\}/m)![0]).toContain(
+      "gap: 10px",
+    )
+    expect((tasksCSS ?? "").match(/\.lazers-tasks-check \{[^}]*\}/)![0]).toMatch(
+      /width: 16px;[^}]*height: 16px/,
+    )
+    // No per-item padding or markdown margin can stack into an uneven band.
+    const itemRule = (tasksCSS ?? "").match(/\.lazers-tasks-assertions li \{[^}]*\}/)![0]
+    expect(itemRule).toContain("padding: 0;")
+    expect((tasksCSS ?? "").match(/\.lazers-tasks-assertion-text p \{[^}]*\}/)![0]).toContain(
+      "margin: 0;",
+    )
     // Running work leads with Radar; trajectory, plan and link stay in the overflow menu.
     const radarAction = [...inspectorPane.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "Open in Radar",
@@ -770,9 +812,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(waitingLink.ownerDocument.activeElement).toBe(waitingLink)
     expect(inspectorText.indexOf("Waiting on")).toBeLessThan(inspectorText.indexOf("Done when"))
     expect(activityDetails().open).toBe(false)
-    expect(inspectorText.indexOf("Done when")).toBeLessThan(
-      inspectorText.indexOf("Activity and holds"),
-    )
+    expect(inspectorText.indexOf("Done when")).toBeLessThan(inspectorText.indexOf("Activity"))
     expect(activityDetails().open).toBe(false)
     const waitingLinkTarget = { href: waitingLink.getAttribute("href")!, session }
     expect(await taskLinkHandler.value!.exists(waitingLinkTarget)).toBe(true)
