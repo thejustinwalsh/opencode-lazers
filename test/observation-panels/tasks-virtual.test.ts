@@ -284,7 +284,7 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
   })
   const query = async (input: { state?: string; cursor?: string }) => {
     queryCalls.push({ state: input.state, cursor: input.cursor })
-    const gate = input.cursor ? gates.get(`${input.state}:${input.cursor}`) : undefined
+    const gate = gates.get(`${input.state}:${input.cursor ?? ""}`)
     if (gate) await gate.promise
     if (input.cursor && failures.has(`${input.state}:${input.cursor}`))
       throw new Error("next page unavailable")
@@ -1137,6 +1137,46 @@ test("only a running row shows elapsed minutes, before the state glyph", async (
     },
     {},
     { runningSince: Date.now() - 12 * 60_000 - 5_000 },
+  )
+})
+
+test("the inspector for a still-selected task is unchanged while a filter reload is in flight", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      h.row(h.beta.join)!.click()
+      const detail = () => h.container.querySelector<HTMLElement>(".lazers-tasks-detail")!
+      const part = (selector: string) =>
+        detail().querySelector<HTMLElement>(selector)?.textContent ?? ""
+      await until(() => part(".lazers-tasks-meta").includes("Beta plan"))
+      const before = {
+        status: part(".lazers-tasks-inspector-state"),
+        action: part(".lazers-tasks-inspector-actions"),
+        meta: part(".lazers-tasks-meta"),
+        reason: part(".lazers-tasks-blocker, .lazers-tasks-node-reason"),
+        all: detail().textContent,
+      }
+      expect(before.meta).toContain("Priority 1")
+      const gate = deferred()
+      h.gates.set("all:", gate)
+      h.chooseFilter("All")
+      await until(() => h.queryCalls.at(-1)?.state === "all")
+      // Let the detail read and the other reads land while the list read is still pending.
+      for (let step = 0; step < 30; step++) await new Promise<void>((r) => setTimeout(r, 0))
+      expect(h.container.querySelector(".lazers-panel-loading")).not.toBeNull()
+      expect(part(".lazers-tasks-inspector-state")).toBe(before.status)
+      expect(part(".lazers-tasks-inspector-actions")).toBe(before.action)
+      expect(part(".lazers-tasks-meta")).toBe(before.meta)
+      expect(part(".lazers-tasks-blocker, .lazers-tasks-node-reason")).toBe(before.reason)
+      expect(detail().textContent).toBe(before.all)
+      gate.resolve()
+      await until(() => Boolean(h.row(h.beta.join)))
+      for (let step = 0; step < 30; step++) await new Promise<void>((r) => setTimeout(r, 0))
+      expect(part(".lazers-tasks-inspector-state")).toBe(before.status)
+      expect(part(".lazers-tasks-meta")).toBe(before.meta)
+    },
+    {},
+    { scheduling: true, prioritized: true },
   )
 })
 

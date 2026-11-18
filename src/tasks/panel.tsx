@@ -446,7 +446,8 @@ function TaskPanel(
   const [lastInspected, setLastInspected] = createSignal<{ identity: string; data: PanelData }>()
   createEffect(() => {
     const value = visible()
-    if (value?.detail) setLastInspected({ identity: identity(), data: value })
+    // Only a finished read holds every input the inspector derives its state from.
+    if (value?.detail && !value.loading) setLastInspected({ identity: identity(), data: value })
   })
   // One clock for every elapsed cell, once a minute; only those cells read it.
   const [minute, setMinute] = createSignal(Date.now())
@@ -466,20 +467,24 @@ function TaskPanel(
   })
   const inspected = () => {
     const value = visible()
-    if (value?.detail) return value
+    // While a reload is in flight the detail can arrive before the topology, scheduling and
+    // activity it is presented with; a partial set would show the recorded lifecycle instead of
+    // the real status. Hold the last complete set instead.
+    if (value?.detail && !value.loading) return value
     const kept = lastInspected()
-    return kept && kept.identity === identity() ? kept.data : value
+    if (kept && kept.identity === identity()) return kept.data
+    return value
   }
   const executionList = createMemo(() =>
     buildExecutionList({
-      topology: visible()?.topology,
-      tasks: visible()?.tasks ?? [],
-      scheduling: visible()?.scheduling,
+      topology: inspected()?.topology,
+      tasks: inspected()?.tasks ?? [],
+      scheduling: inspected()?.scheduling,
       search: prefs().search,
       revealTaskIDs: revealedTaskIDs(),
     }),
   )
-  const schedulingPlans = () => visible()?.scheduling?.plans ?? []
+  const schedulingPlans = () => inspected()?.scheduling?.plans ?? []
   const schedulingNode = (taskID: string) =>
     schedulingPlans()
       .flatMap((plan) => plan.nodes)
@@ -645,8 +650,8 @@ function TaskPanel(
     }
   }
   const relationLabel = (taskID: string) =>
-    visible()?.tasks.find((task) => task.taskID === taskID)?.reference ??
-    visible()?.linkedDetails[taskID]?.reference ??
+    inspected()?.tasks.find((task) => task.taskID === taskID)?.reference ??
+    inspected()?.linkedDetails[taskID]?.reference ??
     taskID.slice(0, 8)
   const renderRelation = (taskID: string) => {
     const reference = createMemo(() => relationLabel(taskID))
@@ -1291,10 +1296,8 @@ function TaskPanel(
     const count = String(value.page.count)
     if (filter === "all") return count
     const label = `${count} ${stateLabel(filter).toLowerCase()}`
-    if (filter !== "open" || value.page.nextCursor) return label
-    const running = value.tasks.filter(
-      (task) => (task.recordedState ?? task.status) === "running",
-    ).length
+    // The Running filter's own count from the read; absent or zero is omitted.
+    const running = filter === "open" ? (value.stateCounts?.running ?? 0) : 0
     return running ? `${label} · ${running} running` : label
   }
   let focusedSelection = ""
