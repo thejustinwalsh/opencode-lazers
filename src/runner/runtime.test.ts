@@ -14075,8 +14075,8 @@ function architectBacklog(f: ReturnType<typeof fixture>, size: number) {
     ).outcome(planID, payload, true)
   const deliver = async () => {
     const fence = f.store.claim(f.runtime.owner)!
-    await (
-      f.runtime as unknown as { outcomeDelivery: { deliver(fence: number): Promise<void> } }
+    return (
+      f.runtime as unknown as { outcomeDelivery: { deliver(fence: number): Promise<boolean> } }
     ).outcomeDelivery.deliver(fence)
   }
   return { ids, emit, deliver }
@@ -14269,4 +14269,83 @@ test("queued outcomes follow an archived Architect to its replacement as one not
   expect(f.store.outboxForDelivery()).toEqual([])
   const rows = f.store.detail(f.receipt.planID).delivery as { session_id: string }[]
   expect(rows.every((row) => row.session_id === owner)).toBe(true)
+})
+
+const transitions = (f: ReturnType<typeof fixture>, planID: string, event: string) =>
+  f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string, string]>(
+        "SELECT payload FROM runner_transitions WHERE plan_id=? AND event=?",
+      )
+      .all(planID, event),
+  )
+
+test("an unreadable Architect inbox does not hold the notice back and is recorded on the plan", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 2)
+  f.host.outcomeInbox = async () => {
+    throw new Error("404 session inbox not found")
+  }
+  for (const id of ids) emit(id, { status: "blocked", reason: id })
+  expect(await deliver()).toBe(false)
+  expect(f.notifications).toHaveLength(1)
+  expect(outboxStates(f).find((row) => row.state === "pending")).toBeUndefined()
+  expect(transitions(f, ids[0]!, "OUTCOME_INBOX_UNREADABLE")).toHaveLength(1)
+  expect(transitions(f, ids[1]!, "OUTCOME_INBOX_UNREADABLE")).toHaveLength(1)
+})
+
+test("a send that fails stays pending, is recorded once, and asks to be retried", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 1)
+  emit(ids[0]!, { status: "blocked", reason: "x" })
+  f.host.notify = async () => {
+    throw new Error("native inbox unavailable")
+  }
+  expect(await deliver()).toBe(true)
+  expect(await deliver()).toBe(true)
+  expect(outboxStates(f).find((row) => row.state === "pending")!.n).toBe(1)
+  expect(transitions(f, ids[0]!, "OUTCOME_DELIVERY_FAILED")).toHaveLength(1)
+})
+
+test("a plan with no live Architect records the hold and asks to be retried", async () => {
+  const f = fixture()
+  const { ids, emit, deliver } = architectBacklog(f, 1)
+  emit(ids[0]!, { status: "blocked", reason: "x" })
+  f.sessions.get("owner")!.archived = true
+  f.host.createArchitect = async () => {
+    throw new Error("cannot create an Architect")
+  }
+  expect(await deliver()).toBe(true)
+  expect(outboxStates(f).find((row) => row.state === "pending")!.n).toBe(1)
+  expect(transitions(f, ids[0]!, "OUTCOME_NO_ARCHITECT")).toHaveLength(1)
+})
+
+test("a tick that holds notices schedules a short retry, not the full interval", async () => {
+  const delays: (number | undefined)[] = []
+  const f = fixture({ wakeScheduler: undefined })
+  ;(f.runtime as unknown as { wakeScheduler: (delay?: number) => void }).wakeScheduler = (delay) =>
+    delays.push(delay)
+  const { ids, emit } = architectBacklog(f, 1)
+  emit(ids[0]!, { status: "blocked", reason: "x" })
+  f.host.notify = async () => {
+    throw new Error("native inbox unavailable")
+  }
+  await f.runtime.tick()
+  expect(delays).toContain(15_000)
+})
+
+test("a tick that loses the lease returns when the lease lapses", async () => {
+  const delays: (number | undefined)[] = []
+  const f = fixture()
+  ;(f.runtime as unknown as { wakeScheduler: (delay?: number) => void }).wakeScheduler = (delay) =>
+    delays.push(delay)
+  f.store.atomic((db) =>
+    db
+      .query("INSERT OR REPLACE INTO runner_leases VALUES(?,?,?,?)")
+      .run(f.repository.projectDirectory, "another-process", 99, Date.now() + 10_000),
+  )
+  await f.runtime.tick()
+  expect(delays).toHaveLength(1)
+  expect(delays[0]!).toBeGreaterThanOrEqual(1_000)
+  expect(delays[0]!).toBeLessThanOrEqual(11_000)
 })

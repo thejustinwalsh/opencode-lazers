@@ -8,7 +8,7 @@ import { retainedVerification } from "./retained-verification/store.ts"
 import { sameProject } from "../project-key.ts"
 
 import type { TaskRuntime } from "./runtime.ts"
-import { messageID } from "./runtime-helpers.ts"
+import { errorText, messageID } from "./runtime-helpers.ts"
 
 /** Handoffs, queue reviews and holds are decisions a later outcome does not answer. */
 function replaceable(row: OutboxRow) {
@@ -278,16 +278,38 @@ export class OutcomeDelivery {
     return [...ids].flatMap((id) => this.runtime.store.outboxRowByID(id) ?? [])
   }
 
-  /** Merge a session's pending notices into one inbox item and cancel the ones it replaces. */
-  private async deliverSession(sessionID: string, pendingRows: OutboxRow[], fence: number) {
+  /** A held notice is visible on its plan, once per distinct cause, never silent. */
+  private hold(rows: OutboxRow[], event: string, detail: Record<string, unknown>, fence: number) {
+    for (const planID of new Set(rows.map((row) => row.plan_id)))
+      this.runtime.store.fenced(this.runtime.owner, fence, () =>
+        this.runtime.store.recordOnce(planID, null, event, detail),
+      )
+  }
+
+  /**
+   * Merge a session's pending notices into one inbox item and cancel the ones it replaces.
+   * Returns true when notices stay pending and delivery should be retried soon.
+   */
+  private async deliverSession(
+    sessionID: string,
+    pendingRows: OutboxRow[],
+    fence: number,
+  ): Promise<boolean> {
     const host = this.runtime.host
     let rows = pendingRows
     let carrier = rows.toSorted((a, b) => a.sequence - b.sequence).at(-1)!
     let queued: Awaited<ReturnType<NonNullable<typeof host.outcomeInbox>>>
     try {
       queued = host.outcomeInbox ? await host.outcomeInbox(sessionID) : []
-    } catch {
-      return
+    } catch (error) {
+      // An unreadable inbox only costs the cancellations: the notice is still sent.
+      queued = []
+      this.hold(
+        pendingRows,
+        "OUTCOME_INBOX_UNREADABLE",
+        { sessionID, error: errorText(error).slice(0, 300) },
+        fence,
+      )
     }
     // Only queued notices that this ledger sent are ours to replace; a lookalike
     // without a durable row, or with different ownership, is left alone.
@@ -313,7 +335,7 @@ export class OutcomeDelivery {
           "OUTCOME_HOST_DELIVERED",
           fence,
         )
-      return
+      return false
     }
 
     // What a notice about to be replaced last told each plan.
@@ -342,7 +364,7 @@ export class OutcomeDelivery {
         )
       else pending.push(row)
     }
-    if (!pending.length) return
+    if (!pending.length) return false
     rows = pending
     carrier = rows.toSorted((a, b) => a.sequence - b.sequence).at(-1)!
     const pendingPlans = new Set(rows.map((row) => row.plan_id))
@@ -354,7 +376,7 @@ export class OutcomeDelivery {
     const carried = new Set([...summary.map((row) => row.id), ...rows.map((row) => row.id)])
 
     // The pause may be set while this tick is already delivering: check again at the send.
-    if (this.runtime.store.architectContactPaused()) return
+    if (this.runtime.store.architectContactPaused()) return false
     const ownership = this.ownership(carrier) ?? this.createOwnership(carrier, sessionID)
     try {
       await host.notify({
@@ -366,14 +388,28 @@ export class OutcomeDelivery {
         resume: rows.some((row) => Boolean(row.resume)),
         metadata: ownership,
       })
-    } catch {
+    } catch (error) {
       // A lost response may still have admitted the notice. If it is queued or already
       // consumed it was delivered; otherwise it stays pending and the next tick retries.
       try {
         const seen = await this.outcomeObservation(carrier, sessionID, ownership)
-        if (seen !== "queued" && seen !== "consumed") return
+        if (seen !== "queued" && seen !== "consumed") {
+          this.hold(
+            rows,
+            "OUTCOME_DELIVERY_FAILED",
+            { sessionID, error: errorText(error).slice(0, 300) },
+            fence,
+          )
+          return true
+        }
       } catch {
-        return
+        this.hold(
+          rows,
+          "OUTCOME_DELIVERY_FAILED",
+          { sessionID, error: errorText(error).slice(0, 300) },
+          fence,
+        )
+        return true
       }
     }
     for (const row of rows)
@@ -403,11 +439,14 @@ export class OutcomeDelivery {
         // It was consumed or cancelled meanwhile; the next delivery lists the inbox again.
       }
     }
+    return false
   }
 
-  async deliver(fence: number, closeoutOnly = false) {
+  /** Returns true when notices remain pending for a retryable reason; the caller schedules a retry. */
+  async deliver(fence: number, closeoutOnly = false): Promise<boolean> {
     // A user-set pause keeps every notice queued; nothing prompts an Architect.
-    if (this.runtime.store.architectContactPaused()) return
+    if (this.runtime.store.architectContactPaused()) return false
+    let retry = false
     const groups = new Map<string, OutboxRow[]>()
     for (const message of this.runtime.store.outboxForDelivery(this.runtime.directory)) {
       const group = groups.get(message.plan_id) ?? []
@@ -434,11 +473,22 @@ export class OutcomeDelivery {
         const current = await this.currentRows(ordered, plan, fence)
         if (!current.length) return
         const target: HostSession | undefined = await this.architect(plan)
-        if (!target) return
+        if (!target) {
+          retry = true
+          this.hold(
+            current,
+            "OUTCOME_NO_ARCHITECT",
+            { owner: plan.owner, reason: "No live Architect could be found or created" },
+            fence,
+          )
+          return
+        }
         const rows = this.retarget(current, target.id)
         if (rows.length) sessions.set(target.id, [...(sessions.get(target.id) ?? []), ...rows])
       })
     }
-    for (const [sessionID, rows] of sessions) await this.deliverSession(sessionID, rows, fence)
+    for (const [sessionID, rows] of sessions)
+      if (await this.deliverSession(sessionID, rows, fence)) retry = true
+    return retry
   }
 }

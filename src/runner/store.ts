@@ -3193,6 +3193,17 @@ export class RunnerStore {
       return fence
     })
   }
+  /** Time until the current lease lapses, bounded so a tick that lost the claim returns promptly. */
+  leaseRetryDelayMs(now = Date.now()) {
+    const lease = this.read((db) =>
+      db
+        .query<{ expires_at: number }, [string]>(
+          "SELECT expires_at FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory),
+    )
+    return Math.min(30_000, Math.max(1_000, (lease?.expires_at ?? now) - now + 250))
+  }
   fenced<T>(owner: string, fence: number, run: (db: Database) => T): T {
     return this.read((db) => {
       const lease = db
