@@ -1,8 +1,8 @@
 # OpenCode V2 API lookup
 
-**OpenCode 2.2.5 · checked 2026-10-31.** Single-page index of the public extension surfaces, not an implementation plan. Coverage: every server-plugin context domain and hook, Desktop window/main APIs and registries, TUI APIs and slots, RPC, client/embedded SDK, and all **169 HTTP operations in 32 resource groups**, with **363 linked schemas**.
+**OpenCode 2.3.0 · checked 2026-11-18** (hook and plugin-surface changes only; operation and schema counts below are from 2.2.5). Single-page index of the public extension surfaces, not an implementation plan. Coverage: every server-plugin context domain and hook, Desktop window/main APIs and registries, TUI APIs and slots, RPC, client/embedded SDK, and all **169 HTTP operations in 32 resource groups**, with **363 linked schemas**.
 
-**Authority:** API names link to source at commit `9bbb8ce` (release `v2.2.5`); documentation links explain usage. Follow the linked definition for signatures, payloads, permissions, errors, and lifecycle before implementing. **E** means explicitly experimental; unmarked entries are not a promise of long-term stability. [OpenAPI contract][protocol] · [schema definitions][schemas] · [live API browser](https://opencode.ai/v2/docs/api).
+**Authority:** API names link to source at commit `dc2ffcf` (release `v2.3.0`); documentation links explain usage. Follow the linked definition for signatures, payloads, permissions, errors, and lifecycle before implementing. **E** means explicitly experimental; unmarked entries are not a promise of long-term stability. [OpenAPI contract][protocol] · [schema definitions][schemas] · [live API browser](https://opencode.ai/v2/docs/api).
 
 ## Entry points and transports
 
@@ -26,7 +26,7 @@ Local `.opencode/plugins/<name>/index.ts` plugins auto-load; other packages/dire
 
 | Domain and source               | Public operations and extension point                                                                                                                                                                                              |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [agent][p-agent]                | `list/get`, `transform/reload`; editor `list/get/update/remove/default`. In 2.2.5, `update` creates missing IDs; no separate `add`. Config/agent files are alternatives. [Runtime][agent-runtime] · [public adapter][plugin-host]. |
+| [agent][p-agent]                | `list/get`, `transform/reload`; editor `list/get/update/remove/default`. In 2.2.5 and 2.3.0, `update` creates missing IDs; no separate `add`. Config/agent files are alternatives. [Runtime][agent-runtime] · [public adapter][plugin-host]. |
 | [provider][p-provider]          | `list/get`, `transform/reload`; editor `list/get/add/update/remove`, `models.set/update/remove`; source model inventory and account-bound discovery.                                                                               |
 | [model][p-model]                | `list/default`, `transform/reload`; editor `list/get/update/remove`, `default.get/set`, `provider.list/get`; routing, availability, capabilities, pricing, limits.                                                                 |
 | [integration][p-integration]    | `list/get`, `connect.key/external`, `oauth.*`, `command.*`; `connection.active/resolve/status`; transform integration metadata/auth methods, then reload.                                                                          |
@@ -54,8 +54,8 @@ Local `.opencode/plugins/<name>/index.ts` plugins auto-load; other packages/dire
 
 | Registration                    | Hook names and purpose                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [session.hook][p-session]       | `prompt` admission; `context` model inputs/tools/options; `compaction`, `generate`, `title` auxiliary requests; `model.request` endpoint/headers; `http.request`, `http.response` native transport; `retry` decision/delay. |
-| [session.hook][p-session] **E** | `experimental.ws.handshake`, `experimental.ws.send`, `experimental.ws.receive` transport interception; `experimental.idle` completion boundary with remaining background work.                                              |
+| [session.hook][p-session]       | `prompt` admission; `context` model inputs/tools/options; `compaction`, `generate`, `title` auxiliary requests; `model.request` endpoint/headers; `http.request`, `http.response` native transport; `retry` decision/delay; `fork` (`{sessionID}`, new in 2.3.0). Request `messages` are `SessionRequestMessage[]` (a `Message` plus read-only stored `metadata`). |
+| [session.hook][p-session] **E** | `experimental.ws.handshake`, `experimental.ws.send`, `experimental.ws.receive` transport interception; `experimental.idle` completion boundary with remaining background work; `experimental.model.resolve` (2.3.0) swaps the model for one request.                                              |
 | [tool.hook][p-tool]             | `execute.before`, `execute.after`; input, success/error output, tool identity.                                                                                                                                              |
 | [permission.hook][p-permission] | `evaluate`; permission effect and explanation.                                                                                                                                                                              |
 | [shell.hook][p-shell]           | `create.before`; spawned process configuration.                                                                                                                                                                             |
@@ -147,20 +147,20 @@ Use `ctx.add(token, valueOrReactiveGetter)`; `ctx.list(token)` reads contributio
 
 The [event manifest][events] indexes event names and payloads, including execution/step/tool/usage, inbox/forms/permissions, registry changes, filesystem/LSP, shell/worktree/VCS, TUI, and RPC events. The [configuration schema][config-schema] is the complete lookup for agent/model/tool/permission/MCP and experimental feature settings.
 
-Public `location.reload()` is server-wide across loaded locations, not scoped to the caller's worktree: the [pinned handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/location.ts) calls [`LocationServiceMap.reload`](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/location-service-map.ts#L20-L35), which invalidates all loaded refs and boots their replacements. The client signature is `location.reload(requestOptions?): Promise<void>`; there is no location input. The [local source loader](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/source.bun.ts) tracks the import graph and evicts its local import cache before loading. Coordinate a quiet boundary outside an in-flight tool call: pending forms/permissions are cancelled, and running sessions continue at the next step boundary. A GUI reload is separate. Verify effective behavior through the actual feature call after reload, not source inventory alone.
+Public `location.reload()` is server-wide across loaded locations, not scoped to the caller's worktree: the [pinned handler](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/server/src/handlers/location.ts) calls [`LocationServiceMap.reload`](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/location-service-map.ts#L20-L35), which invalidates all loaded refs and boots their replacements. The client signature is `location.reload(requestOptions?): Promise<void>`; there is no location input. The [local source loader](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/source.bun.ts) tracks the import graph and evicts its local import cache before loading. Coordinate a quiet boundary outside an in-flight tool call: pending forms/permissions are cancelled, and running sessions continue at the next step boundary. A GUI reload is separate. Verify effective behavior through the actual feature call after reload, not source inventory alone.
 
 For a removed inactive checkout, `debug.location.list()` exposes cached locations;
 `debug.location.evict({location:{directory}})` invalidates that exact location.
-The [debug handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/debug.ts)
+The [debug handler](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/server/src/handlers/debug.ts)
 uses the request's location key and does not explicitly boot a replacement. Check
 active session placement and the target's completed cleanup before retiring it.
 
 `ctx.worktree.create` forwards to the in-process core service; its typed failures
 are not necessarily the HTTP protocol `WorktreeError` envelope. Check the
-[plugin bridge](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/plugin/host.ts#L573)
+[plugin bridge](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/plugin/host.ts#L573)
 and exercise actual Effect/core error shapes when preserving native failure data.
 
-Local server-plugin module identity is not shared state: the pinned [local source loader](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/source.bun.ts) evicts its local import graph when preparing each location. Two loaders of the same canonical entry can retain different module-local objects. Use explicit process-shared or durable state when coordinating locations; one configured path alone does not establish sharing.
+Local server-plugin module identity is not shared state: the pinned [local source loader](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/source.bun.ts) evicts its local import graph when preparing each location. Two loaders of the same canonical entry can retain different module-local objects. Use explicit process-shared or durable state when coordinating locations; one configured path alone does not establish sharing.
 
 ## Complete HTTP operation index
 
@@ -227,93 +227,93 @@ The following is the **entire versioned OpenAPI operation inventory**, grouped f
 
 **Maintenance:** when OpenCode changes, diff [package exports][package], [server context][p-plugin], [hook types][p-session], [GUI registries/context][g-context], [TUI context][t-context], and [OpenAPI][protocol]. Update counts and source revision together; retain one row for every resource and extension domain.
 
-[p-plugin]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/plugin.ts
-[agent-runtime]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/agent.ts
-[plugin-host]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/plugin/host.ts
-[p-agent]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/agent.ts
-[p-provider]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/provider.ts
-[p-model]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/model.ts
-[p-integration]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/integration.ts
-[p-mcp]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/mcp.ts
-[p-command]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/command.ts
-[p-skill]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/skill.ts
-[p-tool]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/tool.ts
-[p-permission]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/permission.ts
-[p-session]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/session.ts
-[p-shell]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/shell.ts
-[p-storage]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/storage.ts
-[p-event]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/event.ts
-[p-reference]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/reference.ts
-[p-worktree]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/worktree.ts
-[p-vcs]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/vcs.ts
-[p-websearch]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/websearch.ts
-[p-artifact]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/artifact.ts
-[p-aisdk]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/aisdk.ts
-[p-rpc]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/rpc.ts
-[p-registration]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/promise/registration.ts
-[g-plugin]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/plugin.ts
-[g-context]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/context.ts
-[g-core]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/core.ts
-[g-registries]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/registries.ts
-[g-host-apis]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/host-apis.ts
-[g-main]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/main.ts
-[g-file]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/file.ts
-[g-review]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/review.ts
-[g-browser]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/browser.ts
-[g-vite]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/vite.ts
-[g-solid]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/solid.ts
-[g-reactive]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/reactive.ts
-[t-context]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/tui/context.ts
-[t-plugin]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/tui/plugin.ts
-[protocol]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/openapi.json
-[client]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/client/src/promise/client.ts
-[service]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/client/src/promise/service.ts
-[client-mcp]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/client/src/mcp.ts
-[media]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/client/src/promise/media.ts
-[sdk]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/sdk/src/promise.ts
-[schedule]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/schedule.ts
-[schedule-schema]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/schema/src/schedule.ts
-[rpc]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/rpc.ts
-[schemas]: https://github.com/anomalyco/opencode/tree/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/schema/src
-[protocol-groups]: https://github.com/anomalyco/opencode/tree/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups
-[package]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/package.json
-[host]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/host.ts
-[runtime]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/runtime.ts
-[events]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/schema/src/event-manifest.ts
-[config-schema]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/schema/src/config.ts
-[ai]: https://github.com/anomalyco/opencode/tree/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/ai/src
-[http-server]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/server.ts
-[http-location]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/location.ts
-[http-agent]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/agent.ts
-[http-plugin]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/plugin.ts
-[http-session]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/session.ts
-[http-model]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/model.ts
-[http-generate]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/generate.ts
-[http-voice]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/voice.ts
-[http-provider]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/provider.ts
-[http-integration]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/integration.ts
-[http-mcp]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/mcp.ts
-[http-credential]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/credential.ts
-[http-project]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/project.ts
-[http-form]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/form.ts
-[http-permission]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/permission.ts
-[http-fs]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/fs.ts
-[http-command]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/command.ts
-[http-skill]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/skill.ts
-[http-rpc]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/rpc.ts
-[http-event]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/event.ts
-[http-pty]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/pty.ts
-[http-persistent-pty]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/persistent-pty.ts
-[http-media]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/media.ts
-[http-schedule]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/schedule.ts
-[http-artifact]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/artifact.ts
-[http-shell]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/shell.ts
-[http-reference]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/reference.ts
-[http-worktree]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/worktree.ts
-[http-vcs]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/vcs.ts
-[http-debug]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/debug.ts
-[http-migration]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/migration.ts
-[http-websearch]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/websearch.ts
-[http-usage]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/usage.ts
-[http-config]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/protocol/src/groups/config.ts
-[client-rpc]: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/client/src/promise/rpc.ts
+[p-plugin]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/plugin.ts
+[agent-runtime]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/agent.ts
+[plugin-host]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/plugin/host.ts
+[p-agent]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/agent.ts
+[p-provider]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/provider.ts
+[p-model]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/model.ts
+[p-integration]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/integration.ts
+[p-mcp]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/mcp.ts
+[p-command]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/command.ts
+[p-skill]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/skill.ts
+[p-tool]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/tool.ts
+[p-permission]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/permission.ts
+[p-session]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/session.ts
+[p-shell]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/shell.ts
+[p-storage]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/storage.ts
+[p-event]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/event.ts
+[p-reference]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/reference.ts
+[p-worktree]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/worktree.ts
+[p-vcs]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/vcs.ts
+[p-websearch]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/websearch.ts
+[p-artifact]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/artifact.ts
+[p-aisdk]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/aisdk.ts
+[p-rpc]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/rpc.ts
+[p-registration]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/registration.ts
+[g-plugin]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/plugin.ts
+[g-context]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/context.ts
+[g-core]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/core.ts
+[g-registries]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/registries.ts
+[g-host-apis]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/host-apis.ts
+[g-main]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/main.ts
+[g-file]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/file.ts
+[g-review]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/review.ts
+[g-browser]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/browser.ts
+[g-vite]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/vite.ts
+[g-solid]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/solid.ts
+[g-reactive]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/gui/reactive.ts
+[t-context]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/tui/context.ts
+[t-plugin]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/tui/plugin.ts
+[protocol]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/openapi.json
+[client]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/client/src/promise/client.ts
+[service]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/client/src/promise/service.ts
+[client-mcp]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/client/src/mcp.ts
+[media]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/client/src/promise/media.ts
+[sdk]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/sdk/src/promise.ts
+[schedule]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/schedule.ts
+[schedule-schema]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/schema/src/schedule.ts
+[rpc]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/rpc.ts
+[schemas]: https://github.com/anomalyco/opencode/tree/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/schema/src
+[protocol-groups]: https://github.com/anomalyco/opencode/tree/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups
+[package]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/package.json
+[host]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/host.ts
+[runtime]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/runtime.ts
+[events]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/schema/src/event-manifest.ts
+[config-schema]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/schema/src/config.ts
+[ai]: https://github.com/anomalyco/opencode/tree/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/ai/src
+[http-server]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/server.ts
+[http-location]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/location.ts
+[http-agent]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/agent.ts
+[http-plugin]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/plugin.ts
+[http-session]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/session.ts
+[http-model]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/model.ts
+[http-generate]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/generate.ts
+[http-voice]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/voice.ts
+[http-provider]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/provider.ts
+[http-integration]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/integration.ts
+[http-mcp]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/mcp.ts
+[http-credential]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/credential.ts
+[http-project]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/project.ts
+[http-form]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/form.ts
+[http-permission]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/permission.ts
+[http-fs]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/fs.ts
+[http-command]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/command.ts
+[http-skill]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/skill.ts
+[http-rpc]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/rpc.ts
+[http-event]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/event.ts
+[http-pty]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/pty.ts
+[http-persistent-pty]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/persistent-pty.ts
+[http-media]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/media.ts
+[http-schedule]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/schedule.ts
+[http-artifact]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/artifact.ts
+[http-shell]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/shell.ts
+[http-reference]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/reference.ts
+[http-worktree]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/worktree.ts
+[http-vcs]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/vcs.ts
+[http-debug]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/debug.ts
+[http-migration]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/migration.ts
+[http-websearch]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/websearch.ts
+[http-usage]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/usage.ts
+[http-config]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/protocol/src/groups/config.ts
+[client-rpc]: https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/client/src/promise/rpc.ts
