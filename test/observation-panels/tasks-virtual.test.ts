@@ -644,9 +644,9 @@ async function mountPanel(dom: Window, outputDirectory: string, fixture: Fixture
     list().dispatchEvent(new dom.window.Event("scroll") as unknown as Event)
   }
   const chooseFilter = (label: string) => {
-    const trigger = [
-      ...container.querySelectorAll<HTMLButtonElement>("button[aria-haspopup=menu]"),
-    ].find((button) => button.getAttribute("aria-label")?.startsWith("State:"))!
+    const trigger = container.querySelector<HTMLButtonElement>(
+      ".lazers-tasks-state-filter button[aria-haspopup=menu]",
+    )!
     trigger.click()
     ;[...container.querySelectorAll<HTMLButtonElement>("[role=menuitem]")]
       .find((button) => button.textContent === label)!

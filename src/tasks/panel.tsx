@@ -896,7 +896,8 @@ function TaskPanel(
               </span>
             )}
           </Show>
-          <span class="lazers-tasks-row-title">{taskTitle(taskRow().title)}</span>
+          {/* The whole first sentence: the row truncates to its own width, not to a fixed length. */}
+          <span class="lazers-tasks-row-title">{taskHeading(taskRow().title)}</span>
           <span class="lazers-tasks-row-signals">
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
@@ -1498,7 +1499,7 @@ function TaskPanel(
           </span>
           <span class="lazers-tasks-state-filter">
             <Ui.Menu
-              label={`State: ${stateLabel(stateFilter())}`}
+              label={stateLabel(stateFilter())}
               trigger="button"
               icon="chevron-down"
               items={(

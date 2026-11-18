@@ -941,9 +941,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => view()?.split === 20)
 
     const chooseFilter = async (label: string) => {
-      const trigger = [
-        ...container.querySelectorAll<HTMLButtonElement>("button[aria-haspopup=menu]"),
-      ].find((button) => button.getAttribute("aria-label")?.startsWith("State:"))!
+      const trigger = container.querySelector<HTMLButtonElement>(
+        ".lazers-tasks-state-filter button[aria-haspopup=menu]",
+      )!
       trigger.click()
       const item = [...container.querySelectorAll<HTMLButtonElement>("[role=menuitem]")].find(
         (button) => button.textContent === label,
