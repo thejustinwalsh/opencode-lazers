@@ -10,6 +10,8 @@ import {
 export type NativeLivenessFixtureOptions = {
   sessionID?: string
   directory?: string
+  /** The worker location is not loaded in the host; default is loaded. */
+  unloadedLocation?: boolean
   version?: string
   expectedPID?: () => number
   serverInfo?: (clientNumber: number) => { pid: number; version: string }
@@ -47,7 +49,7 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
   let activeReads = 0
   let contextReads = 0
   let identityReads = 0
-  const locationReads: { kind: "permission" | "form"; directory: string }[] = []
+  const locationReads: { kind: "permission" | "form" | "shell"; directory: string }[] = []
   const session = {
     id: sessionID,
     parentID: "ses_owner",
@@ -74,6 +76,11 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
           return options.serverInfo?.(clientNumber) ?? { pid: 42, version }
         },
       },
+      debug: {
+        location: {
+          list: async () => (options.unloadedLocation ? [] : [{ directory }]),
+        },
+      },
       form: {
         list: async ({ location }: { location?: { directory?: string } } = {}) => {
           const requestedDirectory = location?.directory ?? ""
@@ -85,10 +92,10 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
         },
       },
       shell: {
-        list: async ({ location }: { location?: { directory?: string } } = {}) => ({
-          location: { directory: location?.directory ?? "" },
-          data: options.shells ?? [],
-        }),
+        list: async ({ location }: { location?: { directory?: string } } = {}) => {
+          locationReads.push({ kind: "shell", directory: location?.directory ?? "" })
+          return { location: { directory: location?.directory ?? "" }, data: options.shells ?? [] }
+        },
       },
       permission: {
         request: {

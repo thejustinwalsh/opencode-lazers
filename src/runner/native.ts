@@ -117,7 +117,15 @@ async function workerObservation(
   requireLocationShells = true,
   confirmedAbsent = false,
 ): Promise<NativeWorkerObservation> {
-  if (directory && requireLocationShells && typeof client.shell?.list !== "function")
+  // Location-scoped reads boot an unloaded location (plugin instantiation,
+  // watchers) and it is evicted right after. A location that is not loaded has no
+  // permission requests, forms or shells, so read them only when it is loaded.
+  const inspectLocation =
+    directory !== undefined &&
+    (await client.debug.location.list()).some(
+      (location) => resolve(location.directory) === resolve(directory),
+    )
+  if (inspectLocation && requireLocationShells && typeof client.shell?.list !== "function")
     throw new Error("Native worker location shell inventory is unavailable")
   const [active, inbox, permissions, forms, shells] = await Promise.all([
     client.session.active(),
@@ -132,11 +140,11 @@ async function workerObservation(
         return []
       throw error
     }),
-    directory
+    inspectLocation
       ? client.permission.request.list({ location: { directory } })
       : Promise.resolve(undefined),
-    directory ? client.form.list({ location: { directory } }) : Promise.resolve(undefined),
-    directory && typeof client.shell?.list === "function"
+    inspectLocation ? client.form.list({ location: { directory } }) : Promise.resolve(undefined),
+    inspectLocation && typeof client.shell?.list === "function"
       ? client.shell.list({ location: { directory } })
       : Promise.resolve(undefined),
   ])
@@ -151,7 +159,7 @@ async function workerObservation(
   )
     throw new Error("Native worker execution inventory is unavailable")
   if (
-    directory &&
+    inspectLocation &&
     (!permissions ||
       !forms ||
       permissions.location.directory !== directory ||

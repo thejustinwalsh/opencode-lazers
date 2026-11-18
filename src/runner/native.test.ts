@@ -33,6 +33,8 @@ type NativeRevalidationOptions = {
   formDirectory?: (requested: string) => string
   shellDirectory?: (requested: string) => string
   omitShellList?: boolean
+  /** The worker location is not loaded in the host; default is loaded. */
+  unloadedLocation?: boolean
   retainedMessageAt?: (id: string, message: unknown) => unknown
 }
 
@@ -100,6 +102,11 @@ function nativeRevalidationHost(
           if (options.inboxError !== undefined) throw new Error("Simulated native inbox failure")
           return options.inbox ?? []
         },
+      },
+    },
+    debug: {
+      location: {
+        list: async () => (options.unloadedLocation ? [] : [{ directory: binding.workspace }]),
       },
     },
     permission: {
@@ -1562,7 +1569,7 @@ test("pending worker input and location-scoped approvals prevent terminal projec
     pendingForms: 1,
     outcome: undefined,
   })
-  expect(fixture.locationReads).toHaveLength(4)
+  expect(fixture.locationReads).toHaveLength(6)
   expect(
     fixture.locationReads.every((read) => read.directory === "/project/.worktrees/attempt"),
   ).toBe(true)
@@ -1755,4 +1762,26 @@ test("Auditor prompt accepts native default readback and still rejects changed e
     "exact assigned session and route",
   )
   expect(prompts).toBe(1)
+})
+
+test("an unloaded worker location is observed without booting it", async () => {
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe(), unloadedLocation: true })
+  const session = await fixture.host.session("ses_worker")
+  expect(session).toMatchObject({
+    busy: false,
+    runningShells: 0,
+    pendingPermissions: 0,
+    pendingForms: 0,
+  })
+  expect(fixture.locationReads).toEqual([])
+})
+
+test("a loaded worker location is still inspected for permissions, forms and shells", async () => {
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe() })
+  await fixture.host.session("ses_worker")
+  expect(fixture.locationReads.map((read) => read.kind).sort()).toEqual([
+    "form",
+    "permission",
+    "shell",
+  ])
 })
