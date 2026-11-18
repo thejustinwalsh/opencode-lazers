@@ -539,12 +539,25 @@ function trimCount(value: number) {
   return (value >= 100 ? Math.round(value) : Math.round(value * 10) / 10).toString()
 }
 
+/** `45s`, `14m`, `2h 10m`. */
+export function compactDuration(milliseconds: number) {
+  const seconds = Math.round(milliseconds / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours}h ${rest}m` : `${hours}h`
+}
+
 export type SelectedModelFacts = {
   /** Rounded price range per accepted task; absent when no complete price exists. */
   price?: string
   accepted?: number
   terminal?: number
   tokens?: string
+  /** Median time per accepted task, e.g. "14m"; absent when no duration was recorded. */
+  time?: string
   attempts?: string
 }
 
@@ -554,6 +567,7 @@ export function selectedModelFacts(input: {
   referenceEstimate?: ModelDecisionReferenceEstimate
   efficiency: ModelDecisionEfficiency
   cohort: ModelDecisionCohortCounts
+  medianDurationMs?: number
 }): SelectedModelFacts {
   const { estimate, referenceEstimate, efficiency, cohort } = input
   const facts: SelectedModelFacts = {}
@@ -578,6 +592,7 @@ export function selectedModelFacts(input: {
   facts.terminal = cohort.terminalTaskCount
   if (efficiency.tokensPerAcceptedTask !== null)
     facts.tokens = compactCount(efficiency.tokensPerAcceptedTask)
+  if (input.medianDurationMs !== undefined) facts.time = compactDuration(input.medianDurationMs)
   facts.attempts = (
     Math.round((cohort.attemptCount / cohort.acceptedTaskCount) * 10) / 10
   ).toString()

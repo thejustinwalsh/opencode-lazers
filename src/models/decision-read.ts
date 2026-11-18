@@ -145,6 +145,8 @@ type DecisionSnapshot = {
   graph: ModelDecisionOverview["graph"]
   contributors: Map<string, ModelDecisionContributor[]>
   estimates: Map<string, ModelDecisionEstimate>
+  /** Median first-attempt-to-acceptance time of a cohort's accepted tasks; absent without records. */
+  medianAcceptedDurationMs: Map<string, number>
   knownUsageMarkets: Map<string, KnownUsageMarket>
 }
 
@@ -845,6 +847,20 @@ function estimateForHistories(
   }
 }
 
+/** From the task's first recorded attempt start to its recorded acceptance; null without both. */
+export function acceptedDurationMs(task: ObservationLedgerDecisionTask) {
+  const acceptedAt = task.acceptance.acceptedAt
+  if (!task.acceptance.accepted || acceptedAt === null || !task.attempts.length) return null
+  const duration = acceptedAt - Math.min(...task.attempts.map((attempt) => attempt.startedAt))
+  return Number.isFinite(duration) && duration >= 0 ? duration : null
+}
+
+export function median(values: readonly number[]) {
+  const sorted = values.toSorted((left, right) => left - right)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2
+}
+
 function contributorContribution(
   attempts: SessionData["attempts"],
   acceptedAttemptIDs: Set<string>,
@@ -1099,6 +1115,7 @@ function buildSnapshotData(
   )
   const rows: ModelDecisionRow[] = []
   const contributors = new Map<string, ModelDecisionContributor[]>()
+  const medianAcceptedDurationMs = new Map<string, number>()
   const estimates = new Map<string, ModelDecisionEstimate>()
   const knownUsageMarkets = new Map<string, KnownUsageMarket>()
   for (const [key, cohort] of cohorts) {
@@ -1271,6 +1288,12 @@ function buildSnapshotData(
       return [acceptedHistoryForTask(task, sessionsByTask.get(taskID) ?? [], key)]
     })
     estimates.set(key, estimateForHistories(acceptedHistories, acceptedTaskCount))
+    const durations = [...cohort.acceptedTaskIDs].flatMap((taskID) => {
+      const task = selectedTaskByID.get(taskID)
+      const duration = task ? acceptedDurationMs(task) : null
+      return duration === null ? [] : [duration]
+    })
+    if (durations.length) medianAcceptedDurationMs.set(key, median(durations))
     contributors.set(
       key,
       makeContributors({
@@ -1341,6 +1364,7 @@ function buildSnapshotData(
     },
     contributors,
     estimates,
+    medianAcceptedDurationMs,
     knownUsageMarkets,
   }
 }
@@ -1433,6 +1457,7 @@ function unavailableSnapshot(
     },
     contributors: new Map(),
     estimates: new Map(),
+    medianAcceptedDurationMs: new Map(),
     knownUsageMarkets: new Map(),
   }
 }
@@ -1612,6 +1637,9 @@ function inspection(
       },
     },
     knownUsageMarket: snapshot.knownUsageMarkets.get(configKey),
+    ...(snapshot.medianAcceptedDurationMs.has(configKey)
+      ? { medianAcceptedDurationMs: snapshot.medianAcceptedDurationMs.get(configKey)! }
+      : {}),
     contributorPage: {
       contributors: page(contributors, offset, input.contributorLimit),
       totalCount: contributors.length,

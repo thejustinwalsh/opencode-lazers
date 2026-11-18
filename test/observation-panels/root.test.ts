@@ -2044,6 +2044,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(selectedStats.textContent).toContain("accepted")
     expect(selectedStats.textContent).toContain("tokens / task")
     expect(selectedStats.textContent).toContain("attempts / task")
+    expect(selectedStats.textContent).toContain("median time14m")
     // The first view carries no accounting or unknown vocabulary; the detail sits in disclosures.
     const firstView = [selectedHeading, selectedPrice, selectedStats]
       .map((element) => element.textContent)

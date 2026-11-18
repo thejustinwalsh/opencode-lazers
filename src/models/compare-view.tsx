@@ -598,6 +598,14 @@ function CompareInspector(props: { ctl: ModelsController }) {
                         </div>
                       )}
                     </Show>
+                    <Show when={facts().time}>
+                      {(time) => (
+                        <div>
+                          <dt>median time</dt>
+                          <dd>{time()}</dd>
+                        </div>
+                      )}
+                    </Show>
                     <Show when={facts().attempts}>
                       {(attempts) => (
                         <div>

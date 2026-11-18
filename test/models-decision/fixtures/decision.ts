@@ -250,6 +250,7 @@ export function decisionInspect(): ModelDecisionInspect {
     context: decisionContext(),
     ...row,
     selectedTaskID: DECISION_TASK_ID,
+    medianAcceptedDurationMs: 840_000,
     estimate: {
       status: "available",
       basis: "empirical-observed-spread",

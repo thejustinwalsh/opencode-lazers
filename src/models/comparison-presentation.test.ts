@@ -8,6 +8,7 @@ import {
   boundedModelLabel,
   currentMarketEstimateSummary,
   compactCount,
+  compactDuration,
   formatDate,
   formatPriceRange,
   joinSegments,
@@ -477,14 +478,18 @@ test("the selected-model facts are a rounded price range, counts and per-task av
       failedAttemptCount: 2,
       retryAttemptCount: 0,
     } as never,
+    medianDurationMs: 14 * 60_000,
   })
   expect(facts).toEqual({
     price: "$0.35 – 0.67",
     accepted: 9,
     terminal: 11,
     tokens: "6.2M",
+    time: "14m",
     attempts: "1.2",
   })
+  expect(compactDuration(45_000)).toBe("45s")
+  expect(compactDuration(130 * 60_000)).toBe("2h 10m")
   expect(JSON.stringify(facts)).not.toMatch(unknownWords)
   expect(formatPriceRange({ minimum: 0.35, maximum: 0.35 })).toBe("$0.35")
   expect(compactCount(840_000)).toBe("840k")
@@ -513,6 +518,7 @@ test("a partial price is omitted from the facts rather than shown as a price", (
     } as never,
   })
   expect(facts.price).toBeUndefined()
+  expect(facts.time).toBeUndefined()
   expect(facts.tokens).toBeUndefined()
   expect(facts.accepted).toBe(1)
   expect(
