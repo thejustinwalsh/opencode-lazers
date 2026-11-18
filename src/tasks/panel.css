@@ -258,6 +258,8 @@
 }
 /* The 12px gap less 6px: the title sits 6px under the head line and the meta 6px under the title. */
 .lazers-tasks-detail > .lazers-tasks-title {
+  /* A clamped box hides its overflow, so a scrolling flex column would shrink it to nothing. */
+  flex: none;
   margin-top: -6px;
   font-size: 16px;
   font-weight: 600;
