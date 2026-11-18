@@ -7,10 +7,10 @@ import { createModelsController } from "./models-controller.ts"
 import type { ModelsController } from "./models-controller.ts"
 import { CompareView } from "./compare-view.tsx"
 import { AssignmentsView } from "./assignments-view.tsx"
+import { Segmented } from "./panel-layout.tsx"
 import { modelPersonaLabels, modelTaskKindLabels, modelTaskKinds } from "./panel-shared.ts"
 import type { ModelsContext, ModelsPreference } from "./panel-shared.ts"
 import type { ModelComparisonPanelData } from "./comparison-state.ts"
-import { routeLabel } from "./comparison-presentation.ts"
 import css from "./comparison-panel.css?inline"
 
 export { modelsStores } from "./panel-shared.ts"
@@ -32,25 +32,35 @@ function PanelHeader(props: { ctl: ModelsController }) {
     Ui,
     changeDecisionFilters,
     compareMode,
-    configurationsForGroup,
-    current,
-    decisionModelChoiceLabel,
-    decisionModelLabel,
     prefs,
+    pricesAsOf,
     projectLabel,
-    providerChoices,
-    selectDecisionGroup,
+    selectCompareMode,
     selectTab,
     selectTask,
-    selectedDecisionConfiguration,
+    selectedTask,
     setPriceSourceRevision,
     sourceWarning,
     state,
     tabKey,
     taskDescription,
-    taskLabel,
     visible,
   } = ctl
+  const compare = () => prefs().tab === "compare"
+  const tab = (id: "compare" | "assignments", label: string) => (
+    <button
+      type="button"
+      role="tab"
+      id={`lazers-models-${id}-tab`}
+      aria-selected={prefs().tab === id}
+      aria-controls={`lazers-models-${id}-panel`}
+      tabIndex={prefs().tab === id ? 0 : -1}
+      onClick={() => selectTab(id)}
+      onKeyDown={tabKey}
+    >
+      {label}
+    </button>
+  )
 
   return (
     <header
@@ -61,135 +71,105 @@ function PanelHeader(props: { ctl: ModelsController }) {
     >
       <div class="lazers-models-title-row">
         <h2>Models</h2>
-        <span
-          class="lazers-models-project"
-          role="note"
-          aria-label={`Project · ${current()?.project ?? "unavailable"}`}
-          title={current()?.project}
+        <div class="lazers-models-tabs" role="tablist" aria-label="Models views">
+          {tab("compare", "Compare")}
+          {tab("assignments", "Assignments")}
+        </div>
+        <Show
+          when={compare()}
+          fallback={
+            <span class="lazers-models-prices" title={ctl.current()?.project}>
+              {projectLabel()}
+            </span>
+          }
         >
-          Project · {projectLabel()}
-        </span>
-        <Ui.Button
+          <Show when={pricesAsOf()}>
+            {(time) => <span class="lazers-models-prices">Prices {time()}</span>}
+          </Show>
+        </Show>
+        <Ui.IconButton
+          icon="refresh"
+          label="Refresh"
           size="small"
-          variant="ghost-muted"
           disabled={!visible() || visible()?.sourceRefresh === "refreshing"}
           busy={visible()?.sourceRefresh === "refreshing"}
           onClick={() => {
             setPriceSourceRevision((revision) => revision + 1)
             void state.refresh()
           }}
-        >
-          Refresh
-        </Ui.Button>
+        />
       </div>
-      <div class="lazers-models-tabs" role="tablist" aria-label="Models views">
-        <button
-          type="button"
-          role="tab"
-          id="lazers-models-compare-tab"
-          aria-selected={prefs().tab === "compare"}
-          aria-controls="lazers-models-compare-panel"
-          tabIndex={prefs().tab === "compare" ? 0 : -1}
-          onClick={() => selectTab("compare")}
-          onKeyDown={tabKey}
-        >
-          Compare
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="lazers-models-assignments-tab"
-          aria-selected={prefs().tab === "assignments"}
-          aria-controls="lazers-models-assignments-panel"
-          tabIndex={prefs().tab === "assignments" ? 0 : -1}
-          onClick={() => selectTab("assignments")}
-          onKeyDown={tabKey}
-        >
-          Assignments
-        </button>
-      </div>
-      <Show when={prefs().tab === "compare"}>
+      <Show when={compare()}>
         <div class="lazers-models-controls">
           <div class="lazers-models-filters" role="group" aria-label="Comparison filters">
-            <Ui.Menu
-              label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All personas",
-                  onSelect: () => changeDecisionFilters({ persona: null }),
-                },
-                ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
-                  label: modelPersonaLabels[persona],
-                  onSelect: () => changeDecisionFilters({ persona }),
-                })),
-              ]}
-            />
-            <Ui.Menu
-              label={`Kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All task kinds",
-                  onSelect: () => changeDecisionFilters({ taskKind: null }),
-                },
-                ...modelTaskKinds.map((taskKind) => ({
-                  label: modelTaskKindLabels[taskKind],
-                  onSelect: () => changeDecisionFilters({ taskKind }),
-                })),
-              ]}
-            />
-            <span
-              class="lazers-models-task-select"
-              role="group"
-              aria-label={taskDescription()}
-              title={taskDescription()}
-            >
+            <span class="lazers-models-chip">
               <Ui.Menu
-                label={taskLabel()}
+                label={personaFilterLabel(visible()?.decisionFilters.persona ?? null)}
                 trigger="button"
                 icon="chevron-down"
-                disabled={!visible()?.tasks.length}
-                items={(visible()?.tasks ?? []).map((task) => ({
-                  label: `${task.reference} · ${task.title || task.objective} · ${task.status}`,
-                  onSelect: () => selectTask(task.taskID),
-                }))}
+                items={[
+                  {
+                    label: "All personas",
+                    onSelect: () => changeDecisionFilters({ persona: null }),
+                  },
+                  ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
+                    label: modelPersonaLabels[persona],
+                    onSelect: () => changeDecisionFilters({ persona }),
+                  })),
+                ]}
               />
             </span>
+            <span class="lazers-models-chip">
+              <Ui.Menu
+                label={
+                  visible()?.decisionFilters.taskKind
+                    ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!]
+                    : "All kinds"
+                }
+                trigger="button"
+                icon="chevron-down"
+                items={[
+                  {
+                    label: "All task kinds",
+                    onSelect: () => changeDecisionFilters({ taskKind: null }),
+                  },
+                  ...modelTaskKinds.map((taskKind) => ({
+                    label: modelTaskKindLabels[taskKind],
+                    onSelect: () => changeDecisionFilters({ taskKind }),
+                  })),
+                ]}
+              />
+            </span>
+            <Show when={selectedTask()}>
+              {(task) => (
+                <span
+                  class="lazers-models-chip lazers-models-task-select"
+                  role="group"
+                  aria-label={taskDescription()}
+                  title={taskDescription()}
+                >
+                  <Ui.Menu
+                    label={task().reference}
+                    trigger="button"
+                    icon="chevron-down"
+                    items={(visible()?.tasks ?? []).map((entry) => ({
+                      label: `${entry.reference} · ${entry.title || entry.objective} · ${entry.status}`,
+                      onSelect: () => selectTask(entry.taskID),
+                    }))}
+                  />
+                </span>
+              )}
+            </Show>
           </div>
-          <Show when={compareMode() === "observed" ? selectedDecisionConfiguration() : undefined}>
-            {(configuration) => (
-              <div
-                class="lazers-models-selection-tools"
-                role="group"
-                aria-label="Model and effort selection"
-                title={`Exact route ${routeLabel(configuration().route)}`}
-              >
-                <Ui.Menu
-                  label={`Model · ${decisionModelLabel(configuration())}`}
-                  trigger="button"
-                  icon="chevron-down"
-                  disabled={!providerChoices().length}
-                  items={providerChoices().map((choice) => ({
-                    label: decisionModelChoiceLabel(choice),
-                    onSelect: () => selectDecisionGroup(choice.groupID),
-                  }))}
-                />
-                <Ui.Menu
-                  label={`Effort · ${configuration().route.variant ?? "Not specified"}`}
-                  trigger="button"
-                  icon="chevron-down"
-                  disabled={!configurationsForGroup(configuration().groupID).length}
-                  items={configurationsForGroup(configuration().groupID).map((choice) => ({
-                    label: choice.route.variant ?? "Not specified",
-                    onSelect: () => state.selectConfiguration(choice.configurationID),
-                  }))}
-                />
-              </div>
-            )}
-          </Show>
+          <Segmented
+            label="Comparison basis"
+            value={compareMode()}
+            onChange={selectCompareMode}
+            options={[
+              { value: "observed", label: "Your runs" },
+              { value: "benchmark", label: "Benchmark" },
+            ]}
+          />
         </div>
         <Show when={visible()?.sourceRefresh === "refreshing"}>
           <p class="lazers-models-refresh-note" role="status">

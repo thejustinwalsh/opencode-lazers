@@ -32,30 +32,28 @@
 
 .lazers-models-header {
   display: grid;
-  gap: 4px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-weak-base);
+  gap: 8px;
+  padding-bottom: 8px;
 }
 
 .lazers-models-title-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
+  gap: 12px;
   min-width: 0;
 }
 
 .lazers-models-title-row h2 {
-  flex: 1 0 auto;
-  min-width: 80px;
+  flex: 0 0 auto;
   margin: 0;
   color: var(--text-strong);
   font-size: 15px;
   font-weight: 600;
 }
 
-.lazers-models-project {
-  max-width: min(38%, 220px);
+.lazers-models-prices {
+  min-width: 0;
+  margin-left: auto;
   overflow: hidden;
   color: var(--text-weak);
   font-size: 12px;
@@ -65,56 +63,57 @@
 
 .lazers-models-tabs {
   display: flex;
-  gap: 8px;
-  border-bottom: 1px solid var(--border-weak-base);
+  gap: 10px;
+  min-width: 0;
 }
 
 .lazers-models-tabs button {
   min-height: 28px;
-  padding: 0 4px;
+  padding: 0 2px;
   border: 0;
   border-bottom: 2px solid transparent;
   color: var(--text-weak);
   background: transparent;
   font: inherit;
   font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .lazers-models-tabs button[aria-selected="true"] {
   border-bottom-color: var(--border-selected);
   color: var(--text-strong);
-  font-weight: 600;
+}
+
+.lazers-models-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
 }
 
 .lazers-models-filters {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: 2px 4px;
+  gap: 6px;
   min-width: 0;
 }
 
-.lazers-models-controls {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.lazers-models-filters > *,
-.lazers-models-selection-tools > * {
-  flex: 0 1 auto;
+.lazers-models-chip {
   min-width: 0;
   max-width: 100%;
 }
 
-.lazers-models-filters button,
+.lazers-models-chip button,
 .lazers-models-selection-tools button {
+  flex-direction: row-reverse;
+  gap: 6px;
   max-width: 100%;
-  min-height: 26px;
-  padding: 3px 5px;
-  font-size: 11px;
-  line-height: 1.15;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -123,23 +122,14 @@
 .lazers-models-selection-tools {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: 2px 4px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   min-width: 0;
 }
 
-.lazers-models-task-select {
-  flex: 0 1 auto;
+.lazers-models-selection-tools > * {
   min-width: 0;
-  max-width: min(100%, 110px);
-}
-
-.lazers-models-task-select button {
   max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .lazers-models-filter-details,
@@ -319,60 +309,6 @@
 
 .lazers-models-chart {
   border-bottom: 1px solid var(--border-weak-base);
-}
-
-.lazers-models-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-bottom: 3px;
-}
-
-.lazers-models-section-heading h3 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.lazers-models-section-heading > span {
-  color: var(--text-weak);
-  font-size: 10px;
-}
-
-/* Observed task outcomes and the public benchmark use different units; one is shown at a time. */
-.lazers-models-compare-mode {
-  display: inline-flex;
-  margin-left: auto;
-  padding: 2px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 6px;
-  gap: 2px;
-}
-
-.lazers-models-compare-mode button {
-  min-height: 24px;
-  padding: 2px 8px;
-  border: 0;
-  border-radius: 4px;
-  color: var(--text-weak);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.lazers-models-compare-mode button:hover {
-  color: var(--text-base);
-  background: var(--surface-base-hover);
-}
-
-.lazers-models-compare-mode button[aria-checked="true"] {
-  color: var(--text-strong);
-  background: var(--surface-base-hover);
-  box-shadow: inset 0 -2px 0 var(--border-selected);
 }
 
 .lazers-models-chart-caption {

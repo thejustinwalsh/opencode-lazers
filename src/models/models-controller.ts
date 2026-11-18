@@ -32,6 +32,7 @@ import {
   selectedModelFacts,
 } from "./comparison-presentation.ts"
 import { benchmarkSourceName } from "./benchmark-chart.tsx"
+import { panelClock } from "../panel-status.ts"
 import {
   clampSplit,
   marketSummarySource,
@@ -584,16 +585,15 @@ export function createModelsController(props: ModelsProps) {
       ? "benchmark"
       : "observed"
   }
-  const selectCompareMode = (mode: "observed" | "benchmark") => save({ compareMode: mode })
-  const compareModeKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
-    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return
-    event.preventDefault()
-    const next = compareMode() === "observed" ? "benchmark" : "observed"
-    selectCompareMode(next)
-    event.currentTarget.parentElement
-      ?.querySelector<HTMLButtonElement>(`[data-compare-mode="${next}"]`)
-      ?.focus()
+  /** Local time of the newest price snapshot; absent until one exists. */
+  const pricesAsOf = () => {
+    const times = (visible()?.comparison?.sources ?? [])
+      .filter((entry) => entry.source !== "openrouter-benchmarks")
+      .flatMap((entry) => (entry.snapshot ? [Date.parse(entry.snapshot.retrievedAt)] : []))
+      .filter((time) => Number.isFinite(time))
+    return times.length ? panelClock(Math.max(...times)) : undefined
   }
+  const selectCompareMode = (mode: "observed" | "benchmark") => save({ compareMode: mode })
   const observedScopeLabel = () => {
     const filters = visible()?.decisionFilters
     const scope = [
@@ -1073,7 +1073,7 @@ export function createModelsController(props: ModelsProps) {
     chartHeight,
     clearConfirmedAssignmentWrite,
     compareMode,
-    compareModeKey,
+    pricesAsOf,
     comparisonSource,
     configurationsForGroup,
     ctx,

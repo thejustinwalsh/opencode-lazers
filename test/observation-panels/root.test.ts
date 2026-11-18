@@ -1887,7 +1887,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(overview.querySelector(".lazers-models-candidates")).toBeNull()
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
     expect(comparePanel.querySelector("table")).toBeNull()
-    expect(sourceDetails.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(overview.compareDocumentPosition(sourceDetails) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
     const chartImage = comparePanel.querySelector<HTMLElement>(
@@ -2065,15 +2065,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(() => modelStore.snapshot().projects[DIRECTORY_A]?.evidenceOpen === false)
     expect(selectedInspector.scrollTop).toBe(0)
     expect(topPaneA.scrollTop).toBe(0)
-    const decisionStatus = comparePanel.querySelector<HTMLElement>(
-      ".lazers-models-decision-status",
-    )!
-    expect(decisionStatus.textContent).toBe("Current")
-    expect(decisionStatus.getAttribute("aria-label")).toBe("Comparison data is current")
-    expect(decisionStatus.textContent).not.toContain("Partial evidence")
     expect(comparePanel.querySelector(".lazers-models-decision-tools")).toBeNull()
     const selectionTools = containerA.querySelector<HTMLElement>(".lazers-models-selection-tools")!
-    expect(selectionTools.closest(".lazers-models-top")).not.toBeNull()
+    expect(selectionTools.closest(".lazers-models-inspector")).not.toBeNull()
     expect(selectionTools.querySelectorAll("button")).toHaveLength(2)
     expect(selectionTools.textContent).toContain("Model ·")
     expect(selectionTools.textContent).toContain("Effort ·")
@@ -2084,9 +2078,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector(".lazers-models-inspector-heading h2")?.getAttribute("aria-label"),
     ).toContain("Exact route")
     expect(topPaneA.textContent).not.toContain("Refreshing sources")
-    expect(containerA.querySelector(".lazers-models-project")?.getAttribute("aria-label")).toBe(
-      `Project · ${DIRECTORY_A}`,
-    )
     const taskMenu = topPaneA.querySelector<HTMLButtonElement>(".lazers-models-task-select button")!
     expect(taskMenu.textContent).toBe("LZ-17")
     expect(taskMenu.textContent).not.toContain(TASK_A)
@@ -2839,9 +2830,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "Route scope · cross-route",
     )
 
-    const personaFilter = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),
-    ].find((button) => button.textContent?.includes("Persona"))!
+    const personaFilter = containerA.querySelectorAll<HTMLButtonElement>(
+      ".lazers-models-filters .lazers-models-chip button",
+    )[0]!
     personaFilter.click()
     menuItemWithText(containerA, "Systems")?.click()
     await until(
@@ -2863,9 +2854,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       filters?: ModelDecisionFilters
     }
     expect(systemsOverview.filters?.persona).toBe("systems")
-    const taskKindFilter = [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),
-    ].find((button) => button.textContent?.includes("Kind"))!
+    const taskKindFilter = containerA.querySelectorAll<HTMLButtonElement>(
+      ".lazers-models-filters .lazers-models-chip button",
+    )[1]!
     taskKindFilter.click()
     menuItemWithText(containerA, "Testing")?.click()
     await until(
@@ -2894,7 +2885,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () => containerA.querySelector(".lazers-models-chart h3")?.textContent === "Public benchmark",
     )
     const modeButton = (mode: "observed" | "benchmark") =>
-      containerA.querySelector<HTMLButtonElement>(`[data-compare-mode="${mode}"]`)!
+      containerA.querySelector<HTMLButtonElement>(`[data-segment="${mode}"]`)!
     expect(modeButton("benchmark").getAttribute("aria-checked")).toBe("true")
     expect(modeButton("benchmark").closest("[role=radiogroup]")?.getAttribute("aria-label")).toBe(
       "Comparison basis",
@@ -3968,17 +3959,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       .querySelector<HTMLButtonElement>('[role="tab"][aria-controls="lazers-models-compare-panel"]')
       ?.click()
     await until(() => containerA.querySelector(".lazers-models-inspector-compare") !== null)
-    expect(
-      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Persona ·"),
-      ),
-    ).toBe(true)
-    expect(
-      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
-        button.textContent?.includes("Kind ·"),
-      ),
-    ).toBe(true)
-    expect(containerA.querySelector(".lazers-models-decision-status")).not.toBeNull()
+    expect(containerA.querySelectorAll(".lazers-models-filters .lazers-models-chip")).toHaveLength(
+      3,
+    )
     expect(containerA.querySelector(".lazers-models-assignment-editor")).toBeNull()
     const effortDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-task-effort-details",
@@ -4173,7 +4156,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_ONE}"]`,
         ) !== null && containerB.textContent?.includes("Objective B project only") === true,
     )
-    expect(containerB.querySelector(".lazers-models-project")?.textContent).toContain("project-b")
     expect(containerB.querySelector(".lazers-models-comparison-chart-data")?.textContent).toContain(
       "gpt-6",
     )

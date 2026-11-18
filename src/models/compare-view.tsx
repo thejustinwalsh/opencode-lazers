@@ -39,48 +39,6 @@ function benchmarkLabel(candidate: ModelCandidate) {
     : `Coding index ${benchmark.codingIndex}`
 }
 
-function decisionStatusLabel(status: ModelComparisonPanelData["decisionStatus"]) {
-  switch (status) {
-    case "loading":
-      return "Loading comparison data"
-    case "ready":
-      return "Comparison data is current"
-    case "partial":
-      return "Some comparison data is missing"
-    case "stale":
-      return "Comparison data may be out of date"
-    case "unknown":
-      return "Comparison data age is unknown"
-    case "backend-not-ready":
-      return "Comparison data is not ready yet"
-    case "missing-rpc":
-      return "Comparison is not available on this server"
-    case "error":
-      return "Comparison data could not be loaded"
-  }
-}
-
-function decisionStatusSummary(status: ModelComparisonPanelData["decisionStatus"]) {
-  switch (status) {
-    case "loading":
-      return "Loading"
-    case "ready":
-      return "Current"
-    case "partial":
-      return "Incomplete"
-    case "stale":
-      return "Out of date"
-    case "unknown":
-      return "Age unknown"
-    case "backend-not-ready":
-      return "Not ready"
-    case "missing-rpc":
-      return "Unavailable"
-    case "error":
-      return "Couldn't load"
-  }
-}
-
 function efficiencyLabel(row: ModelDecisionRow) {
   const efficiency = row.efficiency
   switch (efficiency.status) {
@@ -252,7 +210,6 @@ export function CompareTop(props: { ctl: ModelsController }) {
     benchmarkPriceSourceLabel,
     chartHeight,
     compareMode,
-    compareModeKey,
     ctx,
     decisionChartPoints,
     decisionChartReferences,
@@ -309,96 +266,18 @@ export function CompareTop(props: { ctl: ModelsController }) {
         ctl.refs.comparison = element
       }}
     >
-      <details class="lazers-models-sources-details">
-        <summary>Sources</summary>
-        <div class="lazers-models-sources" aria-label="Source snapshot coverage">
-          <For each={visible()?.comparison?.sources ?? []}>
-            {(source) => (
-              <div
-                class="lazers-models-source"
-                title={source.snapshot?.sourceURL ?? sourceTitle(source.source)}
-              >
-                <strong>{sourceTitle(source.source)}</strong>
-                <span>{sourceState(source)}</span>
-                <Show when={source.refresh?.state === "failed"}>
-                  <span class="lazers-models-source-warning">
-                    Latest refresh failed
-                    {source.refresh?.errorCode ? ` · ${source.refresh.errorCode}` : ""}
-                    {source.refresh?.httpStatus ? ` · HTTP ${source.refresh.httpStatus}` : ""}
-                  </span>
-                </Show>
-                <Show when={source.refresh?.state === "refreshing"}>
-                  <span class="lazers-models-source-warning">Refresh in progress</span>
-                </Show>
-                <Show when={source.refresh?.state === "cancelled"}>
-                  <span class="lazers-models-source-warning">Latest refresh cancelled</span>
-                </Show>
-              </div>
-            )}
-          </For>
-          <Show when={visible()?.sourceRefreshError}>
-            <p class="lazers-models-source-meta">
-              Source refresh error: {visible()?.sourceRefreshError}
-            </p>
-          </Show>
-          <Show when={visible()?.comparisonError}>
-            <p class="lazers-models-source-meta">
-              Comparison read error: {visible()?.comparisonError}
-            </p>
-          </Show>
-        </div>
-      </details>
-
       <div class="lazers-models-overview">
         <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
-          <div class="lazers-models-section-heading">
-            <h3 id="lazers-models-chart-title">
-              {(() => {
-                if (compareMode() === "benchmark") return "Public benchmark"
-                const points = visible()?.decisionOverview?.graph.points ?? []
-                const references = decisionChartReferences()
-                if (comparisonChartHasPlottablePoints(points)) return "Task outcomes"
-                if (comparisonChartHasPlottablePoints([], references)) return "Catalog estimates"
-                return "No comparison yet"
-              })()}
-            </h3>
-            <Show when={compareMode() === "observed"}>
-              <span
-                class="lazers-models-decision-status"
-                classList={{
-                  "lazers-models-visually-hidden": visible()?.decisionStatus === "partial",
-                }}
-                role="status"
-                data-decision-status={visible()?.decisionStatus ?? "loading"}
-                aria-label={decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
-                title={decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
-              >
-                {decisionStatusSummary(visible()?.decisionStatus ?? "loading")}
-              </span>
-            </Show>
-            <div class="lazers-models-compare-mode" role="radiogroup" aria-label="Comparison basis">
-              <For each={["observed", "benchmark"] as const}>
-                {(mode) => (
-                  <button
-                    type="button"
-                    role="radio"
-                    data-compare-mode={mode}
-                    aria-checked={compareMode() === mode}
-                    tabIndex={compareMode() === mode ? 0 : -1}
-                    onClick={() => selectCompareMode(mode)}
-                    onKeyDown={compareModeKey}
-                  >
-                    {mode === "observed" ? "Observed" : "Benchmark"}
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-          <p class="lazers-models-chart-caption">
-            {compareMode() === "benchmark"
-              ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
-              : "Your task runs · market cost and tokens per accepted task"}
-          </p>
+          <h3 id="lazers-models-chart-title" class="lazers-models-visually-hidden">
+            {(() => {
+              if (compareMode() === "benchmark") return "Public benchmark"
+              const points = visible()?.decisionOverview?.graph.points ?? []
+              const references = decisionChartReferences()
+              if (comparisonChartHasPlottablePoints(points)) return "Task outcomes"
+              if (comparisonChartHasPlottablePoints([], references)) return "Catalog estimates"
+              return "No comparison yet"
+            })()}
+          </h3>
           <Show when={compareMode() === "observed"}>
             <Show when={decisionStatusDetail()}>
               {(detail) => (
@@ -491,8 +370,52 @@ export function CompareTop(props: { ctl: ModelsController }) {
               }
             />
           </Show>
+          <p class="lazers-models-chart-caption">
+            {compareMode() === "benchmark"
+              ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
+              : "Your task runs · market cost and tokens per accepted task"}
+          </p>
         </section>
       </div>
+      <details class="lazers-models-sources-details">
+        <summary>Sources</summary>
+        <div class="lazers-models-sources" aria-label="Source snapshot coverage">
+          <For each={visible()?.comparison?.sources ?? []}>
+            {(source) => (
+              <div
+                class="lazers-models-source"
+                title={source.snapshot?.sourceURL ?? sourceTitle(source.source)}
+              >
+                <strong>{sourceTitle(source.source)}</strong>
+                <span>{sourceState(source)}</span>
+                <Show when={source.refresh?.state === "failed"}>
+                  <span class="lazers-models-source-warning">
+                    Latest refresh failed
+                    {source.refresh?.errorCode ? ` · ${source.refresh.errorCode}` : ""}
+                    {source.refresh?.httpStatus ? ` · HTTP ${source.refresh.httpStatus}` : ""}
+                  </span>
+                </Show>
+                <Show when={source.refresh?.state === "refreshing"}>
+                  <span class="lazers-models-source-warning">Refresh in progress</span>
+                </Show>
+                <Show when={source.refresh?.state === "cancelled"}>
+                  <span class="lazers-models-source-warning">Latest refresh cancelled</span>
+                </Show>
+              </div>
+            )}
+          </For>
+          <Show when={visible()?.sourceRefreshError}>
+            <p class="lazers-models-source-meta">
+              Source refresh error: {visible()?.sourceRefreshError}
+            </p>
+          </Show>
+          <Show when={visible()?.comparisonError}>
+            <p class="lazers-models-source-meta">
+              Comparison read error: {visible()?.comparisonError}
+            </p>
+          </Show>
+        </div>
+      </details>
     </section>
   )
 }
@@ -508,6 +431,10 @@ function CompareInspector(props: { ctl: ModelsController }) {
     assignmentBlocked,
     categoryRows,
     compareMode,
+    configurationsForGroup,
+    decisionModelChoiceLabel,
+    providerChoices,
+    selectDecisionGroup,
     comparisonSource,
     decisionModelFullName,
     decisionModelLabel,
@@ -712,6 +639,33 @@ function CompareInspector(props: { ctl: ModelsController }) {
                     </p>
                   )}
                 </Show>
+              </div>
+              <div
+                class="lazers-models-selection-tools"
+                role="group"
+                aria-label="Model and effort selection"
+                title={`Exact route ${routeLabel(configuration().route)}`}
+              >
+                <Ui.Menu
+                  label={`Model · ${decisionModelLabel(configuration())}`}
+                  trigger="button"
+                  icon="chevron-down"
+                  disabled={!providerChoices().length}
+                  items={providerChoices().map((choice) => ({
+                    label: decisionModelChoiceLabel(choice),
+                    onSelect: () => selectDecisionGroup(choice.groupID),
+                  }))}
+                />
+                <Ui.Menu
+                  label={`Effort · ${configuration().route.variant ?? "Not specified"}`}
+                  trigger="button"
+                  icon="chevron-down"
+                  disabled={!configurationsForGroup(configuration().groupID).length}
+                  items={configurationsForGroup(configuration().groupID).map((choice) => ({
+                    label: choice.route.variant ?? "Not specified",
+                    onSelect: () => state.selectConfiguration(choice.configurationID),
+                  }))}
+                />
               </div>
               <div
                 class="lazers-models-selection-actions"
