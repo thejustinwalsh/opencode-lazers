@@ -1,6 +1,12 @@
 import { appendFile, mkdir, rename, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join } from "node:path"
 import { Effect } from "effect"
+import {
+  enableProfiler,
+  type ProfileOptions,
+  type ProfileSummary,
+  type StallProfiler,
+} from "./stall-profile.ts"
 
 /**
  * Always-on event-loop stall attribution. Named sections time synchronous slices of
@@ -40,6 +46,8 @@ export type StallRecord = {
   recent: LongSection[]
   locations: number
   cores: number
+  /** JS stack samples inside the stall window; present only when profiling is enabled. */
+  profile?: ProfileSummary
 }
 export type ProbeOptions = {
   /** Directory holding tasks.sqlite; diagnostics/stalls.jsonl is written beneath it. */
@@ -48,6 +56,8 @@ export type ProbeOptions = {
   log?: (message: string, fields: Record<string, unknown>) => void
   /** Live core count. */
   cores?: () => number
+  /** Sampling-profile attribution; enabled by `diagnostics/profile.on` beside stalls.jsonl. */
+  profile?: ProfileOptions
 }
 
 export const SLICE_THRESHOLD_MS = 50
@@ -93,6 +103,8 @@ export class StallProbe {
   private lastLog = 0
   private pendingSummary = 0
   private worst: StallRecord | undefined
+  private profiler: StallProfiler | undefined
+  private profilerChecked = false
 
   configure(options: ProbeOptions) {
     this.options = { ...this.options, ...options }
@@ -103,6 +115,13 @@ export class StallProbe {
         this.sized = false
         this.size = 0
         if (this.buffer.length) this.scheduleFlush()
+      }
+      if (!this.profilerChecked) {
+        this.profilerChecked = true
+        this.profiler = enableProfiler(
+          join(options.dataDirectory, "diagnostics", "profile.on"),
+          this.options.profile,
+        )
       }
     }
     this.start()
@@ -120,6 +139,7 @@ export class StallProbe {
     this.timer = undefined
     if (this.flushTimer) clearTimeout(this.flushTimer)
     this.flushTimer = undefined
+    this.profiler?.stop()
   }
 
   /** Time a synchronous function. */
@@ -217,6 +237,14 @@ export class StallProbe {
       recent,
       locations: this.locations,
       cores: this.options.cores?.() ?? 0,
+    }
+    if (this.profiler && lagMs >= this.profiler.minStallMs) {
+      try {
+        // Draining here (not on the blocked drain timer) yields the samples inside the window.
+        record.profile = this.profiler.summarize(since, since + lagMs + TICK_MS)
+      } catch {
+        // Profiling must never break stall recording.
+      }
     }
     this.stalls++
     this.pendingSummary++

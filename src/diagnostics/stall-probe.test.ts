@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { activeProfiler } from "./stall-profile.ts"
 import { StallProbe, type StallRecord } from "./stall-probe.ts"
 
 const probes: StallProbe[] = []
@@ -127,4 +128,64 @@ test("the probe is one singleton across module copies", async () => {
   expect(a.StallProbe).not.toBe(b.StallProbe)
   expect(a.stallProbe()).toBe(b.stallProbe())
   a.stallProbe().stop()
+})
+
+function spinInProfileTarget(ms: number) {
+  const end = performance.now() + ms
+  let n = 0
+  while (performance.now() < end) n++
+  return n
+}
+
+async function readRecords(dir: string, probe: StallProbe) {
+  await probe.flush()
+  return (await readFile(join(dir, "diagnostics", "stalls.jsonl"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as StallRecord)
+}
+
+test("profiling is off by default: no flag file, no profiler, no profile field", async () => {
+  const hostKey = Symbol("lazers.test.profiler.off")
+  const dir = await mkdtemp(join(tmpdir(), "lazers-stall-"))
+  dirs.push(dir)
+  const probe = new StallProbe()
+  probes.push(probe)
+  probe.configure({ dataDirectory: dir, profile: { hostKey, minStallMs: 100 } })
+  expect(activeProfiler(hostKey)).toBeUndefined()
+  probe.section("busy", () => busy(320))
+  await sleep(120)
+  const [record] = await readRecords(dir, probe)
+  expect(record!.lagMs).toBeGreaterThan(200)
+  expect(record!.profile).toBeUndefined()
+})
+
+test("with profile.on, a long stall carries a sampled profile naming the busy function", async () => {
+  const hostKey = Symbol("lazers.test.profiler.on")
+  const dir = await mkdtemp(join(tmpdir(), "lazers-stall-"))
+  dirs.push(dir)
+  await mkdir(join(dir, "diagnostics"), { recursive: true })
+  await writeFile(join(dir, "diagnostics", "profile.on"), "")
+  const probe = new StallProbe()
+  probes.push(probe)
+  probe.configure({ dataDirectory: dir, profile: { hostKey, minStallMs: 300, drainMs: 50 } })
+  const profiler = activeProfiler(hostKey)
+  expect(profiler).toBeDefined()
+  // A second probe reuses the one process profiler.
+  const second = new StallProbe()
+  probes.push(second)
+  second.configure({ dataDirectory: dir, profile: { hostKey } })
+  expect(activeProfiler(hostKey)).toBe(profiler!)
+
+  spinInProfileTarget(450)
+  await sleep(120)
+  const [record] = await readRecords(dir, probe)
+  profiler!.stop()
+  const profile = record!.profile!
+  expect(profile.samples).toBeGreaterThan(50)
+  expect(profile.self[0]!.frame).toContain("spinInProfileTarget @")
+  expect(profile.self[0]!.frame).toContain("stall-probe.test.ts")
+  expect(profile.inclusive.map((entry) => entry.frame).join("\n")).toContain("spinInProfileTarget")
+  expect(profile.stacks[0]!.frames[0]).toContain("spinInProfileTarget")
+  expect(profile.self.length).toBeLessThanOrEqual(25)
 })
