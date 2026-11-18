@@ -9,7 +9,7 @@ if (!tag || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag) || !d
   throw Error("Usage: bun run package:release vMAJOR.MINOR.PATCH OUTPUT_DIRECTORY")
 const output = resolve(destination)
 const version = tag.slice(1)
-const runtimeScripts = ["src/context/processor.ts", "src/context/repo-worker.ts"]
+const runtimeScripts = ["dist/processor.js", "dist/repo-worker.js", "dist/decision-worker.js"]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
   const process = Bun.spawn(command, { cwd, stdio: ["ignore", "inherit", "inherit"] })
@@ -17,7 +17,7 @@ const run = async (cwd: string, ...command: string[]) => {
 }
 
 try {
-  await run(root, "bun", "run", "build:gui")
+  await run(root, "bun", "run", "build")
   await mkdir(output, { recursive: true })
   const pkg = join(staging, "package")
   const consumer = join(staging, "consumer")
@@ -33,7 +33,13 @@ try {
       recursive: true,
       filter: (file) => !/\.(?:test|fixture)\.[cm]?[jt]sx?$/.test(basename(file)),
     }),
-    cp(join(root, "dist", "gui-experimental.cjs"), join(pkg, "dist", "gui-experimental.cjs")),
+    ...[
+      "gui-experimental.cjs",
+      "server.js",
+      "processor.js",
+      "repo-worker.js",
+      "decision-worker.js",
+    ].map((file) => cp(join(root, "dist", file), join(pkg, "dist", file))),
     writeFile(
       join(consumer, "package.json"),
       JSON.stringify({ name: "lazers-install-smoke", private: true }),

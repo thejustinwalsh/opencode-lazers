@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "bun@1.4.4-canary.20261030.1",
   "exports": {
-    ".": "./src/index.ts",
+    ".": "./dist/server.js",
     "./gui-experimental": "./dist/gui-experimental.cjs",
     "./webgpu/rpc": "./src/webgpu/rpc.ts",
     "./webgpu/contract": "./src/webgpu/contract.ts",
@@ -18,7 +18,9 @@
   "scripts": {
     "package:release": "bun scripts/release-package.ts",
     "verify": "bun fmt && bun lint --fix && bun fmt && bun check",
-    "build:gui": "vite build && bun scripts/verify-gui-bundle.ts"
+    "build:gui": "vite build && bun scripts/verify-gui-bundle.ts",
+    "build:server": "bun scripts/build-server.ts",
+    "build": "bun run build:gui && bun run build:server"
   },
   "peerDependencies": {
     "@opencode/plugin": "2.2.5",

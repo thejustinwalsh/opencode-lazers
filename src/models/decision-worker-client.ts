@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads"
+import { workerURL } from "../worker-url.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { ModelDecisionPriceState } from "./decision-read.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
@@ -48,8 +49,10 @@ export function createThreadedDecisionReader(
     if (closed) throw new Error("Model decision reader is closed")
     if (worker) return worker
     const created = new Worker(
-      options.workerURL ?? new URL("./decision-worker.ts", import.meta.url),
-      { workerData: { path: options.path, projectDirectory: options.projectDirectory } },
+      options.workerURL ?? workerURL("./decision-worker", import.meta.url),
+      {
+        workerData: { path: options.path, projectDirectory: options.projectDirectory },
+      },
     )
     created.unref()
     worker = created

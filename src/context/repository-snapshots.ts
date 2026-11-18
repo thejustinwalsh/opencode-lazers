@@ -1,3 +1,4 @@
+import { workerURL } from "../worker-url.ts"
 import {
   closeSync,
   constants,
@@ -118,7 +119,7 @@ export function runRepositoryWorker(
 ) {
   signal?.throwIfAborted()
   const timeoutMs = options.timeoutMs ?? 180_000
-  const worker = new Worker(options.workerURL ?? new URL("./repo-worker.ts", import.meta.url), {
+  const worker = new Worker(options.workerURL ?? workerURL("./repo-worker", import.meta.url), {
     env: workerEnvironment(),
     resourceLimits: { maxOldGenerationSizeMb: 512, maxYoungGenerationSizeMb: 128, stackSizeMb: 8 },
   })

@@ -1,3 +1,4 @@
+import { workerURL } from "../worker-url.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import {
   constants,
@@ -315,7 +316,7 @@ export class ProjectIndex {
 
   private async collectWorkspace(principal: Principal): Promise<Snapshot> {
     const started = Date.now()
-    const worker = new Worker(new URL("./processor.ts", import.meta.url))
+    const worker = new Worker(workerURL("./processor", import.meta.url))
     let processorFailure: Error | undefined
     worker.on("error", (error: Error) => {
       processorFailure = error
