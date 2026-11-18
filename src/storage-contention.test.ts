@@ -20,7 +20,9 @@ afterEach(() => {
   for (const lock of locks.splice(0)) {
     try {
       lock.exec("ROLLBACK")
-    } catch {}
+    } catch {
+      // Lock may already be rolled back or closed; cleanup continues.
+    }
     lock.close()
   }
   for (const repository of repos.splice(0)) repository.close()
