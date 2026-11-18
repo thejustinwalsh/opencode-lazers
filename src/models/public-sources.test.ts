@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { benchmarkBaseline, benchmarkPrice } from "./benchmark-baseline.ts"
 import { buildCatalog, entryProvenanceText } from "./catalog-projection.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
+import { freeEntries, projectedRankRows, shortModelLabel } from "./chart-data.ts"
 import { sourceState } from "./comparison-presentation.ts"
 import { parseCSV } from "./csv.ts"
 import { EPOCH_CODING_BENCHMARKS, parseEpochArchive } from "./epoch-parse.ts"
@@ -734,4 +735,111 @@ test("the price join never crosses a tier or a version, and a reseller is not th
   ).toMatchObject({ source: "openrouter", input: 1, output: 5 })
   // The lone reseller listing is the only OpenRouter listing for Haiku, so it prices Haiku.
   expect(price("claude-haiku-4-5")).toMatchObject({ source: "openrouter", input: 9 })
+})
+
+test("one model is one entry however many providers offer it, with the providers listed", () => {
+  const set = [
+    candidateWith("github-copilot", "claude-haiku-5-5", { dev: { input: 0.1, output: 0.5 } }),
+    candidateWith("anthropic", "claude-haiku-5-5", { dev: { input: 0.1, output: 0.5 } }),
+    candidateWith("anthropic", "claude-haiku-4-5", { dev: { input: 1, output: 5 } }),
+  ]
+  const { entries } = buildCatalog({
+    candidates: set,
+    priceSources: ["models-dev"],
+    sourceDates: dates,
+    profile,
+    observed: new Map([
+      // The route the user actually runs is the Copilot one; it joins the same entry.
+      [
+        "github-copilot\u0000claude-haiku-5-5",
+        { configurationID: "c", usd: 0.4, tokens: 1e6, accepted: 2, terminal: 2 },
+      ],
+    ]),
+    routed: [],
+    label: (route) => route.modelID,
+  })
+  expect(entries.map((entry) => entry.route.modelID).sort()).toEqual([
+    "claude-haiku-4-5",
+    "claude-haiku-5-5",
+  ])
+  const haiku = entries.find((entry) => entry.route.modelID === "claude-haiku-5-5")!
+  // The vendor's own provider speaks for it; the other is listed beside it.
+  expect(haiku.route.providerID).toBe("anthropic")
+  expect(haiku.providers).toEqual(["anthropic", "github-copilot"])
+  expect(haiku.observed?.configurationID).toBe("c")
+  expect(
+    entries.find((entry) => entry.route.modelID === "claude-haiku-4-5")!.providers,
+  ).toBeUndefined()
+})
+
+test("a model its source lists as free is shown as free, below the ranking, never as $0", () => {
+  const entries = buildCatalog({
+    candidates: [],
+    priceSources: ["openrouter"],
+    sourceDates: dates,
+    profile,
+    observed: new Map(),
+    routed: [],
+    external: [
+      {
+        source: "openrouter",
+        providerID: "dots-studio",
+        modelID: "dots-3-note-preview:free",
+        name: "Dots Studio: Dots3-Note Preview (free)",
+        releaseDate: null,
+        contextTokens: null,
+        prices: { input: 0, output: 0, cacheRead: null, cacheWrite: null },
+        benchmarks: [],
+      },
+      {
+        source: "openrouter",
+        providerID: "acme",
+        modelID: "rocket-1",
+        name: "Acme: Rocket 1",
+        releaseDate: null,
+        contextTokens: null,
+        prices: { input: 2, output: 10, cacheRead: null, cacheWrite: null },
+        benchmarks: [],
+      },
+    ],
+    label: (route) => route.modelID,
+  }).entries
+  expect(freeEntries(entries).map((entry) => entry.route.modelID)).toEqual([
+    "dots-3-note-preview:free",
+  ])
+  expect(projectedRankRows(entries).map((row) => row.label)).toEqual(["Rocket 1"])
+})
+
+test("ranking labels drop the vendor prefix and routing suffix; the tooltip keeps the full name", () => {
+  expect(shortModelLabel("Dots Studio: Dots3-Note Preview (free)")).toBe("Dots3-Note Preview")
+  expect(shortModelLabel("Gemini 3 Flash Preview (CLI)")).toBe("Gemini 3 Flash Preview")
+  expect(shortModelLabel("Anthropic: Claude Haiku 5.5")).toBe("Claude Haiku 5.5")
+  expect(shortModelLabel("Claude Opus 4.5 (latest)")).toBe("Claude Opus 4.5")
+  // Parentheses that are part of the name stay.
+  expect(shortModelLabel("GPT-5 (high)")).toBe("GPT-5 (high)")
+  expect(shortModelLabel("claude-haiku-5-5")).toBe("claude-haiku-5-5")
+  const entry = {
+    id: "x",
+    route: { providerID: "p", modelID: "m" },
+    label: "Dots Studio: Dots3-Note Preview (free)",
+    tags: ["catalog"],
+    price: {
+      source: "openrouter",
+      input: 1,
+      output: 2,
+      cacheRead: null,
+      cacheWrite: null,
+      blended: 1.25,
+      appliesBelowTokens: null,
+      retrievedAt: null,
+    },
+    projection: { usd: 1, cacheAtInputRate: false },
+    score: null,
+    contextTokens: null,
+    observed: null,
+    frontier: false,
+  } as never
+  const [row] = projectedRankRows([entry])
+  expect(row!.label).toBe("Dots3-Note Preview")
+  expect(row!.tooltip[0]).toBe("Dots Studio: Dots3-Note Preview (free)")
 })

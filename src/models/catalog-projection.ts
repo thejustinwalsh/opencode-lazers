@@ -142,6 +142,8 @@ export type CatalogEntry = {
   score: number | null
   /** For a public-catalog model no route runs: the source that listed it (not the price source). */
   listedBy?: ModelPriceSource
+  /** Providers that offer this model, when more than one does; the entry stands for all. */
+  providers?: string[]
   /** What `score` is called (the Coding index, or an Epoch benchmark in percent). */
   scoreName?: string
   /** Context window in tokens, when the catalog lists one. */
@@ -253,27 +255,40 @@ export function buildCatalog(input: CatalogInput): {
     const key = routeKey(candidate.identity)
     routeGroups.set(key, [...(routeGroups.get(key) ?? []), candidate])
   }
-  // A dated snapshot and its `latest` alias (`claude-opus-4-5-20251101`, `claude-opus-4-5`) are
-  // one model under one provider: one entry, spoken for by the undated alias, else the newest.
-  const sameModel = new Map<string, Array<{ key: string; id: string }>>()
+  // One model is one entry, whoever offers it and under whatever alias: a dated snapshot and
+  // its `latest` alias (`claude-opus-4-5-20251101`, `claude-opus-4-5`), and the same model through
+  // several providers (`anthropic`, `github-copilot`). The vendor's own provider speaks for it,
+  // then the undated alias, then the newest; the others are listed as the providers offering it.
+  const sameModel = new Map<string, Array<{ key: string; id: string; provider: string }>>()
   for (const [key, group] of routeGroups) {
     const { providerID, modelID } = group[0]!.identity
     const identity = parseModelName(modelID, {
       vendor: vendorSlug(providerID) ? providerID : null,
     })
-    const alias = `${providerID}\u0000${identity.key}`
-    sameModel.set(alias, [...(sameModel.get(alias) ?? []), { key, id: modelID }])
+    sameModel.set(identity.key, [
+      ...(sameModel.get(identity.key) ?? []),
+      { key, id: modelID, provider: providerID },
+    ])
   }
   const aliasOf = new Map<string, string>()
   const groups = new Map<string, ModelCandidate[]>()
+  const providersOf = new Map<string, string[]>()
   for (const members of sameModel.values()) {
     const chosen = members.toSorted((a, b) => {
+      const firstParty = (member: { provider: string }) =>
+        vendorSlug(member.provider) === member.provider ? 0 : 1
       const left = parseModelName(a.id).date
       const right = parseModelName(b.id).date
-      if ((left === null) !== (right === null)) return left === null ? -1 : 1
-      return (right ?? "").localeCompare(left ?? "") || a.id.length - b.id.length
+      return (
+        firstParty(a) - firstParty(b) ||
+        Number(left !== null) - Number(right !== null) ||
+        (right ?? "").localeCompare(left ?? "") ||
+        a.id.length - b.id.length ||
+        a.key.localeCompare(b.key)
+      )
     })[0]!
     groups.set(chosen.key, routeGroups.get(chosen.key)!)
+    providersOf.set(chosen.key, [...new Set(members.map((member) => member.provider))].sort())
     for (const member of members) aliasOf.set(member.key, chosen.key)
   }
   type Base = {
@@ -461,6 +476,7 @@ export function buildCatalog(input: CatalogInput): {
       score: base?.score ?? outside?.score ?? null,
       scoreName: choice.basis.label,
       ...(outside ? { listedBy: outside.item.source as ModelPriceSource } : {}),
+      ...((providersOf.get(key)?.length ?? 0) > 1 ? { providers: providersOf.get(key)! } : {}),
       contextTokens:
         representative?.native.contextTokens ??
         representative?.externalModel?.contextLength ??

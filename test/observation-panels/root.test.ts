@@ -2655,7 +2655,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ) !== null,
     )
     expect(containerA.querySelector(".lazers-chart svg")).not.toBeNull()
-    expect(containerA.querySelector(".lazers-chart-legend")?.textContent).toBe("Other")
+    // A catalog reference plotted on the same axes competes for the best trade-off like an
+    // observed point, so the only plotted model is on the frontier.
+    expect(containerA.querySelector(".lazers-chart-legend")?.textContent).toBe("Best trade-off")
     const unknownPricePoint = containerA.querySelector<SVGGElement>(
       `.lazers-chart [data-point-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
