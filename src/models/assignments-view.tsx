@@ -47,7 +47,6 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     modelSelectionCaption,
     openAssignmentModelPicker,
     personas,
-    prefs,
     removeAssignmentRoute,
     revertAssignmentRoute,
     saveAssignmentRoute,
@@ -204,8 +203,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 options={[
                   { value: "shared", label: "All projects" },
                   { value: "project", label: "This project" },
-                  // A task override is offered only once a task is chosen as a filter.
-                  ...(visible()?.selectedTaskID && prefs().taskFilter
+                  ...(visible()?.selectedTaskID
                     ? [{ value: "task" as const, label: "This task" }]
                     : []),
                 ]}

@@ -389,6 +389,7 @@ export class ModelComparisonPanelState {
   private sourceRefreshPromise?: Promise<void>
   private comparisonPromise?: Promise<void>
   private taskListPromise?: Promise<void>
+  private seededTask = false
   private refreshPromise?: Promise<void>
   private comparisonNeedsRefresh = false
   private decisionRequest = 0
@@ -430,6 +431,7 @@ export class ModelComparisonPanelState {
     this.transport = transport
     this.projectID = projectID
     this.projectDirectory = projectDirectory
+    this.seededTask = Boolean(seed && isSeedable(seed) && seed.task)
     this.data =
       seed && isSeedable(seed)
         ? seededData(seed, key, projectID, projectDirectory, preferences, decisionFilters)
@@ -1154,9 +1156,15 @@ export class ModelComparisonPanelState {
             : this.data.selectedTaskID
         const selected = current ?? page.tasks[0]?.taskID ?? null
         if (selected !== this.data.selectedTaskID) this.selectTask(selected)
-        else if (selected && !this.data.task && !this.taskController.signal.aborted)
+        else if (
+          selected &&
+          (!this.data.task || this.seededTask) &&
+          !this.taskController.signal.aborted
+        ) {
+          // A restored task is shown while it is read again.
+          this.seededTask = false
           await this.loadSelectedTask(generation, selected, this.selectionRevision)
-        else if (!selected && this.data.selectedTaskID !== null) this.selectTask(null)
+        } else if (!selected && this.data.selectedTaskID !== null) this.selectTask(null)
       } catch (error) {
         if (generation === this.generation && !signal.aborted)
           this.update({

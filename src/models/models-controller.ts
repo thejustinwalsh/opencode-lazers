@@ -173,10 +173,13 @@ export function createModelsController(props: ModelsProps) {
       value.session === props.session.id &&
       value.directory === props.session.directory
       ? value
-      : knownLocation()
+      : undefined
   }
+  // What to draw while the location is not confirmed yet: the project it resolved to last time.
+  // Reads and writes wait for the confirmed `current()`; only the picture may run ahead of them.
+  const shown = () => current() ?? knownLocation()
   const prefs = () => {
-    const value = current()
+    const value = shown()
     return value
       ? (ctx.stores.modelsView(props.session).value?.projects[value.project] ?? initial)
       : initial
@@ -203,9 +206,8 @@ export function createModelsController(props: ModelsProps) {
         selectedConfigurationID: selection.selectedConfigurationID,
       }),
   )
-  const expectedKey = () => {
-    const value = current()
-    return value
+  const keyOf = (value: ReturnType<typeof shown>) =>
+    value
       ? JSON.stringify([
           value.server,
           value.projectID,
@@ -214,19 +216,21 @@ export function createModelsController(props: ModelsProps) {
           value.directory,
         ])
       : ""
-  }
+  const expectedKey = () => keyOf(current())
   const visible = () => {
-    const key = expectedKey()
+    const confirmed = expectedKey()
+    if (data().key === confirmed) return data()
+    // On a re-mount the last snapshot for this project shows at once, before the location read
+    // returns and the connection starts. A different project has no snapshot and starts empty.
+    const key = confirmed || keyOf(knownLocation())
+    if (!key) return undefined
     if (data().key === key) return data()
-    // Before the connection lands on a re-mount, show the last snapshot for this project.
     const view = prefs()
-    return key
-      ? recallModelsSnapshot(key, {
-          persona: view.persona,
-          taskKind: view.taskKind ?? null,
-          period: { from: null, to: null },
-        })
-      : undefined
+    return recallModelsSnapshot(key, {
+      persona: view.persona,
+      taskKind: view.taskKind ?? null,
+      period: { from: null, to: null },
+    })
   }
 
   onCleanup(() => {
